@@ -3,6 +3,7 @@ use bumbledb::ResultBuffer;
 
 use super::{QueryReport, Scenario, ScenarioQuery, Stores};
 use crate::compare;
+use crate::families::bind_values;
 use crate::harness::{self, Protocol, Rotation};
 use crate::sqlite_run::PreparedFamily;
 use crate::translate::translate;
@@ -33,7 +34,7 @@ pub(super) fn run_query(
         let mut buffer = ResultBuffer::new();
         stores
             .db
-            .read(|snap| snap.execute(&mut prepared, params, &mut buffer))
+            .read(|snap| snap.execute(&mut prepared, &bind_values(params), &mut buffer))
             .map_err(|e| format!("{}/{}: execute: {e:?}", scenario.name, sq.name))?;
         let ours = compare::from_buffer(&buffer, &types);
         let mut stmt = stores
@@ -59,7 +60,7 @@ pub(super) fn run_query(
     let mut buffer = ResultBuffer::new();
     let db = &stores.db;
     let ours = harness::measure(proto, || {
-        let params = rotation.next_set().clone();
+        let params = bind_values(rotation.next_set());
         db.read(|snap| snap.execute(&mut prepared, &params, &mut buffer))
             .map_err(|e| format!("execute: {e:?}"))?;
         Ok(buffer.len() as u64)

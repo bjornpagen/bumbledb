@@ -30,7 +30,7 @@ fn all_fifteen_validate_and_prepare() {
     let dir = std::env::temp_dir().join("bumbledb-bench-families");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, schema()).expect("create");
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger).expect("create");
     assert_eq!(all().len(), 15);
     for family in all() {
         db.prepare(&(family.query)())
@@ -248,7 +248,7 @@ fn balance_counts_equal_amounts_separately() {
     let dir = std::env::temp_dir().join("bumbledb-bench-true-balance");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, schema()).expect("create");
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger).expect("create");
     db.write(|tx| {
         for (rel, values) in &rows {
             tx.insert_dyn(*rel, values)?;
@@ -258,7 +258,7 @@ fn balance_counts_equal_amounts_separately() {
     .expect("seed");
     let mut prepared = db.prepare(&balance_query()).expect("prepare");
     let out = db
-        .read(|snap| snap.execute_collect(&mut prepared, &[Value::U64(0)]))
+        .read(|snap| snap.execute_collect(&mut prepared, &[bumbledb::BindValue::U64(0)]))
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(

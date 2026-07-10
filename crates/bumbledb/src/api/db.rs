@@ -6,7 +6,27 @@
 //! writes serialize on one mutex. A write transaction is a [`WriteDelta`]
 //! — in-memory set arithmetic, nothing touches LMDB until commit, and an
 //! abort (error or panic) never wrote anything.
+//!
+//! # The `Fact<'a>` lifetime (a decision, recorded here)
+//!
+//! Macro-generated fact structs borrow their variable-width fields
+//! (`str` → `&'a str`, `bytes` → `&'a [u8]`), so the trait must express
+//! "the struct is generic over a lifetime". Of the two shapes that can,
+//! the **lifetime-parameterized trait** (`impl<'a> Fact<'a> for
+//! Account<'a>`) wins over a GAT (`type Borrowed<'a>`): decode returns
+//! plain `Self` at the resolver's lifetime with no projection type
+//! anywhere, insert takes the struct at whatever lifetime the host holds
+//! (an `Account<'b>` implements `Fact<'b>` — the encode paths read the
+//! fields as borrows and force nothing toward `'static`), and
+//! all-fixed-width structs implement `Fact<'a>` for every `'a` without
+//! growing a lifetime themselves. A GAT would buy a lifetime-free trait
+//! at the price of a second name for every struct (`F::Borrowed<'a>` next
+//! to `F`) — an owned/borrowed twin in all but syntax, which the design
+//! refuses. There are no owned twins and no modes: the borrowed struct is
+//! the struct, and ownership is an explicit host act (`to_owned()` on the
+//! field you keep).
 
+use std::marker::PhantomData;
 use std::sync::Mutex;
 
 use crate::encoding::ValueRef;
@@ -39,7 +59,20 @@ const BULK_CHUNK: usize = 4096;
 /// side encodes against the delta (interning novel strings/bytes); the
 /// read side encodes against the committed dictionary and reports a
 /// never-interned value as "this fact cannot exist".
-pub trait Fact: Sized {
+///
+/// `'a` is the decode lifetime: variable-width fields (`&'a str` /
+/// `&'a [u8]`) borrow from the resolver — the snapshot's committed
+/// dictionary (mmap pages, txn-stable by LMDB `CoW`) or the write
+/// transaction's pending interns (delta arena). A struct with no
+/// variable-width field implements `Fact<'a>` for every `'a`. The trait
+/// shape is a recorded decision — see the module doc.
+pub trait Fact<'a>: Sized {
+    /// The schema this struct belongs to — the `schema!` invocation's
+    /// named unit struct. Write and read operations bound
+    /// `F: Fact<'_, Schema = S>` against `Db<S>`, so a cross-schema fact
+    /// is a compile error.
+    type Schema;
+
     /// The relation this struct declares, by declaration order.
     const RELATION: RelationId;
 
@@ -49,7 +82,7 @@ pub trait Fact: Sized {
     /// # Errors
     ///
     /// Storage errors from the dictionary reads.
-    fn encode_write(&self, tx: &mut WriteTx<'_>, out: &mut Vec<u8>) -> Result<()>;
+    fn encode_write(&self, tx: &mut WriteTx<'_, Self::Schema>, out: &mut Vec<u8>) -> Result<()>;
 
     /// Encodes for the delete path: pending intern ids first (so an
     /// insert-then-delete within one transaction cancels byte-exactly),
@@ -61,7 +94,7 @@ pub trait Fact: Sized {
     /// # Errors
     ///
     /// Storage errors from the dictionary reads.
-    fn encode_delete(&self, tx: &WriteTx<'_>, out: &mut Vec<u8>) -> Result<bool>;
+    fn encode_delete(&self, tx: &WriteTx<'_, Self::Schema>, out: &mut Vec<u8>) -> Result<bool>;
 
     /// Encodes against a read context. `Ok(false)` means a string or bytes
     /// value was never interned — the fact cannot exist in the database
@@ -70,25 +103,28 @@ pub trait Fact: Sized {
     /// # Errors
     ///
     /// Storage errors from the dictionary reads.
-    fn encode_read(&self, snap: &Snapshot<'_>, out: &mut Vec<u8>) -> Result<bool>;
+    fn encode_read(&self, snap: &Snapshot<'_, Self::Schema>, out: &mut Vec<u8>) -> Result<bool>;
 
-    /// Decodes canonical fact bytes back into the typed struct, resolving
-    /// intern ids through the snapshot's dictionary.
+    /// Decodes canonical fact bytes back into the typed struct.
+    /// Variable-width fields borrow from the snapshot's dictionary at
+    /// `'a`; UTF-8 is validated at resolve (parse, don't validate) —
+    /// without a copy.
     ///
     /// # Errors
     ///
     /// `Corruption` on undecodable bytes or dangling intern ids.
-    fn decode(snap: &Snapshot<'_>, fact: &[u8]) -> Result<Self>;
+    fn decode(snap: &'a Snapshot<'_, Self::Schema>, fact: &[u8]) -> Result<Self>;
 
     /// Decodes canonical fact bytes inside a write transaction — the
     /// point-read sibling of [`Fact::decode`], resolving intern ids
     /// pending-first (a fact inserted this transaction carries provisional
-    /// ids) and through the committed dictionary otherwise.
+    /// ids, borrowed from the delta arena) and through the committed
+    /// dictionary otherwise.
     ///
     /// # Errors
     ///
     /// `Corruption` on undecodable bytes or dangling intern ids.
-    fn decode_write(tx: &WriteTx<'_>, fact: &[u8]) -> Result<Self>;
+    fn decode_write(tx: &'a WriteTx<'_, Self::Schema>, fact: &[u8]) -> Result<Self>;
 }
 
 /// Generated alongside [`Fact`] for relations with **exactly one** serial
@@ -96,7 +132,7 @@ pub trait Fact: Sized {
 /// with zero or several key statements have no single dominant key, so
 /// their point reads spell the statement out through [`WriteTx::get_dyn`]
 /// (the multi-key typed shape is an open item, `docs/architecture/70-api.md`).
-pub trait SerialKeyed: Fact {
+pub trait SerialKeyed<'a>: Fact<'a> {
     /// The serial field's generated newtype.
     type SerialKey: Serial;
 }
@@ -105,6 +141,12 @@ pub trait SerialKeyed: Fact {
 /// `serial` field declared `as NewType`: [`WriteTx::alloc`] mints the next
 /// value with the field already known.
 pub trait Serial: Sized {
+    /// The schema the newtype's relation belongs to — [`WriteTx::alloc`]
+    /// bounds `T: Serial<Schema = S>`, so minting through a foreign
+    /// schema's newtype is a compile error (the same closure as
+    /// [`Fact::Schema`]).
+    type Schema;
+
     /// The relation owning the serial field.
     const RELATION: RelationId;
     /// The serial field itself.
@@ -120,18 +162,21 @@ pub trait Serial: Sized {
 /// writer mutex. Shareable across threads (`Send + Sync`); dropping the
 /// handle closes the environment.
 ///
-/// `'s` borrows the schema. The `schema!` macro's generated `schema()`
-/// returns `&'static Schema` (a `OnceLock`), so macro-declared hosts get
-/// `Db<'static>` and cross thread bounds freely; a hand-built
-/// [`crate::schema::SchemaDescriptor`] schema can be promoted with
-/// `Box::leak` when `'static` is needed.
+/// `S` is the schema definition ([`crate::SchemaDef`]) the database was
+/// created or opened with — a phantom typestate threaded through
+/// [`WriteTx`], [`Snapshot`], and [`crate::PreparedQuery`], so a fact or
+/// prepared query of one schema cannot reach a database of another
+/// (compile error, not a runtime width check). The validated
+/// [`Schema`] itself is owned by the handle: `create`/`open` validate the
+/// definition's descriptor and surface an invalid declaration as the
+/// typed [`crate::error::SchemaError`].
 ///
 /// Transaction closures return [`crate::Result`]; host code with its own
 /// error type wraps the transaction instead of threading the type
 /// through: run the closure for the engine work, then convert — a
 /// generic error parameter here would force turbofish annotations on
 /// every plain `Ok(())` closure.
-pub struct Db<'s> {
+pub struct Db<S> {
     env: Environment,
     cache: ImageCache,
     writer: Mutex<()>,
@@ -152,10 +197,13 @@ pub struct Db<'s> {
     /// Commits since open (monotone; bumped only when a commit changed
     /// state). The parked reader's validity token.
     commit_seq: std::sync::atomic::AtomicU64,
-    schema: &'s Schema,
+    schema: Schema,
+    /// The typestate marker (`fn() -> S` keeps `Send + Sync` independent
+    /// of `S` — the definition value itself is consumed at open).
+    marker: PhantomData<fn() -> S>,
 }
 
-impl<'s> Db<'s> {
+impl<S> Db<S> {
     /// The LMDB environment (reader: `crate::verify_store` — the sweeper
     /// opens its own snapshot, and its fixture tests inject raw desyncs
     /// through the environment's write transactions).
@@ -164,8 +212,8 @@ impl<'s> Db<'s> {
     }
 
     /// The validated schema (reader: `crate::verify_store`).
-    pub(crate) fn schema(&self) -> &'s Schema {
-        self.schema
+    pub(crate) fn schema(&self) -> &Schema {
+        &self.schema
     }
 }
 
@@ -191,14 +239,17 @@ pub struct BulkLoadError {
 }
 
 /// One consistent read snapshot: executes prepared queries and exports
-/// relations. Handed to [`Db::read`] closures.
-pub struct Snapshot<'db> {
+/// relations. Handed to [`Db::read`] closures. Carries the handle's
+/// schema typestate `S`, so a prepared query executes only against
+/// snapshots of a same-schema database by construction.
+pub struct Snapshot<'db, S> {
     txn: ReadTxn<'db>,
     cache: &'db ImageCache,
     schema: &'db Schema,
+    marker: PhantomData<fn() -> S>,
 }
 
-impl<'db> Snapshot<'db> {
+impl<'db, S> Snapshot<'db, S> {
     /// The snapshot's read transaction (reader: the staleness signal —
     /// [`crate::PreparedQuery::staleness`] takes the snapshot directly
     /// rather than routing through a `Snapshot` wrapper method).
@@ -215,8 +266,9 @@ impl<'db> Snapshot<'db> {
 /// [`WriteTx::get_dyn`]), which observe the final-state view the judgment
 /// phase will judge. No prepared-query or snapshot type is reachable from
 /// here (`docs/architecture/70-api.md`: full queries in write transactions
-/// stay unrepresentable).
-pub struct WriteTx<'a> {
+/// stay unrepresentable). Carries the handle's schema typestate `S`:
+/// typed operations bound `F: Fact<'_, Schema = S>`.
+pub struct WriteTx<'a, S> {
     view: ReadTxn<'a>,
     delta: WriteDelta<'a>,
     schema: &'a Schema,
@@ -224,9 +276,10 @@ pub struct WriteTx<'a> {
     /// Reused per dynamic fact: `bulk_load` must not allocate a value
     /// buffer per imported row.
     refs: Vec<ValueRef>,
+    marker: PhantomData<fn() -> S>,
 }
 
-impl WriteTx<'_> {
+impl<S> WriteTx<'_, S> {
     /// Runs `body` with the encode scratch taken out (a typed encode
     /// borrows the whole transaction mutably alongside the buffer),
     /// restoring the buffer — and its capacity — afterward, success or

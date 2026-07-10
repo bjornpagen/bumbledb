@@ -133,7 +133,7 @@ fn walk_atoms() -> Vec<Atom> {
 
 /// The prepared plan's roles — asserting the marks so neither side of
 /// the differential is vacuously equal.
-fn plan_roles(prepared: &PreparedQuery<'_>) -> Vec<Role> {
+fn plan_roles(prepared: &PreparedQuery<'_, ()>) -> Vec<Role> {
     let ExecPlan::FreeJoin(plan) = &prepared.plan else {
         panic!("a two-atom query plans as Free Join");
     };

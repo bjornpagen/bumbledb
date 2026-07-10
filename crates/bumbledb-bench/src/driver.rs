@@ -11,6 +11,7 @@ use rusqlite::Connection;
 use crate::gen::GenConfig;
 use crate::harness::Protocol;
 use crate::report;
+use crate::schema::Ledger;
 
 mod bench;
 mod corpus;
@@ -59,7 +60,7 @@ struct BenchRun<'a> {
     /// process-start band with extra discarded iterations.
     first_family_warmed: bool,
     trace_dir: PathBuf,
-    db: &'a Db<'a>,
+    db: &'a Db<Ledger>,
     conn: &'a Connection,
     flames: Vec<report::FlameEmbed>,
 }

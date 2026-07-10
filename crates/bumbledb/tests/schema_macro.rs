@@ -17,7 +17,20 @@ use bumbledb::{Db, Fact, Interval, Value};
 
 mod common;
 
+/// The macro's declared schema, validated — what the assertions inspect.
+/// The engine itself takes [`Ledger`]; validation runs inside
+/// `Db::create`/`Db::open`.
+fn declared() -> bumbledb::Schema {
+    use bumbledb::SchemaDef as _;
+    Ledger
+        .descriptor()
+        .validate()
+        .expect("the declared schema is valid")
+}
+
 bumbledb::schema! {
+    pub Ledger;
+
     relation Holder  { id: u64 as HolderId, serial, name: str }
     relation Account {
         id: u64 as AccountId, serial,
@@ -138,16 +151,14 @@ fn hand_built() -> bumbledb::schema::Schema {
 
 #[test]
 fn macro_output_is_exactly_sugar() {
-    assert_eq!(fingerprint(schema()), fingerprint(&hand_built()));
+    assert_eq!(fingerprint(&declared()), fingerprint(&hand_built()));
 }
 
 #[test]
 fn statements_land_in_source_order_with_equality_lowered() {
-    let descriptors: Vec<&StatementDescriptor> = schema()
-        .statements()
-        .iter()
-        .map(|s| &s.descriptor)
-        .collect();
+    let schema = declared();
+    let descriptors: Vec<&StatementDescriptor> =
+        schema.statements().iter().map(|s| &s.descriptor).collect();
     // Materialized order: the two serial auto-FDs first (Holder.id,
     // Account.id), then the declared statements in source order — the `==`
     // contributing its two containments adjacently, `A <= B` first.
@@ -208,8 +219,8 @@ fn statements_land_in_source_order_with_equality_lowered() {
 fn the_equality_pair_seals_mirror_links() {
     // The macro's `==` lowers to ids 3 and 4, which seal pointing at each
     // other; every FD and the one-way containment carry `None`.
-    let mirrors: Vec<Option<StatementId>> =
-        schema().statements().iter().map(|s| s.mirror).collect();
+    let schema = declared();
+    let mirrors: Vec<Option<StatementId>> = schema.statements().iter().map(|s| s.mirror).collect();
     assert_eq!(
         mirrors,
         vec![
@@ -237,7 +248,7 @@ fn fact_structs_carry_host_types() {
     assert_eq!(Account::RELATION, RelationId(1));
     let holder = Holder {
         id: HolderId(2),
-        name: "alice".to_owned(),
+        name: "alice",
     };
     let terms = SavingsTerms {
         account: AccountId(1),
@@ -250,7 +261,7 @@ fn fact_structs_carry_host_types() {
 #[test]
 fn typed_round_trip_through_fact_bytes() {
     let dir = common::TempDir::new("macro-round-trip");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), Ledger).expect("create");
 
     let original = Account {
         id: AccountId(7),
@@ -263,7 +274,7 @@ fn typed_round_trip_through_fact_bytes() {
     db.write(|tx| {
         tx.insert(&Holder {
             id: HolderId(3),
-            name: "alice".to_owned(),
+            name: "alice",
         })?;
         tx.insert(&original)?;
         Ok(())
@@ -280,7 +291,7 @@ fn typed_round_trip_through_fact_bytes() {
         // A never-interned value reports itself instead of encoding.
         let ghost = Holder {
             id: HolderId(9),
-            name: "nobody".to_owned(),
+            name: "nobody",
         };
         let mut bytes = Vec::new();
         assert!(!ghost.encode_read(snap, &mut bytes).expect("encode"));
@@ -294,6 +305,8 @@ mod interval_newtype {
     use bumbledb::{Fact, Interval};
 
     bumbledb::schema! {
+        pub Bookings;
+
         relation Booking {
             room: u64 as RoomId,
             active: interval<i64> as ActiveDuring,
@@ -315,7 +328,14 @@ mod interval_newtype {
         assert_eq!(booking.active.0.end(), 20);
         // Both fields are interval-typed in the descriptor, and the schema
         // passes validation (the FD's one interval is its last position).
-        let relation = schema().relation(Booking::RELATION);
+        let schema = {
+            use bumbledb::SchemaDef as _;
+            Bookings
+                .descriptor()
+                .validate()
+                .expect("the declared schema is valid")
+        };
+        let relation = schema.relation(Booking::RELATION);
         assert_eq!(
             relation.field(FieldId(1)).value_type,
             ValueType::Interval {
@@ -336,6 +356,8 @@ mod selection_literals {
     use bumbledb::Value;
 
     bumbledb::schema! {
+        pub Telemetry;
+
         relation Sensor {
             id: u64 as SensorId, serial,
             span: interval<i64>,
@@ -351,8 +373,15 @@ mod selection_literals {
 
     #[test]
     fn every_literal_kind_resolves_typed() {
+        let schema = {
+            use bumbledb::SchemaDef as _;
+            Telemetry
+                .descriptor()
+                .validate()
+                .expect("the declared schema is valid")
+        };
         // Statement 0 is Sensor.id's serial auto-FD; 1 is the containment.
-        let StatementDescriptor::Containment { target, .. } = &schema().statements()[1].descriptor
+        let StatementDescriptor::Containment { target, .. } = &schema.statements()[1].descriptor
         else {
             panic!("the declared statement is a containment");
         };
@@ -375,12 +404,79 @@ mod selection_literals {
             span: bumbledb::Interval::<i64>::new(0, 10).expect("nonempty"),
             offset: -3,
             live: true,
-            label: "north".to_owned(),
-            tag: vec![0x01],
+            label: "north",
+            tag: &[0x01],
         };
         let reading = Reading {
             sensor: SensorId(1),
         };
         assert_eq!(reading.sensor, sensor.id);
+    }
+}
+
+mod two_schemas_per_module {
+    //! Two `schema!` invocations coexist in one module — their `pub Name;`
+    //! headers disambiguate (the old one-invocation-per-module limit died
+    //! with the magic `schema()` constructor).
+
+    use bumbledb::Db;
+
+    bumbledb::schema! {
+        pub LedgerA;
+        relation Alpha { id: u64 as AlphaId, serial, note: str }
+    }
+    bumbledb::schema! {
+        pub LedgerB;
+        relation Beta { id: u64 as BetaId, serial }
+    }
+
+    #[test]
+    fn two_schemas_coexist_in_one_module() {
+        let dir_a = crate::common::TempDir::new("macro-two-schemas-a");
+        let dir_b = crate::common::TempDir::new("macro-two-schemas-b");
+        let db_a = Db::create(dir_a.path(), LedgerA).expect("create A");
+        let db_b = Db::create(dir_b.path(), LedgerB).expect("create B");
+        db_a.write(|tx| {
+            let id = tx.alloc::<AlphaId>()?;
+            tx.insert(&Alpha { id, note: "a" }).map(|_| ())
+        })
+        .expect("write A");
+        db_b.write(|tx| {
+            let id = tx.alloc::<BetaId>()?;
+            tx.insert(&Beta { id }).map(|_| ())
+        })
+        .expect("write B");
+    }
+}
+
+mod invalid_declaration {
+    //! Semantic validation lives in `Db::create`/`Db::open`, not the
+    //! macro: a declaration the grammar accepts but the acceptance gate
+    //! refuses surfaces as the typed `SchemaError` — no panic path.
+
+    use bumbledb::error::SchemaError;
+    use bumbledb::Db;
+
+    bumbledb::schema! {
+        pub Duplicated;
+        relation Parent { id: u64 as ParentId, serial }
+        relation Child { parent: u64 as ParentId }
+        Child(parent) <= Parent(id);
+        Child(parent) <= Parent(id);
+    }
+
+    #[test]
+    fn invalid_declaration_is_a_typed_schema_error_from_create() {
+        let dir = crate::common::TempDir::new("macro-invalid-declaration");
+        let Err(err) = Db::create(dir.path(), Duplicated).map(|_| ()) else {
+            panic!("a duplicate statement must fail validation at create");
+        };
+        assert!(
+            matches!(
+                err,
+                bumbledb::Error::Schema(SchemaError::DuplicateStatement { .. })
+            ),
+            "{err:?}"
+        );
     }
 }

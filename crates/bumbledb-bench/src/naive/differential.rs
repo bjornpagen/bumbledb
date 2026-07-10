@@ -73,7 +73,7 @@ pub struct Summary {
 ///
 /// On tool-level failures (storage errors, a query either side refuses) —
 /// never on a disagreement.
-pub fn run(db: &Db<'_>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Divergence> {
+pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Divergence> {
     let mut summary = Summary::default();
     for (index, op) in ops.iter().enumerate() {
         match op {
@@ -117,7 +117,7 @@ pub fn run(db: &Db<'_>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Dive
 
 /// One delta through the engine's write path: deletes then inserts (the
 /// same order [`NaiveDb::apply`] uses, so no-op cancellation agrees).
-fn engine_write(db: &Db<'_>, delta: &Delta) -> Verdict {
+fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
     let outcome = db.write(|tx| {
         for (rel, fact) in &delta.deletes {
             tx.delete_dyn(*rel, fact)?;
@@ -147,12 +147,12 @@ fn engine_write(db: &Db<'_>, delta: &Delta) -> Verdict {
 /// One query through the engine as a [`Rows`] verdict — shared with the
 /// dual-run chase differential (`tests/chase.rs`), which compares
 /// chase-on, chase-off, and model rows three ways.
-pub(crate) fn engine_query(db: &Db<'_>, query: &Query, params: &[ParamValue]) -> Rows {
+pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) -> Rows {
     let mut prepared = db.prepare(query).expect("differential queries validate");
     let args: Vec<ParamArg<'_>> = params
         .iter()
         .map(|param| match param {
-            ParamValue::Scalar(value) => ParamArg::Scalar(value.clone()),
+            ParamValue::Scalar(value) => ParamArg::Scalar(crate::families::bind_value(value)),
             ParamValue::Set(values) => ParamArg::Set(values),
         })
         .collect();

@@ -3,7 +3,7 @@ use std::path::Path;
 use bumbledb::Db;
 
 use crate::gen::GenConfig;
-use crate::schema::schema;
+use crate::schema::Ledger;
 use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebench};
 
 #[allow(clippy::cast_precision_loss)]
@@ -26,7 +26,7 @@ pub(super) fn write_families(
 
     if commit_selected || cold_selected {
         eprintln!("bench: loading the scratch write corpus");
-        let db = Db::create(&scratch.join("db"), schema()).map_err(|e| format!("{e:?}"))?;
+        let db = Db::create(&scratch.join("db"), Ledger).map_err(|e| format!("{e:?}"))?;
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("{e:?}"))?;
         let (conn, _) =
             corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg).map_err(|e| format!("{e}"))?;

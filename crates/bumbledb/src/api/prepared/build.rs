@@ -29,12 +29,12 @@ use crate::storage::read;
 /// construct valid plans by construction).
 #[allow(clippy::too_many_lines)] // the pipeline's stages in order; each
                                  // is one span-wrapped step
-pub(crate) fn prepare<'s>(
+pub(crate) fn prepare<'s, S>(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
     schema: &'s Schema,
     query: &Query,
-) -> Result<PreparedQuery<'s>> {
+) -> Result<PreparedQuery<'s, S>> {
     let _prepare = obs::span(obs::names::PREPARE, obs::Category::Prepare);
     let witness = {
         let _s = obs::span(obs::names::VALIDATE, obs::Category::Prepare);
@@ -183,7 +183,7 @@ pub(crate) fn prepare<'s>(
         resolve_memo: ResolveMemo::new(),
         guard_key: Vec::new(),
         pinned: pins.into_boxed_slice(),
-        _not_sync: std::marker::PhantomData,
+        marker: std::marker::PhantomData,
     })
 }
 

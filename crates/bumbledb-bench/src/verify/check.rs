@@ -8,7 +8,7 @@ use crate::families::param_args;
 use crate::naive::ParamValue;
 use crate::translate::ParamSlot;
 
-impl Run<'_> {
+impl<S> Run<'_, S> {
     /// Executes one query × param draw on both stores and compares.
     /// Returns `false` once the bundle budget is exhausted (stop the
     /// run). Set params bind through the engine's `ParamArg` surface;

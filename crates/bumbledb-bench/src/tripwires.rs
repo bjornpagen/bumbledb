@@ -12,7 +12,7 @@ mod tests {
     use crate::corpus;
     use crate::families::{self, has_sets, param_args, scalar_values};
     use crate::gen::{GenConfig, Scale, Sizes};
-    use crate::schema::schema;
+    use crate::schema::Ledger;
     use bumbledb::Db;
 
     const CFG: GenConfig = GenConfig {
@@ -20,11 +20,11 @@ mod tests {
         scale: Scale::S,
     };
 
-    fn corpus_db(tag: &str) -> (std::path::PathBuf, Db<'static>) {
+    fn corpus_db(tag: &str) -> (std::path::PathBuf, Db<Ledger>) {
         let dir = std::env::temp_dir().join(format!("bumbledb-tripwires-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
-        let db = Db::create(&dir, schema()).expect("create");
+        let db = Db::create(&dir, Ledger).expect("create");
         corpus::load_bumbledb(&db, CFG).expect("load");
         (dir, db)
     }
@@ -43,7 +43,7 @@ mod tests {
         let dir = std::env::temp_dir().join("bumbledb-tripwires-guard");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
-        let db = Db::create(&dir, schema()).expect("create");
+        let db = Db::create(&dir, Ledger).expect("create");
         let plan_kind = |name: &str| {
             let family = families::all()
                 .iter()
@@ -126,7 +126,7 @@ mod tests {
         let dir = std::env::temp_dir().join("bumbledb-tripwires-elide");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
-        let db = Db::create(&dir, schema()).expect("create");
+        let db = Db::create(&dir, Ledger).expect("create");
         let regime = |name: &str| {
             let family = families::all()
                 .iter()

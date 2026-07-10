@@ -29,7 +29,7 @@ mod run_query;
 #[cfg(test)]
 mod tests;
 
-use bumbledb::schema::Schema;
+use bumbledb::schema::{Schema, SchemaDescriptor};
 use bumbledb::{Db, Query, RelationId, Value};
 use rusqlite::Connection;
 
@@ -58,7 +58,12 @@ pub struct ScenarioQuery {
 pub struct Scenario {
     pub name: &'static str,
     pub about: &'static str,
+    /// The validated schema, for the inspection surfaces (DDL, typing).
     pub schema: fn() -> &'static Schema,
+    /// The declared schema, for store creation — the scenario table is
+    /// data, so its stores share the dynamic `Db<SchemaDescriptor>`
+    /// state (loads and queries are all dynamic-surface).
+    pub descriptor: fn() -> SchemaDescriptor,
     /// Relations in containment order with their row iterators.
     #[allow(clippy::type_complexity)]
     pub rows: fn(u64) -> Vec<(RelationId, Box<dyn Iterator<Item = Vec<Value>>>)>,
@@ -82,6 +87,6 @@ pub struct QueryReport {
 
 /// A loaded scenario store pair.
 struct Stores {
-    db: Db<'static>,
+    db: Db<SchemaDescriptor>,
     conn: Connection,
 }

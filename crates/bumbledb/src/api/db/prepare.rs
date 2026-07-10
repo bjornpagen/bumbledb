@@ -3,7 +3,7 @@ use crate::api::prepared::{prepare, PreparedQuery};
 use crate::error::Result;
 use crate::ir::Query;
 
-impl<'s> Db<'s> {
+impl<S> Db<S> {
     /// Prepares a query against current statistics (pin-at-prepare). The
     /// prepared query outlives the internal snapshot and is reusable
     /// across [`Db::read`] closures.
@@ -12,8 +12,8 @@ impl<'s> Db<'s> {
     ///
     /// The the 20-query-ir doc [`crate::error::ValidationError`] roster, at prepare
     /// time; `Lmdb` from the statistics reads.
-    pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<'s>> {
+    pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<'_, S>> {
         let txn = self.env.read_txn()?;
-        prepare(&txn, &self.cache, self.schema, query)
+        prepare(&txn, &self.cache, &self.schema, query)
     }
 }

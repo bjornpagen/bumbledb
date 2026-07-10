@@ -1,11 +1,11 @@
 use super::{Fact, Snapshot};
-use crate::api::prepared::{ParamArg, PreparedQuery, ResultBuffer};
+use crate::api::prepared::{BindValue, ParamArg, PreparedQuery, ResultBuffer};
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
 use crate::schema::RelationId;
 use crate::storage::{dict, read};
 
-impl Snapshot<'_> {
+impl<S> Snapshot<'_, S> {
     /// Executes a prepared query with positional parameters into the
     /// caller's reusable buffer (the zero-alloc path).
     ///
@@ -16,8 +16,8 @@ impl Snapshot<'_> {
     /// query error aborts the query; the snapshot remains usable.
     pub fn execute(
         &self,
-        prepared: &mut PreparedQuery<'_>,
-        params: &[Value],
+        prepared: &mut PreparedQuery<'_, S>,
+        params: &[BindValue<'_>],
         out: &mut ResultBuffer,
     ) -> Result<()> {
         prepared.execute(&self.txn, self.cache, params, out)
@@ -30,8 +30,8 @@ impl Snapshot<'_> {
     /// As [`Snapshot::execute`].
     pub fn execute_collect(
         &self,
-        prepared: &mut PreparedQuery<'_>,
-        params: &[Value],
+        prepared: &mut PreparedQuery<'_, S>,
+        params: &[BindValue<'_>],
     ) -> Result<ResultBuffer> {
         prepared.execute_collect(&self.txn, self.cache, params)
     }
@@ -50,7 +50,7 @@ impl Snapshot<'_> {
     /// `ParamElementTypeMismatch` (a mistyped set element).
     pub fn execute_args(
         &self,
-        prepared: &mut PreparedQuery<'_>,
+        prepared: &mut PreparedQuery<'_, S>,
         args: &[ParamArg<'_>],
         out: &mut ResultBuffer,
     ) -> Result<()> {
@@ -64,7 +64,7 @@ impl Snapshot<'_> {
     /// As [`Snapshot::execute_args`].
     pub fn execute_collect_args(
         &self,
-        prepared: &mut PreparedQuery<'_>,
+        prepared: &mut PreparedQuery<'_, S>,
         args: &[ParamArg<'_>],
     ) -> Result<ResultBuffer> {
         prepared.execute_collect_args(&self.txn, self.cache, args)
@@ -78,8 +78,8 @@ impl Snapshot<'_> {
     /// As [`Snapshot::execute`].
     pub fn explain(
         &self,
-        prepared: &mut PreparedQuery<'_>,
-        params: &[Value],
+        prepared: &mut PreparedQuery<'_, S>,
+        params: &[BindValue<'_>],
     ) -> Result<(ResultBuffer, String)> {
         prepared.explain(&self.txn, self.cache, params)
     }
@@ -93,8 +93,8 @@ impl Snapshot<'_> {
     /// As [`Snapshot::execute`].
     pub fn profile(
         &self,
-        prepared: &mut PreparedQuery<'_>,
-        params: &[Value],
+        prepared: &mut PreparedQuery<'_, S>,
+        params: &[BindValue<'_>],
     ) -> Result<(ResultBuffer, crate::api::stats::ExecutionStats)> {
         prepared.profile(&self.txn, self.cache, params)
     }
@@ -125,16 +125,20 @@ impl Snapshot<'_> {
     }
 }
 
-impl Snapshot<'_> {
+impl<S> Snapshot<'_, S> {
     /// The typed sibling of [`Snapshot::scan`]: decodes each fact into its
     /// `schema!`-generated struct via [`Fact::decode`]. The dynamic form
     /// remains the ETL pairing for [`Db::bulk_load`]; this one is for
-    /// hosts that want their own types back.
+    /// hosts that want their own types back. Variable-width fields borrow
+    /// from the snapshot's dictionary at the snapshot lifetime — copy
+    /// (`to_owned()`) what must outlive it.
     ///
     /// # Errors
     ///
     /// As [`Snapshot::scan`].
-    pub fn scan_facts<F: Fact>(&self) -> Result<impl Iterator<Item = Result<F>> + '_> {
+    pub fn scan_facts<'snap, F: Fact<'snap, Schema = S>>(
+        &'snap self,
+    ) -> Result<impl Iterator<Item = Result<F>> + 'snap> {
         let iter = read::scan(&self.txn, self.schema, F::RELATION)?;
         Ok(iter.map(move |entry| {
             let (_, bytes) = entry?;

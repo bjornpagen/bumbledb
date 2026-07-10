@@ -12,6 +12,8 @@
 //! is the tripwire).
 
 bumbledb::schema! {
+    pub Ledger;
+
     relation Holder {
         id: u64 as HolderId, serial,
         name: str,
@@ -66,6 +68,25 @@ bumbledb::schema! {
     Mandate(account)     <= Account(id);
     Mandate(org)         <= Org(id);
     Mandate(account, active) -> Mandate;
+}
+
+/// The validated ledger schema, memoized for the inspection surfaces
+/// (DDL rendering, id lookups, query translation); the engine itself
+/// takes [`Ledger`] — `Db::create(dir, Ledger)` — and validates there.
+///
+/// # Panics
+///
+/// Never in practice: the ledger declaration passes the acceptance gate
+/// (asserted on first use).
+pub fn schema() -> &'static bumbledb::Schema {
+    use bumbledb::SchemaDef as _;
+    static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        Ledger
+            .descriptor()
+            .validate()
+            .expect("the ledger schema is valid")
+    })
 }
 
 /// Relation and field ids by name — no magic numbers in family

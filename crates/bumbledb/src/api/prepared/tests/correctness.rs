@@ -249,12 +249,12 @@ fn ne_against_a_never_interned_string_matches_everything() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[Value::String(Box::from(&b"ghost"[..]))])
+        .execute_collect(&txn, &cache, &[BindValue::Str("ghost")])
         .expect("execute");
     assert_eq!(out.len(), 2);
     // An interned value under Ne excludes exactly its rows.
     let out = prepared
-        .execute_collect(&txn, &cache, &[Value::String(Box::from(&b"rent"[..]))])
+        .execute_collect(&txn, &cache, &[BindValue::Str("rent")])
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), ResultValue::I64(-55));
@@ -270,7 +270,7 @@ fn results_decode_intern_ids_to_original_bytes() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let out = prepared
-        .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(0)])
+        .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
         .expect("execute");
     assert_eq!(
         out.get(0, 0),

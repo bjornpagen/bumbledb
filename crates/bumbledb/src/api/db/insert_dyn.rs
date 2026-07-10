@@ -3,7 +3,7 @@ use crate::error::Result;
 use crate::ir::Value;
 use crate::schema::RelationId;
 
-impl WriteTx<'_> {
+impl<S> WriteTx<'_, S> {
     /// Records a dynamic insert (the ETL form): one [`Value`] per field in
     /// declaration order.
     ///

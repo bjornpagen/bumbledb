@@ -15,6 +15,8 @@ two differential oracles standing behind it.
 
 ```rust
 bumbledb::schema! {
+    pub Ledger;
+
     relation Holder {
         id: u64 as HolderId, serial,
         name: str,
@@ -32,13 +34,13 @@ bumbledb::schema! {
     Account(holder) <= Holder(id);   // containment: every account's holder exists
 }
 
-let db = bumbledb::Db::create(path, schema())?;
+let db = bumbledb::Db::create(path, Ledger)?;
 
 // Writes are set arithmetic on an in-memory delta; every statement is
 // judged at commit against the final state — an abort never touched disk.
 db.write(|tx| {
     let holder: HolderId = tx.alloc()?;
-    tx.insert(&Holder { id: holder, name: "alice".into(), region: Region::Eu })?;
+    tx.insert(&Holder { id: holder, name: "alice", region: Region::Eu })?;
     let account: AccountId = tx.alloc()?;
     tx.insert(&Account { id: account, holder, status: Status::Open, opened_at: 17_000_000 })?;
     Ok(())

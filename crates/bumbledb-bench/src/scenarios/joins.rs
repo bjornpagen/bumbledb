@@ -22,6 +22,8 @@ mod term;
 pub use scenario::scenario;
 
 bumbledb::schema! {
+    pub Joins;
+
     relation Kind {
         id: u64 as JKindId, serial,
         name: str,
@@ -75,6 +77,24 @@ bumbledb::schema! {
 }
 
 /// Relation ids by declaration order.
+/// The validated scenario schema, memoized for the inspection surfaces
+/// (DDL rendering, typing); the store is created from [`Joins`]'s
+/// descriptor (`scenarios::load`).
+///
+/// # Panics
+///
+/// Never in practice: the declared scenario schema is valid.
+pub fn schema() -> &'static bumbledb::Schema {
+    use bumbledb::SchemaDef as _;
+    static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        Joins
+            .descriptor()
+            .validate()
+            .expect("the scenario schema is valid")
+    })
+}
+
 pub mod ids {
     use bumbledb::RelationId;
     pub const KIND: RelationId = RelationId(0);

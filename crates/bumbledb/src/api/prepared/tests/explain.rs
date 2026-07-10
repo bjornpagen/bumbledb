@@ -10,7 +10,7 @@ fn explain_reports_the_join_plan_with_actuals() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (rows, report) = prepared
-        .explain(&txn, &cache, &[Value::U64(7), Value::I64(0)])
+        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
         .expect("explain");
     assert_eq!(rows.len(), 2);
     assert!(report.contains("free join"));
@@ -36,7 +36,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (_, stats) = prepared
-        .profile(&txn, &cache, &[Value::U64(7), Value::I64(0)])
+        .profile(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
         .expect("profile");
     assert_eq!(stats.pinned.len(), 1, "one participating occurrence");
     let pin = &stats.pinned[0];
@@ -49,7 +49,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
     );
 
     let (_, report) = prepared
-        .explain(&txn, &cache, &[Value::U64(7), Value::I64(0)])
+        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
         .expect("explain");
     assert!(
         report.contains("estimated from (pinned rows at prepare): 3"),
@@ -71,7 +71,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
     };
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     let (_, stats) = guard
-        .profile(&txn, &cache, &[Value::U64(1)])
+        .profile(&txn, &cache, &[BindValue::U64(1)])
         .expect("profile");
     assert!(stats.pinned.is_empty(), "guard probes read no statistics");
 }
@@ -95,7 +95,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (rows, stats) = prepared
-        .profile(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+        .profile(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
         .expect("profile");
     assert_eq!(rows.len(), 2);
     assert_eq!(stats.emits, 2);
@@ -111,7 +111,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
     // The rendered explain is built from the same struct — spot-pin
     // the format so the golden contract holds.
     let (_, report) = prepared
-        .explain(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
         .expect("explain");
     assert!(report.contains("access path: free join"), "{report}");
     assert!(report.contains("emitted bindings: 2"), "{report}");
@@ -131,7 +131,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
     };
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     let (rows, stats) = guard
-        .profile(&txn, &cache, &[Value::U64(1)])
+        .profile(&txn, &cache, &[BindValue::U64(1)])
         .expect("profile");
     assert_eq!(rows.len(), 1);
     assert!(stats.nodes.is_empty());
@@ -140,7 +140,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
         Some(crate::api::stats::GuardStats { hit: true })
     );
     let (_, stats) = guard
-        .profile(&txn, &cache, &[Value::U64(999)])
+        .profile(&txn, &cache, &[BindValue::U64(999)])
         .expect("profile");
     assert_eq!(
         stats.guard,

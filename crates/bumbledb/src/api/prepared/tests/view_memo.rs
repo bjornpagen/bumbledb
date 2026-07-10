@@ -26,7 +26,7 @@ fn residual_bindings_memoize_under_lru() {
     let cache = ImageCache::new();
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let params = |floor: i64| vec![Value::U64(7), Value::I64(floor)];
+    let params = |floor: i64| vec![BindValue::U64(7), BindValue::I64(floor)];
     let windows = [-100, 15, 25, 35];
 
     let mut run = |floor: i64| -> (usize, usize, Vec<(String, i64)>) {
@@ -102,7 +102,7 @@ fn a_generation_bump_invalidates_the_memo() {
     let cache = ImageCache::new();
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let params = vec![Value::U64(7), Value::I64(0)];
+    let params = vec![BindValue::U64(7), BindValue::I64(0)];
     let out = prepared
         .execute_collect(&txn, &cache, &params)
         .expect("execute");
@@ -173,7 +173,7 @@ fn read_path_traces_phases_memo_hits_and_guard() {
     // First execute: builds views, no memo hits, row count in a0.
     obs::start_capture();
     let out = prepared
-        .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+        .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
         .expect("execute");
     let first = obs::finish_capture();
     assert_eq!(out.len(), 2);
@@ -192,7 +192,7 @@ fn read_path_traces_phases_memo_hits_and_guard() {
     // Second execute, same snapshot + params: memo hits only.
     obs::start_capture();
     prepared
-        .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+        .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
         .expect("execute");
     let second = obs::finish_capture();
     let second_names = names(&second);
@@ -219,7 +219,7 @@ fn read_path_traces_phases_memo_hits_and_guard() {
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     obs::start_capture();
     guard
-        .execute_collect(&txn, &cache, &[Value::U64(1)])
+        .execute_collect(&txn, &cache, &[BindValue::U64(1)])
         .expect("execute");
     let guard_events = obs::finish_capture();
     let guard_names = names(&guard_events);
@@ -236,7 +236,7 @@ fn read_path_traces_phases_memo_hits_and_guard() {
 
     // Nothing records without capture.
     prepared
-        .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+        .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
         .expect("execute");
     obs::start_capture();
     assert!(obs::finish_capture().is_empty());

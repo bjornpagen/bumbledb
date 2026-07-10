@@ -2,7 +2,7 @@ use bumbledb::{Db, ResultBuffer};
 
 use crate::cli::CorpusArgs;
 use crate::harness::{self, Rotation};
-use crate::schema::schema;
+use crate::schema::Ledger;
 use crate::{corpus, families, trace_out};
 
 use super::corpus::gen_config;
@@ -35,7 +35,7 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
     // never the verified corpus.
     let scratch = paths.root.join("trace-scratch");
     let _ = std::fs::remove_dir_all(&scratch);
-    let db = Db::create(&scratch.join("db"), schema()).map_err(|e| format!("{e:?}"))?;
+    let db = Db::create(&scratch.join("db"), Ledger).map_err(|e| format!("{e:?}"))?;
     corpus::load_bumbledb(&db, cfg).map_err(|e| format!("{e:?}"))?;
 
     let query = (family.query)();

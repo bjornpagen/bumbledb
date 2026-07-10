@@ -143,7 +143,7 @@ fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
         seed: 1,
         scale: Scale::S,
     };
-    let db = bumbledb::Db::create(&dir.join("db"), crate::schema::schema()).expect("create");
+    let db = bumbledb::Db::create(&dir.join("db"), crate::schema::Ledger).expect("create");
     crate::corpus::load_bumbledb(&db, cfg).expect("load");
 
     let family = crate::families::all()

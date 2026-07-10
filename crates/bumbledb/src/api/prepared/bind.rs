@@ -1,12 +1,15 @@
-use super::{Const, ExecPlan, Executor, FilterPredicate, ParamArg, PreparedQuery, ValueType};
+use super::{
+    BindValue, Const, ExecPlan, Executor, FilterPredicate, ParamArg, PreparedQuery, ValueType,
+};
 
 use crate::error::{Error, Result};
 use crate::image::view::ResolvedWordSource;
 use crate::ir::{CmpOp, ParamId, Value};
+use crate::schema::IntervalElement;
 use crate::storage::dict;
 use crate::storage::env::ReadTxn;
 
-impl PreparedQuery<'_> {
+impl<S> PreparedQuery<'_, S> {
     /// Rebuilds the executor scratch at a different batch size — the
     /// tuning/test surface for D4's measurement-owned constant. Allocation
     /// happens here, outside any measured window. A no-op for guard
@@ -33,14 +36,18 @@ impl PreparedQuery<'_> {
         }
     }
 
-    /// Binds and converts all-scalar parameters (the `&[Value]` entry;
-    /// a set-typed param rejects the scalar shape with
+    /// Binds and converts all-scalar parameters (the `&[BindValue]`
+    /// entry; a set-typed param rejects the scalar shape with
     /// [`Error::ParamSetExpected`] — the mixed entry is
     /// [`PreparedQuery::bind_param_args`]).
-    pub(super) fn bind_params(&mut self, txn: &ReadTxn<'_>, params: &[Value]) -> Result<()> {
+    pub(super) fn bind_params(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        params: &[BindValue<'_>],
+    ) -> Result<()> {
         self.begin_bind(params.len())?;
         for (idx, value) in params.iter().enumerate() {
-            self.bind_scalar_slot(txn, idx, value)?;
+            self.bind_scalar_slot(txn, idx, *value)?;
         }
         Ok(())
     }
@@ -56,7 +63,7 @@ impl PreparedQuery<'_> {
         self.begin_bind(args.len())?;
         for (idx, arg) in args.iter().enumerate() {
             match arg {
-                ParamArg::Scalar(value) => self.bind_scalar_slot(txn, idx, value)?,
+                ParamArg::Scalar(value) => self.bind_scalar_slot(txn, idx, *value)?,
                 ParamArg::Set(values) => self.bind_set_slot(txn, idx, values)?,
             }
         }
@@ -82,7 +89,12 @@ impl PreparedQuery<'_> {
 
     /// Binds one scalar slot in place. Precise bind errors per position:
     /// a set-typed slot rejects the scalar shape before any conversion.
-    fn bind_scalar_slot(&mut self, txn: &ReadTxn<'_>, idx: usize, value: &Value) -> Result<()> {
+    fn bind_scalar_slot(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        idx: usize,
+        value: BindValue<'_>,
+    ) -> Result<()> {
         let param = param_id(idx);
         if self.param_is_set[idx] {
             return Err(Error::ParamSetExpected { param });
@@ -166,7 +178,10 @@ fn param_id(idx: usize) -> ParamId {
 /// never-minted sentinel intern id (per-element miss semantics,
 /// `docs/architecture/20-query-ir.md`).
 fn element_word(txn: &ReadTxn<'_>, value: &Value, expected: &ValueType) -> Result<Option<u64>> {
-    let Some((resolved, _)) = convert_scalar(txn, value, expected)? else {
+    let Some(view) = element_view(value) else {
+        return Ok(None);
+    };
+    let Some((resolved, _)) = convert_scalar(txn, view, expected)? else {
         return Ok(None);
     };
     Ok(Some(match resolved {
@@ -438,45 +453,69 @@ fn write_word_set_value(dst: &mut FilterPredicate, words: &[u64]) {
     }
 }
 
-/// Converts a bound scalar param value to column form; `Ok(None)` = type
-/// mismatch (the caller names the position — scalar slot or set element).
-/// A String or Bytes value that was never interned resolves to the
-/// sentinel intern id, flagged `missed` so `Eq` uses can short-circuit
-/// to the empty result.
+/// A set element viewed through the bind vocabulary — the borrow
+/// adapter between owned set storage ([`Value`]) and the one conversion
+/// rule ([`convert_scalar`]). `None` = non-UTF-8 `String` bytes: a
+/// mismatch by construction, since [`BindValue::Str`] cannot carry them.
+fn element_view(value: &Value) -> Option<BindValue<'_>> {
+    Some(match value {
+        Value::Bool(v) => BindValue::Bool(*v),
+        Value::U64(v) => BindValue::U64(*v),
+        Value::I64(v) => BindValue::I64(*v),
+        Value::Enum(ordinal) => BindValue::Enum(*ordinal),
+        Value::String(raw) => BindValue::Str(std::str::from_utf8(raw).ok()?),
+        Value::Bytes(raw) => BindValue::Bytes(raw),
+        Value::IntervalU64(start, end) => BindValue::IntervalU64(*start, *end),
+        Value::IntervalI64(start, end) => BindValue::IntervalI64(*start, *end),
+    })
+}
+
+/// Converts a bound scalar param value to column form, checking kind,
+/// enum ordinal range, and interval non-emptiness in the same match
+/// (UTF-8 needs no check: `BindValue::Str` is UTF-8 by type); `Ok(None)`
+/// = type mismatch (the caller names the position — scalar slot or set
+/// element). A str or bytes payload that was never interned resolves to
+/// the sentinel intern id, flagged `missed` so `Eq` uses can
+/// short-circuit to the empty result. The payload is only hashed and
+/// probed here — the reason the bind surface borrows.
 fn convert_scalar(
     txn: &ReadTxn<'_>,
-    value: &Value,
+    value: BindValue<'_>,
     expected: &ValueType,
 ) -> Result<Option<(Const, bool)>> {
-    // The shared compatibility check (kind, enum range, UTF-8) — one rule
-    // with validation and the dynamic write path.
-    if crate::schema::value_matches(value, expected).is_err() {
-        return Ok(None);
-    }
-    let resolved = match value {
-        Value::Bool(v) => Const::Byte(u8::from(*v)),
-        Value::Enum(ordinal) => Const::Byte(*ordinal),
-        Value::U64(v) => Const::Word(*v),
-        Value::I64(v) => Const::Word(i64_word(*v)),
-        Value::IntervalU64(start, end) => Const::Interval {
-            start: *start,
-            end: *end,
-        },
-        Value::IntervalI64(start, end) => Const::Interval {
-            start: i64_word(*start),
-            end: i64_word(*end),
-        },
-        Value::String(bytes) => {
-            let text = std::str::from_utf8(bytes).expect("value_matches validated UTF-8");
-            match dict::lookup_str(txn, text)? {
-                Some(id) => Const::Word(id),
-                None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
-            }
+    let resolved = match (value, expected) {
+        (BindValue::Bool(v), ValueType::Bool) => Const::Byte(u8::from(v)),
+        (BindValue::Enum(ordinal), ValueType::Enum { variants })
+            if usize::from(ordinal) < variants.len() =>
+        {
+            Const::Byte(ordinal)
         }
-        Value::Bytes(bytes) => match dict::lookup_bytes(txn, bytes)? {
+        (BindValue::U64(v), ValueType::U64) => Const::Word(v),
+        (BindValue::I64(v), ValueType::I64) => Const::Word(i64_word(v)),
+        (
+            BindValue::IntervalU64(start, end),
+            ValueType::Interval {
+                element: IntervalElement::U64,
+            },
+        ) if start < end => Const::Interval { start, end },
+        (
+            BindValue::IntervalI64(start, end),
+            ValueType::Interval {
+                element: IntervalElement::I64,
+            },
+        ) if start < end => Const::Interval {
+            start: i64_word(start),
+            end: i64_word(end),
+        },
+        (BindValue::Str(text), ValueType::String) => match dict::lookup_str(txn, text)? {
             Some(id) => Const::Word(id),
             None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
         },
+        (BindValue::Bytes(bytes), ValueType::Bytes) => match dict::lookup_bytes(txn, bytes)? {
+            Some(id) => Const::Word(id),
+            None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
+        },
+        _ => return Ok(None),
     };
     Ok(Some((resolved, false)))
 }

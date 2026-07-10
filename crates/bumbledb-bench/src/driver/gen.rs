@@ -2,7 +2,7 @@ use bumbledb::Db;
 use rusqlite::Connection;
 
 use crate::cli::CorpusArgs;
-use crate::schema::schema;
+use crate::schema::Ledger;
 use crate::{corpus, verify};
 
 use super::corpus::gen_config;
@@ -29,7 +29,7 @@ pub fn cmd_gen(corpus: &CorpusArgs) -> Result<(), String> {
 pub fn cmd_verify(corpus: &CorpusArgs, cases: u32) -> Result<i32, String> {
     let cfg = gen_config(corpus);
     let paths = ensure_corpus(&corpus.dir, cfg)?;
-    let db = Db::open(&paths.db, schema()).map_err(|e| format!("open db: {e:?}"))?;
+    let db = Db::open(&paths.db, Ledger).map_err(|e| format!("open db: {e:?}"))?;
     let conn = Connection::open(&paths.oracle).map_err(|e| format!("open oracle: {e}"))?;
     corpus::configure_sqlite(&conn).map_err(|e| format!("configure oracle: {e}"))?;
     let vcfg = verify::VerifyConfig {

@@ -2,14 +2,14 @@ use super::{Serial, WriteTx};
 use crate::error::Result;
 use crate::schema::SerialField;
 
-impl WriteTx<'_> {
+impl<S> WriteTx<'_, S> {
     /// Mints the next serial value for the newtype's field — insert new
     /// rows without reading a max (`10-data-model.md`).
     ///
     /// # Errors
     ///
     /// `SerialExhausted` at `u64::MAX`; `Lmdb` on the sequence read.
-    pub fn alloc<T: Serial>(&mut self) -> Result<T> {
+    pub fn alloc<T: Serial<Schema = S>>(&mut self) -> Result<T> {
         self.delta
             .alloc(&self.view, T::RELATION, T::FIELD)
             .map(T::from_serial)

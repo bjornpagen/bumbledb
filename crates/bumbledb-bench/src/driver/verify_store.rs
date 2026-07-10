@@ -11,7 +11,7 @@ use bumbledb::schema::render;
 use bumbledb::{Db, Schema, StatementId, StoreFinding, StoreReport};
 
 use crate::cli::CorpusArgs;
-use crate::schema::schema;
+use crate::schema::{schema, Ledger};
 
 use super::corpus::gen_config;
 use super::corpus_paths;
@@ -35,7 +35,7 @@ pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
             corpus.dir.display(),
         ));
     }
-    let db = Db::open(&paths.db, schema()).map_err(|e| format!("open db: {e:?}"))?;
+    let db = Db::open(&paths.db, Ledger).map_err(|e| format!("open db: {e:?}"))?;
     let report = db
         .verify_store()
         .map_err(|e| format!("verify store: {e:?}"))?;

@@ -1,0 +1,147 @@
+# PRD set — the algebra pass: one logic, three confinements
+
+This directory is the complete, ordered work plan for the next phase: the interval
+algebra cutover, the rules-shaped query IR, the temporal completions, and the
+borrowed/typed surface. It **follows** the correctness-and-elegance campaign
+(`docs/prd/`) and begins when that campaign closes (its gate plus the re-bench).
+When a PRD and an architecture chapter disagree, **the chapter wins** and the PRD
+is amended.
+
+## The organizing principle, applied to the letter
+
+The house axiom (`00-product.md`, Brooks → Pike → Raymond → Torvalds): **the
+biggest lever is the shape of the data, not the cleverness of the code.** When a
+case shows up that wants a branch, a flag, or a mode, the first question is what
+representation would make the case inexpressible. This set is that principle run
+at the engine's own vocabulary, and every PRD names its representation move:
+
+- **Choose the coordinates** (Dijkstra EWD831, homogeneous coordinates): the
+  Allen mask replaces a growing operator vocabulary with a coordinate system in
+  which every interval-pair predicate that will ever exist is one value (PRDs
+  03–04); the blessed ray makes "unbounded" a point of the representation, not a
+  sentinel hack (PRD 02).
+- **Make illegal states unrepresentable** (Minsky): the schema-as-type and
+  `Db<S>` make cross-schema fact confusion a compile error (PRD 14); `fresh`
+  stays u64-only and writable because both are theorems of the update idiom, now
+  recorded (PRD 01).
+- **Parse, don't validate** (King): declaration errors surface as the typed
+  `SchemaError` at open, never as a runtime panic in a memoized initializer
+  (PRD 14); a point literal at the domain's ceiling is rejected at validation,
+  never silently unmatched (PRD 02).
+- **Reify control flow as data** (SICP ch. 4): OR is never an execution node —
+  a query is a *set of rules* and disjunction is data three ways: a mask inside a
+  predicate, a set inside a position, rules at the top (PRDs 05–08). The tangled
+  middle is refused; DNF lowering recovers it as rules.
+- **One mechanism, N callers** (the repo's own anti-probe precedent): the
+  coverage judgment's sweep and `Pack`'s finalize become one primitive (PRDs
+  11–12); the exclusivity theorem the checker enforces is the same fact the
+  executor uses to elide cross-rule dedup (PRD 08).
+- **The limit** (Brooks, essential vs accidental): the Refusals section below
+  records every boundary where a representation would cost more than it saves.
+  Each refusal names its modeling answer; none of them is a gap.
+
+## Vocabulary discipline (binds every PRD)
+
+Dependency-theory and type-theory names only. The register: *statement*,
+*functionality/key (FD)*, *containment (IND)*, *judgment*, *guard*, *reverse
+edge*, *rule*, *head*, *fresh*, *measure*, *denotation*, *arm*, *theory*,
+*model*. Banned as identifiers or concepts: *serial* (dies in PRD 01), *unique*,
+*foreign key*, *primary key*, *constraint*, *cascade*, *IN* (the op is
+membership, ∈), *UNION ALL* (there is one union; it is set union). The 13 Allen
+basics keep Allen's names; `Pack` keeps Snodgrass's.
+
+## Policy (read before executing any PRD)
+
+1. **A PRD is a work-organizational unit, not an atomic passing-code state.**
+   Never write a transitional shim, a compatibility alias, or a feature flag.
+   Rip the old thing out and cut directly to the end state; downstream breakage
+   is the next PRD's job. Zero backwards compatibility is an axiom
+   (`00-product.md`), not a risk.
+2. **Passing criteria are typed.** `[shape]` — checkable by reading or grep the
+   moment the PRD lands. `[test]` — unit tests written in this PRD. `[gate]` —
+   holds when the campaign closes: `cargo fmt --all --check`, `clippy --workspace
+   --all-targets -- -D warnings`, `cargo test --workspace`, `scripts/check.sh`.
+3. **No migrations, ever.** Stores are regenerated or ETL'd; no PRD writes
+   conversion code.
+4. **Every measured claim waits for the bench.** New operators exist unearned
+   until PRD 16's family runs green under the two-oracle stamp; no performance
+   number is cited before then.
+5. **Conflict protocol:** if executing a PRD reveals the architecture docs are
+   wrong or silent, stop and record the conflict in the PRD file.
+6. **Doc amendments land in the same change** (architecture README rule 5).
+
+## The PRDs
+
+Phase A — the atom:
+- [01 — `fresh`: the generation attribute, renamed and closed](01-fresh.md)
+- [02 — The ray: infinity enters the denotation](02-ray.md)
+- [03 — Allen: the interval-pair coordinate system](03-allen-mask.md)
+- [04 — The configuration kernel](04-config-kernel.md)
+
+Phase B — the logic:
+- [05 — Rules: the query IR becomes a program](05-rules-ir.md)
+- [06 — DNF lowering: OR as data](06-dnf-lowering.md)
+- [07 — Rule execution: one head, one sink](07-rule-execution.md)
+- [08 — Exclusivity elision: the theorem pays the union's bill](08-exclusivity-elision.md)
+- [09 — The chase, per rule](09-chase-per-rule.md)
+
+Phase C — the temporal completions:
+- [10 — Measure: `Duration`](10-measure.md)
+- [11 — The sweep: one walk, two callers](11-sweep.md)
+- [12 — `Pack`: the coalescing fold](12-pack.md)
+
+Phase D — the surface:
+- [13 — The borrowed surface: structs and params](13-borrowed-surface.md)
+- [14 — The named theory: schema as type, `Db<S>`](14-named-theory.md)
+
+Phase E — the earning:
+- [15 — Oracles and the generator](15-oracles.md)
+- [16 — The calendar family](16-calendar-family.md)
+
+Dependency spine: 01–02 free; 03→04; 05→06→07→08; 09 additionally requires
+`docs/prd/` 11–12 (the chase) landed; 10 requires 02; 11→12; 13→14 (and both
+land after `docs/prd/` 20); 15 requires 03/05/10/12; 16 requires 15. Phases
+A/B/C may interleave; D and E close the set.
+
+## Refusals (recorded with derivations — do not re-litigate)
+
+- **`Intersect` as an operator.** Intersection of two rules over one head *is*
+  conjunction — write the join. An operator would be a name for something the
+  IR already is.
+- **General difference (subtracting a whole subquery).** Atom-negation
+  (anti-probes) covers every sighted case. *Trigger:* a real query no
+  anti-probe can express.
+- **OR tangled mid-rule across atoms.** A cross-atom disjunction poisons filter
+  pushdown and selectivity. It is not refused expressiveness — DNF lowering
+  (PRD 06) recovers it as rules, capped. OR is data or it is nothing.
+- **Enum order comparisons.** Declaration order is an encoding, not a
+  semantics; an order op would make variant reordering a silent meaning change.
+  Modeling answer: an explicit rank field, or a relation split.
+- **Str/bytes order, prefix, substring.** Intern ids are identity, not order;
+  order ops would demand an ordered dictionary — a subsystem. The host sorts;
+  search engines are a different product.
+- **Endpoint accessors on intervals.** The denotation owns intervals; exposed
+  endpoints invite user-space arithmetic and half-open off-by-ones. The mask
+  says everything endpoints could.
+- **Arithmetic beyond the measure.** `Duration` is the one operation the
+  point-set denotation defines (its measure). Everything else is computation
+  and belongs to the host.
+- **A `Gaps` operator.** Free time is a two-line host walk over sorted `Pack`
+  output. *Trigger:* a measured need `Pack` + host cannot meet.
+- **Interval `Min`/`Max`** (no total order — standing ruling) and **`Min`/`Max`
+  over str/bytes** (intern words are not order-preserving; PRD 15 adds the
+  roster rejection if absent).
+- **Floats and embeddings.** Permanently out; fixed-point i64 is the modeling
+  answer for scores and money; vector search belongs to other engines.
+- **A large-object storage class.** Facts are fixed-width; big payloads are
+  refs to external storage. Content churn is recorded on the dictionary-GC OPEN
+  item as its trigger profile.
+- **Recursion, still.** Rules make the IR a non-recursive Datalog program —
+  deliberately one step short of the fixpoint. The OPEN item stands; rules are
+  its landing pad, not its arrival.
+
+## Idioms chapter (PRD 01 discharges into `10-data-model.md`)
+
+Money = i64 minor units + host newtype + i128-checked `Sum`. Time = i64
+microseconds (payroll birthdates predate 1970). Order = position columns, never
+successor pointers. Any/All = `Max`/`Min` over bool. Large content = refs.

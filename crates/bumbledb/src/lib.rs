@@ -4,12 +4,15 @@
 //! The surface is plain data in, plain data out (`docs/architecture/`, the
 //! normative design):
 //!
-//! - Declare a schema with the [`schema!`] macro — it expands to a
-//!   `schema()` constructor, host newtypes, and one typed [`Fact`] struct
-//!   per relation. The macro is sugar; [`schema::SchemaDescriptor`] is the
-//!   contract.
-//! - Open a handle with [`Db::create`] / [`Db::open`] and share it across
-//!   threads (`Send + Sync`; the engine owns zero threads).
+//! - Declare a schema with the [`schema!`] macro — its `pub Name;` header
+//!   names a unit struct implementing [`SchemaDef`], and the body expands
+//!   to host newtypes and one typed [`Fact`] struct per relation
+//!   (variable-width fields borrowed: `str` → `&str`, `bytes` → `&[u8]`).
+//!   The macro is sugar; [`schema::SchemaDescriptor`] is the contract.
+//! - Open a handle with [`Db::create`] / [`Db::open`] — `Db::create(path,
+//!   Ledger)` — and share it across threads (`Send + Sync`; the engine
+//!   owns zero threads). `Db<S>` carries the schema as typestate: a
+//!   schema-A fact cannot reach a schema-B database (see below).
 //! - Write through [`Db::write`]: the transaction is an in-memory delta —
 //!   set arithmetic, statements judged at commit against the final
 //!   state, an abort never touched disk. `delete(old); insert(new)` in
@@ -25,11 +28,37 @@
 //!
 //! ```compile_fail
 //! bumbledb::schema! {
+//!     pub Ledger;
 //!     relation Holder { id: u64 as HolderId, serial }
 //!     relation Account { id: u64 as AccountId, serial }
 //! }
 //! let account = AccountId(1);
 //! let _holder: HolderId = account; // mismatched types: rustc refuses
+//! ```
+//!
+//! The schema typestate closes the cross-schema hole the same way: an
+//! `Inventory` fact into a `Ledger` database is a compile error, not a
+//! runtime surprise —
+//!
+//! ```compile_fail
+//! bumbledb::schema! {
+//!     pub Ledger;
+//!     relation Holder { id: u64 as HolderId, serial }
+//! }
+//! bumbledb::schema! {
+//!     pub Inventory;
+//!     relation Item { id: u64 as ItemId, serial }
+//! }
+//! # let dir = std::env::temp_dir().join("bumbledb-doc-cross-schema");
+//! # let _ = std::fs::remove_dir_all(&dir);
+//! # std::fs::create_dir_all(&dir).unwrap();
+//! let db = bumbledb::Db::create(&dir, Ledger).unwrap();
+//! db.write(|tx| {
+//!     let id = tx.alloc::<ItemId>()?;
+//!     tx.insert(&Item { id }) // schema-B fact, schema-A database: rustc refuses
+//!         .map(|_| ())
+//! })
+//! .unwrap();
 //! ```
 //!
 //! The workspace holds the three-command contract — green after every
@@ -68,7 +97,7 @@ mod verify_store;
 
 pub use api::db::{BulkLoadError, Db, Fact, Serial, SerialKeyed, Snapshot, WriteTx};
 pub use api::prepared::{
-    OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
+    BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
 };
 pub use api::stats::{
     CoverStats, EliminatedOccurrence, ExecutionStats, GuardStats, NodeStats, PinnedRows,
@@ -84,7 +113,7 @@ pub use plan::chase::with_chase_disabled;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
-pub use schema::{FieldId, RelationId, Schema, SerialField, StatementId};
+pub use schema::{FieldId, RelationId, Schema, SchemaDef, SerialField, StatementId};
 pub use verify_store::{StoreFinding, StoreReport};
 
 /// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`
@@ -93,14 +122,26 @@ pub use verify_store::{StoreFinding, StoreReport};
 /// descriptor types.)
 ///
 /// The grammar is parse-shape only and names resolve to ids at expansion;
-/// semantics beyond names flow through schema validation. Four shapes the
-/// macro itself refuses:
+/// semantics beyond names flow through schema validation (typed
+/// [`error::SchemaError`] from [`Db::create`] / [`Db::open`]). The
+/// invocation's first item is the header `pub Name;` — the unit struct
+/// that names the schema ([`SchemaDef`]) and disambiguates multiple
+/// schemas in one module. Five shapes the macro itself refuses:
+///
+/// A missing header:
+///
+/// ```compile_fail
+/// bumbledb::schema! {
+///     relation Holder { id: u64 as HolderId, serial }
+/// }
+/// ```
 ///
 /// Field-level constraint words do not exist — everything relational is a
 /// statement:
 ///
 /// ```compile_fail
 /// bumbledb::schema! {
+///     pub Ledger;
 ///     relation Holder { id: u64 as HolderId, serial, unique }
 /// }
 /// ```
@@ -109,6 +150,7 @@ pub use verify_store::{StoreFinding, StoreReport};
 ///
 /// ```compile_fail
 /// bumbledb::schema! {
+///     pub Ledger;
 ///     relation Holder { id: u64 as HolderId, serial }
 ///     relation Account { id: u64 as AccountId, serial, holder: u64 as HolderId }
 ///     Account(holder) -> Holder;
@@ -119,6 +161,7 @@ pub use verify_store::{StoreFinding, StoreReport};
 ///
 /// ```compile_fail
 /// bumbledb::schema! {
+///     pub Ledger;
 ///     relation Account {
 ///         id: u64 as AccountId, serial,
 ///         kind: enum Kind { Checking, Savings },
@@ -133,6 +176,7 @@ pub use verify_store::{StoreFinding, StoreReport};
 ///
 /// ```compile_fail
 /// bumbledb::schema! {
+///     pub Ledger;
 ///     relation Holder { id: u64 as HolderId, serial }
 ///     Holder(nope) -> Holder;
 /// }

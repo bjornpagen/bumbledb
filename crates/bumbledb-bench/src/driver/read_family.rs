@@ -2,7 +2,7 @@ use bumbledb::ResultBuffer;
 
 use crate::families::{has_sets, param_args, scalar_values, set_bindings};
 use crate::harness::{self, Modes, Rotation};
-use crate::schema::schema;
+use crate::schema::{schema, Ledger};
 use crate::translate::translate;
 use crate::{clockproxy, families, report, sqlite_run, trace_out};
 
@@ -82,7 +82,7 @@ impl BenchRun<'_> {
         let mut rotation = Rotation::new(sets.clone());
         let mut buffer = ResultBuffer::new();
         let db = self.db;
-        let mut run_ours = move |prepared: &mut bumbledb::PreparedQuery<'_>| {
+        let mut run_ours = move |prepared: &mut bumbledb::PreparedQuery<'_, Ledger>| {
             let args = param_args(rotation.next_set());
             db.read(|snap| snap.execute_args(prepared, &args, &mut buffer))
                 .map_err(|e| format!("execute: {e:?}"))?;

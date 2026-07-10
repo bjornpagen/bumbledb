@@ -24,6 +24,18 @@ mod sets;
 mod snapshot;
 mod view_memo;
 
+/// The unit-typestate prepare: these tests drive the environment
+/// directly, below the `Db<S>` surface where the schema typestate
+/// lives, so `S` is uninferable — pin it to `()`.
+fn prepare<'s>(
+    txn: &crate::storage::env::ReadTxn<'_>,
+    cache: &ImageCache,
+    schema: &'s Schema,
+    query: &Query,
+) -> crate::error::Result<PreparedQuery<'s, ()>> {
+    super::build::prepare(txn, cache, schema, query)
+}
+
 /// Posting(id serial u64, account u64, memo string, amount i64).
 fn schema() -> Schema {
     SchemaDescriptor {
@@ -137,8 +149,8 @@ fn by_memo_query() -> Query {
     }
 }
 
-fn memo_param(text: &str) -> Vec<Value> {
-    vec![Value::String(Box::from(text.as_bytes()))]
+fn memo_param(text: &str) -> Vec<BindValue<'_>> {
+    vec![BindValue::Str(text)]
 }
 
 fn amounts_of(buffer: &ResultBuffer) -> Vec<i64> {

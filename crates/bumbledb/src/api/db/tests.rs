@@ -8,7 +8,7 @@ use crate::schema::{
 use crate::testutil::TempDir;
 
 /// Named(name str) — a string-carrying relation for dictionary tests.
-fn named_schema() -> Schema {
+fn named_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             name: "Named".into(),
@@ -20,8 +20,6 @@ fn named_schema() -> Schema {
         }],
         statements: vec![],
     }
-    .validate()
-    .expect("fixture")
 }
 
 /// The reader cache, semantics pinned:
@@ -36,10 +34,9 @@ fn named_schema() -> Schema {
 #[test]
 fn the_reader_cache_is_invisible_except_in_speed() {
     let dir = TempDir::new("db-reader-cache");
-    let schema = named_schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), named_schema()).expect("create");
     let named = RelationId(0);
-    let count_named = |snap: &Snapshot<'_>| -> Result<u64> {
+    let count_named = |snap: &Snapshot<'_, SchemaDescriptor>| -> Result<u64> {
         let mut n = 0;
         for row in snap.scan(named)? {
             row?;
@@ -91,7 +88,7 @@ fn the_reader_cache_is_invisible_except_in_speed() {
     assert_eq!(total, 101);
 }
 
-fn dict_entries(db: &Db<'_>) -> u64 {
+fn dict_entries<S>(db: &Db<S>) -> u64 {
     let rtxn = db.env.read_txn().expect("txn");
     db.env.dict().len(rtxn.raw()).expect("len")
 }
@@ -101,8 +98,7 @@ fn dict_entries(db: &Db<'_>) -> u64 {
 #[test]
 fn a_typo_delete_leaves_the_dictionary_unchanged() {
     let dir = TempDir::new("db-mint-free-dict");
-    let schema = named_schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), named_schema()).expect("create");
     let named = RelationId(0);
     db.write(|tx| {
         tx.insert_dyn(named, &[Value::String("real".as_bytes().into())])
@@ -132,7 +128,7 @@ fn a_typo_delete_leaves_the_dictionary_unchanged() {
 /// Entry(name str, amount i64) with `Entry(name) -> Entry` — a
 /// string-keyed relation for the dynamic point reads. The declared key is
 /// the schema's only statement: StatementId(0).
-fn entry_schema() -> Schema {
+fn entry_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             name: "Entry".into(),
@@ -154,8 +150,6 @@ fn entry_schema() -> Schema {
             projection: Box::new([FieldId(0)]),
         }],
     }
-    .validate()
-    .expect("fixture")
 }
 
 const ENTRY: RelationId = RelationId(0);
@@ -172,8 +166,7 @@ fn entry(name: &str, amount: i64) -> Vec<Value> {
 #[test]
 fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
     let dir = TempDir::new("db-get-dyn-ryw");
-    let schema = entry_schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), entry_schema()).expect("create");
 
     db.write(|tx| {
         // Insert, then read back through the pending delta (the key
@@ -216,8 +209,7 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
 #[test]
 fn get_dyn_falls_through_to_committed_state() {
     let dir = TempDir::new("db-get-dyn-committed");
-    let schema = entry_schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), entry_schema()).expect("create");
     db.write(|tx| tx.insert_dyn(ENTRY, &entry("seed", 42)).map(|_| ()))
         .expect("seed");
 
@@ -240,8 +232,7 @@ fn get_dyn_falls_through_to_committed_state() {
 #[test]
 fn get_dyn_with_a_never_interned_key_answers_none_without_minting() {
     let dir = TempDir::new("db-get-dyn-mint-free");
-    let schema = entry_schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), entry_schema()).expect("create");
     db.write(|tx| tx.insert_dyn(ENTRY, &entry("real", 1)).map(|_| ()))
         .expect("seed");
     let entries = dict_entries(&db);
@@ -271,8 +262,7 @@ fn get_dyn_with_a_never_interned_key_answers_none_without_minting() {
 #[test]
 fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
     let dir = TempDir::new("db-get-dyn-shape");
-    let schema = entry_schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), entry_schema()).expect("create");
     db.write(|tx| {
         // Out-of-range statement id.
         let err = tx
@@ -323,7 +313,7 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
 }
 
 /// S(id serial, v) — the serial-minting relation for witness tests.
-fn serial_schema() -> Schema {
+fn serial_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             name: "S".into(),
@@ -342,8 +332,6 @@ fn serial_schema() -> Schema {
         }],
         statements: vec![],
     }
-    .validate()
-    .expect("fixture")
 }
 
 /// What the `schema!` macro would generate for `id: u64 as SId, serial` —
@@ -352,6 +340,7 @@ fn serial_schema() -> Schema {
 struct SId(u64);
 
 impl Serial for SId {
+    type Schema = SchemaDescriptor;
     const RELATION: RelationId = RelationId(0);
     const FIELD: FieldId = FieldId(0);
     fn from_serial(raw: u64) -> Self {
@@ -367,7 +356,7 @@ impl Serial for SId {
 /// `FactShape` error, never a panic.
 #[test]
 fn serial_field_rejects_non_witnesses_with_typed_errors() {
-    let schema = serial_schema();
+    let schema = serial_schema().validate().expect("fixture");
     assert_eq!(
         schema.serial_field(RelationId(0), FieldId(1)).unwrap_err(),
         FactShapeError::NotASerialField {
@@ -396,11 +385,11 @@ fn serial_field_rejects_non_witnesses_with_typed_errors() {
 #[test]
 fn a_witness_mints_the_same_sequence_as_the_typed_path() {
     let dir = TempDir::new("db-alloc-witness");
-    let schema = serial_schema();
+    let schema = serial_schema().validate().expect("fixture");
     let id_field = schema
         .serial_field(RelationId(0), FieldId(0))
         .expect("serial field");
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), serial_schema()).expect("create");
     db.write(|tx| {
         assert_eq!(tx.alloc_at(id_field)?, 0);
         assert_eq!(tx.alloc::<SId>()?, SId(1), "one sequence, two surfaces");
@@ -425,8 +414,7 @@ fn a_witness_mints_the_same_sequence_as_the_typed_path() {
 #[test]
 fn a_bulk_load_error_keeps_its_committed_count_through_question_mark() {
     let dir = TempDir::new("db-bulk-load-count");
-    let schema = named_schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), named_schema()).expect("create");
     let named = RelationId(0);
 
     // Exactly one full chunk of distinct facts commits; the mis-shaped

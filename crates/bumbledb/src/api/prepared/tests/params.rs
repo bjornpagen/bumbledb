@@ -20,7 +20,12 @@ fn prepare_once_execute_many_with_varying_params() {
     let mut out = ResultBuffer::new();
 
     prepared
-        .execute(&txn, &cache, &[Value::U64(7), Value::I64(0)], &mut out)
+        .execute(
+            &txn,
+            &cache,
+            &[BindValue::U64(7), BindValue::I64(0)],
+            &mut out,
+        )
         .expect("execute");
     assert_eq!(rows_of(&out), vec![("salary".to_owned(), 5000)]);
 
@@ -28,7 +33,7 @@ fn prepare_once_execute_many_with_varying_params() {
         .execute(
             &txn,
             &cache,
-            &[Value::U64(7), Value::I64(i64::MIN)],
+            &[BindValue::U64(7), BindValue::I64(i64::MIN)],
             &mut out,
         )
         .expect("execute");
@@ -41,7 +46,7 @@ fn prepare_once_execute_many_with_varying_params() {
         .execute(
             &txn,
             &cache,
-            &[Value::U64(8), Value::I64(i64::MIN)],
+            &[BindValue::U64(8), BindValue::I64(i64::MIN)],
             &mut out,
         )
         .expect("execute");
@@ -59,7 +64,7 @@ fn bind_time_checks_reject_bad_params() {
     let mut out = ResultBuffer::new();
 
     let err = prepared
-        .execute(&txn, &cache, &[Value::U64(7)], &mut out)
+        .execute(&txn, &cache, &[BindValue::U64(7)], &mut out)
         .unwrap_err();
     assert!(
         matches!(
@@ -73,7 +78,12 @@ fn bind_time_checks_reject_bad_params() {
     );
 
     let err = prepared
-        .execute(&txn, &cache, &[Value::I64(7), Value::I64(0)], &mut out)
+        .execute(
+            &txn,
+            &cache,
+            &[BindValue::I64(7), BindValue::I64(0)],
+            &mut out,
+        )
         .unwrap_err();
     assert!(
         matches!(err, Error::ParamTypeMismatch { param, .. } if param.0 == 0),
@@ -108,12 +118,7 @@ fn string_params_resolve_per_execution() {
 
     // Never-interned value: empty, not an error.
     prepared
-        .execute(
-            &txn,
-            &cache,
-            &[Value::String(Box::from(&b"groceries"[..]))],
-            &mut out,
-        )
+        .execute(&txn, &cache, &[BindValue::Str("groceries")], &mut out)
         .expect("execute");
     assert!(out.is_empty());
     drop(txn);
@@ -123,12 +128,7 @@ fn string_params_resolve_per_execution() {
     insert_postings(&env, &schema, &[(2, 9, "groceries", -55)]);
     let txn = env.read_txn().expect("txn");
     prepared
-        .execute(
-            &txn,
-            &cache,
-            &[Value::String(Box::from(&b"groceries"[..]))],
-            &mut out,
-        )
+        .execute(&txn, &cache, &[BindValue::Str("groceries")], &mut out)
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), ResultValue::I64(-55));

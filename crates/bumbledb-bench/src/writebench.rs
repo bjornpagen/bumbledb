@@ -18,7 +18,7 @@ use bumbledb::{Db, RelationId, ResultBuffer};
 use crate::families::{self, param_args};
 use crate::gen::{self, GenConfig, Rng, Sizes};
 use crate::harness::{self, Measurement, Protocol, Rotation};
-use crate::schema::{ids, schema, AccountId, InstrumentId, JournalEntryId, Posting, PostingId};
+use crate::schema::{ids, AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId};
 
 /// The registered protocol for a write family (shared with the `SQLite`
 /// mirror runners in `sqlite_run`).
@@ -53,7 +53,7 @@ pub(crate) fn seeded_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> Pos
 /// # Errors
 ///
 /// Engine errors, stringified.
-pub fn commit_single_bumbledb(db: &Db<'_>, cfg: GenConfig) -> Result<Measurement, String> {
+pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0001);
     harness::measure(write_protocol("commit_single"), || {
@@ -72,7 +72,7 @@ pub fn commit_single_bumbledb(db: &Db<'_>, cfg: GenConfig) -> Result<Measurement
 /// # Errors
 ///
 /// Engine errors, stringified.
-pub fn commit_batch_bumbledb(db: &Db<'_>, cfg: GenConfig) -> Result<Measurement, String> {
+pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0002);
     harness::measure(write_protocol("commit_batch"), || {
@@ -115,7 +115,7 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
     let mut pending = VecDeque::new();
     for sample in 0..proto.warmups + proto.samples {
         let dir = scratch.join(format!("bulk-bumbledb-{sample}"));
-        let db = Db::create(&dir, schema()).map_err(|e| format!("create: {e:?}"))?;
+        let db = Db::create(&dir, Ledger).map_err(|e| format!("create: {e:?}"))?;
         for rel in non_posting_relations() {
             db.bulk_load(rel, gen::relation_rows(cfg, rel))
                 .map_err(|e| format!("seed: {e:?}"))?;
@@ -153,7 +153,7 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
 /// # Panics
 ///
 /// Only on registry corruption (`containment_walk` missing).
-pub fn cold_containment_walk(db: &Db<'_>, cfg: GenConfig) -> Result<Measurement, String> {
+pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let family = families::all()
         .iter()
         .find(|f| f.name == "containment_walk")
@@ -194,8 +194,8 @@ mod tests {
 
     /// A store holding every posting containment target (the commit families need
     /// referenced rows, not the posting mass).
-    fn containment_target_db(dir: &Path) -> Db<'static> {
-        let db = Db::create(dir, schema()).expect("create");
+    fn containment_target_db(dir: &Path) -> Db<Ledger> {
+        let db = Db::create(dir, Ledger).expect("create");
         for rel in non_posting_relations() {
             db.bulk_load(rel, gen::relation_rows(CFG, rel))
                 .expect("seed");
@@ -223,7 +223,7 @@ mod tests {
             std::fs::copy(entry.path(), copy.join(entry.file_name())).expect("copy file");
         }
 
-        let db = Db::open(&copy, schema()).expect("open copy");
+        let db = Db::open(&copy, Ledger).expect("open copy");
         let single = commit_single_bumbledb(&db, CFG).expect("commit_single");
         assert!(single.stats.min > 0);
         assert_eq!(single.work, 64, "one row per sample");
@@ -233,7 +233,7 @@ mod tests {
         assert!(db.generation().expect("generation") > generation_before);
         drop(db);
 
-        let db = Db::open(&source, schema()).expect("reopen source");
+        let db = Db::open(&source, Ledger).expect("reopen source");
         assert_eq!(
             db.generation().expect("generation"),
             generation_before,
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn cold_containment_walk_costs_at_least_warm() {
         let dir = scratch("cold");
-        let db = Db::create(&dir, schema()).expect("create");
+        let db = Db::create(&dir, Ledger).expect("create");
         corpus::load_bumbledb(&db, CFG).expect("load");
 
         let cold = cold_containment_walk(&db, CFG).expect("cold");

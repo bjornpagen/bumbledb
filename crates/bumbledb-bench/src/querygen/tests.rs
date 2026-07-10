@@ -23,7 +23,7 @@ fn a_thousand_queries_validate_and_translate() {
     let dir = std::env::temp_dir().join("bumbledb-bench-querygen");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, target::schema()).expect("create");
+    let db = bumbledb::Db::create(&dir, target::Target).expect("create");
     let mut rng = Rng::new(SEED);
     for i in 0..N {
         let query = random_query(&mut rng, CFG);
@@ -178,7 +178,7 @@ fn chase_shapes_eliminate_and_near_misses_refuse() {
     let dir = std::env::temp_dir().join("bumbledb-bench-querygen-chase");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, target::schema()).expect("create");
+    let db = bumbledb::Db::create(&dir, target::Target).expect("create");
     let mut rng = Rng::new(SEED);
     let (mut eliminated, mut refused) = (0u32, 0u32);
     for i in 0..N {

@@ -4,7 +4,7 @@
 //! classification. This file of queries **is** the benchmark's identity —
 //! `digest()` keys the verify stamp and every report on it.
 
-use bumbledb::{ParamArg, ParamId, Query, Value};
+use bumbledb::{BindValue, ParamArg, ParamId, Query, Value};
 
 use crate::gen::GenConfig;
 use crate::naive::ParamValue;
@@ -41,12 +41,40 @@ pub fn scalar_draw(values: Vec<Value>) -> Draw {
     values.into_iter().map(ParamValue::Scalar).collect()
 }
 
+/// One owned scalar as the engine's borrowed [`BindValue`] — str/bytes
+/// payloads by reference (the bind surface borrows; the draws own).
+///
+/// # Panics
+///
+/// On non-UTF-8 `Value::String` bytes — the corpus interns text.
+#[must_use]
+pub fn bind_value(value: &Value) -> BindValue<'_> {
+    match value {
+        Value::Bool(v) => BindValue::Bool(*v),
+        Value::U64(v) => BindValue::U64(*v),
+        Value::I64(v) => BindValue::I64(*v),
+        Value::Enum(ordinal) => BindValue::Enum(*ordinal),
+        Value::String(raw) => {
+            BindValue::Str(std::str::from_utf8(raw).expect("corpus strings are UTF-8"))
+        }
+        Value::Bytes(raw) => BindValue::Bytes(raw),
+        Value::IntervalU64(start, end) => BindValue::IntervalU64(*start, *end),
+        Value::IntervalI64(start, end) => BindValue::IntervalI64(*start, *end),
+    }
+}
+
+/// A borrowed view of owned scalar values as the engine's bind slice.
+#[must_use]
+pub fn bind_values(values: &[Value]) -> Vec<BindValue<'_>> {
+    values.iter().map(bind_value).collect()
+}
+
 /// One draw as the engine's borrowed [`ParamArg`] positions.
 #[must_use]
 pub fn param_args(draw: &[ParamValue]) -> Vec<ParamArg<'_>> {
     draw.iter()
         .map(|arg| match arg {
-            ParamValue::Scalar(value) => ParamArg::Scalar(value.clone()),
+            ParamValue::Scalar(value) => ParamArg::Scalar(bind_value(value)),
             ParamValue::Set(values) => ParamArg::Set(values),
         })
         .collect()
@@ -60,10 +88,10 @@ pub fn param_args(draw: &[ParamValue]) -> Vec<ParamArg<'_>> {
 /// On a set position — callers route set-bound draws through
 /// [`param_args`].
 #[must_use]
-pub fn scalar_values(draw: &[ParamValue]) -> Vec<Value> {
+pub fn scalar_values(draw: &[ParamValue]) -> Vec<BindValue<'_>> {
     draw.iter()
         .map(|arg| match arg {
-            ParamValue::Scalar(value) => value.clone(),
+            ParamValue::Scalar(value) => bind_value(value),
             ParamValue::Set(_) => panic!("a set param has no scalar position"),
         })
         .collect()

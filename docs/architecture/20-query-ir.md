@@ -155,7 +155,9 @@ validation error, and so is a variable compared with itself — both are
 constant-valued: write the query you mean.
 
 **Params:** a param's type is inferred from its anchors — the fields it binds and the
-typed terms it compares against. An *unanchored* param is unwritable by construction
+typed terms it compares against. `ir::Value` stays owned by decision: IR literals are
+long-lived query data; only the bind surface borrows (`BindValue<'a>` carries str/bytes
+payloads by reference — `70-api.md`). An *unanchored* param is unwritable by construction
 (every param position is itself an anchor; param-only comparisons are already constant
 comparisons) — the roster discharges that item by representation. Conflicting anchors
 and non-dense param ids (a gap would be a positional slot whose supplied value is never

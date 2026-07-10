@@ -5,7 +5,7 @@ use bumbledb::Db;
 use crate::cli::CorpusArgs;
 use crate::corpus;
 use crate::gen::{self, GenConfig};
-use crate::schema::schema;
+use crate::schema::Ledger;
 
 use super::CorpusPaths;
 
@@ -75,7 +75,7 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
         // case — ~40% of the loaded file is freelist — and the cached
         // corpus is write-once, so it ships live-sized.
         let load_dir = paths.root.join("db-load");
-        let db = Db::create(&load_dir, schema()).map_err(|e| format!("create db: {e:?}"))?;
+        let db = Db::create(&load_dir, Ledger).map_err(|e| format!("create db: {e:?}"))?;
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("load bumbledb: {e:?}"))?;
         db.compact(&paths.db)
             .map_err(|e| format!("compact: {e:?}"))?;

@@ -1,10 +1,9 @@
-use super::{ExecPlan, PreparedQuery, ResultBuffer, ValueType};
+use super::{BindValue, ExecPlan, PreparedQuery, ResultBuffer, ValueType};
 
 use crate::error::Result;
 use crate::exec::dispatch::execute_guard;
 use crate::exec::run::NoopCounters;
 use crate::image::cache::ImageCache;
-use crate::ir::Value;
 use crate::obs;
 use crate::storage::env::ReadTxn;
 
@@ -12,7 +11,7 @@ use super::bind::resolve_predicates;
 use super::finalize::finalize;
 use super::run_join::run_join;
 
-impl PreparedQuery<'_> {
+impl<S> PreparedQuery<'_, S> {
     /// Executes with the given parameters into the caller's buffer.
     ///
     /// # Errors
@@ -28,7 +27,7 @@ impl PreparedQuery<'_> {
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        params: &[Value],
+        params: &[BindValue<'_>],
         out: &mut ResultBuffer,
     ) -> Result<()> {
         self.check_snapshot(txn)?;
@@ -230,7 +229,7 @@ impl PreparedQuery<'_> {
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        params: &[Value],
+        params: &[BindValue<'_>],
     ) -> Result<ResultBuffer> {
         let mut out = ResultBuffer::new();
         self.execute(txn, cache, params, &mut out)?;

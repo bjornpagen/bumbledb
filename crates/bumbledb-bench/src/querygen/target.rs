@@ -147,6 +147,17 @@ fn enum_type(variants: &[&str]) -> ValueType {
 /// draws in-domain, and entry `i` has `source == Import` iff
 /// `i % 3 == 1` iff `ImportBatch` row `(i - 1) / 3` exists.
 ///
+/// The target ledger's schema definition — the value the target stores
+/// are created with (`Db::create(dir, Target)`).
+#[derive(Debug, Clone, Copy)]
+pub struct Target;
+
+impl bumbledb::SchemaDef for Target {
+    fn descriptor(self) -> SchemaDescriptor {
+        descriptor()
+    }
+}
+
 /// # Panics
 ///
 /// Never in practice: the declared ledger passes the acceptance gate
@@ -154,6 +165,15 @@ fn enum_type(variants: &[&str]) -> ValueType {
 pub fn schema() -> &'static Schema {
     static SCHEMA: OnceLock<Schema> = OnceLock::new();
     SCHEMA.get_or_init(|| {
+        descriptor()
+            .validate()
+            .expect("the target ledger validates")
+    })
+}
+
+/// The declared target ledger, as the raw descriptor.
+fn descriptor() -> SchemaDescriptor {
+    {
         SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -247,9 +267,7 @@ pub fn schema() -> &'static Schema {
             ],
             statements: statements(),
         }
-        .validate()
-        .expect("the target ledger validates")
-    })
+    }
 }
 
 /// The declared statements: `ImportBatch`'s key, the ledger's nine

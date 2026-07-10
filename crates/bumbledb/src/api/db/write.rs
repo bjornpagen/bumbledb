@@ -25,7 +25,7 @@ impl Drop for WriterThreadReset<'_> {
     }
 }
 
-impl Db<'_> {
+impl<S> Db<S> {
     /// Runs `f` as the single writer: takes the writer mutex, hands `f` a
     /// delta transaction, and commits on `Ok`. `Err` or panic drops the
     /// delta — LMDB was never touched. Dependency statements are judged at
@@ -50,7 +50,7 @@ impl Db<'_> {
     /// On a nested call from within a write closure on the same thread —
     /// `write` is non-reentrant, and a loud panic beats the silent
     /// forever-deadlock the writer mutex would otherwise become.
-    pub fn write<R>(&self, f: impl FnOnce(&mut WriteTx<'_>) -> Result<R>) -> Result<R> {
+    pub fn write<R>(&self, f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>) -> Result<R> {
         use std::sync::atomic::Ordering;
         let caller = thread_key();
         assert_ne!(
@@ -76,10 +76,11 @@ impl Db<'_> {
             crate::obs::span(crate::obs::names::WRITE_TXN, crate::obs::Category::Commit);
         let mut tx = WriteTx {
             view: self.env.read_txn()?,
-            delta: WriteDelta::new(self.schema),
-            schema: self.schema,
+            delta: WriteDelta::new(&self.schema),
+            schema: &self.schema,
             scratch: Vec::new(),
             refs: Vec::new(),
+            marker: std::marker::PhantomData,
         };
         let out = f(&mut tx)?;
         let WriteTx { view, delta, .. } = tx;

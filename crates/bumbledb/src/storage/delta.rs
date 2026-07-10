@@ -93,14 +93,17 @@ pub struct WriteDelta<'s> {
     /// cancels a pending opposite instead of overwriting it. Judging a
     /// no-op insert is unrepresentable.
     facts: BTreeMap<(RelationId, [u8; 32]), (ArenaSlice, Disposition)>,
-    /// `(key statement, guard bytes) → net disposition` — the point-read
+    /// `key statement → (guard bytes → net disposition)` — the point-read
     /// index maintained beside the fact map by `insert`/`delete`
     /// (`docs/architecture/50-storage.md` § `WriteTx` point reads). Guard
     /// bytes are derived by the one shared slicer
     /// ([`crate::storage::keys::guard_bytes`]), exactly as commit derives
     /// them. No relation id in the key: statement ids are schema-global
-    /// and a `Functionality` statement determines its relation.
-    guards: BTreeMap<(StatementId, Box<[u8]>), GuardDisposition>,
+    /// and a `Functionality` statement determines its relation. Nested so
+    /// the probe borrows: `guard_overlay` looks guard bytes up as
+    /// `&[u8]`, never boxing a key copy (the typed point read is
+    /// host-allocation-free — PRD 22's gate).
+    guards: BTreeMap<StatementId, BTreeMap<Box<[u8]>, GuardDisposition>>,
     /// Scratch for guard derivation, reused across `insert`/`delete` calls
     /// (the write path may allocate, but not per key statement per fact).
     guard_scratch: Vec<u8>,

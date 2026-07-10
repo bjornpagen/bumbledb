@@ -516,9 +516,8 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
     use crate::naive::Violation;
 
     let descriptor = schema();
-    let sealed = descriptor.clone().validate().expect("fixture validates");
     let dir = TempDir::new("differential-net-disposition");
-    let db = Db::create(dir.path(), &sealed).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
     let mut naive = NaiveDb::new(&descriptor);
 
     // Pre-seed {a, b}: a booking and the marker it requires.
@@ -566,9 +565,8 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
 #[test]
 fn seeded_200_op_stream_agrees_with_the_engine() {
     let descriptor = schema();
-    let sealed = descriptor.clone().validate().expect("fixture validates");
     let dir = TempDir::new("differential-200");
-    let db = Db::create(dir.path(), &sealed).expect("create engine store");
+    let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
     let mut naive = NaiveDb::new(&descriptor);
 
     let mut rng = Rng(0x0021_0001);

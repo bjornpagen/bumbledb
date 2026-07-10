@@ -63,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [22 — Borrowed structs, borrowed params, and the named-schema typestate](22-borrowed-structs-typestate.md) — **runs after 20 and before 21** (same emission code as 20's territory; 21 stays the closing pass and cleans this surface's bench fallout)
 - [21 — Elegance: bench crate](21-elegance-bench.md)
 
 ## Refusals (recorded, with reasons — do not re-litigate)

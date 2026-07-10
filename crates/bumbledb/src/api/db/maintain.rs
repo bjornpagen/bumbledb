@@ -3,7 +3,7 @@ use std::path::Path;
 use super::Db;
 use crate::error::Result;
 
-impl Db<'_> {
+impl<S> Db<S> {
     /// The image cache's counters (feature `trace`; reader: the
     /// benchmark report).
     #[cfg(feature = "trace")]

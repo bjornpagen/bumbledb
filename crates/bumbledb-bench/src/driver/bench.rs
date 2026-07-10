@@ -5,7 +5,7 @@ use bumbledb::Db;
 use crate::cli::{BenchArgs, CorpusArgs};
 use crate::gen::{self, GenConfig};
 use crate::harness::Protocol;
-use crate::schema::schema;
+use crate::schema::Ledger;
 use crate::{clockproxy, families, report, sqlite_run, verify};
 
 use super::corpus::gen_config;
@@ -106,7 +106,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     });
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
 
-    let db = Db::open(&paths.db, schema()).map_err(|e| format!("open db: {e:?}"))?;
+    let db = Db::open(&paths.db, Ledger).map_err(|e| format!("open db: {e:?}"))?;
     let conn =
         sqlite_run::open_for_bench(&paths.oracle).map_err(|e| format!("open oracle: {e}"))?;
     sqlite_run::FairnessCheck::run(&conn)?;

@@ -173,7 +173,7 @@ pub enum StoreFinding {
     Malformed { key: Box<[u8]>, what: &'static str },
 }
 
-impl Db<'_> {
+impl<S> Db<S> {
     /// Sweeps the store for cross-namespace desyncs — F↔M, F↔U (plus
     /// per-group pointwise disjointness), F↔R (φ re-checked with the
     /// commit path's satisfaction helper), and the `S` counters against

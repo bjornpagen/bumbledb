@@ -7,12 +7,15 @@ the schema is compiled into the binary (`10-data-model.md`).
 
 ## The `schema!` grammar (normative)
 
-Two statement kinds inside the macro, in any order: **relation blocks** and
+The invocation's first item is the **header** `pub Name;` — it names the schema.
+Then two statement kinds, in any order: **relation blocks** and
 **dependency statements** (`30-dependencies.md` owns their semantics; this section
 owns the surface).
 
 ```rust
 bumbledb::schema! {
+    pub Ledger;
+
     relation Account {
         id: u64 as AccountId, serial,
         holder: u64 as HolderId,
@@ -45,9 +48,17 @@ bumbledb::schema! {
   the schema validation boundary (`30-dependencies.md` roster) is the judge, and
   everything semantic beyond names is a normal typed error with the statement
   rendered back.
-- The macro generates: relation descriptors, dependency statement descriptors, the
-  host newtypes, per-relation fact structs (`Account { id, holder, kind, active }`),
-  and the `schema()` constructor the `Db` functions take.
+- **The header** `pub Ledger;` expands to `pub struct Ledger;` implementing the
+  `SchemaDef` trait (`fn descriptor(self) -> SchemaDescriptor`) — the value the `Db`
+  functions take (`Db::create(path, Ledger)`) and the typestate `Db<Ledger>` carries.
+  Multiple schemas coexist in one module; their headers disambiguate. There is no
+  memoized `schema()` constructor and no panic path: semantic validation runs inside
+  `Db::create`/`Db::open` and surfaces as the typed `SchemaError`.
+- The macro generates: the header's `SchemaDef` unit struct, relation descriptors,
+  dependency statement descriptors, the host newtypes, and per-relation fact structs
+  (`Account { id, holder, kind, active }`). **Variable-width fields are borrowed**:
+  `str` → `&'a str`, `bytes` → `&'a [u8]` — a struct with any variable-width field
+  gains one lifetime; all-fixed-width structs stay lifetime-free.
 
 **Decision: the macro surface is the algebra, with no sugar keywords.** Owner ruling
 (`30-dependencies.md` records the alternative and its loss). The macro
@@ -55,10 +66,13 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
 
 ## Environment lifecycle
 
-- `Db::open(path, &Schema)` — no tuning parameters: map size, max readers, and LMDB
-  flags are internal (fsync durability per `00-product.md`); the schema argument is
-  what gets fingerprint-verified. Open verifies format version, then schema
-  fingerprint; each mismatch is a typed hard failure. `Db::create(path, &Schema)`
+- `Db::open(path, Ledger)` — no tuning parameters: map size, max readers, and LMDB
+  flags are internal (fsync durability per `00-product.md`); the schema definition
+  (`SchemaDef` — the macro's header struct, or a runtime-built `SchemaDescriptor`,
+  which implements the trait as itself) is validated here (typed `SchemaError` on an
+  invalid declaration) and what gets fingerprint-verified. Open verifies format
+  version, then schema fingerprint; each mismatch is a typed hard failure.
+  `Db::create(path, Ledger)`
   initializes a fresh environment with the schema's fingerprint — and **refuses a
   directory that already holds any LMDB environment** (`AlreadyInitialized`): a
   bumbledb one (re-writing `_meta` counters over live data would be silent corruption,
@@ -111,9 +125,14 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   immediately), not at commit. Bulk import is `Db::bulk_load` — a `Db`-level method,
   not a write-closure operation (see the ETL section).
 - **WriteTx point reads (decision):** `tx.contains(&fact) -> bool` (membership — the `insert`/`delete`
-  return value's read-only sibling) and `tx.get::<F>(key) -> Option<F>` — lookup of
-  the full fact through any key FD of its relation (typed via the key's newtype
-  signature; `_dyn` form takes relation + statement id + encoded key). Both read
+  return value's read-only sibling) and `tx.get::<F>(key) -> Option<F<'_>>` — lookup
+  of the full fact through any key FD of its relation (typed via the key's newtype
+  signature; `_dyn` form takes relation + statement id + encoded key). The typed get
+  returns a **view at the transaction lifetime**: variable-width fields borrow from
+  the committed dictionary (mmap pages, txn-stable by LMDB CoW) or this
+  transaction's pending interns (the delta arena — read-your-writes included),
+  whichever holds the value; a host that keeps a field past the transaction copies
+  it explicitly. Both read
   **committed state overlaid with the pending delta** — the same final-state view
   the judgment checker judges (`50-storage.md`), so check-then-act is race-free by
   construction (single writer, one view). **The upsert idiom, blessed:**
@@ -156,6 +175,34 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   Interval<u64>` values whose `start < end` invariant is enforced at construction —
   parse, don't validate, in the host too). A dynamic (untyped) fact form exists for
   ETL tooling.
+- **Borrowed structs:** generated structs carry variable-width fields by reference
+  (`str` → `&'a str`, `bytes` → `&'a [u8]`; one lifetime iff the relation has a
+  variable-width field). Insert takes the struct at any lifetime — the encode path
+  reads the fields as borrows into the engine's arena copy. Typed reads
+  (`tx.get`, `snap.scan_facts`) return views at the resolver's lifetime, UTF-8
+  validated at resolve without a copy. There are no owned twins and no modes;
+  ownership is an explicit host act (`to_owned()` on the field you keep). The trait
+  shape is `impl<'a> Fact<'a> for Account<'a>` (module doc records the
+  GAT alternative and why it lost).
+- **Decision: borrowed variable-width types on the fact and param surfaces.**
+  Ownership is an explicit host act. **Alternative:** the owned surface (`String`/
+  `Vec<u8>` fields, owned scalar param payloads). **Why it lost:** four ceremony
+  allocations serving no engine purpose — insert read the owned field once as a
+  borrow before the arena copy; typed get allocated a fresh `String` per str field
+  per read out of the mmap, which callers compared and dropped; scalar str/bytes
+  params boxed per bind for a hash-and-probe; and validity was stated in prose
+  where a lifetime parameter states it compile-checked (precedent:
+  `sqlite3_column_text`, LMDB `get` — borrow-until-txn-end as the only option).
+  **Reverses if:** a real host profile shows `to_owned()` dominating — hosts
+  overwhelmingly keeping every field they read.
+- **Schema typestate:** `Db<S>` carries the schema definition as a phantom
+  parameter, threaded through `WriteTx`/`Snapshot`/`PreparedQuery`; `Fact` carries
+  `type Schema`, and write/read operations bound `F: Fact<'_, Schema = S>`.
+  Inserting a schema-A struct into a schema-B database — or executing a prepared
+  query against another schema's snapshot — is a **compile error**, closing the
+  cross-schema `RelationId`-aliasing hole that a width mismatch only caught by
+  luck. Inference hides the parameter at call sites; same-schema/different-
+  environment confusion stays a runtime check (`ForeignPreparedQuery`).
 - Query results: one concrete `ResultBuffer` (decided: columnar cells + a byte heap,
   no caller-buffer trait) — rows of decoded values (String/Bytes decoded from intern
   ids at materialization, into the buffer's byte heap; intervals as start/end word
@@ -166,15 +213,20 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   snapshot stays usable. Results are **sets**: unordered; the host sorts. Zero-alloc
   path: caller-provided reusable buffer (`40-execution.md`); convenience path
   allocates a fresh buffer.
-- Params are supplied positionally by `ParamId` at execution — scalars as values,
-  **param sets as slices** (deduplicated at bind; the documented small-set planning
-  assumption is `20-query-ir.md`'s); count and structural types checked at bind time.
+- Params are supplied positionally by `ParamId` at execution — scalars as
+  `BindValue<'a>` (str/bytes payloads **by reference**: the engine only hashes and
+  probes them, so a warm re-bind allocates nothing host-side; `ir::Value` stays
+  owned — IR literals are long-lived query data), **param sets as slices** of owned
+  `Value`s (a set is long-lived host data re-bound by reference; deduplicated at
+  bind; the documented small-set planning assumption is `20-query-ir.md`'s); count
+  and structural types checked at bind time.
 
 ## Errors (taxonomy skeleton)
 
 - **Open errors:** `FormatMismatch`, `SchemaMismatch`, `Io`, `Lmdb`.
 - **Schema errors** (declaration boundary, `30-dependencies.md` roster included):
-  typed, enumerated, returned from schema validation before any environment exists.
+  typed, enumerated, returned from `Db::create`/`Db::open` — where the definition's
+  descriptor is validated — before any environment exists.
 - **Validation errors** (IR boundary, `20-query-ir.md` roster): typed, enumerated,
   returned at prepare time.
 - **Runtime query errors:** `Overflow` (aggregate range check), `Corruption` (hard

@@ -11,7 +11,12 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let mut out = ResultBuffer::new();
     prepared
-        .execute(&txn, &cache, &[Value::U64(7), Value::I64(0)], &mut out)
+        .execute(
+            &txn,
+            &cache,
+            &[BindValue::U64(7), BindValue::I64(0)],
+            &mut out,
+        )
         .expect("execute");
     assert_eq!(out.len(), 1);
     drop(txn);
@@ -20,7 +25,12 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
     insert_postings(&env, &schema, &[(2, 7, "new", 2)]);
     let txn = env.read_txn().expect("txn");
     prepared
-        .execute(&txn, &cache, &[Value::U64(7), Value::I64(0)], &mut out)
+        .execute(
+            &txn,
+            &cache,
+            &[BindValue::U64(7), BindValue::I64(0)],
+            &mut out,
+        )
         .expect("execute");
     assert_eq!(out.len(), 2);
 }
@@ -53,7 +63,7 @@ fn prepare_pins_no_images_and_reaping_releases_them() {
     // hold views over the generation-1 image.
     for floor in [-100, 15] {
         prepared
-            .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(floor)])
+            .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(floor)])
             .expect("execute");
     }
     assert!(
@@ -69,7 +79,7 @@ fn prepare_pins_no_images_and_reaping_releases_them() {
     cache.evict_older_than(2);
     let txn = env.read_txn().expect("txn");
     prepared
-        .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100)])
+        .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100)])
         .expect("execute at generation 2");
     assert_eq!(
         std::sync::Arc::strong_count(&held),
@@ -108,7 +118,7 @@ fn prepare_emits_no_image_events() {
 
     obs::start_capture();
     prepared
-        .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100)])
+        .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100)])
         .expect("execute");
     let events = obs::finish_capture();
     let names: Vec<&str> = events.iter().map(|e| e.name).collect();

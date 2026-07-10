@@ -1,7 +1,7 @@
 use super::{Db, ParkedReader, Snapshot};
 use crate::error::Result;
 
-impl Db<'_> {
+impl<S> Db<S> {
     /// Runs `f` over one LMDB read snapshot: a consistent generation for
     /// every query and scan inside. Reuses the parked reader when no
     /// commit intervened — same snapshot bits, no
@@ -10,7 +10,7 @@ impl Db<'_> {
     /// # Errors
     ///
     /// `Lmdb` on snapshot open; otherwise whatever `f` returns.
-    pub fn read<R>(&self, f: impl FnOnce(&Snapshot<'_>) -> Result<R>) -> Result<R> {
+    pub fn read<R>(&self, f: impl FnOnce(&Snapshot<'_, S>) -> Result<R>) -> Result<R> {
         use std::sync::atomic::Ordering;
         let seq = self.commit_seq.load(Ordering::Acquire);
         let parked = self
@@ -30,7 +30,8 @@ impl Db<'_> {
         let snap = Snapshot {
             txn,
             cache: &self.cache,
-            schema: self.schema,
+            schema: &self.schema,
+            marker: std::marker::PhantomData,
         };
         let result = f(&snap);
         // Park the snapshot for the next read — only if it is still

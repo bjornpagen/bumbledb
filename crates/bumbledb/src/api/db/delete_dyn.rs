@@ -3,7 +3,7 @@ use crate::error::Result;
 use crate::ir::Value;
 use crate::schema::RelationId;
 
-impl WriteTx<'_> {
+impl<S> WriteTx<'_, S> {
     /// Records a dynamic delete, symmetric to [`WriteTx::insert_dyn`] but
     /// never minting (as [`WriteTx::delete`]): a string or bytes value
     /// known to neither the delta nor the committed dictionary proves the

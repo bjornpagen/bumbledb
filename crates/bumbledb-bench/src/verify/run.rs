@@ -9,7 +9,7 @@ use crate::families::set_bindings;
 use crate::gen::Rng;
 use crate::naive::ParamValue;
 use crate::querygen::{self, target, ParamDraw};
-use crate::schema::schema;
+use crate::schema::{schema, Ledger};
 use crate::translate::translate;
 use crate::{corpus, families, sqlmap};
 
@@ -58,7 +58,7 @@ pub fn run_with_sql_override(
         cfg.gen.seed,
         cfg.gen.scale.label()
     );
-    let db = Db::create(&cfg.out_dir.join("db"), schema()).expect("create store");
+    let db = Db::create(&cfg.out_dir.join("db"), Ledger).expect("create store");
     corpus::load_bumbledb(&db, cfg.gen).expect("load bumbledb");
     let (conn, _) =
         corpus::load_sqlite(&cfg.out_dir.join("oracle.sqlite"), cfg.gen).expect("load oracle");
@@ -92,9 +92,9 @@ pub(super) fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
 pub(super) fn load_target_stores(
     dir: &std::path::Path,
     cfg: crate::gen::GenConfig,
-) -> (Db<'static>, rusqlite::Connection) {
+) -> (Db<target::Target>, rusqlite::Connection) {
     let _ = std::fs::remove_dir_all(dir);
-    let db = Db::create(dir, target::schema()).expect("create target store");
+    let db = Db::create(dir, target::Target).expect("create target store");
     let conn = rusqlite::Connection::open_in_memory().expect("target oracle");
     for statement in sqlmap::schema_ddl(target::schema()) {
         conn.execute(&statement, []).expect("target ddl");
@@ -156,7 +156,7 @@ pub(super) fn load_target_stores(
 /// `ImportBatch` rows naming entries in that slice
 /// (`target::import_batch_entry` — row `k` names entry `3k + 1`), so
 /// every commit's final state satisfies both `==` directions.
-fn load_du_cluster(db: &Db<'_>, cfg: crate::gen::GenConfig) {
+fn load_du_cluster(db: &Db<target::Target>, cfg: crate::gen::GenConfig) {
     const CHUNK: u64 = 4096;
     let domains = target::Domains::of(cfg.scale);
     let entries = target::corpus_rows(&domains, target::ids::JOURNAL_ENTRY);
@@ -197,7 +197,7 @@ fn load_du_cluster(db: &Db<'_>, cfg: crate::gen::GenConfig) {
 /// As [`run`].
 pub fn run_prepared(
     cfg: &VerifyConfig,
-    db: &Db<'_>,
+    db: &Db<Ledger>,
     conn: &rusqlite::Connection,
     override_sql: impl Fn(&str) -> Option<String>,
 ) -> Result<VerifyReport, VerifyFailure> {

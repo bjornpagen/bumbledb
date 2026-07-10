@@ -9,7 +9,7 @@ use bumbledb::{Db, RelationId, Value};
 use rusqlite::Connection;
 
 use crate::gen::{relation_rows, GenConfig, Sizes};
-use crate::schema::{ids, schema};
+use crate::schema::{ids, schema, Ledger};
 use crate::sqlmap;
 
 /// One load's outcome.
@@ -37,7 +37,7 @@ fn load_stats(facts: u64, wall: Duration) -> LoadStats {
 ///
 /// Engine errors from `bulk_load` (dropping the committed count into the
 /// message — a corpus load has no resume story; regenerate).
-pub fn load_bumbledb(db: &Db<'_>, cfg: GenConfig) -> Result<LoadStats, bumbledb::Error> {
+pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbledb::Error> {
     let start = Instant::now();
     let mut facts = 0u64;
     for rel in 0..ids::RELATIONS {
@@ -156,7 +156,7 @@ pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection,
 /// # Panics
 ///
 /// On any inequality — this is test/verify support, not a soft check.
-pub fn assert_loaded_equal(db: &Db<'_>, conn: &Connection, cfg: GenConfig) {
+pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
     let schema = schema();
     let sizes = Sizes::of(cfg.scale);
     for rel in 0..ids::RELATIONS {
@@ -224,7 +224,7 @@ mod tests {
             seed: 1,
             scale: Scale::S,
         };
-        let db = Db::create(&dir.join("db"), schema()).expect("create");
+        let db = Db::create(&dir.join("db"), Ledger).expect("create");
         let ours = load_bumbledb(&db, cfg).expect("bumbledb load");
         let (conn, theirs) = load_sqlite(&dir.join("oracle.sqlite"), cfg).expect("sqlite load");
         assert_eq!(ours.facts, theirs.facts);

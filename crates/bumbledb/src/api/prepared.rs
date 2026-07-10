@@ -37,15 +37,40 @@ pub(crate) use self::build::prepare;
 use self::staleness::OccurrencePin;
 pub use self::staleness::{OccurrenceDrift, Staleness};
 
+/// One bound scalar payload (`docs/architecture/70-api.md` § facts and
+/// results): the bind surface's value vocabulary. Variable-width
+/// payloads are **borrowed** — the engine only hashes and probes them
+/// (a per-execution intern lookup), so owned payloads would buy
+/// nothing; `&str` also makes non-UTF-8 string params unrepresentable
+/// rather than checked. [`crate::ir::Value`] stays owned by decision:
+/// IR literals are long-lived query data; only the bind surface
+/// borrows (`docs/architecture/20-query-ir.md`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BindValue<'a> {
+    Bool(bool),
+    U64(u64),
+    I64(i64),
+    /// Declaration-order ordinal.
+    Enum(u8),
+    Str(&'a str),
+    Bytes(&'a [u8]),
+    /// A half-open `[start, end)`.
+    IntervalU64(u64, u64),
+    /// A half-open `[start, end)`.
+    IntervalI64(i64, i64),
+}
+
 /// One positional execution argument (`docs/architecture/70-api.md`
 /// § facts and results): params are supplied by `ParamId` position —
-/// scalars as values, param sets as slices. Bind checks count, scalar-
-/// vs-set usage against what validation recorded, and element types;
-/// set slices deduplicate into the prepared query's pooled storage
-/// (sets are sets — `docs/architecture/20-query-ir.md`).
+/// scalars as [`BindValue`]s, param sets as slices. Bind checks count,
+/// scalar-vs-set usage against what validation recorded, and element
+/// types; set slices deduplicate into the prepared query's pooled
+/// storage (sets are sets — `docs/architecture/20-query-ir.md`). Set
+/// elements stay [`crate::ir::Value`]: a set is long-lived host data
+/// re-bound by reference, so its elements never re-box per bind.
 #[derive(Debug, Clone)]
 pub enum ParamArg<'a> {
-    Scalar(crate::ir::Value),
+    Scalar(BindValue<'a>),
     Set(&'a [crate::ir::Value]),
 }
 
@@ -122,14 +147,17 @@ pub struct Row<'a> {
 
 /// The reusable execution object. `!Sync` by construction (interior
 /// scratch); executes from one thread at a time; owns its scratch.
+/// Carries the preparing database's schema typestate `S`, so it executes
+/// only against same-schema snapshots (the same-environment check stays
+/// a runtime guard — `env_instance`).
 ///
 /// Not shareable across threads:
 ///
 /// ```compile_fail
 /// fn require_sync<T: Sync>() {}
-/// require_sync::<bumbledb::PreparedQuery<'static>>();
+/// require_sync::<bumbledb::PreparedQuery<'static, ()>>();
 /// ```
-pub struct PreparedQuery<'s> {
+pub struct PreparedQuery<'s, S> {
     schema: &'s Schema,
     /// The preparing environment's process-distinct identity: plan,
     /// statistics, and view memo all belong to it, so execution against
@@ -194,9 +222,14 @@ pub struct PreparedQuery<'s> {
     /// and the stats surface, never by execution. Empty for guard
     /// probes (classification precedes statistics; nothing is read).
     pinned: Box<[OccurrencePin]>,
-    /// Marker: a prepared query is single-threaded scratch.
-    _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
+    /// Marker: a prepared query is single-threaded scratch (`Cell` makes
+    /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
+    /// independent of `S`).
+    marker: std::marker::PhantomData<PreparedMarker<S>>,
 }
+
+/// [`PreparedQuery`]'s phantom payload: `!Sync` scratch pinned to `S`.
+type PreparedMarker<S> = (std::cell::Cell<()>, fn() -> S);
 
 /// How many (generation, resolved residual filters) bindings each
 /// occurrence memoizes: the active one plus [`PARKED_SLOTS`] parked.

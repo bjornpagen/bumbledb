@@ -11,11 +11,13 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
-use bumbledb::{Db, Error, Fact, ParamArg, ResultBuffer, ResultValue, Value};
+use bumbledb::{BindValue, Db, Error, Fact, ParamArg, ResultBuffer, ResultValue, Value};
 
 mod common;
 
 bumbledb::schema! {
+    pub Ledger;
+
     relation Alpha {
         id: u64 as AlphaId, serial,
         beta: u64 as BetaId,
@@ -54,7 +56,7 @@ bumbledb::schema! {
 #[test]
 fn cyclic_containments_insert_in_one_transaction() {
     let dir = common::TempDir::new("edge-cyclic");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
         tx.insert(&Alpha {
             id: AlphaId(1),
@@ -91,17 +93,21 @@ fn cyclic_containments_insert_in_one_transaction() {
 #[test]
 fn empty_strings_and_bytes_round_trip() {
     let dir = common::TempDir::new("edge-empty-intern");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), Ledger).expect("create");
     let original = Blob {
         id: BlobId(1),
-        payload: Vec::new(),
-        name: String::new(),
+        payload: &[],
+        name: "",
     };
     db.write(|tx| tx.insert(&original)).expect("write");
-    let back: Vec<Blob> = db
-        .read(|snap| snap.scan_facts::<Blob>()?.collect())
-        .expect("scan");
-    assert_eq!(back, vec![original]);
+    // The scanned views borrow the snapshot, so the comparison happens
+    // inside the read closure.
+    db.read(|snap| {
+        let back: Vec<Blob> = snap.scan_facts()?.collect::<Result<_, _>>()?;
+        assert_eq!(back, vec![original.clone()]);
+        Ok(())
+    })
+    .expect("scan");
 }
 
 /// An explicit `u64::MAX` serial exhausts the generator through the
@@ -109,7 +115,7 @@ fn empty_strings_and_bytes_round_trip() {
 #[test]
 fn explicit_max_serial_exhausts_the_generator() {
     let dir = common::TempDir::new("edge-serial-max");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
         tx.insert(&Node {
             id: NodeId(u64::MAX),
@@ -141,11 +147,9 @@ fn wide_enum_through_commit_and_scan() {
             }],
         }],
         statements: vec![],
-    }
-    .validate()
-    .expect("256 variants are legal");
+    };
     let dir = common::TempDir::new("edge-wide-enum");
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), schema).expect("create");
     db.write(|tx| {
         tx.insert_dyn(RelationId(0), &[Value::Enum(0)])?;
         tx.insert_dyn(RelationId(0), &[Value::Enum(255)])?;
@@ -183,11 +187,9 @@ fn wide_enum_through_commit_and_scan() {
             ],
         }],
         statements: vec![],
-    }
-    .validate()
-    .expect("valid");
+    };
     let dir2 = common::TempDir::new("edge-enum-bind");
-    let db2 = Db::create(dir2.path(), &narrow).expect("create");
+    let db2 = Db::create(dir2.path(), narrow).expect("create");
     db2.write(|tx| {
         tx.insert_dyn(RelationId(0), &[Value::Enum(1), Value::U64(3)])
             .map(|_| ())
@@ -208,7 +210,7 @@ fn wide_enum_through_commit_and_scan() {
     let mut prepared = db2.prepare(&query).expect("prepare");
     let err = db2
         .read(|snap| {
-            snap.execute_collect(&mut prepared, &[Value::Enum(5)])
+            snap.execute_collect(&mut prepared, &[BindValue::Enum(5)])
                 .map(|_| ())
         })
         .unwrap_err();
@@ -280,13 +282,11 @@ fn one_byte_compound_guards() {
                 },
             },
         ],
-    }
-    .validate()
-    .expect("valid");
+    };
     let (switch, watcher) = (RelationId(0), RelationId(1));
 
     let dir = common::TempDir::new("edge-byte-guards");
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), schema).expect("create");
     db.write(|tx| {
         tx.insert_dyn(switch, &[Value::Enum(1), Value::Bool(true)])?;
         tx.insert_dyn(watcher, &[Value::Enum(1), Value::Bool(true), Value::U64(7)])?;
@@ -323,7 +323,7 @@ fn one_byte_compound_guards() {
 #[test]
 fn zero_binding_gate_with_global_count() {
     let dir = common::TempDir::new("edge-gate-count");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
         tx.insert(&Node {
             id: NodeId(1),
@@ -364,12 +364,8 @@ fn zero_binding_gate_with_global_count() {
         .expect("execute");
     assert!(rows.is_empty(), "an empty gate empties the query");
 
-    db.write(|tx| {
-        tx.insert(&Gate {
-            tag: "open".to_owned(),
-        })
-    })
-    .expect("open the gate");
+    db.write(|tx| tx.insert(&Gate { tag: "open" }))
+        .expect("open the gate");
     let rows = db
         .read(|snap| snap.execute_collect(&mut prepared, &[]))
         .expect("execute");
@@ -404,7 +400,7 @@ fn mixed_params_query() -> Query {
 #[allow(clippy::too_many_lines)] // the bind matrix: one case per arm, linear
 fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     let dir = common::TempDir::new("edge-bind-matrix");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), Ledger).expect("create");
     let ids = db
         .write(|tx| {
             let mut ids = Vec::new();
@@ -420,7 +416,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
                     id,
                     account,
                     amount,
-                    memo: memo.to_owned(),
+                    memo,
                 })?;
                 ids.push(id);
             }
@@ -430,14 +426,12 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
 
     let mut prepared = db.prepare(&mixed_params_query()).expect("prepare");
     db.read(|snap| {
-        let rent = Value::String(Box::from(&b"rent"[..]));
-
         // A valid mixed bind — two scalars, one deduplicated set —
         // executes through both the reusable-buffer and collect paths.
         let args = [
-            ParamArg::Scalar(Value::I64(5)),
+            ParamArg::Scalar(BindValue::I64(5)),
             ParamArg::Set(&[Value::U64(10), Value::U64(11), Value::U64(11)]),
-            ParamArg::Scalar(rent.clone()),
+            ParamArg::Scalar(BindValue::Str("rent")),
         ];
         let mut out = ResultBuffer::new();
         snap.execute_args(&mut prepared, &args, &mut out)?;
@@ -463,9 +457,9 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
             .execute_collect_args(
                 &mut prepared,
                 &[
-                    ParamArg::Scalar(Value::I64(5)),
-                    ParamArg::Scalar(Value::U64(10)),
-                    ParamArg::Scalar(rent.clone()),
+                    ParamArg::Scalar(BindValue::I64(5)),
+                    ParamArg::Scalar(BindValue::U64(10)),
+                    ParamArg::Scalar(BindValue::Str("rent")),
                 ],
             )
             .unwrap_err();
@@ -481,7 +475,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
                 &[
                     ParamArg::Set(&[Value::I64(5)]),
                     ParamArg::Set(&[Value::U64(10)]),
-                    ParamArg::Scalar(rent.clone()),
+                    ParamArg::Scalar(BindValue::Str("rent")),
                 ],
             )
             .unwrap_err();
@@ -495,9 +489,9 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
             .execute_collect_args(
                 &mut prepared,
                 &[
-                    ParamArg::Scalar(Value::I64(5)),
+                    ParamArg::Scalar(BindValue::I64(5)),
                     ParamArg::Set(&[Value::U64(10), Value::I64(3)]),
-                    ParamArg::Scalar(rent.clone()),
+                    ParamArg::Scalar(BindValue::Str("rent")),
                 ],
             )
             .unwrap_err();

@@ -13,6 +13,8 @@ use super::{mix, Scenario, ScenarioQuery};
 use crate::gen::Rng;
 
 bumbledb::schema! {
+    pub Graph;
+
     relation Node {
         id: u64 as GNodeId, serial,
         kind: enum NodeKind { User, Bot, Org, Page, Group },
@@ -30,6 +32,24 @@ bumbledb::schema! {
 }
 
 /// Relation ids by declaration order.
+/// The validated scenario schema, memoized for the inspection surfaces
+/// (DDL rendering, typing); the store is created from [`Graph`]'s
+/// descriptor (`scenarios::load`).
+///
+/// # Panics
+///
+/// Never in practice: the declared scenario schema is valid.
+pub fn schema() -> &'static bumbledb::Schema {
+    use bumbledb::SchemaDef as _;
+    static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        Graph
+            .descriptor()
+            .validate()
+            .expect("the scenario schema is valid")
+    })
+}
+
 pub mod ids {
     use bumbledb::RelationId;
     pub const NODE: RelationId = RelationId(0);
@@ -273,6 +293,7 @@ pub fn scenario() -> Scenario {
         name: "graph",
         about: "power-law directed graph: multi-hop fan-out, cycles",
         schema,
+        descriptor: || bumbledb::SchemaDef::descriptor(Graph),
         rows: |seed| {
             vec![
                 (

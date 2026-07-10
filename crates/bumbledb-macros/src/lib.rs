@@ -6,6 +6,8 @@
 //!
 //! ```text
 //! schema! {
+//!     pub Ledger;
+//!
 //!     relation Holder  { id: u64 as HolderId, serial, name: str }
 //!     relation Account {
 //!         id:     u64 as AccountId, serial,
@@ -21,6 +23,12 @@
 //! }
 //! ```
 //!
+//! The header `pub Ledger;` is the invocation's first item and names the
+//! schema: it expands to `pub struct Ledger;` implementing
+//! `bumbledb::SchemaDef`, the value `Db::create(path, Ledger)` takes and
+//! the typestate `Db<Ledger>` carries. Multiple schemas coexist in one
+//! module — their headers disambiguate.
+//!
 //! Types: `bool`, `u64`, `i64`, `str`, `bytes`, inline `enum Name { .. }`
 //! (the name names the generated Rust enum only — engine identity is the
 //! structural variant list), `interval<i64>`, `interval<u64>`. `as NewType`
@@ -35,12 +43,16 @@
 //! the same invocation, so variant names resolve to ordinals here); interval
 //! literals are written `start..end`, half-open.
 //!
+//! Generated fact structs borrow their variable-width fields (`str` →
+//! `&'a str`, `bytes` → `&'a [u8]`): a struct with any variable-width
+//! field gains one lifetime; all-fixed-width structs stay lifetime-free.
+//!
 //! The macro validates only its own grammar plus name-to-id resolution
 //! (both are compile errors at the call site): expansion emits
 //! `SchemaDescriptor` construction directly, ids resolved at expansion
 //! time from declaration order. Everything semantic beyond names surfaces
-//! at the first `schema()` call (memoized in a `OnceLock`) as a panic
-//! carrying the typed `SchemaError`'s rendering.
+//! as the typed `SchemaError` from `Db::create`/`Db::open`, where the
+//! descriptor is validated.
 
 use proc_macro::{Delimiter, TokenStream, TokenTree};
 use std::collections::BTreeMap;
@@ -145,9 +157,11 @@ enum Statement {
     },
 }
 
-/// The whole parsed invocation: relation blocks plus dependency statements,
-/// each list in source order.
+/// The whole parsed invocation: the header's schema name, relation blocks,
+/// and dependency statements, each list in source order.
 struct SchemaAst {
+    /// The `pub Name;` header's name — the emitted `SchemaDef` unit struct.
+    name: String,
     relations: Vec<Relation>,
     statements: Vec<Statement>,
 }
@@ -474,14 +488,24 @@ fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<S
     expect_punct(tokens, ';');
 }
 
-/// Parses the whole `schema!` body: relation blocks and dependency
-/// statements, in any order.
+/// Parses the whole `schema!` body: the `pub Name;` header first, then
+/// relation blocks and dependency statements in any order.
 fn parse_schema(input: TokenStream) -> SchemaAst {
+    let mut tokens = input.into_iter().peekable();
+    match tokens.next() {
+        Some(TokenTree::Ident(ident)) if ident.to_string() == "pub" => {}
+        other => panic!(
+            "schema!: the first item names the schema — `pub Name;` — found {other:?} \
+             (docs/architecture/70-api.md)"
+        ),
+    }
+    let name = expect_ident(&mut tokens, "the schema name");
+    expect_punct(&mut tokens, ';');
     let mut schema = SchemaAst {
+        name,
         relations: Vec::new(),
         statements: Vec::new(),
     };
-    let mut tokens = input.into_iter().peekable();
     while tokens.peek().is_some() {
         let ident = expect_ident(&mut tokens, "`relation` or a statement");
         if ident == "relation" {
@@ -495,12 +519,13 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
     schema
 }
 
-/// The declarative schema surface: expands to `fn schema()`, host-side
-/// newtypes and enums, and one typed fact struct per relation with
-/// `encode_write`/`encode_delete`/`encode_read`/`decode` boundaries. The
-/// expansion constructs `SchemaDescriptor` directly — ids resolved here
-/// from declaration order — and semantic validation runs at the first
-/// `schema()` call.
+/// The declarative schema surface: expands to the header's `SchemaDef`
+/// unit struct, host-side newtypes and enums, and one typed fact struct
+/// per relation with `encode_write`/`encode_delete`/`encode_read`/`decode`
+/// boundaries. The expansion constructs `SchemaDescriptor` directly — ids
+/// resolved here from declaration order — and semantic validation runs
+/// where the definition is consumed (`Db::create`/`Db::open`, as the
+/// typed `SchemaError`).
 ///
 /// # Panics
 ///
@@ -511,11 +536,11 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
 pub fn schema(input: TokenStream) -> TokenStream {
     let schema = parse_schema(input);
     let mut out = String::new();
-    emit_schema_fn(&mut out, &schema);
+    emit_schema_def(&mut out, &schema);
     emit_newtypes(&mut out, &schema.relations);
     emit_enums(&mut out, &schema.relations);
     for (index, relation) in schema.relations.iter().enumerate() {
-        emit_fact_struct(&mut out, index, relation);
+        emit_fact_struct(&mut out, &schema.name, index, relation);
     }
     out.parse().expect("schema!: generated code parses")
 }
@@ -665,7 +690,7 @@ fn side_expr(relations: &[Relation], side: &Side) -> String {
     )
 }
 
-fn emit_schema_fn(out: &mut String, schema: &SchemaAst) {
+fn emit_schema_def(out: &mut String, schema: &SchemaAst) {
     let mut relations = String::new();
     for relation in &schema.relations {
         let mut fields = String::new();
@@ -715,20 +740,21 @@ fn emit_schema_fn(out: &mut String, schema: &SchemaAst) {
             }
         }
     }
+    let name = &schema.name;
     let _ = write!(
         out,
-        "/// The compiled schema (memoized; declaration errors surface as \
-         the typed `SchemaError` at the first call).\n\
-         pub fn schema() -> &'static ::bumbledb::schema::Schema {{\n\
-             static SCHEMA: ::std::sync::OnceLock<::bumbledb::schema::Schema> = ::std::sync::OnceLock::new();\n\
-             SCHEMA.get_or_init(|| {{\n\
+        "/// The `{name}` schema definition: the value `Db::create`/`Db::open` \
+         take and the typestate `Db<{name}>` carries. Validation runs at \
+         open, surfacing declaration errors as the typed `SchemaError`.\n\
+         #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
+         pub struct {name};\n\
+         impl ::bumbledb::SchemaDef for {name} {{\n\
+             fn descriptor(self) -> ::bumbledb::schema::SchemaDescriptor {{\n\
                  ::bumbledb::schema::SchemaDescriptor {{\n\
                      relations: ::std::vec![{relations}],\n\
                      statements: ::std::vec![{statements}],\n\
                  }}\n\
-                 .validate()\n\
-                 .unwrap_or_else(|e| panic!(\"schema! declaration is invalid: {{e}}\"))\n\
-             }})\n\
+             }}\n\
          }}\n",
     );
 }
@@ -811,6 +837,12 @@ fn emit_enums(out: &mut String, relations: &[Relation]) {
     }
 }
 
+/// Whether the field is variable-width — borrowed in the generated struct
+/// (`&'a str` / `&'a [u8]`), the reason its struct gains a lifetime.
+fn is_borrowed(field: &Field) -> bool {
+    matches!(field.ty, FieldTy::Str | FieldTy::Bytes)
+}
+
 fn rust_field_ty(field: &Field) -> String {
     if let Some(newtype) = &field.newtype {
         return newtype.clone();
@@ -819,8 +851,8 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::Bool => "bool".to_owned(),
         FieldTy::U64 => "u64".to_owned(),
         FieldTy::I64 => "i64".to_owned(),
-        FieldTy::Str => "String".to_owned(),
-        FieldTy::Bytes => "Vec<u8>".to_owned(),
+        FieldTy::Str => "&'a str".to_owned(),
+        FieldTy::Bytes => "&'a [u8]".to_owned(),
         FieldTy::Enum { name, .. } => name.clone(),
         FieldTy::Interval(element) => format!("::bumbledb::Interval<{}>", element.rust()),
     }
@@ -859,16 +891,17 @@ fn encode_exprs(field: &Field) -> (String, String, String) {
 /// selects the plumbing functions (`intern_{family}_{write,delete,read}`)
 /// and `variant` the `ValueRef` constructor. Delete and read share the
 /// miss shape — `Ok(false)`, the fact provably absent — differing only
-/// in context binding.
+/// in context binding. The field is already a borrow (`&'a str` /
+/// `&'a [u8]`), so it passes straight through.
 fn interned_exprs(family: &str, variant: &str, name: &str) -> (String, String, String) {
     let miss = |boundary: &str, ctx: &str| {
         format!(
-            "match ::bumbledb::__private::intern_{family}_{boundary}({ctx}, &self.{name})? {{ Some(id) => ::bumbledb::__private::ValueRef::{variant}(id), None => return Ok(false) }}"
+            "match ::bumbledb::__private::intern_{family}_{boundary}({ctx}, self.{name})? {{ Some(id) => ::bumbledb::__private::ValueRef::{variant}(id), None => return Ok(false) }}"
         )
     };
     (
         format!(
-            "::bumbledb::__private::ValueRef::{variant}(::bumbledb::__private::intern_{family}_write(tx, &self.{name})?)"
+            "::bumbledb::__private::ValueRef::{variant}(::bumbledb::__private::intern_{family}_write(tx, self.{name})?)"
         ),
         miss("delete", "tx"),
         miss("read", "snap"),
@@ -929,8 +962,18 @@ fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
     }
 }
 
-fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
+fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation: &Relation) {
     let name = &relation.name;
+    // A struct with any variable-width field gains one lifetime: those
+    // fields are borrowed (`&'a str` / `&'a [u8]`) — from the host at
+    // insert, from the resolver at decode. All-fixed-width structs stay
+    // lifetime-free and implement `Fact<'a>` for every `'a`.
+    let borrowed = relation.fields.iter().any(is_borrowed);
+    let (struct_params, self_ty) = if borrowed {
+        ("<'a>", format!("{name}<'a>"))
+    } else {
+        ("", name.clone())
+    };
     let mut struct_fields = String::new();
     for field in &relation.fields {
         let _ = write!(
@@ -962,28 +1005,29 @@ fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
     let _ = write!(
         out,
         "#[derive(Debug, Clone, PartialEq)]\n\
-         pub struct {name} {{ {struct_fields} }}\n\
-         impl ::bumbledb::Fact for {name} {{\n\
+         pub struct {name}{struct_params} {{ {struct_fields} }}\n\
+         impl<'a> ::bumbledb::Fact<'a> for {self_ty} {{\n\
+             type Schema = {schema_name};\n\
              const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
-             fn encode_write(&self, tx: &mut ::bumbledb::WriteTx<'_>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<()> {{\n\
+             fn encode_write(&self, tx: &mut ::bumbledb::WriteTx<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<()> {{\n\
                  let values = [{write_values}];\n\
-                 ::bumbledb::__private::encode_write_fact(tx, Self::RELATION, &values, out);\n\
+                 ::bumbledb::__private::encode_write_fact(tx, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
                  Ok(())\n\
              }}\n\
-             fn encode_delete(&self, tx: &::bumbledb::WriteTx<'_>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+             fn encode_delete(&self, tx: &::bumbledb::WriteTx<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
                  let values = [{delete_values}];\n\
-                 ::bumbledb::__private::encode_write_fact(tx, Self::RELATION, &values, out);\n\
+                 ::bumbledb::__private::encode_write_fact(tx, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
                  Ok(true)\n\
              }}\n\
-             fn encode_read(&self, snap: &::bumbledb::Snapshot<'_>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+             fn encode_read(&self, snap: &::bumbledb::Snapshot<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
                  let values = [{read_values}];\n\
-                 ::bumbledb::__private::encode_read_fact(snap, Self::RELATION, &values, out);\n\
+                 ::bumbledb::__private::encode_read_fact(snap, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
                  Ok(true)\n\
              }}\n\
-             fn decode(snap: &::bumbledb::Snapshot<'_>, fact: &[u8]) -> ::bumbledb::Result<Self> {{\n\
+             fn decode(snap: &'a ::bumbledb::Snapshot<'_, {schema_name}>, fact: &[u8]) -> ::bumbledb::Result<Self> {{\n\
                  Ok(Self {{ {decode_fields} }})\n\
              }}\n\
-             fn decode_write(tx: &::bumbledb::WriteTx<'_>, fact: &[u8]) -> ::bumbledb::Result<Self> {{\n\
+             fn decode_write(tx: &'a ::bumbledb::WriteTx<'_, {schema_name}>, fact: &[u8]) -> ::bumbledb::Result<Self> {{\n\
                  Ok(Self {{ {decode_write_fields} }})\n\
              }}\n\
          }}\n",
@@ -997,6 +1041,7 @@ fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
         let _ = write!(
             out,
             "impl ::bumbledb::Serial for {newtype} {{\n\
+                 type Schema = {schema_name};\n\
                  const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
                  const FIELD: ::bumbledb::schema::FieldId = ::bumbledb::schema::FieldId({field_idx});\n\
                  fn from_serial(raw: u64) -> Self {{ Self(raw) }}\n\
@@ -1017,7 +1062,7 @@ fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
             .expect("parser demands `as NewType` on serial fields");
         let _ = write!(
             out,
-            "impl ::bumbledb::SerialKeyed for {name} {{\n\
+            "impl<'a> ::bumbledb::SerialKeyed<'a> for {self_ty} {{\n\
                  type SerialKey = {newtype};\n\
              }}\n",
         );

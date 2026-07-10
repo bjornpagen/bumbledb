@@ -225,6 +225,34 @@ pub struct SchemaDescriptor {
     pub statements: Vec<StatementDescriptor>,
 }
 
+/// A named schema definition: the value [`crate::Db::create`] and
+/// [`crate::Db::open`] take, and the type that names the database in
+/// [`crate::Db<S>`]'s typestate. The `schema!` macro emits one unit
+/// struct per invocation (`pub Ledger;` → `pub struct Ledger;` with this
+/// impl), so a fact of schema A cannot reach a database of schema B —
+/// the mismatch is a compile error, not a lucky width check.
+///
+/// Validation happens where the definition is consumed:
+/// `Db::create`/`open` run [`SchemaDescriptor::validate`] and surface an
+/// invalid declaration as the typed [`crate::error::SchemaError`] — no
+/// panic path, no memoization.
+///
+/// [`SchemaDescriptor`] implements the trait as itself: a runtime-built
+/// descriptor (ETL tooling, test fixtures) is its own definition. All
+/// such databases share the `Db<SchemaDescriptor>` state — dynamic
+/// schemas get the dynamic surface's runtime checks, not typestate.
+pub trait SchemaDef: Sized {
+    /// The schema as declared. Consumes the definition value —
+    /// implementers are unit structs or one-shot carriers.
+    fn descriptor(self) -> SchemaDescriptor;
+}
+
+impl SchemaDef for SchemaDescriptor {
+    fn descriptor(self) -> SchemaDescriptor {
+        self
+    }
+}
+
 impl SchemaDescriptor {
     /// The materialized statement list — the one owner of the ordering rule
     /// pinned by the fingerprint (`docs/architecture/10-data-model.md`,

@@ -16,7 +16,8 @@ pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores,
     std::fs::create_dir_all(&root).map_err(|e| format!("scenario dir: {e}"))?;
     let schema = (scenario.schema)();
 
-    let db = Db::create(&root.join("db"), schema).map_err(|e| format!("create db: {e:?}"))?;
+    let db = Db::create(&root.join("db"), (scenario.descriptor)())
+        .map_err(|e| format!("create db: {e:?}"))?;
     let conn = Connection::open(root.join("oracle.sqlite")).map_err(|e| format!("sqlite: {e}"))?;
     corpus::configure_sqlite(&conn).map_err(|e| format!("configure sqlite: {e}"))?;
     for statement in sqlmap::schema_ddl(schema) {

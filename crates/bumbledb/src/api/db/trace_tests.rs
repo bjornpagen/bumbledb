@@ -7,7 +7,7 @@ use crate::schema::{
 };
 use crate::testutil::TempDir;
 
-fn schema() -> Schema {
+fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             name: "R".into(),
@@ -19,8 +19,6 @@ fn schema() -> Schema {
         }],
         statements: vec![],
     }
-    .validate()
-    .expect("fixture")
 }
 
 const R: RelationId = RelationId(0);
@@ -33,8 +31,7 @@ fn names(events: &[obs::TraceEvent]) -> Vec<&'static str> {
 #[test]
 fn write_path_traces_phases_with_counts() {
     let dir = TempDir::new("db-trace-write");
-    let schema = schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
         tx.insert_dyn(R, &[Value::U64(99)])?;
         Ok(())
@@ -150,11 +147,9 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
                 },
             },
         ],
-    }
-    .validate()
-    .expect("fixture");
+    };
     let dir = TempDir::new("db-trace-redundant-insert");
-    let db = Db::create(dir.path(), &containment_schema).expect("create");
+    let db = Db::create(dir.path(), containment_schema).expect("create");
     db.write(|tx| {
         tx.insert_dyn(TARGET, &[Value::U64(5)])?;
         tx.insert_dyn(CLAIM, &[Value::U64(5)])?;
@@ -217,14 +212,14 @@ fn a_noop_serial_commit_keeps_the_view_memo_valid() {
             ],
         }],
         statements: vec![],
-    }
-    .validate()
-    .expect("fixture");
+    };
     let dir = TempDir::new("db-trace-noop-serial");
-    let db = Db::create(dir.path(), &serial_schema).expect("create");
+    let db = Db::create(dir.path(), serial_schema.clone()).expect("create");
     let rel = RelationId(0);
     // Resolve once, mint per row: the witness is the untyped mint handle.
     let id_field = serial_schema
+        .validate()
+        .expect("fixture")
         .serial_field(rel, FieldId(0))
         .expect("serial field");
     db.write(|tx| {
@@ -282,8 +277,7 @@ fn a_noop_serial_commit_keeps_the_view_memo_valid() {
 #[test]
 fn bulk_load_traces_one_span_per_chunk() {
     let dir = TempDir::new("db-trace-bulk");
-    let schema = schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), schema()).expect("create");
     // 2.5 chunks: 4096 + 4096 + 2048.
     let n = 4096 * 2 + 2048;
     obs::start_capture();
@@ -304,8 +298,7 @@ fn bulk_load_traces_one_span_per_chunk() {
 #[test]
 fn an_aborting_write_records_no_lmdb_commit() {
     let dir = TempDir::new("db-trace-abort");
-    let schema = schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), schema()).expect("create");
     obs::start_capture();
     let result: Result<()> = db.write(|tx| {
         tx.insert_dyn(R, &[Value::U64(1)])?;

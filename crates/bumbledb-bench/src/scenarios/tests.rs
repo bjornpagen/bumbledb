@@ -11,7 +11,7 @@ fn every_scenario_query_prepares_and_translates() {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let schema = (scenario.schema)();
-        let db = Db::create(&dir, schema).expect("create");
+        let db = Db::create(&dir, (scenario.descriptor)()).expect("create");
         for sq in (scenario.queries)() {
             db.prepare(&(sq.query)())
                 .unwrap_or_else(|e| panic!("{}/{}: validation: {e:?}", scenario.name, sq.name));

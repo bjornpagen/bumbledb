@@ -1,15 +1,14 @@
-use super::{ExecPlan, PreparedQuery, ResultBuffer, ValueType};
+use super::{BindValue, ExecPlan, PreparedQuery, ResultBuffer, ValueType};
 
 use crate::api::stats::ExecutionStats;
 use crate::error::Result;
 use crate::exec::explain::{CountingCounters, Report};
 use crate::image::cache::ImageCache;
-use crate::ir::Value;
 use crate::storage::env::ReadTxn;
 
 use super::finalize::finalize;
 
-impl PreparedQuery<'_> {
+impl<S> PreparedQuery<'_, S> {
     /// EXPLAIN (docs/architecture/40-execution.md): executes the query with counting instrumentation
     /// (ANALYZE semantics) and returns the rows alongside the rendered
     /// report.
@@ -25,7 +24,7 @@ impl PreparedQuery<'_> {
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        params: &[Value],
+        params: &[BindValue<'_>],
     ) -> Result<(ResultBuffer, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
         let report = match &self.plan {
@@ -51,7 +50,7 @@ impl PreparedQuery<'_> {
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        params: &[Value],
+        params: &[BindValue<'_>],
     ) -> Result<(ResultBuffer, ExecutionStats)> {
         self.check_snapshot(txn)?;
         let mut out = ResultBuffer::new();

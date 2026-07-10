@@ -32,7 +32,7 @@ const CLAIM_BOOKING: StatementId = StatementId(3);
 /// Claim(room, span) ⊆ Booking(room, during) — the coverage-form
 /// containment (the target's pointwise key carries the interval).
 #[allow(clippy::too_many_lines)] // one descriptor literal, four relations
-fn schema() -> Schema {
+fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -133,8 +133,6 @@ fn schema() -> Schema {
             },
         ],
     }
-    .validate()
-    .expect("valid fixture")
 }
 
 /// A committed store: holders 1 "alice" (row 0) and 2 "bob" (row 1, then
@@ -143,10 +141,9 @@ fn schema() -> Schema {
 /// (inside σ — one `R` edge) and (2, savings) at row 1 (outside σ — no
 /// edge), and claim (7, [2,8)) at row 0 (covered by booking (7, [0,10))).
 /// One insert per commit pins the row ids.
-fn fixture(tag: &str) -> (TempDir, Db<'static>) {
-    let schema = Box::leak(Box::new(schema()));
+fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), schema).expect("create");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let facts: &[(RelationId, Vec<Value>)] = &[
         (
             HOLDER,
@@ -180,13 +177,13 @@ fn fixture(tag: &str) -> (TempDir, Db<'static>) {
 /// The test-only raw-write handle: one LMDB write transaction over the
 /// open environment, bypassing the delta — exactly the desync injector
 /// the sweeps exist to catch.
-fn raw_write(db: &Db<'_>, f: impl FnOnce(&mut crate::storage::env::WriteTxn<'_>)) {
+fn raw_write(db: &Db<SchemaDescriptor>, f: impl FnOnce(&mut crate::storage::env::WriteTxn<'_>)) {
     let mut txn = db.env().write_txn().expect("raw txn");
     f(&mut txn);
     txn.commit().expect("raw commit");
 }
 
-fn booking_bytes(db: &Db<'_>, room: u64, start: u64, end: u64) -> Vec<u8> {
+fn booking_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> Vec<u8> {
     let mut out = Vec::new();
     encode_fact(
         &[ValueRef::U64(room), ValueRef::IntervalU64(start, end)],
@@ -204,7 +201,7 @@ fn booking_guard(room: u64, start: u64, end: u64) -> Vec<u8> {
     guard
 }
 
-fn account_bytes(db: &Db<'_>, holder: u64, kind: u8) -> Vec<u8> {
+fn account_bytes(db: &Db<SchemaDescriptor>, holder: u64, kind: u8) -> Vec<u8> {
     let mut out = Vec::new();
     encode_fact(
         &[ValueRef::U64(holder), ValueRef::Enum(kind)],
@@ -214,7 +211,7 @@ fn account_bytes(db: &Db<'_>, holder: u64, kind: u8) -> Vec<u8> {
     out
 }
 
-fn claim_bytes(db: &Db<'_>, room: u64, start: u64, end: u64) -> Vec<u8> {
+fn claim_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> Vec<u8> {
     let mut out = Vec::new();
     encode_fact(
         &[ValueRef::U64(room), ValueRef::IntervalU64(start, end)],
@@ -238,7 +235,7 @@ fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
 /// still requires it. (`R` rows: neither fixture target relation has
 /// outgoing statements, so there are none to remove.)
 fn delete_target_rows(
-    db: &Db<'_>,
+    db: &Db<SchemaDescriptor>,
     rel: RelationId,
     row_id: u64,
     guards: &[(StatementId, Vec<u8>)],

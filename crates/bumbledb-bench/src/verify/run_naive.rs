@@ -7,7 +7,7 @@ use crate::families::{self, scalar_draw, Draw};
 use crate::gen::{self, mandate_segments, Sizes, MANDATE_SEGMENTS};
 use crate::naive::differential::{self, Op};
 use crate::naive::{Delta, NaiveDb, ParamValue};
-use crate::schema::{ids, schema};
+use crate::schema::{ids, schema, Ledger};
 
 /// The unit-scale corpus of the naive lane: small enough for the
 /// brute-force model's nested loops, large enough that every family's
@@ -205,7 +205,7 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
 /// # Panics
 ///
 /// On tool-level invariant violations — never on a disagreement.
-pub(super) fn run_naive_slice(cfg: &VerifyConfig, run: &mut Run<'_>) {
+pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let sizes = unit_sizes();
     let mut ops = load_ops(cfg.gen.seed, &sizes);
     ops.extend(violating_ops(cfg.gen.seed, &sizes));
@@ -225,7 +225,7 @@ pub(super) fn run_naive_slice(cfg: &VerifyConfig, run: &mut Run<'_>) {
 
     let naive_dir = cfg.out_dir.join("naive-db");
     let _ = std::fs::remove_dir_all(&naive_dir);
-    let db = Db::create(&naive_dir, schema()).expect("create naive-slice store");
+    let db = Db::create(&naive_dir, Ledger).expect("create naive-slice store");
     let mut naive = NaiveDb::new(&bench_descriptor());
     eprintln!("verify: naive differential slice ({} ops)", ops.len());
     match differential::run(&db, &mut naive, &ops) {

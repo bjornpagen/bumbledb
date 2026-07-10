@@ -4,7 +4,7 @@ use super::{Case, Db, Run, VerifyConfig, EMPTY_STORE_RANDOM_CASES};
 use crate::families::set_bindings;
 use crate::gen::Rng;
 use crate::querygen::{self, target};
-use crate::schema::schema;
+use crate::schema::{schema, Ledger};
 use crate::translate::translate;
 use crate::{families, sqlmap};
 
@@ -23,10 +23,10 @@ use crate::{families, sqlmap};
 /// On tool-level invariant violations, including the structural gate
 /// check: the randomized slice must contain at least one gate-bearing
 /// query, so gate falsity is exercised by construction, not by luck.
-pub(super) fn run_empty_store(cfg: &VerifyConfig, run: &mut Run<'_>) {
+pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let empty_dir = cfg.out_dir.join("empty-db");
     let _ = std::fs::remove_dir_all(&empty_dir);
-    let empty_db = Db::create(&empty_dir, schema()).expect("create empty store");
+    let empty_db = Db::create(&empty_dir, Ledger).expect("create empty store");
     let empty_conn = rusqlite::Connection::open_in_memory().expect("empty oracle");
     for statement in sqlmap::ddl(schema()) {
         empty_conn.execute(&statement, []).expect("empty ddl");
@@ -64,7 +64,7 @@ pub(super) fn run_empty_store(cfg: &VerifyConfig, run: &mut Run<'_>) {
     // generated queries speak the target ledger).
     let empty_target_dir = cfg.out_dir.join("empty-target-db");
     let _ = std::fs::remove_dir_all(&empty_target_dir);
-    let empty_target = Db::create(&empty_target_dir, target::schema()).expect("empty target");
+    let empty_target = Db::create(&empty_target_dir, target::Target).expect("empty target");
     let target_conn = rusqlite::Connection::open_in_memory().expect("empty target oracle");
     for statement in sqlmap::schema_ddl(target::schema()) {
         target_conn

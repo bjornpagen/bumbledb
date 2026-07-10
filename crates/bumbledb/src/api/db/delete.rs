@@ -1,7 +1,7 @@
 use super::{Fact, WriteTx};
 use crate::error::Result;
 
-impl WriteTx<'_> {
+impl<S> WriteTx<'_, S> {
     /// Records a typed delete. Returns whether the final state changes (an
     /// idempotent no-op if the fact is absent).
     ///
@@ -15,7 +15,7 @@ impl WriteTx<'_> {
     /// # Errors
     ///
     /// As [`WriteTx::insert`].
-    pub fn delete<F: Fact>(&mut self, fact: &F) -> Result<bool> {
+    pub fn delete<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
         self.with_scratch(|tx, bytes| {
             if !fact.encode_delete(tx, bytes)? {
                 return Ok(false);

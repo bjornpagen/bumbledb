@@ -42,7 +42,7 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
     let mut out = ResultBuffer::new();
     // Hit: every cell decoded straight from the fact.
     prepared
-        .execute(&txn, &cache, &[crate::ir::Value::U64(2)], &mut out)
+        .execute(&txn, &cache, &[BindValue::U64(2)], &mut out)
         .expect("hit");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), ResultValue::U64(8));
@@ -50,12 +50,12 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
     assert_eq!(out.get(0, 2), ResultValue::I64(42));
     // Miss: clean empty buffer.
     prepared
-        .execute(&txn, &cache, &[crate::ir::Value::U64(999)], &mut out)
+        .execute(&txn, &cache, &[BindValue::U64(999)], &mut out)
         .expect("miss is empty, not an error");
     assert_eq!(out.len(), 0);
     // Param-type error: typed, before any probe.
     let err = prepared
-        .execute(&txn, &cache, &[crate::ir::Value::Bool(true)], &mut out)
+        .execute(&txn, &cache, &[BindValue::Bool(true)], &mut out)
         .expect_err("type mismatch");
     assert!(matches!(err, Error::ParamTypeMismatch { .. }), "{err:?}");
 }
@@ -94,7 +94,7 @@ fn a_guard_prepare_and_execute_build_no_image() {
     assert!(prepared.guard_finds.is_some(), "the fast lane classified");
     let mut out = ResultBuffer::new();
     prepared
-        .execute(&txn, &cache, &[crate::ir::Value::U64(1)], &mut out)
+        .execute(&txn, &cache, &[BindValue::U64(1)], &mut out)
         .expect("hit");
     assert_eq!(out.len(), 1);
     #[cfg(feature = "trace")]
@@ -466,7 +466,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
     assert!(matches!(prepared.plan, ExecPlan::GuardProbe(_)));
 
     let out = prepared
-        .execute_collect(&txn, &cache, &[Value::String(Box::from(&b"ghost"[..]))])
+        .execute_collect(&txn, &cache, &[BindValue::Str("ghost")])
         .expect("an intern miss is empty, not an error");
     assert_eq!(out.len(), 0);
     assert_eq!(
@@ -477,7 +477,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
 
     // The same prepared query hits once the key resolves.
     let out = prepared
-        .execute_collect(&txn, &cache, &[Value::String(Box::from(&b"alice"[..]))])
+        .execute_collect(&txn, &cache, &[BindValue::Str("alice")])
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), ResultValue::U64(7));

@@ -88,8 +88,11 @@ fn in_family_equals_the_union_of_per_element_executions() {
         // executions (results are sets, so union = sorted dedup).
         let mut union: Vec<(u64, i64)> = Vec::new();
         for element in &elements {
+            let Value::U64(account) = element else {
+                unreachable!("the elements are U64 accounts")
+            };
             let per = scalar_query
-                .execute_collect(&txn, &cache, std::slice::from_ref(element))
+                .execute_collect(&txn, &cache, &[BindValue::U64(*account)])
                 .expect("scalar execution");
             union.extend(id_amount_rows(&per));
         }
@@ -115,7 +118,7 @@ fn in_family_equals_the_union_of_per_element_executions() {
     // A scalar value where the set is expected is a precise bind-time
     // error (a ParamId is scalar or set, never both).
     let err = set_query
-        .execute_collect(&txn, &cache, &[Value::U64(7)])
+        .execute_collect(&txn, &cache, &[BindValue::U64(7)])
         .unwrap_err();
     assert!(matches!(err, Error::ParamSetExpected { param } if param.0 == 0));
 }
@@ -351,7 +354,7 @@ fn set_membership_matches_any_element() {
         out.sort_unstable();
         out
     };
-    let run = |prepared: &mut PreparedQuery<'_>, points: &[u64]| {
+    let run = |prepared: &mut PreparedQuery<'_, ()>, points: &[u64]| {
         let values: Vec<Value> = points.iter().map(|p| Value::U64(*p)).collect();
         let got = prepared
             .execute_collect_args(&txn, &cache, &[ParamArg::Set(&values)])
@@ -468,7 +471,7 @@ fn negated_set_bindings_reject_under_any_element() {
         predicates: vec![],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let run = |prepared: &mut PreparedQuery<'_>, kinds: &[u64]| {
+    let run = |prepared: &mut PreparedQuery<'_, ()>, kinds: &[u64]| {
         let values: Vec<Value> = kinds.iter().map(|k| Value::U64(*k)).collect();
         let got = prepared
             .execute_collect_args(&txn, &cache, &[ParamArg::Set(&values)])

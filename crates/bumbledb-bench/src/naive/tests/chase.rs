@@ -85,13 +85,12 @@ impl Drop for TempDir {
 /// One store pair over a fixture: the engine store and the model,
 /// loaded with the same single-commit delta (containment clusters
 /// insert together — judged on the final state, both sides).
-fn stores<'s>(
+fn stores(
     dir: &Path,
     descriptor: &SchemaDescriptor,
-    sealed: &'s bumbledb::Schema,
     inserts: Vec<(RelationId, Vec<Value>)>,
-) -> (Db<'s>, NaiveDb) {
-    let db = Db::create(dir, sealed).expect("create engine store");
+) -> (Db<SchemaDescriptor>, NaiveDb) {
+    let db = Db::create(dir, descriptor.clone()).expect("create engine store");
     let mut naive = NaiveDb::new(descriptor);
     let delta = Delta {
         deletes: vec![],
@@ -111,7 +110,7 @@ fn stores<'s>(
 /// The eliminated occurrences of the query's prepared plan, through the
 /// public profile surface (ANALYZE executes; the empty param list is
 /// every fixture query's).
-fn eliminated(db: &Db<'_>, query: &Query) -> Vec<bumbledb::EliminatedOccurrence> {
+fn eliminated(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::EliminatedOccurrence> {
     let mut prepared = db.prepare(query).expect("fixture queries validate");
     let (_, stats) = db
         .read(|snap| snap.profile(&mut prepared, &[]))
@@ -122,7 +121,7 @@ fn eliminated(db: &Db<'_>, query: &Query) -> Vec<bumbledb::EliminatedOccurrence>
 /// The dual run: chase-on, chase-off, and the model must produce one
 /// result set — with the marks asserted so neither equality is vacuous
 /// (on eliminates exactly `fallen`; off eliminates nothing).
-fn three_way(db: &Db<'_>, naive: &NaiveDb, query: &Query, fallen: &str) {
+fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: &str) {
     let on = engine_query(db, query, &[]);
     let off = with_chase_disabled(|| engine_query(db, query, &[]));
     let model = Rows::Ok(naive.query(query, &[]).expect("the model executes"));
@@ -197,8 +196,7 @@ fn walk_inserts() -> Vec<(RelationId, Vec<Value>)> {
 fn the_existence_walk_agrees_three_ways_on_both_sinks() {
     let dir = TempDir::new("walk");
     let descriptor = walk_descriptor();
-    let sealed = descriptor.clone().validate().expect("fixture validates");
-    let (db, naive) = stores(dir.path(), &descriptor, &sealed, walk_inserts());
+    let (db, naive) = stores(dir.path(), &descriptor, walk_inserts());
     let atoms = vec![
         atom(0, &[(0, var(0)), (1, var(1)), (2, var(2))]),
         atom(1, &[(0, var(1))]),
@@ -289,8 +287,7 @@ fn du_atoms() -> (Atom, Atom) {
 fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
     let dir = TempDir::new("du-header");
     let descriptor = du_descriptor();
-    let sealed = descriptor.clone().validate().expect("fixture validates");
-    let (db, naive) = stores(dir.path(), &descriptor, &sealed, du_inserts());
+    let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
     let (header, child) = du_atoms();
     let atoms = vec![child, header];
     let projection = Query {
@@ -321,8 +318,7 @@ fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
 fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
     let dir = TempDir::new("du-child");
     let descriptor = du_descriptor();
-    let sealed = descriptor.clone().validate().expect("fixture validates");
-    let (db, naive) = stores(dir.path(), &descriptor, &sealed, du_inserts());
+    let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
     let (header, child) = du_atoms();
     let atoms = vec![header, child];
     let projection = Query {
@@ -357,8 +353,7 @@ fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
 fn the_missing_phi_near_miss_refuses_and_still_agrees() {
     let dir = TempDir::new("du-missing-phi");
     let descriptor = du_descriptor();
-    let sealed = descriptor.clone().validate().expect("fixture validates");
-    let (db, naive) = stores(dir.path(), &descriptor, &sealed, du_inserts());
+    let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![

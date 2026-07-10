@@ -13,6 +13,8 @@ use super::{mix, Scenario, ScenarioQuery};
 use crate::gen::Rng;
 
 bumbledb::schema! {
+    pub Points;
+
     relation Bucket {
         id: u64 as PBucketId, serial,
         class: enum Class { Hot, Warm, Cold, Frozen },
@@ -30,6 +32,24 @@ bumbledb::schema! {
 }
 
 /// Relation ids by declaration order.
+/// The validated scenario schema, memoized for the inspection surfaces
+/// (DDL rendering, typing); the store is created from [`Points`]'s
+/// descriptor (`scenarios::load`).
+///
+/// # Panics
+///
+/// Never in practice: the declared scenario schema is valid.
+pub fn schema() -> &'static bumbledb::Schema {
+    use bumbledb::SchemaDef as _;
+    static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        Points
+            .descriptor()
+            .validate()
+            .expect("the scenario schema is valid")
+    })
+}
+
 pub mod ids {
     use bumbledb::RelationId;
     pub const BUCKET: RelationId = RelationId(0);
@@ -200,6 +220,7 @@ pub fn scenario() -> Scenario {
         name: "points",
         about: "key-value regime: point lookups, tiny fetches, per-query overhead",
         schema,
+        descriptor: || bumbledb::SchemaDef::descriptor(Points),
         rows: |seed| {
             vec![
                 (ids::BUCKET, Box::new((0..BUCKETS).map(bucket_row))),

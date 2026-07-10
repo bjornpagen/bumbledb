@@ -22,17 +22,17 @@
 use bumbledb::alloc_counter;
 use bumbledb::ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    Side, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+    StatementDescriptor, ValueType,
 };
-use bumbledb::{Db, PreparedQuery, ResultBuffer, Snapshot};
+use bumbledb::{BindValue, Db, PreparedQuery, ResultBuffer, Snapshot};
 
 mod common;
 
 /// Posting(id serial, account u64, amount i64, memo str) +
 /// Account(id serial, holder u64), with
 /// `Posting(account) <= Account(id)`.
-fn schema() -> Schema {
+fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -89,12 +89,20 @@ fn schema() -> Schema {
             },
         }],
     }
-    .validate()
-    .expect("valid fixture")
 }
 
 const POSTING: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
+
+// The borrowed-struct gate's typed schema (PRD 22): a str-bearing
+// relation whose generated struct borrows its memo (`&'a str`).
+bumbledb::schema! {
+    pub GateLedger;
+    relation GateItem {
+        id: u64 as GateItemId, serial,
+        memo: str,
+    }
+}
 
 /// The high-water window's escalation ladder: per rung, one account that
 /// is the sole account of its holder, with this many postings — so each
@@ -103,7 +111,7 @@ const ACCOUNT: RelationId = RelationId(1);
 /// last's.
 const LADDER: [u64; 5] = [6, 24, 72, 240, 660];
 
-fn populate(db: &Db<'_>) {
+fn populate(db: &Db<SchemaDescriptor>) {
     db.write(|tx| {
         for account in 0..20u64 {
             tx.insert_dyn(ACCOUNT, &[Value::U64(account), Value::U64(account % 5)])?;
@@ -371,9 +379,9 @@ fn guard_query() -> Query {
 /// The gate protocol for one prepared query and its fixed param set.
 fn gate(
     label: &str,
-    prepared: &mut PreparedQuery<'_>,
-    snap: &Snapshot<'_>,
-    param_set: &[Vec<Value>],
+    prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
+    snap: &Snapshot<'_, SchemaDescriptor>,
+    param_set: &[Vec<BindValue<'_>>],
 ) {
     let mut out = ResultBuffer::new();
     // N = 8 warmup runs over the fixed param set.
@@ -413,9 +421,9 @@ fn gate(
 fn silent(
     label: &str,
     step: &str,
-    prepared: &mut PreparedQuery<'_>,
-    snap: &Snapshot<'_>,
-    params: &[Value],
+    prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
+    snap: &Snapshot<'_, SchemaDescriptor>,
+    params: &[BindValue<'_>],
     out: &mut ResultBuffer,
 ) {
     alloc_counter::reset();
@@ -459,9 +467,9 @@ fn silent(
 /// required on a high-water.
 fn escalation_gate(
     label: &str,
-    prepared: &mut PreparedQuery<'_>,
-    snap: &Snapshot<'_>,
-    params: &[Vec<Value>],
+    prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
+    snap: &Snapshot<'_, SchemaDescriptor>,
+    params: &[Vec<BindValue<'_>>],
 ) {
     let mut out = ResultBuffer::new();
     // Warm the coldest parameter to its fixpoint — first-execution
@@ -513,23 +521,22 @@ fn escalation_gate(
 #[test]
 fn zero_warm_allocation_gate() {
     let dir = common::TempDir::new("alloc-gate");
-    let schema = schema();
-    let db = Db::create(dir.path(), &schema).expect("create");
+    let db = Db::create(dir.path(), schema()).expect("create");
     populate(&db);
 
     // Four rotating residual windows: exactly the view memo's capacity
     // (docs/architecture/40-execution.md) — steady-state rotation must stay allocation-free.
     let join_params = vec![
-        vec![Value::I64(-10)],
-        vec![Value::I64(0)],
-        vec![Value::I64(25)],
-        vec![Value::I64(40)],
+        vec![BindValue::I64(-10)],
+        vec![BindValue::I64(0)],
+        vec![BindValue::I64(25)],
+        vec![BindValue::I64(40)],
     ];
     // The miss (9999) runs first so the last measured execution leaves rows.
     let guard_params = vec![
-        vec![Value::U64(9999)],
-        vec![Value::U64(5)],
-        vec![Value::U64(499)],
+        vec![BindValue::U64(9999)],
+        vec![BindValue::U64(5)],
+        vec![BindValue::U64(499)],
     ];
 
     db.read(|snap| {
@@ -564,15 +571,22 @@ fn zero_warm_allocation_gate() {
         // a non-key string field — the gate's warmups cover two full
         // rotation cycles, so every probed subtrie is forced and the
         // measured rotations must not touch the allocator.
-        let selection_params: Vec<Vec<Value>> = (0..4)
-            .map(|m| vec![Value::String(format!("memo-{m}").into_bytes().into())])
+        // Borrowed str payloads at the bind surface (PRD 22): the host
+        // owns the strings once; every re-bind borrows them — the gate's
+        // zero-allocation assertion now covers the whole bind, boxing
+        // included (there is none).
+        let memo_texts: Vec<String> = (0..4).map(|m| format!("memo-{m}")).collect();
+        let selection_params: Vec<Vec<BindValue<'_>>> = memo_texts
+            .iter()
+            .map(|text| vec![BindValue::Str(text)])
             .collect();
         let mut selection = db.prepare(&selection_query())?;
         gate("selection", &mut selection, snap, &selection_params);
 
         // String projections across rotating params (docs/architecture/40-execution.md): the
         // intern-resolution memo joins the zero-alloc steady state.
-        let account_params: Vec<Vec<Value>> = (0..4).map(|a| vec![Value::U64(a)]).collect();
+        let account_params: Vec<Vec<BindValue<'_>>> =
+            (0..4).map(|a| vec![BindValue::U64(a)]).collect();
         let mut string_rotation = db.prepare(&string_rotation_query())?;
         gate(
             "string-rotation",
@@ -584,7 +598,8 @@ fn zero_warm_allocation_gate() {
         // The high-water window (docs/architecture/40-execution.md § CI
         // gate protocol): holders 5..10 bind the ladder accounts —
         // strictly hotter keys, strictly larger intermediates per step.
-        let escalation_params: Vec<Vec<Value>> = (5..10u64).map(|h| vec![Value::U64(h)]).collect();
+        let escalation_params: Vec<Vec<BindValue<'_>>> =
+            (5..10u64).map(|h| vec![BindValue::U64(h)]).collect();
         let mut escalation = db.prepare(&escalation_query())?;
         escalation_gate("escalation", &mut escalation, snap, &escalation_params);
 
@@ -607,4 +622,54 @@ fn zero_warm_allocation_gate() {
         Ok(())
     })
     .expect("gate");
+
+    // Borrowed structs (PRD 22): construct + typed insert and typed get +
+    // compare of a str-bearing fact are host-allocation-free. The memo
+    // string is committed (and its scratch warmed) before the measured
+    // window, so the window holds exactly the host-visible work: encode
+    // through borrows, probe, decode to a borrowed view — no `String`
+    // per read, no boxing per write. Engine arena/delta copies are
+    // sanctioned but absent here by construction (the value is already
+    // interned; the fact already present).
+    let borrowed_dir = common::TempDir::new("alloc-gate-borrowed");
+    let borrowed_db = Db::create(borrowed_dir.path(), GateLedger).expect("create");
+    let item = borrowed_db
+        .write(|tx| {
+            let id: GateItemId = tx.alloc()?;
+            tx.insert(&GateItem {
+                id,
+                memo: "memo-borrowed",
+            })?;
+            Ok(id)
+        })
+        .expect("seed");
+    borrowed_db
+        .write(|tx| {
+            // Warm the transaction's encode scratch outside the window.
+            tx.insert(&GateItem {
+                id: item,
+                memo: "memo-borrowed",
+            })?;
+            alloc_counter::reset();
+            let fact = GateItem {
+                id: item,
+                memo: "memo-borrowed",
+            };
+            tx.insert(&fact)?;
+            let got = tx.get::<GateItem>(item)?.expect("present");
+            assert_eq!(got.memo, "memo-borrowed");
+            let bytes = alloc_counter::snapshot();
+            assert_eq!(
+                (
+                    bytes.allocs,
+                    bytes.deallocs,
+                    bytes.alloc_bytes,
+                    bytes.dealloc_bytes
+                ),
+                (0, 0, 0, 0),
+                "borrowed-struct insert + get must be host-allocation-free"
+            );
+            Ok(())
+        })
+        .expect("borrowed-struct gate");
 }

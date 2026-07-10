@@ -72,9 +72,11 @@ struct Case<'a> {
     golden_sql: Option<&'static str>,
 }
 
-/// Everything a run accumulates.
-struct Run<'a> {
-    db: &'a Db<'a>,
+/// Everything a run accumulates. Generic over the store's schema
+/// definition: the family lane runs against the ledger store, the
+/// randomized lane against the generator-target store.
+struct Run<'a, S> {
+    db: &'a Db<S>,
     conn: &'a rusqlite::Connection,
     out_dir: PathBuf,
     cases: u64,

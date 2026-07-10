@@ -62,7 +62,7 @@ pub struct Staleness {
     pub max_ratio: f64,
 }
 
-impl PreparedQuery<'_> {
+impl<S> PreparedQuery<'_, S> {
     /// How far the snapshot's live row counts have drifted from the
     /// statistics this plan was costed with — the pull-based staleness
     /// signal, the pin-at-prepare decision's compensating control
@@ -87,7 +87,7 @@ impl PreparedQuery<'_> {
     /// any environment other than the preparing one — the same guard,
     /// same error as every execution entry; `Lmdb`/`Corruption` from
     /// the counter gets.
-    pub fn staleness(&self, snap: &Snapshot<'_>) -> Result<Staleness> {
+    pub fn staleness(&self, snap: &Snapshot<'_, S>) -> Result<Staleness> {
         self.check_snapshot(snap.txn())?;
         let per_occurrence = self
             .pinned

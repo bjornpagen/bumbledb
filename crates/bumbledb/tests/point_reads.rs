@@ -10,6 +10,8 @@ use bumbledb::Db;
 mod common;
 
 bumbledb::schema! {
+    pub Ledger;
+
     relation Account {
         id: u64 as AccountId, serial,
         holder: str,
@@ -24,14 +26,14 @@ bumbledb::schema! {
 #[test]
 fn point_reads_observe_the_final_state_before_commit() {
     let dir = common::TempDir::new("points-read-your-writes");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), Ledger).expect("create");
 
     let id = db
         .write(|tx| {
             let id = tx.alloc::<AccountId>()?;
             let acct = Account {
                 id,
-                holder: "ada".into(),
+                holder: "ada",
                 balance: 10,
             };
             // Insert, then read back through the pending delta — the
@@ -60,7 +62,7 @@ fn point_reads_observe_the_final_state_before_commit() {
     // The post-commit point reads answer identically.
     let survivor = Account {
         id,
-        holder: "ada".into(),
+        holder: "ada",
         balance: 42,
     };
     db.write(|tx| {
@@ -89,13 +91,13 @@ fn point_reads_observe_the_final_state_before_commit() {
 #[test]
 fn point_reads_fall_through_to_committed_state() {
     let dir = common::TempDir::new("points-committed-fallthrough");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), Ledger).expect("create");
     let id = db
         .write(|tx| {
             let id = tx.alloc::<AccountId>()?;
             tx.insert(&Account {
                 id,
-                holder: "seed".into(),
+                holder: "seed",
                 balance: 7,
             })?;
             Ok(id)
@@ -108,12 +110,12 @@ fn point_reads_fall_through_to_committed_state() {
         let other = tx.alloc::<AccountId>()?;
         tx.insert(&Account {
             id: other,
-            holder: "other".into(),
+            holder: "other",
             balance: 1,
         })?;
         let seeded = Account {
             id,
-            holder: "seed".into(),
+            holder: "seed",
             balance: 7,
         };
         assert!(tx.contains(&seeded)?);
@@ -122,7 +124,7 @@ fn point_reads_fall_through_to_committed_state() {
         // provably exists nowhere.
         assert!(!tx.contains(&Account {
             id: AccountId(999),
-            holder: "ghost".into(),
+            holder: "ghost",
             balance: 0,
         })?);
         // An unallocated key misses cleanly.
@@ -133,21 +135,31 @@ fn point_reads_fall_through_to_committed_state() {
 }
 
 /// The blessed upsert idiom, as written in `70-api.md`: get → delete +
-/// insert, or insert.
-fn add(db: &Db<'_>, id: AccountId, x: i64) -> bumbledb::Result<()> {
+/// insert, or insert. The holder string comes back as a borrowed view of
+/// the transaction, so ownership is an explicit host act — copy the
+/// fields out before mutating the transaction again.
+fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
     db.write(|tx| {
-        match tx.get::<Account>(id)? {
-            Some(old) => {
-                tx.delete(&old)?;
+        let old = tx
+            .get::<Account>(id)?
+            .map(|old| (old.holder.to_owned(), old.balance));
+        match old {
+            Some((holder, balance)) => {
+                tx.delete(&Account {
+                    id,
+                    holder: &holder,
+                    balance,
+                })?;
                 tx.insert(&Account {
-                    balance: old.balance + x,
-                    ..old
+                    id,
+                    holder: &holder,
+                    balance: balance + x,
                 })?;
             }
             None => {
                 tx.insert(&Account {
                     id,
-                    holder: "counter".into(),
+                    holder: "counter",
                     balance: x,
                 })?;
             }
@@ -162,7 +174,7 @@ fn add(db: &Db<'_>, id: AccountId, x: i64) -> bumbledb::Result<()> {
 #[test]
 fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
     let dir = common::TempDir::new("points-upsert-counter");
-    let db = Db::create(dir.path(), schema()).expect("create");
+    let db = Db::create(dir.path(), Ledger).expect("create");
     // An explicit serial value is legal on the write path; the high-water
     // mark advances past it.
     let id = AccountId(7);
@@ -176,7 +188,7 @@ fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
             facts,
             vec![Account {
                 id,
-                holder: "counter".into(),
+                holder: "counter",
                 balance: 111,
             }]
         );

@@ -35,7 +35,7 @@ pub(super) fn shape_mismatch(
     }
 }
 
-impl WriteTx<'_> {
+impl<S> WriteTx<'_, S> {
     /// Encodes a dynamic fact into `self.scratch`, interning through the
     /// delta ([`InternMode::Mint`]) or resolving without minting
     /// ([`InternMode::Resolve`] — `Ok(false)` = a value was never

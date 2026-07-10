@@ -89,7 +89,7 @@ fn buffer_reuse_retains_capacity_and_results_stay_identical() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let mut out = ResultBuffer::new();
-    let params = [Value::U64(7), Value::I64(0)];
+    let params = [BindValue::U64(7), BindValue::I64(0)];
 
     prepared
         .execute(&txn, &cache, &params, &mut out)
@@ -140,10 +140,10 @@ fn finalize_resolves_each_distinct_intern_once() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
 
-    let resolves = |prepared: &mut PreparedQuery<'_>, account: u64| {
+    let resolves = |prepared: &mut PreparedQuery<'_, ()>, account: u64| {
         obs::start_capture();
         let out = prepared
-            .execute_collect(&txn, &cache, &[Value::U64(account), Value::I64(-1)])
+            .execute_collect(&txn, &cache, &[BindValue::U64(account), BindValue::I64(-1)])
             .expect("execute");
         let events = obs::finish_capture();
         let count = events

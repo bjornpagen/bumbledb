@@ -11,6 +11,8 @@ use bumbledb::Db;
 mod common;
 
 bumbledb::schema! {
+    pub Store;
+
     relation Item {
         id: u64 as ItemId, serial,
         seq: u64,
@@ -33,7 +35,7 @@ fn crash_child_commit_loop() {
     let Ok(dir) = std::env::var("BUMBLEDB_CRASH_DIR") else {
         return; // ran directly (e.g. `--ignored` sweeps): nothing to do
     };
-    let db = Db::open(std::path::Path::new(&dir), schema()).expect("child open");
+    let db = Db::open(std::path::Path::new(&dir), Store).expect("child open");
     for k in 1..u64::MAX {
         db.write(|tx| {
             tx.insert(&item(k))?;
@@ -51,7 +53,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
     let exe = std::env::current_exe().expect("test binary path");
     for (round, delay_ms) in [5u64, 20, 60].into_iter().enumerate() {
         let dir = common::TempDir::new(&format!("crash-{round}"));
-        drop(Db::create(dir.path(), schema()).expect("create"));
+        drop(Db::create(dir.path(), Store).expect("create"));
 
         let mut child = Command::new(&exe)
             .args([
@@ -71,7 +73,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
 
         // Reopen: format + fingerprint verify, then sweep consistency
         // through the public surface.
-        let db = Db::open(dir.path(), schema()).expect("open after crash");
+        let db = Db::open(dir.path(), Store).expect("open after crash");
         let live: Vec<Item> = db
             .read(|snap| snap.scan_facts::<Item>()?.collect())
             .expect("scan after crash");
@@ -122,7 +124,7 @@ fn crash_child_alloc_loop() {
     let Ok(dir) = std::env::var("BUMBLEDB_CRASH_ALLOC_DIR") else {
         return; // ran directly (e.g. `--ignored` sweeps): nothing to do
     };
-    let db = Db::open(std::path::Path::new(&dir), schema()).expect("child open");
+    let db = Db::open(std::path::Path::new(&dir), Store).expect("child open");
     for _ in 0..u64::MAX {
         db.write(|tx| {
             let _: ItemId = tx.alloc()?;
@@ -142,7 +144,7 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
     let exe = std::env::current_exe().expect("test binary path");
     for (round, delay_ms) in [10u64, 40].into_iter().enumerate() {
         let dir = common::TempDir::new(&format!("crash-alloc-{round}"));
-        drop(Db::create(dir.path(), schema()).expect("create"));
+        drop(Db::create(dir.path(), Store).expect("create"));
 
         let mut child = Command::new(&exe)
             .args([
@@ -160,7 +162,7 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
         child.kill().expect("SIGKILL");
         let _ = child.wait();
 
-        let db = Db::open(dir.path(), schema()).expect("open after crash");
+        let db = Db::open(dir.path(), Store).expect("open after crash");
         // No facts ever committed: the store is empty and the generation
         // never moved — Q marks are not query-visible state.
         let count = db

@@ -13,6 +13,8 @@ use super::{mix, Scenario, ScenarioQuery};
 use crate::gen::Rng;
 
 bumbledb::schema! {
+    pub Olap;
+
     relation Store {
         id: u64 as OStoreId, serial,
         region: enum Region { Na, Eu, Apac, Latam, Mea, Anz },
@@ -47,6 +49,23 @@ bumbledb::schema! {
 }
 
 /// Relation ids by declaration order.
+/// The validated scenario schema, memoized for the inspection surfaces
+/// (DDL rendering, typing); the store is created from [`Olap`]'s
+/// descriptor (`scenarios::load`).
+///
+/// # Panics
+///
+/// Never in practice: the declared scenario schema is valid.
+pub fn schema() -> &'static bumbledb::Schema {
+    use bumbledb::SchemaDef as _;
+    static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        Olap.descriptor()
+            .validate()
+            .expect("the scenario schema is valid")
+    })
+}
+
 pub mod ids {
     use bumbledb::RelationId;
     pub const STORE: RelationId = RelationId(0);
@@ -332,6 +351,7 @@ pub fn scenario() -> Scenario {
         name: "olap",
         about: "star-schema rollups: group-by aggregates over the fact table",
         schema,
+        descriptor: || bumbledb::SchemaDef::descriptor(Olap),
         rows: |seed| {
             vec![
                 (

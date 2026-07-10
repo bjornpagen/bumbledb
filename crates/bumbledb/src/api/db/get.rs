@@ -16,7 +16,7 @@ use crate::schema::{FieldId, RelationId, StatementId};
 use crate::storage::delta::GuardOverlay;
 use crate::storage::read;
 
-impl WriteTx<'_> {
+impl<S> WriteTx<'_, S> {
     /// Whether `fact` is in the transaction's **final state** — reads
     /// observe the final-state view the judgment phase will judge
     /// (`docs/architecture/70-api.md`): the delta's own disposition when
@@ -34,7 +34,7 @@ impl WriteTx<'_> {
     /// # Errors
     ///
     /// `Lmdb` on the membership probe or dictionary reads.
-    pub fn contains<F: Fact>(&mut self, fact: &F) -> Result<bool> {
+    pub fn contains<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
         self.with_scratch(|tx, bytes| {
             if !fact.encode_delete(tx, bytes)? {
                 return Ok(false);
@@ -50,14 +50,23 @@ impl WriteTx<'_> {
     /// single-serial-field case; every other key goes through
     /// [`WriteTx::get_dyn`].
     ///
+    /// The returned fact is a **view at the transaction's lifetime**:
+    /// variable-width fields borrow from the committed dictionary (mmap
+    /// pages, stable for the transaction by LMDB `CoW`) or from this
+    /// transaction's pending interns (the delta arena — read-your-writes
+    /// included), whichever holds the value. No copy is made; a host that
+    /// keeps a field past the transaction copies it explicitly
+    /// (`to_owned()`).
+    ///
     /// # Example — the blessed upsert idiom (`docs/architecture/70-api.md`)
     ///
     /// ```
     /// bumbledb::schema! {
+    ///     pub Ledger;
     ///     relation Account { id: u64 as AccountId, serial, balance: i64 }
     /// }
     ///
-    /// fn add(db: &bumbledb::Db<'_>, id: AccountId, x: i64) -> bumbledb::Result<()> {
+    /// fn add(db: &bumbledb::Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
     ///     db.write(|tx| {
     ///         match tx.get::<Account>(id)? {
     ///             Some(old) => {
@@ -74,7 +83,7 @@ impl WriteTx<'_> {
     /// # let dir = std::env::temp_dir().join("bumbledb-doc-upsert");
     /// # let _ = std::fs::remove_dir_all(&dir);
     /// # std::fs::create_dir_all(&dir).unwrap();
-    /// # let db = bumbledb::Db::create(&dir, schema()).unwrap();
+    /// # let db = bumbledb::Db::create(&dir, Ledger).unwrap();
     /// # let id = db.write(|tx| tx.alloc::<AccountId>()).unwrap();
     /// # add(&db, id, 10).unwrap();
     /// # add(&db, id, 32).unwrap();
@@ -88,7 +97,10 @@ impl WriteTx<'_> {
     ///
     /// `Lmdb` on the guard probe, `Corruption` on undecodable stored
     /// bytes.
-    pub fn get<F: SerialKeyed>(&mut self, id: F::SerialKey) -> Result<Option<F>> {
+    pub fn get<'tx, F>(&'tx self, id: F::SerialKey) -> Result<Option<F>>
+    where
+        F: SerialKeyed<'tx, Schema = S>,
+    {
         // The serial field's guard is its canonical u64 encoding — the
         // one-field instance of the guard-byte format `get_dyn` spells
         // out value by value.
@@ -225,11 +237,11 @@ impl WriteTx<'_> {
             fact,
             self.schema.relation(relation).layout(),
             |id| {
-                Ok(plumbing::resolve_string_write(self, id)?
-                    .into_bytes()
-                    .into_boxed_slice())
+                Ok(Box::from(
+                    plumbing::resolve_string_write(self, id)?.as_bytes(),
+                ))
             },
-            |id| Ok(plumbing::resolve_bytes_write(self, id)?.into()),
+            |id| Ok(Box::from(plumbing::resolve_bytes_write(self, id)?)),
         )
     }
 
