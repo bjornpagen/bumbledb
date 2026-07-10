@@ -122,11 +122,11 @@ fn rejects_order_comparison_on_non_integer() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(1)), (1, var(0))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
             rhs: Term::Literal(Value::String(Box::from(&b"x"[..]))),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -141,11 +141,11 @@ fn rejects_self_comparison() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
             rhs: var(0),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -164,11 +164,11 @@ fn rejects_order_operators_on_bool_and_enum() {
                 atom(rel, vec![(field, var(2)), (0, var(3))]),
             ],
             negated: vec![],
-            predicates: vec![Comparison {
+            predicates: vec![PredicateTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(0),
                 rhs: var(2),
-            }],
+            })],
         });
         let err = expect_err(&query);
         assert!(
@@ -185,11 +185,11 @@ fn enum_ordinal_in_a_comparison_reports_the_precise_variant() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(2, var(0))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
             rhs: Term::Literal(Value::Enum(9)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -207,11 +207,11 @@ fn rejects_cross_type_comparison() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
             rhs: var(1),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -225,11 +225,11 @@ fn rejects_constant_comparison() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: Term::Literal(Value::U64(1)),
             rhs: Term::Param(ParamId(0)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -255,11 +255,11 @@ fn rejects_comparison_only_variable() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(9), // appears in no atom
             rhs: var(0),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -475,11 +475,11 @@ fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(1, 5)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -499,11 +499,11 @@ fn order_operator_on_two_bivalent_interval_variables() {
             atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(1),
             rhs: var(3),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -519,11 +519,11 @@ fn rejects_param_set_under_ne() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (1, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: var(1),
             rhs: Term::ParamSet(ParamId(0)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -555,11 +555,11 @@ fn rejects_a_membership_only_variable() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(1),
             rhs: Term::Literal(Value::U64(5)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -693,11 +693,11 @@ fn rejects_an_inverted_interval_literal_in_a_comparison() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(9, 3)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -734,11 +734,11 @@ fn rejects_a_point_literal_at_the_ceiling_under_contains() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Contains,
             lhs: var(1),
             rhs: Term::Literal(Value::U64(u64::MAX)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -754,11 +754,11 @@ fn rejects_an_interval_typed_param_set_anchor() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(1),
             rhs: Term::ParamSet(ParamId(0)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -775,13 +775,13 @@ fn rejects_the_empty_allen_mask() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(crate::allen::AllenMask::EMPTY),
             },
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(1, 5)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -800,13 +800,13 @@ fn rejects_the_full_allen_mask() {
             atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(crate::allen::AllenMask::FULL),
             },
             lhs: var(1),
             rhs: var(3),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -822,13 +822,13 @@ fn rejects_allen_over_non_interval_sides() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(0, var(0)), (2, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
             },
             lhs: var(1),
             rhs: Term::Literal(Value::I64(5)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -847,11 +847,11 @@ fn rejects_contains_between_two_intervals() {
             atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Contains,
             lhs: var(1),
             rhs: var(3),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),
@@ -862,11 +862,11 @@ fn rejects_contains_between_two_intervals() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Contains,
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(1, 5)),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&literal),
@@ -892,13 +892,13 @@ fn rejects_a_mask_param_with_a_value_anchor() {
             atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Param(ParamId(0)),
             },
             lhs: var(1),
             rhs: var(3),
-        }],
+        })],
     });
     assert!(matches!(
         expect_err(&query),

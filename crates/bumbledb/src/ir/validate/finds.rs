@@ -3,14 +3,15 @@
 
 use super::Context;
 use crate::error::ValidationError;
-use crate::ir::{AggOp, FindTerm, Rule, VarId};
+use crate::ir::normalize::LoweredRule;
+use crate::ir::{AggOp, FindTerm, VarId};
 use crate::schema::ValueType;
 use std::collections::BTreeSet;
 
 impl Context {
     pub(super) fn check_finds(
         &self,
-        rule: &Rule,
+        rule: &LoweredRule,
         group_key: &BTreeSet<VarId>,
     ) -> Result<(), ValidationError> {
         // The Arg discipline: all Arg terms share one key variable and one

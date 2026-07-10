@@ -115,8 +115,8 @@ pub use plan::chase::with_chase_disabled;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{
-    AggOp, Atom, CmpOp, Comparison, FindTerm, HeadOp, HeadTerm, MaskTerm, ParamId, Query, Rule,
-    Term, Value, VarId, MAX_RULES,
+    AggOp, Atom, CmpOp, Comparison, FindTerm, HeadOp, HeadTerm, MaskTerm, ParamId, PredicateTree,
+    Query, Rule, Term, Value, VarId, MAX_RULES,
 };
 pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
 pub use verify_store::{StoreFinding, StoreReport};

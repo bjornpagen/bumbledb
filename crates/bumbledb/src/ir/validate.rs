@@ -14,6 +14,17 @@
 //!     against the head position by position — rule 0's resolved type row
 //!     pins the head's positional types, and every later rule must agree)
 //!
+//! Between the program shape and the per-rule roster, **DNF
+//! distribution** ([`crate::ir::distribute`]): each rule's predicate
+//! trees distribute to disjunctive normal form and each disjunct becomes
+//! a rule — the structural term count past [`crate::ir::MAX_RULES`] is
+//! the typed `DnfExceedsRules { produced, cap }` (judged before
+//! materializing), duplicate rules collapse by normalized-form equality,
+//! and a program whose every disjunction is empty is the empty union
+//! (`EmptyRuleSet`). Everything below — and everything downstream —
+//! reads the Or-free [`LoweredRule`]s; rule indices in diagnostics and
+//! in the witness are **lowered-rule** indices.
+//!
 //! Then, per rule (a rule validates exactly as a conjunctive query did;
 //! variables are rule-scoped, params query-global — param typing unifies
 //! across rules after each rule's own fixpoint):
@@ -68,7 +79,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ir::{FindTerm, ParamId, Query, Rule, VarId};
+use crate::ir::normalize::LoweredRule;
+use crate::ir::{FindTerm, ParamId, VarId};
 use crate::schema::{IntervalElement, ValueType};
 
 mod context;
@@ -86,7 +98,10 @@ pub use validate::validate;
 /// once — unified across the rules' own typing fixpoints.
 #[derive(Debug)]
 pub struct ValidatedQuery {
-    query: Query,
+    /// The lowered program: Or-free rules, one per DNF disjunct of the
+    /// input rules (duplicates collapsed) — the artifact everything
+    /// downstream reads. No `Or` survives validation.
+    lowered: Vec<LoweredRule>,
     /// The head's positional type row, pinned at validation: rule 0's
     /// resolved find-term types (an aggregate position carries its fold
     /// input type; nullary `Count` is `U64`), which every later rule was
@@ -138,7 +153,7 @@ impl ValidatedQuery {
     #[must_use]
     pub fn rule(&self, index: usize) -> RuleWitness<'_> {
         RuleWitness {
-            rule: &self.query.rules[index],
+            rule: &self.lowered[index],
             typing: &self.rules[index],
             query: self,
         }
@@ -193,20 +208,21 @@ impl ValidatedQuery {
     }
 }
 
-/// One rule of the witness: the rule plus its own typing tables, with the
-/// query-global param tables reachable through it. Everything downstream
-/// of validation runs per rule and consumes exactly this view.
+/// One rule of the witness: the lowered (Or-free) rule plus its own
+/// typing tables, with the query-global param tables reachable through
+/// it. Everything downstream of validation runs per rule and consumes
+/// exactly this view.
 #[derive(Clone, Copy)]
 pub struct RuleWitness<'a> {
-    rule: &'a Rule,
+    rule: &'a LoweredRule,
     typing: &'a RuleTyping,
     query: &'a ValidatedQuery,
 }
 
 impl RuleWitness<'_> {
-    /// The rule, verbatim.
+    /// The lowered rule, verbatim.
     #[must_use]
-    pub fn rule(&self) -> &Rule {
+    pub fn rule(&self) -> &LoweredRule {
         self.rule
     }
 

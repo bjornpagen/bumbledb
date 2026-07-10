@@ -48,6 +48,19 @@ mod types;
 
 pub use query::translate;
 
+/// The SQL translation is conjunctive-only: it consumes the flat leaf
+/// list (the fleet's generators and scenarios emit no trees). The tree
+/// grammar's OR shapes are proven against the naive model by the DNF
+/// property suite, never round-tripped through SQL.
+fn leaf(tree: &bumbledb::PredicateTree) -> &bumbledb::Comparison {
+    match tree {
+        bumbledb::PredicateTree::Leaf(comparison) => comparison,
+        bumbledb::PredicateTree::And(_) | bumbledb::PredicateTree::Or(_) => {
+            unreachable!("the SQL translation consumes flat conjunctions only")
+        }
+    }
+}
+
 /// One positional SQL placeholder's source (index `i` maps to placeholder
 /// `?i + 1`): a scalar param's whole value, or one endpoint of an
 /// interval-typed param — the placeholder side of the two-column interval

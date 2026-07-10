@@ -27,7 +27,7 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
-use bumbledb::{BindValue, Db, PreparedQuery, ResultBuffer, Snapshot};
+use bumbledb::{BindValue, Db, PredicateTree, PreparedQuery, ResultBuffer, Snapshot};
 
 mod common;
 
@@ -176,11 +176,11 @@ fn join_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
-        }],
+        })],
     })
 }
 
@@ -216,11 +216,11 @@ fn aggregate_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
-        }],
+        })],
     })
 }
 
@@ -248,11 +248,11 @@ fn string_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(3)),
             rhs: Term::Literal(Value::String(Box::from(&b"memo-0"[..]))),
-        }],
+        })],
     })
 }
 

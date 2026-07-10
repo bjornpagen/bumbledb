@@ -219,13 +219,13 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
             ],
         }],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Param(crate::ir::ParamId(0)),
             },
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::IntervalU64(10, 20)),
-        }],
+        })],
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
@@ -298,18 +298,18 @@ fn a_cross_atom_mask_param_resolves_into_the_executors_residual() {
         ],
         negated: vec![],
         predicates: vec![
-            Comparison {
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Allen {
                     mask: MaskTerm::Param(crate::ir::ParamId(0)),
                 },
                 lhs: Term::Var(VarId(1)),
                 rhs: Term::Var(VarId(3)),
-            },
-            Comparison {
+            }),
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: Term::Var(VarId(0)),
                 rhs: Term::Var(VarId(2)),
-            },
+            }),
         ],
     });
     let txn = env.read_txn().expect("txn");

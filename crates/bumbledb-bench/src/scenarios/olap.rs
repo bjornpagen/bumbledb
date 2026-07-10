@@ -6,7 +6,8 @@
 //! set (the true-rollup pattern the ledger's balance family pins).
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, PredicateTree, Query, Rule, Term,
+    Value, VarId,
 };
 
 use super::{mix, Scenario, ScenarioQuery};
@@ -193,16 +194,16 @@ fn category_window() -> Query {
         ],
         negated: vec![],
         predicates: vec![
-            Comparison {
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(3),
                 rhs: param(0),
-            },
-            Comparison {
+            }),
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(3),
                 rhs: param(1),
-            },
+            }),
         ],
     })
 }
@@ -325,11 +326,11 @@ fn brand_drill() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
             rhs: param(1),
-        }],
+        })],
     })
 }
 

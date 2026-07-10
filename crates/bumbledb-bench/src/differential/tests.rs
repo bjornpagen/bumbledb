@@ -13,8 +13,8 @@ use bumbledb::schema::{
     Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, MaskTerm, ParamId, Query, RelationId,
-    Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, MaskTerm, ParamId, PredicateTree,
+    Query, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::differential::{run, Op, Summary};
@@ -373,18 +373,18 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 ],
                 negated: vec![],
                 predicates: vec![
-                    Comparison {
+                    PredicateTree::Leaf(Comparison {
                         op: CmpOp::Allen {
                             mask: MaskTerm::Literal(AllenMask::INTERSECTS),
                         },
                         lhs: var(1),
                         rhs: var(4),
-                    },
-                    Comparison {
+                    }),
+                    PredicateTree::Leaf(Comparison {
                         op: CmpOp::Lt,
                         lhs: var(2),
                         rhs: var(5),
-                    },
+                    }),
                 ],
             }),
             vec![],
@@ -399,18 +399,18 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 ],
                 negated: vec![],
                 predicates: vec![
-                    Comparison {
+                    PredicateTree::Leaf(Comparison {
                         op: CmpOp::Allen {
                             mask: MaskTerm::Literal(AllenMask::COVERS),
                         },
                         lhs: var(1),
                         rhs: var(4),
-                    },
-                    Comparison {
+                    }),
+                    PredicateTree::Leaf(Comparison {
                         op: CmpOp::Ne,
                         lhs: var(2),
                         rhs: var(5),
-                    },
+                    }),
                 ],
             }),
             vec![],
@@ -421,11 +421,11 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 finds: vec![v(2), v(3)],
                 atoms: vec![booking_atom(), atom(MARKER, vec![(0, var(3))])],
                 negated: vec![],
-                predicates: vec![Comparison {
+                predicates: vec![PredicateTree::Leaf(Comparison {
                     op: CmpOp::Contains,
                     lhs: var(1),
                     rhs: var(3),
-                }],
+                })],
             }),
             vec![],
         ),
@@ -457,11 +457,11 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 finds: vec![v(2)],
                 atoms: vec![booking_atom()],
                 negated: vec![],
-                predicates: vec![Comparison {
+                predicates: vec![PredicateTree::Leaf(Comparison {
                     op: CmpOp::Ge,
                     lhs: var(2),
                     rhs: Term::Literal(Value::U64(4)),
-                }],
+                })],
             }),
             vec![],
         ),

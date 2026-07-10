@@ -4,7 +4,7 @@
 //! error (`docs/architecture/20-query-ir.md`, the rules shape).
 
 use super::*;
-use crate::ir::{HeadTerm, ParamId, Rule, MAX_RULES};
+use crate::ir::{CmpOp, Comparison, HeadTerm, ParamId, Rule, Value, MAX_RULES};
 
 /// A one-atom rule projecting Posting.account (U64) as `Var(var)`.
 fn account_rule(var: u16) -> Rule {
@@ -246,4 +246,117 @@ fn the_single_rule_program_is_the_degenerate_case() {
     let b = validate(&schema, &sugar).expect("valid");
     assert_eq!(format!("{a:?}"), format!("{b:?}"), "byte-identical witness");
     assert_eq!(a.rules().count(), 1);
+}
+
+// --- DNF lowering (PRD ALG-06): OR as data -----------------------------
+
+/// One leaf comparing Posting.amount (I64, bound as `Var(0)`) against a
+/// literal — the atoms below bind it, so every disjunct validates.
+fn amount_leaf(op: CmpOp, literal: i64) -> PredicateTree {
+    PredicateTree::Leaf(Comparison {
+        op,
+        lhs: Term::Var(VarId(0)),
+        rhs: Term::Literal(Value::I64(literal)),
+    })
+}
+
+/// A one-atom rule binding Posting.amount as `Var(0)`, carrying the
+/// given predicate trees.
+fn amount_tree_rule(predicates: Vec<PredicateTree>) -> Rule {
+    Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(POSTING, vec![(2, Term::Var(VarId(0)))])],
+        negated: vec![],
+        predicates,
+    }
+}
+
+/// `(a ∨ b) ∧ (c ∨ d)` distributes to exactly four rules — DNF of a
+/// query is a set of rules, and the witness carries the Or-free program
+/// (each lowered rule's predicates are that disjunct's two leaves).
+#[test]
+fn dnf_distributes_or_pairs_to_four_rules() {
+    let query = Query::single(amount_tree_rule(vec![
+        PredicateTree::Or(vec![amount_leaf(CmpOp::Gt, 1), amount_leaf(CmpOp::Gt, 2)]),
+        PredicateTree::Or(vec![amount_leaf(CmpOp::Lt, 8), amount_leaf(CmpOp::Lt, 9)]),
+    ]));
+    let witness = validate(&schema(), &query).expect("distributes and validates");
+    assert_eq!(witness.rules().count(), 4);
+    for rule in witness.rules() {
+        assert_eq!(
+            rule.rule().predicates.len(),
+            2,
+            "one leaf from each disjunction"
+        );
+    }
+}
+
+/// Distribution past the cap is the typed error naming the blowup: five
+/// two-arm disjunctions produce 2⁵ = 32 rules against the cap of 16 —
+/// judged on the structural count, before any disjunct materializes.
+#[test]
+fn dnf_blowup_past_the_cap_is_typed_with_the_count() {
+    let disjunction = |lo: i64| {
+        PredicateTree::Or(vec![
+            amount_leaf(CmpOp::Gt, lo),
+            amount_leaf(CmpOp::Lt, lo + 100),
+        ])
+    };
+    let query = Query::single(amount_tree_rule(
+        (0..5).map(|i| disjunction(i64::from(i))).collect(),
+    ));
+    assert_eq!(
+        expect_err(&query),
+        ValidationError::DnfExceedsRules {
+            produced: 32,
+            cap: MAX_RULES
+        }
+    );
+}
+
+/// Duplicate rules after distribution collapse by normalized-form
+/// equality: `(a ∨ a)` yields one rule, and `(a ∨ b) ∧ (b ∨ a)` yields
+/// three — `[a, b]` and `[b, a]` are one normalized body (a conjunction
+/// is a set), while `[a, a]` and `[b, b]` each survive.
+#[test]
+fn duplicate_rules_after_distribution_collapse() {
+    let a = || amount_leaf(CmpOp::Gt, 0);
+    let b = || amount_leaf(CmpOp::Lt, 9);
+    let same_twice = Query::single(amount_tree_rule(vec![PredicateTree::Or(vec![a(), a()])]));
+    let witness = validate(&schema(), &same_twice).expect("valid");
+    assert_eq!(witness.rules().count(), 1);
+
+    let permuted = Query::single(amount_tree_rule(vec![
+        PredicateTree::Or(vec![a(), b()]),
+        PredicateTree::Or(vec![b(), a()]),
+    ]));
+    let witness = validate(&schema(), &permuted).expect("valid");
+    assert_eq!(witness.rules().count(), 3);
+}
+
+/// The empty combinations keep their algebraic readings: `And([])` is
+/// true (one rule, no predicates); a program whose every disjunction is
+/// `Or([])` is constant false — it lowers to the empty union, rejected
+/// as the empty rule set. A nested term distributes whole.
+#[test]
+fn empty_and_nested_trees_lower_algebraically() {
+    let empty_and = Query::single(amount_tree_rule(vec![PredicateTree::And(vec![])]));
+    let witness = validate(&schema(), &empty_and).expect("the empty conjunction is true");
+    assert_eq!(witness.rules().count(), 1);
+    assert!(witness.rule(0).rule().predicates.is_empty());
+
+    let empty_or = Query::single(amount_tree_rule(vec![PredicateTree::Or(vec![])]));
+    assert_eq!(expect_err(&empty_or), ValidationError::EmptyRuleSet);
+
+    // (a ∧ b) ∨ c: two rules — the conjunct's leaves ride together.
+    let nested = Query::single(amount_tree_rule(vec![PredicateTree::Or(vec![
+        PredicateTree::And(vec![amount_leaf(CmpOp::Gt, 0), amount_leaf(CmpOp::Lt, 9)]),
+        amount_leaf(CmpOp::Eq, 5),
+    ])]));
+    let witness = validate(&schema(), &nested).expect("valid");
+    let widths: Vec<usize> = witness
+        .rules()
+        .map(|rule| rule.rule().predicates.len())
+        .collect();
+    assert_eq!(widths, vec![2, 1]);
 }

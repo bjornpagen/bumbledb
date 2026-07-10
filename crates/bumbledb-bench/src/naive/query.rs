@@ -6,7 +6,10 @@
 //! rule-scoped), then the cross product of the positive atoms enumerated
 //! fact by fact, bindings built from scalar occurrences, membership
 //! evaluated as a per-binding test (a point value must lie in the fact's
-//! interval), predicates via the endpoint formulas, negated atoms as
+//! interval), predicate trees evaluated **directly from the definition**
+//! (`And` = every child, `Or` = any child, a leaf via the endpoint
+//! formulas — the model never distributes to DNF; the engine's lowering
+//! is proven *against* this evaluation), negated atoms as
 //! plain anti-joins, full bindings deduplicated into a `BTreeSet`, and
 //! finds projected or folded per the aggregation rules (Sum in i128,
 //! `CountDistinct` via `BTreeSet`, Arg terms as literal
@@ -17,7 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
-    AggOp, Atom, Basic, CmpOp, Comparison, FindTerm, MaskTerm, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, Basic, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Query, Rule, Term,
+    Value, VarId,
 };
 
 use super::tuple::{cmp_value, contains_point, endpoints, point};
@@ -47,6 +51,14 @@ enum Substituted {
     Set(Vec<Value>),
 }
 
+/// A predicate tree after parameter substitution — the input grammar's
+/// shape, kept: the model evaluates it recursively, exactly as written.
+enum SubstitutedTree {
+    Leaf(CmpOp, Substituted, Substituted),
+    And(Vec<SubstitutedTree>),
+    Or(Vec<SubstitutedTree>),
+}
+
 /// One atom over substituted terms, each binding pre-tagged with whether
 /// its field is interval-typed (the membership rule's trigger).
 struct FlatAtom {
@@ -59,7 +71,8 @@ struct Env<'a> {
     relations: &'a [BTreeSet<Tuple>],
     atoms: Vec<FlatAtom>,
     negated: Vec<FlatAtom>,
-    predicates: Vec<(CmpOp, Substituted, Substituted)>,
+    /// The rule's predicate trees, conjoined — evaluated directly.
+    predicates: Vec<SubstitutedTree>,
     /// Per variable: bound on some non-interval field of a positive atom,
     /// hence a scalar (an occurrence on an interval field is then point
     /// membership; without a scalar anchor the variable is interval-typed
@@ -144,26 +157,7 @@ impl NaiveDb {
             predicates: rule
                 .predicates
                 .iter()
-                .map(|Comparison { op, lhs, rhs }| {
-                    // A param mask substitutes like any param — the model
-                    // sees only literal masks past this point.
-                    let op = match op {
-                        CmpOp::Allen {
-                            mask: MaskTerm::Param(param),
-                        } => {
-                            let ParamValue::Scalar(Value::AllenMask(mask)) =
-                                &params[usize::from(param.0)]
-                            else {
-                                panic!("validated: a mask param binds an Allen mask")
-                            };
-                            CmpOp::Allen {
-                                mask: MaskTerm::Literal(*mask),
-                            }
-                        }
-                        op => *op,
-                    };
-                    (op, substitute(lhs, params), substitute(rhs, params))
-                })
+                .map(|tree| substitute_tree(tree, params))
                 .collect(),
             scalar_anchored,
             var_count,
@@ -279,15 +273,27 @@ fn count_vars(rule: &Rule) -> usize {
             see(count, *var);
         }
     }
+    fn see_tree(count: &mut usize, tree: &PredicateTree) {
+        match tree {
+            PredicateTree::Leaf(Comparison { lhs, rhs, .. }) => {
+                see_term(count, lhs);
+                see_term(count, rhs);
+            }
+            PredicateTree::And(children) | PredicateTree::Or(children) => {
+                for child in children {
+                    see_tree(count, child);
+                }
+            }
+        }
+    }
     let mut count = 0;
     for atom in rule.atoms.iter().chain(&rule.negated) {
         for (_, term) in &atom.bindings {
             see_term(&mut count, term);
         }
     }
-    for Comparison { lhs, rhs, .. } in &rule.predicates {
-        see_term(&mut count, lhs);
-        see_term(&mut count, rhs);
+    for tree in &rule.predicates {
+        see_tree(&mut count, tree);
     }
     for find in &rule.finds {
         match find {
@@ -303,6 +309,43 @@ fn count_vars(rule: &Rule) -> usize {
         }
     }
     count
+}
+
+/// Substitutes params through a predicate tree, keeping its shape. A
+/// param mask substitutes like any param — the model sees only literal
+/// masks past this point.
+fn substitute_tree(tree: &PredicateTree, params: &[ParamValue]) -> SubstitutedTree {
+    match tree {
+        PredicateTree::Leaf(Comparison { op, lhs, rhs }) => {
+            let op = match op {
+                CmpOp::Allen {
+                    mask: MaskTerm::Param(param),
+                } => {
+                    let ParamValue::Scalar(Value::AllenMask(mask)) = &params[usize::from(param.0)]
+                    else {
+                        panic!("validated: a mask param binds an Allen mask")
+                    };
+                    CmpOp::Allen {
+                        mask: MaskTerm::Literal(*mask),
+                    }
+                }
+                op => *op,
+            };
+            SubstitutedTree::Leaf(op, substitute(lhs, params), substitute(rhs, params))
+        }
+        PredicateTree::And(children) => SubstitutedTree::And(
+            children
+                .iter()
+                .map(|child| substitute_tree(child, params))
+                .collect(),
+        ),
+        PredicateTree::Or(children) => SubstitutedTree::Or(
+            children
+                .iter()
+                .map(|child| substitute_tree(child, params))
+                .collect(),
+        ),
+    }
 }
 
 fn substitute(term: &Term, params: &[ParamValue]) -> Substituted {
@@ -444,8 +487,8 @@ fn leaf_admits(
             return false;
         }
     }
-    for (op, lhs, rhs) in &env.predicates {
-        if !predicate_holds(*op, lhs, rhs, assignment) {
+    for tree in &env.predicates {
+        if !tree_holds(tree, assignment) {
             return false;
         }
     }
@@ -491,6 +534,21 @@ fn negated_matches(
         "validated: negated-atom variables are positively bound"
     );
     matched
+}
+
+/// One predicate tree under a complete assignment, from the definition:
+/// a leaf is its comparison, `And` holds iff every child holds (the
+/// empty conjunction is true), `Or` iff any child holds (the empty
+/// disjunction is false). No DNF, no distribution — the tree is the
+/// semantics.
+fn tree_holds(tree: &SubstitutedTree, assignment: &[Option<Value>]) -> bool {
+    match tree {
+        SubstitutedTree::Leaf(op, lhs, rhs) => predicate_holds(*op, lhs, rhs, assignment),
+        SubstitutedTree::And(children) => {
+            children.iter().all(|child| tree_holds(child, assignment))
+        }
+        SubstitutedTree::Or(children) => children.iter().any(|child| tree_holds(child, assignment)),
+    }
 }
 
 fn predicate_holds(

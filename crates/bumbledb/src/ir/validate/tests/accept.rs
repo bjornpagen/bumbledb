@@ -12,11 +12,11 @@ fn accepts_the_containment_walk_join_with_predicates() {
             atom(ACCOUNT, vec![(0, var(0))]),
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
             rhs: Term::Literal(Value::I64(100)),
-        }],
+        })],
     });
     let witness = validate(&schema(), &query).expect("valid");
     assert_eq!(witness.rule(0).var_type(VarId(0)), &ValueType::U64);
@@ -33,11 +33,11 @@ fn accepts_params_anchored_by_fields_and_comparisons() {
             vec![(1, Term::Param(ParamId(0))), (0, var(0)), (3, var(1))],
         )],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(1),
             rhs: Term::Param(ParamId(1)),
-        }],
+        })],
     });
     let witness = validate(&schema(), &query).expect("valid");
     let params: Vec<_> = witness.param_types().collect();
@@ -56,11 +56,11 @@ fn param_anchoring_is_total_by_construction() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
             rhs: Term::Param(ParamId(0)),
-        }],
+        })],
     });
     let witness = validate(&schema(), &query).expect("valid");
     assert_eq!(
@@ -231,11 +231,11 @@ fn accepts_allen_between_interval_variables_from_different_atoms() {
                 atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
             ],
             negated: vec![],
-            predicates: vec![Comparison {
+            predicates: vec![PredicateTree::Leaf(Comparison {
                 op: CmpOp::Allen { mask },
                 lhs: var(1),
                 rhs: var(3),
-            }],
+            })],
         });
         let witness = validate(&schema(), &query).expect("valid");
         let interval = ValueType::Interval {
@@ -307,11 +307,11 @@ fn accepts_param_sets_in_bindings_and_under_eq() {
             vec![(0, var(0)), (1, Term::ParamSet(ParamId(0)))],
         )],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
             rhs: Term::ParamSet(ParamId(1)),
-        }],
+        })],
     });
     let witness = validate(&schema(), &query).expect("valid");
     let params: Vec<_> = witness.param_types().collect();

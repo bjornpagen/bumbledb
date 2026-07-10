@@ -2,5 +2,6 @@
 //! commit fixtures, and the query-semantics landmarks. The differential
 //! streams live with the runner (`crate::differential`).
 
+mod dnf;
 mod judgment;
 mod query;

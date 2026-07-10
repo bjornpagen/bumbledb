@@ -6,7 +6,7 @@ use super::*;
 use crate::image::{ColumnSpan, ColumnWidth};
 use crate::ir::normalize::normalize;
 use crate::ir::validate::validate as validate_ir;
-use crate::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, Query, Rule, Term};
+use crate::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Query, Rule, Term};
 use crate::plan::planner::{plan, OccStats};
 use crate::schema::IntervalElement;
 use std::collections::BTreeSet;
@@ -225,13 +225,13 @@ fn allen_residual_query_validates_into_the_witness() {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
             },
             lhs: Term::Var(d1),
             rhs: Term::Var(d2),
-        }],
+        })],
     });
     // Asymmetric rows force the order: the 5-row side iterates first
     // (a disconnected pair is a cross product either way; cost counts

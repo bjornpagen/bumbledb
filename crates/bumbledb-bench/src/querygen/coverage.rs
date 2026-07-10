@@ -186,7 +186,7 @@ fn spine_violations(query: &Query, t: &Typing) -> u64 {
         }
     }
     // …and interval-typed sides of cross-atom Allen/Contains.
-    for comparison in &query.rules[0].predicates {
+    for comparison in query.rules[0].predicates.iter().map(super::leaf) {
         if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::Contains) {
             continue;
         }
@@ -314,7 +314,7 @@ impl Coverage {
 
     fn record_comparisons(&mut self, query: &Query, t: &Typing) -> bool {
         let mut has_allen = false;
-        for comparison in &query.rules[0].predicates {
+        for comparison in query.rules[0].predicates.iter().map(super::leaf) {
             let ty = match (&comparison.lhs, &comparison.rhs) {
                 (Term::Var(var), _) | (_, Term::Var(var)) => t
                     .var_types
@@ -531,16 +531,16 @@ impl Coverage {
         let has_aggregate = self.record_finds(query, &t);
         // The structural compositions where bugs hide.
         let has_negation = !query.rules[0].negated.is_empty();
-        let uses_set = query.rules[0]
-            .atoms
-            .iter()
-            .chain(&query.rules[0].negated)
-            .flat_map(|atom| &atom.bindings)
-            .any(|(_, term)| matches!(term, Term::ParamSet(_)))
-            || query.rules[0]
-                .predicates
+        let uses_set =
+            query.rules[0]
+                .atoms
                 .iter()
-                .any(|c| matches!(c.lhs, Term::ParamSet(_)) || matches!(c.rhs, Term::ParamSet(_)));
+                .chain(&query.rules[0].negated)
+                .flat_map(|atom| &atom.bindings)
+                .any(|(_, term)| matches!(term, Term::ParamSet(_)))
+                || query.rules[0].predicates.iter().map(super::leaf).any(|c| {
+                    matches!(c.lhs, Term::ParamSet(_)) || matches!(c.rhs, Term::ParamSet(_))
+                });
         self.neg_and_aggregate += u64::from(has_negation && has_aggregate);
         self.set_and_negation += u64::from(has_negation && uses_set);
         self.membership_and_allen += u64::from(has_membership && has_allen);

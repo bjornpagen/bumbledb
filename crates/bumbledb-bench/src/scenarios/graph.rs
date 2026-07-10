@@ -6,7 +6,8 @@
 //! B-tree plans.
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, PredicateTree, Query, Rule, Term,
+    Value, VarId,
 };
 
 use super::{mix, Scenario, ScenarioQuery};
@@ -254,16 +255,16 @@ fn weighted_hop() -> Query {
         ],
         negated: vec![],
         predicates: vec![
-            Comparison {
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(1),
                 rhs: param(1),
-            },
-            Comparison {
+            }),
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(2),
                 rhs: param(2),
-            },
+            }),
         ],
     })
 }

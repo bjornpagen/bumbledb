@@ -6,7 +6,8 @@
 //! dictionary on every lookup.
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, PredicateTree, Query, Rule, Term,
+    Value, VarId,
 };
 
 use super::{mix, Scenario, ScenarioQuery};
@@ -159,11 +160,11 @@ fn bucket_fetch() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(1),
             rhs: param(1),
-        }],
+        })],
     })
 }
 
@@ -190,16 +191,16 @@ fn size_band() -> Query {
         }],
         negated: vec![],
         predicates: vec![
-            Comparison {
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(1),
                 rhs: param(0),
-            },
-            Comparison {
+            }),
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(1),
                 rhs: param(1),
-            },
+            }),
         ],
     })
 }

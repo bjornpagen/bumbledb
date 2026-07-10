@@ -39,7 +39,7 @@ pub fn translate(
         b.atom(atom)?;
     }
     b.flush_deferred()?;
-    for comparison in &query.rules[0].predicates {
+    for comparison in query.rules[0].predicates.iter().map(super::leaf) {
         b.comparison(comparison)?;
     }
     // Negation last: the NOT EXISTS subqueries append to the core's WHERE.

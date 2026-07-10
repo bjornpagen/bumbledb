@@ -68,7 +68,7 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
             }
         }
     }
-    for comparison in &query.rules[0].predicates {
+    for comparison in query.rules[0].predicates.iter().map(super::leaf) {
         for term in [&comparison.lhs, &comparison.rhs] {
             if let Term::Param(p) | Term::ParamSet(p) = term {
                 count = count.max(p.0 + 1);
@@ -106,7 +106,7 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
             }
         }
     }
-    for comparison in &query.rules[0].predicates {
+    for comparison in query.rules[0].predicates.iter().map(super::leaf) {
         let (param, set, var) = match (&comparison.lhs, &comparison.rhs) {
             (Term::Param(p), Term::Var(v)) | (Term::Var(v), Term::Param(p)) => (*p, false, *v),
             (Term::ParamSet(p), Term::Var(v)) | (Term::Var(v), Term::ParamSet(p)) => (*p, true, *v),

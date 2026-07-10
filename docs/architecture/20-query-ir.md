@@ -133,8 +133,13 @@ Rule {
     finds:      Vec<FindTerm>,        // one per head position; duplicates rejected
     atoms:      Vec<Atom>,            // ≥1; conjunctive, positive
     negated:    Vec<Atom>,            // anti-join atoms (safety rule above)
-    predicates: Vec<Comparison>,
+    predicates: Vec<PredicateTree>,   // the list is a conjunction; trees are
+                                      //   the INPUT grammar — validation
+                                      //   distributes them away (below)
 }
+PredicateTree = Leaf(Comparison)      // the input predicate grammar: any
+              | And(Vec<PredicateTree>)  // boolean combination of positive
+              | Or(Vec<PredicateTree>)   // comparisons — lowered at validation
 HeadTerm   = Var | Aggregate(HeadOp)  // var-free: variables are rule-scoped,
                                       //   so the head names shapes and the
                                       //   rules supply the variables
@@ -254,8 +259,9 @@ disjunction of basics, evaluated as one classify-and-test. *Inside a
 position*: a `ParamSet` is a disjunction of values, evaluated as one probe
 set. *At the top*: rules (the query shape above) are a disjunction of
 conjunctive queries, evaluated as a set union. The tangled middle — a
-cross-atom OR inside one rule — is refused representation; DNF
-lowering recovers it as rules.
+cross-atom OR inside one rule — is refused representation downstream; DNF
+lowering (§ the input predicate grammar, below) recovers it as rules at
+the validation boundary.
 
 Constraint-side unification (no semantics change): the pointwise key
 judgment's meaning — per-group pairwise disjointness — is the statement
@@ -292,6 +298,43 @@ or set, never both (validation); the empty set is legal and matches nothing
 bind (sets are sets). Intern-miss semantics apply per element. This is the `IN` of
 the surveyed workloads (the second-most-used operator in both — 150 and 3 sites),
 admitted as a term because the alternative is N point queries per batch fetch.
+
+## The input predicate grammar and DNF lowering (owned here; runs inside validation)
+
+The rule's predicate list admits trees: `PredicateTree = Leaf(Comparison) |
+And(Vec) | Or(Vec)`, the list itself conjunctive — the one place the surface
+accepts a nested OR. The engine never sees it: **DNF of a query is a set of
+rules**, so validation distributes every rule's trees to disjunctive normal
+form and **each disjunct becomes a rule** — atoms and finds cloned, the
+rule's predicates that disjunct's leaves — before any per-rule check runs.
+This is the outer-join precedent applied to disjunction: a documented
+decomposition, never a node. The refusal it recovers (README refusals, "OR
+tangled mid-rule across atoms"): a cross-atom disjunction poisons filter
+pushdown and selectivity as an *execution* concept, so it is refused
+representation downstream and recovered as rules at the boundary — **OR is
+data or it is nothing.** Negated atoms and membership stay leaf-level; atoms
+disjoin by writing rules, which is what rules are for.
+
+- **The cap:** the distributed program validates under the ordinary roster,
+  `MAX_RULES` included. The blowup is judged on the *structural* term count,
+  before a single disjunct materializes; past the cap it is the typed
+  `DnfExceedsRules { produced, cap }` — the exponential case is rejected at
+  declaration, exactly like guard-width overflow. (A program *written* with
+  more than `MAX_RULES` rules is still `TooManyRules`, judged first.)
+- **Duplicate rules after distribution collapse** — set semantics at the
+  representation level, the duplicate-statement machinery's sibling:
+  identical normalized bodies (finds, atoms, negated verbatim; predicate
+  lists as sets — conjunction is idempotent and commutative) keep their
+  first occurrence.
+- **The empty combinations keep their algebraic readings**: `And([])` is
+  true (no leaves), `Or([])` is false — its rule lowers to zero rules,
+  accepted exactly as statically contradictory predicates are (the semantics
+  are exact); a program whose *every* rule vanishes is the empty union,
+  rejected as the empty rule set.
+- **The validated artifact contains no `Or`** — grep-provable: everything
+  downstream of validation carries flat comparison lists (`LoweredRule`),
+  and the planner and executor never learn disjunction existed. Rule
+  indices in diagnostics and in the witness are lowered-rule indices.
 
 ## Normalization (owned here; runs inside validation)
 
@@ -351,10 +394,15 @@ misalignment** — a rule whose find-term count differs from the head's arity,
 whose term shape (variable vs aggregate-op kind) differs at a position, or
 whose resolved positional type differs from the pinned row (rule 0's
 resolved types pin the head's positional type row in the witness; every
-later rule must agree position by position). Rules then validate **one at a
+later rule must agree position by position). Between the program shape and
+the per-rule roster, **DNF distribution** (§ the input predicate grammar):
+the blowup past `MAX_RULES` is the typed `DnfExceedsRules { produced, cap }`
+on the structural term count, duplicates collapse, and a program whose every
+disjunction is empty is the empty union. Rules then validate **one at a
 time** under the per-rule roster below — a rule validates exactly as a
 conjunctive query did, with its own bivalent-anchor typing fixpoint — and
-every rule-local diagnostic names a position inside the first failing rule.
+every rule-local diagnostic names a position inside the first failing
+**lowered** rule.
 Params, being query-global, unify after the rules' own fixpoints: type,
 scalar-vs-set role, and value-vs-mask role must agree across rules, and id
 density is judged jointly across the whole program.

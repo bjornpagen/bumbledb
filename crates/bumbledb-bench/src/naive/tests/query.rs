@@ -11,8 +11,8 @@ use bumbledb::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, MaskTerm, ParamId, Query,
-    RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, MaskTerm, ParamId, PredicateTree,
+    Query, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::naive::query::ParamValue;
@@ -287,11 +287,11 @@ fn interval_variable_on_interval_fields_is_value_equality() {
             atom(MANDATE, vec![(0, var(2)), (1, var(1))]),
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
             rhs: var(2),
-        }],
+        })],
     });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
@@ -405,18 +405,18 @@ fn allen_masks_use_the_point_set_definitions() {
         ],
         negated: vec![],
         predicates: vec![
-            Comparison {
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Allen {
                     mask: MaskTerm::Literal(AllenMask::INTERSECTS),
                 },
                 lhs: var(1),
                 rhs: var(3),
-            },
-            Comparison {
+            }),
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(0),
                 rhs: var(2),
-            },
+            }),
         ],
     });
     // [10,20) and [20,30) are adjacent, not intersecting.
@@ -432,13 +432,13 @@ fn allen_masks_use_the_point_set_definitions() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(MANDATE, vec![(0, var(0)), (1, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::COVERS),
             },
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(16, 22)),
-        }],
+        })],
     });
     assert_eq!(
         db.query(&covering, &[]).unwrap(),
@@ -509,11 +509,11 @@ fn variables_are_rule_scoped_in_the_model_too() {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
             rhs: Term::Literal(Value::U64(8)),
-        }],
+        })],
     };
     let query = Query {
         head: vec![bumbledb::HeadTerm::Var],

@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use super::*;
-use bumbledb::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, Rule, Term};
+use bumbledb::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Rule, Term};
 use bumbledb::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, Side,
     ValueType,
@@ -443,11 +443,11 @@ fn set_forms_cover_interval_membership_and_predicate_equality() {
             ],
         }],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(1),
             rhs: Term::ParamSet(ParamId(0)),
-        }],
+        })],
     });
     let sets = vec![(ParamId(0), vec![Value::U64(3), Value::U64(7)])];
     let t = translate(&query, schema(), &sets).expect("translates");
@@ -539,13 +539,13 @@ fn allen_intersects_matches_its_hand_written_golden() {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },
             lhs: var(3),
             rhs: var(4),
-        }],
+        })],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::INTERSECTS);
@@ -562,13 +562,13 @@ fn contains_matches_both_goldens() {
             bindings: vec![(ids::mandate::ORG, var(0)), (ids::mandate::ACTIVE, var(1))],
         }],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::COVERS),
             },
             lhs: var(1),
             rhs: Term::Param(ParamId(0)),
-        }],
+        })],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::COVERS_PARAM);
@@ -593,11 +593,11 @@ fn contains_matches_both_goldens() {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Contains,
             lhs: var(1),
             rhs: var(2),
-        }],
+        })],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CONTAINS_POINT);
@@ -627,11 +627,11 @@ fn interval_equality_matches_its_goldens() {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(2),
             rhs: var(3),
-        }],
+        })],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::INTERVAL_EQ);
@@ -848,21 +848,21 @@ fn every_scalar_construct_translates() {
         ],
         negated: vec![],
         predicates: vec![
-            Comparison {
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(0),
                 rhs: var(1),
-            },
-            Comparison {
+            }),
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(1),
                 rhs: Term::Literal(Value::I64(-5)),
-            },
-            Comparison {
+            }),
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Ne,
                 lhs: var(0),
                 rhs: Term::Param(ParamId(0)),
-            },
+            }),
         ],
     });
     let t = translate(&query, schema(), &[]).expect("translates");

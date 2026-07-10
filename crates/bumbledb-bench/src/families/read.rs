@@ -1,6 +1,6 @@
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, Query, Rule, Term,
-    Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query,
+    Rule, Term, Value, VarId,
 };
 
 use crate::families::{scalar_draw, Draw, Family, Kind};
@@ -125,11 +125,11 @@ fn chain_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
             rhs: param(0),
-        }],
+        })],
     })
 }
 
@@ -157,16 +157,16 @@ fn range_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![
-            Comparison {
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(2),
                 rhs: param(0),
-            },
-            Comparison {
+            }),
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(2),
                 rhs: param(1),
-            },
+            }),
         ],
     })
 }
@@ -380,11 +380,11 @@ fn spread_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
             rhs: var(1),
-        }],
+        })],
     })
 }
 
@@ -429,16 +429,16 @@ fn triangle_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![
-            Comparison {
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(0),
                 rhs: param(0),
-            },
-            Comparison {
+            }),
+            PredicateTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(0),
                 rhs: param(1),
-            },
+            }),
         ],
     })
 }
@@ -657,13 +657,13 @@ fn mandate_overlap_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },
             lhs: var(2),
             rhs: var(3),
-        }],
+        })],
     })
 }
 

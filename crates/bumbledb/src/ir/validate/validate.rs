@@ -1,27 +1,36 @@
 use super::{Context, ParamKind, RuleTyping, TypeSlot, ValidatedQuery};
 use crate::error::ValidationError;
-use crate::ir::{AggOp, FindTerm, ParamId, Query, Rule, VarId, MAX_RULES};
+use crate::ir::normalize::{collapse, disjunct_count, distribute, LoweredRule};
+use crate::ir::{AggOp, FindTerm, ParamId, Query, VarId, MAX_RULES};
 use crate::schema::{Schema, ValueType};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Validates a query against the schema, yielding the sealed witness.
 ///
-/// The program shape first (empty rule set, the rule cap, head
-/// alignment), then each rule under the per-rule roster with its own
-/// typing fixpoint — a rule validates exactly as a conjunctive query did
-/// — and finally the query-global param unification (params are one
-/// binding surface across rules; variables never cross them).
+/// The program shape first (empty rule set, the rule cap, empty head);
+/// then **DNF distribution** — each rule's predicate trees distribute
+/// and each disjunct becomes a rule, with the blowup capped at
+/// [`MAX_RULES`] on the structural term count (before materializing)
+/// and duplicates collapsed by normalized-form equality; then each
+/// lowered rule under the per-rule roster with its own typing fixpoint
+/// — a rule validates exactly as a conjunctive query did — and finally
+/// the query-global param unification (params are one binding surface
+/// across rules; variables never cross them).
 ///
 /// Duplicate and even statically contradictory predicates (`x < 5,
 /// x > 9`) are accepted deliberately: the semantics are exact (an empty
 /// result), and the "write the query you mean" roster rejects only
 /// shapes with no meaning at all (constant and self comparisons) — it
-/// does not extend to statically false conjunctions.
+/// does not extend to statically false conjunctions. The empty
+/// disjunction (`Or([])`) rides the same ruling: it is constant false,
+/// its rule lowers to zero rules, and only a program whose *every* rule
+/// vanishes is rejected — as the empty union it now is.
 ///
 /// # Errors
 ///
 /// A distinct [`ValidationError`] per roster item; see the module docs.
-/// Rule-local payloads name positions inside the first failing rule.
+/// Rule-local payloads name positions inside the first failing
+/// **lowered** rule.
 pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, ValidationError> {
     if query.rules.is_empty() {
         return Err(ValidationError::EmptyRuleSet);
@@ -35,10 +44,32 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         return Err(ValidationError::EmptyFinds);
     }
 
+    // DNF distribution: the cap is judged on the structural term count —
+    // no disjunct of an exponential case is ever materialized — and the
+    // distributed program collapses duplicates (set semantics at the
+    // representation level).
+    let produced = query
+        .rules
+        .iter()
+        .map(disjunct_count)
+        .fold(0, usize::saturating_add);
+    if produced > MAX_RULES {
+        return Err(ValidationError::DnfExceedsRules {
+            produced,
+            cap: MAX_RULES,
+        });
+    }
+    let lowered = collapse(query.rules.iter().flat_map(distribute).collect());
+    if lowered.is_empty() {
+        // Every rule's disjunction was empty: the program lowered to the
+        // empty union — no query.
+        return Err(ValidationError::EmptyRuleSet);
+    }
+
     let mut head_types: Vec<ValueType> = Vec::new();
-    let mut rules = Vec::with_capacity(query.rules.len());
+    let mut rules = Vec::with_capacity(lowered.len());
     let mut params = ParamTables::default();
-    for (rule_idx, rule) in query.rules.iter().enumerate() {
+    for (rule_idx, rule) in lowered.iter().enumerate() {
         check_head_alignment(&query.head, rule, rule_idx)?;
         let (typing, ctx) = validate_rule(schema, rule)?;
         // The positional type row: rule 0's pins the head; every later
@@ -68,7 +99,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         .filter_map(|(param, kind)| matches!(kind, ParamKind::Set).then_some(param))
         .collect();
     Ok(ValidatedQuery {
-        query: query.clone(),
+        lowered,
         head_types,
         rules,
         param_types,
@@ -83,7 +114,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
 /// the rule's own typing fixpoint resolves them).
 fn check_head_alignment(
     head: &[crate::ir::HeadTerm],
-    rule: &Rule,
+    rule: &LoweredRule,
     rule_idx: usize,
 ) -> Result<(), ValidationError> {
     if rule.finds.len() != head.len() {
@@ -106,7 +137,10 @@ fn check_head_alignment(
 
 /// The per-rule roster — exactly the conjunctive query's checks, over one
 /// rule's own variable scope and its own bivalent-anchor typing fixpoint.
-fn validate_rule(schema: &Schema, rule: &Rule) -> Result<(RuleTyping, Context), ValidationError> {
+fn validate_rule(
+    schema: &Schema,
+    rule: &LoweredRule,
+) -> Result<(RuleTyping, Context), ValidationError> {
     if rule.atoms.is_empty() {
         return Err(ValidationError::NoPositiveAtoms);
     }
@@ -170,7 +204,7 @@ fn validate_rule(schema: &Schema, rule: &Rule) -> Result<(RuleTyping, Context), 
 /// the variable's type; an aggregate position its fold input type (the
 /// nullary `Count` is `U64`; an Arg position carries the *carried*
 /// variable's type — the key is rule-internal).
-fn head_row(rule: &Rule, typing: &RuleTyping) -> Vec<ValueType> {
+fn head_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
     let var_type = |var: &VarId| typing.var_types[var].clone();
     rule.finds
         .iter()

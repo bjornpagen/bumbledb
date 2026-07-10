@@ -62,11 +62,11 @@ fn overflow_errors_leave_the_buffer_reusable() {
             ],
         }],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: Term::Var(VarId(0)),
             rhs: Term::Literal(crate::ir::Value::U64(8)),
-        }],
+        })],
     });
     let mut ok = prepare(&txn, &cache, &schema, &ok_query).expect("prepares");
     ok.execute(&txn, &cache, &[], &mut out).expect("executes");

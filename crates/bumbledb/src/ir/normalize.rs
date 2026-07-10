@@ -20,11 +20,13 @@ use crate::image::view::FilterPredicate;
 use crate::ir::{CmpOp, VarId};
 use crate::schema::{FieldId, RelationId, StatementId, ValueType};
 
+mod dnf;
 mod lower_literal;
 #[allow(clippy::module_inception)]
 mod normalize;
 mod place_comparisons;
 
+pub use dnf::{collapse, disjunct_count, distribute, LoweredRule};
 pub(crate) use lower_literal::lower_literal;
 pub use normalize::normalize;
 

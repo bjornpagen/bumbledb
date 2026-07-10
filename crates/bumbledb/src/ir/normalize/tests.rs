@@ -4,7 +4,9 @@ use crate::allen::AllenMask;
 use crate::encoding::{encode_fact, encode_i64, ValueRef};
 use crate::image::view::{Const, MaskConst, ResolvedWordSource};
 use crate::ir::validate::validate;
-use crate::ir::{Atom, Comparison, FindTerm, MaskTerm, ParamId, Query, Rule, Term, Value};
+use crate::ir::{
+    Atom, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query, Rule, Term, Value,
+};
 use crate::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, Schema, SchemaDescriptor,
     ValueType,
@@ -99,7 +101,7 @@ fn query(atoms: Vec<Atom>, negated: Vec<Atom>, predicates: Vec<Comparison>) -> Q
         finds: vec![FindTerm::Var(VarId(0))],
         atoms,
         negated,
-        predicates,
+        predicates: predicates.into_iter().map(PredicateTree::Leaf).collect(),
     })
 }
 
@@ -1113,11 +1115,11 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
             relation: R,
             bindings: vec![(FieldId(1), var(0)), (FieldId(2), var(1))],
         }],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
             rhs: var(1),
-        }],
+        })],
     });
     let norm = normalized(&mixed);
     assert_residuals_cross_atom(&norm);

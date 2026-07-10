@@ -334,6 +334,16 @@ pub enum ValidationError {
     TooManyRules {
         count: usize,
     },
+    /// DNF distribution of the rules' predicate trees would produce more
+    /// rules than the cap ([`crate::ir::MAX_RULES`]) — the exponential
+    /// case is rejected at declaration, exactly like guard-width
+    /// overflow. `produced` names the blowup: the structural term count
+    /// across all rules, judged before a single disjunct is materialized
+    /// (so before duplicate collapse).
+    DnfExceedsRules {
+        produced: usize,
+        cap: usize,
+    },
     /// A rule's find-term count differs from the head's arity — rules
     /// align against the head position by position.
     HeadArityMismatch {

@@ -340,6 +340,10 @@ impl fmt::Display for ValidationError {
             Self::TooManyRules { count } => {
                 write!(f, "{count} rules exceed the rule cap")
             }
+            Self::DnfExceedsRules { produced, cap } => write!(
+                f,
+                "DNF distribution produces {produced} rules against the cap of {cap}"
+            ),
             Self::HeadArityMismatch {
                 rule,
                 expected,

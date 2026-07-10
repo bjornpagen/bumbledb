@@ -15,6 +15,12 @@ use crate::schema::{FieldId, RelationId};
 /// normative IR block in `docs/architecture/20-query-ir.md` names it here.
 pub use crate::value::Value;
 
+/// The DNF distribution — the declared decomposition of the input
+/// predicate grammar ([`PredicateTree`]) into Or-free rules; validation
+/// runs it, and it is exported so the differential suite can prove it
+/// against the naive model's direct tree evaluation.
+pub use normalize::{distribute, LoweredRule};
+
 /// The rule-count cap: a query is a program of at most this many rules,
 /// rejected at validation (`ValidationError::TooManyRules`). Counted
 /// independently of the per-rule occurrence cap
@@ -228,6 +234,30 @@ pub struct Comparison {
     pub rhs: Term,
 }
 
+/// The *input* predicate grammar: any boolean combination of positive
+/// comparisons (`docs/architecture/20-query-ir.md`, § the input predicate
+/// grammar). This is the one place the surface admits a nested OR — and
+/// the engine never sees it: validation distributes every rule's trees to
+/// DNF, each disjunct becomes a rule ([`distribute`]), and the validated
+/// artifact carries only flat [`Comparison`] lists ([`LoweredRule`]).
+/// A cross-atom OR *as an execution concept* stays refused — OR is data
+/// or it is nothing; DNF lowering recovers the tangled middle as rules.
+///
+/// Negated atoms and membership stay leaf-level: there is no OR over
+/// atoms — atoms disjoin by writing rules, which is what rules are for.
+///
+/// The empty combinations keep their algebraic readings — `And([])` is
+/// the empty conjunction (true: it contributes no leaves) and `Or([])`
+/// is the empty disjunction (false: the rule denotes nothing and lowers
+/// to zero rules) — accepted exactly as statically contradictory
+/// predicates are: the semantics are exact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PredicateTree {
+    Leaf(Comparison),
+    And(Vec<PredicateTree>),
+    Or(Vec<PredicateTree>),
+}
+
 /// One rule: a conjunctive body projecting its find terms against the
 /// query's head. The rule's denotation is the set of distinct bindings of
 /// its variables satisfying every positive atom, every predicate, and no
@@ -253,7 +283,12 @@ pub struct Rule {
     /// here; negation is a *position* in the rule, not a kind of atom, so
     /// the list reuses [`Atom`] unchanged.
     pub negated: Vec<Atom>,
-    pub predicates: Vec<Comparison>,
+    /// The predicate trees, conjoined — the list is an `And`, so the flat
+    /// conjunctive rule is written without wrapping. Any nested OR is
+    /// distributed away at validation ([`PredicateTree`]); downstream of
+    /// the boundary a rule's predicates are a flat comparison list
+    /// ([`LoweredRule`]).
+    pub predicates: Vec<PredicateTree>,
 }
 
 impl Rule {
@@ -350,11 +385,11 @@ mod tests {
                 },
             ],
             negated: vec![],
-            predicates: vec![Comparison {
+            predicates: vec![PredicateTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: Term::Var(VarId(2)),
                 rhs: Term::Literal(Value::I64(1_700_000_000_000_000)),
-            }],
+            })],
         });
         assert_eq!(query.rules[0].atoms.len(), 2);
         assert_eq!(query.rules[0].predicates.len(), 1);

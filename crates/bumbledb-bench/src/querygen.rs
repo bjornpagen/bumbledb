@@ -114,6 +114,20 @@ enum ChaseVariant {
     DuMissingPhi,
 }
 
+/// The generator's queries carry flat conjunctions — every predicate
+/// tree is a leaf ([`Builder::into_query`] wraps them); its readers
+/// (coverage, oracles, tests) unwrap through here. The tree grammar's
+/// OR shapes are the DNF property suite's territory
+/// (`naive/tests/dnf.rs`), never the generator's.
+fn leaf(tree: &bumbledb::PredicateTree) -> &Comparison {
+    match tree {
+        bumbledb::PredicateTree::Leaf(comparison) => comparison,
+        bumbledb::PredicateTree::And(_) | bumbledb::PredicateTree::Or(_) => {
+            unreachable!("the generator emits flat conjunctions only")
+        }
+    }
+}
+
 /// Accumulating query state: atoms, negated atoms, predicates, finds,
 /// fresh id counters, the registry of variables the shapes bound
 /// (group-key candidates), and each bound variable's anchoring

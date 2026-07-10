@@ -87,7 +87,7 @@ pub(super) fn infer(query: &Query, schema: &Schema) -> TermTypes {
     }
     loop {
         let mut changed = false;
-        for Comparison { op, lhs, rhs } in &query.rules[0].predicates {
+        for Comparison { op, lhs, rhs } in query.rules[0].predicates.iter().map(super::leaf) {
             match op {
                 // Order operators are scalar-only by the type rules.
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {

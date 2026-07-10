@@ -1,4 +1,6 @@
-use bumbledb::{Atom, CmpOp, Comparison, FieldId, FindTerm, Query, Rule, Value, VarId};
+use bumbledb::{
+    Atom, CmpOp, Comparison, FieldId, FindTerm, PredicateTree, Query, Rule, Value, VarId,
+};
 
 use super::corpus::s;
 use super::term::{param, var};
@@ -30,11 +32,11 @@ pub(super) fn keyword_kind() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(1),
             rhs: param(1),
-        }],
+        })],
     })
 }
 

@@ -32,11 +32,11 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
             ],
         }],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::U64(7)),
-        }],
+        })],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &range).expect("prepare");
     let out = prepared
@@ -75,11 +75,11 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
             },
         ],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: Term::Var(VarId(0)),
             rhs: Term::Var(VarId(1)),
-        }],
+        })],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &spread).expect("prepare");
     let out = prepared
@@ -217,11 +217,11 @@ fn ne_against_a_never_interned_string_matches_everything() {
             ],
         }],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::String(Box::from(&b"ghost"[..]))),
-        }],
+        })],
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
@@ -241,11 +241,11 @@ fn ne_against_a_never_interned_string_matches_everything() {
             ],
         }],
         negated: vec![],
-        predicates: vec![Comparison {
+        predicates: vec![PredicateTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(crate::ir::ParamId(0)),
-        }],
+        })],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared

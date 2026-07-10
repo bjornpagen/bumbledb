@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::ValidationError;
-use crate::ir::{FindTerm, Term};
+use crate::ir::{FindTerm, PredicateTree, Query, Rule, Term};
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
 };

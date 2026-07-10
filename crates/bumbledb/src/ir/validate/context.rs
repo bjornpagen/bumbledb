@@ -1,6 +1,7 @@
 use super::{Context, ParamKind, TypeSlot};
 use crate::error::ValidationError;
-use crate::ir::{CmpOp, Comparison, MaskTerm, ParamId, Rule, Term, Value, VarId};
+use crate::ir::normalize::LoweredRule;
+use crate::ir::{CmpOp, Comparison, MaskTerm, ParamId, Term, Value, VarId};
 use crate::schema::{FieldId, IntervalElement, Schema, ValueType};
 
 /// The structural type of a literal, for matching against a field or
@@ -232,7 +233,7 @@ impl Context {
     pub(super) fn check_atoms(
         &mut self,
         schema: &Schema,
-        rule: &Rule,
+        rule: &LoweredRule,
     ) -> Result<(), ValidationError> {
         let occurrences = rule
             .atoms
@@ -377,7 +378,7 @@ impl Context {
 
     // --- comparisons ------------------------------------------------------
 
-    pub(super) fn check_comparisons(&mut self, rule: &Rule) -> Result<(), ValidationError> {
+    pub(super) fn check_comparisons(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
         self.comparison_shapes(rule)?;
         self.propagate_comparison_anchors(rule)?;
         self.resolve_bivalents();
@@ -397,7 +398,7 @@ impl Context {
     /// Shape rules that need no types: self-comparisons, constant
     /// comparisons (no variable side), comparison-only variables, param
     /// roles, and the `ParamSet`-only-under-`Eq` rule.
-    fn comparison_shapes(&mut self, rule: &Rule) -> Result<(), ValidationError> {
+    fn comparison_shapes(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
         for (index, Comparison { op, lhs, rhs }) in rule.predicates.iter().enumerate() {
             // The Allen mask position, both vacuity rules for literals
             // (∅ = "never": write no query; full = "always": write no
@@ -461,7 +462,7 @@ impl Context {
     /// them against final types. `Contains` propagates nothing — its
     /// right side is legally either reading of the left (the predicate
     /// form of the membership rule), so neither side names the other.
-    fn propagate_comparison_anchors(&mut self, rule: &Rule) -> Result<(), ValidationError> {
+    fn propagate_comparison_anchors(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
         loop {
             let mut changed = false;
             for Comparison { op, lhs, rhs } in &rule.predicates {
@@ -571,7 +572,7 @@ impl Context {
     /// Per-operator type legality over final types, and the param
     /// anchoring those rules imply. Runs after `resolve_bivalents`: every
     /// variable slot is monovalent here.
-    fn comparison_types(&mut self, rule: &Rule) -> Result<(), ValidationError> {
+    fn comparison_types(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
         for (index, Comparison { op, lhs, rhs }) in rule.predicates.iter().enumerate() {
             match op {
                 CmpOp::Eq | CmpOp::Ne => self.check_equality(index, lhs, rhs)?,
