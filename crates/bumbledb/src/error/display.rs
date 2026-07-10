@@ -457,6 +457,7 @@ impl fmt::Display for ValidationError {
 }
 
 impl fmt::Display for Error {
+    #[allow(clippy::too_many_lines)] // a rendering table: one arm per variant
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FormatMismatch { found, expected } => {
@@ -545,8 +546,20 @@ impl fmt::Display for Error {
                 "parameter {}, element {element}: expected {expected:?}",
                 param.0
             ),
-            Self::Overflow { find } => {
+            Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")
+            }
+            Self::Overflow(super::OverflowKind::Origins) => {
+                write!(
+                    f,
+                    "origin mint space exhausted: more than 2^32 absorb-node survivors in one execution"
+                )
+            }
+            Self::BulkLoad { committed, error } => {
+                write!(
+                    f,
+                    "bulk load failed after {committed} committed facts: {error}"
+                )
             }
             Self::ResultBytesOverflow => {
                 write!(

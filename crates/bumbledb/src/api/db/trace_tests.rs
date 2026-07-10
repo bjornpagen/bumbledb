@@ -309,7 +309,9 @@ fn an_aborting_write_records_no_lmdb_commit() {
     obs::start_capture();
     let result: Result<()> = db.write(|tx| {
         tx.insert_dyn(R, &[Value::U64(1)])?;
-        Err(crate::error::Error::Overflow { find: 0 })
+        Err(crate::error::Error::Overflow(
+            crate::error::OverflowKind::Aggregate { find: 0 },
+        ))
     });
     let events = obs::finish_capture();
     assert!(result.is_err());

@@ -42,7 +42,13 @@ fn overflow_errors_leave_the_buffer_reusable() {
         let err = prepared
             .execute(&txn, &cache, &[], &mut out)
             .expect_err("account 7 overflows");
-        assert!(matches!(err, Error::Overflow { find: 1 }), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                Error::Overflow(crate::error::OverflowKind::Aggregate { find: 1 })
+            ),
+            "{err:?}"
+        );
     }
     // A passing query fills the same buffer with exactly its rows.
     let ok_query = Query {

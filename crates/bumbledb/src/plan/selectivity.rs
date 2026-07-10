@@ -202,15 +202,23 @@ fn distinct_of(
         };
         return Ok(distinct.max(1));
     }
+    // A field under several unconditional containments is bounded by
+    // each target's row count — fold to the tightest (the min), never
+    // the first statement's.
+    let mut containment_bound: Option<u64> = None;
     for id in descriptor.outgoing() {
         if let StatementDescriptor::Containment { source, target } =
             &schema.statement(*id).descriptor
         {
             if source.projection.as_ref() == [field] && source.selection.is_empty() {
                 let target_rows = read::row_count(txn, target.relation)?;
-                return Ok(target_rows.min(rows).max(1));
+                containment_bound =
+                    Some(containment_bound.map_or(target_rows, |bound| bound.min(target_rows)));
             }
         }
+    }
+    if let Some(bound) = containment_bound {
+        return Ok(bound.min(rows).max(1));
     }
     Ok(match &descriptor.field(field).value_type {
         crate::schema::ValueType::Bool => 2,
@@ -451,6 +459,94 @@ mod tests {
             .expect("estimate")
             .rows;
         assert_eq!(est, 1);
+    }
+
+    /// A field under TWO unconditional containments takes the tightest
+    /// target bound — the min over target row counts, never the first
+    /// statement's. Big (64 rows) is declared first; Small (16 rows)
+    /// must still win.
+    #[test]
+    fn the_containment_rung_takes_the_tightest_target_bound() {
+        const BIG: RelationId = RelationId(0);
+        const SMALL: RelationId = RelationId(1);
+        const SRC: RelationId = RelationId(2);
+        let serial_id = || FieldDescriptor {
+            name: "id".into(),
+            value_type: ValueType::U64,
+            generation: Generation::Serial,
+        };
+        let side = |relation: u32, field: u16| Side {
+            relation: RelationId(relation),
+            projection: Box::new([FieldId(field)]),
+            selection: Box::new([]),
+        };
+        let schema = SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    name: "Big".into(),
+                    fields: vec![serial_id()],
+                },
+                RelationDescriptor {
+                    name: "Small".into(),
+                    fields: vec![serial_id()],
+                },
+                RelationDescriptor {
+                    name: "Src".into(),
+                    fields: vec![
+                        serial_id(),
+                        FieldDescriptor {
+                            name: "r".into(),
+                            value_type: ValueType::U64,
+                            generation: Generation::None,
+                        },
+                    ],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Containment {
+                    source: side(2, 1),
+                    target: side(0, 0),
+                },
+                StatementDescriptor::Containment {
+                    source: side(2, 1),
+                    target: side(1, 0),
+                },
+            ],
+        }
+        .validate()
+        .expect("valid fixture");
+
+        let dir = TempDir::new("selectivity-tightest-containment");
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let mut put = |rel: RelationId, values: &[ValueRef]| {
+            let mut bytes = Vec::new();
+            encode_fact(values, schema.relation(rel).layout(), &mut bytes);
+            delta.insert(&view, rel, &bytes).expect("insert");
+        };
+        for i in 0..64u64 {
+            put(BIG, &[ValueRef::U64(i)]);
+        }
+        for i in 0..16u64 {
+            put(SMALL, &[ValueRef::U64(i)]);
+        }
+        for i in 0..8u64 {
+            put(SRC, &[ValueRef::U64(i), ValueRef::U64(i)]);
+        }
+        drop(view);
+        commit(delta, &env).expect("commit");
+
+        let txn = env.read_txn().expect("txn");
+        let cache = ImageCache::new();
+        let est = occurrence_stats(&txn, &cache, &schema, &eq_on(1, SRC), 1600)
+            .expect("estimate")
+            .rows;
+        assert_eq!(
+            est,
+            1600 / 16,
+            "the min target bound (Small, 16 rows) wins over the first (Big, 64)"
+        );
     }
 
     /// A set-bound position plans as `PARAM_SET_PLANNING_CARDINALITY`

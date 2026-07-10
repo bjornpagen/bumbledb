@@ -495,8 +495,30 @@ pub enum Direction {
     TargetRequired,
 }
 
+/// Which computation crossed its representation — [`Error::Overflow`]'s
+/// payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverflowKind {
+    /// An aggregate's final value exceeds its result type (the once-at-
+    /// finalization range check; deterministic under any fold order).
+    /// Carries the find-clause index.
+    Aggregate { find: usize },
+    /// The executor's D2 origin counter would cross u32 — more than 2³²
+    /// absorb-node survivors in one execution. Beyond the scale axiom,
+    /// but valid input, so it errors; checked at batch granularity
+    /// (`exec/run/probe_pass.rs`).
+    Origins,
+}
+
 /// The one workspace error type, categorized per
 /// `docs/architecture/70-api.md`.
+///
+/// `source()` chains only where the payload *is* an underlying error
+/// (`Io`, `Lmdb`, `BulkLoad`); the structured variants (`Corruption`,
+/// `Schema`, `Validation`, `FactShape`, …) carry data payloads, not
+/// nested errors — a decision, not an omission: chain-walkers see
+/// exactly the real causes, and the structured detail renders through
+/// `Display`.
 #[derive(Debug)]
 pub enum Error {
     // --- Open errors ---
@@ -575,6 +597,17 @@ pub enum Error {
         relation: RelationId,
         field: FieldId,
     },
+    /// A bulk load failed mid-stream: the underlying error plus how many
+    /// facts were already durable in the chunks committed before it —
+    /// the resumability payload, carried through the `?` conversion from
+    /// [`crate::BulkLoadError`] rather than dropped (the count is the
+    /// whole reason that type exists).
+    BulkLoad {
+        /// Facts that changed state in the chunks committed before the
+        /// error.
+        committed: u64,
+        error: Box<Error>,
+    },
 
     // --- Runtime errors ---
     /// A prepared query executed against a snapshot of a different
@@ -612,11 +645,10 @@ pub enum Error {
         element: usize,
         expected: ValueType,
     },
-    /// An aggregate's final value exceeds its result type (the once-at-
-    /// finalization range check; deterministic under any fold order).
-    Overflow {
-        find: usize,
-    },
+    /// A computed value crossed its representation — valid input whose
+    /// result cannot be represented, so a typed error, never a panic.
+    /// The payload names which computation.
+    Overflow(OverflowKind),
     /// The result buffer's byte heap crossed the u32 offset space —
     /// more than 4 GiB of distinct string/bytes payload in one result.
     /// Absurd under the scale axiom, but it is valid input, so it

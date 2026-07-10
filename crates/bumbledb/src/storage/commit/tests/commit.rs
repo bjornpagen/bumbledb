@@ -259,25 +259,65 @@ fn a_noop_commit_flushes_escaped_serials_and_nothing_else() {
 }
 
 #[test]
-fn a_noop_commit_with_clean_serial_marks_touches_nothing() {
-    let dir = TempDir::new("commit-noop-clean-marks");
+fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
+    // The invariant pinned at `delta/insert.rs`'s advance site: the
+    // committed `Q` high-water covers every committed serial value, so
+    // a transaction whose EVERY op is a no-op — even ones carrying
+    // explicit serial values — advances each mark exactly to its base
+    // (clean) and never triggers the counters-only commit: the storage
+    // tx id and the `Q` marks both come out byte-identical.
+    let dir = TempDir::new("commit-pure-noop-clean-marks");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 5))]);
     let before = committed_data(&env);
+    let q_key = key(|buf| keys::serial_key(buf, TARGET, FieldId(0)));
+    let q_before = {
+        let rtxn = env.read_txn().expect("txn");
+        env.data()
+            .get(rtxn.raw(), &q_key)
+            .expect("get")
+            .map(<[u8]>::to_vec)
+    };
+    assert_eq!(
+        q_before.as_deref(),
+        Some(6u64.to_le_bytes().as_slice()),
+        "the original commit advanced Q past the explicit value"
+    );
 
-    // Re-inserting the existing fact reads the serial base (mark 6,
-    // base 6 — clean) and records no disposition: the commit must
-    // write nothing at all.
+    // Every op a no-op: re-inserting the committed fact (its explicit
+    // serial value 5 is already covered by Q = 6 — mark lands on the
+    // base, clean) and deleting a fact base never held (records
+    // nothing). The delta is empty and no mark is dirty: the commit
+    // must write nothing at all.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     assert!(!delta
         .insert(&view, TARGET, &target_fact(&schema, 5))
         .expect("insert"));
+    assert!(!delta
+        .delete(&view, TARGET, &target_fact(&schema, 9))
+        .expect("delete"));
     drop(view);
     let report = commit(delta, &env).expect("commit");
     assert!(!report.changed);
-    assert_eq!(committed_data(&env), before);
+
+    let rtxn = env.read_txn().expect("txn");
+    assert_eq!(
+        rtxn.generation().expect("generation"),
+        1,
+        "the storage tx id did not advance"
+    );
+    assert_eq!(
+        env.data()
+            .get(rtxn.raw(), &q_key)
+            .expect("get")
+            .map(<[u8]>::to_vec),
+        q_before,
+        "the Q mark is byte-identical"
+    );
+    drop(rtxn);
+    assert_eq!(committed_data(&env), before, "nothing else moved either");
 }
 
 #[test]

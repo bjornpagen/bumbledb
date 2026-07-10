@@ -173,9 +173,14 @@ impl std::error::Error for BulkLoadError {
     }
 }
 
-/// Dropping the count keeps `?` working in `crate::Result` contexts.
+/// `?` in `crate::Result` contexts keeps the count: it carries into
+/// [`crate::error::Error::BulkLoad`] — the count is the whole reason
+/// [`BulkLoadError`] exists (resumable partial imports).
 impl From<BulkLoadError> for crate::error::Error {
     fn from(err: BulkLoadError) -> Self {
-        err.error
+        Self::BulkLoad {
+            committed: err.committed,
+            error: Box::new(err.error),
+        }
     }
 }

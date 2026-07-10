@@ -76,7 +76,8 @@ impl Colt {
 
     /// One position of a [`Colt::force`] pass: decode its key words, probe,
     /// and land it (new slot or appended child), rehash-doubling first
-    /// when the next insert would cross 75% load.
+    /// when the next insert would cross the 0.4 max load —
+    /// `(len + 1) * 5 > nbuckets * 16`, i.e. `len + 1 > 0.4 · 8 · nbuckets`.
     fn force_ingest(&mut self, m: &mut Map, level: usize, position: u32) {
         // Growth is checked before the probe, so a position that merely
         // appends to an existing key can still trigger a double — an

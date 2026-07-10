@@ -90,22 +90,26 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
     let mut colts = colts_for(&plan, &views);
     let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
     let mut elided = AggregateSink::new(finds(&plan), plan.slot_count(), true);
-    Executor::new(&plan).execute(
-        &plan,
-        &mut colts,
-        &mut bindings,
-        &mut elided,
-        &mut crate::exec::run::NoopCounters,
-    );
+    Executor::new(&plan)
+        .execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut elided,
+            &mut crate::exec::run::NoopCounters,
+        )
+        .expect("execute");
     let mut colts = colts_for(&plan, &views);
     let mut checked = AggregateSink::new(finds(&plan), plan.slot_count(), false);
-    Executor::new(&plan).execute(
-        &plan,
-        &mut colts,
-        &mut bindings,
-        &mut checked,
-        &mut crate::exec::run::NoopCounters,
-    );
+    Executor::new(&plan)
+        .execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut checked,
+            &mut crate::exec::run::NoopCounters,
+        )
+        .expect("execute");
     let mut a = elided.into_rows().expect("rows");
     let mut b = checked.into_rows().expect("rows");
     a.sort_unstable();
@@ -172,7 +176,13 @@ fn sum_is_order_independent_near_the_boundary() {
             sink.emit(&bindings);
         }
         let err = sink.into_rows().unwrap_err();
-        assert!(matches!(err, Error::Overflow { find: 0 }), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                Error::Overflow(crate::error::OverflowKind::Aggregate { find: 0 })
+            ),
+            "{err:?}"
+        );
     }
 }
 

@@ -69,13 +69,15 @@ fn scan_rows_of(
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSinkForTest::new(slots.to_vec());
     let mut executor = Executor::new(plan);
-    executor.execute(
-        plan,
-        &mut colts,
-        &mut bindings,
-        &mut sink,
-        &mut NoopCounters,
-    );
+    executor
+        .execute(
+            plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        )
+        .expect("execute");
     sink.rows().map(<[u64]>::to_vec).collect()
 }
 

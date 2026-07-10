@@ -261,13 +261,15 @@ fn run(plan: &ValidatedPlan, views: &[Arc<crate::image::RelationImage>]) -> BTre
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut executor = Executor::new(plan);
-    executor.execute(
-        plan,
-        &mut colts,
-        &mut bindings,
-        &mut sink,
-        &mut NoopCounters,
-    );
+    executor
+        .execute(
+            plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        )
+        .expect("execute");
     sink.rows
 }
 
@@ -315,13 +317,15 @@ fn run_batched(
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut executor = Executor::with_batch_size(plan, batch);
-    executor.execute(
-        plan,
-        &mut colts,
-        &mut bindings,
-        &mut sink,
-        &mut NoopCounters,
-    );
+    executor
+        .execute(
+            plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        )
+        .expect("execute");
     sink.rows
 }
 
@@ -357,13 +361,15 @@ fn run_at(
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut executor = Executor::with_batch_size(plan, batch);
-    executor.execute(
-        plan,
-        &mut colts,
-        &mut bindings,
-        &mut sink,
-        &mut NoopCounters,
-    );
+    executor
+        .execute(
+            plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        )
+        .expect("execute");
     sink.rows
 }
 

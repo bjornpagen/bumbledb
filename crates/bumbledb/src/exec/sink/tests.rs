@@ -304,13 +304,15 @@ fn run_aggregate_distinct(
     let mut colts = colts_for(plan, views);
     let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
     let mut sink = AggregateSink::new(finds, plan.slot_count(), distinct);
-    Executor::new(plan).execute(
-        plan,
-        &mut colts,
-        &mut bindings,
-        &mut sink,
-        &mut crate::exec::run::NoopCounters,
-    );
+    Executor::new(plan)
+        .execute(
+            plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut crate::exec::run::NoopCounters,
+        )
+        .expect("execute");
     let mut rows = sink.into_rows()?;
     rows.sort_unstable();
     Ok(rows)

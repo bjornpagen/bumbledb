@@ -441,6 +441,10 @@ pub struct Executor {
     next_origin: u32,
     /// A skip crossed the virtual root: the whole execution is done.
     all_cancelled: bool,
+    /// The origin mint space would cross u32 (checked at batch
+    /// granularity in `probe_pass`): the pipeline stopped early and
+    /// `execute` reports [`crate::error::Error::Overflow`].
+    origin_overflow: bool,
 }
 
 /// The pipelined executor's static shape tables:

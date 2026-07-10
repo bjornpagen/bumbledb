@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use crate::error::{Error, OverflowKind, Result};
 use crate::exec::sink::{i64_to_word, Acc, AggregateSink, FindSpec};
 
 impl AggregateSink {
@@ -94,10 +94,9 @@ impl AggregateSink {
         match acc {
             Acc::SumSigned(total) => i64::try_from(total)
                 .map(i64_to_word)
-                .map_err(|_| Error::Overflow { find: find_idx }),
-            Acc::SumUnsigned(total) => {
-                u64::try_from(total).map_err(|_| Error::Overflow { find: find_idx })
-            }
+                .map_err(|_| Error::Overflow(OverflowKind::Aggregate { find: find_idx })),
+            Acc::SumUnsigned(total) => u64::try_from(total)
+                .map_err(|_| Error::Overflow(OverflowKind::Aggregate { find: find_idx })),
             Acc::Min(word) | Acc::Max(word) | Acc::Count(word) => Ok(word),
             // |distinct values of the group| — the value set's size.
             Acc::CountDistinct(set) => Ok(self.value_sets[set].len() as u64),

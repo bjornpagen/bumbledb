@@ -66,7 +66,11 @@ fn the_reader_cache_is_invisible_except_in_speed() {
     assert_eq!(g1, g2, "parked reuse serves the same snapshot");
 
     // (c) an erroring closure leaves the cache serviceable.
-    let err: Result<()> = db.read(|_| Err(crate::error::Error::Overflow { find: 7 }));
+    let err: Result<()> = db.read(|_| {
+        Err(crate::error::Error::Overflow(
+            crate::error::OverflowKind::Aggregate { find: 7 },
+        ))
+    });
     assert!(err.is_err());
     let again = db.read(|snap| count_named(snap)).expect("read after error");
     assert_eq!(again, 1);
@@ -413,4 +417,30 @@ fn a_witness_mints_the_same_sequence_as_the_typed_path() {
         Ok(())
     })
     .expect("mint again");
+}
+
+/// A mid-stream bulk-load failure surfaced through `?` (the
+/// `From<BulkLoadError> for Error` conversion) still exposes the
+/// committed count — the resumability payload the type exists for.
+#[test]
+fn a_bulk_load_error_keeps_its_committed_count_through_question_mark() {
+    let dir = TempDir::new("db-bulk-load-count");
+    let schema = named_schema();
+    let db = Db::create(dir.path(), &schema).expect("create");
+    let named = RelationId(0);
+
+    // Exactly one full chunk of distinct facts commits; the mis-shaped
+    // fact (wrong arity) fails the second chunk whole.
+    let facts: Vec<Vec<Value>> = (0..BULK_CHUNK as u64)
+        .map(|i| vec![Value::String(format!("v{i}").into_bytes().into())])
+        .chain(std::iter::once(vec![]))
+        .collect();
+    let surfaced = (|| -> Result<u64> { Ok(db.bulk_load(named, facts)?) })();
+    match surfaced.unwrap_err() {
+        Error::BulkLoad { committed, error } => {
+            assert_eq!(committed, BULK_CHUNK as u64, "the whole first chunk");
+            assert!(matches!(*error, Error::FactShape(_)), "{error:?}");
+        }
+        other => panic!("expected Error::BulkLoad, got {other:?}"),
+    }
 }

@@ -15,7 +15,9 @@ use super::*;
 fn bucketized_force_stays_at_parity_with_the_linear_build() {
     /// The prior build, reconstructed: linear probe over a ctrl
     /// byte slab + row-major `(key, child)` rows, first-empty
-    /// insert, rehash-double at 75% — near-distinct keys, so the
+    /// insert, rehash-double at ITS OWN 3/4-load trigger
+    /// (`(len + 1) * 4 >= capacity * 3`; the shipped bucket-of-8
+    /// map's is the 0.4 max load) — near-distinct keys, so the
     /// duplicate/chunk machinery never fires and is elided.
     fn linear_build(keys: &[u64]) -> (Vec<u8>, Vec<u64>) {
         let mut capacity = ((keys.len() / 8).max(16)).next_power_of_two();

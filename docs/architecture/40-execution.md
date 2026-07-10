@@ -441,7 +441,8 @@ Five measured decisions, enforced structurally by
 - **Dense map iteration and occupancy sizing.** Forced maps carry a dense
   occupied-slot list (iteration is O(keys), never O(capacity); the map
   `BatchToken` is a dense index) and size from
-  `next_pow2(clamp(count/8, 16, 2·count))` with rehash-doubling at 75 % load
+  `next_pow2(clamp(count/8, 16, 2·count))` with rehash-doubling at the 0.4
+  max load (`(len+1)·5 > nbuckets·16`, 5/16 = 1/(8·0.4) at 8 slots per bucket)
   (fresh slab ranges at the tail; old ranges reclaimed at reset — a ≤2×
   transient).
 - **The finalize intern memo.** `ResolveMemo` maps `(intern word, tag)` to a

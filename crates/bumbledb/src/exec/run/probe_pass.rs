@@ -286,6 +286,32 @@ impl Executor {
         let leaf = node_idx + 2 == n_nodes;
         let child_carried = &tables.carried[node_idx + 1];
         let mints_origins = tables.absorb == Some(node_idx);
+        // The origin mint space is checked HERE, at mint granularity —
+        // one branch per probe pass (this pass mints at most one origin
+        // per survivor), never on the per-tuple path. Past 2³² absorb
+        // survivors the u32 counter would wrap in release, cancel the
+        // WRONG origin, and silently drop valid rows — beyond the scale
+        // axiom, but valid input, so it is the typed `Overflow` error
+        // (surfaced by `execute`), never a wrap and never a panic. The
+        // representation fix — widening origins to u64 — was rejected:
+        // origin ids are stored per pending row in hot scratch arrays
+        // (`pending_origins`, `element_origins`, the `cancelled`
+        // high-water table), and doubling that width is measured bytes
+        // on the hot path spent against a beyond-axiom case; the
+        // boundary check at mint granularity is the cheaper honest
+        // shape.
+        if mints_origins
+            && self
+                .next_origin
+                .checked_add(u32::try_from(scratch.survivors.len()).expect("batch fits u32"))
+                .is_none()
+        {
+            self.origin_overflow = true;
+            self.all_cancelled = true; // stops the pump loops upstream
+            scratch.parents.clear();
+            scratch.element_origins.clear();
+            return;
+        }
         for k in 0..scratch.survivors.len() {
             if self.all_cancelled {
                 break;

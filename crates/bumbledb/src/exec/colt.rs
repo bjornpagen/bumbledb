@@ -163,7 +163,9 @@ enum Slot {
 /// measured displacement negligible below 0.4 load). No tombstones
 /// (build-once, never deleted from). Sizing targets ≤ 0.4 load — the
 /// measured occupancy-invariant band (flat probes 0.15–0.4) — from the
-/// position-count guess, rehash-doubling in bucket units when short;
+/// position-count guess, rehash-doubling in bucket units when the next
+/// insert would cross it: `(len + 1) * 5 > nbuckets * 16`
+/// (5/16 = 1/(8·0.4), 8 slots per bucket);
 /// iteration never touches the slot array — it walks the dense
 /// occupied list. Slot indices everywhere (dense entries, probe
 /// returns) stay GLOBAL (`bucket·8 + slot`), so ctrl indexing and the

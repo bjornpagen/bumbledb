@@ -61,13 +61,15 @@ fn pipelined_executor_matches_recursive_and_oracle() {
             let mut colts = colts_for(&pipe_plan, &views);
             let mut bindings = Bindings::new(pipe_plan.slot_count());
             let mut sink = CollectSink::default();
-            executor.execute(
-                &pipe_plan,
-                &mut colts,
-                &mut bindings,
-                &mut sink,
-                &mut NoopCounters,
-            );
+            executor
+                .execute(
+                    &pipe_plan,
+                    &mut colts,
+                    &mut bindings,
+                    &mut sink,
+                    &mut NoopCounters,
+                )
+                .expect("execute");
             let got: BTreeSet<Vec<u64>> = sink
                 .rows
                 .iter()
@@ -149,7 +151,9 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
         node: 1,
         ..Default::default()
     };
-    executor.execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+    executor
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
     assert!(!sink.rows.is_empty());
     assert!(counters.passes > 0);
     let mean = counters.probes / counters.passes;

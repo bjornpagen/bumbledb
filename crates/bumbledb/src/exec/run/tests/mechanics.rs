@@ -55,7 +55,9 @@ fn dynamic_cover_prefers_the_forced_small_side() {
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut counters = RecordingCounters::default();
-    Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+    Executor::new(&plan)
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
 
     // Node 0's first choice: subatom 1 (S), whose count is Exact.
     let (node, subatom, exact) = counters.cover_choices[0];
@@ -130,21 +132,25 @@ fn backtracking_restores_sources_across_sequential_executions() {
     let mut executor = Executor::new(&plan);
 
     let mut first = CollectSink::default();
-    executor.execute(
-        &plan,
-        &mut colts,
-        &mut bindings,
-        &mut first,
-        &mut NoopCounters,
-    );
+    executor
+        .execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut first,
+            &mut NoopCounters,
+        )
+        .expect("execute");
     let mut second = CollectSink::default();
-    executor.execute(
-        &plan,
-        &mut colts,
-        &mut bindings,
-        &mut second,
-        &mut NoopCounters,
-    );
+    executor
+        .execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut second,
+            &mut NoopCounters,
+        )
+        .expect("execute");
     assert_eq!(first.rows, second.rows);
     assert!(!first.rows.is_empty());
 }
@@ -209,13 +215,9 @@ fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut counters = PhaseOrderCounters::default();
-    Executor::with_batch_size(&plan, 128).execute(
-        &plan,
-        &mut colts,
-        &mut bindings,
-        &mut sink,
-        &mut counters,
-    );
+    Executor::with_batch_size(&plan, 128)
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
 
     // All 10 root entries fit one batch: every hash of node 0's sibling
     // pass must precede its first probe.
@@ -299,7 +301,9 @@ fn pinned_siblings_probe_without_hashing() {
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut counters = PhaseOrderCounters::default();
-    Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+    Executor::new(&plan)
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
 
     let count = |kind: &str, node: usize, subatom: usize| {
         counters

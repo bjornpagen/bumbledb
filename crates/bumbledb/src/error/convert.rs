@@ -47,10 +47,14 @@ impl From<CorruptionError> for Error {
 }
 
 impl std::error::Error for Error {
+    /// Chains only where the payload *is* an underlying error; the
+    /// structured variants carry data payloads deliberately invisible
+    /// to chain-walking (the decision is documented on [`Error`]).
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(err) => Some(err),
             Self::Lmdb(err) => Some(err),
+            Self::BulkLoad { error, .. } => Some(error.as_ref()),
             _ => None,
         }
     }

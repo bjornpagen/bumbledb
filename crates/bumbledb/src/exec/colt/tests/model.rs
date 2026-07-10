@@ -3,7 +3,7 @@ use super::*;
 /// The ctrl-gated bucket probe is behavior-
 /// identical to a model across adversarial keys (equal low bits —
 /// same slot, different tags), probe hits AND misses, singleton
-/// upgrades, and growth across the 75% boundary.
+/// upgrades, and growth across the 0.4 max-load boundary.
 #[test]
 fn bucket_probes_match_the_model_under_adversarial_keys() {
     let dir = TempDir::new("colt-bucket-model");

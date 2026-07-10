@@ -196,7 +196,10 @@ over `F` in row_id order (a storage iteration, not a query — streams, not sets
 typed sibling `snap.scan_facts::<F>()` decodes into the generated structs. The
 dynamic form pairs with `Db::bulk_load(relation, facts)`: chunks of 4096 per
 transaction, each chunk atomic, prior chunks committed on failure with the committed
-count carried on `BulkLoadError`. The returned/carried count is **facts that changed
+count carried on `BulkLoadError` — and kept through `?`: the conversion into the
+workspace error lands in `Error::BulkLoad { committed, error }`, never dropping the
+count (it is the resumability payload the type exists for). The returned/carried
+count is **facts that changed
 state** (idempotent re-inserts are consumed but not counted) — changed-not-consumed
 semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids and
 `start ≥ end` intervals) are typed `FactShape` errors (decided: ETL input is data,

@@ -253,6 +253,7 @@ impl Executor {
             cancel_epoch: 0,
             next_origin: 0,
             all_cancelled: false,
+            origin_overflow: false,
         }
     }
 
@@ -269,6 +270,14 @@ impl Executor {
     /// Runs the plan over the COLT sources (one per occurrence, indexed by
     /// occurrence id), emitting complete bindings to the sink.
     ///
+    /// # Errors
+    ///
+    /// `Overflow` (origins) when the D2 origin counter would cross u32 —
+    /// more than 2³² absorb-node survivors in one execution, beyond the
+    /// scale axiom but valid input, so it errors rather than wrapping
+    /// (a wrapped counter cancels the wrong origin: silently dropped
+    /// valid rows).
+    ///
     /// # Panics
     ///
     /// Only on programmer-invariant violations (sources not matching the
@@ -280,7 +289,7 @@ impl Executor {
         bindings: &mut Bindings,
         sink: &mut S,
         counters: &mut C,
-    ) {
+    ) -> crate::error::Result<()> {
         assert_eq!(colts.len(), plan.occurrences().len());
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
@@ -299,6 +308,12 @@ impl Executor {
         } else {
             self.run_node(plan, 0, colts, bindings, sink, counters);
         }
+        if self.origin_overflow {
+            return Err(crate::error::Error::Overflow(
+                crate::error::OverflowKind::Origins,
+            ));
+        }
+        Ok(())
     }
 
     /// The pipelined executor: pending binding rows
@@ -329,6 +344,7 @@ impl Executor {
         self.cancel_epoch = self.cancel_epoch.wrapping_add(1);
         self.next_origin = 0;
         self.all_cancelled = false;
+        self.origin_overflow = false;
         // The virtual root entry: no bindings, no carried cursors.
         self.scratch[0].pending_bindings.resize(slot_count, 0);
         self.scratch[0].pending_len = 1;

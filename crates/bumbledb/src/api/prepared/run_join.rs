@@ -123,9 +123,11 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
     // One match per execution: the executor monomorphizes per concrete
     // sink type — no per-emit enum branch on the hot path.
     match sink {
-        EitherSink::Projection(s) => executor.execute(plan, &mut memo.colts, bindings, s, counters),
+        EitherSink::Projection(s) => {
+            executor.execute(plan, &mut memo.colts, bindings, s, counters)?;
+        }
         EitherSink::Aggregate(s) => {
-            executor.execute(plan, &mut memo.colts, bindings, s.as_mut(), counters);
+            executor.execute(plan, &mut memo.colts, bindings, s.as_mut(), counters)?;
         }
     }
     Ok(())

@@ -39,13 +39,15 @@ fn projection_scan_filters_residuals_like_the_oracle() {
         let mut colts = colts_for(&plan, &views2);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1)), plan.slot_of(VarId(2))]);
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let got: BTreeSet<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
         assert_eq!(got, expected, "batch {batch}");
     }
@@ -79,13 +81,9 @@ fn pinned_leaf_skips_preserve_d2() {
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1))]);
         let mut counters = SkipCounter::default();
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut counters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+            .expect("execute");
         let mut rows: Vec<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
         rows.sort_unstable();
         assert_eq!(
@@ -126,13 +124,9 @@ fn duplicate_witness_projection_dedups_and_skips_suffixes() {
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1))]);
         let mut counters = SkipCounter::default();
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut counters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+            .expect("execute");
 
         let rows: Vec<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
         assert_eq!(rows, vec![vec![7]], "batch {batch}");
@@ -174,13 +168,15 @@ fn interval_projection_carries_both_slot_words() {
         // The word-level expansion make_sink performs in production.
         let during = plan.slot_of(VarId(2));
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1)), during, during + 1]);
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let got: BTreeSet<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
         assert_eq!(got, expected, "batch {batch}");
     }

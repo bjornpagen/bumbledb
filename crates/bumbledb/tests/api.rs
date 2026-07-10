@@ -254,7 +254,9 @@ fn aborted_writes_leave_prior_state_intact() {
             id,
             name: "doomed-by-error".to_owned(),
         })?;
-        Err(bumbledb::Error::Overflow { find: 0 })
+        Err(bumbledb::Error::Overflow(
+            bumbledb::OverflowKind::Aggregate { find: 0 },
+        ))
     });
     assert!(failed.is_err());
 

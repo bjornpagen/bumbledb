@@ -27,6 +27,20 @@ impl WriteDelta<'_> {
         rel: RelationId,
         fact_bytes: &[u8],
     ) -> Result<bool> {
+        // Advancing BEFORE the no-op determination is sound — a no-op
+        // insert can never dirty a mark. Invariant: the committed `Q`
+        // high-water covers every committed serial value, because every
+        // path that commits a fact ran this same advance (or `alloc`) at
+        // that fact's original commit — the normal write path, bulk-load
+        // chunks (`Db::bulk_load` chunks route through here), and
+        // explicit resupply after a delete (a genuine insert again) —
+        // and marks never retreat (`mark.max(value + 1)`; deletes do not
+        // touch `Q`). So a no-op insert's serial values are already
+        // below their committed bases: the advance lands exactly on the
+        // base, the mark stays clean, and a pure-no-op transaction never
+        // triggers the counters-only commit (pinned by
+        // `commit/tests/commit.rs`,
+        // `a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks`).
         self.advance_serial_marks(view, rel, fact_bytes)?;
         let hash = fact_hash(fact_bytes);
         match self.facts.get(&(rel, hash)).copied() {

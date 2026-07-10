@@ -73,7 +73,7 @@ pub use api::prepared::{
 pub use api::stats::{
     CoverStats, EliminatedOccurrence, ExecutionStats, GuardStats, NodeStats, PinnedRows,
 };
-pub use error::{Direction, Error, Result};
+pub use error::{Direction, Error, OverflowKind, Result};
 pub use interval::Interval;
 /// The chase's test-support off switch (`plan/chase.rs`): reachable only
 /// under the `chase-off` feature, which only the bench crate's dual-run

@@ -189,7 +189,9 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(2))]);
     let mut counters = CountingCounters::new(&plan);
-    Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+    Executor::new(&plan)
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
 
     // 20 R1 rows each match exactly one R0 row: actual after the last
     // node is 20 emits; estimates rendered beside them.
@@ -256,7 +258,9 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(0))]);
     let mut counters = CountingCounters::new(&plan);
-    Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+    Executor::new(&plan)
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
 
     // Node 0 chose subatom 1 (the forced small side), labeled Exact.
     assert_eq!(counters.cover_histogram(0, 1)[0], 1);
@@ -336,13 +340,9 @@ fn the_counted_execution_shows_batching_engaged() {
         plan.slot_of(VarId(2)),
     ]);
     let mut counters = CountingCounters::new(&plan);
-    Executor::with_batch_size(&plan, 64).execute(
-        &plan,
-        &mut colts,
-        &mut bindings,
-        &mut sink,
-        &mut counters,
-    );
+    Executor::with_batch_size(&plan, 64)
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
 
     let (batches, entries) = counters.batches(0);
     assert_eq!(entries, 300, "the root drains every tuple");
@@ -391,7 +391,9 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(0)), plan.slot_of(VarId(1))]);
     let mut counters = CountingCounters::new(&plan);
-    Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+    Executor::new(&plan)
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
 
     assert_eq!(counters.emits(), 7, "three postings rejected");
     let stats = counters.into_stats(&plan, &schema, Vec::new());

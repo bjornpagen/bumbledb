@@ -44,13 +44,15 @@ fn constant_group_batches_fold_once_per_run() {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), distinct);
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         if distinct && batch == 128 {
             assert_eq!(
                 sink.group_probes, 8,
@@ -116,13 +118,15 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         // distinct_bindings = false: the dedup arm is mandatory.
         let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), false);
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let mut rows = sink.into_rows().expect("in range");
         rows.sort_unstable();
         assert_eq!(
@@ -171,15 +175,23 @@ fn constant_over_slot_folds_value_times_count() {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), distinct);
-        Executor::with_batch_size(&plan, 128).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, 128)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let err = sink.into_rows().unwrap_err();
-        assert!(matches!(err, Error::Overflow { find: 1 }), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                Error::Overflow(crate::error::OverflowKind::Aggregate { find: 1 })
+            ),
+            "{err:?}"
+        );
     }
     // Value parity in range: drop the big account.
     let dir2 = TempDir::new("sink-constant-over-ok");
@@ -188,13 +200,15 @@ fn constant_over_slot_folds_value_times_count() {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), distinct);
-        Executor::with_batch_size(&plan, 128).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, 128)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let rows = sink.into_rows().expect("in range");
         assert_eq!(rows, vec![vec![7, 21]], "distinct {distinct}");
     }
@@ -235,18 +249,23 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), true);
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         // Account 8's Sum overflows: the error is deterministic and
         // carries the find index, at every batch size.
         let err = sink.into_rows().unwrap_err();
         assert!(
-            matches!(err, Error::Overflow { find: 1 }),
+            matches!(
+                err,
+                Error::Overflow(crate::error::OverflowKind::Aggregate { find: 1 })
+            ),
             "batch {batch}: {err:?}"
         );
     }
@@ -258,13 +277,15 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), true);
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let mut rows = sink.into_rows().expect("in range");
         rows.sort_unstable();
         assert_eq!(
@@ -309,13 +330,15 @@ fn count_distinct_collapses_multiplicities_per_group() {
             let mut colts = colts_for(&plan, &views);
             let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
             let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), distinct);
-            Executor::with_batch_size(&plan, batch).execute(
-                &plan,
-                &mut colts,
-                &mut bindings,
-                &mut sink,
-                &mut crate::exec::run::NoopCounters,
-            );
+            Executor::with_batch_size(&plan, batch)
+                .execute(
+                    &plan,
+                    &mut colts,
+                    &mut bindings,
+                    &mut sink,
+                    &mut crate::exec::run::NoopCounters,
+                )
+                .expect("execute");
             let mut rows = sink.into_rows().expect("rows");
             rows.sort_unstable();
             assert_eq!(
@@ -352,13 +375,15 @@ fn elision_skips_the_seen_set_but_never_the_value_sets() {
     let mut colts = colts_for(&plan, &views);
     let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
     let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
-    Executor::new(&plan).execute(
-        &plan,
-        &mut colts,
-        &mut bindings,
-        &mut sink,
-        &mut crate::exec::run::NoopCounters,
-    );
+    Executor::new(&plan)
+        .execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut crate::exec::run::NoopCounters,
+        )
+        .expect("execute");
     assert!(sink.seen_elided(), "the plan proved distinct bindings");
     assert_eq!(
         sink.distinct_values_held(),
@@ -398,13 +423,15 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let finds = vec![var_spec(&plan, 1), arg_spec(&plan, 2, 0, true)];
         let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let mut rows = sink.into_rows().expect("rows");
         rows.sort_unstable();
         assert_eq!(
@@ -417,13 +444,15 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
         let mut colts = colts_for(&plan, &views);
         let finds = vec![var_spec(&plan, 1), arg_spec(&plan, 2, 0, false)];
         let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let mut rows = sink.into_rows().expect("rows");
         rows.sort_unstable();
         assert_eq!(
@@ -436,13 +465,15 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
         let mut colts = colts_for(&plan, &views);
         let finds = vec![arg_spec(&plan, 2, 0, true)];
         let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let rows = sink.into_rows().expect("rows");
         assert_eq!(
             rows,
@@ -477,13 +508,15 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let finds = vec![var_spec(&plan, 1), arg_spec(&plan, 0, 2, true)];
         let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let mut rows = sink.into_rows().expect("rows");
         rows.sort_unstable();
         assert_eq!(
@@ -497,13 +530,15 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
         let mut colts = colts_for(&plan, &views);
         let finds = vec![var_spec(&plan, 1), arg_spec(&plan, 2, 2, true)];
         let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let mut rows = sink.into_rows().expect("rows");
         rows.sort_unstable();
         assert_eq!(
@@ -522,13 +557,15 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
             arg_spec(&plan, 2, 2, true),
         ];
         let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
-        Executor::with_batch_size(&plan, batch).execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut crate::exec::run::NoopCounters,
-        );
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
         let mut rows = sink.into_rows().expect("rows");
         rows.sort_unstable();
         assert_eq!(
