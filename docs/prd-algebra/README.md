@@ -99,10 +99,17 @@ Phase E — the earning:
 - [15 — Oracles and the generator](15-oracles.md)
 - [16 — The calendar family](16-calendar-family.md)
 
+Phase F — the write side and the type ledger:
+- [17 — Identity bytes: `bytes<N>`, the eighth type](17-identity-bytes.md)
+- [18 — The generation witness: read-compute-write as a value](18-generation-witness.md)
+- [19 — Derived relations: the view story, canonized (doc unit)](19-derived-relations.md)
+
 Dependency spine: 01–02 free; 03→04; 05→06→07→08; 09 additionally requires
 `docs/prd/` 11–12 (the chase) landed; 10 requires 02; 11→12; 13/14 landed
-(residual rides 01); 15 requires 03/05/10/12; 16 requires 15. Phases A/B/C may
-interleave; E closes the set.
+(residual rides 01); 15 requires 03/05/10/12; 16 requires 15; 17–18 free
+(17's oracle rows fold into 15 if it lands first); 19 requires 18. Phases
+A/B/C/F may interleave; E closes the set (16 gains a `bytes<32>` content-hash
+column and a witnessed-write family row if F lands first).
 
 ## Refusals (recorded with derivations — do not re-litigate)
 
@@ -140,6 +147,20 @@ interleave; E closes the set.
 - **Recursion, still.** Rules make the IR a non-recursive Datalog program —
   deliberately one step short of the fixpoint. The OPEN item stands; rules are
   its landing pad, not its arrival.
+- **Order operations on `bytes<N>`.** A digest's lexicographic order is an
+  encoding artifact; admitting it makes hash-function choice semantically
+  visible. Identity only (Eq/Ne, membership). The guard B-tree still sorts
+  them — sortedness is the index's need, not a query semantics.
+- **A raw-integer witness API.** `write_from` takes the `Snapshot`, never a
+  generation number: a snapshot is evidence, an integer is a claim (parse,
+  don't validate). Recorded in PRD 18.
+- **A named-view registry in the engine.** A view is a host function
+  returning atoms; a registry would be a second schema with none of the
+  theory's guarantees. Recorded in PRD 19.
+- **Arithmetic-agreement statements** (a derived column equaling a
+  computation over its sources). Outside the ∀∃ vocabulary by the acceptance
+  gate; host discipline plus offline re-derivation, with the trigger
+  recorded in PRD 19.
 
 ## Idioms chapter (PRD 01 discharges into `10-data-model.md`)
 
