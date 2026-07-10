@@ -44,6 +44,13 @@ fn literal_anchor_type(value: &Value) -> Option<ValueType> {
     })
 }
 
+/// Whether an element-typed value sits at its domain ceiling (`MAX`) —
+/// outside the point domain `MIN ..= MAX−1`: `MAX` is the ray's ∞, never
+/// a point (`docs/architecture/10-data-model.md`, the point-domain law).
+fn at_domain_ceiling(value: &Value) -> bool {
+    matches!(value, Value::U64(u64::MAX) | Value::I64(i64::MAX))
+}
+
 /// A literal in an interval-field binding: element-typed means point
 /// membership, interval-typed (same element) means value equality — and
 /// an interval literal with `start >= end` denotes no points.
@@ -54,8 +61,15 @@ fn check_interval_field_literal(
     value: &Value,
 ) -> Result<(), ValidationError> {
     match (value, element) {
-        // Membership: `start <= t < end`.
-        (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => Ok(()),
+        // Membership: `start <= t < end` — and the point domain is
+        // `MIN ..= MAX−1`, so the ceiling can be inside no interval.
+        (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => {
+            if at_domain_ceiling(value) {
+                Err(ValidationError::PointLiteralAtCeiling { atom, field })
+            } else {
+                Ok(())
+            }
+        }
         // Value equality against the field's intervals.
         (Value::IntervalU64(start, end), IntervalElement::U64) => {
             if start < end {
@@ -244,80 +258,9 @@ impl Context {
                 }
                 let field_type = &relation.field(*field).value_type;
                 if let ValueType::Interval { element } = field_type {
-                    // The membership rule: this position types its term
-                    // bivalently — `Interval(element)` (value equality) or
-                    // `element` (membership). Resolution:
-                    // `Context::resolve_bivalents`.
-                    match term {
-                        Term::Var(var) => {
-                            self.bind_var_bivalent(*var, *element)?;
-                            if negated {
-                                self.negated_vars.insert(*var);
-                            } else {
-                                self.atom_vars.insert(*var);
-                            }
-                        }
-                        Term::Param(param) => {
-                            self.note_param_kind(*param, ParamKind::Scalar)?;
-                            self.anchor_param_bivalent(*param, *element)?;
-                        }
-                        // A set holds points, so an interval-field position
-                        // anchors it at the element type — membership per
-                        // element, never interval equality.
-                        Term::ParamSet(param) => {
-                            self.note_param_kind(*param, ParamKind::Set)?;
-                            self.anchor_param_mono(*param, &element_type(*element))?;
-                        }
-                        Term::Literal(value) => {
-                            check_interval_field_literal(occ_idx, *field, *element, value)?;
-                        }
-                    }
+                    self.check_interval_binding(occ_idx, negated, *field, *element, term)?;
                 } else {
-                    match term {
-                        Term::Var(var) => {
-                            self.bind_var_mono(*var, field_type)?;
-                            if negated {
-                                self.negated_vars.insert(*var);
-                            } else {
-                                self.atom_vars.insert(*var);
-                                self.scalar_bound_vars.insert(*var);
-                            }
-                        }
-                        Term::Param(param) => {
-                            self.note_param_kind(*param, ParamKind::Scalar)?;
-                            self.anchor_param_mono(*param, field_type)?;
-                        }
-                        Term::ParamSet(param) => {
-                            self.note_param_kind(*param, ParamKind::Set)?;
-                            self.anchor_param_mono(*param, field_type)?;
-                        }
-                        Term::Literal(value) => match literal_matches(value, field_type) {
-                            Ok(()) => {}
-                            // A non-UTF-8 String literal is a type mismatch:
-                            // `Value::String` documents the UTF-8 contract.
-                            Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
-                                return Err(ValidationError::LiteralTypeMismatch {
-                                    atom: occ_idx,
-                                    field: *field,
-                                });
-                            }
-                            Err(LiteralMismatch::EnumOrdinal(ordinal)) => {
-                                return Err(ValidationError::EnumOrdinalOutOfRange {
-                                    atom: occ_idx,
-                                    field: *field,
-                                    ordinal,
-                                });
-                            }
-                            // Unreachable for a scalar field (kind is
-                            // checked first), kept total for the mapping.
-                            Err(LiteralMismatch::IntervalEmpty) => {
-                                return Err(ValidationError::EmptyIntervalLiteral {
-                                    atom: occ_idx,
-                                    field: *field,
-                                });
-                            }
-                        },
-                    }
+                    self.check_scalar_binding(occ_idx, negated, *field, field_type, term)?;
                 }
             }
         }
@@ -325,6 +268,105 @@ impl Context {
             if !self.atom_vars.contains(var) {
                 return Err(ValidationError::NegatedVariableUnbound { var: *var });
             }
+        }
+        Ok(())
+    }
+
+    /// One binding on an interval field — the membership rule: the
+    /// position types its term bivalently, `Interval(element)` (value
+    /// equality) or `element` (membership). Resolution:
+    /// [`Context::resolve_bivalents`].
+    fn check_interval_binding(
+        &mut self,
+        occ_idx: usize,
+        negated: bool,
+        field: FieldId,
+        element: IntervalElement,
+        term: &Term,
+    ) -> Result<(), ValidationError> {
+        match term {
+            Term::Var(var) => {
+                self.bind_var_bivalent(*var, element)?;
+                if negated {
+                    self.negated_vars.insert(*var);
+                } else {
+                    self.atom_vars.insert(*var);
+                }
+            }
+            Term::Param(param) => {
+                self.note_param_kind(*param, ParamKind::Scalar)?;
+                self.anchor_param_bivalent(*param, element)?;
+                self.interval_position_params.insert(*param);
+            }
+            // A set holds points, so an interval-field position anchors
+            // it at the element type — membership per element, never
+            // interval equality.
+            Term::ParamSet(param) => {
+                self.note_param_kind(*param, ParamKind::Set)?;
+                self.anchor_param_mono(*param, &element_type(element))?;
+                self.interval_position_params.insert(*param);
+            }
+            Term::Literal(value) => {
+                check_interval_field_literal(occ_idx, field, element, value)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One binding on a scalar field: a monovalent anchor for every term
+    /// kind, with the literal precisely diagnosed.
+    fn check_scalar_binding(
+        &mut self,
+        occ_idx: usize,
+        negated: bool,
+        field: FieldId,
+        field_type: &ValueType,
+        term: &Term,
+    ) -> Result<(), ValidationError> {
+        match term {
+            Term::Var(var) => {
+                self.bind_var_mono(*var, field_type)?;
+                if negated {
+                    self.negated_vars.insert(*var);
+                } else {
+                    self.atom_vars.insert(*var);
+                    self.scalar_bound_vars.insert(*var);
+                }
+            }
+            Term::Param(param) => {
+                self.note_param_kind(*param, ParamKind::Scalar)?;
+                self.anchor_param_mono(*param, field_type)?;
+            }
+            Term::ParamSet(param) => {
+                self.note_param_kind(*param, ParamKind::Set)?;
+                self.anchor_param_mono(*param, field_type)?;
+            }
+            Term::Literal(value) => match literal_matches(value, field_type) {
+                Ok(()) => {}
+                // A non-UTF-8 String literal is a type mismatch:
+                // `Value::String` documents the UTF-8 contract.
+                Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
+                    return Err(ValidationError::LiteralTypeMismatch {
+                        atom: occ_idx,
+                        field,
+                    });
+                }
+                Err(LiteralMismatch::EnumOrdinal(ordinal)) => {
+                    return Err(ValidationError::EnumOrdinalOutOfRange {
+                        atom: occ_idx,
+                        field,
+                        ordinal,
+                    });
+                }
+                // Unreachable for a scalar field (kind is checked
+                // first), kept total for the mapping.
+                Err(LiteralMismatch::IntervalEmpty) => {
+                    return Err(ValidationError::EmptyIntervalLiteral {
+                        atom: occ_idx,
+                        field,
+                    });
+                }
+            },
         }
         Ok(())
     }
@@ -674,24 +716,36 @@ impl Context {
                     return Err(ValidationError::IllegalComparison { index });
                 }
             }
-            Term::Param(param) => match self.param_slots.get(param) {
-                // All this param's anchors are bivalent positions — the
-                // resolution rule picks the interval reading (⊇).
-                None => {
-                    self.param_slots
-                        .insert(*param, TypeSlot::Mono(ValueType::Interval { element }));
+            Term::Param(param) => {
+                // A `Contains` right side is an interval position: if the
+                // param resolves element-typed, its values are points and
+                // the point-domain ceiling rule applies at bind.
+                self.interval_position_params.insert(*param);
+                match self.param_slots.get(param) {
+                    // All this param's anchors are bivalent positions —
+                    // the resolution rule picks the interval reading (⊇).
+                    None => {
+                        self.param_slots
+                            .insert(*param, TypeSlot::Mono(ValueType::Interval { element }));
+                    }
+                    Some(TypeSlot::Mono(existing)) => {
+                        if *existing != (ValueType::Interval { element })
+                            && *existing != element_type(element)
+                        {
+                            return Err(ValidationError::IllegalComparison { index });
+                        }
+                    }
+                    Some(TypeSlot::Bivalent(_)) => unreachable!("resolve_bivalents ran"),
                 }
-                Some(TypeSlot::Mono(existing)) => {
-                    if *existing != (ValueType::Interval { element })
-                        && *existing != element_type(element)
-                    {
-                        return Err(ValidationError::IllegalComparison { index });
+            }
+            Term::Literal(value) => match (value, element) {
+                (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => {
+                    // Point membership as a predicate: the point domain
+                    // is `MIN ..= MAX−1` (the point-domain law).
+                    if at_domain_ceiling(value) {
+                        return Err(ValidationError::ComparisonPointLiteralAtCeiling { index });
                     }
                 }
-                Some(TypeSlot::Bivalent(_)) => unreachable!("resolve_bivalents ran"),
-            },
-            Term::Literal(value) => match (value, element) {
-                (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => {}
                 (Value::IntervalU64(start, end), IntervalElement::U64) => {
                     if start >= end {
                         return Err(ValidationError::ComparisonEmptyIntervalLiteral { index });

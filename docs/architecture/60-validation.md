@@ -187,7 +187,7 @@ gate nothing.
   totality (parent without child must abort; parent-with-child in one delta must
   commit), same-delta cluster demolition (must commit), pointwise-key
   adjacent-vs-overlapping boundaries, coverage with exact-abutment segment chains,
-  the sentinel end (`MAX`) at every boundary position, and **the net-disposition
+  the ray end (`MAX` = ∞, the point-domain law) at every boundary position, and **the net-disposition
   pattern class** — a redundant insert (plain, or a delete + re-insert netting to
   nothing) alongside a delete of its containment target must abort **target-side
   on both oracles, `Direction` compared as part of the verdict**: "source side"

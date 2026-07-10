@@ -119,10 +119,16 @@ pub(crate) fn prepare<'s, S>(
     // Dense param typing for bind-time checks (validation rejected gaps,
     // so the id-ordered iteration is positional). A set param records its
     // element type plus the set-ness bit — bind expects a slice for it.
+    // The point-ness bit marks element-typed params at interval positions:
+    // bind rejects their domain ceiling (the point-domain law).
     let (param_types, param_is_set): (Vec<ValueType>, Vec<bool>) = witness
         .param_types()
         .map(|(id, ty)| (ty.clone(), witness.set_params().contains(&id)))
         .unzip();
+    let param_is_point: Vec<bool> = witness
+        .param_types()
+        .map(|(id, _)| witness.point_params().contains(&id))
+        .collect();
 
     // Binding slots are WORDS: an interval variable holds two (the
     // SlotWidth layout) — `slot_count`, never the variable count.
@@ -171,6 +177,7 @@ pub(crate) fn prepare<'s, S>(
         finds,
         param_types,
         param_is_set,
+        param_is_point,
         resolved_params: Vec::new(),
         missed_params: Vec::new(),
         resolved_filters: vec![Vec::new(); occurrence_count],

@@ -130,12 +130,20 @@ iff it holds of the point-families.
   facts share `room` and any point of `during` — i.e. **per-room intervals must not
   overlap**. The "exclusion constraint" is not a feature of this system; it is this
   judgment on this type. Enforcement is two ordered-neighbor probes per touched
-  fact (`50-storage.md`).
+  fact (`50-storage.md`). Rays (`end == MAX` = `[s, ∞)`, the point-domain law —
+  `10-data-model.md`) need no case of their own: two rays in one group share every
+  point past the later start and always conflict — "at most one ongoing booking
+  per room" is this judgment on this value; a bounded interval abutting a ray's
+  start is legal, exactly as between bounded intervals.
 - **IND, pointwise:** `A(who, span) <= B(who, span)` means every point of every A
   fact's span is covered by B facts for the same `who` — B's intervals need not
   match A's bounds, only jointly cover them. Checkable in O(log n + segments)
   because B's key keeps its intervals per-group disjoint and start-ordered: walk
-  adjacent guard entries from the span's start, require no gap before its end.
+  adjacent guard entries from the span's start, require no gap before its end. A
+  **source ray requires coverage to ∞**: only a target chain reaching a ray
+  satisfies it — bounded targets always leave a gap — while a target ray covers
+  any bounded source above its start; both fall out of the same gap check, since
+  ∞ = MAX is just the largest end word.
 - Scalar positions in the same statement are unaffected — lifting is per-position,
   and a statement with no interval positions is the classical judgment unchanged.
 

@@ -460,8 +460,12 @@ impl<'a> Checker<'a> {
     /// Sound in one forward pass because the target's own pointwise key
     /// keeps the prefix group's intervals disjoint and start-ordered. All
     /// comparisons are on the 8-byte encoded halves — order-preserving,
-    /// so byte compare is numeric compare, and a `MAX`-sentinel end is
-    /// just the largest end.
+    /// so byte compare is numeric compare. Rays by definition, not by
+    /// accident (the point-domain law, `docs/architecture/10-data-model.md`):
+    /// a ray's end (`MAX` = ∞) is just the largest end word, so a source
+    /// ray demands coverage to ∞ — satisfiable only by a chain reaching a
+    /// target ray — and the same gap check enforces it with no special
+    /// case.
     pub(crate) fn check_coverage(&mut self, probe: &Probe<'_>) -> Result<()> {
         // The scratch holds the full guard key
         // `U | rel | stmt | prefix | s | e` (the acceptance gate puts the

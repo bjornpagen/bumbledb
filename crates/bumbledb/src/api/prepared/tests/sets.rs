@@ -368,6 +368,156 @@ fn set_membership_matches_any_element() {
     assert_eq!(run(&mut prepared, &[]), Vec::<u64>::new(), "empty set");
 }
 
+/// Commits one ray fact `Payroll(1, [10, ∞))` and returns the open
+/// environment — the point-domain-law fixture.
+fn ray_fixture(dir: &TempDir, schema: &Schema) -> Environment {
+    let env = Environment::create(dir.path(), schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(schema);
+    let mut bytes = Vec::new();
+    crate::encoding::encode_fact(
+        &[
+            crate::encoding::ValueRef::U64(1),
+            crate::encoding::ValueRef::IntervalU64(10, u64::MAX),
+        ],
+        schema.relation(PAYROLL).layout(),
+        &mut bytes,
+    );
+    delta.insert(&view, PAYROLL, &bytes).expect("insert");
+    drop(view);
+    commit(delta, &env).expect("commit");
+    env
+}
+
+/// Q(emp) :- Payroll(emp, during ∋ point-literal).
+fn membership_literal_query(point: u64) -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: PAYROLL,
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::Literal(Value::U64(point))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    }
+}
+
+/// The point-domain law, both halves (`docs/architecture/10-data-model.md`):
+/// `MAX−1` is the last point — membership in the ray `[10, ∞)` is true —
+/// and a point literal of `MAX` is rejected at prepare with the typed
+/// error, never a silently-unmatchable query.
+#[test]
+fn membership_of_the_last_point_in_a_ray_is_true_and_the_ceiling_rejects() {
+    let dir = TempDir::new("prepared-ray-membership");
+    let schema = interval_schema();
+    let env = ray_fixture(&dir, &schema);
+    let cache = ImageCache::new();
+    let txn = env.read_txn().expect("txn");
+
+    let mut prepared = prepare(
+        &txn,
+        &cache,
+        &schema,
+        &membership_literal_query(u64::MAX - 1),
+    )
+    .expect("prepare");
+    let got = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    assert_eq!(got.len(), 1, "MAX-1 is a point of [10, \u{221e})");
+
+    let Err(err) = prepare(&txn, &cache, &schema, &membership_literal_query(u64::MAX)) else {
+        panic!("the ceiling is not a point");
+    };
+    assert!(
+        matches!(
+            err,
+            Error::Validation(crate::error::ValidationError::PointLiteralAtCeiling {
+                atom: 0,
+                field: FieldId(1),
+            })
+        ),
+        "got {err:?}"
+    );
+}
+
+/// The bind-time half of the point-domain law: a point-position param
+/// (element-typed at an interval position) bound to the domain ceiling
+/// is the typed bind error, for scalars and per set element alike.
+#[test]
+fn point_param_at_the_ceiling_is_a_bind_error() {
+    let dir = TempDir::new("prepared-ray-point-param");
+    let schema = interval_schema();
+    let env = ray_fixture(&dir, &schema);
+    let cache = ImageCache::new();
+    let txn = env.read_txn().expect("txn");
+
+    // Q(emp) :- Payroll(emp, during ∋ ?0), Event(emp, at = ?0): the
+    // scalar-field anchor types ?0 at the element, so the Payroll
+    // binding is membership and ?0 is a point param.
+    let scalar_query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            Atom {
+                relation: PAYROLL,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Param(ParamId(0))),
+                ],
+            },
+            Atom {
+                relation: EVENT,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Param(ParamId(0))),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let mut prepared = prepare(&txn, &cache, &schema, &scalar_query).expect("prepare");
+    let err = prepared
+        .execute_collect_args(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(u64::MAX))])
+        .expect_err("the ceiling is not a point");
+    assert!(
+        matches!(err, Error::PointParamAtCeiling { param: ParamId(0) }),
+        "got {err:?}"
+    );
+
+    // Q(emp) :- Payroll(emp, during ∋ ?set0): a point set — the same
+    // rejection per element, and the last point still matches.
+    let set_query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: PAYROLL,
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::ParamSet(ParamId(0))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let mut prepared = prepare(&txn, &cache, &schema, &set_query).expect("prepare");
+    let ceiling = [Value::U64(u64::MAX)];
+    let err = prepared
+        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&ceiling)])
+        .expect_err("the ceiling is not a point");
+    assert!(
+        matches!(err, Error::PointParamAtCeiling { param: ParamId(0) }),
+        "got {err:?}"
+    );
+    let last_point = [Value::U64(u64::MAX - 1)];
+    let got = prepared
+        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&last_point)])
+        .expect("execute");
+    assert_eq!(got.len(), 1, "MAX-1 is a point of [10, \u{221e})");
+}
+
 /// Posting(account u64, amount i64) + Block(account u64, kind u64).
 fn block_schema() -> Schema {
     SchemaDescriptor {

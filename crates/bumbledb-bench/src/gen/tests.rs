@@ -115,7 +115,7 @@ fn containment_sources_resolve_by_construction() {
 /// account's mandate history is sequential and non-overlapping under
 /// the pointwise key, and the three boundary shapes all exist —
 /// **abutting** (every account, segments 0→1), **gapped** (every
-/// account, segments 1→2), and the **sentinel end** (every even
+/// account, segments 1→2), and the **ray end** (every even
 /// account).
 #[test]
 fn mandate_histories_carry_all_three_shapes_validly() {

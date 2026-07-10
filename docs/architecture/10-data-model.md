@@ -70,10 +70,15 @@ timestamp in it. **Reverses if:** never — the jobs are covered separately and 
 
 ## Interval: the denotation
 
-An `Interval` value `[s, e)` is **a finite set of points, written as its bounds** —
+An `Interval` value `[s, e)` is **a set of points, written as its bounds** —
 half-open over the element domain, `s < e` enforced at the encoding boundary exactly
 as Bool's strict 0/1 is (a stored `s ≥ e` is corruption, and the empty interval is
-unrepresentable: a fact never denotes nothing). Encoding: `start ‖ end`, each in the
+unrepresentable: a fact never denotes nothing). Half-open and nonempty are not house
+conventions but **Allen's algebra's preconditions**: the 13 basic interval relations
+are jointly exhaustive and pairwise disjoint (JEPD) only over nonempty intervals —
+an empty interval satisfies none of them cleanly — and *meets* (`a.end == b.start`,
+no shared point) is only well-defined half-open; closed intervals would make meeting
+and overlapping collide at the boundary point. Encoding: `start ‖ end`, each in the
 element type's order-preserving encoding, so the 16 bytes sort lexicographically by
 start — the property the storage layer's neighbor probes stand on (`50-storage.md`).
 
@@ -94,11 +99,32 @@ machinery of its own:
   interval-typed field with an element-typed term means `t ∈ interval`
   (`20-query-ir.md`).
 
-**Unbounded ends are the element maximum, by convention:** `[s, ∞)` is written
-`[s, MAX)` where MAX is the element type's greatest encodable value. Consequence,
-stated: MAX itself is unusable as a point. The alternative — first-class ∞ — buys a
-17th byte or a stolen sentinel anyway, and changes nothing the neighbor probe can
-observe. Open-ended states ("currently active") are exactly this convention.
+**The point-domain law, normative:** the point domain of each element type is
+`MIN ..= MAX−1`, and `end == MAX` **denotes the unbounded ray** `[s, ∞)`. ∞ is a
+value of the representation, not a hack around it: ongoing employment, the top tax
+bracket, and until-forever recurrence are honest values (`Interval::ray(start)`
+names the constructor; `is_ray()` the predicate; `new` admits `end == MAX`
+directly — the ray is a name, not a mode). The zero-cost claim is the encoding,
+not hope: both element types store order-preserving unsigned words (I64 is
+sign-flipped), so ∞ = MAX participates in every unsigned comparison kernel with no
+special case — there is no branch to take, and no judgment or interval predicate
+needs ray awareness. Consequences, typed rather than left to be discovered:
+
+- An **element-typed literal or param equal to the domain ceiling is an error
+  wherever it meets an interval position** (membership bindings, `Contains`
+  operands): a typed validation error for literals, the matching typed bind error
+  for point params — never a silently-unmatchable query. Parse, don't validate.
+- A **ray has no finite measure**: `Duration` over a ray is the typed execution
+  error `MeasureOfRay` — the one runtime type error in the engine, since
+  boundedness is not provable at validation (recorded here as law; the measure
+  itself is PRD 10's). The alternative — silently yield MAX — fabricates
+  arithmetic.
+- **Coverage judgments over rays**: a source ray requires target coverage to ∞,
+  satisfiable only by a target chain reaching a ray; the coverage walk's ordinary
+  gap check enforces it with no special case.
+
+The alternative — first-class ∞ — buys a 17th byte or a stolen sentinel anyway,
+and changes nothing the neighbor probe can observe.
 
 **Coalescing is an aggregate, never a write rule.** Two facts `(x, [1,5))` and
 `(x, [3,8))` are distinct facts whose denotations overlap; the engine stores what it

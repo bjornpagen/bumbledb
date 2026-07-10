@@ -365,6 +365,12 @@ impl fmt::Display for ValidationError {
                 "atom {atom}: interval literal start >= end at field {}",
                 field.0
             ),
+            Self::PointLiteralAtCeiling { atom, field } => write!(
+                f,
+                "atom {atom}: point literal at the domain ceiling at field {} — \
+                 points are MIN..=MAX-1; MAX is the ray's \u{221e}",
+                field.0
+            ),
             Self::ParamIdGap { param } => {
                 write!(f, "parameter ids are not dense: {} is unused", param.0)
             }
@@ -405,6 +411,11 @@ impl fmt::Display for ValidationError {
             Self::ComparisonEmptyIntervalLiteral { index } => {
                 write!(f, "comparison {index}: interval literal start >= end")
             }
+            Self::ComparisonPointLiteralAtCeiling { index } => write!(
+                f,
+                "comparison {index}: point literal at the domain ceiling — \
+                 points are MIN..=MAX-1; MAX is the ray's \u{221e}"
+            ),
             Self::MembershipOnlyVariable { var } => write!(
                 f,
                 "variable {} is bound only by membership — no enumerable domain",
@@ -544,6 +555,12 @@ impl fmt::Display for Error {
             } => write!(
                 f,
                 "parameter {}, element {element}: expected {expected:?}",
+                param.0
+            ),
+            Self::PointParamAtCeiling { param } => write!(
+                f,
+                "parameter {}: point value at the domain ceiling — \
+                 points are MIN..=MAX-1; MAX is the ray's \u{221e}",
                 param.0
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {

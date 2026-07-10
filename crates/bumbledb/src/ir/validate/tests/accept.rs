@@ -165,6 +165,56 @@ fn accepts_an_element_literal_in_an_interval_field_position() {
 }
 
 #[test]
+fn accepts_a_ray_literal_and_the_last_point() {
+    // The point-domain law's legal side: `[5, MAX)` is the ray `[5, ∞)` —
+    // an honest interval value — and `MAX−1` is the last point.
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![atom(
+            ACCOUNT,
+            vec![
+                (0, var(0)),
+                (VALIDITY, Term::Literal(Value::IntervalU64(5, u64::MAX))),
+            ],
+        )],
+    );
+    validate(&schema(), &query).expect("a ray literal is a value");
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![atom(
+            ACCOUNT,
+            vec![
+                (0, var(0)),
+                (VALIDITY, Term::Literal(Value::U64(u64::MAX - 1))),
+            ],
+        )],
+    );
+    validate(&schema(), &query).expect("MAX-1 is a point");
+}
+
+#[test]
+fn point_params_are_the_element_typed_interval_position_params() {
+    // ?0 meets Posting.span (membership — element-anchored by
+    // Account.id) and is a point param; ?1 meets Account.validity with
+    // only bivalent anchors, resolves interval-typed (value equality),
+    // and is not.
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![
+            atom(POSTING, vec![(0, var(0)), (SPAN, Term::Param(ParamId(0)))]),
+            atom(ACCOUNT, vec![(0, Term::Param(ParamId(0)))]),
+            atom(
+                ACCOUNT,
+                vec![(0, var(0)), (VALIDITY, Term::Param(ParamId(1)))],
+            ),
+        ],
+    );
+    let witness = validate(&schema(), &query).expect("valid");
+    assert!(witness.point_params().contains(&ParamId(0)));
+    assert!(!witness.point_params().contains(&ParamId(1)));
+}
+
+#[test]
 fn accepts_overlaps_between_interval_variables_from_different_atoms() {
     // (d) Overlaps(v1, v3): interval-vs-interval overlap needs no shared
     // point variable — both vars stay bivalent and resolve to intervals.

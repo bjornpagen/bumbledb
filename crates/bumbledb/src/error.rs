@@ -354,6 +354,16 @@ pub enum ValidationError {
         atom: usize,
         field: FieldId,
     },
+    /// The point-domain law (`docs/architecture/10-data-model.md`): points
+    /// are `MIN ..= MAX−1`; `end == MAX` denotes the ray `[s, ∞)`, so an
+    /// element-typed literal equal to the domain ceiling in a membership
+    /// binding can never be inside any interval — rejected typed, never
+    /// silently unmatchable (comparison sites report
+    /// [`ValidationError::ComparisonPointLiteralAtCeiling`]).
+    PointLiteralAtCeiling {
+        atom: usize,
+        field: FieldId,
+    },
     /// Param ids must be dense (0..n) across scalars and sets jointly: a
     /// gap would be a positional slot whose supplied value is never
     /// type-checked.
@@ -409,6 +419,13 @@ pub enum ValidationError {
     /// (the binding-site sibling of
     /// [`ValidationError::EmptyIntervalLiteral`]).
     ComparisonEmptyIntervalLiteral {
+        index: usize,
+    },
+    /// An element-typed literal equal to the domain ceiling as a
+    /// comparison operand against an interval side (the comparison-site
+    /// sibling of [`ValidationError::PointLiteralAtCeiling`]): `MAX` is
+    /// the ray's ∞, never a point.
+    ComparisonPointLiteralAtCeiling {
         index: usize,
     },
     /// An element-typed variable whose positive atom bindings are all
@@ -643,6 +660,16 @@ pub enum Error {
         param: ParamId,
         element: usize,
         expected: ValueType,
+    },
+    /// Bind-time: a point-position param (an element-typed param meeting
+    /// an interval position — a membership binding or a `Contains`
+    /// operand) bound to its domain ceiling. The point domain is
+    /// `MIN ..= MAX−1`; `MAX` is the ray's ∞, never a point
+    /// (`docs/architecture/10-data-model.md`, the point-domain law) — the
+    /// bind-time sibling of
+    /// [`ValidationError::PointLiteralAtCeiling`].
+    PointParamAtCeiling {
+        param: ParamId,
     },
     /// A computed value crossed its representation — valid input whose
     /// result cannot be represented, so a typed error, never a panic.

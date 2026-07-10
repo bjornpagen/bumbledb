@@ -135,7 +135,13 @@ not a kind of atom.
 field is `Interval(E)` and the term's type is `E` means **point membership**:
 the binding satisfies iff `start ≤ t < end`. A term of type `Interval(E)` in the
 same position means interval **value equality** (identity, `10-data-model.md`).
-Var, Param, ParamSet, and Literal all participate under the same rule. One
+Var, Param, ParamSet, and Literal all participate under the same rule. The point
+domain is `MIN ..= MAX−1` (`10-data-model.md`'s point-domain law — `end == MAX`
+denotes the ray `[s, ∞)`): an element-typed literal equal to the domain ceiling
+is a validation error wherever it meets an interval position (membership bindings
+and `Contains` operands), and a point-position param bound to the ceiling is the
+matching bind-time error — `MAX` is the ray's ∞, never a point, so the mistake is
+typed out instead of silently matching nothing. One
 consequence, enforced by validation: a variable bound *only* by membership bindings
 has no enumerable domain — every point variable must be bound by at least one
 non-membership occurrence (a scalar field binding). Interval-vs-interval overlap
@@ -228,7 +234,9 @@ everything downstream trusts — no inner layer re-validates. Rejections: unknow
 relation/field ids; duplicate FieldId in one atom's bindings; variable type conflicts
 (structural — membership bindings anchor the *element* type); literal-vs-field and
 param-anchor type mismatches (non-UTF-8 String literals and `start ≥ end` interval
-literals included); enum ordinal out of range for the field's variant list (in
+literals included); element-typed point literals at the domain ceiling in
+membership bindings and `Contains` operands (the point-domain law — point params
+get the same rejection at bind, where the value exists); enum ordinal out of range for the field's variant list (in
 bindings and in comparisons, each precisely diagnosed); comparisons violating the
 type rules above (order operators on intervals named in their own diagnostic —
 the predictable mistake gets the good error); constant comparisons;

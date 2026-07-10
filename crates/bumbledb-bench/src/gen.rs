@@ -8,8 +8,8 @@
 //! access, and independent across relations by construction. `Mandate`
 //! histories are **valid under the pointwise key by construction**
 //! ([`mandate_segments`]): sequential non-overlapping segments per
-//! account, mixing abutting and gapped boundaries, with the sentinel end
-//! (`MAX_END`, the "currently active" convention) on every even account.
+//! account, mixing abutting and gapped boundaries, with the ray end
+//! (`end == MAX_END` = `[s, ∞)`, "currently active") on every even account.
 
 mod corpus_digest;
 mod digest_hex;

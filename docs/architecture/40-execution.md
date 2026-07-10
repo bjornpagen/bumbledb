@@ -36,7 +36,12 @@ cursor `set_range` prefix-hopping (O(distinct-leading-prefixes × log n)); not
 applicable to interval stabbing, whose pointwise layout needs the coverage-walk
 shape. Interval predicates lower to word comparisons over the start/end column
 pair (`50-storage.md` image layout), so the filter kernels are the existing 8-byte
-shapes; no new NEON widths exist.
+shapes; no new NEON widths exist. The membership kernel (`s ≤ t < e`, two unsigned
+word compares) needs no ray awareness: a ray's end (`MAX` = ∞, the point-domain
+law — `10-data-model.md`) is just the largest word, so `t = MAX−1` — the last
+point — passes against `[s, MAX)` through the same two compares, and validation
+has already rejected `t = MAX` (the ceiling is not a point), so the kernel never
+sees it.
 
 Everything else executes as Free Join.
 

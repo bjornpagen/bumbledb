@@ -106,6 +106,14 @@ impl<S> PreparedQuery<'_, S> {
                 expected: expected.clone(),
             });
         };
+        // The point-domain law: a point-position param bound to its
+        // domain ceiling can be inside no interval — rejected typed,
+        // never silently unmatchable. Both element encodings put the
+        // ceiling at the all-ones word (I64 is sign-flipped), and a point
+        // param is numeric, so the word is never a sentinel intern id.
+        if self.param_is_point[idx] && matches!(resolved, Const::Word(u64::MAX)) {
+            return Err(Error::PointParamAtCeiling { param });
+        }
         self.resolved_params[idx] = resolved;
         self.missed_params[idx] = missed;
         Ok(())
@@ -142,6 +150,15 @@ impl<S> PreparedQuery<'_, S> {
                     expected,
                 });
             };
+            // The point-domain law, per element: a point set's elements
+            // are points, and the ceiling is the ray's ∞, not a point
+            // (see `bind_scalar_slot` — the word compare is exact for
+            // both element encodings, and point sets are numeric).
+            if self.param_is_point[idx] && word == u64::MAX {
+                words.clear();
+                self.resolved_params[idx] = Const::WordSet(words);
+                return Err(Error::PointParamAtCeiling { param });
+            }
             words.push(word);
         }
         // Sets are sets: sorted, deduplicated

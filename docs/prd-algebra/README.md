@@ -72,9 +72,8 @@ basics keep Allen's names; `Pack` keeps Snodgrass's.
 
 ## The PRDs
 
-Phase A — the atom (01 — `fresh` — landed and retired; its rulings live in
-`10-data-model.md`):
-- [02 — The ray: infinity enters the denotation](02-ray.md)
+Phase A — the atom (01 — `fresh` — and 02 — the ray — landed and retired; their
+rulings live in `10-data-model.md`):
 - [03 — Allen: the interval-pair coordinate system](03-allen-mask.md)
 - [04 — The configuration kernel](04-config-kernel.md)
 
@@ -110,8 +109,8 @@ Phase G — the intuition:
 Unphased (bug unit, runs any time — the only known flake in the gate suite):
 - [22 — The bulk-load EINVAL: kill the flake, type the boundary](22-bulk-load-einval.md)
 
-Dependency spine: 01 landed; 02 free; 03→04; 05→06→07→08; 09 additionally requires
-`docs/prd/` 11–12 (the chase) landed; 10 requires 02; 11→12; 13/14 landed
+Dependency spine: 01 and 02 landed; 03→04; 05→06→07→08; 09 additionally requires
+`docs/prd/` 11–12 (the chase) landed; 10 free (its dependency, 02, landed); 11→12; 13/14 landed
 (residual landed with 01); 15 requires 03/05/10/12; 16 requires 15; 17–18 free
 (17's oracle rows fold into 15 if it lands first); 19 requires 18; 20
 requires 05 (its sweep and renderer target the rules-shaped IR); 21 lands

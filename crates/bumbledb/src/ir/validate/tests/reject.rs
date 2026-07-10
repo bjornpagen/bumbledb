@@ -706,6 +706,47 @@ fn rejects_an_inverted_interval_literal_in_a_comparison() {
 }
 
 #[test]
+fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
+    // The point-domain law: points are MIN..=MAX-1, and MAX is the ray's
+    // ∞ — inside no interval, so the membership is typed out, never
+    // silently unmatchable.
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![atom(
+            ACCOUNT,
+            vec![(0, var(0)), (VALIDITY, Term::Literal(Value::U64(u64::MAX)))],
+        )],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::PointLiteralAtCeiling {
+            atom: 0,
+            field: FieldId(VALIDITY)
+        }
+    ));
+}
+
+#[test]
+fn rejects_a_point_literal_at_the_ceiling_under_contains() {
+    // The comparison-site sibling: a Contains right side is an interval
+    // position, so the ceiling is equally not a point there.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Contains,
+            lhs: var(1),
+            rhs: Term::Literal(Value::U64(u64::MAX)),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::ComparisonPointLiteralAtCeiling { index: 0 }
+    ));
+}
+
+#[test]
 fn rejects_an_interval_typed_param_set_anchor() {
     // v resolves to the interval type (its only anchors are bivalent), so
     // Eq(v, ?set0) would make ?set0 a set of intervals — not a thing.

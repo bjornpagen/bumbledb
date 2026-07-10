@@ -11,7 +11,12 @@
 //!  4. variable type conflicts (structural — interval-field bindings
 //!     anchor *bivalently*; see [`Context::resolve_bivalents`])
 //!  5. literal-vs-field and param-anchor type mismatches (non-UTF-8
-//!     String literals and `start >= end` interval literals included)
+//!     String literals and `start >= end` interval literals included),
+//!     and element-typed point literals at the domain ceiling wherever
+//!     they meet an interval position — membership bindings and
+//!     `Contains` operands (the point-domain law: points are
+//!     `MIN ..= MAX−1`; `MAX` is the ray's ∞ — point *params* get the
+//!     same rejection at bind, where the value exists)
 //!  6. enum ordinal out of range for the field's variant list (bindings
 //!     and comparisons, each precisely diagnosed)
 //!  7. param anchor conflicts (an *unanchored* param is unwritable by
@@ -64,6 +69,11 @@ pub struct ValidatedQuery {
     /// Param ids bound as sets (`Term::ParamSet`); their entry in
     /// `param_types` is the *element* type.
     set_params: BTreeSet<ParamId>,
+    /// Element-typed params meeting an interval position (membership
+    /// bindings and `Contains` operands): their values are points, so the
+    /// point-domain law (`docs/architecture/10-data-model.md`) forbids the
+    /// domain ceiling — enforced at bind, where the value exists.
+    point_params: BTreeSet<ParamId>,
     /// Non-aggregated find variables — the group key under aggregation.
     group_key: BTreeSet<VarId>,
 }
@@ -115,6 +125,15 @@ impl ValidatedQuery {
     #[must_use]
     pub fn set_params(&self) -> &BTreeSet<ParamId> {
         &self.set_params
+    }
+
+    /// The point-position params: element-typed at an interval position
+    /// (a membership binding or a `Contains` operand). Bind-time rejects
+    /// their domain ceiling — points are `MIN ..= MAX−1`; `MAX` is the
+    /// ray's ∞ (the point-domain law).
+    #[must_use]
+    pub fn point_params(&self) -> &BTreeSet<ParamId> {
+        &self.point_params
     }
 
     /// The plan's sink-relevance set (the D2 gating bits' source). For a
@@ -183,6 +202,10 @@ struct Context {
     scalar_bound_vars: BTreeSet<VarId>,
     /// Variables occurring in negated atoms (the negation safety rule).
     negated_vars: BTreeSet<VarId>,
+    /// Params anchored at interval positions (membership bindings and
+    /// `Contains` operands); those that resolve element-typed are the
+    /// witness's point params.
+    interval_position_params: BTreeSet<ParamId>,
 }
 
 #[cfg(test)]

@@ -24,9 +24,9 @@ pub struct Segment {
 ///   boundary as a data case, not just a unit test),
 /// - segment 1 → 2 and 2 → 3 **gapped** (a strictly positive gap, so a
 ///   gap instant exists for the membership-miss draw),
-/// - segment 3 ending at the **sentinel** `Interval::<i64>::MAX_END`
-///   (the "currently active" convention) on every even account —
-///   structurally guaranteed, never left to chance.
+/// - segment 3 a **ray** (`end == Interval::<i64>::MAX_END` = `[s, ∞)`,
+///   "currently active") on every even account — structurally
+///   guaranteed, never left to chance.
 ///
 /// Orgs draw independently per segment, so one account's history spans
 /// several orgs (the overlap family joins across accounts through a

@@ -1,6 +1,6 @@
 //! The pointwise-key matrix (PRD 07 criteria): per-cell tests of the
 //! ordered-neighbor probe, each in one delta and across deltas, plus the
-//! `MAX_END`-sentinel and delete-then-reinsert cases.
+//! ray (`end == MAX` = `[s, ∞)`) and delete-then-reinsert cases.
 //!
 //! The incumbent everywhere is `Booking(room 1, [10, 20), tag 0)`; each
 //! cell inserts one contender and asserts the judgment.
@@ -258,24 +258,24 @@ fn delete_then_reinsert_overlapping_in_one_delta_passes() {
     commit(delta, &env).expect("the freed window admits the replacement");
 }
 
-// ---------- MAX_END sentinel intervals (no special code) ----------
+// ---------- rays (`end == MAX` denotes `[s, ∞)`; no special code) ----------
 
 #[test]
-fn two_open_ended_intervals_in_one_group_abort() {
-    // `[5, MAX)` and `[9, MAX)`: the unbounded-end convention writes the
-    // sentinel `u64::MAX` as the end, and the ordinary strict comparisons
-    // judge the overlap — no sentinel-specific code path.
+fn two_rays_in_one_group_abort() {
+    // `[5, ∞)` and `[9, ∞)`: two rays share every point past the later
+    // start, so a pointwise key can never hold both — the ordinary strict
+    // comparisons judge the overlap, since ∞ is just the largest end.
     let schema = schema();
     let a = booking_fact(&schema, 1, 5, u64::MAX, 0);
     let b = booking_fact(&schema, 1, 9, u64::MAX, 1);
-    assert_cross_delta_violation(cross_delta("fd-max-end-overlap", &a, &b), &a, &b);
+    assert_cross_delta_violation(cross_delta("fd-ray-overlap", &a, &b), &a, &b);
 }
 
 #[test]
-fn bounded_interval_adjacent_to_open_ended_passes() {
-    // `[5, 9)` then `[9, MAX)`: adjacency at the open end's start.
+fn bounded_interval_adjacent_to_ray_passes() {
+    // `[5, 9)` then `[9, ∞)`: adjacency at the ray's start.
     let schema = schema();
     let a = booking_fact(&schema, 1, 5, 9, 0);
     let b = booking_fact(&schema, 1, 9, u64::MAX, 1);
-    cross_delta("fd-max-end-adjacent", &a, &b).expect("adjacency below the sentinel is legal");
+    cross_delta("fd-ray-adjacent", &a, &b).expect("adjacency at the ray's start is legal");
 }

@@ -561,10 +561,24 @@ mod source_side {
                     verdict: Err(source_unsatisfied(SESSION_COVER)),
                 },
                 Case {
-                    name: "max sentinel segment covers a bounded source",
+                    name: "ray target covers a bounded source",
                     base: vec![shift(1, 10, u64::MAX, false)],
                     deletes: vec![],
                     inserts: vec![span(SESSION, 1, 15, 1000)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "ray source not covered by bounded targets",
+                    base: vec![shift(1, 10, 1_000_000, false)],
+                    deletes: vec![],
+                    inserts: vec![span(SESSION, 1, 15, u64::MAX)],
+                    verdict: Err(source_unsatisfied(SESSION_COVER)),
+                },
+                Case {
+                    name: "ray source covered by a ray target",
+                    base: vec![shift(1, 10, u64::MAX, false)],
+                    deletes: vec![],
+                    inserts: vec![span(SESSION, 1, 15, u64::MAX)],
                     verdict: Ok(()),
                 },
                 Case {

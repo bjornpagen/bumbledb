@@ -176,6 +176,12 @@ pub struct PreparedQuery<'s, S> {
     /// Dense per-param set-ness (`Term::ParamSet` anchors — a `ParamId`
     /// is scalar or set, never both; validation enforced it).
     param_is_set: Vec<bool>,
+    /// Dense per-param point-ness: element-typed at an interval position
+    /// (membership binding or `Contains` operand), so the bound value is
+    /// a point and the domain ceiling is rejected — points are
+    /// `MIN ..= MAX−1`; `MAX` is the ray's ∞ (the point-domain law,
+    /// `docs/architecture/10-data-model.md`).
+    param_is_point: Vec<bool>,
     /// Bind-time resolved constants, reused across executions — pooled
     /// storage: a set param's slot holds a [`Const::WordSet`] whose `Vec`
     /// is rebound in place (sorted, deduplicated words; capacity

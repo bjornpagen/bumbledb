@@ -456,16 +456,49 @@ fn source_end_past_last_segment_aborts() {
 }
 
 #[test]
-fn max_sentinel_segment_covers_a_bounded_source() {
-    // The unbounded-end convention writes u64::MAX as the end; ordinary
-    // byte comparison judges the coverage — no sentinel-specific path.
+fn ray_target_covers_a_bounded_source() {
+    // The point-domain law: `end == MAX` denotes the ray `[s, ∞)`, and ∞
+    // is just the largest end word — ordinary byte comparison judges the
+    // coverage with no special case.
     let schema = schema();
     base_then_insert(
-        "judg-cover-max-sentinel",
+        "judg-cover-ray-target",
         &[(SHIFT, shift(&schema, 1, 10, u64::MAX, false))],
         &[(SESSION, session(&schema, 1, 15, 1000))],
     )
-    .expect("the sentinel segment covers any bounded source above its start");
+    .expect("a ray covers any bounded source above its start");
+}
+
+#[test]
+fn ray_source_not_covered_by_bounded_targets() {
+    // A source ray requires target coverage to ∞: bounded targets always
+    // leave a gap — the chain exhausts below `MAX`, the ordinary
+    // prefix-exhaustion violation.
+    let schema = schema();
+    let s = session(&schema, 1, 15, u64::MAX);
+    assert_source_violation(
+        base_then_insert(
+            "judg-cover-ray-source-bounded",
+            &[(SHIFT, shift(&schema, 1, 10, 1_000_000, false))],
+            &[(SESSION, s.clone())],
+        ),
+        SESSION_COVER,
+        &s,
+    );
+}
+
+#[test]
+fn ray_source_covered_by_ray_target() {
+    // Coverage to ∞ is satisfiable only by a target chain reaching a ray
+    // — `covered` becomes `MAX` and the walk terminates at the source's
+    // own end, same loop, no ray awareness.
+    let schema = schema();
+    base_then_insert(
+        "judg-cover-ray-source-ray",
+        &[(SHIFT, shift(&schema, 1, 10, u64::MAX, false))],
+        &[(SESSION, session(&schema, 1, 15, u64::MAX))],
+    )
+    .expect("a target ray covers a source ray");
 }
 
 #[test]

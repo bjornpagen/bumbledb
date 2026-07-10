@@ -4,9 +4,11 @@
 //! constructors return `Option`, so a held [`Interval`] always satisfies
 //! `start < end` and the encoder never re-checks it.
 
-/// A half-open interval `[start, end)`: a finite set of points, written as
-/// its bounds, strictly `start < end` — the empty interval is
-/// unrepresentable, because a fact never denotes nothing.
+/// A half-open interval `[start, end)`: a set of points, written as its
+/// bounds, strictly `start < end` — the empty interval is unrepresentable,
+/// because a fact never denotes nothing. Half-open and nonempty are
+/// Allen's algebra's preconditions, not conventions
+/// (docs/architecture/10-data-model.md, the point-domain law).
 ///
 /// The element domain is closed to the two orderable scalars; the two
 /// inherent impls below are the whole surface — no other constructors, no
@@ -20,8 +22,9 @@ pub struct Interval<T> {
 }
 
 impl Interval<u64> {
-    /// The unbounded-end convention: `[s, ∞)` is written `[s, MAX_END)`.
-    /// Stated consequence: `MAX_END` itself is unusable as a point.
+    /// The point-domain law: points are `MIN ..= MAX_END − 1`, and
+    /// `end == MAX_END` denotes the unbounded ray `[start, ∞)` — ∞ is a
+    /// value of the representation, not a sentinel.
     pub const MAX_END: u64 = u64::MAX;
 
     /// Parses the bounds; `None` on `start >= end`.
@@ -30,11 +33,18 @@ impl Interval<u64> {
         (start < end).then_some(Self { start, end })
     }
 
-    /// The open-ended interval `[start, MAX_END)`; `None` when `start` is
-    /// `MAX_END` itself (the interval would be empty).
+    /// The unbounded ray `[start, ∞)`; `None` when `start` is `MAX_END`
+    /// itself (outside the point domain — the ray would begin past every
+    /// point).
     #[must_use]
-    pub fn from_start(start: u64) -> Option<Self> {
+    pub fn ray(start: u64) -> Option<Self> {
         Self::new(start, Self::MAX_END)
+    }
+
+    /// Whether this interval is the unbounded ray `[start, ∞)`.
+    #[must_use]
+    pub const fn is_ray(&self) -> bool {
+        self.end == Self::MAX_END
     }
 
     /// The inclusive lower bound.
@@ -51,8 +61,9 @@ impl Interval<u64> {
 }
 
 impl Interval<i64> {
-    /// The unbounded-end convention: `[s, ∞)` is written `[s, MAX_END)`.
-    /// Stated consequence: `MAX_END` itself is unusable as a point.
+    /// The point-domain law: points are `MIN ..= MAX_END − 1`, and
+    /// `end == MAX_END` denotes the unbounded ray `[start, ∞)` — ∞ is a
+    /// value of the representation, not a sentinel.
     pub const MAX_END: i64 = i64::MAX;
 
     /// Parses the bounds; `None` on `start >= end`.
@@ -61,11 +72,18 @@ impl Interval<i64> {
         (start < end).then_some(Self { start, end })
     }
 
-    /// The open-ended interval `[start, MAX_END)`; `None` when `start` is
-    /// `MAX_END` itself (the interval would be empty).
+    /// The unbounded ray `[start, ∞)`; `None` when `start` is `MAX_END`
+    /// itself (outside the point domain — the ray would begin past every
+    /// point).
     #[must_use]
-    pub fn from_start(start: i64) -> Option<Self> {
+    pub fn ray(start: i64) -> Option<Self> {
         Self::new(start, Self::MAX_END)
+    }
+
+    /// Whether this interval is the unbounded ray `[start, ∞)`.
+    #[must_use]
+    pub const fn is_ray(&self) -> bool {
+        self.end == Self::MAX_END
     }
 
     /// The inclusive lower bound.
@@ -119,11 +137,17 @@ mod tests {
     }
 
     #[test]
-    fn from_start_is_the_unbounded_convention() {
-        let iv = Interval::<u64>::from_start(7).expect("open-ended");
+    fn ray_is_the_unbounded_denotation() {
+        let iv = Interval::<u64>::ray(7).expect("ray");
         assert_eq!(iv.end(), Interval::<u64>::MAX_END);
-        // MAX_END is unusable as a point: an interval starting there is empty.
-        assert!(Interval::<u64>::from_start(u64::MAX).is_none());
-        assert!(Interval::<i64>::from_start(i64::MAX).is_none());
+        assert!(iv.is_ray());
+        assert!(!Interval::<u64>::new(7, 9).expect("bounded").is_ray());
+        // `new` admits the ray end directly — `ray` is a name, not a mode.
+        assert!(Interval::<i64>::new(0, i64::MAX)
+            .expect("ray by new")
+            .is_ray());
+        // MAX is not a point: a ray starting at the ceiling is empty.
+        assert!(Interval::<u64>::ray(u64::MAX).is_none());
+        assert!(Interval::<i64>::ray(i64::MAX).is_none());
     }
 }

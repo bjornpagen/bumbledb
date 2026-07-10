@@ -58,6 +58,23 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         });
     }
 
+    // Point-position params (the point-domain law): anchored at an
+    // interval position and resolved element-typed — their bound values
+    // are points, so bind rejects the domain ceiling.
+    let point_params: BTreeSet<_> = ctx
+        .interval_position_params
+        .iter()
+        .filter(|param| {
+            matches!(
+                ctx.param_slots.get(param),
+                Some(TypeSlot::Mono(
+                    crate::schema::ValueType::U64 | crate::schema::ValueType::I64
+                ))
+            )
+        })
+        .copied()
+        .collect();
+
     // Every slot is monovalent past `resolve_bivalents`, and every param
     // position anchored its param — the witness carries plain types.
     let var_types = ctx
@@ -87,6 +104,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         var_types,
         param_types,
         set_params,
+        point_params,
         group_key,
     })
 }
