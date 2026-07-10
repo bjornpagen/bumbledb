@@ -36,11 +36,4 @@ impl Relation {
     pub fn outgoing(&self) -> &[StatementId] {
         &self.outgoing
     }
-
-    /// `Containment` statements whose target is this relation — the
-    /// delete-side reverse-edge scan set (`docs/architecture/50-storage.md`).
-    #[must_use]
-    pub fn incoming(&self) -> &[StatementId] {
-        &self.incoming
-    }
 }

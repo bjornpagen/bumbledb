@@ -114,8 +114,8 @@ impl Selections {
     /// # Panics
     ///
     /// On a non-containment id — programmer invariant: callers hand ids
-    /// from a relation's `outgoing`/`incoming` index, which the validated
-    /// schema fills with `Containment` statements only.
+    /// from a relation's `outgoing` index or a key's `dependents` set,
+    /// which the validated schema fills with `Containment` statements only.
     pub(crate) fn containment(&self, id: StatementId) -> &SideChecks {
         self.checks[usize::from(id.0)]
             .as_ref()

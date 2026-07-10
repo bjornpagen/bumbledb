@@ -45,7 +45,7 @@ pub struct SchemaFingerprint(pub [u8; 32]);
 ///   judgment form (Functionality = 0, Containment = 1) and its sides as
 ///   (relation id, projection field-id list in statement order, selection
 ///   list as (field id, literal value) pairs in statement order).
-pub fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
+fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
     put_bytes(out, FORMAT_VERSION_LABEL);
     put_len(out, schema.relations().len());
     for relation in schema.relations() {
@@ -163,38 +163,12 @@ fn put_literal(out: &mut Vec<u8>, literal: &Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{
-        FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, StatementId, ValueType,
-    };
+    use super::super::{RelationDescriptor, SchemaDescriptor, StatementId};
     use super::*;
+    use crate::schema::tests::{containment, enum_type, fd, field, serial_field, side, side_where};
 
     fn schema_of(descriptor: SchemaDescriptor) -> Schema {
         descriptor.validate().expect("valid fixture")
-    }
-
-    fn field(name: &str, value_type: ValueType, generation: Generation) -> FieldDescriptor {
-        FieldDescriptor {
-            name: name.into(),
-            value_type,
-            generation,
-        }
-    }
-
-    fn enum_type(variants: &[&str]) -> ValueType {
-        ValueType::Enum {
-            variants: variants.iter().map(|v| Box::from(*v)).collect(),
-        }
-    }
-
-    fn side(relation: u32, projection: &[u16], selection: &[(u16, Value)]) -> Side {
-        Side {
-            relation: RelationId(relation),
-            projection: projection.iter().copied().map(FieldId).collect(),
-            selection: selection
-                .iter()
-                .map(|(field, literal)| (FieldId(*field), literal.clone()))
-                .collect(),
-        }
     }
 
     /// The mutation fixture: two relations, an enum, two serials (each
@@ -205,29 +179,27 @@ mod tests {
             relations: vec![
                 RelationDescriptor {
                     name: "Holder".into(),
-                    fields: vec![
-                        field("id", ValueType::U64, Generation::Serial),
-                        field("name", ValueType::String, Generation::None),
-                    ],
+                    fields: vec![serial_field("id"), field("name", ValueType::String)],
                 },
                 RelationDescriptor {
                     name: "Account".into(),
                     fields: vec![
-                        field("id", ValueType::U64, Generation::Serial),
-                        field("holder", ValueType::U64, Generation::None),
-                        field("status", enum_type(&["Active", "Closed"]), Generation::None),
+                        serial_field("id"),
+                        field("holder", ValueType::U64),
+                        field("status", enum_type(&["Active", "Closed"])),
                     ],
                 },
             ],
             statements: vec![
-                StatementDescriptor::Functionality {
-                    relation: RelationId(1),
-                    projection: Box::new([FieldId(1)]),
-                },
-                StatementDescriptor::Containment {
-                    source: side(1, &[1], &[(2, Value::Enum(0))]),
-                    target: side(0, &[0], &[]),
-                },
+                fd(RelationId(1), &[FieldId(1)]),
+                containment(
+                    side_where(
+                        RelationId(1),
+                        &[FieldId(1)],
+                        vec![(FieldId(2), Value::Enum(0))],
+                    ),
+                    side(RelationId(0), &[FieldId(0)]),
+                ),
             ],
         }
     }
@@ -247,11 +219,10 @@ mod tests {
 
     #[test]
     fn golden_fingerprint_pins_the_hash() {
-        // Pinned across the PRD-01 `Value` collapse: the canonical
-        // serialization (and therefore blake3 of it) must not drift while
-        // the format label stays `v1`. `base()` covers every literal-adjacent
-        // input: enums, serial auto-keys, a declared key, and a containment
-        // with a selection literal.
+        // Pinned: the canonical serialization (and therefore blake3 of it)
+        // must not drift while the format label stays `v1`. `base()` covers
+        // every literal-adjacent input: enums, serial auto-keys, a declared
+        // key, and a containment with a selection literal.
         assert_eq!(
             hex_of(&base_fingerprint()),
             "b7e792d16e7b1582fcaca3d3f591fc210bff4d5bbc6a922b46fb24c5eee4c25f"
@@ -265,10 +236,14 @@ mod tests {
         // schema carrying a mirrored pair hashes only its descriptors —
         // pinned so the field can never leak into `canonical_bytes`.
         let mut decl = base();
-        decl.statements.push(StatementDescriptor::Containment {
-            source: side(0, &[0], &[]),
-            target: side(1, &[1], &[(2, Value::Enum(0))]),
-        });
+        decl.statements.push(containment(
+            side(RelationId(0), &[FieldId(0)]),
+            side_where(
+                RelationId(1),
+                &[FieldId(1)],
+                vec![(FieldId(2), Value::Enum(0))],
+            ),
+        ));
         let schema = schema_of(decl);
         // The fixture genuinely seals a pair (materialized ids 3 and 4:
         // two serial auto-keys and the declared FD precede them).
@@ -300,7 +275,7 @@ mod tests {
                     name: "R".into(),
                     fields: names
                         .iter()
-                        .map(|name| field(name, ValueType::U64, Generation::None))
+                        .map(|name| field(name, ValueType::U64))
                         .collect(),
                 }],
                 statements: vec![],
@@ -355,20 +330,28 @@ mod tests {
         let mut decl = base();
         // `Holder(id) <= Account(holder | status = 0)`: still valid — the
         // new target projection {holder} resolves to the declared key.
-        decl.statements[1] = StatementDescriptor::Containment {
-            source: side(0, &[0], &[]),
-            target: side(1, &[1], &[(2, Value::Enum(0))]),
-        };
+        decl.statements[1] = containment(
+            side(RelationId(0), &[FieldId(0)]),
+            side_where(
+                RelationId(1),
+                &[FieldId(1)],
+                vec![(FieldId(2), Value::Enum(0))],
+            ),
+        );
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
     }
 
     #[test]
     fn changing_a_selection_literal_changes_the_fingerprint() {
         let mut decl = base();
-        decl.statements[1] = StatementDescriptor::Containment {
-            source: side(1, &[1], &[(2, Value::Enum(1))]),
-            target: side(0, &[0], &[]),
-        };
+        decl.statements[1] = containment(
+            side_where(
+                RelationId(1),
+                &[FieldId(1)],
+                vec![(FieldId(2), Value::Enum(1))],
+            ),
+            side(RelationId(0), &[FieldId(0)]),
+        );
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
     }
 
@@ -380,15 +363,9 @@ mod tests {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
                     name: "R".into(),
-                    fields: vec![
-                        field("a", ValueType::U64, Generation::None),
-                        field("b", ValueType::U64, Generation::None),
-                    ],
+                    fields: vec![field("a", ValueType::U64), field("b", ValueType::U64)],
                 }],
-                statements: vec![StatementDescriptor::Functionality {
-                    relation: RelationId(0),
-                    projection: fields.iter().copied().map(FieldId).collect(),
-                }],
+                statements: vec![fd(RelationId(0), &fields.map(FieldId))],
             }))
         };
         assert_ne!(of_projection([0, 1]), of_projection([1, 0]));
@@ -400,11 +377,7 @@ mod tests {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
                     name: "R".into(),
-                    fields: vec![field(
-                        "during",
-                        ValueType::Interval { element },
-                        Generation::None,
-                    )],
+                    fields: vec![field("during", ValueType::Interval { element })],
                 }],
                 statements: vec![],
             }))
@@ -424,7 +397,7 @@ mod tests {
         let schema = schema_of(SchemaDescriptor {
             relations: vec![RelationDescriptor {
                 name: "R".into(),
-                fields: vec![field("x", ValueType::U64, Generation::Serial)],
+                fields: vec![serial_field("x")],
             }],
             statements: vec![],
         });
@@ -459,25 +432,26 @@ mod tests {
             relations: vec![
                 RelationDescriptor {
                     name: "Holder".into(),
-                    fields: vec![field("id", ValueType::U64, Generation::None)],
+                    fields: vec![field("id", ValueType::U64)],
                 },
                 RelationDescriptor {
                     name: "Account".into(),
                     fields: vec![
-                        field("holder", ValueType::U64, Generation::None),
-                        field("status", enum_type(&["Active", "Closed"]), Generation::None),
+                        field("holder", ValueType::U64),
+                        field("status", enum_type(&["Active", "Closed"])),
                     ],
                 },
             ],
             statements: vec![
-                StatementDescriptor::Functionality {
-                    relation: RelationId(0),
-                    projection: Box::new([FieldId(0)]),
-                },
-                StatementDescriptor::Containment {
-                    source: side(1, &[0], &[(1, Value::Enum(1))]),
-                    target: side(0, &[0], &[]),
-                },
+                fd(RelationId(0), &[FieldId(0)]),
+                containment(
+                    side_where(
+                        RelationId(1),
+                        &[FieldId(0)],
+                        vec![(FieldId(1), Value::Enum(1))],
+                    ),
+                    side(RelationId(0), &[FieldId(0)]),
+                ),
             ],
         });
         let mut bytes = Vec::new();
@@ -537,7 +511,7 @@ mod tests {
             schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
                     name: relation.into(),
-                    fields: vec![field(field_name, ValueType::U64, Generation::None)],
+                    fields: vec![field(field_name, ValueType::U64)],
                 }],
                 statements: vec![],
             })

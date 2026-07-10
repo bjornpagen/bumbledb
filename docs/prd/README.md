@@ -63,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [16 — Elegance: schema, encoding, error](16-elegance-schema.md)
 - [17 — Elegance: storage](17-elegance-storage.md)
 - [18 — Elegance: IR and plan](18-elegance-ir-plan.md)
 - [19 — Elegance: exec and image](19-elegance-exec-image.md)

@@ -1,9 +1,13 @@
+//! The schema subsystem's one fixture style (`pub(crate)`: the render and
+//! fingerprint test modules import these helpers rather than growing their
+//! own).
+
 use super::*;
 
 mod reject;
 mod valid;
 
-fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
+pub(crate) fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type,
@@ -11,7 +15,7 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-fn serial_field(name: &str) -> FieldDescriptor {
+pub(crate) fn serial_field(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
@@ -19,14 +23,14 @@ fn serial_field(name: &str) -> FieldDescriptor {
     }
 }
 
-fn enum_type(variants: &[&str]) -> ValueType {
+pub(crate) fn enum_type(variants: &[&str]) -> ValueType {
     ValueType::Enum {
         variants: variants.iter().map(|v| Box::from(*v)).collect(),
     }
 }
 
 /// An unselected side: `R(X)`.
-fn side(relation: RelationId, projection: &[FieldId]) -> Side {
+pub(crate) fn side(relation: RelationId, projection: &[FieldId]) -> Side {
     Side {
         relation,
         projection: projection.into(),
@@ -35,7 +39,7 @@ fn side(relation: RelationId, projection: &[FieldId]) -> Side {
 }
 
 /// A selected side: `R(X | σ)`.
-fn side_where(
+pub(crate) fn side_where(
     relation: RelationId,
     projection: &[FieldId],
     selection: Vec<(FieldId, Value)>,
@@ -48,7 +52,7 @@ fn side_where(
 }
 
 /// `R(X) -> R`.
-fn fd(relation: RelationId, projection: &[FieldId]) -> StatementDescriptor {
+pub(crate) fn fd(relation: RelationId, projection: &[FieldId]) -> StatementDescriptor {
     StatementDescriptor::Functionality {
         relation,
         projection: projection.into(),
@@ -56,7 +60,7 @@ fn fd(relation: RelationId, projection: &[FieldId]) -> StatementDescriptor {
 }
 
 /// `source <= target`.
-fn containment(source: Side, target: Side) -> StatementDescriptor {
+pub(crate) fn containment(source: Side, target: Side) -> StatementDescriptor {
     StatementDescriptor::Containment { source, target }
 }
 

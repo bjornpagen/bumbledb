@@ -5,7 +5,7 @@ use crate::error::SchemaError;
 // line of the validation roster (docs/architecture/30-dependencies.md
 // § validation roster), each asserting the exact error variant. "FD with
 // selection" and "non-key FD form" have no tests: both are unrepresentable
-// under `StatementDescriptor::Functionality` (PRD 03 § Conflict).
+// under `StatementDescriptor::Functionality`.
 
 #[test]
 fn rejects_duplicate_relation_name() {

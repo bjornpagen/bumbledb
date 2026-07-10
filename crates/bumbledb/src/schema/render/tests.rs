@@ -1,46 +1,11 @@
-//! Render goldens (PRD 20): the exact macro notation back out — an FD, a
-//! one-way containment with selection, a bidirectional pair rendering
-//! `==` once from either id, an interval selection literal, and enum
-//! ordinals resolved to variant names.
+//! Render goldens: the exact macro notation back out — an FD, a one-way
+//! containment with selection, a bidirectional pair rendering `==` once
+//! from either id, an interval selection literal, and enum ordinals
+//! resolved to variant names.
 
 use super::*;
-use crate::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
-};
-
-fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    }
-}
-
-fn serial_field(name: &str) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type: ValueType::U64,
-        generation: Generation::Serial,
-    }
-}
-
-fn side_of(relation: u32, projection: &[u16]) -> Side {
-    Side {
-        relation: RelationId(relation),
-        projection: projection.iter().map(|f| FieldId(*f)).collect(),
-        selection: Box::new([]),
-    }
-}
-
-fn side_where(relation: u32, projection: &[u16], selection: Vec<(u16, Value)>) -> Side {
-    Side {
-        selection: selection
-            .into_iter()
-            .map(|(f, value)| (FieldId(f), value))
-            .collect(),
-        ..side_of(relation, projection)
-    }
-}
+use crate::schema::tests::{containment, enum_type, fd, field, serial_field, side, side_where};
+use crate::schema::{IntervalElement, RelationDescriptor};
 
 /// The `docs/architecture/30-dependencies.md` example schema plus an
 /// interval-selected containment (Shift/Roster). Materialized ids: 0/1
@@ -58,15 +23,7 @@ fn example() -> SchemaDescriptor {
                 fields: vec![
                     serial_field("id"),
                     field("holder", ValueType::U64),
-                    field(
-                        "kind",
-                        ValueType::Enum {
-                            variants: ["Checking", "Savings"]
-                                .iter()
-                                .map(|v| Box::from(*v))
-                                .collect(),
-                        },
-                    ),
+                    field("kind", enum_type(&["Checking", "Savings"])),
                     field(
                         "active",
                         ValueType::Interval {
@@ -101,34 +58,36 @@ fn example() -> SchemaDescriptor {
         ],
         statements: vec![
             // id 2: Account(holder) <= Holder(id)
-            StatementDescriptor::Containment {
-                source: side_of(1, &[1]),
-                target: side_of(0, &[0]),
-            },
+            containment(
+                side(RelationId(1), &[FieldId(1)]),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
             // ids 3 and 4: Account(id | kind == Savings) == SavingsTerms(account)
-            StatementDescriptor::Containment {
-                source: side_where(1, &[0], vec![(2, savings.clone())]),
-                target: side_of(2, &[0]),
-            },
-            StatementDescriptor::Containment {
-                source: side_of(2, &[0]),
-                target: side_where(1, &[0], vec![(2, savings)]),
-            },
+            containment(
+                side_where(
+                    RelationId(1),
+                    &[FieldId(0)],
+                    vec![(FieldId(2), savings.clone())],
+                ),
+                side(RelationId(2), &[FieldId(0)]),
+            ),
+            containment(
+                side(RelationId(2), &[FieldId(0)]),
+                side_where(RelationId(1), &[FieldId(0)], vec![(FieldId(2), savings)]),
+            ),
             // id 5: SavingsTerms(account) -> SavingsTerms
-            StatementDescriptor::Functionality {
-                relation: RelationId(2),
-                projection: Box::new([FieldId(0)]),
-            },
+            fd(RelationId(2), &[FieldId(0)]),
             // id 6: Roster(worker) -> Roster
-            StatementDescriptor::Functionality {
-                relation: RelationId(3),
-                projection: Box::new([FieldId(0)]),
-            },
+            fd(RelationId(3), &[FieldId(0)]),
             // id 7: Shift(worker | span == 0..86400) <= Roster(worker)
-            StatementDescriptor::Containment {
-                source: side_where(4, &[0], vec![(1, Value::IntervalU64(0, 86_400))]),
-                target: side_of(3, &[0]),
-            },
+            containment(
+                side_where(
+                    RelationId(4),
+                    &[FieldId(0)],
+                    vec![(FieldId(1), Value::IntervalU64(0, 86_400))],
+                ),
+                side(RelationId(3), &[FieldId(0)]),
+            ),
         ],
     }
 }
@@ -191,30 +150,21 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
         ],
         statements: vec![
             // id 0: P(id) -> P
-            StatementDescriptor::Functionality {
-                relation: RelationId(0),
-                projection: Box::new([FieldId(0)]),
-            },
+            fd(RelationId(0), &[FieldId(0)]),
             // id 1: Q(pid) -> Q
-            StatementDescriptor::Functionality {
-                relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
-            },
+            fd(RelationId(1), &[FieldId(0)]),
             // id 2: the pair's first half.
-            StatementDescriptor::Containment {
-                source: side_of(0, &[0]),
-                target: side_of(1, &[0]),
-            },
+            containment(
+                side(RelationId(0), &[FieldId(0)]),
+                side(RelationId(1), &[FieldId(0)]),
+            ),
             // id 3: an unrelated statement between the halves.
-            StatementDescriptor::Functionality {
-                relation: RelationId(2),
-                projection: Box::new([FieldId(0)]),
-            },
+            fd(RelationId(2), &[FieldId(0)]),
             // id 4: the pair's second half — exactly id 2's sides swapped.
-            StatementDescriptor::Containment {
-                source: side_of(1, &[0]),
-                target: side_of(0, &[0]),
-            },
+            containment(
+                side(RelationId(1), &[FieldId(0)]),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
         ],
     };
     let schema = declaration.clone().validate().expect("valid");
@@ -276,10 +226,7 @@ fn unresolvable_names_fall_back_to_id_placeholders() {
             name: "Only".into(),
             fields: vec![field("x", ValueType::U64)],
         }],
-        statements: vec![StatementDescriptor::Functionality {
-            relation: RelationId(9),
-            projection: Box::new([FieldId(3)]),
-        }],
+        statements: vec![fd(RelationId(9), &[FieldId(3)])],
     };
     assert_eq!(
         render_declared(&declaration, StatementId(0)),

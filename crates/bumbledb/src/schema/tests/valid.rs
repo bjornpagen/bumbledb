@@ -8,19 +8,19 @@ fn valid_schema_constructs_with_statement_indices() {
     // statements; the declared Containment follows them.
     assert_eq!(holder.keys(), &[StatementId(0)]);
     assert_eq!(holder.outgoing(), &[]);
-    // ...and Holder is the declared Containment's target (the delete-side
-    // reverse-edge scan set).
-    assert_eq!(holder.incoming(), &[StatementId(2)]);
+    // ...and Holder's key is the declared Containment's resolved target —
+    // the target-side reverse-edge check set.
+    assert_eq!(schema.dependents(StatementId(0)), &[StatementId(2)]);
 
     let account = schema.relation(RelationId(1));
     assert_eq!(account.keys(), &[StatementId(1)]);
     assert_eq!(account.outgoing(), &[StatementId(2)]);
-    assert_eq!(account.incoming(), &[]);
+    assert_eq!(schema.dependents(StatementId(1)), &[]);
     // Layout: id 8 + holder 8 + status 1, dense.
     assert_eq!(account.layout().fact_width(), 17);
 }
 
-/// The PRD 02 materialization-order pin: two relations with one serial
+/// The materialization-order pin: two relations with one serial
 /// field each plus two declared statements — auto-FDs take ids 0 and 1
 /// (relation declaration order, then field order), declared statements
 /// take 2 and 3 (declaration order).

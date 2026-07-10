@@ -10,7 +10,7 @@
 //! The roster's "FD with selection" and "non-key FD form" lines have no
 //! checks here: [`StatementDescriptor::Functionality`] carries neither a
 //! selection nor a Y side, so both shapes are unrepresentable rather than
-//! rejected (the PRD 02 descriptor decision).
+//! rejected.
 
 use super::{
     value_matches, FactLayout, FieldDescriptor, FieldId, Generation, Relation, RelationDescriptor,
@@ -59,7 +59,7 @@ impl SchemaDescriptor {
         let mut normalized: Vec<StatementDescriptor> = Vec::with_capacity(descriptors.len());
         let mut resolutions: Vec<Resolved> = Vec::with_capacity(descriptors.len());
         for (idx, descriptor) in descriptors.iter().enumerate() {
-            let id = StatementId(u16::try_from(idx).expect("statement count fits u16"));
+            let id = statement_id(idx);
             let resolved = match descriptor {
                 StatementDescriptor::Functionality {
                     relation,
@@ -77,7 +77,7 @@ impl SchemaDescriptor {
             if let Some(earlier) = normalized.iter().position(|n| *n == norm) {
                 return Err(SchemaError::DuplicateStatement {
                     statement: id,
-                    earlier: StatementId(u16::try_from(earlier).expect("statement count fits u16")),
+                    earlier: statement_id(earlier),
                 });
             }
             normalized.push(norm);
@@ -88,25 +88,20 @@ impl SchemaDescriptor {
         // list — safe to index now, every relation id is validated.
         let mut keys: Vec<Vec<StatementId>> = vec![Vec::new(); relations.len()];
         let mut outgoing: Vec<Vec<StatementId>> = vec![Vec::new(); relations.len()];
-        let mut incoming: Vec<Vec<StatementId>> = vec![Vec::new(); relations.len()];
         for (idx, descriptor) in descriptors.iter().enumerate() {
-            let id = StatementId(u16::try_from(idx).expect("statement count fits u16"));
+            let id = statement_id(idx);
             match descriptor {
                 StatementDescriptor::Functionality { relation, .. } => {
                     keys[relation.0 as usize].push(id);
                 }
-                StatementDescriptor::Containment { source, target } => {
+                StatementDescriptor::Containment { source, .. } => {
                     outgoing[source.relation.0 as usize].push(id);
-                    incoming[target.relation.0 as usize].push(id);
                 }
             }
         }
-        for (((relation, keys), outgoing), incoming) in
-            relations.iter_mut().zip(keys).zip(outgoing).zip(incoming)
-        {
+        for ((relation, keys), outgoing) in relations.iter_mut().zip(keys).zip(outgoing) {
             relation.keys = keys.into_boxed_slice();
             relation.outgoing = outgoing.into_boxed_slice();
-            relation.incoming = incoming.into_boxed_slice();
         }
 
         // `target_key -> dependents`: the target-side reverse-edge check
@@ -114,9 +109,7 @@ impl SchemaDescriptor {
         let mut dependents: Vec<Vec<StatementId>> = vec![Vec::new(); resolutions.len()];
         for (idx, resolved) in resolutions.iter().enumerate() {
             if let Resolved::Containment { target_key, .. } = resolved {
-                dependents[usize::from(target_key.0)].push(StatementId(
-                    u16::try_from(idx).expect("statement count fits u16"),
-                ));
+                dependents[usize::from(target_key.0)].push(statement_id(idx));
             }
         }
 
@@ -174,7 +167,37 @@ pub(super) fn mirror_of(descriptors: &[StatementDescriptor], index: usize) -> Op
                     } if mirror_source == target && mirror_target == source
                 )
         })
-        .map(|(other, _)| StatementId(u16::try_from(other).expect("statement count fits u16")))
+        .map(|(other, _)| statement_id(other))
+}
+
+/// The materialized-order [`StatementId`] for a list index (validation
+/// panics before 2¹⁶ statements are exceeded).
+fn statement_id(index: usize) -> StatementId {
+    StatementId(u16::try_from(index).expect("statement count fits u16"))
+}
+
+/// A projection as its sorted field set — FD identity is the field *set*
+/// (the duplicate-FD rule and target-key resolution both match on it).
+fn field_set(projection: &[FieldId]) -> Vec<FieldId> {
+    let mut set = projection.to_vec();
+    set.sort_unstable();
+    set
+}
+
+/// The projection positions holding interval-typed fields — the one scan
+/// behind the FD interval gate and the containment pointwise gate.
+fn interval_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec<usize> {
+    projection
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| {
+            matches!(
+                fields[usize::from(field.0)].value_type,
+                ValueType::Interval { .. }
+            )
+        })
+        .map(|(pos, _)| pos)
+        .collect()
 }
 
 /// The descriptor with each selection sorted by [`FieldId`] — σ is a set of
@@ -215,22 +238,15 @@ fn validate_functionality(
     // the neighbor probe needs the scalar prefix as its group; two interval
     // positions would be 2-D exclusion, which the ordered guard cannot
     // answer.
-    let mut interval_position: Option<usize> = None;
-    for (pos, field) in projection.iter().enumerate() {
-        if matches!(
-            relation.fields[usize::from(field.0)].value_type,
-            ValueType::Interval { .. }
-        ) {
-            if interval_position.is_some() {
-                return Err(SchemaError::FunctionalityMultipleIntervals {
-                    statement: id,
-                    relation: relation_id,
-                    field: *field,
-                });
-            }
-            interval_position = Some(pos);
-        }
+    let positions = interval_positions(&relation.fields, projection);
+    if positions.len() > 1 {
+        return Err(SchemaError::FunctionalityMultipleIntervals {
+            statement: id,
+            relation: relation_id,
+            field: projection[positions[1]],
+        });
     }
+    let interval_position = positions.first().copied();
     if let Some(pos) = interval_position {
         if pos != projection.len() - 1 {
             return Err(SchemaError::FunctionalityIntervalNotLast {
@@ -245,20 +261,17 @@ fn validate_functionality(
     // — a second FD over the same set (any order) asserts the same
     // judgment, so its guard is pure write amplification, and rejecting it
     // is what makes containment target-key resolution unambiguous.
-    let mut this_set = projection.to_vec();
-    this_set.sort_unstable();
+    let this_set = field_set(projection);
     for (idx, earlier) in descriptors[..usize::from(id.0)].iter().enumerate() {
         if let StatementDescriptor::Functionality {
             relation: r,
             projection: p,
         } = earlier
         {
-            let mut earlier_set = p.to_vec();
-            earlier_set.sort_unstable();
-            if *r == relation_id && earlier_set == this_set {
+            if *r == relation_id && field_set(p) == this_set {
                 return Err(SchemaError::DuplicateFunctionality {
                     statement: id,
-                    earlier: StatementId(u16::try_from(idx).expect("statement count fits u16")),
+                    earlier: statement_id(idx),
                 });
             }
         }
@@ -489,41 +502,27 @@ fn resolve_target_key(
     descriptors: &[StatementDescriptor],
 ) -> Result<Resolved, SchemaError> {
     let target_fields = &relations[target.relation.0 as usize].fields;
-    let interval_positions: Vec<usize> = target
-        .projection
-        .iter()
-        .enumerate()
-        .filter(|(_, field)| {
-            matches!(
-                target_fields[usize::from(field.0)].value_type,
-                ValueType::Interval { .. }
-            )
-        })
-        .map(|(pos, _)| pos)
-        .collect();
+    let positions = interval_positions(target_fields, &target.projection);
 
     // Pointwise gate, "exactly one interval position": no key can carry
     // two intervals (the FD gate rejects them), so with two or more there
     // is no pointwise key to resolve — reject without searching.
-    if interval_positions.len() > 1 {
+    if positions.len() > 1 {
         return Err(SchemaError::NoPointwiseTargetKey {
             statement: id,
             relation: target.relation,
         });
     }
-    let interval_position = interval_positions.first().copied();
+    let interval_position = positions.first().copied();
 
-    let mut want = target.projection.to_vec();
-    want.sort_unstable();
+    let want = field_set(&target.projection);
     let found = descriptors.iter().enumerate().find(|(_, descriptor)| {
         if let StatementDescriptor::Functionality {
             relation,
             projection,
         } = descriptor
         {
-            let mut set = projection.to_vec();
-            set.sort_unstable();
-            *relation == target.relation && set == want
+            *relation == target.relation && field_set(projection) == want
         } else {
             false
         }
@@ -569,14 +568,21 @@ fn resolve_target_key(
         .collect();
 
     Ok(Resolved::Containment {
-        target_key: StatementId(u16::try_from(key_idx).expect("statement count fits u16")),
+        target_key: statement_id(key_idx),
         key_permutation,
         interval_position,
     })
 }
 
-/// Field checks: duplicate names, enum shape, serial typing.
-fn validate_fields(rel_id: RelationId, fields: &[FieldDescriptor]) -> Result<(), SchemaError> {
+/// One relation: field checks (duplicate names, enum shape, serial typing),
+/// then the sealed [`Relation`]; the caller fills the statement indices
+/// from the materialized statement list.
+fn validate_relation(
+    rel_id: RelationId,
+    decl: RelationDescriptor,
+) -> Result<Relation, SchemaError> {
+    let RelationDescriptor { name, fields } = decl;
+
     for (idx, field) in fields.iter().enumerate() {
         let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
         if fields[..idx].iter().any(|f| f.name == field.name) {
@@ -616,18 +622,6 @@ fn validate_fields(rel_id: RelationId, fields: &[FieldDescriptor]) -> Result<(),
             });
         }
     }
-    Ok(())
-}
-
-/// Validates one relation's fields and seals it; the caller fills the
-/// statement indices from the materialized statement list.
-fn validate_relation(
-    rel_id: RelationId,
-    decl: RelationDescriptor,
-) -> Result<Relation, SchemaError> {
-    let RelationDescriptor { name, fields } = decl;
-
-    validate_fields(rel_id, &fields)?;
 
     let layout = FactLayout::new(
         &fields
@@ -642,6 +636,5 @@ fn validate_relation(
         layout,
         keys: Box::new([]),
         outgoing: Box::new([]),
-        incoming: Box::new([]),
     })
 }

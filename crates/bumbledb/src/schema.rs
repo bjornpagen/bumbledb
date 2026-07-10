@@ -1,4 +1,5 @@
-//! Schema descriptors, declaration validation, and the fingerprint (docs/architecture).
+//! Schema descriptors, declaration validation, and the fingerprint
+//! (`docs/architecture/10-data-model.md`, `docs/architecture/30-dependencies.md`).
 //!
 //! Construction is the validation boundary (parse, don't validate): the only
 //! way to obtain a [`Schema`] is [`SchemaDescriptor::validate`], and everything
@@ -325,9 +326,6 @@ pub struct Relation {
     keys: Box<[StatementId]>,
     /// `Containment` statements whose source is this relation.
     outgoing: Box<[StatementId]>,
-    /// `Containment` statements whose target is this relation — the
-    /// delete-side reverse-edge scan set (`docs/architecture/50-storage.md`).
-    incoming: Box<[StatementId]>,
 }
 
 /// The sealed schema witness. Unconstructible except through

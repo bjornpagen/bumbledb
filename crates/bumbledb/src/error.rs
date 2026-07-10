@@ -1,5 +1,5 @@
-//! The workspace error taxonomy (the 40-storage doc; categories per
-//! `docs/architecture/70-api.md`).
+//! The workspace error taxonomy, categorized per
+//! `docs/architecture/70-api.md`.
 //!
 //! Everything reachable from user input or disk returns these typed errors;
 //! panics are reserved for programmer-invariant violations. Payloads carry
@@ -83,14 +83,14 @@ pub enum CorruptionError {
     InternTagMismatch(u64),
 }
 
-/// A schema declaration error (the 10-data-model doc's validation boundary). Every illegal
-/// schema shape has a distinct variant; an invalid schema is
-/// unconstructible, not flagged.
+/// A schema declaration error (the validation boundary,
+/// `docs/architecture/10-data-model.md`). Every illegal schema shape has a
+/// distinct variant; an invalid schema is unconstructible, not flagged.
 ///
 /// Statement variants implement the validation roster of
 /// `docs/architecture/30-dependencies.md` — one variant per roster line,
 /// no catch-all. Each doc comment cites its line. The roster's "FD with
-/// selection" and "non-key FD form" lines have no variants: PRD 02's
+/// selection" and "non-key FD form" lines have no variants:
 /// [`crate::schema::StatementDescriptor::Functionality`] carries neither a
 /// selection nor a Y side, so both shapes are unrepresentable rather than
 /// rejected.
@@ -314,9 +314,8 @@ pub enum FactShapeError {
     },
 }
 
-/// A query validation error (the IR boundary, the 20-query-ir doc): one variant per
-/// roster item in `docs/architecture/20-query-ir.md`, returned at prepare
-/// time.
+/// A query validation error (the IR boundary): one variant per roster item
+/// in `docs/architecture/20-query-ir.md`, returned at prepare time.
 ///
 /// An `atom` payload is an *occurrence* index: positive atoms first in
 /// query order, then negated atoms — negated atoms are checked under the
