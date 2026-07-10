@@ -99,15 +99,17 @@ Phase E — the earning:
 - [15 — Oracles and the generator](15-oracles.md)
 - [16 — The calendar family](16-calendar-family.md)
 
-Phase F — the write side and the type ledger:
+Phase F — the write side, the type ledger, and the surface ruling:
 - [17 — Identity bytes: `bytes<N>` replaces `bytes`, roster stays at seven](17-identity-bytes.md)
 - [18 — The generation witness: read-compute-write as a value](18-generation-witness.md)
 - [19 — Derived relations: the view story, canonized (doc unit)](19-derived-relations.md)
+- [20 — The data surface, ruled: schemas are code, queries are data](20-data-surface.md)
 
 Dependency spine: 01–02 free; 03→04; 05→06→07→08; 09 additionally requires
 `docs/prd/` 11–12 (the chase) landed; 10 requires 02; 11→12; 13/14 landed
 (residual rides 01); 15 requires 03/05/10/12; 16 requires 15; 17–18 free
-(17's oracle rows fold into 15 if it lands first); 19 requires 18. Phases
+(17's oracle rows fold into 15 if it lands first); 19 requires 18; 20
+requires 05 (its sweep and renderer target the rules-shaped IR). Phases
 A/B/C/F may interleave; E closes the set (16 gains a `bytes<32>` content-hash
 column and a witnessed-write family row if F lands first).
 
@@ -161,6 +163,14 @@ column and a witnessed-write family row if F lands first).
   computation over its sources). Outside the ∀∃ vocabulary by the acceptance
   gate; host discipline plus offline re-derivation, with the trigger
   recorded in PRD 19.
+- **A typed query builder, and any engine-side query ergonomics.** Queries
+  are data (PRD 20's ruling): builders bind construction to Rust closures
+  and generics — exactly what a foreign host cannot invoke — and the
+  roster's typed errors re-provide the checking for every caller equally.
+  Sugar is downstream-package territory, in any language, lowering to IR.
+- **JS/N-API bindings, now.** Pure anticipation, recorded with their
+  quarantine shape in PRD 20; zero deliverable in this set, and no engine
+  decision may lean on their existence.
 
 ## Idioms chapter (PRD 01 discharges into `10-data-model.md`)
 
