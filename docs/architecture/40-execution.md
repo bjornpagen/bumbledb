@@ -146,7 +146,10 @@ Two facts identical on all *bound* variables produce the same binding; the solut
   its relation (typical for ledger queries that bind fresh ids), distinct facts ⇒
   distinct bindings, and the plan carries a proof flag that lets the aggregate sink
   skip the seen-set entirely. Provable at plan time from the schema's FD statements —
-  a representation-level fix, not a runtime branch per binding.
+  a representation-level fix, not a runtime branch per binding. **Per-query-shape**:
+  the elision applies to single-rule programs; a multi-rule sink keeps its seen-set
+  (§ the rule loop) until the exclusivity theorem (PRD ALG-08) proves the rules
+  pairwise-disjoint — correct first, elided when proven.
 
 **Deviation D2 (set semantics — replaces the old D2):** the paper is bag-semantic
 (leaves may carry multiplicity, output is a tuple stream). We: sets everywhere; leaves
@@ -155,7 +158,11 @@ the first witness** when (a) the active sink is the projection sink and (b) the 
 binds only variables outside the projection set — the emitted fact cannot change, so
 the recursion unwinds on the sink's first-emit signal. The skip is **never legal under
 an aggregate sink** (any new bound variable multiplies the binding set the fold is
-defined over). **Reverses if:** never — product semantics.
+defined over). **The skip is per-rule**: each rule of a program executes its own plan,
+so a skip unwinds inside that rule only and never crosses rules — a later rule
+re-deriving the same head fact is absorbed by the spanning seen-set (§ the rule loop),
+which is what makes the skip's early exit harmless under union. **Reverses if:**
+never — product semantics.
 
 **Deviation D3 (sinks, not `output()`):** the executor emits complete bindings to a
 private sink trait; projection-dedup and aggregate folds (semantics normative in
@@ -164,6 +171,50 @@ maps live in sink arena state; aggregate result types: Sum(I64)→I64, Sum(U64)�
 (i128/u128 accumulators, one final range check), Count/CountDistinct→U64,
 Min/Max→input type, Arg carries→their variables' types. **Reverses if:** never
 structurally.
+
+## The rule loop
+
+A prepared query is a program — one head, a list of rules, each with its own
+`ValidatedPlan` (the whole plan pipeline runs per rule at prepare). Execution runs the
+rules **sequentially** into **one sink**: the sink resets once per execution, never
+per rule, and its dedup machinery spanning rules is the *entire* implementation of set
+union. **Union is not an operator** — no merge node, no concat-then-dedup pass exists
+anywhere in the executor; disjunction at the top is the rule list, and what one sink
+hearing several rules *means* under set semantics is exactly ∪. Inter-rule parallelism
+is not attempted: it is inter-query parallelism's job (the concurrency contract below)
+and stays a non-goal.
+
+- **Dedup keys are head-shaped, never rule-slot-shaped** — the representation that
+  makes cross-rule dedup work at all, since binding-slot layouts are per-rule. The
+  projection sink keys the projected find tuple (head-shaped already); the multi-rule
+  aggregate sink keys the **head projection** — per head position, the words the
+  position reads from the rule's binding (group variables and fold inputs; the nullary
+  `Count` contributes nothing), which is `20-query-ir.md`'s "aggregates read the head:
+  the fold domain is the union of the rules' binding sets projected to the head".
+  The single-rule aggregate keys the full slot array (its fold domain is the rule's
+  distinct full bindings — the normative single-rule semantics, unchanged).
+- **Per-rule re-aiming:** the sink's slot tables (projection slots; aggregate finds,
+  group spans, head-projection spans) re-aim to each rule's binding layout at rule
+  entry — head positions are fixed (arity, ops, widths, types), slots are the rule's.
+  The shared maps (rows, groups, seen-sets, value sets) carry across rules untouched:
+  the spanning is the point. Binding-slot scratch is shared across rules, re-sized to
+  each rule's layout at rule entry; executor scratch stays per-rule (it is
+  plan-shaped: slot maps, node buffers).
+- **Params are query-global**: bound once, resolved into shared slots every rule
+  reads; per-rule state is only what is plan-shaped (resolved filters, selections,
+  the view memo). A rule whose `Eq`-anchored constant misses the dictionary
+  short-circuits **that rule only** — a rule is one disjunct.
+- **Guard-probe rules** union through the sink like any other rule; the direct
+  no-sink decode lane applies only to the single-rule guard program (the union must
+  hear every rule).
+- **The view memo under rules:** occurrences of one relation in different rules share
+  the image `Arc` by construction (one `ImageCache`, one build per
+  `(relation, storage_tx_id)`), and each occurrence's filtered views memoize per
+  (generation, resolved filters) exactly as within one rule — a repeat execution of
+  the program rebuilds nothing in any rule.
+- **Arg-restriction never crosses rules** — refused at validation
+  (`20-query-ir.md` § aggregation): the restriction key is rule-scoped, outside the
+  head's vocabulary.
 
 ## Planner
 
@@ -346,8 +397,11 @@ execution's**, excluding a caller-provided result buffer. All scratch — bindin
 slots, probe keys, batch buffers, COLT pools, filtered views, sink state (dedup
 sets, group maps, distinct sets, arg-restriction sets) — is retained-capacity
 pools owned by the `PreparedQuery` (index-addressed `Vec`s that reset without
-freeing; the `Arena` type proper serves only the write delta), so a warm
-execution allocates only when a strictly-increasing input-shape high-water
+freeing; the `Arena` type proper serves only the write delta), **with the
+high-water taken across all rules** — the sink and the binding-slot scratch are
+shared by every rule of the program, and per-rule scratch (executor buffers,
+view memos) is still the one prepared query's property — so a warm execution
+allocates only when a strictly-increasing input-shape high-water
 pushes a pool past every capacity it has ever held; a re-bind whose
 intermediates fit anything already seen touches the allocator zero times. This
 is the stronger-because-true claim, not a weakening: "zero, unconditionally"
@@ -409,12 +463,18 @@ violates the latency budget despite the cache — then persist columns instead.
 representation, not a mode: the executor is generic over a `Counters` trait;
 the normal path instantiates `NoopCounters` (zero-sized, compiled to nothing — no
 runtime branch, no hot-loop cost), and the EXPLAIN entry point instantiates the
-counting variant and **executes the query** (ANALYZE semantics), reporting the plan,
-per-node estimated vs actual cardinalities, residual and anti-probe selectivity,
-cover-choice histograms (choices aggregated per node, not per entry), and the
-chase's eliminated occurrences — read straight off the plan's `Role::Eliminated`
-marks, each rendered with its licensing statement through `schema/render.rs`
-(e.g. `eliminated: Grading via Grading(id | kind == Det) == Det(grading)`).
+counting variant and **executes the query** (ANALYZE semantics), reporting **per
+rule** the plan, per-node estimated vs actual cardinalities, residual and anti-probe
+selectivity, cover-choice histograms (choices aggregated per node, not per entry),
+and the chase's eliminated occurrences — read straight off the plan's
+`Role::Eliminated` marks, each rendered with its licensing statement through
+`schema/render.rs` (e.g. `eliminated: Grading via Grading(id | kind == Det) ==
+Det(grading)`) — plus the **head-level union accounting**: per rule, bindings
+emitted to the shared sink vs absorbed by the spanning seen-set (absorbed =
+emitted − newly-seen: two O(1) reads per rule, no per-tuple cost; an elided
+seen-set absorbs nothing by proof). The obs registry mirrors it: one `RULE` span
+per rule under the execute span (`rule_N` — the index rides in the name,
+`MAX_RULES`-bounded), args (emitted, absorbed), populated on counted paths.
 Output shape: OPEN. Release builds contain no other instrumentation: no per-tuple labels, no
 always-on counters, no diagnostics allocation anywhere in the join loops.
 

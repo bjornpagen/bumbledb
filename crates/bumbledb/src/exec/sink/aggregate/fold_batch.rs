@@ -31,8 +31,10 @@ impl AggregateSink {
     /// gather-fold through the same constant-group core as the elided
     /// path, group probe hoisted and all.
     pub(super) fn fold_batch_dedup_constant_group(&mut self, batch: &LeafBatch<'_>) {
-        // The dedup key is the full binding: outer slots constant,
-        // prefilled once (cached shape); key slots overwritten per row.
+        // The binding fills as ever: outer slots constant, prefilled once
+        // (cached shape); key slots overwritten per row. The dedup key is
+        // the full binding — or its head projection under the multi-rule
+        // union regime (`dedup_key`).
         // Direct per-row insert — NO hash-ahead pipeline (the
         // pipeline measured a strict loss in this
         // exact shape, including on mixed hit/miss streams, once the
@@ -47,11 +49,14 @@ impl AggregateSink {
         // once — the survivor pushes and seen-set writes can no longer
         // alias its header.
         let binding_scratch = &mut self.binding_scratch[..];
+        let union_spans = self.union_spans.as_deref();
+        let union_scratch = &mut self.union_scratch;
         for &entry in batch.survivors {
             for (word, slot) in batch.key_slots.iter().enumerate() {
                 binding_scratch[*slot] = batch.key(entry, word);
             }
-            if seen.insert(binding_scratch) {
+            let key = super::fold_row::dedup_key(union_spans, union_scratch, binding_scratch);
+            if seen.insert(key) {
                 survivors.push(entry);
             }
         }

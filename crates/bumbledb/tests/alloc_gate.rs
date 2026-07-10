@@ -362,6 +362,93 @@ fn escalation_query() -> Query {
     })
 }
 
+/// Q(holder, amount) :- account-side rule ∪ posting-side rule — the
+/// multi-rule union shape (docs/architecture/40-execution.md § the rule
+/// loop): two overlapping rules over the same head, one shared param
+/// reaching both, one sink whose seen-set spans the rules. The overlap
+/// (both rules admit mid-range amounts) keeps the spanning seen-set's
+/// absorption live inside the measured window.
+fn union_rules_query() -> Query {
+    let rule = |op: CmpOp| Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(1), Term::Var(VarId(2))),
+                    (FieldId(2), Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                relation: ACCOUNT,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(2))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![PredicateTree::Leaf(Comparison {
+            op,
+            lhs: Term::Var(VarId(1)),
+            rhs: Term::Param(ParamId(0)),
+        })],
+    };
+    Query {
+        head: vec![bumbledb::HeadTerm::Var, bumbledb::HeadTerm::Var],
+        rules: vec![rule(CmpOp::Ge), rule(CmpOp::Le)],
+    }
+}
+
+/// Q(holder, Sum(amount), Count) :- the same two rules — the multi-rule
+/// aggregate shape: the union regime's head-projection seen-set (never
+/// elided until ALG 08) must reach its high-water and stay silent.
+fn union_aggregate_query() -> Query {
+    let rule = |op: CmpOp| Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Sum,
+                over: Some(VarId(1)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::Count,
+                over: None,
+            },
+        ],
+        atoms: vec![
+            Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(1), Term::Var(VarId(2))),
+                    (FieldId(2), Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                relation: ACCOUNT,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(2))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![PredicateTree::Leaf(Comparison {
+            op,
+            lhs: Term::Var(VarId(1)),
+            rhs: Term::Param(ParamId(0)),
+        })],
+    };
+    Query {
+        head: vec![
+            bumbledb::HeadTerm::Var,
+            bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Sum),
+            bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Count),
+        ],
+        rules: vec![rule(CmpOp::Ge), rule(CmpOp::Le)],
+    }
+}
+
 /// Q(amount) :- Posting(id = ?0, amount) — the guard-probe shape.
 fn guard_query() -> Query {
     Query::single(Rule {
@@ -568,6 +655,16 @@ fn zero_warm_allocation_gate() {
 
         let mut guard = db.prepare(&guard_query())?;
         gate("guard", &mut guard, snap, &guard_params);
+
+        // The rule loop (docs/architecture/40-execution.md § the rule
+        // loop): multi-rule prepared queries in the measured window —
+        // per-rule sink re-aiming, the shared binding scratch, and the
+        // spanning seen-set (projection and the never-elided union
+        // aggregate regime) all sit at their high-water after warmup.
+        let mut union_rules = db.prepare(&union_rules_query())?;
+        gate("union-rules", &mut union_rules, snap, &join_params);
+        let mut union_aggregate = db.prepare(&union_aggregate_query())?;
+        gate("union-aggregate", &mut union_aggregate, snap, &join_params);
 
         // The selection shape (docs/architecture/40-execution.md): four rotating Eq params on
         // a non-key string field — the gate's warmups cover two full

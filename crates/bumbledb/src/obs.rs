@@ -84,6 +84,18 @@ pub mod names {
 
     /// One prepared execution. (result rows, -)
     pub const EXECUTE: &str = "execute";
+    /// One rule of the loop, under the execute span — the index rides in
+    /// the name (`RULE[index]`; the validation cap `crate::ir::MAX_RULES`
+    /// = 16 bounds it). (bindings emitted, absorbed by the spanning
+    /// seen-set) — both zero on uncounted paths (the release executor
+    /// counts nothing; trace and EXPLAIN runs count).
+    pub const RULE: [&str; 16] = [
+        "rule_0", "rule_1", "rule_2", "rule_3", "rule_4", "rule_5", "rule_6", "rule_7", "rule_8",
+        "rule_9", "rule_10", "rule_11", "rule_12", "rule_13", "rule_14", "rule_15",
+    ];
+    // The cap and the table move together, or the rule loop's span
+    // lookup would panic on a legal program.
+    const _: () = assert!(crate::ir::MAX_RULES == RULE.len());
     /// Parameter binding. (-, -)
     pub const BIND_PARAMS: &str = "bind_params";
     /// Filter-constant resolution. (-, -)

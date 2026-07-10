@@ -188,7 +188,11 @@ fn chase_shapes_eliminate_and_near_misses_refuse() {
             .expect("chase shapes execute (empty store)");
         match variant {
             ChaseVariant::Walk => {
-                assert_eq!(stats.eliminated.len(), 1, "walk {i} must eliminate");
+                assert_eq!(
+                    stats.rules[0].eliminated.len(),
+                    1,
+                    "walk {i} must eliminate"
+                );
                 eliminated += 1;
             }
             ChaseVariant::DuHeader | ChaseVariant::DuChild => {
@@ -197,18 +201,22 @@ fn chase_shapes_eliminate_and_near_misses_refuse() {
                 } else {
                     "ImportBatch"
                 };
-                assert_eq!(stats.eliminated.len(), 1, "DU walk {i} must eliminate");
                 assert_eq!(
-                    stats.eliminated[0].relation, fallen,
+                    stats.rules[0].eliminated.len(),
+                    1,
+                    "DU walk {i} must eliminate"
+                );
+                assert_eq!(
+                    stats.rules[0].eliminated[0].relation, fallen,
                     "DU walk {i} fells the wrong side"
                 );
                 eliminated += 1;
             }
             ChaseVariant::WalkExtraField | ChaseVariant::DuMissingPhi => {
                 assert!(
-                    stats.eliminated.is_empty(),
+                    stats.rules[0].eliminated.is_empty(),
                     "near-miss {i} must refuse: {:?}",
-                    stats.eliminated
+                    stats.rules[0].eliminated
                 );
                 refused += 1;
             }

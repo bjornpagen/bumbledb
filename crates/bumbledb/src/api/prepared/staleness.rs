@@ -110,14 +110,14 @@ impl<S> PreparedQuery<'_, S> {
         })
     }
 
-    /// The stats surface's rendering of the pin record
-    /// ([`crate::api::stats::ExecutionStats::pinned`]): per
-    /// participating occurrence, the statistics every node estimate
-    /// derives from, with the relation name resolved.
-    pub(super) fn pinned_rows(&self) -> Vec<crate::api::stats::PinnedRows> {
-        self.rules
+    /// The stats surface's rendering of one rule's pin record
+    /// ([`crate::api::stats::RuleStats::pinned`]): per participating
+    /// occurrence, the statistics every node estimate derives from,
+    /// with the relation name resolved.
+    pub(super) fn rule_pinned_rows(&self, rule_idx: usize) -> Vec<crate::api::stats::PinnedRows> {
+        self.rules[rule_idx]
+            .pinned
             .iter()
-            .flat_map(|rule| rule.pinned.iter())
             .map(|pin| crate::api::stats::PinnedRows {
                 occurrence: pin.occ_id.0,
                 relation: self.schema.relation(pin.relation).name().to_owned(),

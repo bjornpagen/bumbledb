@@ -3,6 +3,16 @@
 //! (`docs/architecture/40-execution.md` D2/D3; semantics normative in
 //! `20-query-ir.md`).
 //!
+//! **The sinks are where union lives** (docs/architecture/40-execution.md
+//! § the rule loop): one sink hears every rule of a program, its seen-set
+//! spanning rules — reset once per execution, never per rule — so a later
+//! rule re-deriving a head fact is absorbed exactly like a within-rule
+//! duplicate. No merge node, no concat-then-dedup pass exists anywhere
+//! else. The seen-set keys are **head-shaped** by construction: the
+//! projection sink keys the projected find tuple, and the multi-rule
+//! aggregate sink keys the head projection (`union_spans`), never the
+//! rule's full slot array — dedup keys must be rule-independent.
+//!
 //! Aggregation never materializes the join: group maps live in sink state;
 //! the fold domain of every aggregate is the group's **set of distinct
 //! full bindings over all query variables** — two postings of amount 100
@@ -185,10 +195,25 @@ pub struct AggregateSink {
     /// not a scalar accumulator, so no gather kernel or scan pushdown
     /// applies; batches route through the per-row scratch fold.
     row_fold_only: bool,
-    /// Full-binding dedup, elided when the plan proves distinct bindings.
-    /// Keyed on the whole slot array — an interval variable's two words
-    /// are both hashed (the `SlotWidth` layout).
+    /// Binding dedup, elided when the plan proves distinct bindings
+    /// (single-rule programs only — a multi-rule sink keeps its seen-set
+    /// until ALG 08's disjointness proof exists). Single-rule key: the
+    /// whole slot array — an interval variable's two words are both
+    /// hashed (the `SlotWidth` layout). Multi-rule key: the head
+    /// projection ([`Self::union_spans`]).
     seen: Option<WordMap<()>>,
+    /// The multi-rule union regime's dedup-key spans (`None` =
+    /// single-rule, key = the whole slot array): per head position in
+    /// head order, the slot span the position reads from THIS rule's
+    /// binding layout — group variables and fold inputs; the nullary
+    /// `Count` contributes nothing. The extracted words are the
+    /// **head projection** of the binding — rule-independent by
+    /// construction, so one seen-set spanning rules is the fold domain's
+    /// union (20-query-ir § aggregation, "aggregates read the head").
+    /// Re-aimed per rule by [`Self::aim`].
+    union_spans: Option<Vec<(usize, usize)>>,
+    /// Head-projection key assembly scratch (union regime only).
+    union_scratch: Vec<u64>,
     key_scratch: Vec<u64>,
     binding_scratch: Vec<u64>,
     /// Batch-fold accumulator staging: the group's row is copied here,

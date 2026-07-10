@@ -27,6 +27,9 @@ impl Counters for CountingCounters {
     fn emit(&mut self) {
         self.emits += 1;
     }
+    fn emits(&self) -> u64 {
+        self.emits
+    }
     fn skip(&mut self, node: usize) {
         self.skips[node] += 1;
     }

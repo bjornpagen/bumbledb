@@ -7,13 +7,19 @@ use crate::storage::env::ReadTxn;
 
 /// Executes the guard probe: key bytes from constants, one `U`/`M` get,
 /// one `F` fetch, remaining filters on the fact bytes, then the single
-/// binding through the ordinary sink (sinks are reused, not special-cased).
+/// binding through the ordinary sink (sinks are reused, not special-cased
+/// — a guard rule inside a multi-rule program unions through the same
+/// spanning seen-set as every other rule). The emit is counted like a
+/// join emit (the rule loop's union accounting).
 ///
 /// # Errors
 ///
 /// `Lmdb`/`Corruption` from the storage reads. A missing key or a failed
 /// filter is not an error: the result is simply empty.
-pub fn execute_guard<S: Sink>(
+#[allow(clippy::too_many_arguments)] // the prepared query's split borrows,
+                                     // exactly like `run_join`'s — bundling
+                                     // would only rename the same eight things
+pub fn execute_guard<S: Sink, C: crate::exec::run::Counters>(
     plan: &GuardPlan,
     txn: &ReadTxn<'_>,
     schema: &Schema,
@@ -21,6 +27,7 @@ pub fn execute_guard<S: Sink>(
     key_scratch: &mut Vec<u8>,
     bindings: &mut Bindings,
     sink: &mut S,
+    counters: &mut C,
 ) -> Result<()> {
     let Some(fact) = guard_probe_fact(plan, txn, schema, params, key_scratch)? else {
         return Ok(());
@@ -40,5 +47,6 @@ pub fn execute_guard<S: Sink>(
         }
     }
     sink.emit(bindings);
+    counters.emit();
     Ok(())
 }

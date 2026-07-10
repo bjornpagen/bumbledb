@@ -14,6 +14,21 @@ impl Bindings {
         }
     }
 
+    /// Re-sizes the slot array to one rule's binding layout (the rule
+    /// loop shares this scratch across rules — capacity is the
+    /// high-water across all of them) and staleness-bumps like
+    /// [`Bindings::reset`].
+    pub fn resize(&mut self, slot_count: usize) {
+        self.slots.clear();
+        self.slots.resize(slot_count, 0);
+        #[cfg(debug_assertions)]
+        {
+            self.epochs.clear();
+            self.epochs.resize(slot_count, 0);
+            self.current += 1;
+        }
+    }
+
     /// Starts a fresh execution: every slot becomes stale at once.
     #[allow(clippy::unused_self)] // the epoch bump is debug-only; release reads no state
     pub fn reset(&mut self) {

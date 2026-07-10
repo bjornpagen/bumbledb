@@ -192,6 +192,13 @@ pub trait Counters {
     /// rejected; a miss survives.
     fn anti_probe(&mut self, node: usize, hit: bool);
     fn emit(&mut self);
+    /// Bindings emitted so far (the rule loop's union accounting:
+    /// per-rule emitted = the delta across one rule's run; absorbed =
+    /// emitted − newly-seen). Zero on uncounted paths — the default is
+    /// the honest report of a counter that does not exist.
+    fn emits(&self) -> u64 {
+        0
+    }
     /// A D2 subtree skip propagated through this node.
     fn skip(&mut self, node: usize);
     /// A timed phase segment opens/closes (default no-op: only the trace
@@ -224,6 +231,9 @@ pub struct PhaseTimers {
     acc: [[(u64, u64); 6]; PHASE_NODE_CAP + 1],
     /// `[node][phase] -> open segment's start tick`.
     open: [[u64; 6]; PHASE_NODE_CAP + 1],
+    /// Bindings emitted (the RULE span's union accounting — trace-mode
+    /// only; the release path's [`NoopCounters`] counts nothing).
+    emits: u64,
 }
 
 /// The release-path counters: every method compiles to nothing.

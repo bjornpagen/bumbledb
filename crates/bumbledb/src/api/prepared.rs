@@ -170,11 +170,12 @@ pub struct PreparedQuery<'s, S> {
     /// — checked first at every execution entry.
     env_instance: u64,
     /// Per rule, in rule order: the rule's validated plan plus its
-    /// execution scratch — the whole plan pipeline ran per rule at
-    /// prepare. The sink configuration below stays query-level: one head,
-    /// one sink. **Execution is single-rule today** — the union-driving
-    /// loop over this list is PRD ALG-07's; a 2+-rule query executes as
-    /// the typed `Error::MultiRuleExecution`, never a wrong answer.
+    /// plan-shaped execution scratch — the whole plan pipeline ran per
+    /// rule at prepare. Execution runs the rules **sequentially** into
+    /// the ONE sink below (docs/architecture/40-execution.md § the rule
+    /// loop): the sink resets once per execution, never per rule, and
+    /// its seen-set spanning rules is the entire implementation of ∪ —
+    /// no merge node, no concat-then-dedup pass exists.
     rules: Vec<PreparedRule>,
     /// Per head position: the result type (identical across rules — the
     /// head's positional alignment pins it at validation).
@@ -203,13 +204,19 @@ pub struct PreparedQuery<'s, S> {
     /// result; under `Ne` the sentinel word matches everything; on a
     /// negated occurrence it just matches nothing.
     missed_params: Vec<bool>,
-    /// The sink, reset per execution with capacities retained — **one**
-    /// sink configuration, owned by the head (its shape is the head's:
-    /// projection vs aggregate, arity, distinctness). Its find-spec slot
-    /// table is rule 0's binding-slot layout; re-aiming the specs per
-    /// rule as the union loop switches plans is PRD ALG-07's, with the
-    /// single-rule gate standing until then.
+    /// The sink, reset once per execution with capacities retained —
+    /// **one** sink configuration, owned by the head (its shape is the
+    /// head's: projection vs aggregate, arity, distinctness). Its
+    /// find-spec slot tables are re-aimed per rule as the rule loop
+    /// switches plans (`run_rule`); the dedup keys are head-shaped —
+    /// projected tuples, or head projections under the multi-rule
+    /// aggregate regime — so the seen-set spanning rules is the union.
     sink: EitherSink,
+    /// The rule-shared binding-slot scratch (docs/architecture/
+    /// 40-execution.md § the rule loop): written in place by each rule's
+    /// recursion, re-sized to the rule's slot layout at rule entry —
+    /// capacity is the high-water across all rules.
+    bindings: Bindings,
     /// Aggregate-finalization row scratch.
     row_scratch: Vec<u64>,
     /// No interned finds: finalize takes the
@@ -231,9 +238,9 @@ pub struct PreparedQuery<'s, S> {
 /// is a list of these — one per rule — under one head-owned sink.
 struct PreparedRule {
     plan: ExecPlan,
-    /// The Free Join executor scratch (unused for guard probes).
+    /// The Free Join executor scratch (unused for guard probes) — plan-
+    /// shaped, so per-rule where the binding-slot scratch is shared.
     executor: Option<Executor>,
-    bindings: Bindings,
     /// The rule's head projection: per head position, the output spec
     /// over this rule's binding-slot layout (result types live on the
     /// query — they are the head's, identical across rules).

@@ -44,6 +44,16 @@ impl ExecPlan {
         }
     }
 
+    /// The plan's binding-slot count in **words** (the `SlotWidth`
+    /// layout) — the rule loop sizes the shared binding scratch with it.
+    #[must_use]
+    pub fn slot_count(&self) -> usize {
+        match self {
+            Self::GuardProbe(guard) => guard.slot_count(),
+            Self::FreeJoin(plan) => plan.slot_count(),
+        }
+    }
+
     /// The distinct-bindings elision flag (trivially true for a guard
     /// probe: at most one binding exists).
     #[must_use]

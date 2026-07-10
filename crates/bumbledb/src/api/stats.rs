@@ -5,27 +5,45 @@
 //! (ANALYZE semantics: the query really executes, with counting
 //! instrumentation; allocation-sanctioned exactly like `explain`).
 
-/// One execution's counted statistics.
+/// One execution's counted statistics: per-rule node stats under the
+/// head-level union accounting (docs/architecture/40-execution.md § the
+/// rule loop — one sink hears every rule; its seen-set spanning rules is
+/// the union). The single-rule program is the one-element list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionStats {
-    /// Per plan node, in node order (empty for guard probes).
+    /// Per rule, in rule order.
+    pub rules: Vec<RuleStats>,
+    /// Bindings emitted to the sink across all rules (the sum of the
+    /// per-rule `emitted`).
+    pub emits: u64,
+}
+
+/// One rule's counted execution under the shared sink.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleStats {
+    /// Per plan node, in node order (empty for guard-probe rules).
     pub nodes: Vec<NodeStats>,
     /// Occurrences the chase eliminated (`plan/chase.rs`), read straight
-    /// off the plan's `Role::Eliminated` marks — no separate list exists
-    /// in the plan; this surface renders the marks. Empty for guard
-    /// probes (single-atom queries have nothing to pair).
+    /// off the rule plan's `Role::Eliminated` marks — no separate list
+    /// exists in the plan; this surface renders the marks. Empty for
+    /// guard probes (single-atom queries have nothing to pair).
     pub eliminated: Vec<EliminatedOccurrence>,
     /// Per participating occurrence, in occurrence-id order: the
-    /// statistics the plan was costed with — every node `estimate` is
-    /// estimated from (pinned rows at prepare), so a drifted plan is
+    /// statistics the rule's plan was costed with — every node `estimate`
+    /// is estimated from (pinned rows at prepare), so a drifted plan is
     /// visible in one read of this surface (the pull-based signal is
     /// `PreparedQuery::staleness`). Empty for guard probes (they read
     /// no statistics); negated and chase-eliminated occurrences earned
     /// no statistics read at prepare and carry no entry.
     pub pinned: Vec<PinnedRows>,
-    /// Bindings emitted to the sink.
-    pub emits: u64,
-    /// Present iff the query classified as a guard probe.
+    /// Bindings this rule emitted to the shared sink.
+    pub emitted: u64,
+    /// Of those, the ones the spanning seen-set absorbed — duplicates
+    /// within the rule or re-derivations of an earlier rule's head fact
+    /// (`emitted - absorbed` were new). Zero under the single-rule
+    /// elision (nothing is ever absorbed — by proof).
+    pub absorbed: u64,
+    /// Present iff this rule classified as a guard probe.
     pub guard: Option<GuardStats>,
 }
 

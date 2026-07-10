@@ -102,7 +102,7 @@ pub use api::prepared::{
     BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
 };
 pub use api::stats::{
-    CoverStats, EliminatedOccurrence, ExecutionStats, GuardStats, NodeStats, PinnedRows,
+    CoverStats, EliminatedOccurrence, ExecutionStats, GuardStats, NodeStats, PinnedRows, RuleStats,
 };
 pub use error::{Direction, Error, OverflowKind, Result};
 pub use interval::Interval;

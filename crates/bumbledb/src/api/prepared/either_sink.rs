@@ -1,12 +1,37 @@
 use super::{Bindings, EitherSink};
 
 use crate::exec::run::Sink;
+use crate::exec::sink::FindSpec;
 
 impl EitherSink {
+    /// Empties the sink, retaining capacity — once per execution, never
+    /// per rule (the seen-set spanning rules IS the union,
+    /// docs/architecture/40-execution.md § the rule loop).
     pub(super) fn reset(&mut self) {
         match self {
             Self::Projection(sink) => sink.reset(),
             Self::Aggregate(sink) => sink.reset(),
+        }
+    }
+
+    /// Re-aims the sink's slot tables at one rule's binding layout —
+    /// the rule loop's per-rule step; the shared maps (the union) are
+    /// untouched.
+    pub(super) fn aim(&mut self, finds: &[FindSpec], slot_count: usize) {
+        match self {
+            Self::Projection(sink) => sink.aim(finds),
+            Self::Aggregate(sink) => sink.aim(finds, slot_count),
+        }
+    }
+
+    /// Distinct head tuples (projection) or seen bindings (aggregate)
+    /// held — the union observable behind per-rule absorbed accounting.
+    /// `None` when the aggregate seen-set is elided (single-rule
+    /// distinct-bindings proof: nothing is ever absorbed).
+    pub(super) fn distinct_seen(&self) -> Option<usize> {
+        match self {
+            Self::Projection(sink) => Some(sink.len()),
+            Self::Aggregate(sink) => sink.distinct_seen(),
         }
     }
 }

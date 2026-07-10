@@ -134,9 +134,8 @@ struct RuleTyping {
 }
 
 impl ValidatedQuery {
-    /// The head's pinned positional type row (see the field doc). Its
-    /// production consumer is the rule-execution union loop (PRD ALG-07);
-    /// until that lands, validation writes it and the tests read it.
+    /// The head's pinned positional type row (see the field doc); the
+    /// rule loop's result-type row derives from it per rule at prepare.
     #[cfg_attr(not(test), allow(dead_code))]
     #[must_use]
     pub fn head_types(&self) -> &[ValueType] {

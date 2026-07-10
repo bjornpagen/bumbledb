@@ -53,16 +53,22 @@ pub struct CountingCounters {
     emits: u64,
 }
 
-/// The EXPLAIN report: the plan rendering plus (for the join engine) the
-/// counted execution. `Display` formats lazily — nothing here ran inside
-/// the hot loops.
+/// The EXPLAIN report: per-rule plan renderings plus the counted
+/// execution — per-rule node stats under the head-level union
+/// accounting (docs/architecture/40-execution.md § the rule loop).
+/// `Display` formats lazily — nothing here ran inside the hot loops.
 #[derive(Debug)]
-pub enum Report<'p> {
-    /// The query classified as a point lookup (docs/architecture/40-execution.md).
-    GuardProbe { plan: &'p GuardPlan },
-    /// The Free Join engine, with its counted execution.
-    FreeJoin {
-        plan: &'p ValidatedPlan,
-        stats: crate::api::stats::ExecutionStats,
-    },
+pub struct Report<'p> {
+    /// Per rule, aligned with `stats.rules`.
+    pub rules: Vec<RulePlan<'p>>,
+    pub stats: crate::api::stats::ExecutionStats,
+}
+
+/// One rule's access path (docs/architecture/40-execution.md).
+#[derive(Debug)]
+pub enum RulePlan<'p> {
+    /// The rule classified as a point lookup.
+    GuardProbe(&'p GuardPlan),
+    /// The Free Join engine.
+    FreeJoin(&'p ValidatedPlan),
 }

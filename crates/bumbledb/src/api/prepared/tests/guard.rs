@@ -256,7 +256,7 @@ fn pointwise_key_point_lookup_is_guarded_and_image_free() {
     let (rows, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(rows.len(), 1);
     assert_eq!(
-        stats.guard,
+        stats.rules[0].guard,
         Some(crate::api::stats::GuardStats { hit: true })
     );
     let near = booking_query(Term::Literal(Value::IntervalU64(5, 11)));
@@ -264,7 +264,7 @@ fn pointwise_key_point_lookup_is_guarded_and_image_free() {
     let (rows, stats) = near.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(rows.len(), 0);
     assert_eq!(
-        stats.guard,
+        stats.rules[0].guard,
         Some(crate::api::stats::GuardStats { hit: false })
     );
     #[cfg(feature = "trace")]
@@ -298,8 +298,11 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
     );
 
     let (rows, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert!(stats.guard.is_none(), "the scan+filter path, not the guard");
-    assert!(!stats.nodes.is_empty());
+    assert!(
+        stats.rules[0].guard.is_none(),
+        "the scan+filter path, not the guard"
+    );
+    assert!(!stats.rules[0].nodes.is_empty());
     assert_eq!(rows.len(), 1);
     assert_eq!(rows.get(0, 0), ResultValue::U64(100));
 

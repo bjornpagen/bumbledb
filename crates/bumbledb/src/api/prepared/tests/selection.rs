@@ -88,7 +88,7 @@ fn selection_work_is_o_selected() {
         .profile(&txn, &cache, &memo_param("hot"))
         .expect("profile");
     assert_eq!(out.len(), 4);
-    let drawn: u64 = stats.nodes.iter().map(|n| n.batch_entries).sum();
+    let drawn: u64 = stats.rules[0].nodes.iter().map(|n| n.batch_entries).sum();
     assert_eq!(drawn, 4, "work is O(selected), not O(relation): {stats:?}");
 }
 

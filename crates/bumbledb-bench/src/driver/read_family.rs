@@ -12,7 +12,7 @@ fn exec_digest(stats: &bumbledb::ExecutionStats) -> report::ExecDigest {
     use std::fmt::Write as _;
     let mut worst = 1.0_f64;
     let mut covers = String::new();
-    for (index, node) in stats.nodes.iter().enumerate() {
+    for (index, node) in stats.rules.iter().flat_map(|r| &r.nodes).enumerate() {
         #[allow(clippy::cast_precision_loss)]
         let (estimate, actual) = (node.estimate.max(1) as f64, node.actual.max(1) as f64);
         worst = worst.max((estimate / actual).max(actual / estimate));

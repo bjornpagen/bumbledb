@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::stats::ExecutionStats;
 use crate::encoding::{encode_fact, ValueRef};
 use crate::exec::colt::Colt;
 use crate::exec::dispatch::classify;
@@ -198,9 +199,13 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
     // node is 20 emits; estimates rendered beside them.
     assert_eq!(counters.emits(), 20);
     assert!(counters.actual_after(0) > 0);
-    let report = Report::FreeJoin {
-        plan: &plan,
-        stats: counters.into_stats(&plan, &schema, Vec::new()),
+    let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
+    let report = Report {
+        rules: vec![RulePlan::FreeJoin(&plan)],
+        stats: ExecutionStats {
+            emits: rule.emitted,
+            rules: vec![rule],
+        },
     };
     let text = format!("{report}");
     assert!(text.contains("estimated=5"));
@@ -266,9 +271,13 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
     // Node 0 chose subatom 1 (the forced small side), labeled Exact.
     assert_eq!(counters.cover_histogram(0, 1)[0], 1);
     assert_eq!(counters.cover_histogram(0, 0), [0, 0]);
-    let report = Report::FreeJoin {
-        plan: &plan,
-        stats: counters.into_stats(&plan, &schema, Vec::new()),
+    let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
+    let report = Report {
+        rules: vec![RulePlan::FreeJoin(&plan)],
+        stats: ExecutionStats {
+            emits: rule.emitted,
+            rules: vec![rule],
+        },
     };
     assert!(format!("{report}").contains("exact=1"));
 }
@@ -288,7 +297,20 @@ fn guard_probe_queries_report_their_classification() {
         }],
     }]);
     let guard = classify(&normalized, &schema).expect("guard probe");
-    let report = Report::GuardProbe { plan: &guard };
+    let report = Report {
+        rules: vec![RulePlan::GuardProbe(&guard)],
+        stats: ExecutionStats {
+            rules: vec![crate::api::stats::RuleStats {
+                nodes: Vec::new(),
+                eliminated: Vec::new(),
+                pinned: Vec::new(),
+                emitted: 0,
+                absorbed: 0,
+                guard: Some(crate::api::stats::GuardStats { hit: true }),
+            }],
+            emits: 0,
+        },
+    };
     let text = format!("{report}");
     assert!(text.contains("guard probe"));
     assert!(text.contains("key statement: 0"));
@@ -397,10 +419,16 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
         .expect("execute");
 
     assert_eq!(counters.emits(), 7, "three postings rejected");
-    let stats = counters.into_stats(&plan, &schema, Vec::new());
-    assert_eq!(stats.nodes[0].anti_probe_probed, 10);
-    assert_eq!(stats.nodes[0].anti_probe_rejected, 3);
-    let report = Report::FreeJoin { plan: &plan, stats };
+    let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
+    assert_eq!(rule.nodes[0].anti_probe_probed, 10);
+    assert_eq!(rule.nodes[0].anti_probe_rejected, 3);
+    let report = Report {
+        rules: vec![RulePlan::FreeJoin(&plan)],
+        stats: ExecutionStats {
+            emits: rule.emitted,
+            rules: vec![rule],
+        },
+    };
     let text = format!("{report}");
     assert!(text.contains("anti-probes: 1 placed, probed=10 rejected=3"));
 }

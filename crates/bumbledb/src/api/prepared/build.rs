@@ -89,26 +89,42 @@ pub(crate) fn prepare<'s, S>(
     }
 
     // The one sink configuration — head-owned shape (projection vs
-    // aggregate, arity, distinctness), sized against rule 0's plan. Its
-    // find-spec slot table is rule 0's layout; the per-rule re-aim rides
-    // with ALG 07's union loop (execution is single-rule-gated until
-    // then).
-    let first = &rules[0];
-    let (output_hint, slot_count) = match &first.plan {
-        ExecPlan::FreeJoin(plan) => (
+    // aggregate, arity, distinctness), built aimed at rule 0's layout
+    // and re-aimed per rule by the rule loop. Presized against the
+    // rules' worst estimate (one sink hears every rule). Dedup is
+    // per-query-shape: a single-rule aggregate elides its seen-set under
+    // the plan's distinct-bindings proof; a multi-rule one keys head
+    // projections and keeps the set until ALG 08's disjointness theorem
+    // pays the union's bill.
+    let output_hint = rules
+        .iter()
+        .map(|rule| match &rule.plan {
             // Sink presizing: the last node's planner estimate bounds
             // the binding stream the sink consumes.
-            usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
-                .expect("clamped"),
-            plan.slot_count(),
-        ),
-        ExecPlan::GuardProbe(guard) => (1, guard.slot_count()),
-    };
+            ExecPlan::FreeJoin(plan) => {
+                usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
+                    .expect("clamped")
+            }
+            ExecPlan::GuardProbe(_) => 1,
+        })
+        .max()
+        .expect("at least one rule");
+    let first = &rules[0];
     let sink = make_sink(
         &first.finds,
-        slot_count,
+        first.plan.slot_count(),
         first.plan.distinct_bindings(),
+        rules.len() > 1,
         output_hint,
+    );
+    // The rule-shared binding-slot scratch, sized at the rules'
+    // high-water so the per-rule resize never allocates.
+    let bindings = Bindings::new(
+        rules
+            .iter()
+            .map(|rule| rule.plan.slot_count())
+            .max()
+            .expect("at least one rule"),
     );
 
     let all_words = column_types
@@ -125,6 +141,7 @@ pub(crate) fn prepare<'s, S>(
         resolved_params: Vec::new(),
         missed_params: Vec::new(),
         sink,
+        bindings,
         row_scratch: Vec::new(),
         all_words,
         resolve_memo: ResolveMemo::new(),
@@ -216,15 +233,9 @@ fn prepare_rule(
 
     let finds = find_specs(rule, &exec_plan);
 
-    // Binding slots are WORDS: an interval variable holds two (the
-    // SlotWidth layout) — `slot_count`, never the variable count.
-    let (executor, slot_count, occurrence_count) = match &exec_plan {
-        ExecPlan::FreeJoin(plan) => (
-            Some(Executor::new(plan)),
-            plan.slot_count(),
-            plan.occurrences().len(),
-        ),
-        ExecPlan::GuardProbe(guard) => (None, guard.slot_count(), 1),
+    let (executor, occurrence_count) = match &exec_plan {
+        ExecPlan::FreeJoin(plan) => (Some(Executor::new(plan)), plan.occurrences().len()),
+        ExecPlan::GuardProbe(_) => (None, 1),
     };
 
     // BUILD_COLTS is pure column-schema construction since the unbound-
@@ -240,7 +251,6 @@ fn prepare_rule(
         PreparedRule {
             plan: exec_plan,
             executor,
-            bindings: Bindings::new(slot_count),
             finds: specs,
             resolved_filters: vec![Vec::new(); occurrence_count],
             resolved_selections: vec![Vec::new(); occurrence_count],
@@ -417,8 +427,17 @@ fn guard_find_table(
 }
 
 /// Builds the sink matching the head shape (the variant is fixed per
-/// prepared query — an enum, not `dyn`).
-fn make_sink(finds: &[FindSpec], slot_count: usize, distinct: bool, hint: usize) -> EitherSink {
+/// prepared query — an enum, not `dyn`), aimed at rule 0's binding
+/// layout. `union` is the multi-rule regime: the aggregate seen-set
+/// keys head projections and is never elided (ALG 08's theorem is the
+/// composition point that will earn the elision back).
+fn make_sink(
+    finds: &[FindSpec],
+    slot_count: usize,
+    distinct: bool,
+    union: bool,
+    hint: usize,
+) -> EitherSink {
     let all_plain = finds
         .iter()
         .all(|spec| matches!(spec, FindSpec::Var { .. }));
@@ -439,7 +458,8 @@ fn make_sink(finds: &[FindSpec], slot_count: usize, distinct: bool, hint: usize)
         EitherSink::Aggregate(Box::new(AggregateSink::with_capacity_hint(
             finds.to_vec(),
             slot_count,
-            distinct,
+            distinct && !union,
+            union,
             hint,
         )))
     }

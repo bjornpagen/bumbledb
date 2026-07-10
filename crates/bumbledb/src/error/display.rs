@@ -360,6 +360,12 @@ impl fmt::Display for ValidationError {
                 f,
                 "rule {rule}: find term {position} disagrees with the head's shape at that position"
             ),
+            Self::ArgAcrossRules { rules } => write!(
+                f,
+                "Arg-restriction over a {rules}-rule program: the restriction key is \
+                 rule-scoped and the union's extreme is undefined — write one Arg query \
+                 per disjunct and merge in the host"
+            ),
             Self::UnknownRelation { atom, relation } => {
                 write!(f, "atom {atom}: unknown relation {}", relation.0)
             }
@@ -617,11 +623,6 @@ impl fmt::Display for Error {
                 "parameter {}: full Allen mask — every pair satisfies it; \
                  write no predicate",
                 param.0
-            ),
-            Self::MultiRuleExecution { rules } => write!(
-                f,
-                "execution of a {rules}-rule program is not implemented yet \
-                 (PRD ALG-07); every rule's plan is prepared"
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")

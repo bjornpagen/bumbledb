@@ -1,8 +1,9 @@
 use super::{BindValue, ExecPlan, PreparedQuery, ResultBuffer, ValueType};
 
-use crate::api::stats::ExecutionStats;
+use crate::api::stats::{ExecutionStats, GuardStats, RuleStats};
 use crate::error::Result;
-use crate::exec::explain::{CountingCounters, Report};
+use crate::exec::explain::{CountingCounters, Report, RulePlan};
+use crate::exec::run::Counters;
 use crate::image::cache::ImageCache;
 use crate::storage::env::ReadTxn;
 
@@ -11,7 +12,8 @@ use super::finalize::finalize;
 impl<S> PreparedQuery<'_, S> {
     /// EXPLAIN (docs/architecture/40-execution.md): executes the query with counting instrumentation
     /// (ANALYZE semantics) and returns the rows alongside the rendered
-    /// report.
+    /// report — per-rule plans and node stats under the head-level union
+    /// accounting.
     ///
     /// # Errors
     ///
@@ -27,13 +29,18 @@ impl<S> PreparedQuery<'_, S> {
         params: &[BindValue<'_>],
     ) -> Result<(ResultBuffer, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
-        // `profile` gated the program to one rule; the report renders its
-        // plan (per-rule reports ride with ALG 07's union loop).
-        let report = match &self.rules[0].plan {
-            ExecPlan::GuardProbe(guard) => format!("{}", Report::GuardProbe { plan: guard }),
-            ExecPlan::FreeJoin(plan) => format!("{}", Report::FreeJoin { plan, stats }),
+        let report = Report {
+            rules: self
+                .rules
+                .iter()
+                .map(|rule| match &rule.plan {
+                    ExecPlan::GuardProbe(guard) => RulePlan::GuardProbe(guard),
+                    ExecPlan::FreeJoin(plan) => RulePlan::FreeJoin(plan),
+                })
+                .collect(),
+            stats,
         };
-        Ok((out, report))
+        Ok((out, format!("{report}")))
     }
 
     /// ANALYZE with structured output: executes with counting
@@ -55,36 +62,75 @@ impl<S> PreparedQuery<'_, S> {
         params: &[BindValue<'_>],
     ) -> Result<(ResultBuffer, ExecutionStats)> {
         self.check_snapshot(txn)?;
-        self.gate_single_rule()?;
         let mut out = ResultBuffer::new();
         out.arity = self.column_types.len();
-        if matches!(&self.rules[0].plan, ExecPlan::GuardProbe(_)) {
+        // The single-rule guard program keeps its fast lane: `execute`
+        // dispatches it whole, and the stats are the probe's outcome.
+        if self.rules.len() == 1 && matches!(self.rules[0].plan, ExecPlan::GuardProbe(_)) {
             self.execute(txn, cache, params, &mut out)?;
+            let emitted = out.len() as u64;
             let stats = ExecutionStats {
-                nodes: Vec::new(),
-                // A guard probe is a single-atom query: the chase has
-                // nothing to pair, so no marks can exist.
-                eliminated: Vec::new(),
-                // Classification precedes statistics: a guard probe
-                // reads none, so nothing is pinned.
-                pinned: Vec::new(),
-                emits: out.len() as u64,
-                guard: Some(crate::api::stats::GuardStats {
-                    hit: !out.is_empty(),
-                }),
+                rules: vec![RuleStats {
+                    nodes: Vec::new(),
+                    // A guard probe is a single-atom query: the chase has
+                    // nothing to pair, so no marks can exist.
+                    eliminated: Vec::new(),
+                    // Classification precedes statistics: a guard probe
+                    // reads none, so nothing is pinned.
+                    pinned: Vec::new(),
+                    emitted,
+                    absorbed: 0,
+                    guard: Some(GuardStats {
+                        hit: !out.is_empty(),
+                    }),
+                }],
+                emits: emitted,
             };
             return Ok((out, stats));
         }
-        // Bind, run the shared Free Join body with counting
-        // instrumentation, and finalize only if the bind's constants
-        // resolved (a short-circuited execution counted nothing and has
-        // nothing to drain).
+        // Bind once (params reach every rule), reset the sink once (the
+        // spanning is the union), then the rule loop with per-rule
+        // counting instrumentation; finalize only if some rule ran (a
+        // fully short-circuited program counted nothing and has nothing
+        // to drain).
         self.bind_params(txn, params)?;
-        let mut counters = match &self.rules[0].plan {
-            ExecPlan::GuardProbe(_) => unreachable!("handled above"),
-            ExecPlan::FreeJoin(plan) => CountingCounters::new(plan),
-        };
-        if self.run_free_join(txn, cache, &mut counters)? {
+        self.sink.reset();
+        let mut rule_stats = Vec::with_capacity(self.rules.len());
+        let mut ran = false;
+        for rule_idx in 0..self.rules.len() {
+            let seen_before = self.sink.distinct_seen().unwrap_or(0);
+            let mut counters = match &self.rules[rule_idx].plan {
+                ExecPlan::FreeJoin(plan) => CountingCounters::new(plan),
+                ExecPlan::GuardProbe(_) => CountingCounters::for_guard(),
+            };
+            ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
+            // The union accounting (docs/architecture/40-execution.md
+            // § observability): absorbed = emitted − newly-seen; an
+            // elided seen-set absorbs nothing by proof.
+            let emitted = Counters::emits(&counters);
+            let newly_seen = self
+                .sink
+                .distinct_seen()
+                .map_or(emitted, |seen| (seen - seen_before) as u64);
+            let absorbed = emitted - newly_seen;
+            rule_stats.push(match &self.rules[rule_idx].plan {
+                ExecPlan::FreeJoin(plan) => counters.into_rule_stats(
+                    plan,
+                    self.schema,
+                    self.rule_pinned_rows(rule_idx),
+                    absorbed,
+                ),
+                ExecPlan::GuardProbe(_) => RuleStats {
+                    nodes: Vec::new(),
+                    eliminated: Vec::new(),
+                    pinned: Vec::new(),
+                    emitted,
+                    absorbed,
+                    guard: Some(GuardStats { hit: emitted > 0 }),
+                },
+            });
+        }
+        if ran {
             finalize(
                 &self.sink,
                 &mut self.row_scratch,
@@ -95,33 +141,41 @@ impl<S> PreparedQuery<'_, S> {
                 &mut out,
             )?;
         }
-        let ExecPlan::FreeJoin(plan) = &self.rules[0].plan else {
-            unreachable!("handled above")
-        };
+        let emits = rule_stats.iter().map(|rule| rule.emitted).sum();
         Ok((
             out,
-            counters.into_stats(plan, self.schema, self.pinned_rows()),
+            ExecutionStats {
+                rules: rule_stats,
+                emits,
+            },
         ))
     }
 
-    /// Whether every plan node binds a sink-relevant variable — the
-    /// pipelined executor's eligibility; `None` for
-    /// guard plans (no join runs at all). Reads rule 0's plan — the one
-    /// executable rule until ALG 07's union loop lands.
+    /// Whether every join rule's plan nodes all bind sink-relevant
+    /// variables — the pipelined executor's eligibility, per rule (D2 is
+    /// per-rule; a skip never crosses rules). `None` when no rule joins
+    /// at all (guard probes run no join).
     #[must_use]
     pub fn skip_free(&self) -> Option<bool> {
-        match &self.rules[0].plan {
+        let mut joins = self.rules.iter().filter_map(|rule| match &rule.plan {
             ExecPlan::FreeJoin(plan) => Some(plan.skip_free()),
             ExecPlan::GuardProbe(_) => None,
-        }
+        });
+        let first = joins.next()?;
+        Some(joins.fold(first, |all, one| all && one))
     }
 
-    /// Whether the plan proved distinct bindings (the aggregate sink's
-    /// seen-set elision, 30-execution) — the regime observable for the
-    /// batch-fold fast path. Reads rule 0's plan, as [`Self::skip_free`].
+    /// Whether the aggregate sink's binding seen-set is elided
+    /// (30-execution) — the regime observable for the batch-fold fast
+    /// path. Per-query-shape: a single-rule program elides under its
+    /// plan's distinct-bindings proof; a multi-rule program keeps the
+    /// spanning seen-set until ALG 08's disjointness theorem exists.
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
-        self.rules[0].plan.distinct_bindings()
+        match &*self.rules {
+            [rule] => rule.plan.distinct_bindings(),
+            _ => false,
+        }
     }
 
     /// The result column types, one per head position — the metadata a

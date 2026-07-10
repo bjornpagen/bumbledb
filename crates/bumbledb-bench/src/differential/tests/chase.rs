@@ -112,10 +112,10 @@ fn stores(
 /// every fixture query's).
 fn eliminated(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::EliminatedOccurrence> {
     let mut prepared = db.prepare(query).expect("fixture queries validate");
-    let (_, stats) = db
+    let (_, mut stats) = db
         .read(|snap| snap.profile(&mut prepared, &[]))
         .expect("profile executes");
-    stats.eliminated
+    stats.rules.swap_remove(0).eliminated
 }
 
 /// The dual run: chase-on, chase-off, and the model must produce one

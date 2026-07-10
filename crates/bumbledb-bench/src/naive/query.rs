@@ -88,10 +88,11 @@ impl NaiveDb {
     /// find list; a one-rule program is exactly the conjunctive query.
     ///
     /// A multi-rule aggregate head folds over the union of the rules'
-    /// binding sets projected to the head (the rules-IR definition; PRD
-    /// ALG-07 owns the executor's dedup semantics). The single-rule fold
-    /// domain stays the rule's distinct **full** binding set — the
-    /// normative aggregation rule, unchanged.
+    /// binding sets projected to the head (the rules-IR definition; the
+    /// executor's spanning seen-set implements the same dedup —
+    /// `docs/architecture/40-execution.md` § the rule loop). The
+    /// single-rule fold domain stays the rule's distinct **full**
+    /// binding set — the normative aggregation rule, unchanged.
     ///
     /// # Errors
     ///
@@ -173,9 +174,10 @@ impl NaiveDb {
     /// to the head (per position: the variable's value, or the
     /// aggregate's fold-input value — the nullary `Count` contributes a
     /// constant filler), unioned as a set, then grouped and folded per
-    /// position. Arg terms are single-rule-only until PRD ALG-07 defines
-    /// their cross-rule restriction (their key is a rule variable the
-    /// head projection does not carry).
+    /// position. Arg terms are single-rule-only — validation refuses
+    /// them across rules (their key is a rule variable the head
+    /// projection does not carry, so the union's extreme is undefined —
+    /// `20-query-ir.md` § aggregation).
     fn union_fold(
         &self,
         query: &Query,
@@ -190,7 +192,7 @@ impl NaiveDb {
                     ..
                 }
             )),
-            "multi-rule Arg restriction is undefined until PRD ALG-07"
+            "validation refuses Arg-restriction across rules"
         );
         let mut domain: BTreeSet<Tuple> = BTreeSet::new();
         for rule in &query.rules {

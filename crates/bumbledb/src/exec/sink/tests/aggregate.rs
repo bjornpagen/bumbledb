@@ -668,3 +668,74 @@ fn interval_group_keys_span_both_words() {
         );
     }
 }
+
+/// The union regime's dedup key is HEAD-shaped, never rule-slot-shaped
+/// (docs/architecture/40-execution.md § the rule loop): two rules with
+/// DIFFERENT binding-slot layouts emitting equal head projections fold
+/// once — a key over the full slot array could never absorb across
+/// layouts, which is exactly why the representation is the head
+/// projection.
+#[test]
+fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
+    use crate::exec::run::{Bindings, Sink};
+
+    // Head: (group var, Sum(x), Count). Rule A: group at slot 0, x at
+    // slot 1 (two slots). Rule B: x at slot 0, an unrelated existential
+    // at slot 1, group at slot 2 (three slots).
+    let spec = |group: usize, x: usize| {
+        vec![
+            FindSpec::Var {
+                slot: group,
+                width: 1,
+            },
+            FindSpec::Agg {
+                op: FoldOp::Sum,
+                over_slot: Some(x),
+                over_width: 1,
+                signed: false,
+            },
+            FindSpec::Agg {
+                op: FoldOp::Count,
+                over_slot: None,
+                over_width: 1,
+                signed: false,
+            },
+        ]
+    };
+    let mut sink = AggregateSink::with_capacity_hint(spec(0, 1), 2, false, true, 0);
+    sink.reset(); // once per execution, never per rule
+
+    // Rule A: (g = 7, x = 100) and (g = 7, x = 250).
+    let mut bindings = Bindings::new(2);
+    for x in [100u64, 250] {
+        bindings.reset();
+        bindings.set(0, 7);
+        bindings.set(1, x);
+        sink.emit(&bindings);
+    }
+    assert_eq!(sink.distinct_seen(), Some(2), "rule A seeds the union");
+
+    // Rule B, re-aimed to its own layout: re-derives (g = 7, x = 100)
+    // at different slots (absorbed) and adds (g = 7, x = 300).
+    sink.aim(&spec(2, 0), 3);
+    let mut bindings = Bindings::new(3);
+    for (x, existential) in [(100u64, 41u64), (300, 42)] {
+        bindings.reset();
+        bindings.set(0, x);
+        bindings.set(1, existential);
+        bindings.set(2, 7);
+        sink.emit(&bindings);
+    }
+    assert_eq!(
+        sink.distinct_seen(),
+        Some(3),
+        "the cross-layout duplicate was absorbed by the head-shaped key"
+    );
+
+    let rows = sink.into_rows().expect("in range");
+    assert_eq!(
+        rows,
+        vec![vec![7, 650, 3]],
+        "Sum folds {{100, 250, 300}} once each; Count counts the union"
+    );
+}

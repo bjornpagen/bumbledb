@@ -78,10 +78,11 @@ rulings live in `10-data-model.md`, `20-query-ir.md` § the Allen
 operator, and `40-execution.md` § vectorized execution (the sanctioned
 kernel shapes).
 
-Phase B — the logic (05 — the rules-shaped IR — and 06 — DNF lowering —
-landed and retired; their rulings live in `20-query-ir.md` § the query
-shape and § the input predicate grammar, and rule *execution* is 07's):
-- [07 — Rule execution: one head, one sink](07-rule-execution.md)
+Phase B — the logic (05 — the rules-shaped IR —, 06 — DNF lowering —, and
+07 — rule execution — landed and retired; their rulings live in
+`20-query-ir.md` § the query shape and § the input predicate grammar, and
+`40-execution.md` § the rule loop — one head, one sink, the spanning
+seen-set as ∪):
 - [08 — Exclusivity elision: the theorem pays the union's bill](08-exclusivity-elision.md)
 - [09 — The chase, per rule](09-chase-per-rule.md)
 
@@ -108,7 +109,8 @@ Phase F — the write side, the type ledger, and the surface ruling:
 Phase G — the intuition:
 - [21 — The cookbook: modeling intuition as schemas (doc unit)](21-cookbook.md)
 
-Dependency spine: Phase A (01–04) landed whole; 05–06 landed; 07→08; 09 additionally requires
+Dependency spine: Phase A (01–04) landed whole; 05–07 landed; 08 free (its
+dependency, 07, landed); 09 additionally requires
 `docs/prd/` 11–12 (the chase) landed; 10 free (its dependency, 02, landed); 11→12; 13/14 landed
 (residual landed with 01); 15 requires 05/10/12 (03 landed); 16 requires 15; 17–18 free
 (17's oracle rows fold into 15 if it lands first); 19 requires 18; 20

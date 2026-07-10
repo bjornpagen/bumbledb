@@ -13,8 +13,8 @@ use bumbledb::schema::{
     Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, MaskTerm, ParamId, PredicateTree,
-    Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, HeadOp, HeadTerm, MaskTerm, ParamId,
+    PredicateTree, Query, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::differential::{run, Op, Summary};
@@ -264,7 +264,7 @@ fn booking_atom() -> Atom {
     atom(BOOKING, vec![(0, var(0)), (1, var(1)), (2, var(2))])
 }
 
-/// The 20 fixed queries, each with its parameters.
+/// The 23 fixed queries, each with its parameters.
 #[allow(clippy::too_many_lines)] // a fixed list, one entry per query
 fn queries() -> Vec<(Query, Vec<ParamValue>)> {
     let v = |id: u16| FindTerm::Var(VarId(id));
@@ -486,6 +486,101 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 vec![atom(MARKER, vec![(0, var(0))]), atom(BOOKING, vec![])],
             ),
             vec![],
+        ),
+        // 21: the rules union with overlap — rooms booked at instant 7
+        // ∪ rooms of bookings with reference >= 4 (one head, one sink;
+        // the spanning seen-set is the union — 40-execution's rule
+        // loop, differentially pinned against the model's set union).
+        (
+            Query {
+                head: vec![HeadTerm::Var],
+                rules: vec![
+                    Rule {
+                        finds: vec![v(0)],
+                        atoms: vec![atom(
+                            BOOKING,
+                            vec![(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
+                        )],
+                        negated: vec![],
+                        predicates: vec![],
+                    },
+                    Rule {
+                        finds: vec![v(0)],
+                        atoms: vec![booking_atom()],
+                        negated: vec![],
+                        predicates: vec![PredicateTree::Leaf(Comparison {
+                            op: CmpOp::Ge,
+                            lhs: var(2),
+                            rhs: Term::Literal(Value::U64(4)),
+                        })],
+                    },
+                ],
+            },
+            vec![],
+        ),
+        // 22: the multi-rule aggregate — Sum(reference) and Count over
+        // the union of the two rules' head-projected bindings (a
+        // booking matched by both rules folds once — the union fold,
+        // 20-query-ir § aggregation).
+        (
+            Query {
+                head: vec![
+                    HeadTerm::Aggregate(HeadOp::Sum),
+                    HeadTerm::Aggregate(HeadOp::Count),
+                ],
+                rules: vec![
+                    Rule {
+                        finds: vec![agg(AggOp::Sum, Some(1)), agg(AggOp::Count, None)],
+                        atoms: vec![atom(
+                            BOOKING,
+                            vec![(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
+                        )],
+                        negated: vec![],
+                        predicates: vec![],
+                    },
+                    Rule {
+                        finds: vec![agg(AggOp::Sum, Some(2)), agg(AggOp::Count, None)],
+                        atoms: vec![booking_atom()],
+                        negated: vec![],
+                        predicates: vec![PredicateTree::Leaf(Comparison {
+                            op: CmpOp::Ge,
+                            lhs: var(2),
+                            rhs: Term::Literal(Value::U64(4)),
+                        })],
+                    },
+                ],
+            },
+            vec![],
+        ),
+        // 23: one query-global param reaching both rules — references
+        // of room ?0 ∪ references >= ?0 (params bind once; every rule
+        // reads the shared slot).
+        (
+            Query {
+                head: vec![HeadTerm::Var],
+                rules: vec![
+                    Rule {
+                        finds: vec![v(1)],
+                        atoms: vec![atom(
+                            BOOKING,
+                            vec![(0, Term::Param(ParamId(0))), (2, var(1))],
+                        )],
+                        negated: vec![],
+                        predicates: vec![],
+                    },
+                    Rule {
+                        finds: vec![v(2)],
+                        atoms: vec![booking_atom()],
+                        negated: vec![],
+                        predicates: vec![PredicateTree::Leaf(Comparison {
+                            op: CmpOp::Ge,
+                            lhs: var(2),
+                            rhs: Term::Param(ParamId(0)),
+                        })],
+                    },
+                ],
+            },
+            vec![ParamValue::Scalar(Value::U64(2))],
         ),
     ]
 }

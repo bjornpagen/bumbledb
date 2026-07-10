@@ -38,8 +38,12 @@ fn the_stats_surface_carries_the_pinned_rows() {
     let (_, stats) = prepared
         .profile(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
         .expect("profile");
-    assert_eq!(stats.pinned.len(), 1, "one participating occurrence");
-    let pin = &stats.pinned[0];
+    assert_eq!(
+        stats.rules[0].pinned.len(),
+        1,
+        "one participating occurrence"
+    );
+    let pin = &stats.rules[0].pinned[0];
     assert_eq!(pin.occurrence, 0);
     assert_eq!(pin.relation, "Posting");
     assert_eq!(pin.rows, 3, "the S count read at prepare");
@@ -73,7 +77,10 @@ fn the_stats_surface_carries_the_pinned_rows() {
     let (_, stats) = guard
         .profile(&txn, &cache, &[BindValue::U64(1)])
         .expect("profile");
-    assert!(stats.pinned.is_empty(), "guard probes read no statistics");
+    assert!(
+        stats.rules[0].pinned.is_empty(),
+        "guard probes read no statistics"
+    );
 }
 
 #[test]
@@ -99,12 +106,15 @@ fn profile_returns_structured_stats_matching_the_execution() {
         .expect("profile");
     assert_eq!(rows.len(), 2);
     assert_eq!(stats.emits, 2);
-    assert!(stats.guard.is_none());
-    assert!(!stats.nodes.is_empty());
-    let last = stats.nodes.last().expect("nodes");
+    let rule = &stats.rules[0];
+    assert!(rule.guard.is_none());
+    assert_eq!(rule.emitted, 2);
+    assert_eq!(rule.absorbed, 0, "distinct rows: nothing absorbed");
+    assert!(!rule.nodes.is_empty());
+    let last = rule.nodes.last().expect("nodes");
     assert_eq!(last.actual, stats.emits, "last node's actual = emits");
     assert!(
-        stats.nodes[0].batches >= 1 && stats.nodes[0].batch_entries >= stats.nodes[0].batches,
+        rule.nodes[0].batches >= 1 && rule.nodes[0].batch_entries >= rule.nodes[0].batches,
         "batching counters populated: {stats:?}"
     );
 
@@ -134,16 +144,16 @@ fn profile_returns_structured_stats_matching_the_execution() {
         .profile(&txn, &cache, &[BindValue::U64(1)])
         .expect("profile");
     assert_eq!(rows.len(), 1);
-    assert!(stats.nodes.is_empty());
+    assert!(stats.rules[0].nodes.is_empty());
     assert_eq!(
-        stats.guard,
+        stats.rules[0].guard,
         Some(crate::api::stats::GuardStats { hit: true })
     );
     let (_, stats) = guard
         .profile(&txn, &cache, &[BindValue::U64(999)])
         .expect("profile");
     assert_eq!(
-        stats.guard,
+        stats.rules[0].guard,
         Some(crate::api::stats::GuardStats { hit: false })
     );
 }

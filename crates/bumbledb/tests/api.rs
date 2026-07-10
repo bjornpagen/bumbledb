@@ -790,7 +790,11 @@ fn cover_choice_iterates_the_selected_side() {
     assert_eq!(stats.emits, 140, "20 accounts x 7 holders reach the sink");
 
     // The join-variable node iterates the 7-key selected side...
-    let batch_entries: Vec<u64> = stats.nodes.iter().map(|n| n.batch_entries).collect();
+    let batch_entries: Vec<u64> = stats.rules[0]
+        .nodes
+        .iter()
+        .map(|n| n.batch_entries)
+        .collect();
     assert!(
         batch_entries.contains(&7),
         "the cover is the selected side: {stats:?}"

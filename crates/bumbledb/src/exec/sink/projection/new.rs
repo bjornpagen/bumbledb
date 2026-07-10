@@ -1,4 +1,4 @@
-use crate::exec::sink::ProjectionSink;
+use crate::exec::sink::{FindSpec, ProjectionSink};
 use crate::exec::wordmap::WordMap;
 
 impl ProjectionSink {
@@ -26,6 +26,28 @@ impl ProjectionSink {
             scan_rows: Vec::new(),
             scan_count: 0,
         }
+    }
+
+    /// Re-aims the projected slots at one rule's binding layout (the
+    /// rule loop, docs/architecture/40-execution.md): the head's word
+    /// arity is fixed — types and widths are the head's — but each rule
+    /// supplies its own slots. The seen-set is untouched: its keys are
+    /// projected (head-shaped) tuples, rule-independent by construction,
+    /// and its spanning rules IS the union. Single-rule sinks are built
+    /// aimed and never call this.
+    pub fn aim(&mut self, finds: &[FindSpec]) {
+        self.slots.clear();
+        self.slots.extend(finds.iter().flat_map(|spec| match spec {
+            FindSpec::Var { slot, width } => *slot..slot + width,
+            FindSpec::Agg { .. } | FindSpec::Arg { .. } => {
+                unreachable!("projection sinks project plain variables")
+            }
+        }));
+        debug_assert_eq!(
+            self.slots.len(),
+            self.scratch.len(),
+            "one head, fixed word arity"
+        );
     }
 
     /// The distinct projected tuples, unordered (results are sets; the

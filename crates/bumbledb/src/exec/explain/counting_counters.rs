@@ -25,6 +25,26 @@ impl CountingCounters {
         }
     }
 
+    /// A node-less counter for a guard-probe rule inside a multi-rule
+    /// program: only the emit count exists (the union accounting — one
+    /// probe, at most one emit); no join ever runs, so the per-node
+    /// tables stay empty and unindexed.
+    #[must_use]
+    pub fn for_guard() -> Self {
+        Self {
+            stride: 0,
+            node_entries: Vec::new(),
+            cover_choices: Vec::new(),
+            probes: Vec::new(),
+            hashes: Vec::new(),
+            residuals: Vec::new(),
+            anti_probes: Vec::new(),
+            skips: Vec::new(),
+            batches: Vec::new(),
+            emits: 0,
+        }
+    }
+
     /// `(batches drawn, entries yielded)` for one node — the "batching
     /// engaged" observable (docs/architecture/60-validation.md).
     #[cfg(test)]

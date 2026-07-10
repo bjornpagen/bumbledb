@@ -65,6 +65,26 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         // empty union — no query.
         return Err(ValidationError::EmptyRuleSet);
     }
+    // Arg-restriction across rules is undefined — the restriction key is
+    // a rule-scoped variable outside the head's vocabulary, and rules
+    // need not even agree on its type — so it refuses at the boundary,
+    // judged on the LOWERED rule count (a DNF blowup of one Arg rule
+    // refuses too). Modeling answer: one Arg query per disjunct,
+    // host-merged (20-query-ir § aggregation).
+    if lowered.len() > 1
+        && query.head.iter().any(|term| {
+            matches!(
+                term,
+                crate::ir::HeadTerm::Aggregate(
+                    crate::ir::HeadOp::ArgMax | crate::ir::HeadOp::ArgMin
+                )
+            )
+        })
+    {
+        return Err(ValidationError::ArgAcrossRules {
+            rules: lowered.len(),
+        });
+    }
 
     let mut head_types: Vec<ValueType> = Vec::new();
     let mut rules = Vec::with_capacity(lowered.len());

@@ -84,9 +84,10 @@ join costume.
 - **The fold domain of every aggregate is the group's set of distinct full bindings
   over all the rule's variables.** Group key = the values of the non-aggregated find
   variables. **Across rules**, aggregates read the head: the fold domain is
-  the union of the rules' binding sets projected to the head (dedup
-  semantics are owned by the rule-execution PRD, ALG-07; the elision
-  theorem by ALG-08). Two postings of amount 100 to one account are two distinct bindings (their
+  the union of the rules' binding sets projected to the head (the executor's
+  spanning seen-set keys exactly that head projection —
+  `40-execution.md` § the rule loop; the cross-rule elision theorem is
+  PRD ALG-08's). Two postings of amount 100 to one account are two distinct bindings (their
   fresh ids differ): `Sum(amount) by account` = 200.
 - **The footgun, stated loudly:** joining a multiplicity-adding relation into an
   aggregate multiplies the binding set — `Posting ⋈ PostingTag` with 3 tags per posting
@@ -114,6 +115,12 @@ join costume.
   (U64/I64); the key variable may itself be projected. Arg terms and fold aggregates
   (Sum/Min/Max/Count/CountDistinct) may not mix in one query in v0 — "sum of the
   latest" is two queries, and the composed form waits for a real need.
+  **Arg-restriction is single-rule only** (a typed validation error on 2+-rule
+  programs, DNF-lowered rules included): the restriction key is a rule-scoped
+  variable outside the head's vocabulary — rules need not even agree on its type —
+  so "the extreme over the union" is undefined. Modeling answer: one Arg query per
+  disjunct, host-merged. *Trigger* for defining a cross-rule restriction: a real
+  query.
 - **All-aggregate finds are legal** (empty group key, one global group). Over empty
   input the result is the **empty set** — not a 0 or NULL row. "The balance of an
   account with no postings is an absent row, not 0." This is a documented divergence
@@ -438,11 +445,9 @@ A `ValidatedQuery` is planned once into a `PreparedQuery` — the reusable objec
 zero-allocation contract is written against (`40-execution.md`). The plan
 pipeline (statistics → DP → lowering → plan validation) runs **per rule**:
 the prepared query holds one validated plan per rule and **one** sink
-configuration, owned by the head. (Execution of multi-rule programs — the
-union loop driving every rule's plan into the one sink — is PRD ALG-07's;
-until it lands a 2+-rule execution is the typed `MultiRuleExecution`
-refusal, never a wrong answer, while single-rule programs execute in
-full.) **Plans pin the
+configuration, owned by the head — execution is the rule loop driving
+every rule's plan into that sink, whose seen-set spanning rules is the
+union (`40-execution.md` § the rule loop). **Plans pin the
 statistics read at prepare time and are never invalidated by writes**; stale plans are
 accepted at this scale, and re-preparation is explicit. The compensating control is
 `PreparedQuery::staleness` (`70-api.md`): the pinned per-occurrence row counts survive

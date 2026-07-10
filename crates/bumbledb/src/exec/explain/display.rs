@@ -1,14 +1,40 @@
-use super::Report;
+use super::{Report, RulePlan};
 use crate::exec::dispatch::GuardPlan;
 use crate::plan::fj::ValidatedPlan;
 use std::fmt;
 
 impl fmt::Display for Report<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::GuardProbe { plan } => fmt_guard_probe(f, plan),
-            Self::FreeJoin { plan, stats } => fmt_free_join(f, plan, stats),
+        let multi = self.rules.len() > 1;
+        for (rule_idx, rule) in self.rules.iter().enumerate() {
+            let stats = &self.stats.rules[rule_idx];
+            if multi {
+                writeln!(f, "rule {rule_idx}:")?;
+            }
+            match rule {
+                RulePlan::GuardProbe(plan) => fmt_guard_probe(f, plan)?,
+                RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, stats)?,
+            }
+            // The union accounting, per rule (docs/architecture/
+            // 40-execution.md § the rule loop): what this rule handed the
+            // shared sink and what the spanning seen-set absorbed.
+            writeln!(
+                f,
+                "  emitted bindings: {}, absorbed by the union seen-set: {}",
+                stats.emitted, stats.absorbed,
+            )?;
         }
+        if multi {
+            let absorbed: u64 = self.stats.rules.iter().map(|r| r.absorbed).sum();
+            writeln!(
+                f,
+                "head union: {} emitted across {} rules, {} absorbed",
+                self.stats.emits,
+                self.rules.len(),
+                absorbed,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -34,7 +60,7 @@ fn fmt_guard_probe(f: &mut fmt::Formatter<'_>, plan: &GuardPlan) -> fmt::Result 
 fn fmt_free_join(
     f: &mut fmt::Formatter<'_>,
     plan: &ValidatedPlan,
-    stats: &crate::api::stats::ExecutionStats,
+    stats: &crate::api::stats::RuleStats,
 ) -> fmt::Result {
     writeln!(f, "access path: free join ({} nodes)", plan.nodes().len())?;
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
@@ -134,6 +160,5 @@ fn fmt_free_join(
             node_stats.estimate, node_stats.actual, node_stats.entries, node_stats.skips,
         )?;
     }
-    writeln!(f, "  emitted bindings: {}", stats.emits)?;
     Ok(())
 }

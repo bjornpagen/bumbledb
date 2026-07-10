@@ -4,21 +4,24 @@ use crate::plan::fj::ValidatedPlan;
 use crate::schema::Schema;
 
 impl CountingCounters {
-    /// Converts the counted execution into the stable stats surface —
-    /// the one source of truth `Report` renders from and
-    /// `Snapshot::profile` returns. The schema resolves relation names
-    /// and renders each eliminated occurrence's licensing statement
-    /// (`schema/render.rs`). `pinned` is the prepared query's rendered
-    /// pin record (`PreparedQuery::pinned_rows` — the statistics the
-    /// estimates derive from), carried through untouched.
+    /// Converts one rule's counted execution into the stable stats
+    /// surface — the source of truth `Report` renders from and
+    /// `Snapshot::profile` returns (one of these per rule; the rule loop
+    /// assembles the program-level `ExecutionStats`). The schema resolves
+    /// relation names and renders each eliminated occurrence's licensing
+    /// statement (`schema/render.rs`). `pinned` is the rule's rendered
+    /// pin record (the statistics its estimates derive from), carried
+    /// through untouched; `absorbed` is the union accounting the rule
+    /// loop measured against the shared sink's seen-set.
     #[must_use]
-    pub fn into_stats(
+    pub fn into_rule_stats(
         self,
         plan: &ValidatedPlan,
         schema: &Schema,
         pinned: Vec<crate::api::stats::PinnedRows>,
-    ) -> crate::api::stats::ExecutionStats {
-        use crate::api::stats::{CoverStats, EliminatedOccurrence, ExecutionStats, NodeStats};
+        absorbed: u64,
+    ) -> crate::api::stats::RuleStats {
+        use crate::api::stats::{CoverStats, EliminatedOccurrence, NodeStats, RuleStats};
         let nodes = plan
             .nodes()
             .iter()
@@ -74,11 +77,12 @@ impl CountingCounters {
                 })
             })
             .collect();
-        ExecutionStats {
+        RuleStats {
             nodes,
             eliminated,
             pinned,
-            emits: self.emits,
+            emitted: self.emits,
+            absorbed,
             guard: None,
         }
     }

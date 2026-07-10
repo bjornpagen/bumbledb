@@ -259,7 +259,7 @@ mod tests {
                     snap.profile(&mut prepared, &scalar_values(&sets[typical(family.name)]))
                 })
                 .expect("profile");
-            let drawn: u64 = stats.nodes.iter().map(|n| n.batch_entries).sum();
+            let drawn: u64 = stats.rules[0].nodes.iter().map(|n| n.batch_entries).sum();
             // Derivations over the pinned corpus (postings = 100_000,
             // entries = 50_000, accounts = 500, holders = 125,
             // instruments = 512, orgs = 64, mandates = 2_000):

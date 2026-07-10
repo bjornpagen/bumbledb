@@ -89,6 +89,93 @@ fn residual_bindings_memoize_under_lru() {
     assert_eq!(rows, expected(-100));
 }
 
+/// The view memo under the rule loop (docs/architecture/40-execution.md
+/// § the rule loop): occurrences of one relation in different rules
+/// share the image Arc by construction — one `IMAGE_BUILD` however many
+/// rules read the relation — and each occurrence's filtered view
+/// memoizes per (generation, resolved filters), so a repeat execution
+/// of the whole program rebuilds nothing in any rule.
+#[test]
+fn rules_share_the_image_and_memoize_every_rules_views() {
+    use crate::ir::HeadTerm;
+    use crate::obs;
+
+    let dir = TempDir::new("prepared-rules-memo");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(&env, &schema, &[(1, 3, "a", 10), (2, 7, "b", 25)]);
+    let cache = ImageCache::new();
+    let txn = env.read_txn().expect("txn");
+
+    // Two rules over the SAME relation, each with a residual filter so
+    // real filtered views exist (amount >= literal — resolved filters
+    // coincide across executions).
+    let rule = |account: u64| Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: POSTING,
+            bindings: vec![
+                (FieldId(1), Term::Literal(Value::U64(account))),
+                (FieldId(3), Term::Var(VarId(0))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![PredicateTree::Leaf(Comparison {
+            op: CmpOp::Ge,
+            lhs: Term::Var(VarId(0)),
+            rhs: Term::Literal(Value::I64(0)),
+        })],
+    };
+    let query = Query {
+        head: vec![HeadTerm::Var],
+        rules: vec![rule(3), rule(7)],
+    };
+    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+
+    // Cold: the relation's image builds ONCE (the cache shares the Arc
+    // across both rules' occurrences); each occurrence builds its view.
+    obs::start_capture();
+    let out = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    let cold = obs::finish_capture();
+    assert_eq!(amounts_of(&out), vec![10, 25]);
+    assert_eq!(
+        cold.iter()
+            .filter(|e| e.name == obs::names::IMAGE_BUILD)
+            .count(),
+        1,
+        "one image build across the rules — the Arc is shared by construction"
+    );
+    assert_eq!(
+        cold.iter()
+            .filter(|e| e.name == obs::names::VIEW_BUILD)
+            .count(),
+        2,
+        "each rule's occurrence builds its filtered view once"
+    );
+
+    // Warm: every rule's occurrence hits its memo — no image, no view.
+    obs::start_capture();
+    prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    let warm = obs::finish_capture();
+    let warm_names: Vec<&str> = warm.iter().map(|e| e.name).collect();
+    assert!(!warm_names.contains(&obs::names::IMAGE_BUILD));
+    assert!(!warm_names.contains(&obs::names::VIEW_BUILD));
+    assert_eq!(
+        warm.iter()
+            .filter(|e| e.name == obs::names::VIEW_MEMO_HIT)
+            .count(),
+        2,
+        "both rules' views memoized"
+    );
+    // The RULE spans mark the loop under the execute span.
+    assert!(warm_names.contains(&obs::names::RULE[0]), "{warm_names:?}");
+    assert!(warm_names.contains(&obs::names::RULE[1]), "{warm_names:?}");
+}
+
 /// A generation bump invalidates every memoized binding, and the
 /// rebuilt view reflects the new fact.
 #[test]

@@ -405,6 +405,7 @@ fn run_guard(
         &mut key,
         &mut bindings,
         &mut sink,
+        &mut crate::exec::run::NoopCounters,
     )
     .expect("execute");
     sink.rows().map(<[u64]>::to_vec).collect()
@@ -631,6 +632,7 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
         &mut key,
         &mut bindings,
         &mut sink,
+        &mut crate::exec::run::NoopCounters,
     )
     .expect("execute");
     assert_eq!(sink.into_rows().expect("rows"), vec![vec![1]]);

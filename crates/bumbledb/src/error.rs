@@ -365,6 +365,17 @@ pub enum ValidationError {
         rule: usize,
         position: usize,
     },
+    /// Arg-restriction (`ArgMax`/`ArgMin`) in a multi-rule program
+    /// (DNF-lowered rules included): the restriction key is a rule-scoped
+    /// variable outside the head's vocabulary — rules need not even
+    /// agree on its type — so "the extreme over the union" is undefined
+    /// and refused at the boundary. The modeling answer is one Arg query
+    /// per disjunct, host-merged; the trigger for defining a cross-rule
+    /// restriction is a real query
+    /// (`docs/architecture/20-query-ir.md` § aggregation).
+    ArgAcrossRules {
+        rules: usize,
+    },
     UnknownRelation {
         atom: usize,
         relation: RelationId,
@@ -759,14 +770,6 @@ pub enum Error {
     /// [`ValidationError::FullAllenMask`]).
     FullAllenMaskParam {
         param: ParamId,
-    },
-    /// Execution of a multi-rule program: the prepared query carries
-    /// every rule's plan, but the union-driving executor loop (one head,
-    /// one sink) is PRD ALG-07's deliverable — until it lands, executing
-    /// a 2+-rule query is this typed refusal, never a wrong answer.
-    /// Single-rule programs execute in full.
-    MultiRuleExecution {
-        rules: usize,
     },
     /// A computed value crossed its representation — valid input whose
     /// result cannot be represented, so a typed error, never a panic.

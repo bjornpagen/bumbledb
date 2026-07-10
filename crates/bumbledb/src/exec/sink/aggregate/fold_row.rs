@@ -7,11 +7,19 @@ impl AggregateSink {
     /// representation.
     pub(super) fn fold_scratch_row(&mut self) {
         // Binding dedup: fold only the first occurrence of each distinct
-        // full binding — unless the plan proved distinctness (elision).
-        // The key is the whole slot array, so an interval variable's two
-        // words are both hashed (the SlotWidth layout).
+        // binding — unless the plan proved distinctness (elision,
+        // single-rule only). Single-rule key: the whole slot array, so an
+        // interval variable's two words are both hashed (the SlotWidth
+        // layout). Multi-rule key: the head projection — rule-independent
+        // by construction, so the seen-set spanning rules folds each
+        // element of the union exactly once (20-query-ir § aggregation).
         if let Some(seen) = &mut self.seen {
-            if !seen.insert(&self.binding_scratch) {
+            let key = dedup_key(
+                self.union_spans.as_deref(),
+                &mut self.union_scratch,
+                &self.binding_scratch,
+            );
+            if !seen.insert(key) {
                 return;
             }
         }
@@ -117,5 +125,29 @@ impl AggregateSink {
         // collapse; this dedup is never elided — it is not the binding
         // seen-set).
         rows.insert(&self.carry_scratch);
+    }
+}
+
+/// The binding-dedup key for the row in `binding_scratch`
+/// (docs/architecture/40-execution.md § the rule loop): the head
+/// projection under the multi-rule union regime — the words each head
+/// position reads, gathered in head order into `scratch` — or the whole
+/// slot array for a single-rule program. Head projections are
+/// rule-independent by construction; full slot arrays are not, which is
+/// why the union regime never keys them.
+pub(super) fn dedup_key<'k>(
+    union_spans: Option<&[(usize, usize)]>,
+    scratch: &'k mut Vec<u64>,
+    binding_scratch: &'k [u64],
+) -> &'k [u64] {
+    match union_spans {
+        Some(spans) => {
+            scratch.clear();
+            for &(slot, width) in spans {
+                scratch.extend_from_slice(&binding_scratch[slot..slot + width]);
+            }
+            scratch
+        }
+        None => binding_scratch,
     }
 }

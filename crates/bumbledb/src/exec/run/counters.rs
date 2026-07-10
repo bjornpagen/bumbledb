@@ -28,6 +28,7 @@ impl PhaseTimers {
         Self {
             acc: [[(0, 0); 6]; PHASE_NODE_CAP + 1],
             open: [[0; 6]; PHASE_NODE_CAP + 1],
+            emits: 0,
         }
     }
 
@@ -74,7 +75,13 @@ impl Counters for PhaseTimers {
     #[inline]
     fn anti_probe(&mut self, _: usize, _: bool) {}
     #[inline]
-    fn emit(&mut self) {}
+    fn emit(&mut self) {
+        self.emits += 1;
+    }
+    #[inline]
+    fn emits(&self) -> u64 {
+        self.emits
+    }
     #[inline]
     fn skip(&mut self, _: usize) {}
     #[inline]

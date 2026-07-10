@@ -529,8 +529,8 @@ fn variables_are_rule_scoped_in_the_model_too() {
 fn a_multi_rule_aggregate_folds_over_the_union_projected_to_the_head() {
     // Sum over the union of the two rules' head projections: accounts 7
     // and 8 contribute {100, 250} ∪ {100} = {100, 250} → 350 (the
-    // rules-IR definition; PRD ALG-07 owns the executor's dedup
-    // refinements).
+    // rules-IR definition; the executor's spanning seen-set implements
+    // the same dedup).
     let db = db(vec![
         posting(1, 7, 100),
         posting(2, 7, 250),
