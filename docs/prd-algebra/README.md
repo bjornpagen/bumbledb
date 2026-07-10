@@ -100,7 +100,7 @@ Phase E — the earning:
 - [16 — The calendar family](16-calendar-family.md)
 
 Phase F — the write side and the type ledger:
-- [17 — Identity bytes: `bytes<N>`, the eighth type](17-identity-bytes.md)
+- [17 — Identity bytes: `bytes<N>` replaces `bytes`, roster stays at seven](17-identity-bytes.md)
 - [18 — The generation witness: read-compute-write as a value](18-generation-witness.md)
 - [19 — Derived relations: the view story, canonized (doc unit)](19-derived-relations.md)
 
