@@ -1,4 +1,4 @@
-//! The dedicated interval-value generator (PRD 23 § data generation):
+//! The dedicated interval-value generator:
 //! seeded, random-access interval mixes for the corpus's interval
 //! columns. Every scalar-prefix collision group carries [`PER_GROUP`]
 //! intervals in a fixed shape roster — **disjoint** (a gap), **adjacent**

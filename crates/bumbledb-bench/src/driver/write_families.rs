@@ -20,62 +20,49 @@ pub(super) fn write_families(
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
 ) -> Result<Vec<report::WriteFamilyReport>, String> {
-    let mut out = Vec::new();
-    let commit_selected = selected("commit_single") || selected("commit_batch");
-    let cold_selected = selected("cold_containment_walk");
+    // The scratch-corpus write families, table-driven: one entry per
+    // family, an engine runner beside its `SQLite` mirror.
+    type EngineRunner = fn(&Db<Ledger>, GenConfig) -> Result<harness::Measurement, String>;
+    type OracleRunner =
+        fn(&rusqlite::Connection, GenConfig) -> Result<harness::Measurement, String>;
+    const PAIRED: [(&str, EngineRunner, OracleRunner); 3] = [
+        (
+            "commit_single",
+            writebench::commit_single_bumbledb,
+            sqlite_run::commit_single,
+        ),
+        (
+            "commit_batch",
+            writebench::commit_batch_bumbledb,
+            sqlite_run::commit_batch,
+        ),
+        (
+            "cold_containment_walk",
+            writebench::cold_containment_walk,
+            sqlite_run::cold_containment_walk,
+        ),
+    ];
 
-    if commit_selected || cold_selected {
+    let mut out = Vec::new();
+    if PAIRED.iter().any(|(name, ..)| selected(name)) {
         eprintln!("bench: loading the scratch write corpus");
         let db = Db::create(&scratch.join("db"), Ledger).map_err(|e| format!("{e:?}"))?;
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("{e:?}"))?;
         let (conn, _) =
             corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg).map_err(|e| format!("{e}"))?;
-        if selected("commit_single") {
-            eprintln!("bench: commit_single");
-            let ((ours, theirs), ghz) = clockproxy::stamped(|| {
-                Ok((
-                    writebench::commit_single_bumbledb(&db, cfg)?,
-                    sqlite_run::commit_single(&conn, cfg)?,
-                ))
-            })?;
+        for (name, engine, oracle) in PAIRED {
+            if !selected(name) {
+                continue;
+            }
+            eprintln!("bench: {name}");
+            let ((ours, theirs), ghz) =
+                clockproxy::stamped(|| Ok((engine(&db, cfg)?, oracle(&conn, cfg)?)))?;
             out.push(report::WriteFamilyReport {
-                name: "commit_single".to_owned(),
+                name: name.to_owned(),
                 ours: ours.stats,
                 theirs: Some(theirs.stats),
                 facts_per_sec: None,
-                ghz: Some(write_ghz(ghz)),
-            });
-        }
-        if selected("commit_batch") {
-            eprintln!("bench: commit_batch");
-            let ((ours, theirs), ghz) = clockproxy::stamped(|| {
-                Ok((
-                    writebench::commit_batch_bumbledb(&db, cfg)?,
-                    sqlite_run::commit_batch(&conn, cfg)?,
-                ))
-            })?;
-            out.push(report::WriteFamilyReport {
-                name: "commit_batch".to_owned(),
-                ours: ours.stats,
-                theirs: Some(theirs.stats),
-                facts_per_sec: None,
-                ghz: Some(write_ghz(ghz)),
-            });
-        }
-        if cold_selected {
-            eprintln!("bench: cold_containment_walk");
-            let ((ours, theirs), ghz) = clockproxy::stamped(|| {
-                Ok((
-                    writebench::cold_containment_walk(&db, cfg)?,
-                    sqlite_run::cold_containment_walk(&conn, cfg)?,
-                ))
-            })?;
-            out.push(report::WriteFamilyReport {
-                name: "cold_containment_walk".to_owned(),
-                ours: ours.stats,
-                theirs: Some(theirs.stats),
-                facts_per_sec: None,
-                ghz: Some(write_ghz(ghz)),
+                ghz: Some(super::ghz_report(ghz)),
             });
         }
     }
@@ -99,7 +86,7 @@ pub(super) fn write_families(
             facts_per_sec: Some(facts_per_sec(&ours, proto.samples)),
             ours: ours.stats,
             theirs: Some(theirs.stats),
-            ghz: Some(write_ghz(ghz)),
+            ghz: Some(super::ghz_report(ghz)),
         });
     }
     // The write-order pin (measured): bulk's seconds of fsync
@@ -111,14 +98,4 @@ pub(super) fn write_families(
         "bulk must be the last write family"
     );
     Ok(out)
-}
-
-/// A write family's block is guarded as one bracket over both engines.
-fn write_ghz(stamp: clockproxy::GhzStamp) -> report::GhzReport {
-    report::GhzReport {
-        pre: stamp.pre,
-        post: stamp.post,
-        retried: stamp.retried,
-        contaminated: stamp.contaminated(),
-    }
 }

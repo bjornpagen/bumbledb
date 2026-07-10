@@ -1,6 +1,6 @@
-//! Judgment goldens: the engine's commit fixtures (PRDs 07/08/09 — the
-//! pointwise-key matrix, the source-side judgment, the target-side
-//! judgment) re-expressed against the naive model, table-driven. Verdict
+//! Judgment goldens: the engine's commit fixtures — the pointwise-key
+//! matrix, the source-side judgment, and the target-side judgment —
+//! re-expressed against the naive model, table-driven. Verdict
 //! and violator must match the hand-computed expectation; these cases
 //! double as the engine-agreement seed corpus.
 
@@ -92,7 +92,7 @@ fn run(schema: &SchemaDescriptor, cases: Vec<Case>) {
     }
 }
 
-// ---------- PRD 07: functionality — the pointwise-key matrix ----------
+// ---------- functionality — the pointwise-key matrix ----------
 //
 // The engine fixture: Target(id serial) + Keyed(x, y; key x) +
 // Booking(room, during, tag; key (room, during)) + Claim(holder) <=
@@ -313,7 +313,7 @@ fn scalar_key_conflicts() {
     );
 }
 
-// ---------- PRD 08: containment, source side ----------
+// ---------- containment, source side ----------
 //
 // The engine's judgment fixture: Parent == Child (lowered to TOTALITY and
 // ARM), Transfer(account) <= Account(id | active == true), Session <=
@@ -681,7 +681,7 @@ mod source_side {
     }
 }
 
-// ---------- PRD 09: containment, target side ----------
+// ---------- containment, target side ----------
 //
 // The engine's target fixture: two scalar containments sharing one target
 // key, coverage over a pointwise key, the == pair on delete, and

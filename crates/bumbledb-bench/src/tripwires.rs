@@ -30,7 +30,7 @@ mod tests {
     }
 
     /// The plan-shape assertions the doc's perf decisions require
-    /// (docs/architecture/60-validation.md; PRD 24):
+    /// (docs/architecture/60-validation.md):
     /// - `point` takes the guard fast path (`skip_free()` is `None`
     ///   exactly for guard plans);
     /// - the **membership families do NOT take the guard fast path** —

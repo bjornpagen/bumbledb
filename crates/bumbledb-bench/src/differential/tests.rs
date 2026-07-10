@@ -1,7 +1,10 @@
-//! The end-of-PRD differential unit test: a fixed, seeded 200-op random
-//! stream over a two-relation schema with one `==` pair and one pointwise
-//! key. Engine and model must agree on every write verdict (including the
-//! violating statement) and on every one of 20 fixed queries.
+//! The seeded differential stream: a fixed 200-op random stream over a
+//! two-relation schema with one `==` pair and one pointwise key. Engine
+//! and model must agree on every write verdict (including the violating
+//! statement) and on every one of 20 fixed queries — plus the dual-run
+//! chase differential ([`chase`]).
+
+mod chase;
 
 use std::path::{Path, PathBuf};
 
@@ -13,7 +16,7 @@ use bumbledb::{
     AggOp, Atom, CmpOp, Comparison, Db, FindTerm, ParamId, Query, RelationId, Term, Value, VarId,
 };
 
-use crate::naive::differential::{run, Op, Summary};
+use crate::differential::{run, Op, Summary};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb};
 
@@ -94,7 +97,9 @@ fn schema() -> SchemaDescriptor {
 const BOOKING: RelationId = RelationId(0);
 const MARKER: RelationId = RelationId(1);
 
-/// splitmix64 — the crate's no-dependency randomness discipline.
+/// splitmix64, local by design: the 200-op stream's exact content is
+/// this test's identity (the assertions pin its verdict mix), so it is
+/// not deduplicated into `gen::Rng`.
 struct Rng(u64);
 
 impl Rng {
@@ -196,7 +201,7 @@ fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
                 }
                 None => Delta::default(),
             },
-            // The net-disposition pattern class (PRD 05 normative rule:
+            // The net-disposition pattern class (the normative rule:
             // "source side" means facts the transaction actually added):
             // a redundant insert of a committed booking alongside the
             // delete of its containment target — in its plain form
@@ -501,7 +506,7 @@ impl Drop for TempDir {
     }
 }
 
-/// The PRD-05 Direction-divergence regression: `A(x) <= B(y)` standing,
+/// The net-disposition Direction-divergence regression: `A(x) <= B(y)` standing,
 /// `a ∈ A` and its target `b ∈ B` committed; one transaction does
 /// `insert(a)` (a storage no-op) and `delete(b)`. The naive model is
 /// normative — "source side" means facts the transaction *actually

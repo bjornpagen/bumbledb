@@ -91,7 +91,7 @@ fn enum_type(variants: &[&str]) -> ValueType {
 }
 
 /// The test ledger: the benchmark schema of
-/// `docs/architecture/60-validation.md` (whose families PRD 24 owns),
+/// `docs/architecture/60-validation.md`,
 /// plus `Transfer` for a Bytes field — built locally so the translator's
 /// goldens depend on nothing but the IR and the schema descriptors.
 fn schema() -> &'static Schema {

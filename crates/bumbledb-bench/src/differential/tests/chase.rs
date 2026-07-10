@@ -17,7 +17,7 @@ use bumbledb::{
     with_chase_disabled, AggOp, Atom, Db, FindTerm, Query, RelationId, Term, Value, VarId,
 };
 
-use crate::naive::differential::{engine_query, Rows};
+use crate::differential::{engine_query, Rows};
 use crate::naive::{Delta, NaiveDb};
 
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {

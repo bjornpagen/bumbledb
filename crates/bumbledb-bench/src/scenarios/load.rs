@@ -1,7 +1,6 @@
 use std::path::Path;
 
-use bumbledb::schema::Schema;
-use bumbledb::{Db, RelationId, Value};
+use bumbledb::{Db, Value};
 use rusqlite::Connection;
 
 use super::{Scenario, Stores};
@@ -31,7 +30,8 @@ pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores,
         total += rows.len() as u64;
         db.bulk_load(rel, rows.iter().cloned())
             .map_err(|e| format!("{}: bulk_load: {e}", scenario.name))?;
-        load_sqlite_rows(&conn, schema, rel, &rows)?;
+        corpus::insert_rows(&conn, schema.relation(rel), rows.into_iter())
+            .map_err(|e| format!("{}: sqlite insert: {e}", scenario.name))?;
     }
     for statement in scenario.extra_indexes {
         conn.execute(statement, [])
@@ -46,41 +46,4 @@ pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores,
         scenario.name
     );
     Ok(Stores { db, conn })
-}
-
-/// The `SQLite` mirror load for one relation (the ledger loader is
-/// generator-coupled; this one takes the rows).
-fn load_sqlite_rows(
-    conn: &Connection,
-    schema: &Schema,
-    rel: RelationId,
-    rows: &[Vec<Value>],
-) -> Result<(), String> {
-    let relation = schema.relation(rel);
-    let placeholders = (1..=relation.fields().len())
-        .map(|i| format!("?{i}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let insert = format!(
-        "INSERT INTO \"{}\" VALUES ({placeholders})",
-        relation.name()
-    );
-    for chunk in rows.chunks(4096) {
-        conn.execute_batch("BEGIN IMMEDIATE")
-            .map_err(|e| format!("begin: {e}"))?;
-        {
-            let mut stmt = conn
-                .prepare_cached(&insert)
-                .map_err(|e| format!("prepare: {e}"))?;
-            for row in chunk {
-                let params: Vec<rusqlite::types::Value> =
-                    row.iter().map(sqlmap::to_sql_value).collect();
-                stmt.execute(rusqlite::params_from_iter(params))
-                    .map_err(|e| format!("insert: {e}"))?;
-            }
-        }
-        conn.execute_batch("COMMIT")
-            .map_err(|e| format!("commit: {e}"))?;
-    }
-    Ok(())
 }

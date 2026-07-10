@@ -47,6 +47,17 @@ pub struct CorpusPaths {
 /// bench reconstructs the full `VerifyConfig` from it.
 const CASES_FILE: &str = "verify.cases";
 
+/// One proxy stamp as the report's plain-data form (merge stamps first
+/// when a family's blocks were bracketed separately).
+fn ghz_report(stamp: crate::clockproxy::GhzStamp) -> report::GhzReport {
+    report::GhzReport {
+        pre: stamp.pre,
+        post: stamp.post,
+        retried: stamp.retried,
+        contaminated: stamp.contaminated(),
+    }
+}
+
 /// The per-run context the bench families share.
 #[allow(clippy::struct_excessive_bools)] // mirrors BenchArgs' flag surface.
 struct BenchRun<'a> {

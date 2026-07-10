@@ -63,7 +63,7 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [21 — Elegance: bench crate](21-elegance-bench.md)
+All executed and deleted (policy rule 7); the set survives in git history.
 
 ## Refusals (recorded, with reasons — do not re-litigate)
 

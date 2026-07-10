@@ -155,11 +155,6 @@ fn parse_trace(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Trace { corpus, family })
 }
 
-/// Parses raw arguments (without the program name).
-///
-/// # Errors
-///
-/// A human-readable message naming the offending token.
 fn parse_scenarios(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     let mut args = ScenarioArgs::default();
     while let Some(flag) = tokens.next() {

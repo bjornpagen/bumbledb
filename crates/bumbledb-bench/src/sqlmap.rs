@@ -564,7 +564,7 @@ mod tests {
         .is_err());
     }
 
-    /// The PRD 22 round trip: interval facts inserted through the DDL
+    /// The boundary round trip: interval facts inserted through the DDL
     /// split re-read as equal `Value::IntervalU64`/`IntervalI64` —
     /// boundary endpoints, negative starts, and `start + 1 == end`
     /// minimal intervals included.

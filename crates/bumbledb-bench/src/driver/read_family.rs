@@ -51,18 +51,6 @@ fn alloc_report(
     })
 }
 
-/// The stamp merge for a family whose ours/theirs blocks were guarded
-/// as one bracket pair each: the reported bracket is the WORST of the
-/// two (contamination of either engine's block dirties the ratio).
-fn merge_stamps(ours: clockproxy::GhzStamp, theirs: clockproxy::GhzStamp) -> report::GhzReport {
-    report::GhzReport {
-        pre: ours.pre.min(theirs.pre),
-        post: ours.post.min(theirs.post),
-        retried: ours.retried || theirs.retried,
-        contaminated: ours.contaminated() || theirs.contaminated(),
-    }
-}
-
 impl BenchRun<'_> {
     /// One read family on both engines.
     #[allow(clippy::too_many_lines)] // one family's full protocol, linear
@@ -196,7 +184,7 @@ impl BenchRun<'_> {
             ratio_p50,
             alloc,
             exec,
-            ghz: Some(merge_stamps(ghz_ours, ghz_theirs)),
+            ghz: Some(super::ghz_report(ghz_ours.merge(ghz_theirs))),
             p50_norm: ours.p50_norm,
         })
     }

@@ -10,6 +10,7 @@ pub mod cli;
 pub mod clockproxy;
 pub mod compare;
 pub mod corpus;
+pub mod differential;
 pub mod driver;
 pub mod families;
 pub mod gen;

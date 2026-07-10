@@ -40,7 +40,7 @@ fn all_fifteen_validate_and_prepare() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The PRD 24 golden criterion: every family's SQL golden is byte-pinned
+/// The golden criterion: every family's SQL golden is byte-pinned
 /// against the translator (set-bound families under the documented
 /// representative set).
 #[test]

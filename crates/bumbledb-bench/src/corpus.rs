@@ -84,9 +84,42 @@ pub fn configure_sqlite(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Loads one relation's generator stream into the `SQLite` mirror:
-/// prepared-statement inserts in transactions of 4096 rows (mirroring the
-/// engine's chunk).
+/// Loads one row stream into a `SQLite` table: prepared-statement inserts
+/// in transactions of 4096 rows (mirroring the engine's bulk chunk),
+/// interval fields split through the normative mapping. The one insert
+/// loop every `SQLite` mirror shares — the ledger corpus, the verify
+/// target corpus, and the scenario worlds.
+///
+/// # Errors
+///
+/// `SQLite` errors verbatim.
+///
+/// # Panics
+///
+/// Only on a row value breaking the mapping axiom (a programmer error).
+pub fn insert_rows(
+    conn: &Connection,
+    relation: &bumbledb::schema::Relation,
+    rows: impl Iterator<Item = Vec<Value>>,
+) -> rusqlite::Result<u64> {
+    let insert = sqlmap::insert_sql(relation);
+    let mut facts = 0u64;
+    let mut rows = rows.peekable();
+    while rows.peek().is_some() {
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        {
+            let mut stmt = conn.prepare_cached(&insert)?;
+            for row in rows.by_ref().take(4096) {
+                stmt.execute(rusqlite::params_from_iter(sqlmap::to_sql_row(&row)))?;
+                facts += 1;
+            }
+        }
+        conn.execute_batch("COMMIT")?;
+    }
+    Ok(facts)
+}
+
+/// Loads one relation's generator stream into the `SQLite` mirror.
 ///
 /// # Errors
 ///
@@ -101,23 +134,7 @@ pub fn load_sqlite_relation(
     cfg: GenConfig,
     rel: RelationId,
 ) -> rusqlite::Result<u64> {
-    let relation = schema().relation(rel);
-    let insert = sqlmap::insert_sql(relation);
-
-    let mut facts = 0u64;
-    let mut rows = relation_rows(cfg, rel).peekable();
-    while rows.peek().is_some() {
-        conn.execute_batch("BEGIN IMMEDIATE")?;
-        {
-            let mut stmt = conn.prepare_cached(&insert)?;
-            for row in rows.by_ref().take(4096) {
-                stmt.execute(rusqlite::params_from_iter(sqlmap::to_sql_row(&row)))?;
-                facts += 1;
-            }
-        }
-        conn.execute_batch("COMMIT")?;
-    }
-    Ok(facts)
+    insert_rows(conn, schema().relation(rel), relation_rows(cfg, rel))
 }
 
 /// Creates, configures, and loads the `SQLite` mirror: DDL from the schema

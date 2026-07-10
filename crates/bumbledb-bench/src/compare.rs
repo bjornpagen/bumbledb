@@ -48,25 +48,6 @@ pub fn from_buffer(buffer: &ResultBuffer, types: &[ValueType]) -> Vec<Row> {
         .collect()
 }
 
-/// One [`ParamSlot`]'s bound `SQLite` value: a scalar param's whole
-/// value, or one endpoint of an interval-typed scalar param. Set params
-/// never reach here — their element lists render as SQL literals.
-///
-/// # Panics
-///
-/// On a set arg in a placeholder slot (the translator never emits one).
-fn slot_value(slot: ParamSlot, args: &[ParamValue]) -> rusqlite::types::Value {
-    let scalar = |p: bumbledb::ParamId| match &args[usize::from(p.0)] {
-        ParamValue::Scalar(value) => value,
-        ParamValue::Set(_) => panic!("a set param has no placeholder slot"),
-    };
-    match slot {
-        ParamSlot::Whole(p) => sqlmap::to_sql_value(scalar(p)),
-        ParamSlot::Start(p) => sqlmap::interval_halves(scalar(p)).0,
-        ParamSlot::End(p) => sqlmap::interval_halves(scalar(p)).1,
-    }
-}
-
 /// Executes a prepared `SQLite` statement with the given typed params and
 /// decodes every row into canonical form, guided by the expected column
 /// types (the engine side already knows them — aggregate columns
@@ -87,10 +68,7 @@ pub fn from_sqlite(
     args: &[ParamValue],
     types: &[ValueType],
 ) -> Result<Vec<Row>, String> {
-    let bound: Vec<rusqlite::types::Value> = param_order
-        .iter()
-        .map(|slot| slot_value(*slot, args))
-        .collect();
+    let bound = crate::sqlite_run::bind_args(param_order, args);
     let mut rows = stmt
         .query(rusqlite::params_from_iter(bound))
         .map_err(|e| e.to_string())?;

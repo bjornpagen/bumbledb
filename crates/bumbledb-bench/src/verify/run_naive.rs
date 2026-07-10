@@ -3,9 +3,9 @@ use super::{Db, Run, VerifyConfig};
 use bumbledb::schema::{Generation, RelationDescriptor, SchemaDescriptor};
 use bumbledb::{Interval, RelationId, Value};
 
+use crate::differential::{self, Op};
 use crate::families::{self, scalar_draw, Draw};
 use crate::gen::{self, mandate_segments, Sizes, MANDATE_SEGMENTS};
-use crate::naive::differential::{self, Op};
 use crate::naive::{Delta, NaiveDb, ParamValue};
 use crate::schema::{ids, schema, Ledger};
 
@@ -82,7 +82,7 @@ fn load_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
 /// both sides: a dangling containment source, a pointwise-key overlap,
 /// a scalar-key duplicate, a target-required delete, and the
 /// net-disposition pattern class (a redundant insert alongside a delete
-/// of its containment target — PRD 05's Direction-divergence shape).
+/// of its containment target — the Direction-divergence shape).
 fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     let cfg = gen::GenConfig {
         seed,
@@ -136,7 +136,7 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
             deletes: vec![(ids::ACCOUNT, gen::row(&cfg, sizes, ids::ACCOUNT, 0))],
             inserts: vec![],
         }),
-        // The net-disposition pattern class (PRD 05): a committed posting
+        // The net-disposition pattern class: a committed posting
         // deleted and re-inserted (netting to nothing) alongside the
         // delete of its containment target — the posting was not
         // genuinely added, so the verdict classifies target-side on both
@@ -196,7 +196,7 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
 }
 
 /// The naive-model differential slice (docs/architecture/60-validation.md
-/// § the two oracles — the integration point PRD 21 marked): a fresh
+/// § the two oracles): a fresh
 /// unit-scale store replays the corpus stream, five judgment-violating
 /// deltas, and every family query (its unit draw plus its seeded S
 /// rotation) against [`NaiveDb`]; any verdict, violator, or result-set

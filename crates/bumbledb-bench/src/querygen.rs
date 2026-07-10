@@ -13,8 +13,8 @@
 //! The target schema is the [`target`] seam: the generator's grammar is
 //! schema-specific by design, and everything schema-shaped it consumes
 //! (relation/field ids, domains, vocabulary, the deterministic corpus
-//! value functions) comes from that one module — the ledger rebuild
-//! (PRD 24) drops its schema in there without touching the grammar.
+//! value functions) comes from that one module — a schema change lands
+//! there without touching the grammar.
 
 use bumbledb::{Atom, CmpOp, Comparison, FieldId, FindTerm, RelationId, VarId};
 

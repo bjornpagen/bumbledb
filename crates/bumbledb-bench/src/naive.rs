@@ -11,12 +11,10 @@
 //! collects and merges every matching target segment rather than trusting
 //! the target's own key to keep them disjoint.
 //!
-//! The comparison runner lives in [`differential`]; query evaluation in
-//! [`query`]. Integration point: the verify command (PRDs 22–24) will feed
-//! [`differential::run`] the corpus op streams — until that wiring lands,
-//! the runner's only callers are this module's own tests.
+//! The comparison runner lives beside this module (`crate::differential`
+//! — it drives the engine, which nothing under `naive/` may import);
+//! query evaluation in [`query`].
 
-pub mod differential;
 pub mod query;
 mod tuple;
 

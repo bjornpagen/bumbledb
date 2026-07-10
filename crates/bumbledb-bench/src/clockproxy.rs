@@ -117,6 +117,20 @@ impl GhzStamp {
         self.pre.min(self.post)
     }
 
+    /// The worst of two brackets guarded around one family's pair of
+    /// measurement blocks — contamination of either engine's block
+    /// dirties the ratio, so the merged stamp reads component-wise
+    /// worst.
+    #[must_use]
+    pub fn merge(self, other: Self) -> Self {
+        Self {
+            pre: self.pre.min(other.pre),
+            post: self.post.min(other.post),
+            retried: self.retried || other.retried,
+            threshold: self.threshold,
+        }
+    }
+
     /// Whether the FINAL bracket (post-retry) still reads contaminated.
     /// NaN readings (no reference-host law off aarch64) never mark.
     #[must_use]

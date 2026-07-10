@@ -1,18 +1,23 @@
 //! The comparison runner: one op stream replayed against the engine and
 //! the naive model, asserting per write the same verdict and the same
 //! violating statement, and per query set-equal results
-//! (`docs/architecture/60-validation.md` § the two oracles).
+//! (`docs/architecture/60-validation.md` § the two oracles). The verify
+//! command's naive lane (`verify::run_naive`) feeds [`run`] the corpus
+//! op streams.
 //!
-//! INTEGRATION POINT (PRDs 22–24): the verify command wires its corpus
-//! and generator streams into [`run`]; this PRD delivers the runner and
-//! its unit tests, not the harness executions.
+//! This module lives beside `naive`, never inside it: the runner drives
+//! the engine (`Db`), and the naive model's independence forbids
+//! anything under `naive/` from importing engine machinery.
 
 use std::collections::BTreeSet;
 
-use bumbledb::{Db, Error, ParamArg, Query, ResultValue, Value};
+use bumbledb::{Db, Error, Query, ResultValue, Value};
 
-use super::query::{ParamValue, QueryError};
-use super::{Delta, NaiveDb, Tuple, Violation};
+use crate::naive::query::{ParamValue, QueryError};
+use crate::naive::{Delta, NaiveDb, Tuple, Violation};
+
+#[cfg(test)]
+mod tests;
 
 /// One operation of a differential stream.
 #[derive(Debug, Clone)]
@@ -149,13 +154,7 @@ fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
 /// chase-on, chase-off, and model rows three ways.
 pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) -> Rows {
     let mut prepared = db.prepare(query).expect("differential queries validate");
-    let args: Vec<ParamArg<'_>> = params
-        .iter()
-        .map(|param| match param {
-            ParamValue::Scalar(value) => ParamArg::Scalar(crate::families::bind_value(value)),
-            ParamValue::Set(values) => ParamArg::Set(values),
-        })
-        .collect();
+    let args = crate::families::param_args(params);
     let outcome = db.read(|snap| snap.execute_collect_args(&mut prepared, &args));
     match outcome {
         Ok(buffer) => Rows::Ok(

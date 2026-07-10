@@ -65,6 +65,91 @@ pub fn run_with_sql_override(
     run_prepared(cfg, &db, &conn, override_sql)
 }
 
+impl<S> Run<'_, S> {
+    /// Runs one lane against a different store pair: the accumulator's
+    /// case count and bundle list flow through the sub-run and back —
+    /// the lanes share the harness and differ only in the store pair.
+    pub(super) fn lane<T>(
+        &mut self,
+        db: &Db<T>,
+        conn: &rusqlite::Connection,
+        body: impl FnOnce(&mut Run<'_, T>),
+    ) {
+        let mut sub = Run {
+            db,
+            conn,
+            out_dir: self.out_dir.clone(),
+            cases: self.cases,
+            total: self.total,
+            bundles: std::mem::take(&mut self.bundles),
+        };
+        body(&mut sub);
+        self.cases = sub.cases;
+        self.bundles = sub.bundles;
+    }
+}
+
+/// The family lane: every family × its param draws, per-draw re-rendered
+/// SQL (set params embed as literals — prepared-statement parity is not
+/// claimed for set-bound families). `override_sql` is the mismatch
+/// path's test seam; the empty-store pass passes none.
+pub(super) fn family_lane<S>(
+    run: &mut Run<'_, S>,
+    cfg: &VerifyConfig,
+    label: &str,
+    override_sql: &dyn Fn(&str) -> Option<String>,
+) {
+    'families: for family in families::all() {
+        let query = (family.query)();
+        for params in (family.params)(&cfg.gen) {
+            let translated =
+                translate(&query, schema(), &set_bindings(&params)).expect("families translate");
+            let sql = override_sql(family.name).unwrap_or(translated.sql);
+            let case = Case {
+                label: format!("{label} {}", family.name),
+                query: &query,
+                sql: &sql,
+                golden_sql: Some(family.golden_sql),
+            };
+            if !run.check(&case, &translated.params, &params) {
+                break 'families;
+            }
+        }
+    }
+}
+
+/// The randomized lane: `cases` seeded random queries over the
+/// generator's target schema × their four param draws each. `on_query`
+/// is the structural hook (the empty-store pass counts gate-bearing
+/// queries with it).
+pub(super) fn random_lane<S>(
+    run: &mut Run<'_, S>,
+    cfg: &VerifyConfig,
+    cases: u32,
+    seed_salt: u64,
+    label: &str,
+    mut on_query: impl FnMut(&bumbledb::Query),
+) {
+    let mut rng = Rng::new(cfg.gen.seed ^ seed_salt);
+    'random: for index in 0..cases {
+        let query = querygen::random_query(&mut rng, cfg.gen);
+        on_query(&query);
+        for draw in querygen::params_for(&query, &mut rng, cfg.gen) {
+            let translated = translate(&query, target::schema(), &draw.sets)
+                .expect("generated queries translate");
+            let case = Case {
+                label: format!("{label} {index}"),
+                query: &query,
+                sql: &translated.sql,
+                golden_sql: None,
+            };
+            if !run.check(&case, &translated.params, &positional(&draw)) {
+                break 'random;
+            }
+        }
+    }
+}
+
 /// One randomized draw as positional [`ParamValue`]s (dense `ParamId`s).
 pub(super) fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
     let len = draw.scalars.len() + draw.sets.len();
@@ -133,19 +218,12 @@ pub(super) fn load_target_stores(
                     .expect("target bulk load");
             }
         }
-        let insert = sqlmap::insert_sql(target::schema().relation(rel));
-        let mut rows = target::corpus_relation_rows(cfg, rel).peekable();
-        while rows.peek().is_some() {
-            conn.execute_batch("BEGIN IMMEDIATE").expect("begin");
-            {
-                let mut stmt = conn.prepare_cached(&insert).expect("prepare");
-                for row in rows.by_ref().take(4096) {
-                    stmt.execute(rusqlite::params_from_iter(sqlmap::to_sql_row(&row)))
-                        .expect("target insert");
-                }
-            }
-            conn.execute_batch("COMMIT").expect("commit");
-        }
+        corpus::insert_rows(
+            &conn,
+            target::schema().relation(rel),
+            target::corpus_relation_rows(cfg, rel),
+        )
+        .expect("target insert");
     }
     conn.execute_batch("ANALYZE").expect("analyze");
     (db, conn)
@@ -225,26 +303,8 @@ pub fn run_prepared(
         bundles: Vec::new(),
     };
 
-    // The family lane: the ledger corpus, per-draw re-rendered SQL
-    // (set params embed as literals — prepared-statement parity is not
-    // claimed for set-bound families).
-    'families: for family in families::all() {
-        let query = (family.query)();
-        for params in (family.params)(&cfg.gen) {
-            let translated =
-                translate(&query, schema(), &set_bindings(&params)).expect("families translate");
-            let sql = override_sql(family.name).unwrap_or_else(|| translated.sql.clone());
-            let case = Case {
-                label: format!("family {}", family.name),
-                query: &query,
-                sql: &sql,
-                golden_sql: Some(family.golden_sql),
-            };
-            if !run.check(&case, &translated.params, &params) {
-                break 'families;
-            }
-        }
-    }
+    // The family lane: the ledger corpus.
+    family_lane(&mut run, cfg, "family", &override_sql);
 
     // The randomized lane: seeded random queries over the generator's
     // target schema and its own corpus (the target module carries the
@@ -252,33 +312,9 @@ pub fn run_prepared(
     if run.bundles.len() < MAX_BUNDLES && cfg.random_cases > 0 {
         eprintln!("verify: loading the randomized lane's target corpus");
         let (target_db, target_conn) = load_target_stores(&cfg.out_dir.join("target-db"), cfg.gen);
-        let mut random_run = Run {
-            db: &target_db,
-            conn: &target_conn,
-            out_dir: run.out_dir.clone(),
-            cases: run.cases,
-            total: run.total,
-            bundles: std::mem::take(&mut run.bundles),
-        };
-        let mut rng = Rng::new(cfg.gen.seed ^ 0x0112_0001);
-        'random: for index in 0..cfg.random_cases {
-            let query = querygen::random_query(&mut rng, cfg.gen);
-            for draw in querygen::params_for(&query, &mut rng, cfg.gen) {
-                let translated = translate(&query, target::schema(), &draw.sets)
-                    .expect("generated queries translate");
-                let case = Case {
-                    label: format!("random {index}"),
-                    query: &query,
-                    sql: &translated.sql,
-                    golden_sql: None,
-                };
-                if !random_run.check(&case, &translated.params, &positional(&draw)) {
-                    break 'random;
-                }
-            }
-        }
-        run.cases = random_run.cases;
-        run.bundles = random_run.bundles;
+        run.lane(&target_db, &target_conn, |lane| {
+            random_lane(lane, cfg, cfg.random_cases, 0x0112_0001, "random", |_| {});
+        });
     }
 
     if run.bundles.len() < MAX_BUNDLES {

@@ -111,7 +111,7 @@ fn containment_sources_resolve_by_construction() {
     }
 }
 
-/// The PRD 24 corpus-validity criterion, structural half: every
+/// The corpus-validity criterion, structural half: every
 /// account's mandate history is sequential and non-overlapping under
 /// the pointwise key, and the three boundary shapes all exist —
 /// **abutting** (every account, segments 0→1), **gapped** (every

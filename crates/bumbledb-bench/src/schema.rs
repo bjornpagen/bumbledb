@@ -1,6 +1,6 @@
 //! The benchmark's ledger schema — a statement-for-statement
 //! transcription of the primary-benchmark block in
-//! `docs/architecture/60-validation.md`: nine relations, the eight
+//! `docs/architecture/60-validation.md`: nine relations, the nine
 //! containments, and the pointwise key
 //! `Mandate(account, active) -> Mandate` (one mandate per account per
 //! instant). The doc's notation leaves enum variant lists open; this
