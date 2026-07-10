@@ -48,47 +48,38 @@ pub(crate) fn prepare<'s, S>(
         normalize(schema, &witness)
     };
 
+    // The disjointness proof runs pre-chase (the rewrite never changes
+    // the denotation, so the proof stands), and pre-deletion: pairwise
+    // over a superset holds over whichever rules survive below.
     let disjoint_rules = disjointness(&witness, &normalized, schema);
 
-    let mut rules = Vec::with_capacity(normalized.len());
+    let (survivors, subsumed) = chase_program(normalized, &witness, schema);
+    // A program subsumption shrank to one rule has no pair left to
+    // prove (the stats surface's single-rule contract).
+    let disjoint_rules = (survivors.len() > 1).then_some(disjoint_rules).flatten();
+
+    let mut rules = Vec::with_capacity(survivors.len());
     let mut column_types = Vec::new();
-    for (rule_idx, normalized_rule) in normalized.into_iter().enumerate() {
+    for (position, (rule_idx, normalized_rule)) in survivors.into_iter().enumerate() {
         let rule = witness.rule(rule_idx);
-        let (prepared, types) = prepare_rule(txn, cache, schema, &rule, normalized_rule)?;
-        if rule_idx == 0 {
+        let (prepared, types) = prepare_rule(txn, cache, schema, &rule, &normalized_rule)?;
+        if position == 0 {
             // The head's result-type row — validation pinned the
             // positional alignment, so every rule computes this same row.
             column_types = types;
+        } else {
+            // The head-alignment re-check after subsumption deletion:
+            // deleting a rule never changes the head, and every survivor
+            // still computes the pinned row.
+            debug_assert_eq!(
+                types, column_types,
+                "survivors compute the head's pinned type row"
+            );
         }
         rules.push(prepared);
     }
 
-    // Dense param typing for bind-time checks (validation rejected gaps
-    // — jointly across value and mask params, across all rules — so the
-    // id-ordered merge is positional). A set param records its element
-    // type plus the set-ness bit — bind expects a slice for it. The
-    // point-ness bit marks element-typed params at interval positions:
-    // bind rejects their domain ceiling (the point-domain law). Mask
-    // params (`Allen` mask positions) are absent from the witness's
-    // value typing and fill their slots with the mask shape.
-    let value_types: std::collections::BTreeMap<crate::ir::ParamId, &ValueType> =
-        witness.param_types().collect();
-    let param_count = value_types.len() + witness.mask_params().len();
-    let mut param_types = Vec::with_capacity(param_count);
-    let mut param_is_set = Vec::with_capacity(param_count);
-    let mut param_is_point = Vec::with_capacity(param_count);
-    for idx in 0..param_count {
-        let id = crate::ir::ParamId(u16::try_from(idx).expect("param ids fit u16"));
-        param_types.push(value_types.get(&id).map_or_else(
-            || {
-                debug_assert!(witness.mask_params().contains(&id), "dense param ids");
-                super::ParamShape::AllenMask
-            },
-            |ty| super::ParamShape::Value((*ty).clone()),
-        ));
-        param_is_set.push(witness.set_params().contains(&id));
-        param_is_point.push(witness.point_params().contains(&id));
-    }
+    let (param_types, param_is_set, param_is_point) = param_tables(&witness);
 
     // The one sink configuration — head-owned shape (projection vs
     // aggregate, arity, distinctness), built aimed at rule 0's layout
@@ -144,6 +135,7 @@ pub(crate) fn prepare<'s, S>(
         env_instance: txn.env_instance(),
         disjoint_rules,
         union_elided,
+        subsumed,
         rules,
         column_types,
         param_types,
@@ -161,28 +153,101 @@ pub(crate) fn prepare<'s, S>(
     })
 }
 
-/// The per-rule pipeline tail: chase → classify → statistics → DP →
-/// lowering → plan validation — the conjunctive query's pipeline, with
-/// zero changes, over one rule. Returns the rule's prepared artifact and
-/// its result-type row (the head's; identical across rules).
+/// Dense param typing for bind-time checks (validation rejected gaps —
+/// jointly across value and mask params, across all rules — so the
+/// id-ordered merge is positional): per param, its expected shape,
+/// set-ness, and point-ness. A set param records its element type plus
+/// the set-ness bit — bind expects a slice for it. The point-ness bit
+/// marks element-typed params at interval positions: bind rejects their
+/// domain ceiling (the point-domain law). Mask params (`Allen` mask
+/// positions) are absent from the witness's value typing and fill their
+/// slots with the mask shape.
+fn param_tables(
+    witness: &crate::ir::validate::ValidatedQuery,
+) -> (Vec<super::ParamShape>, Vec<bool>, Vec<bool>) {
+    let value_types: std::collections::BTreeMap<crate::ir::ParamId, &ValueType> =
+        witness.param_types().collect();
+    let param_count = value_types.len() + witness.mask_params().len();
+    let mut param_types = Vec::with_capacity(param_count);
+    let mut param_is_set = Vec::with_capacity(param_count);
+    let mut param_is_point = Vec::with_capacity(param_count);
+    for idx in 0..param_count {
+        let id = crate::ir::ParamId(u16::try_from(idx).expect("param ids fit u16"));
+        param_types.push(value_types.get(&id).map_or_else(
+            || {
+                debug_assert!(witness.mask_params().contains(&id), "dense param ids");
+                super::ParamShape::AllenMask
+            },
+            |ty| super::ParamShape::Value((*ty).clone()),
+        ));
+        param_is_set.push(witness.set_params().contains(&id));
+        param_is_point.push(witness.point_params().contains(&id));
+    }
+    (param_types, param_is_set, param_is_point)
+}
+
+/// The theory's program rewrite (`plan/chase.rs`): the elimination
+/// fixpoint per rule, independently — after normalization and before
+/// statistics and the DP (docs/architecture/40-execution.md planner
+/// placement), with no cross-rule state; a rule shrinking below its
+/// cover requirements re-validates like any rule (the per-rule pipeline
+/// re-runs plan validation regardless). Eliminated occurrences keep
+/// their ids and are skipped by every downstream path through the one
+/// participates-in-planning predicate. Then rule subsumption: a rule
+/// whose post-elimination body a sibling contains modulo eliminated
+/// filters is deleted — the union loses nothing. Returns the surviving
+/// rules with their lowered-rule indices plus the deletion record (the
+/// EXPLAIN surface).
+fn chase_program(
+    mut normalized: Vec<NormalizedQuery>,
+    witness: &crate::ir::validate::ValidatedQuery,
+    schema: &Schema,
+) -> (
+    Vec<(usize, NormalizedQuery)>,
+    Vec<crate::api::stats::SubsumedRule>,
+) {
+    for (rule_idx, normalized_rule) in normalized.iter_mut().enumerate() {
+        crate::plan::chase::chase(
+            normalized_rule,
+            schema,
+            &witness.rule(rule_idx).rule().finds,
+        );
+    }
+    let finds: Vec<&[FindTerm]> = (0..normalized.len())
+        .map(|idx| witness.rule(idx).rule().finds.as_slice())
+        .collect();
+    let subsumed: Vec<crate::api::stats::SubsumedRule> =
+        crate::plan::chase::subsume(&normalized, &finds)
+            .into_iter()
+            .map(|deletion| crate::api::stats::SubsumedRule {
+                rule: u16::try_from(deletion.rule).expect("rule count fits u16"),
+                by: u16::try_from(deletion.by).expect("rule count fits u16"),
+            })
+            .collect();
+    let survivors = normalized
+        .into_iter()
+        .enumerate()
+        .filter(|(idx, _)| !subsumed.iter().any(|s| usize::from(s.rule) == *idx))
+        .collect();
+    (survivors, subsumed)
+}
+
+/// The per-rule pipeline tail: classify → statistics → DP → lowering →
+/// plan validation — the conjunctive query's pipeline, with zero
+/// changes, over one already-chased rule. Returns the rule's prepared
+/// artifact and its result-type row (the head's; identical across
+/// rules).
 fn prepare_rule(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
     schema: &Schema,
     rule: &RuleWitness<'_>,
-    mut normalized: NormalizedQuery,
+    normalized: &NormalizedQuery,
 ) -> Result<(PreparedRule, Vec<ValueType>)> {
-    // The chase (plan/chase.rs): containment-implied occurrence
-    // elimination, after normalization and before statistics and the DP
-    // (docs/architecture/40-execution.md planner placement). Eliminated
-    // occurrences keep their ids and are skipped by every downstream
-    // path through the one participates-in-planning predicate.
-    crate::plan::chase::chase(&mut normalized, schema, &rule.rule().finds);
-
     // Classification first: a guard probe needs no statistics or planning.
     let classified = {
         let _s = obs::span(obs::names::CLASSIFY, obs::Category::Prepare);
-        classify(&normalized, schema)
+        classify(normalized, schema)
     };
     // The staleness pin record (`staleness.rs`): the statistics below,
     // kept instead of dropped. Stays empty for guard probes — they read
@@ -221,23 +286,18 @@ fn prepare_rule(
         stats_span.end();
         let order = {
             let _s = obs::span(obs::names::PLAN_DP, obs::Category::Prepare);
-            plan_order(&normalized, schema, &stats)
+            plan_order(normalized, schema, &stats)
         };
         let lower_span = obs::span(obs::names::LOWER, obs::Category::Prepare);
-        let mut fj = binary2fj(&normalized, &order);
+        let mut fj = binary2fj(normalized, &order);
         factor(&mut fj);
         // Group key for projections; every variable for aggregates —
         // skip-illegality under a fold is encoded in the bits themselves
         // (`RuleWitness::sink_vars`).
         let sink_vars = rule.sink_vars();
-        let validated = crate::plan::fj::validate(
-            &fj,
-            &normalized,
-            schema,
-            order.estimates.clone(),
-            &sink_vars,
-        )
-        .expect("binary2fj + factor construct valid plans");
+        let validated =
+            crate::plan::fj::validate(&fj, normalized, schema, order.estimates.clone(), &sink_vars)
+                .expect("binary2fj + factor construct valid plans");
         lower_span.end();
         ExecPlan::FreeJoin(validated)
     };

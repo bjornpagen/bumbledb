@@ -87,6 +87,9 @@ impl<S> PreparedQuery<'_, S> {
                 emits: emitted,
                 // A single-rule program has no pair to prove.
                 disjoint_rules: None,
+                // ... but may still be subsumption's residue: a program
+                // deleted down to one guard rule keeps the record.
+                subsumed: self.subsumed.clone(),
             };
             return Ok((out, stats));
         }
@@ -150,6 +153,7 @@ impl<S> PreparedQuery<'_, S> {
                 rules: rule_stats,
                 emits,
                 disjoint_rules: self.disjoint_rules_stat(),
+                subsumed: self.subsumed.clone(),
             },
         ))
     }

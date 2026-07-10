@@ -195,8 +195,13 @@ fn explain_names_the_disjointness_witness() {
         }),
     );
 
+    // The open arm reads `kind` as a variable: no pinned literal, so
+    // the pair is unproven — and the extra variable position keeps the
+    // bodies structurally distinct, out of subsumption's witness (a
+    // plainly kind-free arm would contain the pinned one and delete it,
+    // leaving no pair to report).
     let mut open = arm_rule(1);
-    open.atoms[0].bindings.remove(1);
+    open.atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(2)));
     let mut unproven =
         prepare(&txn, &cache, &schema, &du_query(vec![arm_rule(0), open])).expect("prepare");
     let (_, report) = unproven.explain(&txn, &cache, &[]).expect("explain");

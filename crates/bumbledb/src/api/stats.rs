@@ -22,6 +22,23 @@ pub struct ExecutionStats {
     /// proof. `None` for single-rule programs and unproven pairs (the
     /// spanning seen-set stays).
     pub disjoint_rules: Option<DisjointRules>,
+    /// Rules the subsumption pass deleted at prepare (`plan/chase.rs`):
+    /// after per-rule elimination the subsuming rule's normalized body
+    /// contains the deleted rule's, so the union loses nothing. Indices
+    /// are lowered-rule indices (the DNF-distributed program validation
+    /// diagnostics use) — the per-rule list above holds only survivors,
+    /// in order.
+    pub subsumed: Vec<SubsumedRule>,
+}
+
+/// One deleted rule with its subsumer (EXPLAIN's `subsumed: rule D by
+/// rule K`). Both indices are lowered-rule indices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubsumedRule {
+    /// The deleted rule's index.
+    pub rule: u16,
+    /// The subsuming rule's index.
+    pub by: u16,
 }
 
 /// The disjointness witness, rendered by name: the relation and field

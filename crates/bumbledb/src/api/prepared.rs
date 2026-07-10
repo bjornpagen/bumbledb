@@ -182,6 +182,11 @@ pub struct PreparedQuery<'s, S> {
     /// aggregate seen-set is elided exactly when this holds
     /// (introspection's observable; the sink was built from it).
     union_elided: bool,
+    /// The subsumption record (`plan/chase.rs`): rules deleted at
+    /// prepare, each with its subsuming rule, in lowered-rule indices —
+    /// `rules` below holds only the survivors, in order. Readers:
+    /// EXPLAIN and the structured stats.
+    subsumed: Vec<crate::api::stats::SubsumedRule>,
     /// Per rule, in rule order: the rule's validated plan plus its
     /// plan-shaped execution scratch — the whole plan pipeline ran per
     /// rule at prepare. Execution runs the rules **sequentially** into

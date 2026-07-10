@@ -206,6 +206,7 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
             emits: rule.emitted,
             rules: vec![rule],
             disjoint_rules: None,
+            subsumed: Vec::new(),
         },
     };
     let text = format!("{report}");
@@ -279,6 +280,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
             emits: rule.emitted,
             rules: vec![rule],
             disjoint_rules: None,
+            subsumed: Vec::new(),
         },
     };
     assert!(format!("{report}").contains("exact=1"));
@@ -312,6 +314,7 @@ fn guard_probe_queries_report_their_classification() {
             }],
             emits: 0,
             disjoint_rules: None,
+            subsumed: Vec::new(),
         },
     };
     let text = format!("{report}");
@@ -431,6 +434,7 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
             emits: rule.emitted,
             rules: vec![rule],
             disjoint_rules: None,
+            subsumed: Vec::new(),
         },
     };
     let text = format!("{report}");

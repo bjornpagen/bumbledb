@@ -42,6 +42,17 @@
 //! Removal is therefore bit-identical under both sinks — projection and
 //! aggregate alike.
 //!
+//! **Per rule, and the rule-level pass.** Since the rules cutover the
+//! fixpoint runs per rule, independently — a union's rules are
+//! independent conjunctive bodies, so the chase distributes over them
+//! with no cross-rule state, and a rule shrinking below its cover
+//! requirements re-validates like any rule (the per-rule pipeline
+//! re-runs plan validation regardless). A second pass follows at
+//! prepare: [`subsume`], which deletes a rule whose denotation a
+//! sibling provably contains — the restricted UCQ-minimization witness
+//! (its doc carries the refused NP-hard general form). The off switch
+//! below covers both passes.
+//!
 //! **Chains and support.** An eliminated occurrence may itself serve as
 //! the pairing source of a later elimination: its fact still exists
 //! (uniquely, per the above) and satisfies its whole filter list (the
@@ -340,6 +351,171 @@ fn var_is_dead(
                     )
                 }))
     })
+}
+
+/// One prepare-time rule deletion: `rule` (a lowered-rule index) was
+/// subsumed by `by` — the survivor's denotation contains the deleted
+/// rule's, so the union loses nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Subsumption {
+    pub rule: usize,
+    pub by: usize,
+}
+
+/// Rule subsumption over the chased program — classical UCQ
+/// minimization restricted to the cheap witness the DNF path actually
+/// produces (docs/architecture/40-execution.md § planner): rule K
+/// subsumes rule D when, after elimination, K's normalized body equals
+/// D's *modulo the filters elimination removed* — identical
+/// participating atom multisets with K's conditions ⊆ D's, K's negated
+/// atoms within D's, identical head projection. Every D-binding then
+/// satisfies K and the heads agree, so K ⊇ D in denotation and D is
+/// deleted. O(rules²) at prepare with rules ≤ 16.
+///
+/// **Refused, the general form:** full CQ-homomorphism minimization is
+/// NP-hard — the witness is normalized-form containment and never
+/// searches variable mappings (nothing here recurses); `VarId`s must
+/// already agree, which is exactly what DNF-cloned rules provide.
+///
+/// Earlier rules win ties (the DNF collapse's first-occurrence-wins
+/// discipline); a deleted rule neither subsumes nor re-enters. Deleting
+/// a rule never changes the head — the caller re-checks the alignment
+/// invariant. `finds` is per rule, aligned with `rules`.
+pub(crate) fn subsume(rules: &[NormalizedQuery], finds: &[&[FindTerm]]) -> Vec<Subsumption> {
+    #[cfg(any(test, feature = "chase-off"))]
+    if DISABLED.with(std::cell::Cell::get) {
+        return Vec::new();
+    }
+    let mut deleted = vec![false; rules.len()];
+    let mut record = Vec::new();
+    for later in 1..rules.len() {
+        for earlier in 0..later {
+            if deleted[earlier] || deleted[later] {
+                continue;
+            }
+            if subsumes(&rules[earlier], finds[earlier], &rules[later], finds[later]) {
+                deleted[later] = true;
+                record.push(Subsumption {
+                    rule: later,
+                    by: earlier,
+                });
+            } else if subsumes(&rules[later], finds[later], &rules[earlier], finds[earlier]) {
+                deleted[earlier] = true;
+                record.push(Subsumption {
+                    rule: earlier,
+                    by: later,
+                });
+            }
+        }
+    }
+    record.sort_unstable_by_key(|subsumption| subsumption.rule);
+    record
+}
+
+/// The subsumption witness for one ordered pair: `keeper ⊇ candidate`
+/// by normalized-form containment — identical head projection,
+/// identical participating atom multisets with the keeper's per-atom
+/// filters ⊆ the candidate's (eliminated occurrences and their
+/// discharged filters are simply absent — the "modulo eliminated
+/// filters" clause), the keeper's residual sets ⊆ the candidate's, and
+/// every negated atom of the keeper present in the candidate (fewer
+/// rejections = weaker = larger). Anti-probes ride the negated
+/// occurrences and need no separate check; slot widths are typing facts
+/// the matched atoms already pin.
+fn subsumes(
+    keeper: &NormalizedQuery,
+    keeper_finds: &[FindTerm],
+    candidate: &NormalizedQuery,
+    candidate_finds: &[FindTerm],
+) -> bool {
+    keeper_finds == candidate_finds
+        && atoms_match(keeper, candidate)
+        && subset(&keeper.residuals, &candidate.residuals)
+        && subset(&keeper.word_residuals, &candidate.word_residuals)
+        && subset(&keeper.allen_residuals, &candidate.allen_residuals)
+        && negated_within(keeper, candidate)
+}
+
+/// Identical participating atom multisets, filters modulo containment:
+/// each keeper atom pairs one-to-one with a candidate atom of the same
+/// relation and variable positions whose filter list contains the
+/// keeper's. First-fit — a refusal on an ambiguous pairing is only ever
+/// conservative (the rule is kept), and the DNF-cloned bodies the
+/// witness targets pair index-aligned anyway.
+fn atoms_match(keeper: &NormalizedQuery, candidate: &NormalizedQuery) -> bool {
+    pairs_off(
+        &participating(keeper),
+        &participating(candidate),
+        |atom, other| {
+            atom.relation == other.relation
+                && atom.vars == other.vars
+                && subset(&atom.filters, &other.filters)
+        },
+        true,
+    )
+}
+
+/// Every negated atom of the keeper present verbatim in the candidate
+/// (relation, variable positions, and filters — a negated atom only
+/// rejects, so the candidate may carry extras and stay smaller).
+fn negated_within(keeper: &NormalizedQuery, candidate: &NormalizedQuery) -> bool {
+    pairs_off(
+        &negated(keeper),
+        &negated(candidate),
+        |atom, other| {
+            atom.relation == other.relation
+                && atom.vars == other.vars
+                && atom.filters == other.filters
+        },
+        false,
+    )
+}
+
+/// First-fit one-to-one matching of `from` into `into` under `matches`;
+/// `exact` additionally requires equal counts (multiset identity rather
+/// than containment).
+fn pairs_off(
+    from: &[&Occurrence],
+    into: &[&Occurrence],
+    matches: impl Fn(&Occurrence, &Occurrence) -> bool,
+    exact: bool,
+) -> bool {
+    if exact && from.len() != into.len() {
+        return false;
+    }
+    let mut paired = vec![false; into.len()];
+    from.iter().all(|atom| {
+        match (0..into.len()).find(|&idx| !paired[idx] && matches(atom, into[idx])) {
+            Some(idx) => {
+                paired[idx] = true;
+                true
+            }
+            None => false,
+        }
+    })
+}
+
+/// The rule's participating occurrences, in occurrence order.
+fn participating(rule: &NormalizedQuery) -> Vec<&Occurrence> {
+    rule.occurrences
+        .iter()
+        .filter(|occurrence| occurrence.role.participates())
+        .collect()
+}
+
+/// The rule's negated occurrences, in occurrence order.
+fn negated(rule: &NormalizedQuery) -> Vec<&Occurrence> {
+    rule.occurrences
+        .iter()
+        .filter(|occurrence| occurrence.role == Role::Negated)
+        .collect()
+}
+
+/// Set containment by membership — conjuncts are idempotent and the
+/// lists are one rule's filters or residuals, so multiplicity is
+/// irrelevant and the quadratic scan is trivially cheap.
+fn subset<T: PartialEq>(within: &[T], of: &[T]) -> bool {
+    within.iter().all(|item| of.contains(item))
 }
 
 /// Whether `from`'s support chain reaches `target`.

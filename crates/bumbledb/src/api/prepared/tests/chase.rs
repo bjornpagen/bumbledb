@@ -131,10 +131,10 @@ fn walk_atoms() -> Vec<Atom> {
     ]
 }
 
-/// The prepared plan's roles — asserting the marks so neither side of
+/// One prepared rule's roles — asserting the marks so neither side of
 /// the differential is vacuously equal.
-fn plan_roles(prepared: &PreparedQuery<'_, ()>) -> Vec<Role> {
-    let ExecPlan::FreeJoin(plan) = &prepared.rules[0].plan else {
+fn plan_roles(prepared: &PreparedQuery<'_, ()>, rule: usize) -> Vec<Role> {
+    let ExecPlan::FreeJoin(plan) = &prepared.rules[rule].plan else {
         panic!("a two-atom query plans as Free Join");
     };
     plan.occurrences().iter().map(|o| o.role).collect()
@@ -143,7 +143,7 @@ fn plan_roles(prepared: &PreparedQuery<'_, ()>) -> Vec<Role> {
 fn rows(buffer: &ResultBuffer) -> Vec<Vec<ResultValue<'_>>> {
     let mut rows: Vec<Vec<ResultValue<'_>>> = (0..buffer.len())
         .map(|row| {
-            (0..2)
+            (0..buffer.arity)
                 .map(|column| buffer.get(row, column))
                 .collect::<Vec<_>>()
         })
@@ -343,7 +343,7 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
     for query in [&projection, &aggregate] {
         let mut chased = prepare(&txn, &cache, &schema, query).expect("prepare");
         assert_eq!(
-            plan_roles(&chased),
+            plan_roles(&chased, 0),
             vec![
                 Role::Positive,
                 Role::Eliminated(crate::schema::StatementId(2))
@@ -353,7 +353,7 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
         let mut disabled =
             with_chase_disabled(|| prepare(&txn, &cache, &schema, query)).expect("prepare");
         assert_eq!(
-            plan_roles(&disabled),
+            plan_roles(&disabled, 0),
             vec![Role::Positive, Role::Positive],
             "the off switch keeps both occurrences joining"
         );
@@ -368,4 +368,169 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
         );
         assert!(!with_chase.is_empty(), "the fixture produces rows");
     }
+}
+
+/// The chase runs per rule, independently: a two-rule union where the
+/// walk's Account occurrence is containment-implied in rule 0 but
+/// filter-blocked in rule 1 (an extra selection beyond ψ — condition
+/// 2), so the mark stays rule-local, no rule subsumes the other, and
+/// the off switch changes no results.
+#[test]
+fn per_rule_elimination_marks_one_rule_only() {
+    let dir = TempDir::new("chase-per-rule");
+    let schema = chase_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    populate(&env, &schema);
+    let cache = ImageCache::new();
+    let txn = env.read_txn().expect("txn");
+    // rule 0: Q(pid, m) :- Posting(pid, x, m), Account(id = x);
+    // rule 1: the same walk with Account(name == "cash") — the extra
+    // target selection refuses elimination in that rule alone.
+    let rule = |name_filter: bool| {
+        let mut atoms = walk_atoms();
+        if name_filter {
+            atoms[1].bindings.push((
+                FieldId(1),
+                Term::Literal(Value::String(Box::from(&b"cash"[..]))),
+            ));
+        }
+        Rule {
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+            atoms,
+            negated: vec![],
+            predicates: vec![],
+        }
+    };
+    let query = Query {
+        head: rule(false).head(),
+        rules: vec![rule(false), rule(true)],
+    };
+    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    assert_eq!(prepared.rules.len(), 2, "differing bodies never subsume");
+    assert_eq!(
+        plan_roles(&prepared, 0),
+        vec![
+            Role::Positive,
+            Role::Eliminated(crate::schema::StatementId(2))
+        ],
+        "the unfiltered walk eliminates its Account occurrence"
+    );
+    assert_eq!(
+        plan_roles(&prepared, 1),
+        vec![Role::Positive, Role::Positive],
+        "the filtered rule keeps its Account occurrence — no cross-rule state"
+    );
+    let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    assert!(stats.subsumed.is_empty(), "no rule was deleted");
+
+    let mut disabled =
+        with_chase_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
+    assert_eq!(
+        plan_roles(&disabled, 0),
+        vec![Role::Positive, Role::Positive],
+        "the off switch keeps every occurrence joining"
+    );
+    let with_chase = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    let without = disabled
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    assert_eq!(
+        rows(&with_chase),
+        rows(&without),
+        "per-rule elimination is result-identical"
+    );
+    assert!(!with_chase.is_empty(), "the fixture produces rows");
+}
+
+/// The DNF residue: lowering `(rate > 30 ∨ kind == Det)` over the DU
+/// walk produces a rule pair where elimination discharges the second
+/// disjunct's `kind` filter with the Grading occurrence itself — the
+/// filterless rule subsumes the rate-filtered one, the subsumed rule is
+/// deleted at prepare, results are identical with the passes off, and
+/// EXPLAIN names the deletion with the subsuming rule's index.
+#[test]
+fn dnf_residue_subsumption_deletes_the_filtered_rule() {
+    let dir = TempDir::new("chase-subsume");
+    let schema = du_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    populate_du(&env, &schema);
+    let cache = ImageCache::new();
+    let txn = env.read_txn().expect("txn");
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: RelationId(1),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                relation: RelationId(0),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![PredicateTree::Or(vec![
+            PredicateTree::Leaf(Comparison {
+                op: CmpOp::Gt,
+                lhs: Term::Var(VarId(1)),
+                rhs: Term::Literal(Value::I64(30)),
+            }),
+            PredicateTree::Leaf(Comparison {
+                op: CmpOp::Eq,
+                lhs: Term::Var(VarId(2)),
+                rhs: Term::Literal(Value::Enum(0)),
+            }),
+        ])],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    assert_eq!(prepared.rules.len(), 1, "the subsumed disjunct is deleted");
+    assert_eq!(
+        plan_roles(&prepared, 0),
+        vec![
+            Role::Positive,
+            Role::Eliminated(crate::schema::StatementId(3))
+        ],
+        "the survivor still carries its own elimination mark"
+    );
+
+    let (results, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    assert_eq!(results.len(), 2, "the two Det rates");
+    assert!(
+        report.contains("subsumed: rule 0 by rule 1\n"),
+        "EXPLAIN names the deletion with the subsuming rule's index:\n{report}"
+    );
+    let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    assert_eq!(
+        stats.subsumed,
+        vec![crate::api::stats::SubsumedRule { rule: 0, by: 1 }],
+        "the structured stats carry the record as data"
+    );
+
+    let mut disabled =
+        with_chase_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
+    assert_eq!(
+        disabled.rules.len(),
+        2,
+        "the off switch covers both passes: no elimination, no deletion"
+    );
+    let with_passes = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    let without = disabled
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    assert_eq!(
+        rows(&with_passes),
+        rows(&without),
+        "subsumption is result-identical"
+    );
+    assert!(!with_passes.is_empty(), "the fixture produces rows");
 }

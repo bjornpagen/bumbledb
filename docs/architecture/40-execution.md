@@ -238,10 +238,13 @@ and stays a non-goal.
 ## Planner
 
 **The chase: containment-implied occurrence elimination under accepted
-statements.** Placement: after normalization, before statistics and the DP — a
-fixpoint over the occurrence table's `Role` sum (`plan/chase.rs`) that marks
-provably redundant positive occurrences `Role::Eliminated(statement)`; a mark,
-never a removal, so occurrence ids never move. An accepted containment
+statements.** Placement: after normalization, before statistics and the DP,
+**per rule and independently** — a union's rules are independent conjunctive
+bodies, so the chase distributes over them with no cross-rule state and no new
+theory, and a rule shrinking below its cover requirements re-validates like any
+rule — a fixpoint over the occurrence table's `Role` sum (`plan/chase.rs`) that
+marks provably redundant positive occurrences `Role::Eliminated(statement)`; a
+mark, never a removal, so occurrence ids never move. An accepted containment
 `A(X | φ) <= B(Y | ψ)` makes the query's join of `A` to `B` on X→Y redundant
 when four conditions hold:
 
@@ -277,6 +280,25 @@ and a larger DP, and is illegal under an aggregate sink (D2's own rule), while
 elimination is sink-independent and pays once at plan time. **Reverses if:**
 measured plan-time cost of the fixpoint exceeds its execution savings on the
 ledger suite — implausible at the 20-occurrence cap.
+
+**Rule subsumption, the restricted witness.** After elimination, if one rule's
+normalized body equals a sibling's *modulo the filters elimination removed* —
+identical participating atom multisets on identical head projection, with the
+keeper's conditions a subset of the deleted rule's — then the keeper contains
+the sibling in denotation (a body homomorphism at the identity variable
+mapping) and the subsumed rule is **deleted** at prepare: classical UCQ
+minimization, restricted to the cheap witness the DNF path actually produces
+(a lowered `(φ ∨ true-by-elimination)` pair whose second disjunct's filter
+rode the eliminated occurrence). The check is normalized-form containment
+(`plan/chase.rs::subsume`), O(rules²) at prepare with rules ≤ 16, and nothing
+recursive. **Refused, the general form:** full CQ-homomorphism minimization is
+NP-hard, so the witness never searches variable mappings — `VarId`s must
+already agree, which is exactly what DNF-cloned rules provide. Deleting a rule
+never changes the head (the head-alignment invariant is re-checked after
+deletion), a program shrunk to one rule sheds its union machinery like any
+single-rule program, EXPLAIN reports deleted rules with the subsuming rule's
+index (lowered-rule indices) beside the per-rule eliminated atoms, and the
+differential off-switch covers both passes.
 
 **Statistics** (all real, nothing else exists): exact per-relation row counts
 (maintained on write, stored in `S`); schema dependency knowledge (keys and
@@ -491,9 +513,11 @@ and the chase's eliminated occurrences — read straight off the plan's
 Det(grading)`) — plus the **head-level union accounting**: per rule, bindings
 emitted to the shared sink vs absorbed by the spanning seen-set (absorbed =
 emitted − newly-seen: two O(1) reads per rule, no per-tuple cost; an elided
-seen-set absorbs nothing by proof), and — multi-rule programs — the
+seen-set absorbs nothing by proof), — multi-rule programs — the
 rule-disjointness line naming its witness (`disjoint_rules: proven (R.f)`,
-or `unproven`). The obs registry mirrors it: one `RULE` span
+or `unproven`), and the subsumption record: rules deleted at prepare, each
+with its subsuming rule's index (`subsumed: rule 0 by rule 1`, lowered-rule
+indices — the per-rule sections are the survivors). The obs registry mirrors it: one `RULE` span
 per rule under the execute span (`rule_N` — the index rides in the name,
 `MAX_RULES`-bounded), args (emitted, absorbed), populated on counted paths.
 Output shape: OPEN. Release builds contain no other instrumentation: no per-tuple labels, no

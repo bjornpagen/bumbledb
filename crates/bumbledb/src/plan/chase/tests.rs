@@ -1,7 +1,7 @@
 use super::*;
 use crate::ir::normalize::{normalize, NormalizedQuery, OccId};
 use crate::ir::validate::validate;
-use crate::ir::{Atom, Query, Rule, Term, Value};
+use crate::ir::{Atom, Comparison, PredicateTree, Query, Rule, Term, Value};
 use crate::plan::planner::{plan, OccStats};
 use crate::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
@@ -661,6 +661,146 @@ fn an_interval_typed_pair_refuses() {
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
+}
+
+/// The whole chased program: validate → normalize → chase per rule,
+/// returning each rule's normalized form with its finds — the
+/// subsumption pass's exact inputs.
+fn chased_program(schema: &Schema, query: &Query) -> (Vec<NormalizedQuery>, Vec<Vec<FindTerm>>) {
+    let witness = validate(schema, query).expect("valid fixture query");
+    let mut rules = normalize(schema, &witness);
+    let finds: Vec<Vec<FindTerm>> = (0..rules.len())
+        .map(|idx| witness.rule(idx).rule().finds.clone())
+        .collect();
+    for (idx, rule) in rules.iter_mut().enumerate() {
+        chase(rule, schema, &finds[idx]);
+    }
+    (rules, finds)
+}
+
+/// The DNF residue over the DU fixture: `Q(rate) :- Det(grading = g,
+/// rate = r), Grading(id = g, kind = k), (r > 30 ∨ k == Det)`. Lowering
+/// distributes the disjunction into two rules; the chase eliminates the
+/// Grading occurrence from both (statement 3 discharges the second
+/// disjunct's `kind` filter with it), leaving that rule filterless — it
+/// subsumes the rate-filtered sibling.
+fn residue_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: RelationId(1),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                relation: RelationId(0),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![PredicateTree::Or(vec![
+            PredicateTree::Leaf(Comparison {
+                op: CmpOp::Gt,
+                lhs: Term::Var(VarId(1)),
+                rhs: Term::Literal(Value::I64(30)),
+            }),
+            PredicateTree::Leaf(Comparison {
+                op: CmpOp::Eq,
+                lhs: Term::Var(VarId(2)),
+                rhs: Term::Literal(Value::Enum(0)),
+            }),
+        ])],
+    })
+}
+
+/// The restricted witness fires on the DNF residue: both disjuncts'
+/// Grading occurrences fall to statement 3, the filterless disjunct
+/// contains the rate-filtered one, and the filtered rule is deleted —
+/// with the subsuming rule's index in the record.
+#[test]
+fn the_dnf_residue_subsumes_the_filtered_rule() {
+    let schema = du_schema();
+    let (rules, finds) = chased_program(&schema, &residue_query());
+    assert_eq!(rules.len(), 2, "two disjuncts lower to two rules");
+    for rule in &rules {
+        assert_eq!(
+            roles(rule),
+            vec![Role::Positive, Role::Eliminated(StatementId(3))],
+            "the chase runs per rule and eliminates Grading in each"
+        );
+    }
+    let finds: Vec<&[FindTerm]> = finds.iter().map(Vec::as_slice).collect();
+    assert_eq!(
+        subsume(&rules, &finds),
+        vec![Subsumption { rule: 0, by: 1 }],
+        "the filterless disjunct subsumes the rate-filtered one"
+    );
+}
+
+/// The off switch covers the second pass too: the same chased pair
+/// yields no deletion under the switch, and the record returns once the
+/// switch releases.
+#[test]
+fn the_off_switch_covers_subsumption() {
+    let schema = du_schema();
+    let (rules, finds) = chased_program(&schema, &residue_query());
+    let finds: Vec<&[FindTerm]> = finds.iter().map(Vec::as_slice).collect();
+    assert!(
+        with_chase_disabled(|| subsume(&rules, &finds)).is_empty(),
+        "the switch bypasses subsumption"
+    );
+    assert_eq!(
+        subsume(&rules, &finds),
+        vec![Subsumption { rule: 0, by: 1 }],
+        "the switch is scoped: the same pass deletes once re-enabled"
+    );
+}
+
+/// Subsumption negative — no elimination, no witness: without the
+/// child-to-header containment the Grading occurrences survive with
+/// differing filter lists, so neither direction's containment holds and
+/// both rules stay.
+#[test]
+fn distinct_bodies_refuse_subsumption() {
+    let kind = ValueType::Enum {
+        variants: ["Det", "Custom"].iter().map(|v| Box::from(*v)).collect(),
+    };
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "Grading".into(),
+                fields: vec![fresh("id"), field("kind", kind)],
+            },
+            RelationDescriptor {
+                name: "Det".into(),
+                fields: vec![
+                    field("grading", ValueType::U64),
+                    field("rate", ValueType::I64),
+                ],
+            },
+        ],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(1),
+            projection: Box::new([FieldId(0)]),
+        }],
+    }
+    .validate()
+    .expect("valid fixture");
+    let (rules, finds) = chased_program(&schema, &residue_query());
+    for rule in &rules {
+        assert_eq!(roles(rule), vec![Role::Positive, Role::Positive]);
+    }
+    let finds: Vec<&[FindTerm]> = finds.iter().map(Vec::as_slice).collect();
+    assert!(
+        subsume(&rules, &finds).is_empty(),
+        "differing surviving filters refuse both directions"
+    );
 }
 
 /// Circular support refused: a full `==` pair could certify each

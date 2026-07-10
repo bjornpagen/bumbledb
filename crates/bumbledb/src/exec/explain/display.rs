@@ -46,6 +46,16 @@ impl fmt::Display for Report<'_> {
                 None => writeln!(f, "disjoint_rules: unproven")?,
             }
         }
+        // The subsumption record (`plan/chase.rs`): rules deleted at
+        // prepare with the subsuming rule's index — lowered-rule
+        // indices; the per-rule sections above are the survivors.
+        for subsumed in &self.stats.subsumed {
+            writeln!(
+                f,
+                "subsumed: rule {} by rule {}",
+                subsumed.rule, subsumed.by
+            )?;
+        }
         Ok(())
     }
 }
