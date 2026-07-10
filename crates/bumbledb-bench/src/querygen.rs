@@ -27,6 +27,7 @@ pub mod interval_data;
 mod negate;
 mod oracle;
 mod shapes;
+mod shapes_chase;
 mod shapes_interval;
 mod shapes_sink;
 pub mod target;
@@ -54,6 +55,8 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::Boundary, 4),
     (Shape::CountDistinct, 10),
     (Shape::Arg, 8),
+    (Shape::ExistenceWalk, 8),
+    (Shape::DuWalk, 6),
 ];
 
 /// Filter dressing applies to every shape with this percent chance…
@@ -82,6 +85,30 @@ enum Shape {
     /// Arg-restriction: `ArgMax`/`ArgMin` over tie-rich and tie-free
     /// keys, key-projected and multi-carry variants.
     Arg,
+    /// The chase's existence walk (`shapes_chase.rs`): the containment
+    /// target joined on its full key with nothing else read from it —
+    /// eliminable — plus the extra-projected-field near-miss.
+    ExistenceWalk,
+    /// The discriminated-union one-sided walk, both `==` directions,
+    /// plus the missing-φ near-miss.
+    DuWalk,
+}
+
+/// Which chase-shape variant a query is ([`Shape::ExistenceWalk`] /
+/// [`Shape::DuWalk`]) — the generator's intent, which the coverage
+/// contract and the engine-backed structural test hold it to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChaseVariant {
+    /// Eliminable existence walk (projection or aggregate sink).
+    Walk,
+    /// Near-miss: one extra projected target field — must refuse.
+    WalkExtraField,
+    /// DU one-sided, the header falls (child-to-header direction).
+    DuHeader,
+    /// DU one-sided, the child falls (header-to-child direction).
+    DuChild,
+    /// Near-miss: φ missing from the header occurrence — must refuse.
+    DuMissingPhi,
 }
 
 /// Accumulating query state: atoms, negated atoms, predicates, finds,
@@ -112,10 +139,13 @@ struct Builder {
     /// interval at the corpus interval's start / at its end.
     adjacent_left: bool,
     adjacent_right: bool,
+    /// Which chase-shape variant this query is, when the shape is one.
+    chase: Option<ChaseVariant>,
 }
 
 /// Generation facts the query alone cannot reveal (hit-vs-miss and the
-/// boundary polarities are corpus-content properties).
+/// boundary polarities are corpus-content properties; the chase variant
+/// is the generator's intent, engine-verified in the tests).
 #[allow(clippy::struct_excessive_bools)] // independent corpus-content tags.
 #[derive(Debug, Clone, Copy, Default)]
 struct GenTags {
@@ -124,6 +154,7 @@ struct GenTags {
     bytes_miss: bool,
     adjacent_left: bool,
     adjacent_right: bool,
+    chase: Option<ChaseVariant>,
 }
 
 /// The comparison-type axis of the coverage matrix — all seven types.
@@ -157,6 +188,17 @@ pub struct Coverage {
     pub boundary: u64,
     pub count_distinct: u64,
     pub arg: u64,
+    pub existence_walk: u64,
+    pub du_walk: u64,
+    /// The chase variants (`shapes_chase.rs`): eliminable shapes
+    /// (existence walks and both DU `==` directions) vs the near-miss
+    /// refusals — the coverage contract asserts both appear per run,
+    /// and the engine-backed test holds each tag to its verdict.
+    pub chase_eliminable: u64,
+    pub chase_extra_field: u64,
+    pub chase_missing_phi: u64,
+    pub du_header_falls: u64,
+    pub du_child_falls: u64,
     pub gates: u64,
     pub misses: u64,
     pub params: u64,

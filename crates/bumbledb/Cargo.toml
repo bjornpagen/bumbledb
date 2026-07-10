@@ -9,6 +9,10 @@ trace = []
 # Test-support: global-allocator counting for the zero-warm-allocation
 # gate. Never enabled in production builds.
 alloc-counter = []
+# Test-support: reaches the chase's thread-local off switch
+# (`plan/chase.rs`) from the bench crate's dual-run differential unit
+# tests. Enabled only as a bench dev-dependency; no runtime mode ships.
+chase-off = []
 
 [dependencies]
 blake3 = "1"

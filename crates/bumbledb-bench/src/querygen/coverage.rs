@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use crate::gen::{GenConfig, Rng};
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
-use crate::querygen::{Coverage, GenTags, Shape, CMP_OPS};
+use crate::querygen::{ChaseVariant, Coverage, GenTags, Shape, CMP_OPS};
 
 /// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
 /// all seven types, order operators over the two integer types only,
@@ -239,6 +239,28 @@ impl Coverage {
             Shape::Boundary => self.boundary += 1,
             Shape::CountDistinct => self.count_distinct += 1,
             Shape::Arg => self.arg += 1,
+            Shape::ExistenceWalk => self.existence_walk += 1,
+            Shape::DuWalk => self.du_walk += 1,
+        }
+    }
+
+    /// The chase-variant tallies (`shapes_chase.rs`): eliminable shapes
+    /// (existence walks and both DU `==` directions) vs the two
+    /// near-miss refusal classes.
+    fn record_chase(&mut self, chase: Option<ChaseVariant>) {
+        match chase {
+            Some(ChaseVariant::Walk) => self.chase_eliminable += 1,
+            Some(ChaseVariant::DuHeader) => {
+                self.chase_eliminable += 1;
+                self.du_header_falls += 1;
+            }
+            Some(ChaseVariant::DuChild) => {
+                self.chase_eliminable += 1;
+                self.du_child_falls += 1;
+            }
+            Some(ChaseVariant::WalkExtraField) => self.chase_extra_field += 1,
+            Some(ChaseVariant::DuMissingPhi) => self.chase_missing_phi += 1,
+            None => {}
         }
     }
 
@@ -463,6 +485,7 @@ impl Coverage {
 
     fn record(&mut self, query: &Query, shape: Shape, tags: GenTags) {
         self.record_shape(shape);
+        self.record_chase(tags.chase);
         self.gates += query
             .atoms
             .iter()

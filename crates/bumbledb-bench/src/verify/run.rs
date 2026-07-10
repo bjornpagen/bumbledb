@@ -82,10 +82,13 @@ pub(super) fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
 /// `querygen::target` owns its schema and value functions) into a fresh
 /// engine store under `dir` and an in-memory `SQLite` mirror. The
 /// mirror gets one index per column (interval halves as a composite):
-/// the target schema declares no statements, so nothing is derived, and
 /// an unindexed oracle turns random joins into minutes of nested loops
 /// — this is the correctness lane, never timed, so indexes are pure
-/// win.
+/// win. Engine loading is `bulk_load` in declaration order (every
+/// containment's target precedes its source), except the
+/// discriminated-union cluster: `JournalEntry == ImportBatch` holds in
+/// neither one-relation prefix, so the pair loads through joint chunked
+/// write transactions ([`load_du_cluster`]).
 pub(super) fn load_target_stores(
     dir: &std::path::Path,
     cfg: crate::gen::GenConfig,
@@ -120,8 +123,16 @@ pub(super) fn load_target_stores(
     }
     for rel in 0..target::TARGET_RELATIONS {
         let rel = bumbledb::RelationId(rel);
-        db.bulk_load(rel, target::corpus_relation_rows(cfg, rel))
-            .expect("target bulk load");
+        match rel {
+            // The DU cluster: entries and their import batches commit
+            // together (either alone violates one `==` direction).
+            target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
+            target::ids::IMPORT_BATCH => {} // loaded with its entries
+            _ => {
+                db.bulk_load(rel, target::corpus_relation_rows(cfg, rel))
+                    .expect("target bulk load");
+            }
+        }
         let insert = sqlmap::insert_sql(target::schema().relation(rel));
         let mut rows = target::corpus_relation_rows(cfg, rel).peekable();
         while rows.peek().is_some() {
@@ -138,6 +149,37 @@ pub(super) fn load_target_stores(
     }
     conn.execute_batch("ANALYZE").expect("analyze");
     (db, conn)
+}
+
+/// Loads the `JournalEntry == ImportBatch` cluster in joint chunks:
+/// each write transaction inserts a slice of entries plus exactly the
+/// `ImportBatch` rows naming entries in that slice
+/// (`target::import_batch_entry` — row `k` names entry `3k + 1`), so
+/// every commit's final state satisfies both `==` directions.
+fn load_du_cluster(db: &Db<'_>, cfg: crate::gen::GenConfig) {
+    const CHUNK: u64 = 4096;
+    let domains = target::Domains::of(cfg.scale);
+    let entries = target::corpus_rows(&domains, target::ids::JOURNAL_ENTRY);
+    let batches = target::corpus_rows(&domains, target::ids::IMPORT_BATCH);
+    let mut next_batch = 0u64;
+    let mut start = 0u64;
+    while start < entries {
+        let end = (start + CHUNK).min(entries);
+        db.write(|tx| {
+            for i in start..end {
+                let row = target::corpus_row(cfg, &domains, target::ids::JOURNAL_ENTRY, i);
+                tx.insert_dyn(target::ids::JOURNAL_ENTRY, &row)?;
+            }
+            while next_batch < batches && target::import_batch_entry(next_batch) < end {
+                let row = target::corpus_row(cfg, &domains, target::ids::IMPORT_BATCH, next_batch);
+                tx.insert_dyn(target::ids::IMPORT_BATCH, &row)?;
+                next_batch += 1;
+            }
+            Ok(())
+        })
+        .expect("target DU cluster load");
+        start = end;
+    }
 }
 
 /// The oracle against *pre-loaded* ledger stores (the CLI's digest-keyed

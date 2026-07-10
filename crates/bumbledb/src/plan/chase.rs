@@ -65,20 +65,22 @@ use crate::ir::normalize::{lower_literal, NormalizedQuery, Occurrence, Role};
 use crate::ir::{AggOp, CmpOp, FindTerm, VarId};
 use crate::schema::{FieldId, Resolved, Schema, Side, StatementDescriptor, StatementId};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "chase-off"))]
 thread_local! {
     /// The test-only off switch: differential tests run the same query
-    /// with and without the rewrite. Crate-internal and
-    /// `#[cfg(test)]`-reachable only — no runtime mode ships (no public
-    /// API, no env var, no feature flag). Thread-local because the test
-    /// harness runs tests concurrently.
+    /// with and without the rewrite. Reachable from this crate's own
+    /// tests and — through the `chase-off` test-support feature, enabled
+    /// only as the bench crate's dev-dependency for its dual-run
+    /// differential — from nowhere a production build can see: no
+    /// runtime mode ships (no public default-features API, no env var).
+    /// Thread-local because the test harness runs tests concurrently.
     static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Runs `f` with the chase bypassed on this thread — the differential
 /// tests' off switch. Restores on unwind.
-#[cfg(test)]
-pub(crate) fn with_chase_disabled<T>(f: impl FnOnce() -> T) -> T {
+#[cfg(any(test, feature = "chase-off"))]
+pub fn with_chase_disabled<T>(f: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -96,7 +98,7 @@ pub(crate) fn with_chase_disabled<T>(f: impl FnOnce() -> T) -> T {
 /// projection against (an aggregate's `over` variable and an Arg key
 /// are outputs exactly like a projected variable).
 pub(crate) fn chase(normalized: &mut NormalizedQuery, schema: &Schema, finds: &[FindTerm]) {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "chase-off"))]
     if DISABLED.with(std::cell::Cell::get) {
         return;
     }

@@ -9,12 +9,17 @@
 //! declarations here are the bench schema and its corpus; the grammar
 //! above does not depend on them.
 //!
-//! The declared ledger is `60-validation.md`'s, with the two coverage
+//! The declared ledger is `60-validation.md`'s, with the coverage
 //! extensions the seven-type matrix needs: `Posting.{memo, reconciled}`
 //! (interned-string vocabulary and the Bool column) and
 //! `Transfer { extref: bytes, window: interval<u64> }` (the Bytes
 //! exerciser and the U64-element interval lane; `Mandate.active` is the
-//! I64-element lane).
+//! I64-element lane) — plus, for the chase shapes (`shapes_chase.rs`),
+//! the ledger's containment statements and one discriminated-union pair
+//! `JournalEntry(id | source == Import) == ImportBatch(entry)`, so the
+//! randomized lane exercises the occurrence elimination and its
+//! refusals against corpora that satisfy the statements by
+//! construction (`docs/architecture/40-execution.md` § the chase).
 
 use std::sync::OnceLock;
 
@@ -41,6 +46,7 @@ pub mod ids {
     pub const ORG_PARENT: RelationId = RelationId(7);
     pub const MANDATE: RelationId = RelationId(8);
     pub const TRANSFER: RelationId = RelationId(9);
+    pub const IMPORT_BATCH: RelationId = RelationId(10);
 
     pub mod holder {
         use super::FieldId;
@@ -102,6 +108,11 @@ pub mod ids {
         pub const EXTREF: FieldId = FieldId(1);
         pub const WINDOW: FieldId = FieldId(2);
     }
+    pub mod import_batch {
+        use super::FieldId;
+        pub const ENTRY: FieldId = FieldId(0);
+        pub const BATCH: FieldId = FieldId(1);
+    }
 }
 
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
@@ -126,10 +137,15 @@ fn enum_type(variants: &[&str]) -> ValueType {
     }
 }
 
-/// The target ledger, sealed. Statements are the write side's concern;
-/// the query grammar needs only relations and field types, so none are
-/// declared here (the serial auto-keys still materialize — coverage
-/// derives key-coveredness from the `Serial` generation attribute).
+/// The target ledger, sealed — relations for the query grammar's typing
+/// walk, and the statements the chase shapes need: the ledger's nine
+/// containments plus the discriminated-union pair
+/// `JournalEntry(id | source == Import) == ImportBatch(entry)` (written
+/// as its two containments; `ImportBatch(entry) -> ImportBatch` is the
+/// declared key each direction's acceptance requires). The corpus
+/// satisfies every statement by construction: every reference field
+/// draws in-domain, and entry `i` has `source == Import` iff
+/// `i % 3 == 1` iff `ImportBatch` row `(i - 1) / 3` exists.
 ///
 /// # Panics
 ///
@@ -221,12 +237,86 @@ pub fn schema() -> &'static Schema {
                         ),
                     ],
                 },
+                RelationDescriptor {
+                    name: "ImportBatch".into(),
+                    fields: vec![
+                        field("entry", ValueType::U64),
+                        field("batch", ValueType::U64),
+                    ],
+                },
             ],
-            statements: vec![],
+            statements: statements(),
         }
         .validate()
         .expect("the target ledger validates")
     })
+}
+
+/// The declared statements: `ImportBatch`'s key, the ledger's nine
+/// containments (`60-validation.md`'s block, in its source order), and
+/// the DU pair as its two containments (mirror-detected at sealing).
+fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
+    use bumbledb::schema::{Side, StatementDescriptor};
+    let side = |relation: bumbledb::RelationId,
+                projection: bumbledb::FieldId,
+                selection: &[(bumbledb::FieldId, Value)]| Side {
+        relation,
+        projection: Box::new([projection]),
+        selection: selection.iter().cloned().collect(),
+    };
+    let containment =
+        |source: Side, target: Side| StatementDescriptor::Containment { source, target };
+    let import = [(ids::journal_entry::SOURCE, Value::Enum(SOURCE_IMPORT))];
+    vec![
+        StatementDescriptor::Functionality {
+            relation: ids::IMPORT_BATCH,
+            projection: Box::new([ids::import_batch::ENTRY]),
+        },
+        containment(
+            side(ids::ACCOUNT, ids::account::HOLDER, &[]),
+            side(ids::HOLDER, ids::holder::ID, &[]),
+        ),
+        containment(
+            side(ids::POSTING, ids::posting::ENTRY, &[]),
+            side(ids::JOURNAL_ENTRY, ids::journal_entry::ID, &[]),
+        ),
+        containment(
+            side(ids::POSTING, ids::posting::ACCOUNT, &[]),
+            side(ids::ACCOUNT, ids::account::ID, &[]),
+        ),
+        containment(
+            side(ids::POSTING, ids::posting::INSTRUMENT, &[]),
+            side(ids::INSTRUMENT, ids::instrument::ID, &[]),
+        ),
+        containment(
+            side(ids::POSTING_TAG, ids::posting_tag::POSTING, &[]),
+            side(ids::POSTING, ids::posting::ID, &[]),
+        ),
+        containment(
+            side(ids::ORG_PARENT, ids::org_parent::CHILD, &[]),
+            side(ids::ORG, ids::org::ID, &[]),
+        ),
+        containment(
+            side(ids::ORG_PARENT, ids::org_parent::PARENT, &[]),
+            side(ids::ORG, ids::org::ID, &[]),
+        ),
+        containment(
+            side(ids::MANDATE, ids::mandate::ACCOUNT, &[]),
+            side(ids::ACCOUNT, ids::account::ID, &[]),
+        ),
+        containment(
+            side(ids::MANDATE, ids::mandate::ORG, &[]),
+            side(ids::ORG, ids::org::ID, &[]),
+        ),
+        containment(
+            side(ids::JOURNAL_ENTRY, ids::journal_entry::ID, &import),
+            side(ids::IMPORT_BATCH, ids::import_batch::ENTRY, &[]),
+        ),
+        containment(
+            side(ids::IMPORT_BATCH, ids::import_batch::ENTRY, &[]),
+            side(ids::JOURNAL_ENTRY, ids::journal_entry::ID, &import),
+        ),
+    ]
 }
 
 /// Derived per-relation domains (dense ids are `0..n`) — the dressing
@@ -269,6 +359,18 @@ impl Domains {
 
 /// The memo vocabulary size (interning realism).
 pub const MEMO_VOCAB: u64 = 4096;
+
+/// `JournalEntry.source`'s `Import` ordinal — the DU pair's
+/// discriminator. Sources are deterministic (`row % 3`), so entry `i`
+/// is an import iff `i % 3 == 1`, and `ImportBatch` row `k` names entry
+/// `3k + 1`: both `==` directions hold by construction.
+pub const SOURCE_IMPORT: u8 = 1;
+
+/// The entry an `ImportBatch` row names (see [`SOURCE_IMPORT`]).
+#[must_use]
+pub fn import_batch_entry(row: u64) -> u64 {
+    3 * row + 1
+}
 
 /// Timestamps: `AT_BASE + row × AT_STEP`, strictly monotone — every
 /// posting's `at` is distinct by construction, so `at` is the **tie-free
@@ -383,7 +485,7 @@ pub fn string_hit(rel: bumbledb::RelationId, field: bumbledb::FieldId, rng: &mut
 }
 
 /// The number of target relations — loaders iterate `0..TARGET_RELATIONS`.
-pub const TARGET_RELATIONS: u32 = 10;
+pub const TARGET_RELATIONS: u32 = 11;
 
 /// Row count of one target relation (the randomized lane's corpus).
 #[must_use]
@@ -399,7 +501,9 @@ pub fn corpus_rows(domains: &Domains, rel: bumbledb::RelationId) -> u64 {
         ids::ORG_PARENT => domains.orgs - 1,
         ids::MANDATE => domains.mandates,
         ids::TRANSFER => domains.transfers,
-        _ => unreachable!("ten target relations"),
+        // Import entries are `i % 3 == 1` in `0..entries`: count them.
+        ids::IMPORT_BATCH => (domains.entries + 1) / 3,
+        _ => unreachable!("eleven target relations"),
     }
 }
 
@@ -438,7 +542,9 @@ pub fn corpus_row(
         ],
         ids::JOURNAL_ENTRY => vec![
             Value::U64(i),
-            Value::Enum(u8::try_from(rng.range(3)).expect("3 sources")),
+            // Deterministic (never drawn): the DU pair requires import
+            // entries to be exactly the ImportBatch rows' entries.
+            Value::Enum(u8::try_from(i % 3).expect("3 sources")),
             Value::I64(posting_at(i * 2)),
         ],
         ids::POSTING => vec![
@@ -480,7 +586,8 @@ pub fn corpus_row(
                 Value::IntervalU64(start, end),
             ]
         }
-        _ => unreachable!("ten target relations"),
+        ids::IMPORT_BATCH => vec![Value::U64(import_batch_entry(i)), Value::U64(i)],
+        _ => unreachable!("eleven target relations"),
     }
 }
 
@@ -540,6 +647,28 @@ mod tests {
         let tagged: std::collections::BTreeSet<u64> =
             (0..100).map(|row| posting_tag(row).0).collect();
         assert!(!tagged.contains(&1), "odd postings are tagless");
+    }
+
+    /// The DU pair holds by construction: entry `i` is an import iff
+    /// `i % 3 == 1` iff `ImportBatch` row `(i - 1) / 3` names it —
+    /// the alignment the joint corpus commit relies on.
+    #[test]
+    fn import_batches_mirror_import_entries() {
+        let domains = Domains::of(Scale::S);
+        let import_entries: Vec<u64> = (0..domains.entries).filter(|i| i % 3 == 1).collect();
+        assert_eq!(
+            corpus_rows(&domains, ids::IMPORT_BATCH),
+            import_entries.len() as u64
+        );
+        for (k, entry) in import_entries.iter().enumerate() {
+            assert_eq!(import_batch_entry(k as u64), *entry);
+        }
+        let entry = corpus_row(CFG, &domains, ids::JOURNAL_ENTRY, 4);
+        assert_eq!(entry[1], Value::Enum(SOURCE_IMPORT));
+        assert_ne!(
+            corpus_row(CFG, &domains, ids::JOURNAL_ENTRY, 3)[1],
+            entry[1]
+        );
     }
 
     /// Extrefs recompute exactly (the dressing's in-vocabulary hits).

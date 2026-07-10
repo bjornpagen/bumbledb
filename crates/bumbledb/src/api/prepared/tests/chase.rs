@@ -152,6 +152,159 @@ fn rows(buffer: &ResultBuffer) -> Vec<Vec<ResultValue<'_>>> {
     rows
 }
 
+/// Grading(id serial, kind enum{Det, Custom}); Det(grading u64, rate
+/// i64) with the declared key Det(grading) -> Det (statement 1 after
+/// Grading's auto-key 0) and the discriminated-union pair
+/// `Grading(id | kind == Det) == Det(grading)` written as its two
+/// containments (statements 2 and 3).
+fn du_schema() -> Schema {
+    let kind = ValueType::Enum {
+        variants: ["Det", "Custom"].iter().map(|v| Box::from(*v)).collect(),
+    };
+    let side = |relation: u32, field: u16, selection: &[(u16, crate::ir::Value)]| Side {
+        relation: RelationId(relation),
+        projection: Box::new([FieldId(field)]),
+        selection: selection
+            .iter()
+            .map(|(f, v)| (FieldId(*f), v.clone()))
+            .collect(),
+    };
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "Grading".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::Serial,
+                    },
+                    FieldDescriptor {
+                        name: "kind".into(),
+                        value_type: kind,
+                        generation: Generation::None,
+                    },
+                ],
+            },
+            RelationDescriptor {
+                name: "Det".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "grading".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "rate".into(),
+                        value_type: ValueType::I64,
+                        generation: Generation::None,
+                    },
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: side(0, 0, &[(1, Value::Enum(0))]),
+                target: side(1, 0, &[]),
+            },
+            StatementDescriptor::Containment {
+                source: side(1, 0, &[]),
+                target: side(0, 0, &[(1, Value::Enum(0))]),
+            },
+        ],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+/// Commits the DU cluster in one transaction: three gradings (two Det,
+/// one Custom) and the two Det rows the pair requires.
+fn populate_du(env: &Environment, schema: &Schema) {
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(schema);
+    for (id, kind) in [(1u64, 0u8), (2, 0), (3, 1)] {
+        let mut bytes = Vec::new();
+        encode_fact(
+            &[ValueRef::U64(id), ValueRef::Enum(kind)],
+            schema.relation(RelationId(0)).layout(),
+            &mut bytes,
+        );
+        delta.insert(&view, RelationId(0), &bytes).expect("insert");
+    }
+    for (grading, rate) in [(1u64, 25i64), (2, 40)] {
+        let mut bytes = Vec::new();
+        encode_fact(
+            &[ValueRef::U64(grading), ValueRef::I64(rate)],
+            schema.relation(RelationId(1)).layout(),
+            &mut bytes,
+        );
+        delta.insert(&view, RelationId(1), &bytes).expect("insert");
+    }
+    drop(view);
+    commit(delta, env).expect("commit");
+}
+
+/// The EXPLAIN golden on the DU fixture (docs/prd — the chase surface):
+/// the one-sided walk `Q(rate) :- Det(grading = g, rate),
+/// Grading(id = g, kind == Det)` reports the header's elimination with
+/// the licensing statement rendered in the `schema!` notation — the
+/// mirrored pair renders `==` once — and the structured stats carry the
+/// same mark as data.
+#[test]
+fn the_du_fixture_explain_pins_the_eliminated_line() {
+    let dir = TempDir::new("chase-du-golden");
+    let schema = du_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    populate_du(&env, &schema);
+    let cache = ImageCache::new();
+    let txn = env.read_txn().expect("txn");
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: RelationId(1),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                relation: RelationId(0),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Literal(Value::Enum(0))),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+
+    let (rows, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    assert_eq!(rows.len(), 2, "the two Det rates");
+    assert!(
+        report.contains("eliminated: Grading via Grading(id | kind == Det) == Det(grading)\n"),
+        "the golden eliminated line is missing:\n{report}"
+    );
+
+    let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    assert_eq!(
+        stats.eliminated,
+        vec![crate::api::stats::EliminatedOccurrence {
+            occurrence: 1,
+            relation: "Grading".into(),
+            statement: crate::schema::StatementId(3),
+            rendered: "Grading(id | kind == Det) == Det(grading)".into(),
+        }],
+        "the structured stats carry the mark as data"
+    );
+}
+
 /// Eliminated vs chase-disabled execution: identical result sets under
 /// the projection sink and under the aggregate sink.
 #[test]

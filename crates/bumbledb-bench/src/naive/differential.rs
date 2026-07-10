@@ -144,7 +144,10 @@ fn engine_write(db: &Db<'_>, delta: &Delta) -> Verdict {
     }
 }
 
-fn engine_query(db: &Db<'_>, query: &Query, params: &[ParamValue]) -> Rows {
+/// One query through the engine as a [`Rows`] verdict — shared with the
+/// dual-run chase differential (`tests/chase.rs`), which compares
+/// chase-on, chase-off, and model rows three ways.
+pub(crate) fn engine_query(db: &Db<'_>, query: &Query, params: &[ParamValue]) -> Rows {
     let mut prepared = db.prepare(query).expect("differential queries validate");
     let args: Vec<ParamArg<'_>> = params
         .iter()

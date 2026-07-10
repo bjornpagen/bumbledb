@@ -197,7 +197,7 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
     assert!(counters.actual_after(0) > 0);
     let report = Report::FreeJoin {
         plan: &plan,
-        stats: counters.into_stats(&plan),
+        stats: counters.into_stats(&plan, &schema),
     };
     let text = format!("{report}");
     assert!(text.contains("estimated=5"));
@@ -263,7 +263,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
     assert_eq!(counters.cover_histogram(0, 0), [0, 0]);
     let report = Report::FreeJoin {
         plan: &plan,
-        stats: counters.into_stats(&plan),
+        stats: counters.into_stats(&plan, &schema),
     };
     assert!(format!("{report}").contains("exact=1"));
 }
@@ -394,7 +394,7 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
     Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
 
     assert_eq!(counters.emits(), 7, "three postings rejected");
-    let stats = counters.into_stats(&plan);
+    let stats = counters.into_stats(&plan, &schema);
     assert_eq!(stats.nodes[0].anti_probe_probed, 10);
     assert_eq!(stats.nodes[0].anti_probe_rejected, 3);
     let report = Report::FreeJoin { plan: &plan, stats };

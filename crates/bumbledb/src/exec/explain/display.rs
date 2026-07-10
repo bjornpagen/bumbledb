@@ -37,6 +37,15 @@ impl fmt::Display for Report<'_> {
                         occurrence.filters.len(),
                     )?;
                 }
+                // The chase's marks (`plan/chase.rs`): occurrences the
+                // plan never joined, with the licensing statement.
+                for eliminated in &stats.eliminated {
+                    writeln!(
+                        f,
+                        "  eliminated: {} via {}",
+                        eliminated.relation, eliminated.rendered,
+                    )?;
+                }
                 for (node_idx, node) in plan.nodes().iter().enumerate() {
                     let node_stats = &stats.nodes[node_idx];
                     writeln!(f, "  node {node_idx}:")?;

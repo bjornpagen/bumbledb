@@ -70,6 +70,8 @@ fn the_coverage_contract_holds_at_a_thousand() {
     band("boundary", cov.boundary, 4);
     band("count_distinct", cov.count_distinct, 10);
     band("arg", cov.arg, 8);
+    band("existence_walk", cov.existence_walk, 8);
+    band("du_walk", cov.du_walk, 6);
     for (name, count) in [
         ("gates", cov.gates),
         ("misses", cov.misses),
@@ -117,6 +119,15 @@ fn the_coverage_contract_holds_at_a_thousand() {
         // ≥4-interval-find flavor, both drawn per run.
         ("wide_scalar", cov.wide_scalar),
         ("wide_interval", cov.wide_interval),
+        // The chase shapes' structural assertion: both an eliminated
+        // (existence walks and both DU `==` directions) and a refused
+        // (extra projected target field; missing φ) shape appear per
+        // run — the engine-backed verdict test holds the tags honest.
+        ("chase_eliminable", cov.chase_eliminable),
+        ("chase_extra_field", cov.chase_extra_field),
+        ("chase_missing_phi", cov.chase_missing_phi),
+        ("du_header_falls", cov.du_header_falls),
+        ("du_child_falls", cov.du_child_falls),
     ] {
         assert!(count > 0, "{name} never generated");
     }
@@ -152,6 +163,65 @@ fn the_coverage_contract_holds_at_a_thousand() {
         cov.spine_violations, 0,
         "a membership/overlap construct escaped the equality spine"
     );
+}
+
+/// The chase tags are engine-verified: prepared against the target
+/// schema (statements included — the chase runs at prepare, data-free),
+/// every eliminable variant's profile carries `Role::Eliminated` marks
+/// (the DU directions naming their fallen side) and every near-miss
+/// carries none — the structural assertion that both an eliminated and
+/// a refused shape appear per run, held to the engine's verdict.
+#[test]
+fn chase_shapes_eliminate_and_near_misses_refuse() {
+    use super::construct::random_query_tagged;
+    use super::ChaseVariant;
+    let dir = std::env::temp_dir().join("bumbledb-bench-querygen-chase");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let db = bumbledb::Db::create(&dir, target::schema()).expect("create");
+    let mut rng = Rng::new(SEED);
+    let (mut eliminated, mut refused) = (0u32, 0u32);
+    for i in 0..N {
+        let (query, _, tags) = random_query_tagged(&mut rng, CFG);
+        let Some(variant) = tags.chase else { continue };
+        let mut prepared = db.prepare(&query).expect("chase shapes validate");
+        let (_, stats) = db
+            .read(|snap| snap.profile(&mut prepared, &[]))
+            .expect("chase shapes execute (empty store)");
+        match variant {
+            ChaseVariant::Walk => {
+                assert_eq!(stats.eliminated.len(), 1, "walk {i} must eliminate");
+                eliminated += 1;
+            }
+            ChaseVariant::DuHeader | ChaseVariant::DuChild => {
+                let fallen = if variant == ChaseVariant::DuHeader {
+                    "JournalEntry"
+                } else {
+                    "ImportBatch"
+                };
+                assert_eq!(stats.eliminated.len(), 1, "DU walk {i} must eliminate");
+                assert_eq!(
+                    stats.eliminated[0].relation, fallen,
+                    "DU walk {i} fells the wrong side"
+                );
+                eliminated += 1;
+            }
+            ChaseVariant::WalkExtraField | ChaseVariant::DuMissingPhi => {
+                assert!(
+                    stats.eliminated.is_empty(),
+                    "near-miss {i} must refuse: {:?}",
+                    stats.eliminated
+                );
+                refused += 1;
+            }
+        }
+    }
+    assert!(
+        eliminated > 0 && refused > 0,
+        "both an eliminated ({eliminated}) and a refused ({refused}) shape appear per run"
+    );
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The grammar never emits a NUL — the translator rejects NUL string

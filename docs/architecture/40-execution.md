@@ -160,6 +160,47 @@ structurally.
 
 ## Planner
 
+**The chase: containment-implied occurrence elimination under accepted
+statements.** Placement: after normalization, before statistics and the DP — a
+fixpoint over the occurrence table's `Role` sum (`plan/chase.rs`) that marks
+provably redundant positive occurrences `Role::Eliminated(statement)`; a mark,
+never a removal, so occurrence ids never move. An accepted containment
+`A(X | φ) <= B(Y | ψ)` makes the query's join of `A` to `B` on X→Y redundant
+when four conditions hold:
+
+1. **Full-key join** — every X→Y position pair is join-covered, and every
+   variable shared between the two occurrences pairs a statement position
+   (uniqueness needs the whole key; the acceptance gate made Y a key of B, so a
+   partial-key join refuses).
+2. **B otherwise unused** — no non-Y field of B is projected, filtered, compared
+   in a residual, or referenced by any other occurrence (anti-probe bindings and
+   membership points included); B's own selections are a **literal subset** of ψ
+   and the A occurrence's filters carry φ **literally** — (field, encoded
+   literal) set containment, never inference.
+3. **Variables join or die** — every variable of B is either unified with A's at
+   an X→Y pair or dead in condition 2's sense.
+4. **Scalar positions only** — an interval-typed pair refuses in v0: pointwise
+   coverage proves covering facts exist, not a joinable equal fact. OPEN
+   trigger: a census-style query that would benefit from interval-pair
+   elimination — until one exists the refusal stands, like the range
+   accelerator's trigger discipline.
+
+Chains (`A<=B<=C`) close in the fixpoint; mutual `==` pairs stay acyclic by
+support tracking (each elimination records its source, and a source whose chain
+passes through the candidate is refused — a pair may not certify itself). Sound
+here and nowhere like Postgres because no deferral modes exist: every readable
+snapshot satisfies every accepted statement (`30-dependencies.md`), and Y's
+key-ness maps the surviving binding set 1:1, so removal is result-identical
+under both sinks — projection and aggregate alike. The marks' readers: EXPLAIN
+and the structured stats (each mark rendered with its licensing statement
+through `schema/render.rs`), and the DP, which sees a smaller problem.
+**Alternative:** no rewrite — leave redundant existence walks to D2's
+skip-suffix dynamics. **Why it loses:** the skip still pays per-binding probes
+and a larger DP, and is illegal under an aggregate sink (D2's own rule), while
+elimination is sink-independent and pays once at plan time. **Reverses if:**
+measured plan-time cost of the fixpoint exceeds its execution savings on the
+ledger suite — implausible at the 20-occurrence cap.
+
 **Statistics** (all real, nothing else exists): exact per-relation row counts
 (maintained on write, stored in `S`); schema dependency knowledge (keys and
 containments — `30-dependencies.md`); filter survivor counts — *measured, not
@@ -354,9 +395,12 @@ representation, not a mode: the executor is generic over a `Counters` trait;
 the normal path instantiates `NoopCounters` (zero-sized, compiled to nothing — no
 runtime branch, no hot-loop cost), and the EXPLAIN entry point instantiates the
 counting variant and **executes the query** (ANALYZE semantics), reporting the plan,
-per-node estimated vs actual cardinalities, residual and anti-probe selectivity, and
-cover-choice histograms (choices aggregated per node, not per entry). Output shape:
-OPEN. Release builds contain no other instrumentation: no per-tuple labels, no
+per-node estimated vs actual cardinalities, residual and anti-probe selectivity,
+cover-choice histograms (choices aggregated per node, not per entry), and the
+chase's eliminated occurrences — read straight off the plan's `Role::Eliminated`
+marks, each rendered with its licensing statement through `schema/render.rs`
+(e.g. `eliminated: Grading via Grading(id | kind == Det) == Det(grading)`).
+Output shape: OPEN. Release builds contain no other instrumentation: no per-tuple labels, no
 always-on counters, no diagnostics allocation anywhere in the join loops.
 
 ## Measured mechanisms

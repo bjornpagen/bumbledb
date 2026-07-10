@@ -1,13 +1,21 @@
 use super::CountingCounters;
+use crate::ir::normalize::Role;
 use crate::plan::fj::ValidatedPlan;
+use crate::schema::Schema;
 
 impl CountingCounters {
     /// Converts the counted execution into the stable stats surface —
     /// the one source of truth `Report` renders from and
-    /// `Snapshot::profile` returns.
+    /// `Snapshot::profile` returns. The schema resolves relation names
+    /// and renders each eliminated occurrence's licensing statement
+    /// (`schema/render.rs`).
     #[must_use]
-    pub fn into_stats(self, plan: &ValidatedPlan) -> crate::api::stats::ExecutionStats {
-        use crate::api::stats::{CoverStats, ExecutionStats, NodeStats};
+    pub fn into_stats(
+        self,
+        plan: &ValidatedPlan,
+        schema: &Schema,
+    ) -> crate::api::stats::ExecutionStats {
+        use crate::api::stats::{CoverStats, EliminatedOccurrence, ExecutionStats, NodeStats};
         let nodes = plan
             .nodes()
             .iter()
@@ -45,8 +53,27 @@ impl CountingCounters {
                 }
             })
             .collect();
+        // The eliminated occurrences, read straight off the plan's
+        // `Role::Eliminated` marks (`plan/chase.rs` — no separate list
+        // exists).
+        let eliminated = plan
+            .occurrences()
+            .iter()
+            .filter_map(|occurrence| {
+                let Role::Eliminated(statement) = occurrence.role else {
+                    return None;
+                };
+                Some(EliminatedOccurrence {
+                    occurrence: occurrence.occ_id.0,
+                    relation: schema.relation(occurrence.relation).name().to_owned(),
+                    statement,
+                    rendered: crate::schema::render::render(schema, statement),
+                })
+            })
+            .collect();
         ExecutionStats {
             nodes,
+            eliminated,
             emits: self.emits,
             guard: None,
         }

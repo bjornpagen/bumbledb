@@ -68,9 +68,14 @@ mod verify_store;
 
 pub use api::db::{BulkLoadError, Db, Fact, Serial, SerialKeyed, Snapshot, WriteTx};
 pub use api::prepared::{ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row};
-pub use api::stats::{CoverStats, ExecutionStats, GuardStats, NodeStats};
+pub use api::stats::{CoverStats, EliminatedOccurrence, ExecutionStats, GuardStats, NodeStats};
 pub use error::{Direction, Error, Result};
 pub use interval::Interval;
+/// The chase's test-support off switch (`plan/chase.rs`): reachable only
+/// under the `chase-off` feature, which only the bench crate's dual-run
+/// differential unit tests enable (as a dev-dependency).
+#[cfg(feature = "chase-off")]
+pub use plan::chase::with_chase_disabled;
 // The IR vocabulary a host needs to build a `Query`, and the id types that
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.

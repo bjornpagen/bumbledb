@@ -214,6 +214,10 @@ definitions** — the reframe is normative in `50-storage.md`. The checker share
 anti-probe primitive with query-surface negation (`40-execution.md`): "no fact
 matches" is one mechanism with two callers.
 
+Accepted statements also license planner rewrites: the chase-based occurrence
+elimination (`40-execution.md` § planner) deletes query joins a containment
+already certifies.
+
 ## Validation roster (statements; exhaustive)
 
 Rejected at schema validation, each with a distinct error: unknown relation/field

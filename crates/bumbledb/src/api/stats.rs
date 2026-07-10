@@ -10,10 +10,30 @@
 pub struct ExecutionStats {
     /// Per plan node, in node order (empty for guard probes).
     pub nodes: Vec<NodeStats>,
+    /// Occurrences the chase eliminated (`plan/chase.rs`), read straight
+    /// off the plan's `Role::Eliminated` marks — no separate list exists
+    /// in the plan; this surface renders the marks. Empty for guard
+    /// probes (single-atom queries have nothing to pair).
+    pub eliminated: Vec<EliminatedOccurrence>,
     /// Bindings emitted to the sink.
     pub emits: u64,
     /// Present iff the query classified as a guard probe.
     pub guard: Option<GuardStats>,
+}
+
+/// One chase-eliminated occurrence: never joined, its view never built —
+/// the plan solved a smaller problem (`plan/chase.rs`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EliminatedOccurrence {
+    /// The occurrence index (`OccId`) in the normalized occurrence table.
+    pub occurrence: u16,
+    /// The eliminated occurrence's relation name.
+    pub relation: String,
+    /// The containment statement licensing the elimination.
+    pub statement: crate::schema::StatementId,
+    /// The statement rendered in the `schema!` algebra notation
+    /// (`schema/render.rs`), e.g. `Posting(account) <= Account(id)`.
+    pub rendered: String,
 }
 
 /// One node's counted execution.

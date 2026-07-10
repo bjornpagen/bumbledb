@@ -4,6 +4,7 @@ use crate::gen::{GenConfig, Rng};
 use crate::querygen::dress::dress;
 use crate::querygen::negate::negate;
 use crate::querygen::shapes::{aggregate, chain, guard, self_join, star};
+use crate::querygen::shapes_chase::{du_walk, existence_walk};
 use crate::querygen::shapes_interval::{boundary, interval_join, membership};
 use crate::querygen::shapes_sink::{arg, count_distinct};
 use crate::querygen::target::{ids, Domains};
@@ -52,11 +53,19 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::Boundary => boundary(&mut b, rng, cfg, domains),
         Shape::CountDistinct => count_distinct(&mut b, rng),
         Shape::Arg => arg(&mut b, rng),
+        Shape::ExistenceWalk => existence_walk(&mut b, rng),
+        Shape::DuWalk => du_walk(&mut b, rng),
     }
-    dress(&mut b, rng, cfg, domains);
-    // Negation last: its templates draw on every anchor the shape and
-    // the dressing established.
-    negate(&mut b, rng);
+    // The chase shapes are their own deliberate dressing: a random
+    // predicate or negated probe landing on the target atom would flip
+    // an eliminable shape to a refusal nondeterministically, and the
+    // coverage contract asserts each variant per run (shapes_chase.rs).
+    if !matches!(shape, Shape::ExistenceWalk | Shape::DuWalk) {
+        dress(&mut b, rng, cfg, domains);
+        // Negation last: its templates draw on every anchor the shape
+        // and the dressing established.
+        negate(&mut b, rng);
+    }
     b
 }
 
@@ -70,6 +79,7 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
         bytes_miss: b.bytes_miss,
         adjacent_left: b.adjacent_left,
         adjacent_right: b.adjacent_right,
+        chase: b.chase,
     };
     (b.into_query(), shape, tags)
 }
