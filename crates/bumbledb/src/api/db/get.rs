@@ -8,8 +8,7 @@
 use super::encode_dyn::shape_mismatch;
 use super::{plumbing, Fact, Serial, SerialKeyed, WriteTx};
 use crate::encoding::{
-    decode_field, encode_bool, encode_i64, encode_interval_i64, encode_interval_u64, encode_u64,
-    ValueRef,
+    encode_bool, encode_i64, encode_interval_i64, encode_interval_u64, encode_u64,
 };
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
@@ -36,15 +35,12 @@ impl WriteTx<'_> {
     ///
     /// `Lmdb` on the membership probe or dictionary reads.
     pub fn contains<F: Fact>(&mut self, fact: &F) -> Result<bool> {
-        let mut bytes = std::mem::take(&mut self.scratch);
-        bytes.clear();
-        let present = match fact.encode_delete(self, &mut bytes) {
-            Ok(true) => self.delta.contains(&self.view, F::RELATION, &bytes),
-            Ok(false) => Ok(false),
-            Err(err) => Err(err),
-        };
-        self.scratch = bytes;
-        present
+        self.with_scratch(|tx, bytes| {
+            if !fact.encode_delete(tx, bytes)? {
+                return Ok(false);
+            }
+            tx.delta.contains(&tx.view, F::RELATION, bytes)
+        })
     }
 
     /// Point lookup of the full fact through the relation's serial key —
@@ -147,19 +143,14 @@ impl WriteTx<'_> {
             }
             .into());
         }
-        let mut guard = std::mem::take(&mut self.scratch);
-        guard.clear();
-        let result = match self.encode_guard(relation, projection, key_values, &mut guard) {
-            Ok(true) => self.fact_by_guard(relation, key, &guard).and_then(|found| {
-                found
-                    .map(|bytes| self.decode_values(relation, bytes))
-                    .transpose()
-            }),
-            Ok(false) => Ok(None),
-            Err(err) => Err(err),
-        };
-        self.scratch = guard;
-        result
+        self.with_scratch(|tx, guard| {
+            if !tx.encode_guard(relation, projection, key_values, guard)? {
+                return Ok(None);
+            }
+            tx.fact_by_guard(relation, key, guard)?
+                .map(|bytes| tx.decode_values(relation, bytes))
+                .transpose()
+        })
     }
 
     /// Encodes `key_values` into guard bytes — the concatenated canonical
@@ -230,27 +221,16 @@ impl WriteTx<'_> {
     /// ids pending-first (a fact inserted this transaction carries
     /// provisional ids) — the dynamic sibling of [`Fact::decode_write`].
     fn decode_values(&self, relation: RelationId, fact: &[u8]) -> Result<Vec<Value>> {
-        let layout = self.schema.relation(relation).layout();
-        (0..layout.field_count())
-            .map(|idx| {
-                Ok(match decode_field(fact, layout, idx)? {
-                    ValueRef::Bool(v) => Value::Bool(v),
-                    ValueRef::U64(v) => Value::U64(v),
-                    ValueRef::I64(v) => Value::I64(v),
-                    ValueRef::Enum(ordinal) => Value::Enum(ordinal),
-                    ValueRef::String(id) => Value::String(
-                        plumbing::resolve_string_write(self, id)?
-                            .into_bytes()
-                            .into_boxed_slice(),
-                    ),
-                    ValueRef::Bytes(id) => {
-                        Value::Bytes(plumbing::resolve_bytes_write(self, id)?.into())
-                    }
-                    ValueRef::IntervalU64(start, end) => Value::IntervalU64(start, end),
-                    ValueRef::IntervalI64(start, end) => Value::IntervalI64(start, end),
-                })
-            })
-            .collect()
+        super::encode_dyn::decode_values(
+            fact,
+            self.schema.relation(relation).layout(),
+            |id| {
+                Ok(plumbing::resolve_string_write(self, id)?
+                    .into_bytes()
+                    .into_boxed_slice())
+            },
+            |id| Ok(plumbing::resolve_bytes_write(self, id)?.into()),
+        )
     }
 
     /// The auto-materialized `Functionality` statement for one serial

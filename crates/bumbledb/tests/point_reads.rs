@@ -5,9 +5,9 @@
 //! equals the post-commit one, and the blessed upsert idiom is sound
 //! within a single write transaction.
 
-use std::path::PathBuf;
-
 use bumbledb::Db;
+
+mod common;
 
 bumbledb::schema! {
     relation Account {
@@ -17,21 +17,14 @@ bumbledb::schema! {
     }
 }
 
-fn test_dir(tag: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("bumbledb-point-reads-{tag}"));
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).expect("test dir");
-    path
-}
-
 /// The read-your-writes matrix: insert → found; delete → gone; delete +
 /// reinsert(modified) → the modified fact — all before commit, and all
 /// equal to the post-commit answer (asserted through a fresh transaction
 /// *and* a read-transaction scan).
 #[test]
 fn point_reads_observe_the_final_state_before_commit() {
-    let dir = test_dir("read-your-writes");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("points-read-your-writes");
+    let db = Db::create(dir.path(), schema()).expect("create");
 
     let id = db
         .write(|tx| {
@@ -95,8 +88,8 @@ fn point_reads_observe_the_final_state_before_commit() {
 /// never-interned string proves absence without touching the dictionary.
 #[test]
 fn point_reads_fall_through_to_committed_state() {
-    let dir = test_dir("committed-fallthrough");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("points-committed-fallthrough");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let id = db
         .write(|tx| {
             let id = tx.alloc::<AccountId>()?;
@@ -168,8 +161,8 @@ fn add(db: &Db<'_>, id: AccountId, x: i64) -> bumbledb::Result<()> {
 /// survives, carrying the sum.
 #[test]
 fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
-    let dir = test_dir("upsert-counter");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("points-upsert-counter");
+    let db = Db::create(dir.path(), schema()).expect("create");
     // An explicit serial value is legal on the write path; the high-water
     // mark advances past it.
     let id = AccountId(7);

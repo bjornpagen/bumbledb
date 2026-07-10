@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use bumbledb::Db;
 
+mod common;
+
 bumbledb::schema! {
     relation Item {
         id: u64 as ItemId, serial,
@@ -48,10 +50,8 @@ fn crash_child_commit_loop() {
 fn kill_during_commit_leaves_a_consistent_database() {
     let exe = std::env::current_exe().expect("test binary path");
     for (round, delay_ms) in [5u64, 20, 60].into_iter().enumerate() {
-        let dir = std::env::temp_dir().join(format!("bumbledb-crash-{round}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("test dir");
-        drop(Db::create(&dir, schema()).expect("create"));
+        let dir = common::TempDir::new(&format!("crash-{round}"));
+        drop(Db::create(dir.path(), schema()).expect("create"));
 
         let mut child = Command::new(&exe)
             .args([
@@ -60,7 +60,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
                 "--ignored",
                 "--test-threads=1",
             ])
-            .env("BUMBLEDB_CRASH_DIR", &dir)
+            .env("BUMBLEDB_CRASH_DIR", dir.path())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -71,7 +71,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
 
         // Reopen: format + fingerprint verify, then sweep consistency
         // through the public surface.
-        let db = Db::open(&dir, schema()).expect("open after crash");
+        let db = Db::open(dir.path(), schema()).expect("open after crash");
         let live: Vec<Item> = db
             .read(|snap| snap.scan_facts::<Item>()?.collect())
             .expect("scan after crash");
@@ -110,8 +110,6 @@ fn kill_during_commit_leaves_a_consistent_database() {
             .read(|snap| Ok(snap.scan_facts::<Item>()?.count()))
             .expect("count after crash");
         assert!(count >= 1);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
@@ -143,10 +141,8 @@ fn crash_child_alloc_loop() {
 fn kill_during_counters_only_commit_leaves_q_consistent() {
     let exe = std::env::current_exe().expect("test binary path");
     for (round, delay_ms) in [10u64, 40].into_iter().enumerate() {
-        let dir = std::env::temp_dir().join(format!("bumbledb-crash-alloc-{round}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("test dir");
-        drop(Db::create(&dir, schema()).expect("create"));
+        let dir = common::TempDir::new(&format!("crash-alloc-{round}"));
+        drop(Db::create(dir.path(), schema()).expect("create"));
 
         let mut child = Command::new(&exe)
             .args([
@@ -155,7 +151,7 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
                 "--ignored",
                 "--test-threads=1",
             ])
-            .env("BUMBLEDB_CRASH_ALLOC_DIR", &dir)
+            .env("BUMBLEDB_CRASH_ALLOC_DIR", dir.path())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -164,7 +160,7 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
         child.kill().expect("SIGKILL");
         let _ = child.wait();
 
-        let db = Db::open(&dir, schema()).expect("open after crash");
+        let db = Db::open(dir.path(), schema()).expect("open after crash");
         // No facts ever committed: the store is empty and the generation
         // never moved — Q marks are not query-visible state.
         let count = db
@@ -186,7 +182,5 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
             tx.insert(&item(id.0)).map(|_| ())
         })
         .expect("write after crash");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

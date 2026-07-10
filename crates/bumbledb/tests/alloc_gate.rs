@@ -27,6 +27,8 @@ use bumbledb::schema::{
 };
 use bumbledb::{Db, PreparedQuery, ResultBuffer, Snapshot};
 
+mod common;
+
 /// Posting(id serial, account u64, amount i64, memo str) +
 /// Account(id serial, holder u64), with
 /// `Posting(account) <= Account(id)`.
@@ -510,11 +512,9 @@ fn escalation_gate(
 /// One test function: the gate binary is single-threaded by construction.
 #[test]
 fn zero_warm_allocation_gate() {
-    let dir = std::env::temp_dir().join("bumbledb-alloc-gate");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("test dir");
+    let dir = common::TempDir::new("alloc-gate");
     let schema = schema();
-    let db = Db::create(&dir, &schema).expect("create");
+    let db = Db::create(dir.path(), &schema).expect("create");
     populate(&db);
 
     // Four rotating residual windows: exactly the view memo's capacity
@@ -607,7 +607,4 @@ fn zero_warm_allocation_gate() {
         Ok(())
     })
     .expect("gate");
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }

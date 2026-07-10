@@ -5,8 +5,6 @@
 //! precise per-position errors for every scalar/set misuse, and a valid
 //! mixed bind through the public [`bumbledb::ParamArg`] surface.
 
-use std::path::PathBuf;
-
 use bumbledb::error::ValidationError;
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, VarId};
 use bumbledb::schema::{
@@ -14,6 +12,8 @@ use bumbledb::schema::{
     StatementDescriptor, ValueType,
 };
 use bumbledb::{Db, Error, Fact, ParamArg, ResultBuffer, ResultValue, Value};
+
+mod common;
 
 bumbledb::schema! {
     relation Alpha {
@@ -48,20 +48,13 @@ bumbledb::schema! {
     Node(parent) <= Node(id);
 }
 
-fn test_dir(tag: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("bumbledb-edge-{tag}"));
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).expect("test dir");
-    path
-}
-
 /// "Cyclic references insert without any staging concept"
 /// (docs/architecture/10-data-model.md): A→B plus B→A in one delta, and a
 /// self-referencing row — judgments run against the final state.
 #[test]
 fn cyclic_containments_insert_in_one_transaction() {
-    let dir = test_dir("cyclic");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("edge-cyclic");
+    let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
         tx.insert(&Alpha {
             id: AlphaId(1),
@@ -91,17 +84,14 @@ fn cyclic_containments_insert_in_one_transaction() {
         })
         .unwrap_err();
     assert!(matches!(err, Error::ContainmentViolation { .. }));
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Empty strings and empty byte sequences intern, round-trip, and query —
 /// the reverse dictionary entry is exactly the tag byte.
 #[test]
 fn empty_strings_and_bytes_round_trip() {
-    let dir = test_dir("empty-intern");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("edge-empty-intern");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let original = Blob {
         id: BlobId(1),
         payload: Vec::new(),
@@ -118,8 +108,8 @@ fn empty_strings_and_bytes_round_trip() {
 /// public surface (typed error, not wraparound).
 #[test]
 fn explicit_max_serial_exhausts_the_generator() {
-    let dir = test_dir("serial-max");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("edge-serial-max");
+    let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
         tx.insert(&Node {
             id: NodeId(u64::MAX),
@@ -154,8 +144,8 @@ fn wide_enum_through_commit_and_scan() {
     }
     .validate()
     .expect("256 variants are legal");
-    let dir = test_dir("wide-enum");
-    let db = Db::create(&dir, &schema).expect("create");
+    let dir = common::TempDir::new("edge-wide-enum");
+    let db = Db::create(dir.path(), &schema).expect("create");
     db.write(|tx| {
         tx.insert_dyn(RelationId(0), &[Value::Enum(0)])?;
         tx.insert_dyn(RelationId(0), &[Value::Enum(255)])?;
@@ -196,8 +186,8 @@ fn wide_enum_through_commit_and_scan() {
     }
     .validate()
     .expect("valid");
-    let dir2 = test_dir("enum-bind");
-    let db2 = Db::create(&dir2, &narrow).expect("create");
+    let dir2 = common::TempDir::new("edge-enum-bind");
+    let db2 = Db::create(dir2.path(), &narrow).expect("create");
     db2.write(|tx| {
         tx.insert_dyn(RelationId(0), &[Value::Enum(1), Value::U64(3)])
             .map(|_| ())
@@ -295,8 +285,8 @@ fn one_byte_compound_guards() {
     .expect("valid");
     let (switch, watcher) = (RelationId(0), RelationId(1));
 
-    let dir = test_dir("byte-guards");
-    let db = Db::create(&dir, &schema).expect("create");
+    let dir = common::TempDir::new("edge-byte-guards");
+    let db = Db::create(dir.path(), &schema).expect("create");
     db.write(|tx| {
         tx.insert_dyn(switch, &[Value::Enum(1), Value::Bool(true)])?;
         tx.insert_dyn(watcher, &[Value::Enum(1), Value::Bool(true), Value::U64(7)])?;
@@ -332,8 +322,8 @@ fn one_byte_compound_guards() {
 /// (exercising the zero-arity group through the public surface).
 #[test]
 fn zero_binding_gate_with_global_count() {
-    let dir = test_dir("gate-count");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("edge-gate-count");
+    let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
         tx.insert(&Node {
             id: NodeId(1),
@@ -413,8 +403,8 @@ fn mixed_params_query() -> Query {
 #[test]
 #[allow(clippy::too_many_lines)] // the bind matrix: one case per arm, linear
 fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
-    let dir = test_dir("bind-matrix");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("edge-bind-matrix");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let ids = db
         .write(|tx| {
             let mut ids = Vec::new();
@@ -540,7 +530,4 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
         ),
         "{err:?}"
     );
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }

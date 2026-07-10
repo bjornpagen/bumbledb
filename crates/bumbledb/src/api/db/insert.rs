@@ -9,12 +9,9 @@ impl WriteTx<'_> {
     ///
     /// `Lmdb` on the membership probe or dictionary reads.
     pub fn insert<F: Fact>(&mut self, fact: &F) -> Result<bool> {
-        let mut bytes = std::mem::take(&mut self.scratch);
-        bytes.clear();
-        let changed = fact
-            .encode_write(self, &mut bytes)
-            .and_then(|()| self.delta.insert(&self.view, F::RELATION, &bytes));
-        self.scratch = bytes;
-        changed
+        self.with_scratch(|tx, bytes| {
+            fact.encode_write(tx, bytes)?;
+            tx.delta.insert(&tx.view, F::RELATION, bytes)
+        })
     }
 }

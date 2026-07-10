@@ -306,6 +306,12 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
     field
 }
 
+/// The integer-literal token shape: digits first, no float dot. Shared
+/// between [`parse_int`] and [`parse_literal`]'s bare-literal fallback.
+fn is_int_text(text: &str) -> bool {
+    text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.')
+}
+
 /// Parses one `[-] int`, returning the sign and the raw token text (spliced
 /// verbatim into the generated code — rustc polices range and form).
 fn parse_int(tokens: &mut Tokens, what: &str) -> (bool, String) {
@@ -317,7 +323,7 @@ fn parse_int(tokens: &mut Tokens, what: &str) -> (bool, String) {
         Some(TokenTree::Literal(lit)) => {
             let text = lit.to_string();
             assert!(
-                text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.'),
+                is_int_text(&text),
                 "schema!: expected {what}, found `{text}`"
             );
             (negative, text)
@@ -368,10 +374,7 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
             } else if text.starts_with("b\"") {
                 Literal::Bytes(text)
             } else {
-                assert!(
-                    text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.'),
-                    "schema!: unsupported literal `{text}`"
-                );
+                assert!(is_int_text(&text), "schema!: unsupported literal `{text}`");
                 finish_int(tokens, false, text)
             }
         }
@@ -823,74 +826,53 @@ fn rust_field_ty(field: &Field) -> String {
     }
 }
 
-/// The `ValueRef` expressions for one field in the write and read encode
-/// contexts (write interns novel values; read bails `Ok(false)` on a miss).
 /// The per-field encode expressions for the three `Fact` boundaries:
 /// write (mints through the delta), delete (resolves pending-then-
 /// committed, never mints — a miss proves the fact absent), read
-/// (committed dictionary only).
+/// (committed dictionary only). Word-backed fields encode identically in
+/// every context; only the interned kinds (str/bytes) split by boundary.
 fn encode_exprs(field: &Field) -> (String, String, String) {
     let access = if field.newtype.is_some() {
         format!("self.{}.0", field.name)
     } else {
         format!("self.{}", field.name)
     };
+    let same = |expr: String| (expr.clone(), expr.clone(), expr);
     match &field.ty {
-        FieldTy::Bool => {
-            let expr = format!("::bumbledb::__private::ValueRef::Bool({access})");
-            (expr.clone(), expr.clone(), expr)
-        }
-        FieldTy::U64 => {
-            let expr = format!("::bumbledb::__private::ValueRef::U64({access})");
-            (expr.clone(), expr.clone(), expr)
-        }
-        FieldTy::I64 => {
-            let expr = format!("::bumbledb::__private::ValueRef::I64({access})");
-            (expr.clone(), expr.clone(), expr)
-        }
-        FieldTy::Enum { .. } => {
-            let expr = format!(
-                "::bumbledb::__private::ValueRef::Enum(self.{}.ordinal())",
-                field.name
-            );
-            (expr.clone(), expr.clone(), expr)
-        }
-        FieldTy::Interval(element) => {
-            let expr = format!(
-                "::bumbledb::__private::ValueRef::Interval{}({access}.start(), {access}.end())",
-                element.suffix()
-            );
-            (expr.clone(), expr.clone(), expr)
-        }
-        FieldTy::Str => (
-            format!(
-                "::bumbledb::__private::ValueRef::String(::bumbledb::__private::intern_str_write(tx, &self.{})?)",
-                field.name
-            ),
-            format!(
-                "match ::bumbledb::__private::intern_str_delete(tx, &self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::String(id), None => return Ok(false) }}",
-                field.name
-            ),
-            format!(
-                "match ::bumbledb::__private::intern_str_read(snap, &self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::String(id), None => return Ok(false) }}",
-                field.name
-            ),
-        ),
-        FieldTy::Bytes => (
-            format!(
-                "::bumbledb::__private::ValueRef::Bytes(::bumbledb::__private::intern_bytes_write(tx, &self.{})?)",
-                field.name
-            ),
-            format!(
-                "match ::bumbledb::__private::intern_bytes_delete(tx, &self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::Bytes(id), None => return Ok(false) }}",
-                field.name
-            ),
-            format!(
-                "match ::bumbledb::__private::intern_bytes_read(snap, &self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::Bytes(id), None => return Ok(false) }}",
-                field.name
-            ),
-        ),
+        FieldTy::Bool => same(format!("::bumbledb::__private::ValueRef::Bool({access})")),
+        FieldTy::U64 => same(format!("::bumbledb::__private::ValueRef::U64({access})")),
+        FieldTy::I64 => same(format!("::bumbledb::__private::ValueRef::I64({access})")),
+        FieldTy::Enum { .. } => same(format!(
+            "::bumbledb::__private::ValueRef::Enum(self.{}.ordinal())",
+            field.name
+        )),
+        FieldTy::Interval(element) => same(format!(
+            "::bumbledb::__private::ValueRef::Interval{}({access}.start(), {access}.end())",
+            element.suffix()
+        )),
+        FieldTy::Str => interned_exprs("str", "String", &field.name),
+        FieldTy::Bytes => interned_exprs("bytes", "Bytes", &field.name),
     }
+}
+
+/// The three boundary expressions for one interned field: `family`
+/// selects the plumbing functions (`intern_{family}_{write,delete,read}`)
+/// and `variant` the `ValueRef` constructor. Delete and read share the
+/// miss shape — `Ok(false)`, the fact provably absent — differing only
+/// in context binding.
+fn interned_exprs(family: &str, variant: &str, name: &str) -> (String, String, String) {
+    let miss = |boundary: &str, ctx: &str| {
+        format!(
+            "match ::bumbledb::__private::intern_{family}_{boundary}({ctx}, &self.{name})? {{ Some(id) => ::bumbledb::__private::ValueRef::{variant}(id), None => return Ok(false) }}"
+        )
+    };
+    (
+        format!(
+            "::bumbledb::__private::ValueRef::{variant}(::bumbledb::__private::intern_{family}_write(tx, &self.{name})?)"
+        ),
+        miss("delete", "tx"),
+        miss("read", "snap"),
+    )
 }
 
 /// The struct-literal arm decoding one field out of canonical fact bytes.
@@ -906,43 +888,43 @@ fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
     };
     let decode =
         format!("::bumbledb::__private::decode{suffix}({ctx}, Self::RELATION, fact, {idx})?");
+    // Every field decodes through one shape: destructure the
+    // schema-typed `ValueRef` variant, convert; any other variant is a
+    // programmer-invariant violation.
+    let arm = |pattern: String, expr: String| {
+        format!(
+            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::{pattern} => {expr}, _ => unreachable!(\"schema-typed\") }},",
+            field.name
+        )
+    };
     match &field.ty {
-        FieldTy::Bool => format!(
-            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::Bool(v) => v, _ => unreachable!(\"schema-typed\") }},",
-            field.name
-        ),
-        FieldTy::U64 => format!(
-            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::U64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
-            field.name,
-            wrap("v")
-        ),
-        FieldTy::I64 => format!(
-            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::I64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
-            field.name,
-            wrap("v")
-        ),
-        FieldTy::Enum { name: enum_name, .. } => format!(
-            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::Enum(o) => {enum_name}::from_ordinal(o).expect(\"decode_field range-checked the ordinal\"), _ => unreachable!(\"schema-typed\") }},",
-            field.name
+        FieldTy::Bool => arm("Bool(v)".to_owned(), "v".to_owned()),
+        FieldTy::U64 => arm("U64(v)".to_owned(), wrap("v")),
+        FieldTy::I64 => arm("I64(v)".to_owned(), wrap("v")),
+        FieldTy::Enum {
+            name: enum_name, ..
+        } => arm(
+            "Enum(o)".to_owned(),
+            format!(
+                "{enum_name}::from_ordinal(o).expect(\"decode_field range-checked the ordinal\")"
+            ),
         ),
         FieldTy::Interval(element) => {
             let el = element.rust();
-            format!(
-                "{}: match {decode} {{ ::bumbledb::__private::ValueRef::Interval{}(start, end) => {}, _ => unreachable!(\"schema-typed\") }},",
-                field.name,
-                element.suffix(),
+            arm(
+                format!("Interval{}(start, end)", element.suffix()),
                 wrap(&format!(
                     "::bumbledb::Interval::<{el}>::new(start, end).expect(\"stored intervals satisfy start < end\")"
-                ))
+                )),
             )
         }
-        FieldTy::Str => format!(
-            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::String(id) => ::bumbledb::__private::resolve_string{suffix}({ctx}, id)?, _ => unreachable!(\"schema-typed\") }},",
-            field.name
+        FieldTy::Str => arm(
+            "String(id)".to_owned(),
+            format!("::bumbledb::__private::resolve_string{suffix}({ctx}, id)?"),
         ),
-        FieldTy::Bytes => format!(
-            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::Bytes(id) => ::bumbledb::__private::resolve_bytes{suffix}({ctx}, id)?, _ => unreachable!(\"schema-typed\") }},",
-            field.name
+        FieldTy::Bytes => arm(
+            "Bytes(id)".to_owned(),
+            format!("::bumbledb::__private::resolve_bytes{suffix}({ctx}, id)?"),
         ),
     }
 }

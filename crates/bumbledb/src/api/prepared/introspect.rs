@@ -7,9 +7,7 @@ use crate::image::cache::ImageCache;
 use crate::ir::Value;
 use crate::storage::env::ReadTxn;
 
-use super::bind::resolve_predicates;
 use super::finalize::finalize;
-use super::run_join::run_join;
 
 impl PreparedQuery<'_> {
     /// EXPLAIN (docs/architecture/40-execution.md): executes the query with counting instrumentation
@@ -75,63 +73,35 @@ impl PreparedQuery<'_> {
             };
             return Ok((out, stats));
         }
-        // Bind before borrowing the plan (bind_params takes &mut self).
+        // Bind, run the shared Free Join body with counting
+        // instrumentation, and finalize only if the bind's constants
+        // resolved (a short-circuited execution counted nothing and has
+        // nothing to drain).
         self.bind_params(txn, params)?;
-        match &self.plan {
+        let mut counters = match &self.plan {
             ExecPlan::GuardProbe(_) => unreachable!("handled above"),
-            ExecPlan::FreeJoin(plan) => {
-                let mut counters = CountingCounters::new(plan);
-                let short_circuit = !resolve_predicates(
-                    txn,
-                    plan,
-                    &self.resolved_params,
-                    &self.missed_params,
-                    &mut self.resolved_filters,
-                    &mut self.resolved_selections,
-                )?;
-                if short_circuit {
-                    return Ok((
-                        out,
-                        counters.into_stats(plan, self.schema, self.pinned_rows()),
-                    ));
-                }
-                self.sink.reset();
-                run_join(
-                    plan,
-                    self.schema,
-                    txn,
-                    cache,
-                    self.executor
-                        .as_mut()
-                        .expect("free join plans carry executor scratch"),
-                    &mut self.bindings,
-                    &self.resolved_filters,
-                    &self.resolved_selections,
-                    &mut self.memo,
-                    &mut self.sink,
-                    &mut counters,
-                )?;
-                finalize(
-                    &self.sink,
-                    &mut self.row_scratch,
-                    &mut self.resolve_memo,
-                    txn,
-                    &self.finds,
-                    self.all_words,
-                    &mut out,
-                )?;
-                Ok((
-                    out,
-                    counters.into_stats(plan, self.schema, self.pinned_rows()),
-                ))
-            }
+            ExecPlan::FreeJoin(plan) => CountingCounters::new(plan),
+        };
+        if self.run_free_join(txn, cache, &mut counters)? {
+            finalize(
+                &self.sink,
+                &mut self.row_scratch,
+                &mut self.resolve_memo,
+                txn,
+                &self.finds,
+                self.all_words,
+                &mut out,
+            )?;
         }
+        let ExecPlan::FreeJoin(plan) = &self.plan else {
+            unreachable!("handled above")
+        };
+        Ok((
+            out,
+            counters.into_stats(plan, self.schema, self.pinned_rows()),
+        ))
     }
 
-    /// The result column types, one per find term in `finds` order — the
-    /// metadata a generic host needs to type an (even empty) result. The
-    /// buffer itself stays typeless: stamping owned types per execution
-    /// would allocate on the warm path.
     /// Whether every plan node binds a sink-relevant variable — the
     /// pipelined executor's eligibility; `None` for
     /// guard plans (no join runs at all).
@@ -151,6 +121,10 @@ impl PreparedQuery<'_> {
         self.plan.distinct_bindings()
     }
 
+    /// The result column types, one per find term in `finds` order — the
+    /// metadata a generic host needs to type an (even empty) result. The
+    /// buffer itself stays typeless: stamping owned types per execution
+    /// would allocate on the warm path.
     pub fn column_types(&self) -> impl Iterator<Item = &ValueType> {
         self.finds.iter().map(|(_, ty)| ty)
     }

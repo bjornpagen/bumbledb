@@ -15,6 +15,8 @@ use bumbledb::schema::{
 };
 use bumbledb::{Db, Fact, Interval, Value};
 
+mod common;
+
 bumbledb::schema! {
     relation Holder  { id: u64 as HolderId, serial, name: str }
     relation Account {
@@ -247,10 +249,8 @@ fn fact_structs_carry_host_types() {
 
 #[test]
 fn typed_round_trip_through_fact_bytes() {
-    let dir = std::env::temp_dir().join("bumbledb-macro-round-trip");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("test dir");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("macro-round-trip");
+    let db = Db::create(dir.path(), schema()).expect("create");
 
     let original = Account {
         id: AccountId(7),
@@ -287,9 +287,6 @@ fn typed_round_trip_through_fact_bytes() {
         Ok(())
     })
     .expect("read");
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 mod interval_newtype {

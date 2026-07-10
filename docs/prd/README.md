@@ -63,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [20 — Elegance: api and macros](20-elegance-api-macros.md)
 - [22 — Borrowed structs, borrowed params, and the named-schema typestate](22-borrowed-structs-typestate.md) — **runs after 20 and before 21** (same emission code as 20's territory; 21 stays the closing pass and cleans this surface's bench fallout)
 - [21 — Elegance: bench crate](21-elegance-bench.md)
 

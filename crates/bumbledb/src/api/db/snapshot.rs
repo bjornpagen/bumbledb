@@ -1,6 +1,5 @@
 use super::{Fact, Snapshot};
 use crate::api::prepared::{ParamArg, PreparedQuery, ResultBuffer};
-use crate::encoding::{decode_field, ValueRef};
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
 use crate::schema::RelationId;
@@ -116,26 +115,12 @@ impl Snapshot<'_> {
         let iter = read::scan(&self.txn, self.schema, rel)?;
         Ok(iter.map(move |entry| {
             let (_, bytes) = entry?;
-            (0..layout.field_count())
-                .map(|idx| {
-                    Ok(match decode_field(bytes, layout, idx)? {
-                        ValueRef::Bool(v) => Value::Bool(v),
-                        ValueRef::U64(v) => Value::U64(v),
-                        ValueRef::I64(v) => Value::I64(v),
-                        ValueRef::Enum(ordinal) => Value::Enum(ordinal),
-                        ValueRef::String(id) => Value::String(Box::from(dict::resolve(
-                            &self.txn,
-                            id,
-                            dict::TAG_STRING,
-                        )?)),
-                        ValueRef::Bytes(id) => {
-                            Value::Bytes(Box::from(dict::resolve(&self.txn, id, dict::TAG_BYTES)?))
-                        }
-                        ValueRef::IntervalU64(start, end) => Value::IntervalU64(start, end),
-                        ValueRef::IntervalI64(start, end) => Value::IntervalI64(start, end),
-                    })
-                })
-                .collect()
+            super::encode_dyn::decode_values(
+                bytes,
+                layout,
+                |id| Ok(Box::from(dict::resolve(&self.txn, id, dict::TAG_STRING)?)),
+                |id| Ok(Box::from(dict::resolve(&self.txn, id, dict::TAG_BYTES)?)),
+            )
         }))
     }
 }

@@ -5,11 +5,11 @@
 //! commit-time statement judgments with their rendered diagnostics; and
 //! the export → `bulk_load` ETL round trip.
 
-use std::path::PathBuf;
-
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, Value, VarId};
 use bumbledb::schema::FieldId;
 use bumbledb::{Db, Direction, Fact, ResultBuffer, ResultValue, StatementId};
+
+mod common;
 
 bumbledb::schema! {
     relation Holder {
@@ -23,13 +23,6 @@ bumbledb::schema! {
     }
 
     Account(holder) <= Holder(id);
-}
-
-fn test_dir(tag: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("bumbledb-api-{tag}"));
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).expect("test dir");
-    path
 }
 
 /// Q(name, balance) :- Account(holder = h, balance), Holder(id = h, name).
@@ -125,8 +118,8 @@ fn name_amount_rows(out: &ResultBuffer) -> Vec<(String, i64)> {
 
 #[test]
 fn usage_shapes_end_to_end() {
-    let dir = test_dir("usage");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-usage");
+    let db = Db::create(dir.path(), schema()).expect("create");
 
     // Write: serial minting + typed inserts.
     let accounts = db
@@ -216,15 +209,12 @@ fn usage_shapes_end_to_end() {
         Ok(())
     })
     .expect("read after mutate");
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn aborted_writes_leave_prior_state_intact() {
-    let dir = test_dir("abort");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-abort");
+    let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
         let id: HolderId = tx.alloc()?;
         tx.insert(&Holder {
@@ -285,9 +275,6 @@ fn aborted_writes_leave_prior_state_intact() {
         })
         .expect("scan");
     assert_eq!(names, vec!["after".to_owned(), "keep".to_owned()]);
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -295,8 +282,8 @@ fn concurrent_readers_while_writing() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Db<'static>>();
 
-    let dir = test_dir("threads");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-threads");
+    let db = Db::create(dir.path(), schema()).expect("create");
     // Seed one pair so readers always see data.
     db.write(|tx| {
         let holder: HolderId = tx.alloc()?;
@@ -352,16 +339,13 @@ fn concurrent_readers_while_writing() {
         }
         writer.join().expect("writer thread");
     });
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn export_scan_bulk_loads_into_a_fresh_database() {
-    let dir_old = test_dir("etl-old");
-    let dir_new = test_dir("etl-new");
-    let old = Db::create(&dir_old, schema()).expect("create old");
+    let dir_old = common::TempDir::new("api-etl-old");
+    let dir_new = common::TempDir::new("api-etl-new");
+    let old = Db::create(dir_old.path(), schema()).expect("create old");
 
     let max_holder = old
         .write(|tx| {
@@ -397,7 +381,7 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
 
     // Import: containment targets first; explicit serial values preserve
     // identity.
-    let new = Db::create(&dir_new, schema()).expect("create new");
+    let new = Db::create(dir_new.path(), schema()).expect("create new");
     let loaded = new
         .bulk_load(Holder::RELATION, holders)
         .expect("load holders");
@@ -429,18 +413,13 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
         Ok(())
     })
     .expect("mint after import");
-
-    drop(old);
-    drop(new);
-    let _ = std::fs::remove_dir_all(&dir_old);
-    let _ = std::fs::remove_dir_all(&dir_new);
 }
 
 #[test]
 #[allow(clippy::too_many_lines)] // one violation per statement kind, linear
 fn statement_violations_surface_from_commit_through_the_public_api() {
-    let dir = test_dir("violations");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-violations");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let holder = db
         .write(|tx| {
             let id: HolderId = tx.alloc()?;
@@ -554,15 +533,12 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         "{rendered}"
     );
     assert!(rendered.contains("target"), "{rendered}");
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn open_mismatches_and_snapshot_usability() {
-    let dir = test_dir("open-mismatch");
-    drop(Db::create(&dir, schema()).expect("create"));
+    let dir = common::TempDir::new("api-open-mismatch");
+    drop(Db::create(dir.path(), schema()).expect("create"));
 
     // Db-level mismatch: a different schema refuses to open.
     let other = bumbledb::schema::SchemaDescriptor {
@@ -578,20 +554,20 @@ fn open_mismatches_and_snapshot_usability() {
     }
     .validate()
     .expect("valid");
-    let Err(err) = Db::open(&dir, &other).map(|_| ()) else {
+    let Err(err) = Db::open(dir.path(), &other).map(|_| ()) else {
         panic!("a different schema must refuse to open");
     };
     assert!(matches!(err, bumbledb::Error::SchemaMismatch { .. }));
 
     // Create-over-existing refuses at the Db level too.
-    let Err(err) = Db::create(&dir, schema()).map(|_| ()) else {
+    let Err(err) = Db::create(dir.path(), schema()).map(|_| ()) else {
         panic!("create over an existing environment must refuse");
     };
     assert!(matches!(err, bumbledb::Error::AlreadyInitialized));
 
     // A failed execute leaves the snapshot usable, and the caller-buffer
     // path works through the public surface.
-    let db = Db::open(&dir, schema()).expect("open");
+    let db = Db::open(dir.path(), schema()).expect("open");
     db.write(|tx| {
         let id: HolderId = tx.alloc()?;
         tx.insert(&Holder {
@@ -614,15 +590,12 @@ fn open_mismatches_and_snapshot_usability() {
         Ok(())
     })
     .expect("snapshot stays usable");
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn pinned_snapshot_reads_its_generation_across_later_commits() {
-    let dir = test_dir("pinned");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-pinned");
+    let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
         let id: HolderId = tx.alloc()?;
         tx.insert(&Holder {
@@ -660,17 +633,14 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
         .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
         .expect("fresh read");
     assert_eq!(after, 3);
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
-    let dir_bulk = test_dir("bulk-a");
-    let dir_seq = test_dir("bulk-b");
-    let bulk = Db::create(&dir_bulk, schema()).expect("create");
-    let seq = Db::create(&dir_seq, schema()).expect("create");
+    let dir_bulk = common::TempDir::new("api-bulk-a");
+    let dir_seq = common::TempDir::new("api-bulk-b");
+    let bulk = Db::create(dir_bulk.path(), schema()).expect("create");
+    let seq = Db::create(dir_seq.path(), schema()).expect("create");
 
     // > one chunk of holders (chunk = 4096).
     let n = 4_100u64;
@@ -719,8 +689,8 @@ fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
 
     // Mid-stream failure: prior chunks stay committed and the error
     // carries the committed count.
-    let dir_fail = test_dir("bulk-fail");
-    let fail = Db::create(&dir_fail, schema()).expect("create");
+    let dir_fail = common::TempDir::new("api-bulk-fail");
+    let fail = Db::create(dir_fail.path(), schema()).expect("create");
     let mut bad = facts;
     bad[4_099] = vec![Value::U64(0)]; // arity mismatch in the second chunk
     let err = fail.bulk_load(Holder::RELATION, bad).unwrap_err();
@@ -730,17 +700,12 @@ fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
         .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
         .expect("scan");
     assert_eq!(persisted, 4_096);
-
-    drop((bulk, seq, fail));
-    for d in [dir_bulk, dir_seq, dir_fail] {
-        let _ = std::fs::remove_dir_all(&d);
-    }
 }
 
 #[test]
 fn disk_size_and_generation_report_store_state() {
-    let dir = test_dir("disk-size");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-disk-size");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let empty = db.disk_size().expect("size");
     assert!(empty > 0, "a fresh environment still has pages");
     assert_eq!(db.generation().expect("gen"), 0);
@@ -759,9 +724,6 @@ fn disk_size_and_generation_report_store_state() {
     let grown = db.disk_size().expect("size");
     assert!(grown > empty, "10k facts grow the file: {empty} -> {grown}");
     assert_eq!(db.generation().expect("gen"), 1);
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The magnitude-first cover choice (docs/architecture/40-execution.md), end to end: the
@@ -772,8 +734,8 @@ fn disk_size_and_generation_report_store_state() {
 fn cover_choice_iterates_the_selected_side() {
     use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, Value, VarId};
 
-    let dir = test_dir("cover-choice");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-cover-choice");
+    let db = Db::create(dir.path(), schema()).expect("create");
     // 500 holders (ids 0..7 share the name "target"), 20 accounts each.
     db.write(|tx| {
         let mut holders = Vec::new();
@@ -854,8 +816,8 @@ fn cover_choice_iterates_the_selected_side() {
 fn compaction_drops_the_freelist_and_preserves_content() {
     use bumbledb::ir::Value;
 
-    let dir = test_dir("compact");
-    let source_dir = dir.join("source");
+    let dir = common::TempDir::new("api-compact");
+    let source_dir = dir.path().join("source");
     let db = Db::create(&source_dir, schema()).expect("create");
     // Many small commits grow a real freelist through CoW churn.
     for round in 0..40u64 {
@@ -882,7 +844,7 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     };
     let source_rows = scan_digest(&db);
 
-    let compact_dir = dir.join("compacted");
+    let compact_dir = dir.path().join("compacted");
     db.compact(&compact_dir).expect("compact");
     // Never clobbers.
     let err = db.compact(&compact_dir).expect_err("must refuse");
@@ -921,10 +883,10 @@ fn compaction_drops_the_freelist_and_preserves_content() {
 /// data through A's memo keys.
 #[test]
 fn a_prepared_query_refuses_a_foreign_snapshot() {
-    let dir_a = test_dir("foreign-prepared-a");
-    let dir_b = test_dir("foreign-prepared-b");
-    let db_a = Db::create(&dir_a, schema()).expect("create a");
-    let db_b = Db::create(&dir_b, schema()).expect("create b");
+    let dir_a = common::TempDir::new("api-foreign-prepared-a");
+    let dir_b = common::TempDir::new("api-foreign-prepared-b");
+    let db_a = Db::create(dir_a.path(), schema()).expect("create a");
+    let db_b = Db::create(dir_b.path(), schema()).expect("create b");
     for (db, name, balance) in [(&db_a, "alice", 10), (&db_b, "bob", 20)] {
         db.write(|tx| {
             let holder: HolderId = tx.alloc()?;
@@ -994,11 +956,6 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
         Ok(())
     })
     .expect("A unaffected");
-
-    drop(db_a);
-    drop(db_b);
-    let _ = std::fs::remove_dir_all(&dir_a);
-    let _ = std::fs::remove_dir_all(&dir_b);
 }
 
 /// The wipe-and-recreate variant — same path, new environment,
@@ -1006,8 +963,8 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
 /// store even though every byte of the path matches.
 #[test]
 fn a_recreated_store_is_foreign_to_old_prepared_queries() {
-    let dir = test_dir("foreign-recreate");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-foreign-recreate");
+    let db = Db::create(dir.path(), schema()).expect("create");
     db.write(|tx| {
         let holder: HolderId = tx.alloc()?;
         tx.insert(&Holder {
@@ -1025,8 +982,8 @@ fn a_recreated_store_is_foreign_to_old_prepared_queries() {
     let mut prepared = db.prepare(&join_query()).expect("prepare");
     drop(db);
 
-    std::fs::remove_dir_all(&dir).expect("wipe");
-    let recreated = Db::create(&dir, schema()).expect("recreate at the same path");
+    std::fs::remove_dir_all(dir.path()).expect("wipe");
+    let recreated = Db::create(dir.path(), schema()).expect("recreate at the same path");
     recreated
         .read(|snap| {
             let err = snap.execute_collect(&mut prepared, &[]).unwrap_err();
@@ -1037,28 +994,24 @@ fn a_recreated_store_is_foreign_to_old_prepared_queries() {
             Ok(())
         })
         .expect("read");
-
-    drop(recreated);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The advisory lock — a second live handle on the same path is
 /// a loud open-time error; dropping the first releases it.
 #[test]
 fn a_second_handle_on_a_live_path_is_locked_out() {
-    let dir = test_dir("env-lock");
-    let db = Db::create(&dir, schema()).expect("create");
-    let err = Db::open(&dir, schema()).map(|_| ()).unwrap_err();
+    let dir = common::TempDir::new("api-env-lock");
+    let db = Db::create(dir.path(), schema()).expect("create");
+    let err = Db::open(dir.path(), schema()).map(|_| ()).unwrap_err();
     assert!(matches!(err, bumbledb::Error::EnvironmentLocked), "{err:?}");
-    let err = Db::create(&dir, schema()).map(|_| ()).unwrap_err();
+    let err = Db::create(dir.path(), schema()).map(|_| ()).unwrap_err();
     assert!(
         matches!(err, bumbledb::Error::EnvironmentLocked),
         "create is locked out before it can even refuse: {err:?}"
     );
     drop(db);
-    let reopened = Db::open(&dir, schema()).expect("the lock died with the handle");
+    let reopened = Db::open(dir.path(), schema()).expect("the lock died with the handle");
     drop(reopened);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// `create` refuses a directory holding someone else's LMDB
@@ -1067,13 +1020,13 @@ fn a_second_handle_on_a_live_path_is_locked_out() {
 #[test]
 #[allow(unsafe_code)]
 fn create_refuses_a_foreign_lmdb_environment() {
-    let dir = test_dir("env-foreign-lmdb");
+    let dir = common::TempDir::new("api-env-foreign-lmdb");
     {
         // SAFETY: this test environment is opened once, in this scope.
         let env = unsafe {
             heed::EnvOpenOptions::new()
                 .max_dbs(2)
-                .open(&dir)
+                .open(dir.path())
                 .expect("raw lmdb env")
         };
         let mut wtxn = env.write_txn().expect("txn");
@@ -1083,30 +1036,27 @@ fn create_refuses_a_foreign_lmdb_environment() {
         db.put(&mut wtxn, b"k", b"v").expect("put");
         wtxn.commit().expect("commit");
     }
-    let err = Db::create(&dir, schema()).map(|_| ()).unwrap_err();
+    let err = Db::create(dir.path(), schema()).map(|_| ()).unwrap_err();
     assert!(
         matches!(err, bumbledb::Error::AlreadyInitialized),
         "{err:?}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 
     // The recovery case: an LMDB file with an empty root (exactly what a
     // crash between directory creation and the meta commit leaves).
-    let dir = test_dir("env-half-created");
+    let dir = common::TempDir::new("api-env-half-created");
     {
         // SAFETY: as above.
         let env = unsafe {
             heed::EnvOpenOptions::new()
                 .max_dbs(2)
-                .open(&dir)
+                .open(dir.path())
                 .expect("raw lmdb env")
         };
         let wtxn = env.write_txn().expect("txn");
         wtxn.commit().expect("commit nothing");
     }
-    let db = Db::create(&dir, schema()).expect("an empty root is recoverable");
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(Db::create(dir.path(), schema()).expect("an empty root is recoverable"));
 }
 
 /// `Db::write` is non-reentrant — a nested call on the same
@@ -1114,8 +1064,8 @@ fn create_refuses_a_foreign_lmdb_environment() {
 /// and the guard clears for the next (sequential) write.
 #[test]
 fn nested_write_panics_instead_of_deadlocking() {
-    let dir = test_dir("nested-write");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-nested-write");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = db.write(|_| db.write(|_| Ok(())));
     }));
@@ -1136,8 +1086,6 @@ fn nested_write_panics_instead_of_deadlocking() {
         })
     })
     .expect("the writer survives");
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The concurrency family: prepared queries on
@@ -1146,8 +1094,8 @@ fn nested_write_panics_instead_of_deadlocking() {
 /// equal balances, always — never a torn mix of two generations.
 #[test]
 fn prepared_executions_observe_exactly_one_generation() {
-    let dir = test_dir("gen-atomic");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-gen-atomic");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let (hx, hy, ax, ay) = db
         .write(|tx| {
             let hx: HolderId = tx.alloc()?;
@@ -1226,8 +1174,6 @@ fn prepared_executions_observe_exactly_one_generation() {
         }
         writer.join().expect("writer thread");
     });
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A *successful* commit persists every serial
@@ -1239,8 +1185,8 @@ fn prepared_executions_observe_exactly_one_generation() {
 #[test]
 #[allow(clippy::redundant_closure_for_method_calls)] // HRTB: the method path does not unify
 fn escaped_serials_survive_noop_commits() {
-    let dir = test_dir("serial-escape");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-serial-escape");
+    let db = Db::create(dir.path(), schema()).expect("create");
 
     // The empty-delta path.
     let a: HolderId = db.write(|tx| tx.alloc()).expect("bare alloc");
@@ -1290,9 +1236,6 @@ fn escaped_serials_survive_noop_commits() {
         generation_after_c, 1,
         "a nets-to-nothing write is not a state change"
     );
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Deleting a fact whose string was never interned is a proven
@@ -1301,8 +1244,8 @@ fn escaped_serials_survive_noop_commits() {
 /// still treat it as novel (both engine-visible effects of not minting).
 #[test]
 fn deleting_a_never_interned_string_is_a_mint_free_noop() {
-    let dir = test_dir("mint-free-delete");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-mint-free-delete");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let holder = db
         .write(|tx| {
             let id: HolderId = tx.alloc()?;
@@ -1363,9 +1306,6 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
         })
         .expect("scan");
     assert_eq!(names, vec!["real".to_owned()]);
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// An out-of-range relation id at the dynamic
@@ -1373,8 +1313,8 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
 /// `insert_dyn`, `delete_dyn`, `bulk_load`, and `scan` — never a panic.
 #[test]
 fn out_of_range_relation_ids_are_typed_errors() {
-    let dir = test_dir("unknown-relation");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-unknown-relation");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let bogus = bumbledb::RelationId(999);
     let is_unknown = |err: &bumbledb::Error| {
         matches!(
@@ -1407,9 +1347,6 @@ fn out_of_range_relation_ids_are_typed_errors() {
         Ok(())
     })
     .expect("read closes cleanly");
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The plan-staleness signal (`docs/architecture/70-api.md`): prepare
@@ -1421,8 +1358,8 @@ fn out_of_range_relation_ids_are_typed_errors() {
 #[allow(clippy::too_many_lines)] // one lifecycle, read in order: fresh →
                                  // grown → re-prepared → shrunk
 fn staleness_reports_drift_and_reprepare_resets_it() {
-    let dir = test_dir("staleness");
-    let db = Db::create(&dir, schema()).expect("create");
+    let dir = common::TempDir::new("api-staleness");
+    let db = Db::create(dir.path(), schema()).expect("create");
     let holder = db
         .write(|tx| {
             let holder: HolderId = tx.alloc()?;
@@ -1530,7 +1467,4 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
         Ok(())
     })
     .expect("shrunk read");
-
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
 }

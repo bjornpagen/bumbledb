@@ -99,55 +99,25 @@ impl PreparedQuery<'_> {
                     &mut self.sink,
                 )?;
             }
-            ExecPlan::FreeJoin(plan) => {
-                self.sink.reset();
-                let resolved = {
-                    let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
-                    resolve_predicates(
-                        txn,
-                        plan,
-                        &self.resolved_params,
-                        &self.missed_params,
-                        &mut self.resolved_filters,
-                        &mut self.resolved_selections,
-                    )?
-                };
-                if !resolved {
-                    return Ok(()); // Eq-anchored dictionary miss: empty result
-                }
+            ExecPlan::FreeJoin(_) => {
                 // Phase attribution engages only under an active obs
                 // capture (docs/architecture/60-validation.md): timing
                 // runs — even obs builds — monomorphize NoopCounters and
                 // pay nothing.
-                macro_rules! run_join_with {
-                    ($counters:expr) => {
-                        run_join(
-                            plan,
-                            self.schema,
-                            txn,
-                            cache,
-                            self.executor
-                                .as_mut()
-                                .expect("free join plans carry executor scratch"),
-                            &mut self.bindings,
-                            &self.resolved_filters,
-                            &self.resolved_selections,
-                            &mut self.memo,
-                            &mut self.sink,
-                            $counters,
-                        )
-                    };
-                }
                 #[cfg(feature = "trace")]
-                if obs::capturing() {
+                let ran = if obs::capturing() {
                     let mut timers = crate::exec::run::PhaseTimers::new();
-                    run_join_with!(&mut timers)?;
+                    let ran = self.run_free_join(txn, cache, &mut timers)?;
                     timers.flush();
+                    ran
                 } else {
-                    run_join_with!(&mut NoopCounters)?;
-                }
+                    self.run_free_join(txn, cache, &mut NoopCounters)?
+                };
                 #[cfg(not(feature = "trace"))]
-                run_join_with!(&mut NoopCounters)?;
+                let ran = self.run_free_join(txn, cache, &mut NoopCounters)?;
+                if !ran {
+                    return Ok(()); // Eq-anchored dictionary miss: empty result
+                }
             }
         }
         let _s = obs::span(obs::names::FINALIZE, obs::Category::Execute);
@@ -160,6 +130,54 @@ impl PreparedQuery<'_> {
             self.all_words,
             out,
         )
+    }
+
+    /// The Free Join body shared by every entry (`execute`,
+    /// `execute_args`, `profile`): resets the sink, resolves this
+    /// execution's predicate constants, and runs the join. `Ok(false)` =
+    /// the positive-occurrence `Eq` short-circuit (a dictionary miss or
+    /// empty set emptied the whole conjunctive query — nothing ran, the
+    /// sink stays reset, and the caller skips finalize).
+    pub(super) fn run_free_join<C: crate::exec::run::Counters>(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        cache: &ImageCache,
+        counters: &mut C,
+    ) -> Result<bool> {
+        let ExecPlan::FreeJoin(plan) = &self.plan else {
+            unreachable!("free join entries dispatch on the plan")
+        };
+        self.sink.reset();
+        let resolved = {
+            let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
+            resolve_predicates(
+                txn,
+                plan,
+                &self.resolved_params,
+                &self.missed_params,
+                &mut self.resolved_filters,
+                &mut self.resolved_selections,
+            )?
+        };
+        if !resolved {
+            return Ok(false);
+        }
+        run_join(
+            plan,
+            self.schema,
+            txn,
+            cache,
+            self.executor
+                .as_mut()
+                .expect("free join plans carry executor scratch"),
+            &mut self.bindings,
+            &self.resolved_filters,
+            &self.resolved_selections,
+            &mut self.memo,
+            &mut self.sink,
+            counters,
+        )?;
+        Ok(true)
     }
 
     /// The point fast lane's body: probe + fetch +

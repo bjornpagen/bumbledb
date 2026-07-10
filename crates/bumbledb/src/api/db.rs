@@ -226,6 +226,23 @@ pub struct WriteTx<'a> {
     refs: Vec<ValueRef>,
 }
 
+impl WriteTx<'_> {
+    /// Runs `body` with the encode scratch taken out (a typed encode
+    /// borrows the whole transaction mutably alongside the buffer),
+    /// restoring the buffer — and its capacity — afterward, success or
+    /// error. The one scratch discipline of every typed operation.
+    fn with_scratch<R>(
+        &mut self,
+        body: impl FnOnce(&mut Self, &mut Vec<u8>) -> Result<R>,
+    ) -> Result<R> {
+        let mut bytes = std::mem::take(&mut self.scratch);
+        bytes.clear();
+        let out = body(self, &mut bytes);
+        self.scratch = bytes;
+        out
+    }
+}
+
 /// How [`WriteTx::encode_dyn`] treats novel strings and bytes: the insert
 /// path mints provisional intern ids; the delete path only resolves —
 /// a value neither pending nor committed proves its fact absent.

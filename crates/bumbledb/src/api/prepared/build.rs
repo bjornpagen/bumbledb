@@ -119,11 +119,10 @@ pub(crate) fn prepare<'s>(
     // Dense param typing for bind-time checks (validation rejected gaps,
     // so the id-ordered iteration is positional). A set param records its
     // element type plus the set-ness bit — bind expects a slice for it.
-    let param_types: Vec<ValueType> = witness.param_types().map(|(_, ty)| ty.clone()).collect();
-    let param_is_set: Vec<bool> = witness
+    let (param_types, param_is_set): (Vec<ValueType>, Vec<bool>) = witness
         .param_types()
-        .map(|(id, _)| witness.set_params().contains(&id))
-        .collect();
+        .map(|(id, ty)| (ty.clone(), witness.set_params().contains(&id)))
+        .unzip();
 
     // Binding slots are WORDS: an interval variable holds two (the
     // SlotWidth layout) — `slot_count`, never the variable count.

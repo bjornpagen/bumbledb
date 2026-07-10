@@ -16,14 +16,11 @@ impl WriteTx<'_> {
     ///
     /// As [`WriteTx::insert`].
     pub fn delete<F: Fact>(&mut self, fact: &F) -> Result<bool> {
-        let mut bytes = std::mem::take(&mut self.scratch);
-        bytes.clear();
-        let changed = match fact.encode_delete(self, &mut bytes) {
-            Ok(true) => self.delta.delete(&self.view, F::RELATION, &bytes),
-            Ok(false) => Ok(false),
-            Err(err) => Err(err),
-        };
-        self.scratch = bytes;
-        changed
+        self.with_scratch(|tx, bytes| {
+            if !fact.encode_delete(tx, bytes)? {
+                return Ok(false);
+            }
+            tx.delta.delete(&tx.view, F::RELATION, bytes)
+        })
     }
 }
