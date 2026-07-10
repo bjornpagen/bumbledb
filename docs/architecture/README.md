@@ -68,6 +68,13 @@ documents themselves describe **only the current reality**.
   state-changing commit; accepted leak, `10-data-model.md`). *Trigger: measured
   dictionary growth — both classes counted — dominating store size on a real churn
   workload.*
+- **`M`-key width**: membership keys carry the full 32-byte blake3; truncating to
+  16 bytes shrinks every `M` key ~40% (B-tree fanout and node count — a real,
+  benchmarkable write-path and store-size effect) at the cost of dropping the
+  adversarial collision margin from 2¹²⁸ to 2⁶⁴ (accidental stays negligible,
+  ~2⁻¹⁰⁵ at the scale axiom). *Trigger: a measured write-path or store-size
+  violation attributable to `M`-key width; the decision then weighs the 2⁶⁴
+  margin against the number (`10-data-model.md` identity-hash decision).*
 - **Incremental image maintenance**: images rebuild whole per state-changing commit
   by design (the write design point amortizes it). *Trigger: traced rebuild cost
   violating the latency budget despite the cache — recorded with D1's reversal.*

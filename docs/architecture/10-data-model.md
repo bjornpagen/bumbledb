@@ -235,6 +235,28 @@ Storage (`50-storage.md`) implements membership as blake3-256 of `fact_bytes`;
 (2⁻¹²⁸-scale event), not verified against, and the same axiom applies to the
 dictionary's content hash. Recorded once, here.
 
+**Decision: blake3, full 32 bytes, as the identity hash.** The distinction that
+decides it: this hash is **content-addressed identity**, not a corruption
+checksum — the `M` probe and the dictionary resolve by hash with no byte
+verification, so a collision is not a detected error but two distinct facts or
+strings silently unified, and external-world strings enter the dictionary, so
+the contract requires cryptographic collision resistance against chosen inputs.
+And the hash is on no measured hot path: it runs once per touched fact per write
+op (deduplicated by design), once per novel interned string, once per open — the
+write path is fsync-bound (~100 ns of hash against milliseconds of commit) and
+the query path never hashes (queries compare intern words). **Alternative
+(strong):** AEGIS-128L, per TigerBeetle's storage checksums — severalfold faster
+on AES-accelerated hardware including Apple Silicon. **Why it lost:**
+TigerBeetle's adversary is bitrot (integrity), ours is unification (identity);
+an unkeyed 128-bit AES-round tag carries no collision-resistance claim, and
+under the shipping law no swap can cite a number while every swap breaks the
+set-in-stone format (`M` keys, dict keys, fingerprint). **Reverses if:** never
+for AEGIS (contract, not cost); **hardware SHA-256** (ARMv8 crypto extensions,
+collision resistance intact, faster than blake3 at small inputs on this
+hardware) only on a measured write-path CPU bottleneck. Synergy noted: blake3 is
+one of the two sanctioned engine deps and frozen upstream — the hash-stability
+risk TigerBeetle solved by vendoring does not exist here.
+
 Note the denotation asymmetry, stated so nobody trips on it: *identity* is bytes —
 `(x, [1,5))` and `(x, [1,8))` are different facts — while *dependency judgments and
 membership queries* read intervals through the denotation. Both layers are exact;
