@@ -48,6 +48,25 @@ derivation ("`fresh` auto-materializes `R(field) -> R`") is unchanged in
 substance and re-stated in the new name. Discharge the idioms chapter
 (README of this set) into `10-data-model.md` in the same change.
 
+Two further doc discharges ride along (approved 2026-07-09, doc-only):
+
+- **The identity-hash decision block**, beside the collision axiom in
+  `10-data-model.md`: blake3-256 full-width for identity. **Alternative
+  (strong):** AEGIS-128L per TigerBeetle (`vsr/checksum.zig`) — hardware-AES
+  speed. **Why it lost:** their hash is a corruption *checksum* (adversarial
+  collision resistance a non-goal); ours is content-addressed *identity* with
+  no byte verification, so the collision axiom's 2⁻¹²⁸ arithmetic holds only
+  if collisions cannot be manufactured — which is what collision resistance
+  is. The hash is on no measured hot path (write path is fsync-bound; queries
+  compare intern words), so no swap can cite a number, and the on-disk format
+  is set in stone. **Reverses if:** never for AEGIS (contract, not cost);
+  hardware SHA-256 only on a measured write-path CPU bottleneck.
+- **The M-key-width OPEN item** (architecture README): truncating the 32-byte
+  `M` hash to 16 shrinks every membership key ~40% — B-tree fanout, a real
+  number — at the cost of the adversarial margin dropping to 2⁶⁴. *Trigger:*
+  a measured write-path or store-size violation attributable to `M`-key
+  width.
+
 ## Passing criteria
 
 - `[shape]` `grep -ri serial crates/ docs/architecture/` returns nothing

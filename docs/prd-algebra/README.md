@@ -90,18 +90,19 @@ Phase C — the temporal completions:
 - [11 — The sweep: one walk, two callers](11-sweep.md)
 - [12 — `Pack`: the coalescing fold](12-pack.md)
 
-Phase D — the surface:
-- [13 — The borrowed surface: structs and params](13-borrowed-surface.md)
-- [14 — The named theory: schema as type, `Db<S>`](14-named-theory.md)
+Phase D — the surface (**landed early**: implemented as `docs/prd/22` before
+this set began execution; 13/14 are reconciliation records):
+- [13 — The borrowed surface: structs and params — LANDED](13-borrowed-surface.md)
+- [14 — The named theory — LANDED, one residual (the `Theory` rename, folded into 01)](14-named-theory.md)
 
 Phase E — the earning:
 - [15 — Oracles and the generator](15-oracles.md)
 - [16 — The calendar family](16-calendar-family.md)
 
 Dependency spine: 01–02 free; 03→04; 05→06→07→08; 09 additionally requires
-`docs/prd/` 11–12 (the chase) landed; 10 requires 02; 11→12; 13→14 (and both
-land after `docs/prd/` 20); 15 requires 03/05/10/12; 16 requires 15. Phases
-A/B/C may interleave; D and E close the set.
+`docs/prd/` 11–12 (the chase) landed; 10 requires 02; 11→12; 13/14 landed
+(residual rides 01); 15 requires 03/05/10/12; 16 requires 15. Phases A/B/C may
+interleave; E closes the set.
 
 ## Refusals (recorded with derivations — do not re-litigate)
 
