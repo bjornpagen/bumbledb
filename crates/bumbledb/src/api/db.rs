@@ -198,6 +198,15 @@ pub struct Snapshot<'db> {
     schema: &'db Schema,
 }
 
+impl<'db> Snapshot<'db> {
+    /// The snapshot's read transaction (reader: the staleness signal —
+    /// [`crate::PreparedQuery::staleness`] takes the snapshot directly
+    /// rather than routing through a `Snapshot` wrapper method).
+    pub(crate) fn txn(&self) -> &ReadTxn<'db> {
+        &self.txn
+    }
+}
+
 /// One write transaction: an in-memory write delta over a read view. Operations
 /// are in-memory set arithmetic — order is semantically irrelevant, and
 /// `delete(old); insert(new)` in either order is the blessed mutation

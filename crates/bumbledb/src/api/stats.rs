@@ -15,6 +15,14 @@ pub struct ExecutionStats {
     /// in the plan; this surface renders the marks. Empty for guard
     /// probes (single-atom queries have nothing to pair).
     pub eliminated: Vec<EliminatedOccurrence>,
+    /// Per participating occurrence, in occurrence-id order: the
+    /// statistics the plan was costed with — every node `estimate` is
+    /// estimated from (pinned rows at prepare), so a drifted plan is
+    /// visible in one read of this surface (the pull-based signal is
+    /// `PreparedQuery::staleness`). Empty for guard probes (they read
+    /// no statistics); negated and chase-eliminated occurrences earned
+    /// no statistics read at prepare and carry no entry.
+    pub pinned: Vec<PinnedRows>,
     /// Bindings emitted to the sink.
     pub emits: u64,
     /// Present iff the query classified as a guard probe.
@@ -34,6 +42,24 @@ pub struct EliminatedOccurrence {
     /// The statement rendered in the `schema!` algebra notation
     /// (`schema/render.rs`), e.g. `Posting(account) <= Account(id)`.
     pub rendered: String,
+}
+
+/// One occurrence's pinned prepare-time statistics: what the plan was
+/// costed with (docs/architecture/20-query-ir.md, pin-at-prepare) —
+/// est-vs-actual honesty for a plan whose data has moved since.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedRows {
+    /// The occurrence index (`OccId`) in the normalized occurrence table.
+    pub occurrence: u16,
+    /// The occurrence's relation name.
+    pub relation: String,
+    /// The `S`-counter row count read at prepare.
+    pub rows: u64,
+    /// The filtered view's survivor count as measured at prepare, where
+    /// the occurrence carries filters (exact where a resident image was
+    /// measured; documented bounds and floors otherwise —
+    /// `plan/selectivity.rs`). `None` = unfiltered.
+    pub survivors: Option<u64>,
 }
 
 /// One node's counted execution.

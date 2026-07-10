@@ -8,12 +8,15 @@ impl CountingCounters {
     /// the one source of truth `Report` renders from and
     /// `Snapshot::profile` returns. The schema resolves relation names
     /// and renders each eliminated occurrence's licensing statement
-    /// (`schema/render.rs`).
+    /// (`schema/render.rs`). `pinned` is the prepared query's rendered
+    /// pin record (`PreparedQuery::pinned_rows` — the statistics the
+    /// estimates derive from), carried through untouched.
     #[must_use]
     pub fn into_stats(
         self,
         plan: &ValidatedPlan,
         schema: &Schema,
+        pinned: Vec<crate::api::stats::PinnedRows>,
     ) -> crate::api::stats::ExecutionStats {
         use crate::api::stats::{CoverStats, EliminatedOccurrence, ExecutionStats, NodeStats};
         let nodes = plan
@@ -74,6 +77,7 @@ impl CountingCounters {
         ExecutionStats {
             nodes,
             eliminated,
+            pinned,
             emits: self.emits,
             guard: None,
         }

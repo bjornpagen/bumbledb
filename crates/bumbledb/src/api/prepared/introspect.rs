@@ -65,6 +65,9 @@ impl PreparedQuery<'_> {
                 // A guard probe is a single-atom query: the chase has
                 // nothing to pair, so no marks can exist.
                 eliminated: Vec::new(),
+                // Classification precedes statistics: a guard probe
+                // reads none, so nothing is pinned.
+                pinned: Vec::new(),
                 emits: out.len() as u64,
                 guard: Some(crate::api::stats::GuardStats {
                     hit: !out.is_empty(),
@@ -87,7 +90,10 @@ impl PreparedQuery<'_> {
                     &mut self.resolved_selections,
                 )?;
                 if short_circuit {
-                    return Ok((out, counters.into_stats(plan, self.schema)));
+                    return Ok((
+                        out,
+                        counters.into_stats(plan, self.schema, self.pinned_rows()),
+                    ));
                 }
                 self.sink.reset();
                 run_join(
@@ -114,7 +120,10 @@ impl PreparedQuery<'_> {
                     self.all_words,
                     &mut out,
                 )?;
-                Ok((out, counters.into_stats(plan, self.schema)))
+                Ok((
+                    out,
+                    counters.into_stats(plan, self.schema, self.pinned_rows()),
+                ))
             }
         }
     }

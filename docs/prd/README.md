@@ -63,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [13 — Plan staleness signal](13-staleness-signal.md)
 - [14 — Minor findings sweep](14-minor-sweep.md)
 - [15 — CommitPlan: compute, don't accumulate](15-commit-plan.md)
 - [16 — Elegance: schema, encoding, error](16-elegance-schema.md)

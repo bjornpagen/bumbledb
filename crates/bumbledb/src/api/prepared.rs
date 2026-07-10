@@ -27,12 +27,15 @@ mod introspect;
 mod resolve_memo;
 mod result_buffer;
 mod run_join;
+mod staleness;
 mod view_memo;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use self::build::prepare;
+use self::staleness::OccurrencePin;
+pub use self::staleness::{OccurrenceDrift, Staleness};
 
 /// One positional execution argument (`docs/architecture/70-api.md`
 /// § facts and results): params are supplied by `ParamId` position —
@@ -185,6 +188,12 @@ pub struct PreparedQuery<'s> {
     resolve_memo: ResolveMemo,
     /// Guard-key byte scratch.
     guard_key: Vec<u8>,
+    /// The staleness pin record (`staleness.rs`): per participating
+    /// occurrence, the statistics the plan was costed with. Cold data —
+    /// written once at build, read only by [`PreparedQuery::staleness`]
+    /// and the stats surface, never by execution. Empty for guard
+    /// probes (classification precedes statistics; nothing is read).
+    pinned: Box<[OccurrencePin]>,
     /// Marker: a prepared query is single-threaded scratch.
     _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
 }

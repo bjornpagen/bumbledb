@@ -67,8 +67,12 @@ mod value;
 mod verify_store;
 
 pub use api::db::{BulkLoadError, Db, Fact, Serial, SerialKeyed, Snapshot, WriteTx};
-pub use api::prepared::{ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row};
-pub use api::stats::{CoverStats, EliminatedOccurrence, ExecutionStats, GuardStats, NodeStats};
+pub use api::prepared::{
+    OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
+};
+pub use api::stats::{
+    CoverStats, EliminatedOccurrence, ExecutionStats, GuardStats, NodeStats, PinnedRows,
+};
 pub use error::{Direction, Error, Result};
 pub use interval::Interval;
 /// The chase's test-support off switch (`plan/chase.rs`): reachable only

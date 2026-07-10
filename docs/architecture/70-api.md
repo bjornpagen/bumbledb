@@ -82,6 +82,21 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   execution entry checks the environment's process-unique instance id first and
   returns `ForeignPreparedQuery` on a foreign snapshot (plan, statistics, and view
   memo all belong to the preparing environment).
+- `prepared.staleness(&snap)` — the plan-drift signal, the pin-at-prepare decision's
+  compensating control (`20-query-ir.md`): per participating occurrence, the row
+  count the plan was costed with against the snapshot's live `S` counter (one O(1)
+  get each, ≤ 20 by the roster cap), each ratio
+  `max(live, pinned) / max(1, min(live, pinned))` so shrink and growth both read as
+  drift ≥ 1, plus the max. Pull-based and engine-policy-free: the engine never calls
+  it and holds no thresholds — the host owns policy (`00-product.md`). Convention,
+  not contract: re-prepare at max ratio ≥ 4× (the worst measured est/actual on a
+  fresh plan is 3.3×, so 4× separates plan drift from estimation noise). Same
+  foreign-snapshot guard as execution; it allocates — a diagnostic surface, never a
+  warm-path call. Negated and chase-eliminated occurrences earn no statistics read
+  at prepare and so carry no pin; guard probes pin nothing. The stats/EXPLAIN
+  surface (`Snapshot::profile`) carries the same pin record per occurrence —
+  "estimated from (pinned rows at prepare)" — so a drifted plan is visible in one
+  read of the existing report.
 - `db.write(|tx| ...)` — the single writer; commits on `Ok`, aborts on `Err`/panic.
   Non-reentrant: a nested `write` from within a write closure on the same thread
   panics with a named message ("nested Db::write") rather than self-deadlocking on

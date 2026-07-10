@@ -974,6 +974,13 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
         );
+        // The staleness signal guards its entry identically: pinned
+        // statistics belong to the preparing environment.
+        let err = prepared.staleness(snap).unwrap_err();
+        assert!(
+            matches!(err, bumbledb::Error::ForeignPreparedQuery),
+            "{err:?}"
+        );
         Ok(())
     })
     .expect("read on b");
@@ -1398,6 +1405,129 @@ fn out_of_range_relation_ids_are_typed_errors() {
         Ok(())
     })
     .expect("read closes cleanly");
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The plan-staleness signal (`docs/architecture/70-api.md`): prepare
+/// pins per-occurrence row counts; `staleness` compares them against a
+/// snapshot's live counters. Growth to ~4x reads as ratio 4 on the grown
+/// occurrence (and as the max); re-preparing resets the pin; a shrunk
+/// relation also reads as drift > 1 — the ratio is symmetric.
+#[test]
+#[allow(clippy::too_many_lines)] // one lifecycle, read in order: fresh →
+                                 // grown → re-prepared → shrunk
+fn staleness_reports_drift_and_reprepare_resets_it() {
+    let dir = test_dir("staleness");
+    let db = Db::create(&dir, schema()).expect("create");
+    let holder = db
+        .write(|tx| {
+            let holder: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id: holder,
+                name: "alice".to_owned(),
+            })?;
+            for balance in 0..8 {
+                let id: AccountId = tx.alloc()?;
+                tx.insert(&Account {
+                    id,
+                    holder,
+                    balance,
+                })?;
+            }
+            Ok(holder)
+        })
+        .expect("seed 1 holder + 8 accounts");
+    let prepared = db.prepare(&join_query()).expect("prepare at N");
+
+    // Fresh plan: both occurrences pinned, nothing drifted.
+    db.read(|snap| {
+        let staleness = prepared.staleness(snap)?;
+        assert_eq!(staleness.per_occurrence.len(), 2);
+        assert!(
+            (staleness.max_ratio - 1.0).abs() < f64::EPSILON,
+            "{staleness:?}"
+        );
+        Ok(())
+    })
+    .expect("fresh read");
+
+    // Grow Account 8 → 32 (~4x); Holder stays put.
+    db.write(|tx| {
+        for balance in 8..32 {
+            let id: AccountId = tx.alloc()?;
+            tx.insert(&Account {
+                id,
+                holder,
+                balance,
+            })?;
+        }
+        Ok(())
+    })
+    .expect("grow accounts to 4N");
+
+    db.read(|snap| {
+        let staleness = prepared.staleness(snap)?;
+        let account = staleness
+            .per_occurrence
+            .iter()
+            .find(|d| d.relation == Account::RELATION)
+            .expect("the Account occurrence is pinned");
+        assert_eq!(account.pinned, 8);
+        assert_eq!(account.live, 32);
+        assert!((account.ratio - 4.0).abs() < f64::EPSILON, "{account:?}");
+        let holder = staleness
+            .per_occurrence
+            .iter()
+            .find(|d| d.relation == Holder::RELATION)
+            .expect("the Holder occurrence is pinned");
+        assert!((holder.ratio - 1.0).abs() < f64::EPSILON, "{holder:?}");
+        assert!(
+            (staleness.max_ratio - 4.0).abs() < f64::EPSILON,
+            "the max is the worst occurrence: {staleness:?}"
+        );
+        Ok(())
+    })
+    .expect("drifted read");
+
+    // Re-prepare: the pin resets to the live counts.
+    let reprepared = db.prepare(&join_query()).expect("re-prepare at 4N");
+    db.read(|snap| {
+        let staleness = reprepared.staleness(snap)?;
+        assert!(
+            (staleness.max_ratio - 1.0).abs() < f64::EPSILON,
+            "{staleness:?}"
+        );
+        Ok(())
+    })
+    .expect("reset read");
+
+    // Shrink Account 32 → 8: drift reads > 1 in this direction too.
+    let accounts: Vec<Account> = db
+        .read(|snap| snap.scan_facts::<Account>()?.collect())
+        .expect("collect accounts");
+    db.write(|tx| {
+        for account in accounts.iter().take(24) {
+            tx.delete(account)?;
+        }
+        Ok(())
+    })
+    .expect("shrink accounts");
+    db.read(|snap| {
+        let staleness = reprepared.staleness(snap)?;
+        let account = staleness
+            .per_occurrence
+            .iter()
+            .find(|d| d.relation == Account::RELATION)
+            .expect("the Account occurrence is pinned");
+        assert_eq!(account.pinned, 32);
+        assert_eq!(account.live, 8);
+        assert!(account.ratio > 1.0, "shrink reads as drift: {account:?}");
+        assert!((staleness.max_ratio - 4.0).abs() < f64::EPSILON);
+        Ok(())
+    })
+    .expect("shrunk read");
 
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);

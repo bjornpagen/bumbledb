@@ -246,7 +246,11 @@ invariants.
 A `ValidatedQuery` is planned once into a `PreparedQuery` — the reusable object the
 zero-allocation contract is written against (`40-execution.md`). **Plans pin the
 statistics read at prepare time and are never invalidated by writes**; stale plans are
-accepted at this scale, and re-preparation is explicit. (Literal values are part of the
+accepted at this scale, and re-preparation is explicit. The compensating control is
+`PreparedQuery::staleness` (`70-api.md`): the pinned per-occurrence row counts survive
+on the prepared query as a cold record, and the host — never the engine — can pull the
+drift against a snapshot's live `S` counters and decide to re-prepare; no engine-side
+threshold, trigger, or background anything exists. (Literal values are part of the
 query, hence of the prepared plan; queries meant for reuse across values use Params.)
 **Param sets and the pinned plan:** the plan assumes a *small* set (it plans the
 set-bound position like a selective equality; the documented assumption is |set| ≤

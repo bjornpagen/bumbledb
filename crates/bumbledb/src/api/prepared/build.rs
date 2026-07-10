@@ -1,6 +1,6 @@
 use super::{
-    AggregateSink, Bindings, Colt, EitherSink, ExecPlan, Executor, FindSpec, PreparedQuery,
-    ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo, PARKED_SLOTS,
+    AggregateSink, Bindings, Colt, EitherSink, ExecPlan, Executor, FindSpec, OccurrencePin,
+    PreparedQuery, ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo, PARKED_SLOTS,
 };
 
 use crate::error::Result;
@@ -56,6 +56,10 @@ pub(crate) fn prepare<'s>(
         let _s = obs::span(obs::names::CLASSIFY, obs::Category::Prepare);
         classify(&normalized, schema)
     };
+    // The staleness pin record (`staleness.rs`): the statistics below,
+    // kept instead of dropped. Stays empty for guard probes — they read
+    // no statistics, so there is nothing to drift.
+    let mut pins = Vec::new();
     let exec_plan = if let Some(guard) = classified {
         ExecPlan::GuardProbe(guard)
     } else {
@@ -65,7 +69,8 @@ pub(crate) fn prepare<'s>(
         // builds an image for statistics), documented bounds and floors.
         // Participating occurrences only: negated occurrences enter no
         // DP state and chase-eliminated occurrences left planning
-        // entirely, so neither earns a statistics read.
+        // entirely, so neither earns a statistics read — and, by the
+        // same token, neither earns a pin.
         let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
         let mut stats = Vec::with_capacity(normalized.occurrences.len());
         for occurrence in normalized
@@ -74,9 +79,15 @@ pub(crate) fn prepare<'s>(
             .filter(|o| o.role.participates())
         {
             let rows = read::row_count(txn, occurrence.relation)?;
-            stats.push(crate::plan::selectivity::occurrence_stats(
-                txn, cache, schema, occurrence, rows,
-            )?);
+            let occ_stats =
+                crate::plan::selectivity::occurrence_stats(txn, cache, schema, occurrence, rows)?;
+            pins.push(OccurrencePin {
+                occ_id: occurrence.occ_id,
+                relation: occurrence.relation,
+                rows,
+                survivors: (!occurrence.filters.is_empty()).then_some(occ_stats.rows),
+            });
+            stats.push(occ_stats);
         }
         stats_span.set_args(stats.len() as u64, 0);
         stats_span.end();
@@ -172,6 +183,7 @@ pub(crate) fn prepare<'s>(
         guard_finds,
         resolve_memo: ResolveMemo::new(),
         guard_key: Vec::new(),
+        pinned: pins.into_boxed_slice(),
         _not_sync: std::marker::PhantomData,
     })
 }
