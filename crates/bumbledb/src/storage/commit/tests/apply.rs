@@ -22,7 +22,8 @@ fn insert_lands_exactly_the_expected_key_set() {
         delta.insert(&view, TARGET, &t).expect("insert");
         delta.insert(&view, KEYED, &k).expect("insert");
         drop(view);
-        let applied = apply(delta, &env).expect("apply");
+        let plan = plan_for(&delta, &env);
+        let applied = apply(&plan, &env).expect("apply");
 
         let t_hash = crate::encoding::fact_hash(&t);
         let k_hash = crate::encoding::fact_hash(&k);
@@ -38,14 +39,10 @@ fn insert_lands_exactly_the_expected_key_set() {
         .collect();
         assert_eq!(all_data_keys(&applied.txn, &env), expected);
 
-        // Bookkeeping: no deleted guards; the inserted Target guard is
-        // recorded because a containment targets its key, and Keyed's
-        // guard is not (no dependents).
-        assert!(applied.deleted_guards.is_empty());
-        assert_eq!(applied.inserted_guards.len(), 1);
-        assert!(applied
-            .inserted_guards
-            .contains(&(TARGET_KEY, encode_u64(5).to_vec())));
+        // Bookkeeping: nothing deleted, so the plan's target-side check
+        // set is empty; the insert-side guard and edge material is pinned
+        // byte-level by the plan derivation tests (`tests/plan.rs`).
+        assert!(plan.target_checks.is_empty());
         // Abort: drop the txn without committing.
     }
     assert!(committed_data(&env).is_empty());
@@ -66,7 +63,8 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, TARGET, &t5).expect("insert");
         drop(view);
-        apply(delta, &env)
+        let plan = plan_for(&delta, &env);
+        apply(&plan, &env)
             .expect("apply")
             .txn
             .commit()
@@ -87,7 +85,8 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
     let mut delta = WriteDelta::new(&schema);
     delta.delete(&view, TARGET, &t5).expect("record delete");
     drop(view);
-    let Err(err) = apply(delta, &env).map(|_| ()) else {
+    let plan = plan_for(&delta, &env);
+    let Err(err) = apply(&plan, &env).map(|_| ()) else {
         panic!("apply must fail on a scrubbed F row");
     };
     assert!(matches!(
@@ -114,7 +113,8 @@ fn deleting_a_fact_with_a_scrubbed_interval_guard_is_corruption() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, BOOKING, &booked).expect("insert");
         drop(view);
-        apply(delta, &env)
+        let plan = plan_for(&delta, &env);
+        apply(&plan, &env)
             .expect("apply")
             .txn
             .commit()
@@ -139,7 +139,8 @@ fn deleting_a_fact_with_a_scrubbed_interval_guard_is_corruption() {
         .delete(&view, BOOKING, &booked)
         .expect("record delete");
     drop(view);
-    let Err(err) = apply(delta, &env).map(|_| ()) else {
+    let plan = plan_for(&delta, &env);
+    let Err(err) = apply(&plan, &env).map(|_| ()) else {
         panic!("apply must fail on a scrubbed U guard");
     };
     assert!(matches!(
@@ -174,13 +175,15 @@ fn base_state_disagreeing_with_a_proved_disposition_is_corruption() {
         let mut sneak = WriteDelta::new(&schema);
         sneak.insert(&view, TARGET, &t5).expect("insert");
         drop(view);
-        apply(sneak, &env)
+        let plan = plan_for(&sneak, &env);
+        apply(&plan, &env)
             .expect("apply")
             .txn
             .commit()
             .expect("commit");
     }
-    let Err(err) = apply(insert_delta, &env).map(|_| ()) else {
+    let plan = plan_for(&insert_delta, &env);
+    let Err(err) = apply(&plan, &env).map(|_| ()) else {
         panic!("apply must fail on a base state the delta disproved");
     };
     assert!(matches!(
@@ -205,7 +208,8 @@ fn base_state_disagreeing_with_a_proved_disposition_is_corruption() {
             .expect("del"));
         wtxn.commit().expect("commit");
     }
-    let Err(err) = apply(delete_delta, &env).map(|_| ()) else {
+    let plan = plan_for(&delete_delta, &env);
+    let Err(err) = apply(&plan, &env).map(|_| ()) else {
         panic!("apply must fail on a base state the delta disproved");
     };
     assert!(matches!(
@@ -230,7 +234,8 @@ fn delete_removes_exactly_its_entries() {
         delta.insert(&view, TARGET, &t6).expect("insert");
         delta.insert(&view, KEYED, &k).expect("insert");
         drop(view);
-        apply(delta, &env)
+        let plan = plan_for(&delta, &env);
+        apply(&plan, &env)
             .expect("apply")
             .txn
             .commit()
@@ -243,7 +248,8 @@ fn delete_removes_exactly_its_entries() {
     let mut delta = WriteDelta::new(&schema);
     delta.delete(&view, KEYED, &k).expect("delete");
     drop(view);
-    let applied = apply(delta, &env).expect("apply");
+    let plan = plan_for(&delta, &env);
+    let applied = apply(&plan, &env).expect("apply");
 
     let k_hash = crate::encoding::fact_hash(&k);
     let removed: BTreeSet<Vec<u8>> = [
@@ -259,8 +265,8 @@ fn delete_removes_exactly_its_entries() {
         .filter(|k| !removed.contains(k))
         .collect();
     assert_eq!(all_data_keys(&applied.txn, &env), expected);
-    // Keyed's key has no containment dependents; nothing to record.
-    assert!(applied.deleted_guards.is_empty());
+    // Keyed's key has no containment dependents; no check set.
+    assert!(plan.target_checks.is_empty());
 }
 
 #[test]
@@ -274,7 +280,8 @@ fn deleting_a_containment_targeted_key_records_its_guard() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, TARGET, &t5).expect("insert");
         drop(view);
-        apply(delta, &env)
+        let plan = plan_for(&delta, &env);
+        apply(&plan, &env)
             .expect("apply")
             .txn
             .commit()
@@ -284,10 +291,12 @@ fn deleting_a_containment_targeted_key_records_its_guard() {
     let mut delta = WriteDelta::new(&schema);
     delta.delete(&view, TARGET, &t5).expect("delete");
     drop(view);
-    let applied = apply(delta, &env).expect("apply");
-    assert!(applied
-        .deleted_guards
-        .contains(&(TARGET_KEY, encode_u64(5).to_vec())));
+    let plan = plan_for(&delta, &env);
+    let [check] = &*plan.target_checks else {
+        panic!("one disestablished tuple");
+    };
+    assert_eq!(check.key, TARGET_KEY);
+    assert_eq!(&*check.guard, encode_u64(5).as_slice());
 }
 
 #[test]
@@ -302,7 +311,8 @@ fn inserting_a_source_fact_writes_its_reverse_edge() {
     delta.insert(&view, TARGET, &t).expect("insert");
     delta.insert(&view, CLAIM, &c).expect("insert");
     drop(view);
-    let applied = apply(delta, &env).expect("apply");
+    let plan = plan_for(&delta, &env);
+    let applied = apply(&plan, &env).expect("apply");
 
     // R | statement | key_bytes | source_rel | source_row: key_bytes is
     // the claim's projection in Target's guard order, the source row is
@@ -324,7 +334,8 @@ fn deleting_a_source_fact_removes_the_same_reverse_edge() {
         delta.insert(&view, TARGET, &t).expect("insert");
         delta.insert(&view, CLAIM, &c).expect("insert");
         drop(view);
-        apply(delta, &env)
+        let plan = plan_for(&delta, &env);
+        apply(&plan, &env)
             .expect("apply")
             .txn
             .commit()
@@ -340,7 +351,8 @@ fn deleting_a_source_fact_removes_the_same_reverse_edge() {
     let mut delta = WriteDelta::new(&schema);
     delta.delete(&view, CLAIM, &c).expect("delete");
     drop(view);
-    let applied = apply(delta, &env).expect("apply");
+    let plan = plan_for(&delta, &env);
+    let applied = apply(&plan, &env).expect("apply");
     let c_hash = crate::encoding::fact_hash(&c);
     let removed: BTreeSet<Vec<u8>> = [
         key(|b| keys::fact_key(b, CLAIM, 0)),
@@ -368,7 +380,8 @@ fn delete_plus_insert_of_same_key_succeeds_in_either_user_order() {
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, KEYED, &old).expect("insert");
         drop(view);
-        apply(delta, &env)
+        let plan = plan_for(&delta, &env);
+        apply(&plan, &env)
             .expect("apply")
             .txn
             .commit()
@@ -382,7 +395,8 @@ fn delete_plus_insert_of_same_key_succeeds_in_either_user_order() {
     delta.insert(&view, KEYED, &new).expect("insert");
     delta.delete(&view, KEYED, &old).expect("delete");
     drop(view);
-    let applied = apply(delta, &env).expect("apply");
+    let plan = plan_for(&delta, &env);
+    let applied = apply(&plan, &env).expect("apply");
     // The guard key survives, now pointing at the new row.
     let u = key(|b| keys::guard_key(b, KEYED, KEYED_KEY, &encode_u64(1)));
     assert!(all_data_keys(&applied.txn, &env).contains(&u));
@@ -400,7 +414,8 @@ fn rederived_guard_keys_match_independent_computation() {
     delta.insert(&view, KEYED, &k).expect("insert");
     delta.insert(&view, BOOKING, &booked).expect("insert");
     drop(view);
-    let applied = apply(delta, &env).expect("apply");
+    let plan = plan_for(&delta, &env);
+    let applied = apply(&plan, &env).expect("apply");
 
     // The scalar guard is the canonical encoding of `x`; the pointwise
     // guard is `room ‖ during` with the interval's whole 16 bytes —

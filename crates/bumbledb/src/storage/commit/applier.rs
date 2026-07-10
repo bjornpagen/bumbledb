@@ -1,22 +1,19 @@
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{RelationId, Resolved, Schema, StatementDescriptor, StatementId};
+use crate::schema::{RelationId, StatementId};
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 
-use super::{judgment, Applier};
+use super::plan::FactOp;
+use super::Applier;
 
 impl Applier<'_> {
-    /// Phase-1 step: removes one fact's F/M/U entries. The fact exists in
-    /// base state by the delta's net-disposition invariant — a missing `M`
-    /// entry means storage disagrees with what the delta proved at op
-    /// time, unambiguously corruption (docs/architecture/50-storage.md).
-    pub(super) fn delete_fact(
-        &mut self,
-        schema: &Schema,
-        rel: RelationId,
-        fact_bytes: &[u8],
-    ) -> Result<()> {
-        let relation = schema.relation(rel);
-        let hash = crate::encoding::fact_hash(fact_bytes);
+    /// Phase-1 step: removes one fact's F/M/U/R entries, every key byte
+    /// taken from the plan. The fact exists in base state by the delta's
+    /// net-disposition invariant the plan was derived from — a missing
+    /// `M` entry means storage disagrees with what the plan *proved*,
+    /// unambiguously corruption (docs/architecture/50-storage.md).
+    pub(super) fn delete_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
+        let rel = op.relation;
+        let hash = crate::encoding::fact_hash(op.fact);
         let m_len = keys::membership_key(&mut self.key, rel, &hash);
         let Some(row_id_bytes) = self.data.get(self.txn.raw(), &self.key[..m_len])? else {
             return Err(Error::Corruption(CorruptionError::DispositionDesync {
@@ -35,57 +32,40 @@ impl Applier<'_> {
                 row_id,
             }));
         }
-
-        // Guard keys are re-derived by slicing projected fields out of
-        // fact_bytes — never a scan; interval fields slice as their whole
-        // 16 bytes (`keys::guard_bytes`).
-        for &sid in relation.keys() {
-            keys::guard_bytes(
-                relation.layout(),
-                schema.statement(sid).key_projection(),
-                fact_bytes,
-                &mut self.guard,
-            );
-            let u_len = keys::guard_key(&mut self.key, rel, sid, &self.guard);
+        for guard in &op.guards {
+            let u_len = keys::guard_key(&mut self.key, rel, guard.statement, &guard.guard);
             if !self.data.delete(self.txn.raw_mut(), &self.key[..u_len])? {
                 return Err(Error::Corruption(CorruptionError::MembershipDesync {
                     relation: rel,
                     row_id,
                 }));
             }
-            if !schema.dependents(sid).is_empty() {
-                self.deleted_guards.insert((sid, self.guard.clone()));
-            }
         }
-        // Outgoing R entries: the same key derivation as the insert-side
-        // puts, so the removal is byte-symmetric. Deleted without
-        // verifying they existed — unlike F/M/U, a missing R entry is not
-        // independently detectable here without re-deriving every
-        // statement's edges; the class is deferred to the offline
+        // Outgoing R entries: the plan derived the same key bytes for the
+        // insert-side puts, so the removal is byte-symmetric. Deleted
+        // without verifying they existed — unlike F/M/U, a missing R
+        // entry is not independently detectable here without re-deriving
+        // every statement's edges; the class is deferred to the offline
         // sweeper, `Db::verify_store` (docs/architecture/50-storage.md,
         // R-delete verification).
-        for &sid in relation.outgoing() {
-            if let Some(r_len) = self.reverse_key_for(schema, rel, sid, fact_bytes, row_id) {
-                self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
-            }
+        for edge in &op.edges {
+            let r_len =
+                keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
+            self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
         }
         Ok(())
     }
 
-    /// Phase-2 step: lands one fact's F/M/U entries, enforcing every key
+    /// Phase-2 step: lands one fact's F/M/U/R entries, enforcing every key
     /// statement — scalar by put-conflict, pointwise by the
-    /// ordered-neighbor probe. The fact is absent from base state by the
-    /// delta's net-disposition invariant — a live `M` entry means storage
-    /// disagrees with what the delta proved at op time, unambiguously
-    /// corruption (docs/architecture/50-storage.md).
-    pub(super) fn insert_fact(
-        &mut self,
-        schema: &Schema,
-        rel: RelationId,
-        fact_bytes: &[u8],
-    ) -> Result<()> {
-        let relation = schema.relation(rel);
-        let hash = crate::encoding::fact_hash(fact_bytes);
+    /// ordered-neighbor probe the plan marked. The fact is absent from
+    /// base state by the delta's net-disposition invariant the plan was
+    /// derived from — a live `M` entry means storage disagrees with what
+    /// the plan *proved*, unambiguously corruption
+    /// (docs/architecture/50-storage.md).
+    pub(super) fn insert_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
+        let rel = op.relation;
+        let hash = crate::encoding::fact_hash(op.fact);
         let m_len = keys::membership_key(&mut self.key, rel, &hash);
         if self.data.get(self.txn.raw(), &self.key[..m_len])?.is_some() {
             return Err(Error::Corruption(CorruptionError::DispositionDesync {
@@ -100,21 +80,10 @@ impl Applier<'_> {
         )?;
         let f_len = keys::fact_key(&mut self.key, rel, row_id);
         self.data
-            .put(self.txn.raw_mut(), &self.key[..f_len], fact_bytes)?;
+            .put(self.txn.raw_mut(), &self.key[..f_len], op.fact)?;
 
-        for &sid in relation.keys() {
-            let statement = schema.statement(sid);
-            let Resolved::Functionality { interval_position } = &statement.resolved else {
-                unreachable!("validated schema: relation keys resolve as Functionality")
-            };
-            let pointwise = interval_position.is_some();
-            keys::guard_bytes(
-                relation.layout(),
-                statement.key_projection(),
-                fact_bytes,
-                &mut self.guard,
-            );
-            let u_len = keys::guard_key(&mut self.key, rel, sid, &self.guard);
+        for guard in &op.guards {
+            let u_len = keys::guard_key(&mut self.key, rel, guard.statement, &guard.guard);
             // Every delete already landed and the insert set is
             // deduplicated, so an occupied guard here is a genuine
             // violation of the final-state judgment. On a pointwise key
@@ -122,15 +91,15 @@ impl Applier<'_> {
             // case; the incumbent is named via its row_id (cold aborting
             // path — one extra get, docs/architecture/50-storage.md).
             if let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? {
-                let incumbent = if pointwise {
+                let incumbent = if guard.pointwise {
                     let incumbent_row = decode_row_id(value)?;
                     Some(self.fetch_fact(rel, incumbent_row)?)
                 } else {
                     None
                 };
                 return Err(Error::FunctionalityViolation {
-                    statement: sid,
-                    fact: fact_bytes.into(),
+                    statement: guard.statement,
+                    fact: op.fact.into(),
                     incumbent,
                 });
             }
@@ -139,76 +108,19 @@ impl Applier<'_> {
                 &self.key[..u_len],
                 row_id.to_le_bytes().as_slice(),
             )?;
-            if pointwise {
+            if guard.pointwise {
                 // The exact put cannot detect overlap — only equality —
                 // so a pointwise key additionally probes its ordered
                 // neighbors within the scalar-prefix group.
-                self.probe_neighbors(rel, sid, u_len, fact_bytes)?;
-            }
-            if !schema.dependents(sid).is_empty() {
-                self.inserted_guards.insert((sid, self.guard.clone()));
+                self.probe_neighbors(rel, guard.statement, u_len, op.fact)?;
             }
         }
-        // One R entry per outgoing containment statement whose source
-        // selection this fact satisfies — conditional containments write
-        // reverse edges only for facts inside their σ
-        // (docs/architecture/50-storage.md § key layout).
-        for &sid in relation.outgoing() {
-            if let Some(r_len) = self.reverse_key_for(schema, rel, sid, fact_bytes, row_id) {
-                self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
-            }
+        for edge in &op.edges {
+            let r_len =
+                keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
+            self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
         }
         Ok(())
-    }
-
-    /// Derives one outgoing statement's `R` key into `self.key` — the
-    /// source fact's projection laid down in the target key's guard order
-    /// (`keys::permuted_guard_bytes`), statement-scoped. Returns the key
-    /// length, or `None` when the fact is outside the statement's source
-    /// selection (no reverse edge exists for it, by design). The same
-    /// derivation serves the insert-phase put and the delete-phase
-    /// removal, which is what makes them byte-symmetric.
-    fn reverse_key_for(
-        &mut self,
-        schema: &Schema,
-        rel: RelationId,
-        sid: StatementId,
-        fact_bytes: &[u8],
-        row_id: u64,
-    ) -> Option<usize> {
-        let relation = schema.relation(rel);
-        let statement = schema.statement(sid);
-        let StatementDescriptor::Containment { source, .. } = &statement.descriptor else {
-            unreachable!("validated schema: outgoing ids name Containment statements")
-        };
-        let Resolved::Containment {
-            key_permutation, ..
-        } = &statement.resolved
-        else {
-            unreachable!("validated schema: Containment resolves as Containment")
-        };
-        if !judgment::satisfies(
-            &self.selections.containment(sid).source,
-            relation.layout(),
-            fact_bytes,
-        ) {
-            return None;
-        }
-        // Scratch reuse: the key-statement loop is done with `self.guard`.
-        keys::permuted_guard_bytes(
-            relation.layout(),
-            &source.projection,
-            key_permutation,
-            fact_bytes,
-            &mut self.guard,
-        );
-        Some(keys::reverse_key(
-            &mut self.key,
-            sid,
-            &self.guard,
-            rel,
-            row_id,
-        ))
     }
 
     /// The ordered-neighbor probe for a pointwise key: after the exact `U`
@@ -230,7 +142,7 @@ impl Applier<'_> {
     fn probe_neighbors(
         &mut self,
         rel: RelationId,
-        statement: crate::schema::StatementId,
+        statement: StatementId,
         u_len: usize,
         fact_bytes: &[u8],
     ) -> Result<()> {

@@ -1,17 +1,31 @@
+use super::plan::CommitPlan;
 use super::*;
 use crate::encoding::{encode_fact, ValueRef};
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, Schema,
-    SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
 };
+use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys::{KeyBuf, MAX_KEY};
+
+use std::collections::BTreeSet;
 
 mod apply;
 mod commit;
 mod functionality;
 mod judgment;
+mod plan;
 mod target;
+
+/// Derives a delta's commit plan exactly as `commit` does: selection
+/// literals encoded against the committed dictionary plus the delta's
+/// pending interns, then the pure derivation.
+fn plan_for<'d>(delta: &'d WriteDelta<'_>, env: &Environment) -> CommitPlan<'d> {
+    let view = env.read_txn().expect("txn");
+    let selections = super::judgment::Selections::encode(delta, &view).expect("encode selections");
+    super::plan::plan_commit(delta, delta.schema(), selections)
+}
 
 /// Target(id serial) + Keyed(x u64, y i64; key x) +
 /// Booking(room u64, during interval<u64>, tag u64; key (room, during)) +

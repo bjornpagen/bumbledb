@@ -7,12 +7,14 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 
+use super::plan::plan_commit;
 use super::{apply, judgment, Applied, CommitReport};
 
-/// The full commit (docs/architecture/50-storage.md): apply (phases 1-2),
-/// the judgment phase (phase 3 — containment source and target sides),
-/// counter flush (phase 4), LMDB commit (phase 5). Any error anywhere
-/// aborts — nothing persists.
+/// The full commit (docs/architecture/50-storage.md): plan derivation
+/// (the pure function of the delta), apply (phases 1-2), the judgment
+/// phase (phase 3 — containment source and target sides), counter flush
+/// (phase 4), LMDB commit (phase 5). Any error anywhere aborts — nothing
+/// persists.
 ///
 /// # Errors
 ///
@@ -25,6 +27,7 @@ use super::{apply, judgment, Applied, CommitReport};
 /// # Panics
 ///
 /// Only on programmer-invariant violations (validated-schema shapes).
+#[allow(clippy::needless_pass_by_value)] // consuming the delta IS the contract: a commit ends it
 pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> {
     // The empty delta is the *only* no-op commit shape — net dispositions
     // make every recorded entry a genuine state change. It commits without
@@ -49,29 +52,28 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     }
 
     let mut commit_span = obs::span(obs::names::COMMIT, obs::Category::Commit);
+    // The plan: every derivable key byte and check set, computed as a
+    // pure function of (delta, schema) before the write lock. Selection
+    // literals encode once per commit here — the resolution reads only
+    // the committed dictionary (frozen for the single writer) plus the
+    // delta's pending interns.
+    let schema = delta.schema();
+    let plan = {
+        let view = env.read_txn()?;
+        let selections = judgment::Selections::encode(&delta, &view)?;
+        plan_commit(&delta, schema, selections)
+    };
     let Applied {
         mut txn,
-        delta,
         row_id_next,
-        deleted_guards,
-        inserted_guards,
-        selections,
-    } = apply(delta, env)?;
+    } = apply(&plan, env)?;
 
     // Phase 3, the judgment phase: final-state probes inside this same
     // write transaction (LMDB write txns read their own writes) — the
-    // containment source side over inserted facts, then the target side
-    // over the disestablished guard tuples
-    // (`deleted_guards − inserted_guards`).
-    judgment::check_source(&txn, env.data(), &delta, &selections)?;
-    judgment::check_target(
-        &txn,
-        env.data(),
-        &delta,
-        &selections,
-        &deleted_guards,
-        &inserted_guards,
-    )?;
+    // containment source side over the plan's probe list, then the
+    // target side over the plan's disestablished-guard check sets.
+    judgment::check_source(&txn, env.data(), schema, &plan)?;
+    judgment::check_target(&txn, env.data(), schema, &plan)?;
 
     // Phase 4: counters — row counts, row-id high-waters, serial sequences,
     // pending dictionary entries and the dictionary next-id.

@@ -9,8 +9,8 @@
 //! against the final `U` state. LMDB write transactions read their own
 //! writes, so both sides see exactly the state the commit would persist.
 //!
-//! Also home of the selection machinery shared with the insert phase's
-//! `R`-puts: literals encode once per commit into [`Selections`]
+//! Also home of the selection machinery the plan derivation gates its
+//! `R`-edges with: literals encode once per commit into [`Selections`]
 //! (never per fact), and [`satisfies`] is a straight byte compare of
 //! selected field slices.
 //!
@@ -34,6 +34,7 @@ use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use crate::value::Value;
 
 use super::applier::decode_row_id;
+use super::plan::CommitPlan;
 
 /// One side's selection σ, its literals pre-encoded for byte comparison.
 pub(crate) enum SelectionCheck {
@@ -167,61 +168,35 @@ pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes:
     }
 }
 
-/// The source-side judgment: for each fact of the delta's insert set —
-/// exactly the facts this commit added, by the net-disposition invariant,
-/// so a redundant insert is never judged here — for each `outgoing`
-/// containment statement whose source selection it satisfies, prove the
-/// target tuple present (scalar) or covered (interval) in the final
-/// state. The per-relation `outgoing` index drives the loops — a fact
-/// whose relation has no outgoing statements touches none of this.
+/// The source-side judgment: for each insert op's edges — exactly the
+/// facts this commit added that satisfy a containment's source selection,
+/// by the plan derivation over the net-disposition delta, so a redundant
+/// or out-of-σ insert is never judged here — prove the target tuple
+/// present (scalar) or covered (interval) in the final state. The probe
+/// list and its pre-permuted target key bytes come whole from the plan;
+/// only the probe *results* are read here.
 pub(super) fn check_source(
     txn: &WriteTxn<'_>,
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
-    delta: &WriteDelta<'_>,
-    selections: &Selections,
+    schema: &Schema,
+    plan: &CommitPlan<'_>,
 ) -> Result<()> {
-    let schema = delta.schema();
     let mut checker = Checker::new(txn.raw(), data, schema);
-    let mut key_bytes = Vec::new();
     let mut probes = 0u64;
     let mut span = obs::span(obs::names::JUDGMENT_SOURCE, obs::Category::Commit);
-    for (rel, fact_bytes) in delta.inserts() {
-        let relation = schema.relation(rel);
-        for &sid in relation.outgoing() {
-            let statement = schema.statement(sid);
-            let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
-                unreachable!("validated schema: outgoing ids name Containment statements")
-            };
-            let Resolved::Containment {
-                target_key,
-                key_permutation,
-                interval_position,
-            } = &statement.resolved
-            else {
-                unreachable!("validated schema: Containment resolves as Containment")
-            };
-            let checks = selections.containment(sid);
-            if !satisfies(&checks.source, relation.layout(), fact_bytes) {
-                continue;
-            }
+    for op in &plan.inserts {
+        for edge in &op.edges {
             probes += 1;
-            keys::permuted_guard_bytes(
-                relation.layout(),
-                &source.projection,
-                key_permutation,
-                fact_bytes,
-                &mut key_bytes,
-            );
             let probe = Probe {
-                statement: sid,
-                target_relation: target.relation,
-                target_key: *target_key,
-                target_check: &checks.target,
-                key_bytes: &key_bytes,
-                fact_bytes,
+                statement: edge.statement,
+                target_relation: edge.target_relation,
+                target_key: edge.target_key,
+                target_check: &plan.selections.containment(edge.statement).target,
+                key_bytes: &edge.key_bytes,
+                fact_bytes: op.fact,
                 direction: Direction::SourceUnsatisfied,
             };
-            if interval_position.is_some() {
+            if edge.coverage {
                 checker.check_coverage(&probe)?;
             } else {
                 checker.check_scalar(&probe)?;
@@ -233,17 +208,19 @@ pub(super) fn check_source(
     Ok(())
 }
 
-/// The target-side judgment: every key tuple deleted in phase 1 and not
-/// re-established in phase 2 probes its dependent containment
-/// statements' `R` prefixes for surviving sources. Re-establishment is
-/// **per statement, ψ-qualified** (`docs/architecture/50-storage.md`
-/// § commit step 3): a dependent with a nonempty target selection counts
-/// a re-landed guard tuple as re-established only if the establishing
-/// fact satisfies its ψ — one `F` get per re-established tuple, shared
-/// across that tuple's ψ-carrying dependents; empty-ψ dependents use the
-/// plain set difference. A scalar survivor convicts outright: the key
-/// statement's guard was the tuple's one holder and the final state no
-/// longer has it. An interval tuple is a disestablished
+/// The target-side judgment: every key tuple the plan's check set names —
+/// deleted in phase 1 and not re-established in phase 2 — probes its
+/// dependent containment statements' `R` prefixes for surviving sources.
+/// Re-establishment is **per statement, ψ-qualified**
+/// (`docs/architecture/50-storage.md` § commit step 3), split across the
+/// plan and this phase along the honest boundary: the plan already
+/// dropped empty-ψ re-established tuples (the plain set difference) and
+/// *marked* the ψ-carrying dependents of a re-landed tuple, because only
+/// this phase can read the establishing fact — one `F` get per
+/// re-established tuple, shared across that tuple's ψ-carrying
+/// dependents; a ψ hit skips the check. A scalar survivor convicts
+/// outright: the key statement's guard was the tuple's one holder and the
+/// final state no longer has it. An interval tuple is a disestablished
 /// *segment* `(prefix, ts, te)`: each surviving source of the prefix
 /// group whose interval intersects the segment re-runs the coverage walk
 /// against the final `U` state — a delete whose hole a same-delta insert
@@ -257,12 +234,9 @@ pub(super) fn check_source(
 pub(super) fn check_target(
     txn: &WriteTxn<'_>,
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
-    delta: &WriteDelta<'_>,
-    selections: &Selections,
-    deleted_guards: &BTreeSet<(StatementId, Vec<u8>)>,
-    inserted_guards: &BTreeSet<(StatementId, Vec<u8>)>,
+    schema: &Schema,
+    plan: &CommitPlan<'_>,
 ) -> Result<()> {
-    let schema = delta.schema();
     let mut span = obs::span(obs::names::JUDGMENT_TARGET, obs::Category::Commit);
     let mut scanned = 0u64;
     let mut key: KeyBuf = [0; MAX_KEY];
@@ -272,67 +246,32 @@ pub(super) fn check_target(
     // disestablished segments of one (statement, prefix-group) collapse
     // to one coverage walk per source.
     let mut affected: BTreeSet<Vec<u8>> = BTreeSet::new();
-    for entry in deleted_guards {
-        let (key_sid, guard) = entry;
-        let reestablished = inserted_guards.contains(entry);
+    for check in &plan.target_checks {
+        let guard = &check.guard;
         // The establishing fact of a re-landed guard, fetched at most
         // once per tuple and shared by every ψ-carrying dependent.
         let mut establisher: Option<&[u8]> = None;
         let mut counted = false;
-        for &sid in schema.dependents(*key_sid) {
-            if reestablished {
-                match &selections.containment(sid).target {
-                    // Empty ψ: any establishing fact re-establishes —
-                    // the plain set difference.
-                    SelectionCheck::Empty => continue,
-                    // ψ-qualification: the tuple stays disestablished
-                    // for this statement unless the establishing fact
-                    // satisfies its ψ. `Never` means no fact can.
-                    SelectionCheck::Never => {}
-                    check @ SelectionCheck::Compare(_) => {
-                        let relation = key_relation(schema, *key_sid);
-                        let fact = if let Some(fact) = establisher {
-                            fact
-                        } else {
-                            let fact = establishing_fact(data, txn, relation, *key_sid, guard)?;
-                            establisher = Some(fact);
-                            fact
-                        };
-                        if satisfies(check, schema.relation(relation).layout(), fact) {
-                            continue;
-                        }
-                    }
+        for dependent in &check.dependents {
+            let sid = dependent.statement;
+            if dependent.psi_qualified {
+                let fact = if let Some(fact) = establisher {
+                    fact
+                } else {
+                    let fact = establishing_fact(data, txn, check.relation, check.key, guard)?;
+                    establisher = Some(fact);
+                    fact
+                };
+                let target_check = &plan.selections.containment(sid).target;
+                if satisfies(target_check, schema.relation(check.relation).layout(), fact) {
+                    continue;
                 }
             }
             if !counted {
                 scanned += 1;
                 counted = true;
             }
-            let Resolved::Containment {
-                interval_position, ..
-            } = &schema.statement(sid).resolved
-            else {
-                unreachable!("validated schema: dependents name Containment statements")
-            };
-            if interval_position.is_none() {
-                // Scalar form: any surviving entry under the exact key
-                // bytes is a stranded source.
-                let p_len = keys::reverse_prefix(&mut key, sid, guard);
-                let survivor = data
-                    .get_greater_than_or_equal_to(txn.raw(), &key[..p_len])?
-                    .filter(|(k, _)| k.starts_with(&key[..p_len]));
-                if let Some((r_key, _)) = survivor {
-                    let (_, _, source_rel, source_row) = keys::parse_reverse_key(r_key).ok_or(
-                        Error::Corruption(CorruptionError::MalformedValue("R key shape")),
-                    )?;
-                    let fact = fact_by_row(data, txn, source_rel, source_row)?;
-                    return Err(Error::ContainmentViolation {
-                        statement: sid,
-                        direction: Direction::TargetRequired,
-                        fact: fact.into(),
-                    });
-                }
-            } else {
+            if dependent.coverage {
                 // Interval form: conservatively scan the whole prefix
                 // group and filter by intersection. An optimized lower
                 // bound would need the maximum source-interval length,
@@ -370,6 +309,24 @@ pub(super) fn check_target(
                         affected.insert(k.to_vec());
                     }
                 }
+            } else {
+                // Scalar form: any surviving entry under the exact key
+                // bytes is a stranded source.
+                let p_len = keys::reverse_prefix(&mut key, sid, guard);
+                let survivor = data
+                    .get_greater_than_or_equal_to(txn.raw(), &key[..p_len])?
+                    .filter(|(k, _)| k.starts_with(&key[..p_len]));
+                if let Some((r_key, _)) = survivor {
+                    let (_, _, source_rel, source_row) = keys::parse_reverse_key(r_key).ok_or(
+                        Error::Corruption(CorruptionError::MalformedValue("R key shape")),
+                    )?;
+                    let fact = fact_by_row(data, txn, source_rel, source_row)?;
+                    return Err(Error::ContainmentViolation {
+                        statement: sid,
+                        direction: Direction::TargetRequired,
+                        fact: fact.into(),
+                    });
+                }
             }
         }
     }
@@ -390,7 +347,7 @@ pub(super) fn check_target(
             statement: sid,
             target_relation: target.relation,
             target_key: *target_key,
-            target_check: &selections.containment(sid).target,
+            target_check: &plan.selections.containment(sid).target,
             key_bytes,
             fact_bytes,
             direction: Direction::TargetRequired,
@@ -400,15 +357,6 @@ pub(super) fn check_target(
     span.set_args(scanned, 0);
     span.end();
     Ok(())
-}
-
-/// The relation a key (`Functionality`) statement guards.
-fn key_relation(schema: &Schema, key: StatementId) -> RelationId {
-    let StatementDescriptor::Functionality { relation, .. } = &schema.statement(key).descriptor
-    else {
-        unreachable!("validated schema: guard-set ids name Functionality statements")
-    };
-    *relation
 }
 
 /// The fact that re-established a key guard in phase 2, reached through
