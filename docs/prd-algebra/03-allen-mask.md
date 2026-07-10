@@ -17,9 +17,13 @@ there is nothing outside the coordinate system.
 no aliases**. The replacement:
 
 - `AllenMask(u16)` — a newtype over the low 13 bits; bit *i* = basic relation
-  *i* in a pinned order (before, meets, overlaps, starts, during, finishes,
-  equals, finished-by, contains, started-by, overlapped-by, met-by, after —
-  chosen so `converse()` is `reverse-through-equals`, a constant permutation).
+  *i* in the **palindromic order** (before, meets, overlaps, starts, during,
+  finishes, **equals**, finished-by, contains, started-by, overlapped-by,
+  met-by, after): each basic's converse sits at the mirrored position, so
+  `converse(mask)` is the 13-bit reversal — one `rbit` plus a shift, scalar or
+  vector. The bit order is a **specified representation**, not an
+  implementation detail: the algebra's involution costs one instruction because
+  the bits are laid out as the algebra's symmetry.
 - One IR comparison form for interval pairs: `Allen { mask }` between two
   interval terms of one element type.
 - **Named constants, not sugar** (they are values of the algebra): the 13

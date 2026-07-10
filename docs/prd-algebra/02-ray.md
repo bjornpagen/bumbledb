@@ -18,7 +18,11 @@ The point domain is officially `MIN ..= MAX−1` for each element type;
 `end == MAX` **denotes the unbounded ray** `[s, ∞)`. Every judgment and every
 Allen relation (PRD 03) is well-defined over rays with zero kernel changes — ∞
 compares as MAX naturally, which is why the sentinel worked by accident; now it
-works by definition. Half-open and nonempty are re-recorded with their real
+works by definition. The zero-cost claim is the encoding, not hope: both element
+types store order-preserving **unsigned** words (the i64 sign-flip), so ∞ = MAX
+participates in every unsigned comparison kernel with no special case — there is
+no branch to take, and PRD 04's kernel needs no ray awareness at all. Half-open
+and nonempty are re-recorded with their real
 justification: they are Allen's algebra's preconditions (JEPD of the 13 basics
 fails over empty intervals; *meets* is only clean half-open), not conventions.
 
