@@ -204,10 +204,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 );
                 let hit = match child {
                     None => false,
-                    Some(child) if spec.point_parts.is_empty() => {
-                        let _ = child;
-                        true
-                    }
+                    Some(_) if spec.point_parts.is_empty() => true,
                     Some(child) => {
                         point_checks.clear();
                         for (start_col, end_col, var, slot) in &spec.point_parts {

@@ -197,6 +197,16 @@ pub struct PlanNode {
     /// Whole-value residual comparisons evaluated at this node (both
     /// sides bound here for the first time).
     pub residuals: Vec<PlacedComparison>,
+    // REFUSAL, recorded (the representation audit; do not re-litigate):
+    // the three per-node rejection lists below — `word_residuals`,
+    // `anti_probes`, `point_probes` — look like one `RejectionPredicate`
+    // enum begging to exist. The merge is refused: grouped-by-kind IS
+    // the representation of the executor's batching law. Word residuals
+    // are pure ALU over already-gathered batch words; probes are
+    // two-phase batched (phase 1 hashes — ALU; phase 1.5 prefetches;
+    // phase 2 issues all bucket loads as independent chains). One
+    // interleaved predicate list would force per-item dispatch exactly
+    // where phase-grouped batches now run.
     /// Decomposed interval word residuals (cross-atom `Overlaps`/
     /// `Contains`/membership) evaluated at this node — same placement
     /// rule as `residuals`.

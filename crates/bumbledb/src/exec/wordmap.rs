@@ -83,9 +83,12 @@ impl<V: Copy> WordMap<V> {
 mod clear;
 mod entry;
 mod grow;
-mod hash;
 mod new;
 mod probe;
+
+// The tag/hash/mask primitives shared with the COLT bucket maps — one
+// definition (`exec/swar.rs`), two independent probe structures.
+use super::swar::{ctrl_tag, eq_byte_mask, hash_core, hash_words, zero_byte_mask};
 
 #[cfg(test)]
 mod tests;

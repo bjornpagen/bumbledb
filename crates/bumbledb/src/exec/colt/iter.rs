@@ -4,6 +4,16 @@ use super::{
 };
 
 impl Colt {
+    /// Copies up to `max` entries into the caller's buffers, returning the
+    /// yielded count and the resume token. `keys_out` receives
+    /// `yielded * arity(level)` words; `children_out` one cursor per entry.
+    ///
+    /// An unforced node iterates its positions directly only at the last
+    /// level (the suffix rule, paper §4.2); anywhere else it forces first.
+    ///
+    /// # Panics
+    ///
+    /// Only on programmer-invariant violations: undersized caller buffers.
     pub fn iter_batch(
         &mut self,
         cursor: Cursor,

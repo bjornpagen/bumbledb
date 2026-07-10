@@ -204,10 +204,9 @@ pub struct AggregateSink {
     scan_sources: Vec<Option<usize>>,
     /// Rows consumed by the open scan.
     scan_count: u64,
-    /// The leaf-shape cache (pointer-keyed on `key_slots`): outer slots
-    /// for the per-row prefill, and whether the group key is batch-
-    /// constant. Pinned leaves emit batches of one — recomputing this
-    /// per batch was per-row work.
+    /// The leaf-shape classification, recomputed at each batch entry
+    /// (per-slot work, never per-row): outer slots for the per-row
+    /// prefill, and whether the group key is batch-constant.
     cached_outer_slots: Vec<usize>,
     cached_constant_group: bool,
     /// Group-map probes actually issued (the group-probe hoist observable).

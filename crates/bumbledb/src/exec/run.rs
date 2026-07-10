@@ -327,9 +327,15 @@ const PREFETCH_WIDTH_FLOOR: usize = 4;
 
 /// Per-node reusable scratch: each node's frame is active at most once in
 /// the recursion (frames advance strictly by node index), so scratch is
-/// indexed by node and allocated once per executor construction.
+/// indexed by node and allocated once per executor construction. Fields
+/// group by lifecycle, marked by the dividers below (named sub-structs
+/// were refused: the grouping buys no new invariant — every field is
+/// already private to the executor — and would rename every access in
+/// the two hot passes for it).
 #[derive(Default)]
 struct NodeScratch {
+    // — Pass scratch: valid within one probe/leaf pass, overwritten per
+    //   batch (capacity retained across executions). —
     /// Cover-entry key words, entry-major (`entry * arity + word`).
     entry_keys: Vec<u64>,
     /// Cover-entry child cursors.
@@ -363,9 +369,17 @@ struct NodeScratch {
     point_checks: Vec<(usize, usize, u64)>,
     /// Per-entry survivor mask for the compaction kernel.
     mask: Vec<u8>,
+    // — Probe-batch identity (pipeline): per element of the CURRENT
+    //   cross-parent batch, aligned with `entry_keys`; cleared at the
+    //   end of each `probe_pass`. —
     /// Pipeline probe-batch parent indices: the
     /// pending entry each batch element expanded from.
     parents: Vec<u32>,
+    /// Per probe-batch element: the origin (aligned with `parents`).
+    element_origins: Vec<u32>,
+    // — Pending buffers (pipeline): rows awaiting this node, appended by
+    //   the parent node's routing and drained whole by `pump`; live
+    //   across passes, reset per execution. —
     /// Pending binding rows awaiting this node, entry-major
     /// (stride = slot count).
     pending_bindings: Vec<u64>,
@@ -377,8 +391,6 @@ struct NodeScratch {
     /// Per pending entry: the D2 origin it descends from — minted at
     /// the absorb node's routing, inherited below.
     pending_origins: Vec<u32>,
-    /// Per probe-batch element: the origin (aligned with `parents`).
-    element_origins: Vec<u32>,
 }
 
 /// The executor scratch for one plan shape: per-execution cursor state and

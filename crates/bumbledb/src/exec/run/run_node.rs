@@ -29,7 +29,7 @@ impl Executor {
         // The leaf fast paths: pinned-row elision and
         // the scan-fold pushdown. A `None` decline falls through to the
         // generic batch machinery with no counters fired.
-        if self.leaf_single && node_idx + 1 == plan.nodes().len() {
+        if self.leaf_single {
             if let Some(flow) = self.run_leaf_fast(plan, node_idx, colts, bindings, sink, counters)
             {
                 return flow;
@@ -127,7 +127,16 @@ impl Executor {
                 .survivors
                 .extend(0..u32::try_from(yielded).expect("batch fits u32"));
 
-            // Per sibling: the two-phase probe, then branchless compaction.
+            // Per sibling: the two-phase probe, then branchless
+            // compaction. `probe_pass.rs` hosts this pass's pipelined
+            // twin, kept line-parallel — a change here needs its mirror
+            // there. Extracting the shared pass was refused: the bodies
+            // differ in more than parameters (this pass probes one
+            // batch-constant cursor per sibling and elides hashing for
+            // pinned rows; the twin sources a carried cursor PER ELEMENT
+            // and re-resolves value sources per pass), so the honest
+            // shape is two commented copies, not one function whose
+            // closure parameters reintroduce the difference.
             let value_of = |sources: &[Source],
                             entry_keys: &[u64],
                             bindings: &Bindings,
@@ -340,56 +349,49 @@ impl Executor {
                 counters,
             );
 
-            // The leaf: the last plan node hands its
-            // surviving batch to the sink whole. No recursion, no journal,
-            // no cursor writes — nothing below reads them — and no
-            // binding stores for the leaf's own vars (the batch carries
-            // them). `stop_on_skip` folds this node's sink-relevance into
-            // the batch call: when the leaf binds nothing sink-relevant,
-            // the sink stops at its first emit and the skip unwinds here
-            // exactly as the recursive path's absorption arm did.
-            if node_idx + 1 == plan.nodes().len() {
-                if scratch.survivors.is_empty() {
-                    continue;
-                }
-                counters.phase_start(node_idx, JoinPhase::Descend);
-                let batch = LeafBatch {
-                    keys: &scratch.entry_keys,
-                    arity,
-                    survivors: &scratch.survivors,
-                    key_slots: &self.slot_map[node_idx][cover_sub],
-                    bindings,
-                };
-                let stop_on_skip = !plan.nodes()[node_idx].sink_relevant && sink.may_skip();
-                let batch_flow = sink.emit_batch(&batch, stop_on_skip);
-                // EXPLAIN's `emits` counts rows the sink consumed: the
-                // whole batch, or exactly one when the first emit's skip
-                // stopped it (identical to the recursive path's counts).
-                let emitted = if batch_flow == Flow::SkipSuffix {
-                    1
-                } else {
-                    scratch.survivors.len()
-                };
-                for _ in 0..emitted {
-                    counters.emit();
-                }
-                counters.phase_end(node_idx, JoinPhase::Descend);
-                if batch_flow == Flow::SkipSuffix {
-                    debug_assert!(
-                        sink.may_skip(),
-                        "a SkipSuffix crossed a node under a non-skipping sink"
-                    );
-                    counters.skip(node_idx);
-                    flow = Flow::SkipSuffix;
-                    break 'outer;
-                }
+            // The leaf: the batch is handed to the sink whole (this IS
+            // the last plan node — the entry assert). No recursion, no
+            // journal, no cursor writes — nothing below reads them — and
+            // no binding stores for the leaf's own vars (the batch
+            // carries them). `stop_on_skip` folds this node's
+            // sink-relevance into the batch call: when the leaf binds
+            // nothing sink-relevant, the sink stops at its first emit and
+            // the skip unwinds here exactly as the recursive path's
+            // absorption arm did.
+            if scratch.survivors.is_empty() {
                 continue;
             }
-
-            // Middle nodes never reach here (the entry assert): every
-            // batch either emitted through the leaf arm above or was
-            // empty.
-            unreachable!("run_node is the leaf pass; the leaf arm consumed the batch");
+            counters.phase_start(node_idx, JoinPhase::Descend);
+            let batch = LeafBatch {
+                keys: &scratch.entry_keys,
+                arity,
+                survivors: &scratch.survivors,
+                key_slots: &self.slot_map[node_idx][cover_sub],
+                bindings,
+            };
+            let stop_on_skip = !plan.nodes()[node_idx].sink_relevant && sink.may_skip();
+            let batch_flow = sink.emit_batch(&batch, stop_on_skip);
+            // EXPLAIN's `emits` counts rows the sink consumed: the
+            // whole batch, or exactly one when the first emit's skip
+            // stopped it (identical to the recursive path's counts).
+            let emitted = if batch_flow == Flow::SkipSuffix {
+                1
+            } else {
+                scratch.survivors.len()
+            };
+            for _ in 0..emitted {
+                counters.emit();
+            }
+            counters.phase_end(node_idx, JoinPhase::Descend);
+            if batch_flow == Flow::SkipSuffix {
+                debug_assert!(
+                    sink.may_skip(),
+                    "a SkipSuffix crossed a node under a non-skipping sink"
+                );
+                counters.skip(node_idx);
+                flow = Flow::SkipSuffix;
+                break 'outer;
+            }
         }
 
         self.scratch[node_idx] = scratch;

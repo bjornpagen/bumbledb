@@ -242,25 +242,6 @@ fn unpack_child(word: u64) -> Slot {
     }
 }
 
-/// The 7-bit hash tag a ctrl byte carries (bit 7 marks occupancy).
-#[inline(always)]
-fn ctrl_tag(hash: u64) -> u8 {
-    0x80 | u8::try_from(hash >> 57).expect("7 bits")
-}
-
-/// SWAR zero-byte mask over a bucket's ctrl word: bit 7 of each zero
-/// (empty) byte sets (same masks as the wordmap's window probe).
-#[inline(always)]
-fn zero_byte_mask(w: u64) -> u64 {
-    w.wrapping_sub(0x0101_0101_0101_0101) & !w & 0x8080_8080_8080_8080
-}
-
-/// SWAR byte-equality mask against a broadcast needle.
-#[inline(always)]
-fn eq_byte_mask(w: u64, needle: u8) -> u64 {
-    zero_byte_mask(w ^ (u64::from(needle) * 0x0101_0101_0101_0101))
-}
-
 /// One prepended selection level's shape (docs/architecture/
 /// 40-execution.md, § selection levels): the image columns its trie keys
 /// decode from (one column for a scalar field, the start/end pair for an
@@ -342,15 +323,24 @@ mod count;
 mod force;
 mod gather;
 mod grow;
-mod hash;
 mod iter;
 mod new;
 mod prefetch;
 mod probe;
 mod select;
 
-pub use hash::hash_key;
-use hash::hash_words;
+// The tag/hash/mask primitives shared with the sink `WordMap` — one
+// definition (`exec/swar.rs`), two independent probe structures.
+use super::swar::{ctrl_tag, eq_byte_mask, hash_words, zero_byte_mask};
+
+/// The probe hash for a key — exposed so the vectorized executor's phase 1
+/// can compute all hashes (pure ALU) before phase 2 issues any bucket load
+/// (D4's two-phase probing, the 30-execution doc).
+#[must_use]
+#[inline(always)]
+pub fn hash_key(words: &[u64]) -> u64 {
+    hash_words(words)
+}
 
 #[cfg(test)]
 mod tests;

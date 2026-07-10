@@ -6,6 +6,7 @@ pub mod explain;
 pub mod kernel;
 pub mod run;
 pub mod sink;
+mod swar;
 pub mod wordmap;
 
 /// Run length at which hoisting operand/column tables pays for itself —

@@ -38,7 +38,10 @@ impl Executor {
             .survivors
             .extend(0..u32::try_from(fill).expect("batch fits u32"));
 
-        // Sibling passes: per-parent Slot reads and per-parent cursors.
+        // Sibling passes: per-parent Slot reads and per-parent cursors —
+        // the pipelined twin of run_node's sibling loop, kept
+        // line-parallel (a change here needs its mirror there; the
+        // extraction refusal is recorded at that loop's head).
         // Instruction diet (measured): value sources resolve once
         // per (pass, subatom) — never a per-element variable search —
         // loop invariants (carried column, start cursor) hoist, and the

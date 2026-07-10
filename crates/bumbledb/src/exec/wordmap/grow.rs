@@ -1,8 +1,6 @@
 use std::mem::MaybeUninit;
 
-use super::hash::{hash_core, hash_words};
-use super::probe::tag;
-use super::{WordMap, WINDOW};
+use super::{ctrl_tag, hash_core, hash_words, WordMap, WINDOW};
 
 impl<V: Copy> WordMap<V> {
     pub(super) fn grow(&mut self) {
@@ -50,7 +48,7 @@ impl<V: Copy> WordMap<V> {
             let hash = hash_core::<K>(key);
             let (found, new_idx) = self.probe_core::<K>(key, hash);
             debug_assert!(!found, "rehashed keys are distinct");
-            self.set_ctrl(new_idx, tag(hash));
+            self.set_ctrl(new_idx, ctrl_tag(hash));
             self.keys[new_idx * K..new_idx * K + K].copy_from_slice(key);
             // SAFETY: old_idx was occupied (dense-listed), so its value
             // was initialized; the copy moves it to the new slot.
@@ -67,7 +65,7 @@ impl<V: Copy> WordMap<V> {
             let hash = hash_words(&old_keys[key_range.clone()]);
             let (found, new_idx) = self.probe(&old_keys[key_range.clone()], hash);
             debug_assert!(!found, "rehashed keys are distinct");
-            self.set_ctrl(new_idx, tag(hash));
+            self.set_ctrl(new_idx, ctrl_tag(hash));
             self.keys[new_idx * self.arity..(new_idx + 1) * self.arity]
                 .copy_from_slice(&old_keys[key_range]);
             // SAFETY: old_idx was occupied (dense-listed), so its value

@@ -1,6 +1,4 @@
-use super::hash::{hash_core, hash_words};
-use super::probe::tag;
-use super::{WordMap, LOAD_DEN};
+use super::{ctrl_tag, hash_core, hash_words, WordMap, LOAD_DEN};
 
 impl<V: Copy> WordMap<V> {
     /// Gets the value for `key`, inserting `make()` when absent. Returns
@@ -68,7 +66,7 @@ impl<V: Copy> WordMap<V> {
         }
         let (found, idx) = self.probe_core::<K>(key, hash);
         if !found {
-            self.set_ctrl(idx, tag(hash));
+            self.set_ctrl(idx, ctrl_tag(hash));
             self.keys[idx * K..idx * K + K].copy_from_slice(&key[..K]);
             self.values[idx].write(make());
             self.dense
@@ -94,7 +92,7 @@ impl<V: Copy> WordMap<V> {
         }
         let (found, idx) = self.probe(key, hash);
         if !found {
-            self.set_ctrl(idx, tag(hash));
+            self.set_ctrl(idx, ctrl_tag(hash));
             self.keys[idx * self.arity..(idx + 1) * self.arity].copy_from_slice(key);
             self.values[idx].write(make());
             self.dense

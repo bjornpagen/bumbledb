@@ -1,21 +1,4 @@
-use super::{WordMap, WINDOW};
-
-/// The 7-bit hash tag a ctrl byte carries (bit 7 marks occupancy).
-pub(super) fn tag(hash: u64) -> u8 {
-    0x80 | u8::try_from(hash >> 57).expect("7 bits")
-}
-
-/// SWAR zero-byte mask: bit 7 of each zero byte in `w` sets.
-#[inline(always)]
-fn zero_byte_mask(w: u64) -> u64 {
-    w.wrapping_sub(0x0101_0101_0101_0101) & !w & 0x8080_8080_8080_8080
-}
-
-/// SWAR byte-equality mask against a broadcast needle.
-#[inline(always)]
-fn eq_byte_mask(w: u64, needle: u8) -> u64 {
-    zero_byte_mask(w ^ (u64::from(needle) * 0x0101_0101_0101_0101))
-}
+use super::{ctrl_tag, eq_byte_mask, zero_byte_mask, WordMap, WINDOW};
 
 impl<V: Copy> WordMap<V> {
     /// Whether the stored key at `slot` equals `key` — a manual word
@@ -67,7 +50,7 @@ impl<V: Copy> WordMap<V> {
         debug_assert!(!self.values.is_empty());
         let capacity = self.capacity();
         let mask = capacity - 1;
-        let wanted = tag(hash);
+        let wanted = ctrl_tag(hash);
         let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
         loop {
             // The mirror tail makes an 8-byte read at any idx < capacity
