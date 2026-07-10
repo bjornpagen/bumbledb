@@ -1,12 +1,13 @@
 use std::sync::OnceLock;
 
 use super::*;
-use bumbledb::ir::{Atom, CmpOp, Comparison, FindTerm, Term};
+use bumbledb::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, Term};
 use bumbledb::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, Side,
     ValueType,
 };
 use bumbledb::AggOp;
+use bumbledb::AllenMask;
 
 /// Relation and field ids for the test ledger below — declaration order
 /// is the id order, no magic numbers in query constructions.
@@ -513,10 +514,10 @@ fn membership_matches_its_goldens() {
 }
 
 #[test]
-fn overlaps_matches_its_hand_written_golden() {
+fn allen_intersects_matches_its_hand_written_golden() {
     // Q(o1, o2) :- Mandate(account = a, org = o1, active = u),
     //              Mandate(account = a, org = o2, active = v),
-    //              Overlaps(u, v).
+    //              Allen(u, v, INTERSECTS).
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -539,19 +540,21 @@ fn overlaps_matches_its_hand_written_golden() {
         ],
         negated: vec![],
         predicates: vec![Comparison {
-            op: CmpOp::Overlaps,
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+            },
             lhs: var(3),
             rhs: var(4),
         }],
     };
     let t = translate(&query, schema(), &[]).expect("translates");
-    assert_eq!(t.sql, goldens::OVERLAPS);
+    assert_eq!(t.sql, goldens::INTERSECTS);
 }
 
 #[test]
 fn contains_matches_both_goldens() {
-    // Interval ⊇ interval, the containing side probed by a param:
-    // Q(o) :- Mandate(org = o, active = v), Contains(v, ?0).
+    // The ⊇ composite against an interval param:
+    // Q(o) :- Mandate(org = o, active = v), Allen(v, ?0, COVERS).
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -560,13 +563,15 @@ fn contains_matches_both_goldens() {
         }],
         negated: vec![],
         predicates: vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(AllenMask::COVERS),
+            },
             lhs: var(1),
             rhs: Term::Param(ParamId(0)),
         }],
     };
     let t = translate(&query, schema(), &[]).expect("translates");
-    assert_eq!(t.sql, goldens::CONTAINS_INTERVAL);
+    assert_eq!(t.sql, goldens::COVERS_PARAM);
     assert_eq!(
         t.params,
         vec![ParamSlot::Start(ParamId(0)), ParamSlot::End(ParamId(0))],

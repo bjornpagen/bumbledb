@@ -105,6 +105,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         param_types,
         set_params,
         point_params,
+        mask_params: ctx.mask_params,
         group_key,
     })
 }

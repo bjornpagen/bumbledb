@@ -30,7 +30,10 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
         "validated: at least one positive atom, positives order first, and \
          the chase cannot eliminate a sourceless single occurrence"
     );
-    if !normalized.residuals.is_empty() || !normalized.word_residuals.is_empty() {
+    if !normalized.residuals.is_empty()
+        || !normalized.word_residuals.is_empty()
+        || !normalized.allen_residuals.is_empty()
+    {
         return None;
     }
     // Decision: a `ParamSet`-bound field disqualifies the fast path in v0

@@ -31,6 +31,9 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
             start: i64_word(*start),
             end: i64_word(*end),
         },
+        // A mask literal is only ever legal inside `CmpOp::Allen`'s mask
+        // position, which lowers through `MaskConst`, never through here.
+        Value::AllenMask(_) => unreachable!("validated: mask values are not terms"),
     }
 }
 

@@ -102,6 +102,19 @@ impl Executor {
                 resolve(residual.rhs, *rhs_slot),
             ));
         }
+        // Allen residuals: one base source per side; evaluation reads
+        // the (start, end) pair at offsets 0/1.
+        scratch.allen_sources.clear();
+        for (residual, lhs_slot, rhs_slot) in &self.allen_residual_slots[node_idx] {
+            let resolve = |var: crate::ir::VarId, slot: usize| {
+                super::word_base(cover_vars, var, |v| self.width_of(v))
+                    .map_or(Source::Slot(slot), Source::Batch)
+            };
+            scratch.allen_sources.push((
+                resolve(residual.lhs, *lhs_slot),
+                resolve(residual.rhs, *rhs_slot),
+            ));
+        }
 
         let mut token = BatchToken::default();
         let mut flow = Flow::Continue;
@@ -282,6 +295,34 @@ impl Executor {
                         Source::Slot(slot) => bindings.get(slot),
                     };
                     let pass = op.compare(&value(lhs_src), &value(rhs_src));
+                    counters.residual(node_idx, pass);
+                    scratch.mask[k] = u8::from(pass);
+                }
+                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+            }
+            // Allen residuals: classify the (start, end) pairs and test
+            // the resolved mask — four endpoint words per element, one
+            // classify, one bit test; compacted like every residual
+            // (docs/architecture/20-query-ir.md, § the Allen operator).
+            for (r_idx, (lhs_src, rhs_src)) in scratch.allen_sources.iter().enumerate() {
+                let mask = self.allen_masks[node_idx][r_idx];
+                let n = scratch.survivors.len();
+                scratch.mask.clear();
+                scratch.mask.resize(n, 0);
+                for k in 0..n {
+                    let e = scratch.survivors[k];
+                    let entry = usize::try_from(e).expect("batch fits usize");
+                    let value = |src: &Source, offset: usize| match *src {
+                        Source::Batch(word) => scratch.entry_keys[entry * arity + word + offset],
+                        Source::Slot(slot) => bindings.get(slot + offset),
+                    };
+                    let basic = crate::allen::classify_bounds(
+                        &value(lhs_src, 0),
+                        &value(lhs_src, 1),
+                        &value(rhs_src, 0),
+                        &value(rhs_src, 1),
+                    );
+                    let pass = mask.contains(basic);
                     counters.residual(node_idx, pass);
                     scratch.mask[k] = u8::from(pass);
                 }

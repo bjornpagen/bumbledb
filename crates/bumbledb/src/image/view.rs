@@ -12,6 +12,7 @@ use crate::schema::FieldId;
 mod apply;
 
 pub use apply::apply;
+pub(crate) use apply::mask_of;
 
 #[cfg(test)]
 mod build_with_filters;
@@ -36,8 +37,8 @@ pub enum Const {
     Byte(u8),
     /// An interval constant as its two encoded column words (each half
     /// byte-order-normalized exactly like a `Word`, so u64 word order is
-    /// value order). Compared pairwise under `Eq`/`Ne`, and as the constant
-    /// side of `Overlaps`/`Contains` compares and `FieldWithin`.
+    /// value order). Compared pairwise under `Eq`, and the constant side
+    /// of `FieldAllen` and `FieldWithin`.
     Interval {
         start: u64,
         end: u64,
@@ -83,18 +84,36 @@ pub enum ResolvedWordSource {
     Var(crate::ir::VarId),
 }
 
+/// The mask side of a lowered `Allen` shape: a resolved mask, or a param
+/// marker resolved at bind — with the mirrored form pre-encoded
+/// (`Allen(a, b, m) ≡ Allen(b, a, converse(m))`, `crate::allen`): a
+/// comparison written constant-first lowers with the field kept on the
+/// left and the mask conversed — immediately for a literal,
+/// [`ConversedParam`](MaskConst::ConversedParam) for a param, so
+/// evaluation never carries an operand-order flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaskConst {
+    Mask(crate::allen::AllenMask),
+    /// Bind-time mask param; the evaluator indexes the param slice.
+    Param(crate::ir::ParamId),
+    /// Bind-time mask param whose comparison was written with the field
+    /// on the right: `converse()` applies after resolution.
+    ConversedParam(crate::ir::ParamId),
+}
+
 /// One lowered per-atom filter (produced by the 20-query-ir doc's normalization).
 ///
-/// The interval kinds are **fixed word-comparison compositions** over the
-/// interval field's two encoded column words (`docs/architecture/40-execution.md`
-/// — interval predicates lower to word comparisons over the start/end
-/// column pair; no expression tree exists, three shapes as three kinds is
-/// the representation-over-control-flow answer).
+/// The membership kinds are **fixed word-comparison compositions** over
+/// the interval field's two encoded column words; the `Allen` kinds carry
+/// the mask with the four endpoint operands — classify-then-test on the
+/// scalar path (the batch kernel is PRD 04's; the shape already carries
+/// everything it needs). No expression tree exists: shapes as kinds is
+/// the representation-over-control-flow answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterPredicate {
-    /// `field <op> constant`. Under `Overlaps`/`Contains` the field is the
-    /// **left** operand and the constant is `Interval`/`Param` by
-    /// construction (the reversed containment is [`FilterPredicate::FieldWithin`]).
+    /// `field <op> constant`. An interval field appears here only under
+    /// `Eq` (a value-equality binding); every interval-pair *predicate*
+    /// is an `Allen` kind below.
     Compare {
         field: FieldId,
         op: CmpOp,
@@ -107,7 +126,8 @@ pub enum FilterPredicate {
     /// have the same structural type by validation, hence the same column
     /// kind, and word comparison is value-faithful (biased I64, ordinal
     /// bytes, injective intern ids; interval fields compare pairwise over
-    /// their two-word span).
+    /// their two-word span — repeated-variable `Eq` only: interval
+    /// comparisons canonicalize to masks).
     FieldsCompare {
         left: FieldId,
         right: FieldId,
@@ -127,21 +147,32 @@ pub enum FilterPredicate {
     /// [`Const::WordSet`] per execution, exactly like a `Compare`
     /// constant.
     AnyPointIn { field: FieldId, set: Const },
-    /// Same-atom `Overlaps` over two interval fields:
-    /// `left.start < right.end AND right.start < left.end`.
-    FieldsOverlap { left: FieldId, right: FieldId },
-    /// Same-atom `Contains` over two interval fields (point-set ⊇):
-    /// `outer.start ≤ inner.start AND inner.end ≤ outer.end`.
-    FieldsContain { outer: FieldId, inner: FieldId },
+    /// Same-atom `Allen` over two interval fields:
+    /// `classify(left, right) ∈ mask` — four endpoint words and the mask,
+    /// the whole algebra as one shape.
+    FieldsAllen {
+        left: FieldId,
+        right: FieldId,
+        mask: MaskConst,
+    },
+    /// `Allen` between an interval field (always the **left** operand —
+    /// the mirrored form is pre-encoded in the mask, [`MaskConst`]) and
+    /// an interval constant (`Interval`/`Param` by construction):
+    /// `classify(field, other) ∈ mask`.
+    FieldAllen {
+        field: FieldId,
+        other: Const,
+        mask: MaskConst,
+    },
     /// Same-atom `Contains` with a point field (the predicate form of the
     /// membership rule, and the lowering of a same-atom membership-var
     /// binding): `interval.start ≤ point AND point < interval.end`.
     FieldsContainPoint { interval: FieldId, point: FieldId },
-    /// The field's point-set within a constant interval — the reversed
-    /// `Contains(constant, field)`. Over a scalar field:
-    /// `outer.start ≤ f AND f < outer.end`; over an interval field:
-    /// `outer.start ≤ f.start AND f.end ≤ outer.end`. `outer` is
-    /// `Interval`/`Param` by construction.
+    /// A scalar field's point within a constant interval — the reversed
+    /// point containment `Contains(constant, field)`:
+    /// `outer.start ≤ f AND f < outer.end`. `outer` is `Interval`/`Param`
+    /// by construction; the field is scalar by construction (an interval
+    /// field under a constant is [`FilterPredicate::FieldAllen`]).
     FieldWithin { field: FieldId, outer: Const },
 }
 

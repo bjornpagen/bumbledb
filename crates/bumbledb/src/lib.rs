@@ -77,6 +77,7 @@
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-product.md)");
 
+pub mod allen;
 #[cfg(feature = "alloc-counter")]
 pub mod alloc_counter;
 pub(crate) mod api;
@@ -95,6 +96,7 @@ pub(crate) mod storage;
 mod value;
 mod verify_store;
 
+pub use allen::{classify, AllenMask, Basic};
 pub use api::db::{BulkLoadError, Db, Fact, Fresh, FreshKeyed, Snapshot, WriteTx};
 pub use api::prepared::{
     BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
@@ -112,7 +114,9 @@ pub use plan::chase::with_chase_disabled;
 // The IR vocabulary a host needs to build a `Query`, and the id types that
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
-pub use ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
+pub use ir::{
+    AggOp, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, Query, Term, Value, VarId,
+};
 pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
 pub use verify_store::{StoreFinding, StoreReport};
 

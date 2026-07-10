@@ -2,7 +2,8 @@
 
 use super::{
     AntiProbeSpec, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
-    PipeTables, PlacedComparison, PlacedWordComparison, PointProbeSpec, Sink, ValidatedPlan, BATCH,
+    PipeTables, PlacedAllen, PlacedComparison, PlacedWordComparison, PointProbeSpec, Sink,
+    ValidatedPlan, BATCH,
 };
 
 /// The membership-filter column/slot table shared by both probe kinds:
@@ -181,6 +182,34 @@ impl Executor {
                     .collect()
             })
             .collect();
+        // Allen residuals: base slots per side (evaluation reads the
+        // pair at offsets 0/1), plus the resolved-mask table — literal
+        // masks final here, param masks rewritten per execution
+        // (`bind_allen_masks`).
+        let allen_residual_slots: Vec<Vec<(PlacedAllen, usize, usize)>> = plan
+            .nodes()
+            .iter()
+            .map(|node| {
+                node.allen_residuals
+                    .iter()
+                    .map(|r| (*r, plan.slot_of(r.lhs), plan.slot_of(r.rhs)))
+                    .collect()
+            })
+            .collect();
+        let allen_masks: Vec<Vec<crate::allen::AllenMask>> = allen_residual_slots
+            .iter()
+            .map(|slots| {
+                slots
+                    .iter()
+                    .map(|(residual, _, _)| match residual.mask {
+                        crate::ir::MaskTerm::Literal(mask) => mask,
+                        // Placeholder until the first bind — every
+                        // execution entry rewrites param masks first.
+                        crate::ir::MaskTerm::Param(_) => crate::allen::AllenMask::EMPTY,
+                    })
+                    .collect()
+            })
+            .collect();
         let anti_probe_slots = anti_probe_slots(plan);
         let point_probe_slots = point_probe_slots(plan);
         let scratch = plan
@@ -219,6 +248,7 @@ impl Executor {
                     sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
                     residual_sources: Vec::new(),
                     word_residual_sources: Vec::new(),
+                    allen_sources: Vec::new(),
                     anti_sources: anti_specs.iter().map(|_| Vec::new()).collect(),
                     point_checks: Vec::new(),
                     mask: Vec::with_capacity(batch),
@@ -238,6 +268,8 @@ impl Executor {
             slot_map,
             residual_slots,
             word_residual_slots,
+            allen_residual_slots,
+            allen_masks,
             point_probe_slots,
             var_widths,
             anti_probe_slots,
@@ -254,6 +286,29 @@ impl Executor {
             next_origin: 0,
             all_cancelled: false,
             origin_overflow: false,
+        }
+    }
+
+    /// Resolves this execution's Allen-residual masks in place: literal
+    /// masks are re-copied (idempotent), param masks read the bind slice
+    /// — with the ∅/full vacuity already rejected at bind, the hot path
+    /// sees only honest predicates. Called by the prepared query before
+    /// every join execution; the executor itself never touches params.
+    pub fn bind_allen_masks(&mut self, params: &[crate::image::view::Const]) {
+        for (node_slots, node_masks) in self.allen_residual_slots.iter().zip(&mut self.allen_masks)
+        {
+            for ((residual, _, _), mask) in node_slots.iter().zip(node_masks.iter_mut()) {
+                *mask = match residual.mask {
+                    crate::ir::MaskTerm::Literal(literal) => literal,
+                    crate::ir::MaskTerm::Param(param) => match &params[usize::from(param.0)] {
+                        crate::image::view::Const::Word(word) => crate::allen::AllenMask::new(
+                            u16::try_from(*word).expect("bind stored 13-bit mask words"),
+                        )
+                        .expect("bind validated the mask"),
+                        _ => unreachable!("validated: a mask param resolves to a word"),
+                    },
+                };
+            }
         }
     }
 

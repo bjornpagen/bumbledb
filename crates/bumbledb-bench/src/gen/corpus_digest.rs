@@ -37,6 +37,8 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
             digest.update(&start.to_le_bytes());
             digest.update(&end.to_le_bytes());
         }
+        // Masks never appear in corpus rows (not a field type).
+        Value::AllenMask(_) => unreachable!("mask values are not corpus data"),
     }
 }
 

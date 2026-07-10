@@ -149,6 +149,7 @@ fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
         occurrences,
         residuals: vec![],
         word_residuals: vec![],
+        allen_residuals: vec![],
         anti_probes,
         slot_widths,
     }

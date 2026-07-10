@@ -20,7 +20,7 @@
 //! future work" caveat is retired: deep nodes see full batches.
 
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
-use crate::ir::normalize::{PlacedComparison, PlacedWordComparison};
+use crate::ir::normalize::{PlacedAllen, PlacedComparison, PlacedWordComparison};
 use crate::plan::fj::ValidatedPlan;
 
 /// The sink's reply to one emitted binding: `SkipSuffix` requests the D2
@@ -266,9 +266,9 @@ enum Source {
 
 /// One whole-value residual compare over a variable's slot words: width
 /// 1 is the scalar compare; width 2 is an interval pair, compared
-/// **pairwise** — `Eq`/`Ne` are the only operators validation admits for
-/// intervals (`docs/architecture/20-query-ir.md`; `Overlaps`/`Contains`
-/// decompose into word residuals instead).
+/// **pairwise** (`docs/architecture/20-query-ir.md` — interval-pair
+/// predicates travel as Allen mask residuals and point containment as
+/// word residuals, so width 2 is the repeated-variable equality only).
 fn compare_wide(
     op: crate::ir::CmpOp,
     width: usize,
@@ -356,8 +356,14 @@ struct NodeScratch {
     /// Word-residual operand sources, aligned with the node's
     /// `word_residuals` list — one source per side, already offset to
     /// the compared interval word (docs/architecture/20-query-ir.md,
-    /// § normalization: the three fixed compositions).
+    /// § normalization).
     word_residual_sources: Vec<(Source, Source)>,
+    /// Allen-residual operand sources, aligned with the node's
+    /// `allen_residuals` list — one source per side at the interval
+    /// variable's word **base**; evaluation reads the pair at offsets
+    /// 0/1 (batch key words and binding slots lay intervals out
+    /// identically — the `SlotWidth` layout).
+    allen_sources: Vec<(Source, Source)>,
     /// Anti-probe key sources, aligned with the node's anti-probe list
     /// (one inner vec per anti-probe, one source per key **word**) —
     /// resolved per pass against the runtime cover choice, exactly like
@@ -412,6 +418,15 @@ pub struct Executor {
     /// Per word residual: (lhs slot, rhs slot), aligned with each node's
     /// `word_residuals` — slots already offset to the compared word.
     word_residual_slots: Vec<Vec<(PlacedWordComparison, usize, usize)>>,
+    /// Per Allen residual: (residual, lhs base slot, rhs base slot),
+    /// aligned with each node's `allen_residuals`.
+    allen_residual_slots: Vec<Vec<(PlacedAllen, usize, usize)>>,
+    /// Per Allen residual: this execution's resolved mask, aligned with
+    /// `allen_residual_slots` — literal masks are fixed at construction;
+    /// param masks are rewritten in place by [`Executor::bind_allen_masks`]
+    /// before every execution (the executor never sees the param slice
+    /// on the hot path).
+    allen_masks: Vec<Vec<crate::allen::AllenMask>>,
     /// Per membership probe, aligned with each node's `point_probes`
     /// list ([`PointProbeSpec`]).
     point_probe_slots: Vec<Vec<PointProbeSpec>>,

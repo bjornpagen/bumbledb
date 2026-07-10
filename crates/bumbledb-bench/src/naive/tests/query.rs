@@ -11,8 +11,8 @@ use bumbledb::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, RelationId, Term, Value,
-    VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, MaskTerm, ParamId, Query,
+    RelationId, Term, Value, VarId,
 };
 
 use crate::naive::query::ParamValue;
@@ -391,7 +391,7 @@ fn param_set_membership_and_the_empty_set() {
 }
 
 #[test]
-fn overlaps_and_contains_use_the_endpoint_formulas() {
+fn allen_masks_use_the_point_set_definitions() {
     let db = db(vec![
         mandate(1, 10, 20),
         mandate(2, 15, 25),
@@ -406,7 +406,9 @@ fn overlaps_and_contains_use_the_endpoint_formulas() {
         negated: vec![],
         predicates: vec![
             Comparison {
-                op: CmpOp::Overlaps,
+                op: CmpOp::Allen {
+                    mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                },
                 lhs: var(1),
                 rhs: var(3),
             },
@@ -417,7 +419,7 @@ fn overlaps_and_contains_use_the_endpoint_formulas() {
             },
         ],
     };
-    // [10,20) and [20,30) are adjacent, not overlapping.
+    // [10,20) and [20,30) are adjacent, not intersecting.
     assert_eq!(
         db.query(&overlapping, &[]).unwrap(),
         rows(vec![
@@ -425,18 +427,21 @@ fn overlaps_and_contains_use_the_endpoint_formulas() {
             vec![Value::U64(2), Value::U64(3)],
         ])
     );
-    let containing = Query {
+    // COVERS against a literal: only [15,25) ⊇ [16,22).
+    let covering = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(MANDATE, vec![(0, var(0)), (1, var(1))])],
         negated: vec![],
         predicates: vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(AllenMask::COVERS),
+            },
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(16, 22)),
         }],
     };
     assert_eq!(
-        db.query(&containing, &[]).unwrap(),
+        db.query(&covering, &[]).unwrap(),
         rows(vec![vec![Value::U64(2)]])
     );
 }

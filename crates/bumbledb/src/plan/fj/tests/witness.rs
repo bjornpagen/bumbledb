@@ -4,9 +4,9 @@
 
 use super::*;
 use crate::image::{ColumnSpan, ColumnWidth};
-use crate::ir::normalize::{normalize, IntervalWord, VarWord};
+use crate::ir::normalize::normalize;
 use crate::ir::validate::validate as validate_ir;
-use crate::ir::{Atom, CmpOp, Comparison, FindTerm, Query, Term};
+use crate::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, Query, Term};
 use crate::plan::planner::{plan, OccStats};
 use crate::schema::IntervalElement;
 use std::collections::BTreeSet;
@@ -201,12 +201,12 @@ fn outer_join_idiom_absence_half_validates_into_the_witness() {
     assert!(witness.distinct_bindings());
 }
 
-/// An `Overlaps` residual query: two P occurrences with no shared
-/// variable, `Overlaps(d1, d2)` decomposed into two word comparisons
-/// attached to the node binding the second interval — plus the two-slot
-/// interval layout and `ColumnSpan` field maps.
+/// An `Allen` residual query: two P occurrences with no shared variable,
+/// `Allen(d1, d2, INTERSECTS)` carried whole (four endpoint slots + mask)
+/// and attached to the node binding the second interval — plus the
+/// two-slot interval layout and `ColumnSpan` field maps.
 #[test]
-fn overlaps_residual_query_validates_into_the_witness() {
+fn allen_residual_query_validates_into_the_witness() {
     let schema = interval_schema();
     let e1 = VarId(0);
     let d1 = VarId(1);
@@ -226,7 +226,9 @@ fn overlaps_residual_query_validates_into_the_witness() {
         ],
         negated: vec![],
         predicates: vec![Comparison {
-            op: CmpOp::Overlaps,
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+            },
             lhs: Term::Var(d1),
             rhs: Term::Var(d2),
         }],
@@ -248,37 +250,18 @@ fn overlaps_residual_query_validates_into_the_witness() {
     );
     assert_eq!(witness.nodes()[1].subatoms, vec![subatom(1, &[e2, d2])]);
 
-    // The decomposed Overlaps lands on the node binding d2 — as word
-    // comparisons over the interval slot pairs, never a whole-value
-    // residual.
+    // The mask residual lands on the node binding d2, whole — never a
+    // whole-value or word residual.
     assert!(witness.nodes().iter().all(|n| n.residuals.is_empty()));
-    assert!(witness.nodes()[0].word_residuals.is_empty());
+    assert!(witness.nodes().iter().all(|n| n.word_residuals.is_empty()));
+    assert!(witness.nodes()[0].allen_residuals.is_empty());
     assert_eq!(
-        witness.nodes()[1].word_residuals,
-        vec![
-            PlacedWordComparison {
-                op: CmpOp::Lt,
-                lhs: VarWord {
-                    var: d1,
-                    word: IntervalWord::Start
-                },
-                rhs: VarWord {
-                    var: d2,
-                    word: IntervalWord::End
-                },
-            },
-            PlacedWordComparison {
-                op: CmpOp::Lt,
-                lhs: VarWord {
-                    var: d2,
-                    word: IntervalWord::Start
-                },
-                rhs: VarWord {
-                    var: d1,
-                    word: IntervalWord::End
-                },
-            },
-        ]
+        witness.nodes()[1].allen_residuals,
+        vec![PlacedAllen {
+            lhs: d1,
+            rhs: d2,
+            mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+        }]
     );
 
     // The two-slot interval layout: d1 and d2 hold two slots each.

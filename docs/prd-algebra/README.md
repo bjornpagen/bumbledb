@@ -72,9 +72,9 @@ basics keep Allen's names; `Pack` keeps Snodgrass's.
 
 ## The PRDs
 
-Phase A — the atom (01 — `fresh` — and 02 — the ray — landed and retired; their
-rulings live in `10-data-model.md`):
-- [03 — Allen: the interval-pair coordinate system](03-allen-mask.md)
+Phase A — the atom (01 — `fresh` —, 02 — the ray —, and 03 — the Allen mask —
+landed and retired; their rulings live in `10-data-model.md` and
+`20-query-ir.md` § the Allen operator):
 - [04 — The configuration kernel](04-config-kernel.md)
 
 Phase B — the logic:
@@ -107,9 +107,10 @@ Phase F — the write side, the type ledger, and the surface ruling:
 Phase G — the intuition:
 - [21 — The cookbook: modeling intuition as schemas (doc unit)](21-cookbook.md)
 
-Dependency spine: 01 and 02 landed; 03→04; 05→06→07→08; 09 additionally requires
+Dependency spine: 01, 02, and 03 landed (04 — the configuration kernel — is
+free); 05→06→07→08; 09 additionally requires
 `docs/prd/` 11–12 (the chase) landed; 10 free (its dependency, 02, landed); 11→12; 13/14 landed
-(residual landed with 01); 15 requires 03/05/10/12; 16 requires 15; 17–18 free
+(residual landed with 01); 15 requires 05/10/12 (03 landed); 16 requires 15; 17–18 free
 (17's oracle rows fold into 15 if it lands first); 19 requires 18; 20
 requires 05 (its sweep and renderer target the rules-shaped IR); 23 requires
 05 and 20 and coordinates with 21 (the cookbook's queries are written in the

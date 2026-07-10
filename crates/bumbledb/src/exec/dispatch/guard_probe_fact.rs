@@ -106,14 +106,11 @@ fn fact_matches(
         FilterPredicate::Compare { field, op, value } => {
             match (operand(*field), const_operand(txn, value, params)?) {
                 (FactOperand::Word(w), FactOperand::Word(c)) => op.compare(&w, &c),
-                // The interval-vs-interval-constant compositions: fixed
-                // word comparisons over the (start, end) pair.
+                // Interval-vs-interval-constant: value equality only
+                // (interval-pair *predicates* are the Allen kinds below).
                 (FactOperand::Pair(s, e), FactOperand::Pair(start, end)) => match op {
                     CmpOp::Eq => s == start && e == end,
-                    CmpOp::Ne => s != start || e != end,
-                    CmpOp::Overlaps => s < end && start < e,
-                    CmpOp::Contains => s <= start && end <= e,
-                    _ => unreachable!("validated: no order comparison over intervals"),
+                    _ => unreachable!("validated: interval constants compare under Eq only"),
                 },
                 _ => unreachable!("validated: filter constants match their field's shape"),
             }
@@ -138,15 +135,25 @@ fn fact_matches(
         FilterPredicate::AnyPointIn { .. } => {
             unreachable!("classification: a param-set binding never reaches the guard path")
         }
-        FilterPredicate::FieldsOverlap { left, right } => {
+        // The Allen kinds: classify-then-test, exactly as the view
+        // evaluator runs them (`image::view::apply`) — encoded words
+        // preserve value order, so classification over fact words equals
+        // classification over values.
+        FilterPredicate::FieldsAllen { left, right, mask } => {
             let (l_start, l_end) = pair(*left);
             let (r_start, r_end) = pair(*right);
-            l_start < r_end && r_start < l_end
+            crate::image::view::mask_of(*mask, params).contains(crate::allen::classify_bounds(
+                &l_start, &l_end, &r_start, &r_end,
+            ))
         }
-        FilterPredicate::FieldsContain { outer, inner } => {
-            let (o_start, o_end) = pair(*outer);
-            let (i_start, i_end) = pair(*inner);
-            o_start <= i_start && i_end <= o_end
+        FilterPredicate::FieldAllen { field, other, mask } => {
+            let (f_start, f_end) = pair(*field);
+            let FactOperand::Pair(start, end) = const_operand(txn, other, params)? else {
+                unreachable!("validated: the Allen constant side is an interval")
+            };
+            crate::image::view::mask_of(*mask, params).contains(crate::allen::classify_bounds(
+                &f_start, &f_end, &start, &end,
+            ))
         }
         FilterPredicate::FieldsContainPoint { interval, point } => {
             let (start, end) = pair(*interval);
@@ -158,7 +165,9 @@ fn fact_matches(
             };
             match operand(*field) {
                 FactOperand::Word(w) => contains_point(start, end, w),
-                FactOperand::Pair(f_start, f_end) => start <= f_start && f_end <= end,
+                FactOperand::Pair(..) => {
+                    unreachable!("validated: within-comparands are scalar words")
+                }
             }
         }
     })

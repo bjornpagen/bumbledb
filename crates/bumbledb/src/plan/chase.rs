@@ -313,6 +313,13 @@ fn var_is_dead(
         return false;
     }
     if normalized
+        .allen_residuals
+        .iter()
+        .any(|r| r.lhs == var || r.rhs == var)
+    {
+        return false;
+    }
+    if normalized
         .anti_probes
         .iter()
         .any(|p| p.probe_bindings.iter().any(|(_, v)| *v == var))

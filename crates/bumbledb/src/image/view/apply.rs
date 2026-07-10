@@ -8,7 +8,7 @@ use crate::image::{ColumnView, ColumnWidth, RelationImage};
 use crate::ir::CmpOp;
 use crate::schema::FieldId;
 
-use super::{Const, FilterPredicate, ResolvedWordSource, View};
+use super::{Const, FilterPredicate, MaskConst, ResolvedWordSource, View};
 
 /// Resolves a filter constant through the bind-time param slice: `Param`
 /// and `ParamSet` markers index it; everything else is already column form.
@@ -87,6 +87,25 @@ const fn contains_point(start: u64, end: u64, p: u64) -> bool {
     start <= p && p < end
 }
 
+/// The resolved mask of an `Allen` shape: literal masks pass through;
+/// param markers index the bind slice (a mask param resolves to its bits
+/// as a `Word`), with the pre-encoded mirror applied after resolution
+/// (`ConversedParam` — see [`MaskConst`]).
+pub(crate) fn mask_of(mask: MaskConst, params: &[Const]) -> crate::allen::AllenMask {
+    let param_bits = |param: crate::ir::ParamId| match &params[usize::from(param.0)] {
+        Const::Word(word) => crate::allen::AllenMask::new(
+            u16::try_from(*word).expect("bind stored 13-bit mask words"),
+        )
+        .expect("bind validated the mask"),
+        _ => unreachable!("validated: a mask param resolves to a word"),
+    };
+    match mask {
+        MaskConst::Mask(mask) => mask,
+        MaskConst::Param(param) => param_bits(param),
+        MaskConst::ConversedParam(param) => param_bits(param).converse(),
+    }
+}
+
 /// Evaluates the conjunction against one image position. `params` is the
 /// bind-time resolution slice, indexed by `ParamId`: `Word`/`Byte` for
 /// scalar params, `Interval` for interval params, `WordSet` for set
@@ -105,15 +124,12 @@ fn row_matches(
             ) {
                 (Operand::Word(word), Const::Word(c)) => op.compare(&word, c),
                 (Operand::Byte(byte), Const::Byte(c)) => op.compare(&byte, c),
-                // The interval-vs-interval-constant compositions: fixed
-                // word comparisons over the (start, end) pair
-                // (`docs/architecture/40-execution.md`).
+                // Interval-vs-interval-constant: value equality only (a
+                // binding's `Eq` on a negated occurrence — every
+                // interval-pair *predicate* is an `Allen` kind).
                 (Operand::Pair(s, e), Const::Interval { start, end }) => match op {
                     CmpOp::Eq => s == *start && e == *end,
-                    CmpOp::Ne => s != *start || e != *end,
-                    CmpOp::Overlaps => s < *end && *start < e,
-                    CmpOp::Contains => s <= *start && *end <= e,
-                    _ => unreachable!("validated: no order comparison over intervals"),
+                    _ => unreachable!("validated: interval constants compare under Eq only"),
                 },
                 // A bound set: `Eq` matches any element (validation admits
                 // sets under `Eq` only).
@@ -156,15 +172,25 @@ fn row_matches(
             let idx = points.partition_point(|&p| p < start);
             idx < points.len() && points[idx] < end
         }
-        FilterPredicate::FieldsOverlap { left, right } => {
+        // The Allen kinds: classify-then-test on the scalar path —
+        // encoded words preserve value order, so classification over
+        // column words equals classification over values (the batch
+        // kernel is PRD 04's; the shape already carries the four
+        // endpoints and the mask it will need).
+        FilterPredicate::FieldsAllen { left, right, mask } => {
             let (l_start, l_end) = interval_at(image, *left, position);
             let (r_start, r_end) = interval_at(image, *right, position);
-            l_start < r_end && r_start < l_end
+            mask_of(*mask, params).contains(crate::allen::classify_bounds(
+                &l_start, &l_end, &r_start, &r_end,
+            ))
         }
-        FilterPredicate::FieldsContain { outer, inner } => {
-            let (o_start, o_end) = interval_at(image, *outer, position);
-            let (i_start, i_end) = interval_at(image, *inner, position);
-            o_start <= i_start && i_end <= o_end
+        FilterPredicate::FieldAllen { field, other, mask } => {
+            let (f_start, f_end) = interval_at(image, *field, position);
+            let Const::Interval { start, end } = resolve(other, params) else {
+                unreachable!("validated: the Allen constant side is an interval")
+            };
+            mask_of(*mask, params)
+                .contains(crate::allen::classify_bounds(&f_start, &f_end, start, end))
         }
         FilterPredicate::FieldsContainPoint { interval, point } => {
             let (start, end) = interval_at(image, *interval, position);
@@ -175,11 +201,13 @@ fn row_matches(
                 unreachable!("validated: the outer side is an interval constant")
             };
             match scalar_or_pair(image, *field, position) {
-                // A scalar field: point membership in the outer interval.
+                // A scalar field: point membership in the outer interval
+                // (the field is scalar by construction — an interval
+                // field under a constant is `FieldAllen`).
                 Operand::Word(word) => contains_point(*start, *end, word),
-                // An interval field: point-set containment.
-                Operand::Pair(f_start, f_end) => *start <= f_start && f_end <= *end,
-                Operand::Byte(_) => unreachable!("validated: within-comparands are word-typed"),
+                Operand::Pair(..) | Operand::Byte(_) => {
+                    unreachable!("validated: within-comparands are scalar words")
+                }
             }
         }
     })
@@ -296,12 +324,13 @@ fn interval_columns(image: &RelationImage, field: FieldId) -> (&[u64], &[u64]) {
 
 /// Attempts the kernel fast path for one predicate. Scalar compares
 /// against a resolved `Word`/`Byte` constant lower to the fixed-width
-/// predicate scans; the membership/interval kinds (`PointIn`,
-/// `AnyPointIn`, the three `Overlaps`/`Contains` shapes) lower to
-/// compositions of that same shape over the start/end column pair —
-/// two compare-and-mask passes `AND`ed, never a new kernel shape
-/// (docs/architecture/40-execution.md, § access paths). Returns whether
-/// the scan ran; `false` falls back to the scalar `row_matches` loop.
+/// predicate scans; the membership kinds (`PointIn`, `AnyPointIn`,
+/// `FieldWithin`) lower to compositions of that same shape over the
+/// start/end column pair — two compare-and-mask passes `AND`ed, never a
+/// new kernel shape (docs/architecture/40-execution.md, § access
+/// paths); the Allen kinds are scalar until PRD 04's configuration
+/// kernel. Returns whether the scan ran; `false` falls back to the
+/// scalar `row_matches` loop.
 fn kernel_scan(
     image: &RelationImage,
     predicate: &FilterPredicate,
@@ -325,32 +354,25 @@ fn kernel_scan(
                 unreachable!("validated: the outer side is an interval constant")
             };
             let span = image.span(*field);
-            match span.width {
-                // A scalar field within the constant interval: point
-                // membership is the range scan `[start, end - 1]` (the
-                // half-open bound; `end >= 1` because `start < end` and
-                // word order is value order).
-                ColumnWidth::Word => {
-                    let ColumnView::Words(words) = image.column(usize::from(span.first_column))
-                    else {
-                        unreachable!("a word span covers a word column")
-                    };
-                    crate::exec::kernel::filter_range_u64(words, *start, *end - 1, out);
-                }
-                ColumnWidth::WordPair => {
-                    let (starts, ends) = interval_columns(image, *field);
-                    crate::exec::kernel::filter_within_u64(starts, ends, *start, *end, out);
-                }
-                ColumnWidth::Byte => unreachable!("validated: within-comparands are word-typed"),
-            }
+            // A scalar field within the constant interval: point
+            // membership is the range scan `[start, end - 1]` (the
+            // half-open bound; `end >= 1` because `start < end` and
+            // word order is value order). Scalar by construction — an
+            // interval field under a constant is `FieldAllen`.
+            debug_assert_eq!(span.width, ColumnWidth::Word);
+            let ColumnView::Words(words) = image.column(usize::from(span.first_column)) else {
+                unreachable!("a word span covers a word column")
+            };
+            crate::exec::kernel::filter_range_u64(words, *start, *end - 1, out);
             return true;
         }
         // Same-fact comparisons read two varying columns per position —
-        // no constant side, no kernel shape; the scalar loop evaluates
-        // them.
+        // no constant side, no kernel shape — and the Allen kinds are
+        // classify-then-test until PRD 04's configuration kernel slots
+        // in here; the scalar loop evaluates them all.
         FilterPredicate::FieldsCompare { .. }
-        | FilterPredicate::FieldsOverlap { .. }
-        | FilterPredicate::FieldsContain { .. }
+        | FilterPredicate::FieldsAllen { .. }
+        | FilterPredicate::FieldAllen { .. }
         | FilterPredicate::FieldsContainPoint { .. } => return false,
     }
     let FilterPredicate::Compare { field, op, value } = predicate else {
@@ -359,25 +381,9 @@ fn kernel_scan(
     let span = image.span(*field);
     let value = resolve(value, params);
     if span.width == ColumnWidth::WordPair {
-        // The interval-vs-interval-constant compositions: `Overlaps` and
-        // `Contains` are two-column compare-and-mask ANDs; `Eq`/`Ne`
-        // have no fixed-width scan shape (like scalar `Ne`) and take the
-        // scalar loop.
-        let Const::Interval { start, end } = value else {
-            return false; // an unresolved set/marker never pairs with a word-pair span
-        };
-        let (starts, ends) = interval_columns(image, *field);
-        return match op {
-            CmpOp::Overlaps => {
-                crate::exec::kernel::filter_overlaps_u64(starts, ends, *start, *end, out);
-                true
-            }
-            CmpOp::Contains => {
-                crate::exec::kernel::filter_contains_u64(starts, ends, *start, *end, out);
-                true
-            }
-            _ => false,
-        };
+        // Interval value equality (`Eq` on a negated occurrence's view)
+        // has no fixed-width scan shape, like scalar `Ne`: scalar loop.
+        return false;
     }
     match (image.column(usize::from(span.first_column)), value) {
         (ColumnView::Words(words), Const::Word(c)) => {
@@ -404,9 +410,8 @@ fn kernel_scan(
                 CmpOp::Ge => (*c, u64::MAX),
                 // `Ne` has no fixed-width scan shape; the interval
                 // operators never pair with a single-word constant
-                // (normalization emits the interval filter kinds, and
-                // their word-pair compositions matched above).
-                CmpOp::Ne | CmpOp::Overlaps | CmpOp::Contains => return false,
+                // (normalization emits the interval filter kinds).
+                CmpOp::Ne | CmpOp::Allen { .. } | CmpOp::Contains => return false,
             };
             crate::exec::kernel::filter_range_u64(words, lo, hi, out);
             true

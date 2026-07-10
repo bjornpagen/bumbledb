@@ -60,10 +60,10 @@ fn u8_kernel_matches_the_scalar_reference() {
     }
 }
 
-/// PRD 17 (the 00-product unsafe policy): the interval filter
-/// compositions — `PointIn`, `AnyPointIn`, and the three Overlaps/Contains
-/// shapes — are bit-identical to the scalar reference across the
-/// boundary shapes: empty, single, odd lengths, lane ±1.
+/// PRD 17 (the 00-product unsafe policy): the membership filter
+/// compositions — `PointIn` and `AnyPointIn` — are bit-identical to the
+/// scalar reference across the boundary shapes: empty, single, odd
+/// lengths, lane ±1.
 #[test]
 fn interval_filter_compositions_match_the_scalar_reference_bit_for_bit() {
     let mut rng = Lcg(1717);
@@ -96,22 +96,6 @@ fn interval_filter_compositions_match_the_scalar_reference_bit_for_bit() {
             filter_any_point_in_u64(&starts, &ends, points, &mut kernel);
             super::reference::filter_any_point_in_u64(&starts, &ends, points, &mut reference);
             assert_eq!(kernel, reference, "any_point_in len {len} {points:?}");
-        }
-        for (c_start, c_end) in [(0u64, 1u64), (1, 4), (2, 7), (0, u64::MAX), (5, 6)] {
-            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
-            filter_overlaps_u64(&starts, &ends, c_start, c_end, &mut kernel);
-            super::reference::filter_overlaps_u64(&starts, &ends, c_start, c_end, &mut reference);
-            assert_eq!(kernel, reference, "overlaps len {len} [{c_start},{c_end})");
-
-            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
-            filter_contains_u64(&starts, &ends, c_start, c_end, &mut kernel);
-            super::reference::filter_contains_u64(&starts, &ends, c_start, c_end, &mut reference);
-            assert_eq!(kernel, reference, "contains len {len} [{c_start},{c_end})");
-
-            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
-            filter_within_u64(&starts, &ends, c_start, c_end, &mut kernel);
-            super::reference::filter_within_u64(&starts, &ends, c_start, c_end, &mut reference);
-            assert_eq!(kernel, reference, "within len {len} [{c_start},{c_end})");
         }
     }
 }

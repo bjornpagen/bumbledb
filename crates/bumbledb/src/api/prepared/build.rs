@@ -116,19 +116,32 @@ pub(crate) fn prepare<'s, S>(
 
     let finds = find_specs(query, &witness, &exec_plan);
 
-    // Dense param typing for bind-time checks (validation rejected gaps,
-    // so the id-ordered iteration is positional). A set param records its
-    // element type plus the set-ness bit — bind expects a slice for it.
-    // The point-ness bit marks element-typed params at interval positions:
-    // bind rejects their domain ceiling (the point-domain law).
-    let (param_types, param_is_set): (Vec<ValueType>, Vec<bool>) = witness
-        .param_types()
-        .map(|(id, ty)| (ty.clone(), witness.set_params().contains(&id)))
-        .unzip();
-    let param_is_point: Vec<bool> = witness
-        .param_types()
-        .map(|(id, _)| witness.point_params().contains(&id))
-        .collect();
+    // Dense param typing for bind-time checks (validation rejected gaps
+    // — jointly across value and mask params — so the id-ordered merge
+    // is positional). A set param records its element type plus the
+    // set-ness bit — bind expects a slice for it. The point-ness bit
+    // marks element-typed params at interval positions: bind rejects
+    // their domain ceiling (the point-domain law). Mask params (`Allen`
+    // mask positions) are absent from the witness's value typing and
+    // fill their slots with the mask shape.
+    let value_types: std::collections::BTreeMap<crate::ir::ParamId, &ValueType> =
+        witness.param_types().collect();
+    let param_count = value_types.len() + witness.mask_params().len();
+    let mut param_types = Vec::with_capacity(param_count);
+    let mut param_is_set = Vec::with_capacity(param_count);
+    let mut param_is_point = Vec::with_capacity(param_count);
+    for idx in 0..param_count {
+        let id = crate::ir::ParamId(u16::try_from(idx).expect("param ids fit u16"));
+        param_types.push(value_types.get(&id).map_or_else(
+            || {
+                debug_assert!(witness.mask_params().contains(&id), "dense param ids");
+                super::ParamShape::AllenMask
+            },
+            |ty| super::ParamShape::Value((*ty).clone()),
+        ));
+        param_is_set.push(witness.set_params().contains(&id));
+        param_is_point.push(witness.point_params().contains(&id));
+    }
 
     // Binding slots are WORDS: an interval variable holds two (the
     // SlotWidth layout) — `slot_count`, never the variable count.

@@ -20,14 +20,20 @@
 //!  6. enum ordinal out of range for the field's variant list (bindings
 //!     and comparisons, each precisely diagnosed)
 //!  7. param anchor conflicts (an *unanchored* param is unwritable by
-//!     construction: every param position is itself an anchor) and
-//!     non-dense param ids — dense across scalars and sets jointly
+//!     construction: every param position is itself an anchor; a mask
+//!     param with any value anchor conflicts — a mask is not a
+//!     data-model type) and non-dense param ids — dense across scalars,
+//!     sets, and masks jointly
 //!  8. a `ParamId` used both scalar and set; a `ParamSet` under any
 //!     operator but `Eq`; an interval-typed `ParamSet` anchor
 //!  9. comparisons violating the type rules (Eq/Ne all types; order ops
 //!     U64/U64 and I64/I64 only — an interval operand under an order op
-//!     gets its own diagnostic; Overlaps two intervals of one element;
-//!     Contains interval × same-element interval or element)
+//!     gets its own diagnostic; Allen two intervals of one element type;
+//!     Contains interval × element — its interval⊇interval form is
+//!     `Allen(COVERS)`, not an operator), and the Allen vacuity rules:
+//!     the ∅ mask ("never" — write no query) and the full mask
+//!     ("always" — write no predicate), distinct typed errors here for
+//!     literal masks and at bind for mask params
 //! 10. constant comparisons (no variable side) and self-comparisons
 //! 11. point variables bound only by membership (no enumerable domain)
 //! 12. negated-atom variables not bound by any positive atom (negated
@@ -74,6 +80,11 @@ pub struct ValidatedQuery {
     /// point-domain law (`docs/architecture/10-data-model.md`) forbids the
     /// domain ceiling — enforced at bind, where the value exists.
     point_params: BTreeSet<ParamId>,
+    /// Params in `Allen` mask positions ([`crate::ir::MaskTerm::Param`]):
+    /// bound as [`crate::BindValue::AllenMask`], with the ∅/full vacuity
+    /// rejection at bind. Disjoint from `param_types` — a mask is not a
+    /// data-model type.
+    mask_params: BTreeSet<ParamId>,
     /// Non-aggregated find variables — the group key under aggregation.
     group_key: BTreeSet<VarId>,
 }
@@ -134,6 +145,14 @@ impl ValidatedQuery {
     #[must_use]
     pub fn point_params(&self) -> &BTreeSet<ParamId> {
         &self.point_params
+    }
+
+    /// The mask params (`Allen` mask positions): bind-time expects an
+    /// Allen mask for each, rejecting the vacuous ∅/full masks. Absent
+    /// from [`Self::param_types`] — a mask is not a data-model type.
+    #[must_use]
+    pub fn mask_params(&self) -> &BTreeSet<ParamId> {
+        &self.mask_params
     }
 
     /// The plan's sink-relevance set (the D2 gating bits' source). For a
@@ -206,6 +225,9 @@ struct Context {
     /// `Contains` operands); those that resolve element-typed are the
     /// witness's point params.
     interval_position_params: BTreeSet<ParamId>,
+    /// Params in `Allen` mask positions (never in `param_slots` — the
+    /// conflict is checked, not represented).
+    mask_params: BTreeSet<ParamId>,
 }
 
 #[cfg(test)]

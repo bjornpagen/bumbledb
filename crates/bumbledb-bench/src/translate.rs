@@ -8,8 +8,9 @@
 //! - Projection = `SELECT DISTINCT` over the find variables.
 //! - An `Interval(E)` field is two INTEGER columns (`crate::sqlmap`):
 //!   a membership binding becomes `f_start <= t AND t < f_end`, interval
-//!   value equality compares the halves pairwise, and `Overlaps` /
-//!   `Contains` are the endpoint formulas.
+//!   value equality compares the halves pairwise, `Contains`' point
+//!   form is the membership formula, and an `Allen` mask is its basics'
+//!   endpoint formulas OR'd (PRD 15 systematizes).
 //! - Negation = one `NOT EXISTS (SELECT 1 FROM ...)` correlated subquery
 //!   per negated atom, appended to the core's WHERE. Correlation reuses
 //!   the positive joins' column aliases; the subqueries' own alias space

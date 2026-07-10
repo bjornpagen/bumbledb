@@ -53,6 +53,7 @@ pub(super) fn derive_nodes(plan: &FjPlan) -> Result<Vec<PlanNode>, PlanError> {
             covers,
             residuals: Vec::new(),
             word_residuals: Vec::new(),
+            allen_residuals: Vec::new(),
             anti_probes: Vec::new(),
             point_probes: Vec::new(),
             new_vars,

@@ -101,6 +101,12 @@ pub fn from_sqlite(
                 Value::Bytes(raw) => Owned::Bytes(raw.to_vec()),
                 Value::IntervalU64(start, end) => Owned::IntervalU64(start, end),
                 Value::IntervalI64(start, end) => Owned::IntervalI64(start, end),
+                Value::AllenMask(_) => {
+                    return Err(format!(
+                        "column {}: mask values are not results",
+                        column - 1
+                    ))
+                }
             });
         }
         out.push(canonical);

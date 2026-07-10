@@ -36,4 +36,13 @@ pub enum Value {
     IntervalU64(u64, u64),
     /// A half-open `[start, end)` over I64; bounds as [`Value::IntervalU64`].
     IntervalI64(i64, i64),
+    /// An Allen mask — the interval-pair relation as a value
+    /// (`docs/architecture/10-data-model.md` § the mask value shape).
+    /// Not a field type: it anchors nothing but the `Allen` comparison's
+    /// mask position, and exists so the temporal relation is a bind-time
+    /// argument like any other param. Carried as the checked
+    /// [`crate::AllenMask`] (bits above the low 13 are unrepresentable);
+    /// the vacuous ∅/full masks are query-boundary rules, exactly like
+    /// `start < end`.
+    AllenMask(crate::allen::AllenMask),
 }

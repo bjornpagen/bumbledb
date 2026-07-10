@@ -27,10 +27,27 @@ pub(crate) const DEFAULT_EQ_DISTINCT: u64 = 64;
 
 /// A range residual (`Lt/Le/Gt/Ge` against a constant) keeps 1/4 of its
 /// input — the classic textbook fraction; ranges are scans by design and
-/// the estimate only orders joins. Interval predicates are fixed
+/// the estimate only orders joins. Membership predicates are fixed
 /// word-range compositions over the start/end column pair
 /// (docs/architecture/40-execution.md), so they take the same class.
 pub(crate) const RANGE_KEEP_DEN: u64 = 4;
+
+/// The Allen basics partition every interval pair (JEPD), so a mask
+/// predicate's honest keep fraction is `popcount/13` — the mask's measure
+/// in the coordinate system, no workload assumption needed — clamped to
+/// the existing floor ladder exactly like every residual: never below one
+/// row here, never outside `[1, rows]` at the end of the estimate. A
+/// *param* mask is unmeasurable at prepare (the ladder's carve-out) and
+/// takes the range class ([`RANGE_KEEP_DEN`]), like every other param.
+fn allen_keep(estimate: u64, mask: crate::image::view::MaskConst) -> u64 {
+    match mask {
+        crate::image::view::MaskConst::Mask(mask) => {
+            (estimate.saturating_mul(u64::from(mask.popcount())) / 13).max(1)
+        }
+        crate::image::view::MaskConst::Param(_)
+        | crate::image::view::MaskConst::ConversedParam(_) => (estimate / RANGE_KEEP_DEN).max(1),
+    }
+}
 
 /// A same-fact field equality (`FieldsCompare` under `Eq`, the repeated
 /// in-atom variable) keeps `1/64` — same floor class as an Eq selection.
@@ -119,35 +136,40 @@ fn occurrence_estimate(
             (estimate.saturating_mul(selection_matches(&selection.value)) / distinct.max(1)).max(1);
     }
     for residual in &residuals {
+        // The Allen kinds carry their own honest fraction ([`allen_keep`]:
+        // popcount/13); everything else takes a constant denominator.
+        if let FilterPredicate::FieldsAllen { mask, .. }
+        | FilterPredicate::FieldAllen { mask, .. } = residual
+        {
+            estimate = allen_keep(estimate, *mask);
+            continue;
+        }
         let keep_den = match residual {
             FilterPredicate::Compare { op, .. } => match op {
-                // Interval predicates against a constant are word-range
-                // compositions — the same range class as the scalar ops.
-                CmpOp::Lt
-                | CmpOp::Le
-                | CmpOp::Gt
-                | CmpOp::Ge
-                | CmpOp::Overlaps
-                | CmpOp::Contains => RANGE_KEEP_DEN,
+                CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
                 CmpOp::Eq => unreachable!("split_filters routed Eq into selections"),
+                CmpOp::Allen { .. } | CmpOp::Contains => {
+                    unreachable!("interval predicates lower to their fixed shapes")
+                }
             },
             FilterPredicate::FieldsCompare { op, .. } => match op {
                 CmpOp::Eq => FIELDS_EQ_KEEP_DEN,
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
-                CmpOp::Overlaps | CmpOp::Contains => {
+                CmpOp::Allen { .. } | CmpOp::Contains => {
                     unreachable!("same-atom interval predicates lower to their fixed shapes")
                 }
             },
-            // The fixed interval compositions (membership, overlap,
-            // containment): word ranges over the start/end pair.
+            // The fixed membership compositions: word ranges over the
+            // start/end pair.
             FilterPredicate::PointIn { .. }
             | FilterPredicate::AnyPointIn { .. }
-            | FilterPredicate::FieldsOverlap { .. }
-            | FilterPredicate::FieldsContain { .. }
             | FilterPredicate::FieldsContainPoint { .. }
             | FilterPredicate::FieldWithin { .. } => RANGE_KEEP_DEN,
+            FilterPredicate::FieldsAllen { .. } | FilterPredicate::FieldAllen { .. } => {
+                unreachable!("handled above")
+            }
         };
         estimate = (estimate / keep_den).max(1);
         // A set-bound membership matches any of the set's elements —

@@ -49,17 +49,19 @@ pub const MEMBERSHIP: &str = "SELECT DISTINCT t1.\"org\" FROM \"Posting\" AS t0,
 /// bound value); the account param repeats across atoms (`?1` twice).
 pub const MEMBERSHIP_PARAM: &str = "SELECT DISTINCT t1.\"org\" FROM \"Posting\" AS t0, \"Mandate\" AS t1 WHERE t0.\"account\" = ?1 AND t0.\"at\" = ?2 AND t1.\"account\" = ?1 AND t1.\"active_start\" <= ?2 AND ?2 < t1.\"active_end\"";
 
-/// overlaps — `Q(o1, o2) :- Mandate(account = a, org = o1, active = u),
-/// Mandate(account = a, org = o2, active = v), Overlaps(u, v)`: the
-/// mandate-overlap join. The endpoint formula:
-/// `a_start < b_end AND b_start < a_end`.
-pub const OVERLAPS: &str = "SELECT DISTINCT t0.\"org\", t1.\"org\" FROM \"Mandate\" AS t0, \"Mandate\" AS t1 WHERE t0.\"account\" = t1.\"account\" AND t0.\"active_start\" < t1.\"active_end\" AND t1.\"active_start\" < t0.\"active_end\"";
+/// intersects — `Q(o1, o2) :- Mandate(account = a, org = o1, active = u),
+/// Mandate(account = a, org = o2, active = v),
+/// Allen(u, v, INTERSECTS)`: the mandate-intersection join. The mask
+/// renders as its per-basic endpoint formulas OR'd (the 9 sharing
+/// basics), under the query's SELECT DISTINCT — deliberately naive
+/// (PRD 15 systematizes).
+pub const INTERSECTS: &str = "SELECT DISTINCT t0.\"org\", t1.\"org\" FROM \"Mandate\" AS t0, \"Mandate\" AS t1 WHERE t0.\"account\" = t1.\"account\" AND ((t0.\"active_start\" < t1.\"active_start\" AND t1.\"active_start\" < t0.\"active_end\" AND t0.\"active_end\" < t1.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t0.\"active_end\" < t1.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_end\" < t1.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" < t1.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" < t1.\"active_start\" AND t1.\"active_end\" < t0.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t1.\"active_end\" < t0.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_start\" < t1.\"active_end\" AND t1.\"active_end\" < t0.\"active_end\"))";
 
-/// `contains_interval` — `Q(o) :- Mandate(org = o, active = v),
-/// Contains(v, ?0)` with `?0` anchored only here, hence interval-typed
-/// (point-set ⊇): `a_start <= b_start AND b_end <= a_end`, the param's
-/// halves as two placeholders.
-pub const CONTAINS_INTERVAL: &str = "SELECT DISTINCT t0.\"org\" FROM \"Mandate\" AS t0 WHERE t0.\"active_start\" <= ?1 AND ?2 <= t0.\"active_end\"";
+/// `covers_param` — `Q(o) :- Mandate(org = o, active = v),
+/// Allen(v, ?0, COVERS)` with `?0` anchored interval-typed by the
+/// comparison: the 4-basic ⊇ composite (equals ∪ finished-by ∪ contains
+/// ∪ started-by) OR'd over the param's halves as two placeholders.
+pub const COVERS_PARAM: &str = "SELECT DISTINCT t0.\"org\" FROM \"Mandate\" AS t0 WHERE ((t0.\"active_start\" = ?1 AND t0.\"active_end\" = ?2) OR (t0.\"active_start\" < ?1 AND t0.\"active_end\" = ?2) OR (t0.\"active_start\" < ?1 AND ?2 < t0.\"active_end\") OR (t0.\"active_start\" = ?1 AND ?2 < t0.\"active_end\"))";
 
 /// `contains_point` — `Q(o, t) :- Mandate(org = o, active = v),
 /// Posting(at = t), Contains(v, t)`: point containment as a predicate —
@@ -137,9 +139,10 @@ pub const POSTINGS_WITHOUT_TAG: &str = "SELECT DISTINCT t0.\"id\", t0.\"amount\"
 
 /// `mandate_overlap` — `Q(a1, a2) :- Mandate(account = a1, org = ?0,
 /// active = u), Mandate(account = a2, org = ?0, active = v),
-/// Overlaps(u, v)`: account pairs whose mandates under one org overlap
-/// in time — an Overlaps **join** across accounts, not a filter.
-pub const MANDATE_OVERLAP: &str = "SELECT DISTINCT t0.\"account\", t1.\"account\" FROM \"Mandate\" AS t0, \"Mandate\" AS t1 WHERE t0.\"org\" = ?1 AND t1.\"org\" = ?1 AND t0.\"active_start\" < t1.\"active_end\" AND t1.\"active_start\" < t0.\"active_end\"";
+/// Allen(u, v, INTERSECTS)`: account pairs whose mandates under one org
+/// intersect in time — an Allen-mask **join** across accounts, not a
+/// filter; the mask renders as its 9 sharing basics OR'd.
+pub const MANDATE_OVERLAP: &str = "SELECT DISTINCT t0.\"account\", t1.\"account\" FROM \"Mandate\" AS t0, \"Mandate\" AS t1 WHERE t0.\"org\" = ?1 AND t1.\"org\" = ?1 AND ((t0.\"active_start\" < t1.\"active_start\" AND t1.\"active_start\" < t0.\"active_end\" AND t0.\"active_end\" < t1.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t0.\"active_end\" < t1.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_end\" < t1.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" < t1.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" < t1.\"active_start\" AND t1.\"active_end\" < t0.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t1.\"active_end\" < t0.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_start\" < t1.\"active_end\" AND t1.\"active_end\" < t0.\"active_end\"))";
 
 /// `arg_max_global` — `Q(ArgMax_at(p)) :- Posting(id = p, at = t)`: the
 /// global-group variant omits the GROUP BY and the group join keys; an

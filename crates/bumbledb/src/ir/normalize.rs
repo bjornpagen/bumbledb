@@ -87,15 +87,28 @@ pub struct Occurrence {
 
 /// A comparison whose sides are variables — evaluated inside the join at
 /// the earliest plan node where both are bound (placement is the
-/// 40-execution doc's job). Whole-value semantics: an interval-typed
-/// variable compares **pairwise** over its two slot words (`Eq`/`Ne` are
-/// the only operators that reach here for intervals — `Overlaps`/
-/// `Contains`/membership decompose into [`PlacedWordComparison`]s).
+/// 40-execution doc's job). Scalar single-word semantics: interval
+/// comparisons never reach here — interval `Eq`/`Ne` canonicalize to
+/// masks ([`PlacedAllen`]) and point containment decomposes into
+/// [`PlacedWordComparison`]s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacedComparison {
     pub op: CmpOp,
     pub lhs: VarId,
     pub rhs: VarId,
+}
+
+/// A cross-atom `Allen` residual: two interval variables and the mask —
+/// four endpoint slot words (each side's pair at its slot base) plus the
+/// mask, evaluated classify-then-test at the earliest plan node where
+/// both sides are bound, exactly where whole-value residuals attach. The
+/// mask stays symbolic ([`crate::ir::MaskTerm`]): a param mask resolves
+/// per execution ([`crate::exec::run::Executor::bind_allen_masks`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlacedAllen {
+    pub lhs: VarId,
+    pub rhs: VarId,
+    pub mask: crate::ir::MaskTerm,
 }
 
 /// Which of a variable's binding words a residual side reads (the
@@ -126,16 +139,15 @@ pub struct VarWord {
     pub word: IntervalWord,
 }
 
-/// One word comparison of a decomposed cross-atom interval residual
-/// (`Overlaps`/`Contains`/membership between different occurrences'
-/// variables): `lhs <op> rhs` over binding-slot words. The three
-/// compositions (`docs/architecture/20-query-ir.md`, § normalization):
+/// One word comparison of a decomposed cross-atom point containment
+/// (`Contains(a, p)` between different occurrences' variables):
+/// `lhs <op> rhs` over binding-slot words — the one fixed composition
+/// (`docs/architecture/20-query-ir.md`, § normalization):
 ///
-/// - `Overlaps(a, b)` ≡ `a.start < b.end AND b.start < a.end`
-/// - `Contains(a, b: interval)` ≡ `a.start ≤ b.start AND b.end ≤ a.end`
 /// - `Contains(a, p: point)` ≡ `a.start ≤ p AND p < a.end`
 ///
-/// so `op` is always `Lt` or `Le`.
+/// so `op` is always `Lt` or `Le`. Interval-pair predicates are never
+/// decomposed — they are [`PlacedAllen`] residuals carrying their mask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacedWordComparison {
     pub op: CmpOp,
@@ -207,9 +219,13 @@ pub struct NormalizedQuery {
     pub occurrences: Vec<Occurrence>,
     /// Cross-atom whole-value comparisons.
     pub residuals: Vec<PlacedComparison>,
-    /// Cross-atom interval predicates, decomposed into word comparisons
+    /// Cross-atom point containments, decomposed into word comparisons
     /// over slot pairs.
     pub word_residuals: Vec<PlacedWordComparison>,
+    /// Cross-atom `Allen` residuals: four endpoint slots + mask
+    /// (interval `Eq`/`Ne` comparisons canonicalize here too — exactly
+    /// one interval-pair form reaches the planner).
+    pub allen_residuals: Vec<PlacedAllen>,
     /// Anti-probe descriptors, one per negated occurrence, in occurrence
     /// order.
     pub anti_probes: Vec<AntiProbe>,

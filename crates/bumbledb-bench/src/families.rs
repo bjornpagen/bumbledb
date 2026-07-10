@@ -60,6 +60,7 @@ pub fn bind_value(value: &Value) -> BindValue<'_> {
         Value::Bytes(raw) => BindValue::Bytes(raw),
         Value::IntervalU64(start, end) => BindValue::IntervalU64(*start, *end),
         Value::IntervalI64(start, end) => BindValue::IntervalI64(*start, *end),
+        Value::AllenMask(mask) => BindValue::AllenMask(*mask),
     }
 }
 

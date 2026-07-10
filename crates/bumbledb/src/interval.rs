@@ -99,6 +99,15 @@ impl Interval<i64> {
     }
 }
 
+impl<T: Copy> Interval<T> {
+    /// The parsed bounds `(start, end)` — the algebra's one read
+    /// ([`crate::allen::classify`] is generic over the element order);
+    /// hosts read through the per-element accessors above.
+    pub(crate) const fn bounds(self) -> (T, T) {
+        (self.start, self.end)
+    }
+}
+
 impl From<Interval<u64>> for crate::value::Value {
     /// Hosts construct interval literals through the checked
     /// [`Interval`] type, so a converted literal already satisfies

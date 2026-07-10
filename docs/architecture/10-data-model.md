@@ -34,12 +34,23 @@ encoding, so it *is* the identity; the wrapper name types nothing. **Reverses if
 never — philosophy.
 
 **Orderability, complete:** U64 and I64 support ordering (`Lt/Le/Gt/Ge`, `Min`, `Max`,
-range predicates). Interval supports **equality, `Overlaps`, `Contains`, and point
-membership** (below) — never `Lt`-family order or `Min`/`Max`: the value order that
+range predicates). Interval supports **equality, the `Allen` mask (the whole
+interval-pair algebra as one comparison — `20-query-ir.md` § the Allen
+operator), and point membership** (below) — never `Lt`-family order or
+`Min`/`Max`: the value order that
 exists (lexicographic by start) is an encoding accident, and offering it would invite
-queries that mean overlap and say "less than". Everything else is equality-only. Enum
+queries that mean intersection and say "less than". Everything else is equality-only. Enum
 ordinal order is a declaration-order accident, not semantics; String/Bytes intern ids
 are meaningless to order; Bool ordering is noise.
+
+**The mask value shape:** the interval-pair relation itself is a value —
+`AllenMask`, a 13-bit word, bit *i* = Allen basic *i* in the palindromic order
+(before, meets, overlaps, starts, during, finishes, equals, finished-by,
+contains, started-by, overlapped-by, met-by, after), so the algebra's converse
+involution is the 13-bit reversal. It is **not a field type** — nothing stores
+a mask; the roster stays at seven — it exists so the temporal relation can be
+a bind-time argument (`Value::AllenMask` / `BindValue::AllenMask`,
+`20-query-ir.md`).
 
 **Names live in the host.** The schema macro generates Rust newtypes
 (`struct AccountId(pub u64);`, `struct Cents(pub i64);`, `struct ValidDuring(pub
@@ -88,8 +99,9 @@ Everything temporal in this database is a corollary of this sentence and owns no
 machinery of its own:
 
 - A **functional dependency over an interval position holds pointwise** — no two facts
-  in the key group may share any point, i.e. their intervals must not overlap
-  (`30-dependencies.md`). SQL:2011 spells this `WITHOUT OVERLAPS` and ships it as a
+  in the key group may share any point: every pair satisfies `DISJOINT`, the
+  Allen composite (`30-dependencies.md`, `20-query-ir.md` § the Allen
+  operator). SQL:2011 spells this `WITHOUT OVERLAPS` and ships it as a
   keyword; here it is not an option but what the judgment *means* on this type.
 - An **inclusion dependency over an interval position holds pointwise** — every point
   of the source's interval is covered by the target's intervals (SQL:2011's `PERIOD`

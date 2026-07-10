@@ -62,8 +62,7 @@ mod neon;
 
 pub use compact::compact_u32_by_mask;
 pub use filter::{
-    filter_any_point_in_u64, filter_contains_u64, filter_eq_u64, filter_eq_u8, filter_overlaps_u64,
-    filter_point_in_u64, filter_range_u64, filter_within_u64,
+    filter_any_point_in_u64, filter_eq_u64, filter_eq_u8, filter_point_in_u64, filter_range_u64,
 };
 pub use fold::{fold_min_max_u64, fold_sum_biased_i64, fold_sum_u64};
 pub use gather::{fold_min_max_u64_idx, fold_sum_biased_i64_idx, fold_sum_u64_idx};

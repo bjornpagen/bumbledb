@@ -13,9 +13,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::schema::ValueType;
-use bumbledb::{AggOp, Atom, CmpOp, Comparison, FindTerm, Query, Term, Value, VarId};
+use bumbledb::{
+    AggOp, Atom, Basic, CmpOp, Comparison, FindTerm, MaskTerm, Query, Term, Value, VarId,
+};
 
-use super::tuple::{cmp_value, contains_point, endpoints, overlaps, point};
+use super::tuple::{cmp_value, contains_point, endpoints, point};
 use super::{NaiveDb, Tuple};
 
 /// One positional parameter, scalar or set — the model's mirror of the
@@ -108,7 +110,24 @@ impl NaiveDb {
                 .predicates
                 .iter()
                 .map(|Comparison { op, lhs, rhs }| {
-                    (*op, substitute(lhs, params), substitute(rhs, params))
+                    // A param mask substitutes like any param — the model
+                    // sees only literal masks past this point.
+                    let op = match op {
+                        CmpOp::Allen {
+                            mask: MaskTerm::Param(param),
+                        } => {
+                            let ParamValue::Scalar(Value::AllenMask(mask)) =
+                                &params[usize::from(param.0)]
+                            else {
+                                panic!("validated: a mask param binds an Allen mask")
+                            };
+                            CmpOp::Allen {
+                                mask: MaskTerm::Literal(*mask),
+                            }
+                        }
+                        op => *op,
+                    };
+                    (op, substitute(lhs, params), substitute(rhs, params))
                 })
                 .collect(),
             scalar_anchored,
@@ -409,16 +428,43 @@ fn predicate_holds(
                 _ => unreachable!(),
             }
         }
-        CmpOp::Overlaps => overlaps(endpoints(&left), endpoints(&right)),
-        CmpOp::Contains => {
-            let (start, end) = endpoints(&left);
-            if let Some(t) = point(&right) {
-                contains_point((start, end), t)
-            } else {
-                let (inner_start, inner_end) = endpoints(&right);
-                start <= inner_start && inner_end <= end
-            }
+        CmpOp::Allen { mask } => {
+            let MaskTerm::Literal(mask) = mask else {
+                panic!("param masks substitute before evaluation")
+            };
+            let (a, b) = (endpoints(&left), endpoints(&right));
+            Basic::ALL
+                .iter()
+                .any(|basic| mask.contains(*basic) && basic_holds(*basic, a, b))
         }
+        CmpOp::Contains => {
+            let t = point(&right).expect("validated: Contains' right side is a point");
+            contains_point(endpoints(&left), t)
+        }
+    }
+}
+
+/// One Allen basic's point-set definition over half-open intervals,
+/// written directly as its endpoint characterization — the model's own
+/// arithmetic, deliberately **independent** of the engine's classifier
+/// (the differential oracle would otherwise test a function against
+/// itself).
+fn basic_holds(basic: Basic, a: (i128, i128), b: (i128, i128)) -> bool {
+    let ((a_s, a_e), (b_s, b_e)) = (a, b);
+    match basic {
+        Basic::Before => a_e < b_s,
+        Basic::Meets => a_e == b_s,
+        Basic::Overlaps => a_s < b_s && b_s < a_e && a_e < b_e,
+        Basic::Starts => a_s == b_s && a_e < b_e,
+        Basic::During => b_s < a_s && a_e < b_e,
+        Basic::Finishes => b_s < a_s && a_e == b_e,
+        Basic::Equals => a_s == b_s && a_e == b_e,
+        Basic::FinishedBy => a_s < b_s && a_e == b_e,
+        Basic::Contains => a_s < b_s && b_e < a_e,
+        Basic::StartedBy => a_s == b_s && b_e < a_e,
+        Basic::OverlappedBy => b_s < a_s && a_s < b_e && b_e < a_e,
+        Basic::MetBy => b_e == a_s,
+        Basic::After => b_e < a_s,
     }
 }
 

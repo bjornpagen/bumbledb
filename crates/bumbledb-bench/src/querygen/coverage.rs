@@ -5,17 +5,18 @@
 //! facts (hit-vs-miss, boundary polarity) come from generation tags.
 
 use bumbledb::schema::{Generation, IntervalElement, ValueType};
-use bumbledb::{AggOp, Atom, CmpOp, FindTerm, Query, Term, VarId};
+use bumbledb::{AggOp, Atom, CmpOp, FindTerm, MaskTerm, Query, Term, VarId};
 use std::collections::{HashMap, HashSet};
 
 use crate::gen::{GenConfig, Rng};
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
-use crate::querygen::{ChaseVariant, Coverage, GenTags, Shape, CMP_OPS};
+use crate::querygen::{ChaseVariant, Coverage, GenTags, Shape};
 
 /// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
 /// all seven types, order operators over the two integer types only,
-/// `Overlaps`/`Contains` only at their interval-typed shapes.
+/// `Allen` (any mask) and `Contains` only at their interval-anchored
+/// shapes.
 #[must_use]
 pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
     match op_idx {
@@ -25,11 +26,19 @@ pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
     }
 }
 
+/// The matrix row of an operator — every `Allen` mask shares one row (the
+/// mask is a value of the operator, not a new operator).
 fn op_index(op: CmpOp) -> usize {
-    CMP_OPS
-        .iter()
-        .position(|o| *o == op)
-        .expect("all eight ops")
+    match op {
+        CmpOp::Eq => 0,
+        CmpOp::Ne => 1,
+        CmpOp::Lt => 2,
+        CmpOp::Le => 3,
+        CmpOp::Gt => 4,
+        CmpOp::Ge => 5,
+        CmpOp::Allen { .. } => 6,
+        CmpOp::Contains => 7,
+    }
 }
 
 fn type_index(ty: &ValueType) -> usize {
@@ -130,7 +139,7 @@ fn element_of(ty: &ValueType) -> Option<IntervalElement> {
 /// (`docs/architecture/60-validation.md` § the generator contract;
 /// `40-execution.md` names the degenerate): every atom carrying a
 /// var-point membership binding or an interval-typed side of a
-/// cross-atom `Overlaps`/`Contains` must share an equality join
+/// cross-atom `Allen`/`Contains` must share an equality join
 /// variable with another atom or carry an equality selection
 /// (literal/param/set) on a scalar field; a negated atom whose only
 /// bindings are memberships is the same Cartesian. Returns the count of
@@ -176,9 +185,9 @@ fn spine_violations(query: &Query, t: &Typing) -> u64 {
             }
         }
     }
-    // …and interval-typed sides of cross-atom Overlaps/Contains.
+    // …and interval-typed sides of cross-atom Allen/Contains.
     for comparison in &query.predicates {
-        if !matches!(comparison.op, CmpOp::Overlaps | CmpOp::Contains) {
+        if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::Contains) {
             continue;
         }
         if let (Term::Var(lhs), Term::Var(rhs)) = (&comparison.lhs, &comparison.rhs) {
@@ -304,7 +313,7 @@ impl Coverage {
     }
 
     fn record_comparisons(&mut self, query: &Query, t: &Typing) -> bool {
-        let mut has_overlaps = false;
+        let mut has_allen = false;
         for comparison in &query.predicates {
             let ty = match (&comparison.lhs, &comparison.rhs) {
                 (Term::Var(var), _) | (_, Term::Var(var)) => t
@@ -316,34 +325,27 @@ impl Coverage {
             };
             self.matrix[op_index(comparison.op)][type_index(&ty)] += 1;
             match comparison.op {
-                CmpOp::Overlaps => {
-                    has_overlaps = true;
+                CmpOp::Allen { mask } => {
+                    has_allen = true;
                     match element_of(&ty) {
-                        Some(IntervalElement::U64) => self.overlaps_u64 += 1,
-                        Some(IntervalElement::I64) => self.overlaps_i64 += 1,
-                        None => unreachable!("Overlaps is interval-typed by construction"),
+                        Some(IntervalElement::U64) => self.allen_u64 += 1,
+                        Some(IntervalElement::I64) => self.allen_i64 += 1,
+                        None => unreachable!("Allen is interval-typed by construction"),
                     }
-                }
-                CmpOp::Contains => {
-                    match element_of(&ty) {
-                        Some(IntervalElement::U64) => self.contains_u64 += 1,
-                        Some(IntervalElement::I64) => self.contains_i64 += 1,
-                        None => unreachable!("Contains' left side is interval-typed"),
-                    }
-                    // An element-typed right side: point membership as
-                    // a predicate.
-                    let element_rhs = match &comparison.rhs {
-                        Term::Literal(bumbledb::Value::U64(_) | bumbledb::Value::I64(_)) => true,
-                        Term::Var(var) => !matches!(
-                            t.var_types.get(var),
-                            Some(ValueType::Interval { .. }) | None
-                        ),
-                        _ => false,
+                    let MaskTerm::Literal(mask) = mask else {
+                        unreachable!("the generator emits literal masks (PRD 15 owns params)")
                     };
-                    if element_rhs {
-                        self.contains_element += 1;
+                    if mask.popcount() > 1 {
+                        self.allen_composite += 1;
+                    } else {
+                        self.allen_singleton += 1;
                     }
                 }
+                CmpOp::Contains => match element_of(&ty) {
+                    Some(IntervalElement::U64) => self.contains_u64 += 1,
+                    Some(IntervalElement::I64) => self.contains_i64 += 1,
+                    None => unreachable!("Contains' left side is interval-typed"),
+                },
                 _ => {}
             }
             if let (Term::Var(lhs), Term::Var(rhs)) = (&comparison.lhs, &comparison.rhs) {
@@ -362,7 +364,7 @@ impl Coverage {
                 }
             }
         }
-        has_overlaps
+        has_allen
     }
 
     /// Negated-atom shapes: gate / key-covered / open (with the
@@ -524,7 +526,7 @@ impl Coverage {
             }
         }
         let has_membership = self.record_membership(query, &t);
-        let has_overlaps = self.record_comparisons(query, &t);
+        let has_allen = self.record_comparisons(query, &t);
         self.record_negations(query, &t);
         let has_aggregate = self.record_finds(query, &t);
         // The structural compositions where bugs hide.
@@ -541,7 +543,7 @@ impl Coverage {
                 .any(|c| matches!(c.lhs, Term::ParamSet(_)) || matches!(c.rhs, Term::ParamSet(_)));
         self.neg_and_aggregate += u64::from(has_negation && has_aggregate);
         self.set_and_negation += u64::from(has_negation && uses_set);
-        self.membership_and_overlaps += u64::from(has_membership && has_overlaps);
+        self.membership_and_allen += u64::from(has_membership && has_allen);
         self.spine_violations += spine_violations(query, &t);
     }
 }

@@ -428,6 +428,19 @@ pub enum ValidationError {
     ComparisonPointLiteralAtCeiling {
         index: usize,
     },
+    /// An `Allen` comparison whose literal mask is empty — no basic
+    /// relation can hold, so the predicate is "never": write no query
+    /// (`docs/architecture/20-query-ir.md` § the Allen operator; the
+    /// bind-time sibling is [`Error::EmptyAllenMaskParam`]).
+    EmptyAllenMask {
+        index: usize,
+    },
+    /// An `Allen` comparison whose literal mask is all 13 basics — every
+    /// pair satisfies it, so the predicate is "always": write no
+    /// predicate (the bind-time sibling is [`Error::FullAllenMaskParam`]).
+    FullAllenMask {
+        index: usize,
+    },
     /// An element-typed variable whose positive atom bindings are all
     /// interval-field memberships: membership binds no enumerable domain,
     /// so every point variable needs at least one positive scalar-field
@@ -685,6 +698,23 @@ pub enum Error {
     /// bind-time sibling of
     /// [`ValidationError::PointLiteralAtCeiling`].
     PointParamAtCeiling {
+        param: ParamId,
+    },
+    /// Bind-time: a non-mask value supplied for an `Allen` comparison's
+    /// mask param — supply [`crate::BindValue::AllenMask`].
+    AllenMaskParamExpected {
+        param: ParamId,
+    },
+    /// Bind-time: a mask param bound to the empty mask — the predicate
+    /// would be "never" (the validation-time sibling is
+    /// [`ValidationError::EmptyAllenMask`]).
+    EmptyAllenMaskParam {
+        param: ParamId,
+    },
+    /// Bind-time: a mask param bound to the full mask — the predicate
+    /// would be "always" (the validation-time sibling is
+    /// [`ValidationError::FullAllenMask`]).
+    FullAllenMaskParam {
         param: ParamId,
     },
     /// A computed value crossed its representation — valid input whose

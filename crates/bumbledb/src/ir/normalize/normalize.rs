@@ -45,7 +45,7 @@ pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> NormalizedQuery {
         })
         .collect();
 
-    let (residuals, word_residuals) = place_comparisons(query, &mut occurrences);
+    let (residuals, word_residuals, allen_residuals) = place_comparisons(query, &mut occurrences);
 
     // The binding-slot widths — the two-slot interval layout, decided at
     // [`SlotWidth`] and exported here to the plan witness.
@@ -56,11 +56,13 @@ pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> NormalizedQuery {
 
     // Nothing single-occurrence survives to the residual list
     // (docs/architecture/20-query-ir.md, § normalization step 5) — across
-    // every residual kind: whole-value and decomposed word comparisons.
+    // every residual kind: whole-value, decomposed word, and Allen mask
+    // comparisons.
     debug_assert!(residuals
         .iter()
         .map(|r| (r.lhs, r.rhs))
         .chain(word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)))
+        .chain(allen_residuals.iter().map(|r| (r.lhs, r.rhs)))
         .all(|(lhs, rhs)| {
             !occurrences
                 .iter()
@@ -75,6 +77,7 @@ pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> NormalizedQuery {
         occurrences,
         residuals,
         word_residuals,
+        allen_residuals,
         anti_probes,
         slot_widths,
     }

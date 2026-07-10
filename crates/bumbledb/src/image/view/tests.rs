@@ -1,4 +1,5 @@
 use super::*;
+use crate::allen::AllenMask;
 use crate::encoding::{decode_field, encode_fact, encode_i64, encode_u64, ValueRef};
 use crate::error::Result as DbResult;
 use crate::image::build;
@@ -387,21 +388,32 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
     let run =
         |predicate: FilterPredicate| sorted_ids(&apply(&image, &[predicate], &[], Vec::new()));
 
-    // Overlaps: left.start < right.end AND right.start < left.end.
+    // INTERSECTS: the point-sets share a point (the 9-bit composite).
     assert_eq!(
-        run(FilterPredicate::FieldsOverlap {
+        run(FilterPredicate::FieldsAllen {
             left: P_DURING,
             right: P_REVIEW,
+            mask: MaskConst::Mask(AllenMask::INTERSECTS),
         }),
         [1, 2, 3, 5]
     );
-    // Contains (⊇): outer.start ≤ inner.start AND inner.end ≤ outer.end.
+    // COVERS (⊇): equals ∪ contains ∪ started-by ∪ finished-by.
     assert_eq!(
-        run(FilterPredicate::FieldsContain {
-            outer: P_DURING,
-            inner: P_REVIEW,
+        run(FilterPredicate::FieldsAllen {
+            left: P_DURING,
+            right: P_REVIEW,
+            mask: MaskConst::Mask(AllenMask::COVERS),
         }),
         [1, 2, 5]
+    );
+    // A singleton basic: exact equality through the algebra.
+    assert_eq!(
+        run(FilterPredicate::FieldsAllen {
+            left: P_DURING,
+            right: P_REVIEW,
+            mask: MaskConst::Mask(AllenMask::EQUALS),
+        }),
+        [5]
     );
     // Point membership as a same-fact composition, half-open on both
     // fixture boundaries (rows 1 and 2 sit at start, rows 3 and 4 at end).
@@ -432,22 +444,9 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
 }
 
 #[test]
-fn field_within_covers_interval_and_scalar_fields() {
+fn field_within_is_scalar_membership_in_the_constant_interval() {
     let dir = TempDir::new("view-field-within");
     let image = interval_image(&dir);
-
-    // Interval field within [0,10): point-set containment.
-    let interval_within = vec![FilterPredicate::FieldWithin {
-        field: P_DURING,
-        outer: Const::Interval {
-            start: w(0),
-            end: w(10),
-        },
-    }];
-    assert_eq!(
-        sorted_ids(&apply(&image, &interval_within, &[], Vec::new())),
-        [1, 4, 5]
-    );
 
     // Scalar field within [2,9): membership with the half-open boundary
     // (at == 2 survives, at == 9 dies).
@@ -465,14 +464,13 @@ fn field_within_covers_interval_and_scalar_fields() {
 }
 
 #[test]
-fn interval_constants_compare_against_the_two_word_span() {
-    let dir = TempDir::new("view-interval-const");
+fn field_allen_classifies_against_the_constant_interval() {
+    let dir = TempDir::new("view-field-allen");
     let image = interval_image(&dir);
-    let run = |op: CmpOp, start: i64, end: i64, params: &[Const]| {
-        let predicates = vec![FilterPredicate::Compare {
+    let run = |mask: MaskConst, start: i64, end: i64, params: &[Const]| {
+        let predicates = vec![FilterPredicate::FieldAllen {
             field: P_DURING,
-            op,
-            value: if params.is_empty() {
+            other: if params.is_empty() || matches!(params[0], Const::Word(_)) {
                 Const::Interval {
                     start: w(start),
                     end: w(end),
@@ -480,21 +478,65 @@ fn interval_constants_compare_against_the_two_word_span() {
             } else {
                 Const::Param(ParamId(0))
             },
+            mask,
         }];
         sorted_ids(&apply(&image, &predicates, params, Vec::new()))
     };
 
-    assert_eq!(run(CmpOp::Eq, 2, 9, &[]), [1]);
-    assert_eq!(run(CmpOp::Ne, 2, 9, &[]), [2, 3, 4, 5]);
-    assert_eq!(run(CmpOp::Overlaps, 3, 10, &[]), [1, 2, 4]);
-    // The field's interval covers the constant.
-    assert_eq!(run(CmpOp::Contains, 3, 4, &[]), [1, 4]);
-    // A param-bound interval resolves through the slice.
+    // Value equality and its complement — the Eq/Ne derived facts.
+    assert_eq!(run(MaskConst::Mask(AllenMask::EQUALS), 2, 9, &[]), [1]);
+    assert_eq!(
+        run(MaskConst::Mask(AllenMask::EQUALS.complement()), 2, 9, &[]),
+        [2, 3, 4, 5]
+    );
+    // The intersection composite, literal and param-bound constant.
+    assert_eq!(
+        run(MaskConst::Mask(AllenMask::INTERSECTS), 3, 10, &[]),
+        [1, 2, 4]
+    );
     let bound = [Const::Interval {
         start: w(3),
         end: w(10),
     }];
-    assert_eq!(run(CmpOp::Overlaps, 0, 0, &bound), [1, 2, 4]);
+    assert_eq!(
+        run(MaskConst::Mask(AllenMask::INTERSECTS), 0, 0, &bound),
+        [1, 2, 4]
+    );
+    // The field's interval covers the constant.
+    assert_eq!(run(MaskConst::Mask(AllenMask::COVERS), 3, 4, &[]), [1, 4]);
+    // COVERED_BY: the field within [0,10) — the old reversed containment,
+    // now a mask like everything else.
+    assert_eq!(
+        run(MaskConst::Mask(AllenMask::COVERED_BY), 0, 10, &[]),
+        [1, 4, 5]
+    );
+    // A param mask resolves through the slice as its 13-bit word; the
+    // mirrored form (`ConversedParam`) converses after resolution —
+    // COVERED_BY via a COVERS param proves the involution end to end.
+    let mask_param = [Const::Word(u64::from(AllenMask::COVERS.bits()))];
+    assert_eq!(
+        run(MaskConst::ConversedParam(ParamId(0)), 0, 10, &mask_param),
+        [1, 4, 5]
+    );
+    assert_eq!(run(MaskConst::Param(ParamId(0)), 3, 4, &mask_param), [1, 4]);
+}
+
+#[test]
+fn interval_constants_compare_pairwise_under_eq() {
+    let dir = TempDir::new("view-interval-const");
+    let image = interval_image(&dir);
+    let predicates = vec![FilterPredicate::Compare {
+        field: P_DURING,
+        op: CmpOp::Eq,
+        value: Const::Interval {
+            start: w(2),
+            end: w(9),
+        },
+    }];
+    assert_eq!(
+        sorted_ids(&apply(&image, &predicates, &[], Vec::new())),
+        [1]
+    );
 }
 
 #[test]

@@ -115,11 +115,19 @@ Value      = Bool(bool) | U64(u64) | I64(i64)
            | IntervalI64(i64, i64)
            | String(Box<[u8]>)        // raw UTF-8 bytes; interning is the engine's job
            | Bytes(Box<[u8]>)
+           | AllenMask(AllenMask)     // the mask value shape — a param payload,
+                                      //   never a field type (10-data-model.md)
 FindTerm   = Var(VarId)
            | Aggregate { op: AggOp, over: Option<VarId> }   // over: None for Count
 AggOp      = Sum | Min | Max | Count | CountDistinct
            | ArgMax { key: VarId } | ArgMin { key: VarId }  // over = the carried var
-Comparison { op: Eq|Ne|Lt|Le|Gt|Ge|Overlaps|Contains, lhs: Term, rhs: Term }
+Comparison { op: CmpOp, lhs: Term, rhs: Term }
+CmpOp      = Eq | Ne | Lt | Le | Gt | Ge
+           | Allen { mask: MaskTerm }  // THE interval-pair comparison (below)
+           | Contains                  // point membership as a predicate — the
+                                       //   point form only; ⊇ is Allen(COVERS)
+MaskTerm   = Literal(AllenMask) | Param(ParamId)  // a variable or set mask is
+                                                  //   unrepresentable, not rejected
 ```
 
 Representation notes (the branch-removal decisions): no wildcard variant — an unbound
@@ -144,21 +152,77 @@ matching bind-time error — `MAX` is the ray's ∞, never a point, so the mista
 typed out instead of silently matching nothing. One
 consequence, enforced by validation: a variable bound *only* by membership bindings
 has no enumerable domain — every point variable must be bound by at least one
-non-membership occurrence (a scalar field binding). Interval-vs-interval overlap
-needs no shared point variable: that is the `Overlaps` predicate.
+non-membership occurrence (a scalar field binding). Interval-vs-interval
+comparison needs no shared point variable: that is the `Allen` predicate.
 
 **Comparison rules, complete:** both sides must have the same structural type except
 where stated (no U64-vs-I64, no silent coercion). `Eq`/`Ne` are legal for all seven
 types; `Lt/Le/Gt/Ge` only for U64/U64 and I64/I64 — **never intervals**
-(`10-data-model.md` orderability). `Overlaps` requires two interval terms of one
-element type: satisfied iff the point-sets intersect. `Contains` requires an
-interval left side and either an interval of the same element type (⊇ of
-point-sets) or an element-typed right side (point membership as a predicate — the
-predicate form of the binding rule, for terms already bound elsewhere). `Eq` between
+(`10-data-model.md` orderability). `Allen { mask }` requires two interval terms of
+one element type — **the** interval-pair comparison (next section). `Contains`
+requires an interval left side and an **element-typed** right side (point
+membership as a predicate — the predicate form of the binding rule, for terms
+already bound elsewhere); its old interval⊇interval form is not an operator —
+that predicate is `Allen(COVERS)`. `Eq` between
 two variables is unification and obeys identical type rules. Any comparison without
 a variable side (literal-vs-literal, param-vs-literal, param-vs-param) is a
 validation error, and so is a variable compared with itself — both are
 constant-valued: write the query you mean.
+
+## The Allen operator (normative — the interval-pair coordinate system)
+
+The 13 Allen basic relations are jointly exhaustive and pairwise disjoint over
+nonempty half-open intervals (the type's preconditions, `10-data-model.md`):
+every configuration of two intervals is **exactly one** of them. The set of all
+interval-pair predicates is therefore the powerset 2¹³, and the IR carries it as
+exactly that: `Allen { mask }` between two interval terms of one element type,
+satisfied iff `classify(lhs, rhs) ∈ mask`. One operator parameterized by a
+13-bit mask replaces an operator vocabulary permanently — the vocabulary can
+never grow again, because nothing exists outside the coordinate system.
+
+- **The bit order is a specified representation, not an implementation
+  detail**: bit *i* = basic *i* in the **palindromic order** — before, meets,
+  overlaps, starts, during, finishes, **equals**, finished-by, contains,
+  started-by, overlapped-by, met-by, after. Each basic's converse sits at the
+  mirrored position, so `converse(mask)` — the involution with
+  `Allen(a, b, m) ≡ Allen(b, a, converse(m))` — is the 13-bit reversal: one
+  `rbit` plus a shift, scalar or vector. The bits are laid out as the
+  algebra's symmetry.
+- **Named constants, not sugar** (they are values of the algebra): the 13
+  singletons under Allen's names, plus the workload composites — `INTERSECTS`
+  (9 bits: the point-sets share a point; under half-open intervals *meets*
+  shares none), `COVERS` (equals ∪ contains ∪ started-by ∪ finished-by),
+  `COVERED_BY` (its converse), `DISJOINT` (before ∪ meets ∪ met-by ∪ after,
+  `INTERSECTS`' complement).
+- **Vacuity is typed out**: validation rejects the empty mask ("never" —
+  write no query) and the full mask ("always" — write no predicate) with
+  distinct errors; a mask *param* gets the same two rejections at bind, where
+  the value exists.
+- **The mask is paramable**: `MaskTerm::Param` makes the temporal relation a
+  bind-time argument (`Value::AllenMask` / `BindValue::AllenMask`) — one
+  prepared query answers any of the 2¹³ − 2 questions per execution.
+- **Interval `Eq`/`Ne` are derived facts**: normalization canonicalizes them
+  to `Allen(EQUALS)` / `Allen(¬EQUALS)`, so exactly one interval-pair form
+  reaches the planner. (Bindings are untouched: an interval term in an
+  interval field position is value equality and still probes as a selection.)
+- **Point membership is untouched**: Allen is a pair-of-intervals algebra;
+  the membership typing rule above is a different judgment.
+
+**The three-confinement disjunction law** (the set's organizing rule,
+PRD ALG-05 owns the third): OR is never an execution node — disjunction is
+data in exactly three confinements. *Inside a predicate*: an Allen mask is a
+disjunction of basics, evaluated as one classify-and-test. *Inside a
+position*: a `ParamSet` is a disjunction of values, evaluated as one probe
+set. *At the top*: rules (the rules-shaped IR) are a disjunction of
+conjunctive queries, evaluated as a set union. The tangled middle — a
+cross-atom OR inside one conjunction — is refused representation; DNF
+lowering recovers it as rules.
+
+Constraint-side unification (no semantics change): the pointwise key
+judgment's meaning — per-group pairwise disjointness — is the statement
+"every pair satisfies `DISJOINT`" (`30-dependencies.md`); the checker's
+neighbor probe is its O(log n) enforcement plan. One vocabulary, both sides
+of the engine.
 
 **Params:** a param's type is inferred from its anchors — the fields it binds and the
 typed terms it compares against. `ir::Value` stays owned by decision: IR literals are
@@ -203,15 +267,19 @@ three; **normalization lowers IR form to paper form**:
    literal, param, and param-set bindings lower to per-atom filters; membership
    bindings lower to per-atom range filters over the interval field's two encoded
    words.
-3. Same-atom var-vs-var comparisons lower to per-atom field-vs-field filters
-   (membership and `Overlaps`/`Contains` included — all decompose into word
-   comparisons over start/end).
+3. Same-atom var-vs-var comparisons lower to per-atom field-vs-field filters:
+   membership and point containment as word compositions over start/end, and
+   `Allen` as the mask-carrying shape (two interval fields + mask —
+   classify-then-test; a comparison written constant-first keeps the field on
+   the left and converses the mask, so no operand-order flag exists).
 4. **Negated atoms** are numbered as occurrences but join no plan node: each lowers
    to an **anti-probe filter** attached to the earliest point where all its
    variables are bound (`40-execution.md`), exactly as residual comparisons attach.
 5. Output: distinct-variable positive atoms + per-atom filter lists + a **residual
-   list** (cross-atom comparisons and anti-probe filters — exactly those; nothing
-   single-atom survives to the residual list).
+   list** (cross-atom comparisons — scalar whole-value, decomposed
+   point-containment words, and `Allen` residuals carried whole as four
+   endpoint slots + mask — and anti-probe filters; nothing single-atom
+   survives to the residual list).
 
 **Deviation (paper §2):** the paper assumes selections pre-pushed and per-atom variables
 distinct; we accept the richer surface and own the lowering, because there is no
@@ -239,9 +307,13 @@ membership bindings and `Contains` operands (the point-domain law — point para
 get the same rejection at bind, where the value exists); enum ordinal out of range for the field's variant list (in
 bindings and in comparisons, each precisely diagnosed); comparisons violating the
 type rules above (order operators on intervals named in their own diagnostic —
-the predictable mistake gets the good error); constant comparisons;
+the predictable mistake gets the good error); the Allen vacuity rules (the ∅
+and full literal masks, distinct typed errors; mask params get the same two at
+bind); constant comparisons;
 self-comparisons; a ParamId used both scalar and set, or a ParamSet under any
-operator but `Eq`; non-dense param ids; point variables bound only by membership;
+operator but `Eq`; a mask param with any value anchor (a mask is not a
+data-model type); non-dense param ids — dense across value and mask params
+jointly; point variables bound only by membership;
 negated-atom variables not bound by any positive atom; unbound find variables;
 comparison-only variables; empty finds; duplicate find terms; no positive atoms;
 aggregate input-type violations; aggregate-over-group-key; mixed Arg and fold

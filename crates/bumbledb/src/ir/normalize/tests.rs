@@ -1,9 +1,10 @@
 use super::lower_literal::lower_literal;
 use super::*;
+use crate::allen::AllenMask;
 use crate::encoding::{encode_fact, encode_i64, ValueRef};
-use crate::image::view::{Const, ResolvedWordSource};
+use crate::image::view::{Const, MaskConst, ResolvedWordSource};
 use crate::ir::validate::validate;
-use crate::ir::{Atom, Comparison, FindTerm, ParamId, Query, Term, Value};
+use crate::ir::{Atom, Comparison, FindTerm, MaskTerm, ParamId, Query, Term, Value};
 use crate::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, Schema, SchemaDescriptor,
     ValueType,
@@ -462,54 +463,86 @@ fn constant_point_membership_lowers_to_point_in() {
 }
 
 #[test]
-fn same_atom_overlaps_lowers_to_the_fixed_word_composition() {
-    // Golden (b): P(during = x, review = y), Overlaps(x, y) — the fixed
-    // three-word-comparison shape as one filter kind, never a residual.
-    let overlaps = query(
+fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
+    // Golden (b): P(during = x, review = y), Allen(x, y, INTERSECTS) —
+    // the mask rides the same-atom shape as one filter kind, never a
+    // residual.
+    let allen = query(
         vec![Atom {
             relation: P,
             bindings: vec![(P_DURING, var(0)), (P_REVIEW, var(1))],
         }],
         vec![],
         vec![Comparison {
-            op: CmpOp::Overlaps,
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+            },
             lhs: var(0),
             rhs: var(1),
         }],
     );
-    let norm = normalized(&overlaps);
-    assert!(norm.residuals.is_empty() && norm.word_residuals.is_empty());
+    let norm = normalized(&allen);
+    assert!(
+        norm.residuals.is_empty()
+            && norm.word_residuals.is_empty()
+            && norm.allen_residuals.is_empty()
+    );
     assert_eq!(
         norm.occurrences[0].filters,
-        vec![FilterPredicate::FieldsOverlap {
+        vec![FilterPredicate::FieldsAllen {
             left: P_DURING,
             right: P_REVIEW,
+            mask: MaskConst::Mask(AllenMask::INTERSECTS),
         }]
     );
     // Interval variables occupy two slots each.
     assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::Two);
     assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::Two);
 
-    // The two Contains shapes: interval ⊇ interval and point membership.
-    let contains = query(
+    // Interval Eq canonicalizes to the EQUALS mask (Ne to its
+    // complement): exactly one interval-pair form leaves normalization.
+    let eq = query(
         vec![Atom {
             relation: P,
             bindings: vec![(P_DURING, var(0)), (P_REVIEW, var(1))],
         }],
         vec![],
         vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::Eq,
             lhs: var(0),
             rhs: var(1),
         }],
     );
     assert_eq!(
-        normalized(&contains).occurrences[0].filters,
-        vec![FilterPredicate::FieldsContain {
-            outer: P_DURING,
-            inner: P_REVIEW,
+        normalized(&eq).occurrences[0].filters,
+        vec![FilterPredicate::FieldsAllen {
+            left: P_DURING,
+            right: P_REVIEW,
+            mask: MaskConst::Mask(AllenMask::EQUALS),
         }]
     );
+    let ne = query(
+        vec![Atom {
+            relation: P,
+            bindings: vec![(P_DURING, var(0)), (P_REVIEW, var(1))],
+        }],
+        vec![],
+        vec![Comparison {
+            op: CmpOp::Ne,
+            lhs: var(0),
+            rhs: var(1),
+        }],
+    );
+    assert_eq!(
+        normalized(&ne).occurrences[0].filters,
+        vec![FilterPredicate::FieldsAllen {
+            left: P_DURING,
+            right: P_REVIEW,
+            mask: MaskConst::Mask(AllenMask::EQUALS.complement()),
+        }]
+    );
+
+    // Contains' surviving point form: same-atom membership predicate.
     let contains_point = query(
         vec![Atom {
             relation: P,
@@ -579,11 +612,12 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
 }
 
 #[test]
-fn cross_atom_overlaps_decomposes_into_slot_pair_word_comparisons() {
-    // Golden (d): P(during = x), P(during = y), Overlaps(x, y) — the
-    // residual references two slot pairs as word comparisons:
-    // x.start < y.end AND y.start < x.end.
-    let overlaps = query(
+#[allow(clippy::too_many_lines)] // one lowering case per residual form
+fn cross_atom_allen_becomes_the_mask_residual() {
+    // Golden (d): P(during = x), P(during = y), Allen(x, y, m) — the
+    // residual carries the mask whole (four endpoint slots + mask);
+    // nothing decomposes.
+    let allen = query(
         vec![
             Atom {
                 relation: P,
@@ -596,13 +630,57 @@ fn cross_atom_overlaps_decomposes_into_slot_pair_word_comparisons() {
         ],
         vec![],
         vec![Comparison {
-            op: CmpOp::Overlaps,
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+            },
             lhs: var(0),
             rhs: var(1),
         }],
     );
-    let norm = normalized(&overlaps);
-    assert!(norm.residuals.is_empty());
+    let norm = normalized(&allen);
+    assert!(norm.residuals.is_empty() && norm.word_residuals.is_empty());
+    assert_eq!(
+        norm.allen_residuals,
+        vec![PlacedAllen {
+            lhs: VarId(0),
+            rhs: VarId(1),
+            mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+        }]
+    );
+    // Cross-atom interval Eq canonicalizes into the same residual kind.
+    let eq = query(
+        vec![
+            Atom {
+                relation: P,
+                bindings: vec![(P_DURING, var(0))],
+            },
+            Atom {
+                relation: P,
+                bindings: vec![(P_DURING, var(1))],
+            },
+        ],
+        vec![],
+        vec![Comparison {
+            op: CmpOp::Eq,
+            lhs: var(0),
+            rhs: var(1),
+        }],
+    );
+    let eq_norm = normalized(&eq);
+    assert!(eq_norm.residuals.is_empty());
+    assert_eq!(
+        eq_norm.allen_residuals,
+        vec![PlacedAllen {
+            lhs: VarId(0),
+            rhs: VarId(1),
+            mask: MaskTerm::Literal(AllenMask::EQUALS),
+        }]
+    );
+    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::Two);
+    assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::Two);
+
+    // Cross-atom Contains over a point variable: x.start ≤ t AND t < x.end
+    // — the point variable's single word is its Start word.
     let start = |id: u16| VarWord {
         var: VarId(id),
         word: IntervalWord::Start,
@@ -611,26 +689,6 @@ fn cross_atom_overlaps_decomposes_into_slot_pair_word_comparisons() {
         var: VarId(id),
         word: IntervalWord::End,
     };
-    assert_eq!(
-        norm.word_residuals,
-        vec![
-            PlacedWordComparison {
-                op: CmpOp::Lt,
-                lhs: start(0),
-                rhs: end(1),
-            },
-            PlacedWordComparison {
-                op: CmpOp::Lt,
-                lhs: start(1),
-                rhs: end(0),
-            },
-        ]
-    );
-    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::Two);
-    assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::Two);
-
-    // Cross-atom Contains over a point variable: x.start ≤ t AND t < x.end
-    // — the point variable's single word is its Start word.
     let contains_point = query(
         vec![
             Atom {
@@ -787,64 +845,91 @@ fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
         bindings: vec![(P_DURING, var(0))],
     };
 
-    // Overlaps(x, [2,9)) — symmetric, field on the left.
-    let overlaps = query(
+    // Allen(x, [2,9), INTERSECTS) — the field stays on the left.
+    let intersects = query(
         vec![p_atom()],
         vec![],
         vec![Comparison {
-            op: CmpOp::Overlaps,
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+            },
             lhs: var(0),
             rhs: iv(),
         }],
     );
     assert_eq!(
-        normalized(&overlaps).occurrences[0].filters,
-        vec![FilterPredicate::Compare {
+        normalized(&intersects).occurrences[0].filters,
+        vec![FilterPredicate::FieldAllen {
             field: P_DURING,
-            op: CmpOp::Overlaps,
-            value: iv_const.clone(),
+            other: iv_const.clone(),
+            mask: MaskConst::Mask(AllenMask::INTERSECTS),
         }]
     );
 
-    // Contains(x, [2,9)) — the field's interval covers the constant.
-    let covers = query(
+    // Allen([2,9), x, COVERS) — constant-first mirrors as the converse
+    // mask; the field stays the left operand.
+    let mirrored = query(
         vec![p_atom()],
         vec![],
         vec![Comparison {
-            op: CmpOp::Contains,
-            lhs: var(0),
-            rhs: iv(),
-        }],
-    );
-    assert_eq!(
-        normalized(&covers).occurrences[0].filters,
-        vec![FilterPredicate::Compare {
-            field: P_DURING,
-            op: CmpOp::Contains,
-            value: iv_const.clone(),
-        }]
-    );
-
-    // Contains([2,9), x) — reversed: the field lies within the constant.
-    let within = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(AllenMask::COVERS),
+            },
             lhs: iv(),
             rhs: var(0),
         }],
     );
     assert_eq!(
-        normalized(&within).occurrences[0].filters,
-        vec![FilterPredicate::FieldWithin {
+        normalized(&mirrored).occurrences[0].filters,
+        vec![FilterPredicate::FieldAllen {
             field: P_DURING,
-            outer: iv_const.clone(),
+            other: iv_const.clone(),
+            mask: MaskConst::Mask(AllenMask::COVERED_BY),
         }]
     );
 
-    // Contains([2,9), t) over a scalar variable — the same reversed shape
-    // on the point's field.
+    // ...and a mirrored param mask defers the converse to bind.
+    let mirrored_param = query(
+        vec![p_atom()],
+        vec![],
+        vec![Comparison {
+            op: CmpOp::Allen {
+                mask: MaskTerm::Param(ParamId(0)),
+            },
+            lhs: iv(),
+            rhs: var(0),
+        }],
+    );
+    assert_eq!(
+        normalized(&mirrored_param).occurrences[0].filters,
+        vec![FilterPredicate::FieldAllen {
+            field: P_DURING,
+            other: iv_const.clone(),
+            mask: MaskConst::ConversedParam(ParamId(0)),
+        }]
+    );
+
+    // Ne(x, [2,9)) canonicalizes: Allen(¬EQUALS) against the constant.
+    let ne = query(
+        vec![p_atom()],
+        vec![],
+        vec![Comparison {
+            op: CmpOp::Ne,
+            lhs: var(0),
+            rhs: iv(),
+        }],
+    );
+    assert_eq!(
+        normalized(&ne).occurrences[0].filters,
+        vec![FilterPredicate::FieldAllen {
+            field: P_DURING,
+            other: iv_const.clone(),
+            mask: MaskConst::Mask(AllenMask::EQUALS.complement()),
+        }]
+    );
+
+    // Contains([2,9), t) over a scalar variable — the reversed point
+    // containment on the point's field.
     let point_within = query(
         vec![Atom {
             relation: E,
@@ -935,7 +1020,8 @@ fn assert_residuals_cross_atom(norm: &NormalizedQuery) {
         .residuals
         .iter()
         .map(|r| (r.lhs, r.rhs))
-        .chain(norm.word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)));
+        .chain(norm.word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)))
+        .chain(norm.allen_residuals.iter().map(|r| (r.lhs, r.rhs)));
     for (lhs, rhs) in pairs {
         assert!(
             !norm
@@ -983,17 +1069,26 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
             ],
         )
     };
-    for op in [CmpOp::Overlaps, CmpOp::Contains, CmpOp::Eq, CmpOp::Ne] {
+    for op in [
+        CmpOp::Allen {
+            mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+        },
+        CmpOp::Allen {
+            mask: MaskTerm::Literal(AllenMask::COVERS),
+        },
+        CmpOp::Eq,
+        CmpOp::Ne,
+    ] {
         let norm = normalized(&two_intervals_one_atom(op));
         assert_residuals_cross_atom(&norm);
         // The same-atom pair became a filter; the cross-atom pair a
-        // residual (word comparisons for the interval predicates,
-        // whole-value for Eq/Ne).
+        // residual (Allen masks for every interval-pair form — Eq/Ne
+        // canonicalize into them).
         assert_eq!(norm.occurrences[0].filters.len(), 1, "{op:?}");
-        let residual_count = norm.residuals.len() + norm.word_residuals.len();
-        assert!(
-            residual_count > 0,
-            "{op:?} cross-atom pair must residualize"
+        assert_eq!(
+            norm.allen_residuals.len(),
+            1,
+            "{op:?} cross-atom pair must residualize as a mask"
         );
     }
 

@@ -16,7 +16,9 @@
 //! value functions) comes from that one module — a schema change lands
 //! there without touching the grammar.
 
-use bumbledb::{Atom, CmpOp, Comparison, FieldId, FindTerm, RelationId, VarId};
+use bumbledb::{
+    AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, MaskTerm, RelationId, VarId,
+};
 
 mod builder;
 mod construct;
@@ -75,7 +77,8 @@ enum Shape {
     /// Point membership against an interval field: literal, param, and
     /// var points (the var case constructs its scalar anchor first).
     Membership,
-    /// `Overlaps`/`Contains`/`Eq`/`Ne` between interval terms.
+    /// `Allen` masks (composites and random singletons) and `Eq`/`Ne`
+    /// between interval terms, plus the point form of `Contains`.
     IntervalJoin,
     /// The adjacent-touching boundary: query literals recomputed to touch
     /// a corpus interval exactly at its endpoint, both polarities.
@@ -159,7 +162,8 @@ struct GenTags {
 
 /// The comparison-type axis of the coverage matrix — all seven types.
 pub const CMP_TYPES: [&str; 7] = ["u64", "i64", "enum", "bool", "string", "bytes", "interval"];
-/// The operator axis, in `CmpOp` order — all eight operators.
+/// The operator axis, in `CmpOp` order — all eight operators (the Allen
+/// row counts every mask; the representative here is only a row label).
 pub const CMP_OPS: [CmpOp; 8] = [
     CmpOp::Eq,
     CmpOp::Ne,
@@ -167,7 +171,9 @@ pub const CMP_OPS: [CmpOp; 8] = [
     CmpOp::Le,
     CmpOp::Gt,
     CmpOp::Ge,
-    CmpOp::Overlaps,
+    CmpOp::Allen {
+        mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+    },
     CmpOp::Contains,
 ];
 
@@ -232,13 +238,15 @@ pub struct Coverage {
     pub membership_var: u64,
     pub membership_u64: u64,
     pub membership_i64: u64,
-    /// Interval comparisons by element type; `contains_element` counts
-    /// `Contains` with an element-typed right side.
-    pub overlaps_u64: u64,
-    pub overlaps_i64: u64,
+    /// Interval comparisons by element type: `Allen` masks per lane,
+    /// composite (≥2 basics) vs singleton mask draws, and the point form
+    /// of `Contains` per lane.
+    pub allen_u64: u64,
+    pub allen_i64: u64,
+    pub allen_composite: u64,
+    pub allen_singleton: u64,
     pub contains_u64: u64,
     pub contains_i64: u64,
-    pub contains_element: u64,
     /// Boundary-shape polarities (corpus-adjacent query literals).
     pub adjacent_left: u64,
     pub adjacent_right: u64,
@@ -260,7 +268,7 @@ pub struct Coverage {
     /// run.
     pub neg_and_aggregate: u64,
     pub set_and_negation: u64,
-    pub membership_and_overlaps: u64,
+    pub membership_and_allen: u64,
     /// Var-vs-var comparisons whose variables bind in different atoms.
     pub cross_residuals: u64,
     /// Wide projections — the >8-projected-word class the executor's
@@ -275,7 +283,7 @@ pub struct Coverage {
     /// Equality-spine cost-bound violations
     /// (`docs/architecture/60-validation.md` § the generator contract):
     /// an atom carrying a var-point membership or a cross-atom
-    /// `Overlaps`/`Contains` occurrence with neither an equality join
+    /// `Allen`/`Contains` occurrence with neither an equality join
     /// variable nor an equality selection, or a negated atom whose only
     /// bindings are memberships. Asserted **zero** — the Cartesian
     /// degenerate (`40-execution.md`) must be unemittable.

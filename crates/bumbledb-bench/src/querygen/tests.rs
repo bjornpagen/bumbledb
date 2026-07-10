@@ -95,11 +95,12 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("membership_var", cov.membership_var),
         ("membership_u64", cov.membership_u64),
         ("membership_i64", cov.membership_i64),
-        ("overlaps_u64", cov.overlaps_u64),
-        ("overlaps_i64", cov.overlaps_i64),
+        ("allen_u64", cov.allen_u64),
+        ("allen_i64", cov.allen_i64),
+        ("allen_composite", cov.allen_composite),
+        ("allen_singleton", cov.allen_singleton),
         ("contains_u64", cov.contains_u64),
         ("contains_i64", cov.contains_i64),
-        ("contains_element", cov.contains_element),
         ("adjacent_left", cov.adjacent_left),
         ("adjacent_right", cov.adjacent_right),
         ("negations", cov.negations),
@@ -151,10 +152,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
     // per run carries each.
     assert!(cov.neg_and_aggregate > 0, "negation ∧ aggregate missing");
     assert!(cov.set_and_negation > 0, "param set ∧ negation missing");
-    assert!(
-        cov.membership_and_overlaps > 0,
-        "membership ∧ Overlaps missing"
-    );
+    assert!(cov.membership_and_allen > 0, "membership ∧ Allen missing");
     // The equality-spine cost bound (60-validation.md § the generator
     // contract): every emitted membership/overlap construct rides an
     // equality-connected spine — the keyless Cartesian degenerate

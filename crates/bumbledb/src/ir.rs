@@ -100,13 +100,29 @@ pub enum FindTerm {
     Aggregate { op: AggOp, over: Option<VarId> },
 }
 
+/// The `Allen` comparison's mask position: a literal mask, or a param
+/// resolved at bind (`Value::AllenMask` / [`crate::BindValue::AllenMask`])
+/// — the temporal relation as a bind-time argument. A two-variant sum, not
+/// a [`Term`]: a variable or set mask is unrepresentable, not rejected.
+/// Both surfaces reject the vacuous ∅/full masks with distinct typed
+/// errors — validation for literals, bind for params.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaskTerm {
+    Literal(crate::allen::AllenMask),
+    Param(ParamId),
+}
+
 /// Comparison operators. `Eq`/`Ne` are legal for all seven types; order
 /// operators only for U64/U64 and I64/I64 (no cross-type comparison, ever
-/// — and never intervals). `Overlaps` requires two interval terms of one
-/// element type: satisfied iff the point-sets intersect. `Contains`
-/// requires an interval left side and either an interval of the same
-/// element type (⊇ of point-sets) or an element-typed right side (point
-/// membership as a predicate, for terms already bound elsewhere).
+/// — and never intervals). `Allen { mask }` is **the** interval-pair
+/// comparison — two interval terms of one element type; satisfied iff
+/// `classify(lhs, rhs)` is in the mask (`crate::allen`) — and interval
+/// `Eq`/`Ne` are its derived facts (normalization canonicalizes them to
+/// `EQUALS` / `¬EQUALS`, so exactly one interval-pair form reaches the
+/// planner). `Contains` is point membership as a predicate — an interval
+/// left side, an element-typed right side (the predicate form of the
+/// membership binding rule, for terms already bound elsewhere); its
+/// interval⊇interval form is gone — that predicate is `Allen(COVERS)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,
@@ -115,7 +131,7 @@ pub enum CmpOp {
     Le,
     Gt,
     Ge,
-    Overlaps,
+    Allen { mask: MaskTerm },
     Contains,
 }
 
@@ -131,10 +147,10 @@ impl CmpOp {
             Self::Gt => left > right,
             Self::Ge => left >= right,
             // Interval operators never reach single-word evaluation:
-            // normalization decomposes them into fixed word-comparison
-            // shapes over the interval's start/end (`ir::normalize`).
-            Self::Overlaps | Self::Contains => {
-                unreachable!("interval operators are decomposed at lowering")
+            // normalization lowers `Allen` to mask-carrying shapes and
+            // `Contains` to endpoint compositions (`ir::normalize`).
+            Self::Allen { .. } | Self::Contains => {
+                unreachable!("interval operators are lowered before evaluation")
             }
         }
     }
@@ -323,8 +339,11 @@ mod tests {
             Value::Bytes(Box::from(&[0xDEu8, 0xAD][..])),
             Value::IntervalU64(0, u64::MAX),
             Value::IntervalI64(i64::MIN, i64::MAX),
+            // Plus the one non-field value shape: the Allen mask (a
+            // param's bind-time payload, never a stored type).
+            Value::AllenMask(crate::allen::AllenMask::DISJOINT),
         ];
-        assert_eq!(values.len(), 8);
+        assert_eq!(values.len(), 9);
     }
 
     #[test]

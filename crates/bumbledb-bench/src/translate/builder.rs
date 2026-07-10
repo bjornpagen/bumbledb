@@ -49,6 +49,7 @@ fn sql_literal(value: &Value) -> Result<String, String> {
         Value::IntervalU64(..) | Value::IntervalI64(..) => {
             return Err("interval literal in a scalar position".to_owned())
         }
+        Value::AllenMask(_) => return Err("mask value in a scalar position".to_owned()),
     })
 }
 
@@ -70,9 +71,31 @@ fn op_sql(op: CmpOp) -> &'static str {
         CmpOp::Le => "<=",
         CmpOp::Gt => ">",
         CmpOp::Ge => ">=",
-        CmpOp::Overlaps | CmpOp::Contains => {
+        CmpOp::Allen { .. } | CmpOp::Contains => {
             unreachable!("interval operators take the endpoint forms")
         }
+    }
+}
+
+/// One Allen basic's endpoint formula over half-open interval halves —
+/// the per-basic SQL the mask disjunction ORs together (kept deliberately
+/// naive: correctness first; PRD 15 systematizes the translation).
+fn basic_sql(basic: bumbledb::Basic, ls: &str, le: &str, rs: &str, re: &str) -> String {
+    use bumbledb::Basic;
+    match basic {
+        Basic::Before => format!("{le} < {rs}"),
+        Basic::Meets => format!("{le} = {rs}"),
+        Basic::Overlaps => format!("{ls} < {rs} AND {rs} < {le} AND {le} < {re}"),
+        Basic::Starts => format!("{ls} = {rs} AND {le} < {re}"),
+        Basic::During => format!("{rs} < {ls} AND {le} < {re}"),
+        Basic::Finishes => format!("{rs} < {ls} AND {le} = {re}"),
+        Basic::Equals => format!("{ls} = {rs} AND {le} = {re}"),
+        Basic::FinishedBy => format!("{ls} < {rs} AND {le} = {re}"),
+        Basic::Contains => format!("{ls} < {rs} AND {re} < {le}"),
+        Basic::StartedBy => format!("{ls} = {rs} AND {re} < {le}"),
+        Basic::OverlappedBy => format!("{rs} < {ls} AND {ls} < {re} AND {re} < {le}"),
+        Basic::MetBy => format!("{re} = {ls}"),
+        Basic::After => format!("{re} < {ls}"),
     }
 }
 
@@ -415,12 +438,22 @@ impl Builder<'_> {
             (CmpOp::Ne, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
                 format!("({ls} <> {rs} OR {le} <> {re})")
             }
-            // The endpoint formulas (`60-validation.md`, normative).
-            (CmpOp::Overlaps, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
-                format!("{ls} < {re} AND {rs} < {le}")
-            }
-            (CmpOp::Contains, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
-                format!("{ls} <= {rs} AND {re} <= {le}")
+            // The Allen mask: per-basic endpoint formulas OR'd — the
+            // query's SELECT DISTINCT keeps the disjunction honest
+            // (`60-validation.md`; PRD 15 systematizes).
+            (CmpOp::Allen { mask }, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
+                let bumbledb::MaskTerm::Literal(mask) = mask else {
+                    return Err("param masks are not translated (PRD 15)".to_owned());
+                };
+                let arms: Vec<String> = bumbledb::Basic::ALL
+                    .iter()
+                    .filter(|basic| mask.contains(**basic))
+                    .map(|basic| format!("({})", basic_sql(*basic, &ls, &le, &rs, &re)))
+                    .collect();
+                if arms.is_empty() {
+                    return Err("empty Allen mask reached translation".to_owned());
+                }
+                format!("({})", arms.join(" OR "))
             }
             // Point containment: the membership form.
             (CmpOp::Contains, Rendered::Pair(ls, le), Rendered::One(point)) => {

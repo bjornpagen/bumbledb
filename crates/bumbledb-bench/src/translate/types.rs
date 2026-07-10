@@ -59,9 +59,10 @@ impl TermTypes {
 
 /// Resolves every variable and param of a validated query. Anchors flow
 /// exactly as in validation: field bindings first, then a fixpoint over
-/// the predicates (comparison order cannot matter). `Overlaps` operands
-/// and `Contains` sides anchor the interval reading — which is the
-/// default, so they propagate nothing.
+/// the predicates (comparison order cannot matter). `Allen` operands
+/// anchor the interval reading — the default, so they propagate nothing;
+/// `Contains`' right side is a point (the surviving point form), so it
+/// anchors scalar.
 pub(super) fn infer(query: &Query, schema: &Schema) -> TermTypes {
     let mut types = TermTypes::default();
     for atom in query.atoms.iter().chain(&query.negated) {
@@ -102,7 +103,10 @@ pub(super) fn infer(query: &Query, schema: &Schema) -> TermTypes {
                         changed |= types.mark_scalar(lhs);
                     }
                 }
-                CmpOp::Overlaps | CmpOp::Contains => {}
+                CmpOp::Allen { .. } => {}
+                CmpOp::Contains => {
+                    changed |= types.mark_scalar(rhs);
+                }
             }
         }
         if !changed {

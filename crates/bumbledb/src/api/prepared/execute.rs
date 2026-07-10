@@ -161,6 +161,13 @@ impl<S> PreparedQuery<'_, S> {
         if !resolved {
             return Ok(false);
         }
+        // This execution's Allen-residual masks (literal or bound param)
+        // resolve into the executor before the join runs — the hot path
+        // never touches the param slice.
+        self.executor
+            .as_mut()
+            .expect("free join plans carry executor scratch")
+            .bind_allen_masks(&self.resolved_params);
         run_join(
             plan,
             self.schema,

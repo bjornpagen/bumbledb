@@ -9,7 +9,7 @@
 use crate::image::view::{Const, FilterPredicate};
 use crate::image::ColumnSpan;
 use crate::ir::normalize::{
-    AntiProbe, OccId, PlacedComparison, PlacedWordComparison, Role, SlotWidth,
+    AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedWordComparison, Role, SlotWidth,
 };
 use crate::ir::VarId;
 use crate::schema::{FieldId, RelationId};
@@ -84,6 +84,8 @@ pub enum PlanError {
     /// A decomposed interval word residual's variables are never both
     /// bound.
     UnplacedWordResidual { residual: usize },
+    /// An `Allen` residual's variables are never both bound.
+    UnplacedAllenResidual { residual: usize },
     /// An anti-probe's variable set is never fully bound (validation
     /// guarantees negated-atom variables are positive-atom-bound, so
     /// this names a hand-built plan or query).
@@ -207,10 +209,15 @@ pub struct PlanNode {
     // phase 2 issues all bucket loads as independent chains). One
     // interleaved predicate list would force per-item dispatch exactly
     // where phase-grouped batches now run.
-    /// Decomposed interval word residuals (cross-atom `Overlaps`/
+    /// Decomposed point-containment word residuals (cross-atom
     /// `Contains`/membership) evaluated at this node — same placement
     /// rule as `residuals`.
     pub word_residuals: Vec<PlacedWordComparison>,
+    /// Cross-atom `Allen` residuals evaluated at this node — four
+    /// endpoint slots + mask, classify-then-test; same placement rule as
+    /// `residuals` (a fourth grouped-by-kind list, per the refusal above:
+    /// masks are pure ALU over gathered batch words too).
+    pub allen_residuals: Vec<PlacedAllen>,
     /// Anti-probes evaluated at this node: each negated occurrence
     /// attaches to the earliest node binding its whole variable set —
     /// its probe keys **and** its point-filter variables

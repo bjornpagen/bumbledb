@@ -1,17 +1,19 @@
 //! The interval-surface shapes: point membership (literal, param, and
-//! var points), interval joins (`Overlaps`/`Contains`/`Eq`/`Ne`), and
-//! the adjacent-touching boundary probes whose literals are recomputed
-//! from the corpus interval generator — the query touches a corpus
-//! interval at exactly its endpoint, both polarities.
+//! var points), interval joins (`Allen` masks — the composites, random
+//! singleton basics, and the `Eq`/`Ne` derived facts — plus `Contains`'
+//! point form), and the adjacent-touching boundary probes whose literals
+//! are recomputed from the corpus interval generator — the query touches
+//! a corpus interval at exactly its endpoint, both polarities.
 //!
 //! Interval operators are constructed **only here**, and only over
 //! interval-typed terms; order operators never touch these shapes: the
 //! illegal (operator, type) matrix cells are unemittable by
-//! construction.
+//! construction. Masks are literal: the param-mask surface belongs to
+//! PRD 15's systematized oracle (the translator does not render it yet).
 //!
 //! **The equality-spine cost bound** (`docs/architecture/60-validation.md`
 //! § the generator contract; `40-execution.md` names the degenerate): a
-//! var-point membership binding or a cross-atom `Overlaps`/`Contains`
+//! var-point membership binding or a cross-atom `Allen`/`Contains`
 //! join whose interval occurrence shares **no** equality variable with
 //! the rest of the query is a Cartesian with a filter — O(bindings × n).
 //! Every such construct here is built on a spine: the Mandate lane joins
@@ -20,7 +22,20 @@
 //! ([`pin_transfer`] — Transfers have no scalar join key). The unbounded
 //! shape is unemittable, not filtered after.
 
-use bumbledb::{CmpOp, Comparison, Term, Value, VarId};
+use bumbledb::{AllenMask, Basic, CmpOp, Comparison, MaskTerm, Term, Value, VarId};
+
+/// An `Allen` op with a literal mask — the shapes' one constructor.
+fn allen(mask: AllenMask) -> CmpOp {
+    CmpOp::Allen {
+        mask: MaskTerm::Literal(mask),
+    }
+}
+
+/// A uniformly drawn singleton basic's mask.
+fn singleton_mask(rng: &mut Rng) -> AllenMask {
+    AllenMask::new(Basic::ALL[usize::try_from(rng.range(13)).expect("small")].bit())
+        .expect("a basic's bit is in range")
+}
 
 use crate::gen::{GenConfig, Rng};
 use crate::querygen::interval_data;
@@ -163,15 +178,15 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         }
     }
     b.find_var(org);
-    // The membership ∧ Overlaps composition (one of the three the
-    // contract asserts per run): a second Mandate occurrence joined on
-    // org (the spine) whose interval must overlap an in-data literal.
+    // The membership ∧ Allen composition (one of the three the contract
+    // asserts per run): a second Mandate occurrence joined on org (the
+    // spine) whose interval must intersect an in-data literal.
     if rng.chance(7, 20) {
         let second = b.atom(ids::MANDATE);
         b.bind(second, ids::mandate::ORG, Term::Var(org));
         let active = b.bind_var(second, ids::mandate::ACTIVE);
         b.predicates.push(Comparison {
-            op: CmpOp::Overlaps,
+            op: allen(AllenMask::INTERSECTS),
             lhs: Term::Var(active),
             rhs: Term::Literal(i64_interval(cfg, rng)),
         });
@@ -217,7 +232,7 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
             b.find_var(extref);
         }
     }
-    // The composition, U64 lane: a second window overlapping a literal.
+    // The composition, U64 lane: a second window intersecting a literal.
     // The occurrence is pinned — with no scalar join key it would
     // otherwise cross-product against the membership part.
     if rng.chance(7, 20) {
@@ -225,7 +240,7 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         let _payload = pin_transfer(b, rng, cfg, domains, second);
         let window = b.bind_var(second, ids::transfer::WINDOW);
         b.predicates.push(Comparison {
-            op: CmpOp::Overlaps,
+            op: allen(AllenMask::INTERSECTS),
             lhs: Term::Var(window),
             rhs: Term::Literal(u64_interval(cfg, rng)),
         });
@@ -244,22 +259,27 @@ enum Right {
 }
 
 /// An interval-vs-interval (or interval-vs-literal) comparison over one
-/// element lane: `Overlaps`, `Contains` (both the same-element interval
-/// and the element-typed right side), and interval `Eq`/`Ne` — the
-/// (Eq/Ne, interval) matrix cells. Var-vs-var joins build the second
-/// occurrence **on the spine**: the Mandate lane equality-joins on
-/// account; the Transfer lane pins each occurrence. Var-vs-literal
-/// filters build no second occurrence at all.
+/// element lane: `Allen` masks — the workload composites (`INTERSECTS`,
+/// `COVERS`, `DISJOINT`), a random singleton basic per draw (all 13
+/// reachable over the run), and the `Eq`/`Ne` derived facts (the
+/// (Eq/Ne, interval) matrix cells) — plus `Contains`' point form.
+/// Var-vs-var joins build the second occurrence **on the spine**: the
+/// Mandate lane equality-joins on account; the Transfer lane pins each
+/// occurrence. Var-vs-literal filters build no second occurrence at all.
 pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
-    let (op, right) = match rng.range(10) {
-        0..=2 => (CmpOp::Overlaps, Right::Var),
-        3 => (CmpOp::Overlaps, Right::Literal),
-        4 | 5 => (CmpOp::Contains, Right::Var),
-        6 => (CmpOp::Contains, Right::Literal),
-        // Contains with an element-typed right side: point membership
-        // as a predicate.
-        7 => (CmpOp::Contains, Right::Element),
-        8 => (CmpOp::Eq, Right::Var),
+    let draw = rng.range(12);
+    let (op, right) = match draw {
+        0 | 1 => (allen(AllenMask::INTERSECTS), Right::Var),
+        2 => (allen(AllenMask::INTERSECTS), Right::Literal),
+        3 | 4 => (allen(AllenMask::COVERS), Right::Var),
+        5 => (allen(AllenMask::COVERED_BY), Right::Literal),
+        6 => (allen(AllenMask::DISJOINT), Right::Literal),
+        // A random singleton basic — every classify branch is reachable.
+        7 => (allen(singleton_mask(rng)), Right::Var),
+        8 => (allen(singleton_mask(rng)), Right::Literal),
+        // Contains' point form: point membership as a predicate.
+        9 => (CmpOp::Contains, Right::Element),
+        10 => (CmpOp::Eq, Right::Var),
         _ => (CmpOp::Ne, Right::Var),
     };
     let (lhs, rhs) = if rng.chance(1, 2) {
@@ -346,10 +366,11 @@ fn wide_mandate_join(b: &mut Builder) -> (VarId, Term) {
 /// recomputed from the corpus interval generator to touch a corpus
 /// interval **exactly** at an endpoint — `[a,b) [b,c)` as data and
 /// query — in both polarities (the literal ends at a corpus start;
-/// the literal starts at a corpus end). Half the probes are `Overlaps`
-/// (adjacency must NOT overlap); half are `Contains` with the touch
-/// point itself (`b ∉ [a,b)`, `b ∈ [b,c)`). Single-occurrence filters:
-/// the accepted O(n) scan, not the Cartesian shape.
+/// the literal starts at a corpus end). Half the probes are
+/// `Allen(INTERSECTS)` (adjacency must NOT intersect — *meets* shares
+/// no point); half are `Contains` with the touch point itself
+/// (`b ∉ [a,b)`, `b ∈ [b,c)`). Single-occurrence filters: the accepted
+/// O(n) scan, not the Cartesian shape.
 pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     let group = rng.range(GROUP_POOL);
     let left = rng.chance(1, 2);
@@ -402,7 +423,7 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
 
 fn push_boundary_cmp(b: &mut Builder, rng: &mut Rng, var: VarId, literal: Value, point: Value) {
     let (op, rhs) = if rng.chance(1, 2) {
-        (CmpOp::Overlaps, Term::Literal(literal))
+        (allen(AllenMask::INTERSECTS), Term::Literal(literal))
     } else {
         (CmpOp::Contains, Term::Literal(point))
     };

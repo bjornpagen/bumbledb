@@ -1,9 +1,10 @@
 use super::{
-    BindValue, Const, ExecPlan, Executor, FilterPredicate, ParamArg, PreparedQuery, ValueType,
+    BindValue, Const, ExecPlan, Executor, FilterPredicate, ParamArg, ParamShape, PreparedQuery,
+    ValueType,
 };
 
 use crate::error::{Error, Result};
-use crate::image::view::ResolvedWordSource;
+use crate::image::view::{MaskConst, ResolvedWordSource};
 use crate::ir::{CmpOp, ParamId, Value};
 use crate::schema::IntervalElement;
 use crate::storage::dict;
@@ -99,7 +100,26 @@ impl<S> PreparedQuery<'_, S> {
         if self.param_is_set[idx] {
             return Err(Error::ParamSetExpected { param });
         }
-        let expected = &self.param_types[idx];
+        let expected = match &self.param_types[idx] {
+            // A mask slot: the vacuity rules land here, where the value
+            // exists — the bind-time sibling of validation's literal-mask
+            // rejections. Resolves to the mask's bits as a word.
+            ParamShape::AllenMask => {
+                let BindValue::AllenMask(mask) = value else {
+                    return Err(Error::AllenMaskParamExpected { param });
+                };
+                if mask.is_empty() {
+                    return Err(Error::EmptyAllenMaskParam { param });
+                }
+                if mask.is_full() {
+                    return Err(Error::FullAllenMaskParam { param });
+                }
+                self.resolved_params[idx] = Const::Word(u64::from(mask.bits()));
+                self.missed_params[idx] = false;
+                return Ok(());
+            }
+            ParamShape::Value(expected) => expected,
+        };
         let Some((resolved, missed)) = convert_scalar(txn, value, expected)? else {
             return Err(Error::ParamTypeMismatch {
                 param,
@@ -126,7 +146,9 @@ impl<S> PreparedQuery<'_, S> {
         if !self.param_is_set[idx] {
             return Err(Error::ParamScalarExpected { param });
         }
-        let expected = &self.param_types[idx];
+        let ParamShape::Value(expected) = &self.param_types[idx] else {
+            unreachable!("validated: a mask param is never a set")
+        };
         // Pooled storage: steal the slot's previous `WordSet` so a warm
         // re-bind (any size within the documented assumption) reuses its
         // capacity.
@@ -322,6 +344,7 @@ fn resolve_selection_into(
 /// through positive occurrences (`split_filters` routes every
 /// Eq-constant into selections) and live for negated ones, whose
 /// Eq-constants ARE view filters.
+#[allow(clippy::too_many_lines)] // one arm per filter kind, in kind order
 fn resolve_filter_into(
     txn: &ReadTxn<'_>,
     template: &FilterPredicate,
@@ -418,11 +441,34 @@ fn resolve_filter_into(
                 outer: resolved,
             };
         }
+        // The Allen kinds: the mask resolves to its literal (params were
+        // vacuity-checked at bind; a mirrored param converses here —
+        // `MaskConst`), and `FieldAllen`'s constant side resolves like
+        // any interval constant. Views are built with fully resolved
+        // filters, so nothing symbolic survives past this point.
+        FilterPredicate::FieldsAllen { left, right, mask } => {
+            *dst = FilterPredicate::FieldsAllen {
+                left: *left,
+                right: *right,
+                mask: MaskConst::Mask(crate::image::view::mask_of(*mask, params)),
+            };
+        }
+        FilterPredicate::FieldAllen { field, other, mask } => {
+            let resolved = match other {
+                Const::Interval { .. } => other.clone(),
+                Const::Param(param) => params[usize::from(param.0)].clone(),
+                _ => unreachable!("validated: the Allen constant side is an interval"),
+            };
+            *dst = FilterPredicate::FieldAllen {
+                field: *field,
+                other: resolved,
+                mask: MaskConst::Mask(crate::image::view::mask_of(*mask, params)),
+            };
+        }
         // Constant-free kinds copy through (cheap: field ids only).
-        FilterPredicate::FieldsCompare { .. }
-        | FilterPredicate::FieldsOverlap { .. }
-        | FilterPredicate::FieldsContain { .. }
-        | FilterPredicate::FieldsContainPoint { .. } => dst.clone_from(template),
+        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsContainPoint { .. } => {
+            dst.clone_from(template);
+        }
     }
     Ok(true)
 }
@@ -484,6 +530,9 @@ fn element_view(value: &Value) -> Option<BindValue<'_>> {
         Value::Bytes(raw) => BindValue::Bytes(raw),
         Value::IntervalU64(start, end) => BindValue::IntervalU64(*start, *end),
         Value::IntervalI64(start, end) => BindValue::IntervalI64(*start, *end),
+        // A mask is no element type — a set never holds masks; the
+        // caller reports the element mismatch.
+        Value::AllenMask(_) => return None,
     })
 }
 

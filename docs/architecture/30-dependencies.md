@@ -127,10 +127,12 @@ Both judgments read interval positions through the denotation
 iff it holds of the point-families.
 
 - **FD, pointwise:** `R(room, during) -> R` with `during: interval` means no two
-  facts share `room` and any point of `during` — i.e. **per-room intervals must not
-  overlap**. The "exclusion constraint" is not a feature of this system; it is this
+  facts share `room` and any point of `during` — i.e. **every per-room pair
+  satisfies `DISJOINT`**, the Allen composite (before ∪ meets ∪ met-by ∪ after
+  — `20-query-ir.md` § the Allen operator; one vocabulary, both sides of the
+  engine). The "exclusion constraint" is not a feature of this system; it is this
   judgment on this type. Enforcement is two ordered-neighbor probes per touched
-  fact (`50-storage.md`). Rays (`end == MAX` = `[s, ∞)`, the point-domain law —
+  fact (`50-storage.md`) — the O(log n) plan for the pairwise statement. Rays (`end == MAX` = `[s, ∞)`, the point-domain law —
   `10-data-model.md`) need no case of their own: two rays in one group share every
   point past the later start and always conflict — "at most one ongoing booking
   per room" is this judgment on this value; a bounded interval abutting a ray's

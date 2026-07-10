@@ -1,6 +1,6 @@
 use super::{Context, ParamKind, TypeSlot};
 use crate::error::ValidationError;
-use crate::ir::{CmpOp, Comparison, ParamId, Query, Term, Value, VarId};
+use crate::ir::{CmpOp, Comparison, MaskTerm, ParamId, Query, Term, Value, VarId};
 use crate::schema::{FieldId, IntervalElement, Schema, ValueType};
 
 /// The structural type of a literal, for matching against a field or
@@ -40,7 +40,11 @@ fn literal_anchor_type(value: &Value) -> Option<ValueType> {
         Value::IntervalI64(..) => ValueType::Interval {
             element: IntervalElement::I64,
         },
-        Value::Enum(_) => return None,
+        // An enum literal names an ordinal, not a variant list; a mask
+        // literal is no data-model type at all (it is only ever legal
+        // inside `CmpOp::Allen`'s mask position, never as a term) — both
+        // anchor nothing and are checked against the other side instead.
+        Value::Enum(_) | Value::AllenMask(_) => return None,
     })
 }
 
@@ -385,9 +389,17 @@ impl Context {
         // `ConstantComparison`) — the roster item is discharged by
         // representation, not by a check.
         //
-        // Param ids must be dense — jointly across scalars and sets: a gap
-        // would be a positional slot at execution whose supplied value is
-        // never type-checked.
+        // A mask param is anchored by its mask position alone; any value
+        // anchor on the same id (a field binding, a comparison side) is a
+        // type conflict — a mask is not a data-model type.
+        for param in &self.mask_params {
+            if self.param_slots.contains_key(param) {
+                return Err(ValidationError::ParamTypeConflict { param: *param });
+            }
+        }
+        // Param ids must be dense — jointly across scalars, sets, and
+        // masks: a gap would be a positional slot at execution whose
+        // supplied value is never type-checked.
         for (position, param) in self.param_kinds.keys().enumerate() {
             if usize::from(param.0) != position {
                 return Err(ValidationError::ParamIdGap {
@@ -403,6 +415,26 @@ impl Context {
     /// roles, and the `ParamSet`-only-under-`Eq` rule.
     fn comparison_shapes(&mut self, query: &Query) -> Result<(), ValidationError> {
         for (index, Comparison { op, lhs, rhs }) in query.predicates.iter().enumerate() {
+            // The Allen mask position, both vacuity rules for literals
+            // (∅ = "never": write no query; full = "always": write no
+            // predicate) and the roster registration for params (their
+            // vacuity is checked at bind, where the value exists).
+            if let CmpOp::Allen { mask } = op {
+                match mask {
+                    MaskTerm::Literal(mask) => {
+                        if mask.is_empty() {
+                            return Err(ValidationError::EmptyAllenMask { index });
+                        }
+                        if mask.is_full() {
+                            return Err(ValidationError::FullAllenMask { index });
+                        }
+                    }
+                    MaskTerm::Param(param) => {
+                        self.note_param_kind(*param, ParamKind::Scalar)?;
+                        self.mask_params.insert(*param);
+                    }
+                }
+            }
             // A comparison of a variable with itself is constant-valued —
             // the "write the query you mean" rule applies exactly as it
             // does to literal-vs-literal.
@@ -562,7 +594,7 @@ impl Context {
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
                     self.check_order(index, lhs, rhs)?;
                 }
-                CmpOp::Overlaps => self.check_overlaps(index, lhs, rhs)?,
+                CmpOp::Allen { .. } => self.check_allen(index, lhs, rhs)?,
                 CmpOp::Contains => self.check_contains(index, lhs, rhs)?,
             }
         }
@@ -632,13 +664,10 @@ impl Context {
         Ok(())
     }
 
-    /// `Overlaps`: two interval terms of one element type.
-    fn check_overlaps(
-        &mut self,
-        index: usize,
-        lhs: &Term,
-        rhs: &Term,
-    ) -> Result<(), ValidationError> {
+    /// `Allen { mask }`: two interval terms of one element type — the one
+    /// interval-pair comparison (the mask itself was checked in
+    /// `comparison_shapes`; params get the vacuity rules at bind).
+    fn check_allen(&mut self, index: usize, lhs: &Term, rhs: &Term) -> Result<(), ValidationError> {
         let (var, other) = match (lhs, rhs) {
             (Term::Var(var), other) | (other, Term::Var(var)) => (*var, other),
             _ => unreachable!("comparison_shapes rejected constant comparisons"),
@@ -654,17 +683,17 @@ impl Context {
                 }
             }
             Term::Param(param) => self.anchor_param_mono(*param, &var_type)?,
-            Term::ParamSet(_) => unreachable!("comparison_shapes rejected sets under Overlaps"),
+            Term::ParamSet(_) => unreachable!("comparison_shapes rejected sets under Allen"),
             Term::Literal(value) => self.check_literal_against(index, value, &var_type)?,
         }
         Ok(())
     }
 
-    /// `Contains`: an interval left side, and a right side that is either
-    /// an interval of the same element (point-set ⊇) or element-typed
-    /// (point membership as a predicate — the predicate form of the
-    /// binding rule). An unanchored param on the right resolves like any
-    /// all-bivalent anchor: to the interval reading.
+    /// `Contains`: point membership as a predicate — an interval left
+    /// side, an **element-typed** right side (the predicate form of the
+    /// membership binding rule, for terms already bound elsewhere). The
+    /// interval⊇interval form is gone: that predicate is `Allen(COVERS)`,
+    /// and an interval-typed right side is an illegal comparison.
     fn check_contains(
         &mut self,
         index: usize,
@@ -681,13 +710,12 @@ impl Context {
             },
             Term::Param(param) => {
                 // The right side is a variable (constant comparisons are
-                // gone). Its type names the element domain; the param is
-                // the containing interval.
+                // gone), and it is the *point*: its element type names the
+                // param's interval domain.
                 let Term::Var(rhs_var) = rhs else {
                     unreachable!("comparison_shapes rejected constant comparisons")
                 };
                 let element = match self.resolved_var_type(*rhs_var) {
-                    ValueType::Interval { element } => *element,
                     ValueType::U64 => IntervalElement::U64,
                     ValueType::I64 => IntervalElement::I64,
                     _ => return Err(ValidationError::IllegalComparison { index }),
@@ -709,51 +737,22 @@ impl Context {
         };
         match rhs {
             Term::Var(var) => {
-                let rhs_type = self.resolved_var_type(*var);
-                if *rhs_type != (ValueType::Interval { element })
-                    && *rhs_type != element_type(element)
-                {
+                if *self.resolved_var_type(*var) != element_type(element) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
             }
             Term::Param(param) => {
-                // A `Contains` right side is an interval position: if the
-                // param resolves element-typed, its values are points and
-                // the point-domain ceiling rule applies at bind.
+                // A `Contains` right side is a point at an interval
+                // position: the ceiling rule applies at bind, where the
+                // value exists (the point-domain law).
                 self.interval_position_params.insert(*param);
-                match self.param_slots.get(param) {
-                    // All this param's anchors are bivalent positions —
-                    // the resolution rule picks the interval reading (⊇).
-                    None => {
-                        self.param_slots
-                            .insert(*param, TypeSlot::Mono(ValueType::Interval { element }));
-                    }
-                    Some(TypeSlot::Mono(existing)) => {
-                        if *existing != (ValueType::Interval { element })
-                            && *existing != element_type(element)
-                        {
-                            return Err(ValidationError::IllegalComparison { index });
-                        }
-                    }
-                    Some(TypeSlot::Bivalent(_)) => unreachable!("resolve_bivalents ran"),
-                }
+                self.anchor_param_mono(*param, &element_type(element))?;
             }
             Term::Literal(value) => match (value, element) {
                 (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => {
-                    // Point membership as a predicate: the point domain
-                    // is `MIN ..= MAX−1` (the point-domain law).
+                    // The point domain is `MIN ..= MAX−1`.
                     if at_domain_ceiling(value) {
                         return Err(ValidationError::ComparisonPointLiteralAtCeiling { index });
-                    }
-                }
-                (Value::IntervalU64(start, end), IntervalElement::U64) => {
-                    if start >= end {
-                        return Err(ValidationError::ComparisonEmptyIntervalLiteral { index });
-                    }
-                }
-                (Value::IntervalI64(start, end), IntervalElement::I64) => {
-                    if start >= end {
-                        return Err(ValidationError::ComparisonEmptyIntervalLiteral { index });
                     }
                 }
                 _ => return Err(ValidationError::IllegalComparison { index }),

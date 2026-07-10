@@ -234,8 +234,8 @@ pub fn validate(
         };
         nodes[node].residuals.push(*residual);
     }
-    // Decomposed interval word residuals: the same rule over the word
-    // operands' variables.
+    // Decomposed point-containment word residuals: the same rule over
+    // the word operands' variables.
     for (residual_idx, residual) in normalized.word_residuals.iter().enumerate() {
         let Some(node) = earliest_bound_node(&bound, &[residual.lhs.var, residual.rhs.var]) else {
             return Err(PlanError::UnplacedWordResidual {
@@ -243,6 +243,16 @@ pub fn validate(
             });
         };
         nodes[node].word_residuals.push(*residual);
+    }
+    // Allen residuals: the same rule again — the earliest node binding
+    // both interval variables.
+    for (residual_idx, residual) in normalized.allen_residuals.iter().enumerate() {
+        let Some(node) = earliest_bound_node(&bound, &[residual.lhs, residual.rhs]) else {
+            return Err(PlanError::UnplacedAllenResidual {
+                residual: residual_idx,
+            });
+        };
+        nodes[node].allen_residuals.push(*residual);
     }
     // Anti-probe attachment: the earliest node binding the negated
     // occurrence's whole variable set — probe keys plus point-filter

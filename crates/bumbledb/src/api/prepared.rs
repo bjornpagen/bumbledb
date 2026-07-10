@@ -58,6 +58,11 @@ pub enum BindValue<'a> {
     IntervalU64(u64, u64),
     /// A half-open `[start, end)`.
     IntervalI64(i64, i64),
+    /// An Allen mask for an `Allen` comparison's mask param — the
+    /// temporal relation as a bind-time argument (`crate::allen`). The
+    /// vacuous ∅/full masks are rejected at bind with distinct typed
+    /// errors, mirroring validation's literal-mask rules.
+    AllenMask(crate::allen::AllenMask),
 }
 
 /// One positional execution argument (`docs/architecture/70-api.md`
@@ -170,9 +175,9 @@ pub struct PreparedQuery<'s, S> {
     bindings: Bindings,
     /// Per find term: the output spec and its result type.
     finds: Vec<(FindSpec, ValueType)>,
-    /// Dense per-param expected types (validation rejects id gaps). A set
-    /// param's type is its **element** type.
-    param_types: Vec<ValueType>,
+    /// Dense per-param expected shapes (validation rejects id gaps). A
+    /// set param's entry carries its **element** type.
+    param_types: Vec<ParamShape>,
     /// Dense per-param set-ness (`Term::ParamSet` anchors — a `ParamId`
     /// is scalar or set, never both; validation enforced it).
     param_is_set: Vec<bool>,
@@ -236,6 +241,16 @@ pub struct PreparedQuery<'s, S> {
 
 /// [`PreparedQuery`]'s phantom payload: `!Sync` scratch pinned to `S`.
 type PreparedMarker<S> = (std::cell::Cell<()>, fn() -> S);
+
+/// What one param slot expects at bind: a data-model value of a type, or
+/// an Allen mask (`Allen` mask positions — a mask is not a data-model
+/// type, so it is not a [`ValueType`]; making the slot a two-variant sum
+/// keeps the untyped placeholder unrepresentable).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ParamShape {
+    Value(ValueType),
+    AllenMask,
+}
 
 /// How many (generation, resolved residual filters) bindings each
 /// occurrence memoizes: the active one plus [`PARKED_SLOTS`] parked.

@@ -221,6 +221,7 @@ fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<PlacedComparison>) ->
         occurrences,
         residuals,
         word_residuals: vec![],
+        allen_residuals: vec![],
         anti_probes,
         slot_widths,
     }

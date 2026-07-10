@@ -13,7 +13,8 @@ use bumbledb::schema::{
     Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, Db, FindTerm, ParamId, Query, RelationId, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, MaskTerm, ParamId, Query, RelationId,
+    Term, Value, VarId,
 };
 
 use crate::differential::{run, Op, Summary};
@@ -373,7 +374,9 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 negated: vec![],
                 predicates: vec![
                     Comparison {
-                        op: CmpOp::Overlaps,
+                        op: CmpOp::Allen {
+                            mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                        },
                         lhs: var(1),
                         rhs: var(4),
                     },
@@ -397,7 +400,9 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 negated: vec![],
                 predicates: vec![
                     Comparison {
-                        op: CmpOp::Contains,
+                        op: CmpOp::Allen {
+                            mask: MaskTerm::Literal(AllenMask::COVERS),
+                        },
                         lhs: var(1),
                         rhs: var(4),
                     },

@@ -65,7 +65,7 @@ silently coerces everything and is the oracle-corrupting bug class:
 | U64 | INTEGER | generator constrains oracle-checked data to `< 2^63`; full-range U64 is covered by non-oracle property tests (encode/decode, guards) |
 | I64 | INTEGER | |
 | Enum | INTEGER (ordinal) | Min/Max never apply (equality-only type) |
-| Interval | two INTEGER columns (start, end) | value equality = pairwise; `Overlaps`/`Contains`/membership translate to endpoint comparisons — fully expressible in SQL; the *judgments* over intervals are the naive model's lane |
+| Interval | two INTEGER columns (start, end) | value equality = pairwise; an `Allen` mask translates to its basics' endpoint formulas OR'd (under the query's SELECT DISTINCT); membership is the endpoint pair — fully expressible in SQL; the *judgments* over intervals are the naive model's lane |
 | String | TEXT | intern ids decoded to bytes **before** comparison, outside any timed region |
 | Bytes | BLOB | never TEXT — DISTINCT distinguishes `X'41'` from `'A'` |
 
@@ -127,7 +127,7 @@ convention is retired with `ParamSet`); multi-hop joins across
 holders/accounts/postings/instruments/entries; balance-style aggregates by account
 and instrument; **latest-posting-per-account (Arg-restriction family)**;
 **postings-with-no-tag (negation family)**; **mandate-at-instant and
-mandate-overlap (interval families — membership probe and Overlaps join)**; a
+mandate-overlap (interval families — membership probe and Allen-mask join)**; a
 cyclic-ish join for WCOJ honesty; a duplicate-witness projection. Data: seeded,
 reproducible, generated at 10⁵–10⁷ facts; the mandate generator emits both disjoint
 and adjacent intervals (the neighbor-probe boundary is a data case, not just a unit
@@ -157,7 +157,7 @@ gate nothing.
   form the coverage test pins at n = 1000): every shape within ±30% of its weight;
   every *legal* cell of the per-(operator, type) comparison matrix nonzero (`Eq`/`Ne`
   over all seven types; order operators over the two integer types;
-  `Overlaps`/`Contains` over both interval element types, including the
+  `Allen` masks (composites and singleton basics) over both interval element types, including the
   adjacent-touching boundary `[a,b) [b,c)` in both polarities) and every illegal
   cell zero (order-on-interval prominently); repeated in-atom variables; self-joins
   with cross-atom ordered residuals; zero-binding gate atoms drawn from more than
@@ -166,7 +166,7 @@ gate nothing.
   param sets across sizes {0, 1, 2, boundary-large} with per-type miss policies and
   duplicate elements (dedup asserted); membership bindings against literals,
   params, and variables (each anchoring the element type) — with the **cost-bound
-  rule**: a var-point membership or cross-atom Overlaps/Contains construct is
+  rule**: a var-point membership or cross-atom Allen/Contains construct is
   generated only on an equality-connected spine (the interval occurrence shares an
   equality join variable with the point's atom, or carries an equality
   selection) — the keyless form is a Cartesian (`40-execution.md`) and the

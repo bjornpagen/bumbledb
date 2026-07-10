@@ -1,6 +1,6 @@
 # PRD 04 — The configuration kernel
 
-**Depends on:** 03.
+**Depends on:** 03 (landed — the mask, `classify`, and the lowered shapes are in; this PRD replaces their scalar evaluation with the configuration kernel).
 **Modules:** `crates/bumbledb/src/exec/kernel.rs` (+ reference), `exec/run/`
 (filter + residual paths), `image.rs` (interval column reads — read-only use).
 **Authority:** `40-execution.md` (batching doctrine, port-topology law, unsafe

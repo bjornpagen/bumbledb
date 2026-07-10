@@ -183,6 +183,9 @@ impl<S> WriteTx<'_, S> {
                 return Err(shape_mismatch(relation, field, mismatch).into());
             }
             match value {
+                Value::AllenMask(_) => {
+                    unreachable!("value_matches rejected mask values above: not a field type")
+                }
                 Value::Bool(v) => out.push(encode_bool(*v)),
                 Value::Enum(ordinal) => out.push(*ordinal),
                 Value::U64(v) => out.extend_from_slice(&encode_u64(*v)),

@@ -1,4 +1,7 @@
-use bumbledb::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
+use bumbledb::{
+    AggOp, AllenMask, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, Query, Term, Value,
+    VarId,
+};
 
 use crate::families::{scalar_draw, Draw, Family, Kind};
 use crate::gen::{self, GenConfig, Rng, Sizes};
@@ -626,12 +629,12 @@ fn mandate_at_instant_params(cfg: &GenConfig) -> Vec<Draw> {
 
 /// `mandate_overlap` — `Q(a1, a2) :- Mandate(account = a1, org = ?0,
 /// active = u), Mandate(account = a2, org = ?0, active = v),
-/// Overlaps(u, v)` — the interval-overlap family. **Chosen shape:**
-/// Mandate × Mandate joined through a shared org param — a true
-/// `Overlaps` JOIN across accounts (account pairs concurrently mandated
-/// to one org), not a window filter; the pointwise key makes
-/// same-account overlap impossible, so the join must cross accounts to
-/// produce anything beyond the reflexive pairs.
+/// Allen(u, v, INTERSECTS)` — the interval-intersection family.
+/// **Chosen shape:** Mandate × Mandate joined through a shared org param
+/// — a true Allen-mask JOIN across accounts (account pairs concurrently
+/// mandated to one org), not a window filter; the pointwise key makes
+/// same-account intersection impossible, so the join must cross accounts
+/// to produce anything beyond the reflexive pairs.
 fn mandate_overlap_query() -> Query {
     Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -655,7 +658,9 @@ fn mandate_overlap_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![Comparison {
-            op: CmpOp::Overlaps,
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+            },
             lhs: var(2),
             rhs: var(3),
         }],

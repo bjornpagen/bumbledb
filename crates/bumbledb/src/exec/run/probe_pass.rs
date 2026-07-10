@@ -214,6 +214,39 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
+        // Allen residuals: classify the (start, end) pairs — read at
+        // word-base offsets 0/1 — and test the resolved mask, compacted
+        // like every residual (the line-parallel twin of `run_node`'s
+        // pass; docs/architecture/20-query-ir.md, § the Allen operator).
+        for (r_idx, (residual, lhs_slot, rhs_slot)) in
+            self.allen_residual_slots[node_idx].iter().enumerate()
+        {
+            let mask = self.allen_masks[node_idx][r_idx];
+            let cover_vars = &node.subatoms[cover_sub].vars;
+            let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
+            let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
+            let n = scratch.survivors.len();
+            scratch.mask.clear();
+            scratch.mask.resize(n, 0);
+            for k in 0..n {
+                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                let parent = scratch.parents[element] as usize;
+                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
+                    Some(word) => scratch.entry_keys[element * arity + word + offset],
+                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
+                };
+                let basic = crate::allen::classify_bounds(
+                    &value(lhs_word, *lhs_slot, 0),
+                    &value(lhs_word, *lhs_slot, 1),
+                    &value(rhs_word, *rhs_slot, 0),
+                    &value(rhs_word, *rhs_slot, 1),
+                );
+                let pass = mask.contains(basic);
+                counters.residual(node_idx, pass);
+                scratch.mask[k] = u8::from(pass);
+            }
+            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+        }
         // Membership probes (docs/architecture/40-execution.md, the
         // point-membership scan): scan the occurrence's remaining
         // positions per surviving binding — cursors assembled exactly as

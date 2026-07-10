@@ -1,6 +1,6 @@
 use std::arch::aarch64::{
-    uint64x2_t, vandq_u64, vceqq_u64, vceqq_u8, vcgeq_u64, vcgtq_u64, vcleq_u64, vcltq_u64,
-    vdupq_n_u64, vdupq_n_u8, vgetq_lane_u64, vld1q_u64, vld1q_u8, vorrq_u64, vst1q_u8,
+    uint64x2_t, vandq_u64, vceqq_u64, vceqq_u8, vcgeq_u64, vcgtq_u64, vcleq_u64, vdupq_n_u64,
+    vdupq_n_u8, vgetq_lane_u64, vld1q_u64, vld1q_u8, vorrq_u64, vst1q_u8,
 };
 
 pub(super) fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
@@ -149,71 +149,9 @@ pub(super) fn filter_any_point_in_u64(
     }
 }
 
-pub(super) fn filter_overlaps_u64(
-    starts: &[u64],
-    ends: &[u64],
-    c_start: u64,
-    c_end: u64,
-    out: &mut Vec<u32>,
-) {
-    // SAFETY: the `filter_pair_u64` contract.
-    unsafe {
-        let cs = vdupq_n_u64(c_start);
-        let ce = vdupq_n_u64(c_end);
-        filter_pair_u64(
-            starts,
-            ends,
-            out,
-            // `start < c_end` AND `c_start < end` — point-sets intersect.
-            |s, e| vandq_u64(vcltq_u64(s, ce), vcgtq_u64(e, cs)),
-            |s, e| s < c_end && c_start < e,
-        );
-    }
-}
-
-pub(super) fn filter_contains_u64(
-    starts: &[u64],
-    ends: &[u64],
-    c_start: u64,
-    c_end: u64,
-    out: &mut Vec<u32>,
-) {
-    // SAFETY: the `filter_pair_u64` contract.
-    unsafe {
-        let cs = vdupq_n_u64(c_start);
-        let ce = vdupq_n_u64(c_end);
-        filter_pair_u64(
-            starts,
-            ends,
-            out,
-            // `start <= c_start` AND `c_end <= end` — field ⊇ constant.
-            |s, e| vandq_u64(vcleq_u64(s, cs), vcgeq_u64(e, ce)),
-            |s, e| s <= c_start && c_end <= e,
-        );
-    }
-}
-
-pub(super) fn filter_within_u64(
-    starts: &[u64],
-    ends: &[u64],
-    c_start: u64,
-    c_end: u64,
-    out: &mut Vec<u32>,
-) {
-    // SAFETY: the `filter_pair_u64` contract.
-    unsafe {
-        let cs = vdupq_n_u64(c_start);
-        let ce = vdupq_n_u64(c_end);
-        filter_pair_u64(
-            starts,
-            ends,
-            out,
-            // `c_start <= start` AND `end <= c_end` — constant ⊇ field.
-            |s, e| vandq_u64(vcgeq_u64(s, cs), vcleq_u64(e, ce)),
-            |s, e| c_start <= s && e <= c_end,
-        );
-    }
-}
+// The old interval-vs-constant comparison kernels lived here; they left
+// with their operators (interval-pair predicates are Allen masks now —
+// the configuration kernel is PRD 04's).
 
 /// Dense exact-u128 sum via carry counting: four
 /// 2-lane accumulators take wrapping `vaddq_u64` adds while a

@@ -91,6 +91,9 @@ impl<S> WriteTx<'_, S> {
                 return Err(shape_mismatch(rel, field_id, mismatch).into());
             }
             let value_ref = match value {
+                Value::AllenMask(_) => {
+                    unreachable!("value_matches rejected mask values above: not a field type")
+                }
                 Value::Bool(v) => ValueRef::Bool(*v),
                 Value::U64(v) => ValueRef::U64(*v),
                 Value::I64(v) => ValueRef::I64(*v),

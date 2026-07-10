@@ -416,6 +416,16 @@ impl fmt::Display for ValidationError {
                 "comparison {index}: point literal at the domain ceiling — \
                  points are MIN..=MAX-1; MAX is the ray's \u{221e}"
             ),
+            Self::EmptyAllenMask { index } => write!(
+                f,
+                "comparison {index}: empty Allen mask — no basic relation can hold; \
+                 write no query"
+            ),
+            Self::FullAllenMask { index } => write!(
+                f,
+                "comparison {index}: full Allen mask — every pair satisfies it; \
+                 write no predicate"
+            ),
             Self::MembershipOnlyVariable { var } => write!(
                 f,
                 "variable {} is bound only by membership — no enumerable domain",
@@ -565,6 +575,23 @@ impl fmt::Display for Error {
                 f,
                 "parameter {}: point value at the domain ceiling — \
                  points are MIN..=MAX-1; MAX is the ray's \u{221e}",
+                param.0
+            ),
+            Self::AllenMaskParamExpected { param } => write!(
+                f,
+                "parameter {}: expected an Allen mask (BindValue::AllenMask)",
+                param.0
+            ),
+            Self::EmptyAllenMaskParam { param } => write!(
+                f,
+                "parameter {}: empty Allen mask — no basic relation can hold; \
+                 write no query",
+                param.0
+            ),
+            Self::FullAllenMaskParam { param } => write!(
+                f,
+                "parameter {}: full Allen mask — every pair satisfies it; \
+                 write no predicate",
                 param.0
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {

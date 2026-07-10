@@ -41,6 +41,10 @@ fn rank(value: &Value) -> u8 {
         Value::Bytes(_) => 5,
         Value::IntervalU64(..) => 6,
         Value::IntervalI64(..) => 7,
+        // Never stored in a tuple (masks are comparison arguments, not
+        // fact values); ranked anyway — the order stays total over the
+        // whole `Value` sum.
+        Value::AllenMask(_) => 8,
     }
 }
 
@@ -53,6 +57,7 @@ pub(crate) fn cmp_value(a: &Value, b: &Value) -> Ordering {
         (Value::String(x), Value::String(y)) | (Value::Bytes(x), Value::Bytes(y)) => x.cmp(y),
         (Value::IntervalU64(xs, xe), Value::IntervalU64(ys, ye)) => (xs, xe).cmp(&(ys, ye)),
         (Value::IntervalI64(xs, xe), Value::IntervalI64(ys, ye)) => (xs, xe).cmp(&(ys, ye)),
+        (Value::AllenMask(x), Value::AllenMask(y)) => x.bits().cmp(&y.bits()),
         _ => rank(a).cmp(&rank(b)),
     }
 }

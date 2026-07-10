@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::{AggOp, CmpOp, Comparison, Value};
+use crate::ir::{AggOp, CmpOp, Comparison, MaskTerm, Value};
 
 // --- Rejecting shapes, one per roster item ---
 
@@ -763,5 +763,145 @@ fn rejects_an_interval_typed_param_set_anchor() {
     assert!(matches!(
         expect_err(&query),
         ValidationError::IntervalParamSet { param: ParamId(0) }
+    ));
+}
+
+// --- The Allen mask roster lines (PRD ALG-03) ---
+
+#[test]
+fn rejects_the_empty_allen_mask() {
+    // Allen(v, [1,5), ∅): no basic can hold — "never"; write no query.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(crate::allen::AllenMask::EMPTY),
+            },
+            lhs: var(1),
+            rhs: Term::Literal(Value::IntervalU64(1, 5)),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::EmptyAllenMask { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_the_full_allen_mask() {
+    // Allen(v, w, all 13): every pair satisfies it — "always"; write no
+    // predicate.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
+            atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
+        ],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(crate::allen::AllenMask::FULL),
+            },
+            lhs: var(1),
+            rhs: var(3),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::FullAllenMask { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_allen_over_non_interval_sides() {
+    // Allen over two scalar variables: the interval-pair comparison
+    // types over intervals only.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(POSTING, vec![(0, var(0)), (2, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+            },
+            lhs: var(1),
+            rhs: Term::Literal(Value::I64(5)),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::IllegalComparison { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_contains_between_two_intervals() {
+    // The interval⊇interval Contains is gone — that predicate is
+    // Allen(COVERS); an interval-typed right side is illegal.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
+            atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
+        ],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Contains,
+            lhs: var(1),
+            rhs: var(3),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::IllegalComparison { index: 0 }
+    ));
+    // The literal form of the same mistake.
+    let literal = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Contains,
+            lhs: var(1),
+            rhs: Term::Literal(Value::IntervalU64(1, 5)),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&literal),
+        ValidationError::IllegalComparison { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_a_mask_param_with_a_value_anchor() {
+    // ?0 is both the Allen mask and a field binding: a mask is not a
+    // data-model type, so the anchors conflict.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            atom(
+                ACCOUNT,
+                vec![
+                    (0, var(0)),
+                    (1, Term::Param(ParamId(0))),
+                    (VALIDITY, var(1)),
+                ],
+            ),
+            atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
+        ],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Allen {
+                mask: MaskTerm::Param(ParamId(0)),
+            },
+            lhs: var(1),
+            rhs: var(3),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::ParamTypeConflict { param: ParamId(0) }
     ));
 }

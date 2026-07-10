@@ -27,45 +27,6 @@ pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out
     });
 }
 
-/// Scalar reference of [`super::filter_overlaps_u64`].
-pub fn filter_overlaps_u64(
-    starts: &[u64],
-    ends: &[u64],
-    c_start: u64,
-    c_end: u64,
-    out: &mut Vec<u32>,
-) {
-    push_matching(starts.len(), out, |i| {
-        starts[i] < c_end && c_start < ends[i]
-    });
-}
-
-/// Scalar reference of [`super::filter_contains_u64`].
-pub fn filter_contains_u64(
-    starts: &[u64],
-    ends: &[u64],
-    c_start: u64,
-    c_end: u64,
-    out: &mut Vec<u32>,
-) {
-    push_matching(starts.len(), out, |i| {
-        starts[i] <= c_start && c_end <= ends[i]
-    });
-}
-
-/// Scalar reference of [`super::filter_within_u64`].
-pub fn filter_within_u64(
-    starts: &[u64],
-    ends: &[u64],
-    c_start: u64,
-    c_end: u64,
-    out: &mut Vec<u32>,
-) {
-    push_matching(starts.len(), out, |i| {
-        c_start <= starts[i] && ends[i] <= c_end
-    });
-}
-
 /// Branchless cursor-write over the whole column.
 fn push_matching(len: usize, out: &mut Vec<u32>, keep: impl Fn(usize) -> bool) {
     let start = out.len();

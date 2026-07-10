@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::{AggOp, CmpOp, Comparison, Value};
+use crate::ir::{AggOp, CmpOp, Comparison, MaskTerm, Value};
 
 // --- Accepting shapes ---
 
@@ -215,28 +215,38 @@ fn point_params_are_the_element_typed_interval_position_params() {
 }
 
 #[test]
-fn accepts_overlaps_between_interval_variables_from_different_atoms() {
-    // (d) Overlaps(v1, v3): interval-vs-interval overlap needs no shared
-    // point variable — both vars stay bivalent and resolve to intervals.
-    let query = Query {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![
-            atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
-            atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
-        ],
-        negated: vec![],
-        predicates: vec![Comparison {
-            op: CmpOp::Overlaps,
-            lhs: var(1),
-            rhs: var(3),
-        }],
-    };
-    let witness = validate(&schema(), &query).expect("valid");
-    let interval = ValueType::Interval {
-        element: IntervalElement::U64,
-    };
-    assert_eq!(witness.var_type(VarId(1)), &interval);
-    assert_eq!(witness.var_type(VarId(3)), &interval);
+fn accepts_allen_between_interval_variables_from_different_atoms() {
+    // (d) Allen(v1, v3, INTERSECTS): the interval-pair comparison needs
+    // no shared point variable — both vars stay bivalent and resolve to
+    // intervals. Both mask forms are exercised: literal and param.
+    let masks = [
+        MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+        MaskTerm::Param(ParamId(0)),
+    ];
+    for mask in masks {
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![
+                atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
+                atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
+            ],
+            negated: vec![],
+            predicates: vec![Comparison {
+                op: CmpOp::Allen { mask },
+                lhs: var(1),
+                rhs: var(3),
+            }],
+        };
+        let witness = validate(&schema(), &query).expect("valid");
+        let interval = ValueType::Interval {
+            element: IntervalElement::U64,
+        };
+        assert_eq!(witness.var_type(VarId(1)), &interval);
+        assert_eq!(witness.var_type(VarId(3)), &interval);
+        if let MaskTerm::Param(param) = mask {
+            assert!(witness.mask_params().contains(&param));
+        }
+    }
 }
 
 // --- Negation, param sets, and the new aggregates ---
