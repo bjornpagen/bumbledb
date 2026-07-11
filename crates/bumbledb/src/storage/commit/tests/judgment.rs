@@ -49,14 +49,17 @@ fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Parent".into(),
                 fields: vec![field("id", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Child".into(),
                 fields: vec![field("parent", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![
                     field("id", ValueType::U64),
@@ -64,10 +67,12 @@ fn schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Transfer".into(),
                 fields: vec![field("account", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Shift".into(),
                 fields: vec![
                     field("worker", ValueType::U64),
@@ -76,14 +81,17 @@ fn schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Session".into(),
                 fields: vec![field("worker", ValueType::U64), field("span", interval())],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Rest".into(),
                 fields: vec![field("worker", ValueType::U64), field("span", interval())],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Report".into(),
                 fields: vec![
                     field("subject", ValueType::U64),

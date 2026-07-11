@@ -283,6 +283,7 @@ mod tests {
         SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
+                    extension: None,
                     name: "R".into(),
                     fields: vec![
                         FieldDescriptor {
@@ -308,6 +309,7 @@ mod tests {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "S".into(),
                     fields: vec![
                         FieldDescriptor {
@@ -516,14 +518,17 @@ mod tests {
         let schema = SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
+                    extension: None,
                     name: "Big".into(),
                     fields: vec![fresh_id()],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Small".into(),
                     fields: vec![fresh_id()],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Src".into(),
                     fields: vec![
                         fresh_id(),

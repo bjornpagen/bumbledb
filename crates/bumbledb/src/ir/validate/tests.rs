@@ -31,10 +31,12 @@ fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Holder".into(),
                 fields: vec![fresh("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![
                     fresh("id"),
@@ -49,6 +51,7 @@ fn schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Posting".into(),
                 fields: vec![
                     fresh("id"),

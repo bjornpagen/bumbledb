@@ -61,6 +61,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
     // R(k u64, v u64, b bool): a byte-backed column beside the words.
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "R".into(),
             fields: vec![
                 FieldDescriptor {

@@ -15,6 +15,7 @@ use crate::exec::SCAN_HOIST_THRESHOLD;
 fn wide_schema(fields: usize) -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "W".into(),
             fields: (0..fields)
                 .map(|f| FieldDescriptor {

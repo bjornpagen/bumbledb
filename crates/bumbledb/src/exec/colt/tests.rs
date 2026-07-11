@@ -16,6 +16,7 @@ use std::sync::Arc;
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "R".into(),
             fields: vec![
                 FieldDescriptor {

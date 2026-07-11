@@ -329,6 +329,7 @@ fn arg_ties_are_set_honest() {
 fn interval_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Payroll".into(),
             fields: vec![
                 FieldDescriptor {

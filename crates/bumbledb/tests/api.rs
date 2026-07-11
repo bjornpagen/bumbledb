@@ -542,6 +542,7 @@ fn open_mismatches_and_snapshot_usability() {
     // Db-level mismatch: a different schema refuses to open.
     let other = bumbledb::schema::SchemaDescriptor {
         relations: vec![bumbledb::schema::RelationDescriptor {
+            extension: None,
             name: "Other".into(),
             fields: vec![bumbledb::schema::FieldDescriptor {
                 name: "x".into(),

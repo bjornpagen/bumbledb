@@ -20,8 +20,17 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         let rel = RelationId(u32::from_be_bytes(
             key[1..5].try_into().expect("fixed-width slice"),
         ));
-        if s.schema.relation_checked(rel).is_none() {
+        let Some(relation) = s.schema.relation_checked(rel) else {
             s.malformed(key, "M key relation");
+            continue;
+        };
+        // Closed relations have no rows in the store: presence is the
+        // finding (the F pass's exemption, mirrored).
+        if relation.is_closed() {
+            s.push(StoreFinding::ClosedRelationEntry {
+                relation: rel,
+                key: key.into(),
+            });
             continue;
         }
         let Ok(row_bytes) = <[u8; 8]>::try_from(value) else {

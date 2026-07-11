@@ -138,6 +138,7 @@ fn explicit_max_fresh_exhausts_the_generator() {
 fn wide_enum_through_commit_and_scan() {
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Wide".into(),
             fields: vec![FieldDescriptor {
                 name: "v".into(),
@@ -171,6 +172,7 @@ fn wide_enum_through_commit_and_scan() {
     // 5 is a typed ParamTypeMismatch, not a silent empty result.
     let narrow = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "N".into(),
             fields: vec![
                 FieldDescriptor {
@@ -228,6 +230,7 @@ fn one_byte_compound_guards() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Switch".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -243,6 +246,7 @@ fn one_byte_compound_guards() {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Watcher".into(),
                 fields: vec![
                     FieldDescriptor {

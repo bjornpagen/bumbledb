@@ -31,8 +31,9 @@ pub struct FieldId(pub u16);
 
 /// Dense statement id: the statement's index in the schema-global
 /// materialized order — fresh auto-[`StatementDescriptor::Functionality`]
-/// statements first, then declared statements in declaration order
-/// ([`SchemaDescriptor::materialized_statements`] owns the rule).
+/// statements first, then closed auto-keys, then declared statements in
+/// declaration order ([`SchemaDescriptor::materialized_statements`] owns
+/// the rule).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StatementId(pub u16);
 
@@ -230,11 +231,35 @@ pub enum StatementDescriptor {
     Containment { source: Side, target: Side },
 }
 
-/// One declared relation.
+/// The extension-row cap: a vocabulary larger than 256 is policy data
+/// wearing a vocabulary costume, and the cap keeps every compiled word-set
+/// a fixed 4×u64 bitset (`docs/prd-comptime/README.md`, the refusal —
+/// *trigger* for lifting it: a census sighting).
+pub const MAX_EXTENSION_ROWS: usize = 256;
+
+/// One ground axiom of a closed relation: the handle — the row's identity,
+/// NOT a column — plus one value per declared intrinsic column, in
+/// field-declaration order (`docs/architecture/10-data-model.md` § closed
+/// relations). The row id is the declaration index, exactly the
+/// declaration-order rule relations, fields, and statements already obey.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    pub handle: Box<str>,
+    pub values: Box<[Value]>,
+}
+
+/// A closed relation's extension: its ground axioms in declaration order.
+pub type Extension = Box<[Row]>;
+
+/// One declared relation. `Some(extension)` declares it **closed** — its
+/// rows are ground axioms, frozen by the fingerprint, virtual in storage,
+/// write-refused; `None` is ordinary. No relation-kind enum exists: the
+/// option *is* the kind (`docs/architecture/10-data-model.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelationDescriptor {
     pub name: Box<str>,
     pub fields: Vec<FieldDescriptor>,
+    pub extension: Option<Extension>,
 }
 
 /// The schema as declared: input to validation. Statements are
@@ -293,8 +318,12 @@ impl SchemaDescriptor {
     /// pinned by the fingerprint (`docs/architecture/10-data-model.md`,
     /// § fingerprint inputs): one auto-`Functionality` per `Fresh` field
     /// (relation declaration order, then field order; projection = the one
-    /// fresh field), followed by the declared statements in declaration
-    /// order. [`StatementId`] = index into this list, schema-global.
+    /// fresh field), then one closed auto-key `R(id) -> R` per closed
+    /// relation (declaration order; projection = the synthetic id field),
+    /// then the declared statements in declaration order. Fresh before
+    /// closed is a fingerprint input, pinned here and never revisited
+    /// (`docs/architecture/30-dependencies.md`). [`StatementId`] = index
+    /// into this list, schema-global.
     ///
     /// # Panics
     ///
@@ -305,16 +334,31 @@ impl SchemaDescriptor {
         let mut statements: Vec<StatementDescriptor> = Vec::new();
         for (rel_idx, relation) in self.relations.iter().enumerate() {
             for (field_idx, field) in relation.fields.iter().enumerate() {
+                // A closed relation's sealed field list opens with the
+                // synthetic id, so its declared fields sit at idx + 1.
+                let sealed_idx = field_idx + usize::from(relation.extension.is_some());
                 if field.generation == Generation::Fresh {
                     statements.push(StatementDescriptor::Functionality {
                         relation: RelationId(
                             u32::try_from(rel_idx).expect("relation count fits u32"),
                         ),
                         projection: Box::new([FieldId(
-                            u16::try_from(field_idx).expect("field count fits u16"),
+                            u16::try_from(sealed_idx).expect("field count fits u16"),
                         )]),
                     });
                 }
+            }
+        }
+        // Closedness materializes `R(id) -> R` exactly as `fresh` does:
+        // the handle is the identity, and the auto-key is the statement
+        // containments target when a plain-u64 reference declares its
+        // containment against a closed relation.
+        for (rel_idx, relation) in self.relations.iter().enumerate() {
+            if relation.extension.is_some() {
+                statements.push(StatementDescriptor::Functionality {
+                    relation: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
+                    projection: Box::new([FieldId(0)]),
+                });
             }
         }
         statements.extend(self.statements.iter().cloned());
@@ -379,12 +423,30 @@ impl Statement {
     }
 }
 
+/// One sealed ground axiom: the handle plus the row's canonical fact bytes
+/// — the synthetic id field (the declaration index) followed by each
+/// intrinsic value's canonical encoding. Values encode ONCE, at validate,
+/// and never again — the staging law applied to the feature itself
+/// (`docs/prd-comptime/README.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedRow {
+    pub handle: Box<str>,
+    pub fact: Box<[u8]>,
+}
+
 /// One relation of a validated schema.
 #[derive(Debug)]
 pub struct Relation {
     name: Box<str>,
     fields: Box<[FieldDescriptor]>,
     layout: FactLayout,
+    /// The sealed extension of a closed relation (`None` = ordinary): rows
+    /// pre-encoded at validate, in declaration order — row id = index. A
+    /// closed relation's `fields` open with the synthetic (`id`, U64)
+    /// field, so guards, statements, and queries address the handle's id
+    /// uniformly at [`FieldId`] 0 (`docs/architecture/10-data-model.md`
+    /// § closed relations).
+    extension: Option<Box<[SealedRow]>>,
     /// `Functionality` statements on this relation, in materialized order.
     keys: Box<[StatementId]>,
     /// `Containment` statements whose source is this relation.

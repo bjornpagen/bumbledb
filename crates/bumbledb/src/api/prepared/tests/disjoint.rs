@@ -16,6 +16,7 @@ use crate::ir::{AggOp, HeadOp, HeadTerm};
 fn du_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Item".into(),
             fields: vec![
                 FieldDescriptor {

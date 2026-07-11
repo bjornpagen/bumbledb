@@ -29,6 +29,27 @@ pub(crate) fn enum_type(variants: &[&str]) -> ValueType {
     }
 }
 
+/// One ground axiom: `handle(values...)`.
+pub(crate) fn row(handle: &str, values: Vec<Value>) -> Row {
+    Row {
+        handle: handle.into(),
+        values: values.into_boxed_slice(),
+    }
+}
+
+/// A closed relation: declared intrinsic columns plus its extension.
+pub(crate) fn closed(
+    name: &str,
+    fields: Vec<FieldDescriptor>,
+    rows: Vec<Row>,
+) -> RelationDescriptor {
+    RelationDescriptor {
+        name: name.into(),
+        fields,
+        extension: Some(rows.into_boxed_slice()),
+    }
+}
+
 /// An unselected side: `R(X)`.
 pub(crate) fn side(relation: RelationId, projection: &[FieldId]) -> Side {
     Side {
@@ -70,10 +91,12 @@ fn ledger_slice() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Holder".into(),
                 fields: vec![fresh_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![
                     fresh_field("id"),
@@ -92,6 +115,7 @@ fn ledger_slice() -> SchemaDescriptor {
 fn one_relation(fields: Vec<FieldDescriptor>) -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "R".into(),
             fields,
         }],

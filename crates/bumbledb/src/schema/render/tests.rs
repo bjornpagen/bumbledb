@@ -15,10 +15,12 @@ fn example() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Holder".into(),
                 fields: vec![fresh_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![
                     fresh_field("id"),
@@ -33,6 +35,7 @@ fn example() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "SavingsTerms".into(),
                 fields: vec![
                     field("account", ValueType::U64),
@@ -40,10 +43,12 @@ fn example() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Roster".into(),
                 fields: vec![field("worker", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Shift".into(),
                 fields: vec![
                     field("worker", ValueType::U64),
@@ -136,14 +141,17 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
     let declaration = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "P".into(),
                 fields: vec![field("id", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Q".into(),
                 fields: vec![field("pid", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "R".into(),
                 fields: vec![field("x", ValueType::U64)],
             },
@@ -223,6 +231,7 @@ fn unresolvable_names_fall_back_to_id_placeholders() {
     // being diagnosed.
     let declaration = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Only".into(),
             fields: vec![field("x", ValueType::U64)],
         }],

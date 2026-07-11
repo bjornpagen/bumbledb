@@ -84,7 +84,12 @@ bumbledb::schema! {
 There is **no sugar and no field-level constraint syntax**: no `unique` modifier, no
 `fk(...)`, no `union` block. A field carries its type, optional `as NewType`, and
 optional `fresh` (which auto-materializes `R(field) -> R`, `10-data-model.md`) —
-everything relational is a statement. Statements are anonymous; their identity is
+everything relational is a statement. A closed relation likewise auto-materializes
+`R(id) -> R` on its synthetic id field (`10-data-model.md` § closed relations);
+**materialized order is: every fresh auto-key (relation-then-field declaration
+order), then every closed auto-key (relation declaration order), then the declared
+statements in declaration order** — the order is a fingerprint input, pinned once
+and never revisited. Statements are anonymous; their identity is
 their materialized-order id, pinned by the fingerprint, and errors cite the
 statement rendered back in this notation.
 **Decision: raw statements only.** **Alternative:** blessed sugar keywords lowering

@@ -29,6 +29,7 @@ fn schema() -> SchemaDescriptor {
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Posting".into(),
             fields: vec![
                 field("account", ValueType::U64),

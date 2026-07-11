@@ -18,6 +18,7 @@ fn chase_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Posting".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -38,6 +39,7 @@ fn chase_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -172,6 +174,7 @@ fn du_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Grading".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -187,6 +190,7 @@ fn du_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Det".into(),
                 fields: vec![
                     FieldDescriptor {

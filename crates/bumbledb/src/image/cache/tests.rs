@@ -11,6 +11,7 @@ use crate::testutil::TempDir;
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "R".into(),
             fields: vec![FieldDescriptor {
                 name: "x".into(),

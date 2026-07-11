@@ -440,6 +440,7 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
     // atom — past the executor's 128-bit variable bitsets.
     let wide = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Wide".into(),
             fields: (0..129)
                 .map(|i| FieldDescriptor {

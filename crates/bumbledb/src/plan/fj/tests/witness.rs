@@ -27,10 +27,12 @@ fn idiom_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "A".into(),
                 fields: vec![fresh("id"), field("v", ValueType::I64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "B".into(),
                 fields: vec![
                     fresh("id"),
@@ -53,6 +55,7 @@ fn interval_schema() -> Schema {
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "P".into(),
             fields: vec![
                 FieldDescriptor {

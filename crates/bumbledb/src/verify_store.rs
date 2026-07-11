@@ -166,6 +166,15 @@ pub enum StoreFinding {
         intern_id: u64,
         next_id: u64,
     },
+    /// An `F`/`M`/`U`/`R` entry naming a closed relation. Closed relations
+    /// are virtual — the theory is their storage and writes are refused
+    /// (`docs/architecture/10-data-model.md` § closed relations) — so they
+    /// are exempt from every coherence walk, and a stored entry's very
+    /// existence is the finding.
+    ClosedRelationEntry {
+        relation: RelationId,
+        key: Box<[u8]>,
+    },
     /// An entry that does not parse under the schema; the static string
     /// names the failing shape, [`CorruptionError::MalformedValue`]-style.
     ///

@@ -138,6 +138,7 @@ fn string_params_resolve_per_execution() {
 fn mandate_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Mandate".into(),
             fields: vec![
                 FieldDescriptor {

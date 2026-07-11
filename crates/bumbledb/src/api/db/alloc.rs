@@ -8,8 +8,12 @@ impl<S> WriteTx<'_, S> {
     ///
     /// # Errors
     ///
-    /// `FreshExhausted` at `u64::MAX`; `Lmdb` on the sequence read.
+    /// `ClosedRelationWrite` on a closed relation (its rows are ground
+    /// axioms, never minted — `fresh` is already refused at declaration,
+    /// so only a hand-written impl can reach this); `FreshExhausted` at
+    /// `u64::MAX`; `Lmdb` on the sequence read.
     pub fn alloc<T: Fresh<Schema = S>>(&mut self) -> Result<T> {
+        self.refuse_closed(T::RELATION)?;
         self.delta
             .alloc(&self.view, T::RELATION, T::FIELD)
             .map(T::from_fresh)
@@ -18,7 +22,9 @@ impl<S> WriteTx<'_, S> {
     /// Untyped fresh minting for ETL tooling: the witness carries the
     /// proof [`crate::Schema::fresh_field`] established at resolution, so
     /// the mint itself re-checks nothing — resolve once per relation, mint
-    /// per row (`70-api.md` § ETL).
+    /// per row (`70-api.md` § ETL). No closed-relation check runs here:
+    /// `fresh` on a closed relation is refused at declaration, so a
+    /// closed relation's witness is unconstructible.
     ///
     /// # Errors
     ///

@@ -39,6 +39,16 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             prev_pointwise = None;
             continue;
         };
+        // Closed relations have no rows in the store: presence is the
+        // finding (the F pass's exemption, mirrored).
+        if relation.is_closed() {
+            s.push(StoreFinding::ClosedRelationEntry {
+                relation: rel,
+                key: key.into(),
+            });
+            prev_pointwise = None;
+            continue;
+        }
         if !relation.keys().contains(&sid) {
             s.malformed(key, "U key statement");
             prev_pointwise = None;

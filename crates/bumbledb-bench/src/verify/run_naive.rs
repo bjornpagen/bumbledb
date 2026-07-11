@@ -43,6 +43,7 @@ fn bench_descriptor() -> SchemaDescriptor {
             .relations()
             .iter()
             .map(|relation| RelationDescriptor {
+                extension: None,
                 name: relation.name().into(),
                 fields: relation.fields().to_vec(),
             })

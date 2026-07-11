@@ -85,10 +85,12 @@ fn hand_built() -> bumbledb::schema::Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Holder".into(),
                 fields: vec![fresh_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![
                     fresh_field("id"),
@@ -111,6 +113,7 @@ fn hand_built() -> bumbledb::schema::Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "SavingsTerms".into(),
                 fields: vec![
                     field("account", ValueType::U64),

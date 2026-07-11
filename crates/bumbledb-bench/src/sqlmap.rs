@@ -389,14 +389,17 @@ mod tests {
         SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
+                    extension: None,
                     name: "Account".into(),
                     fields: vec![fresh("id"), field("code", ValueType::String)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Org".into(),
                     fields: vec![fresh("id")],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Mandate".into(),
                     fields: vec![
                         field("account", ValueType::U64),
@@ -410,6 +413,7 @@ mod tests {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Span".into(),
                     fields: vec![
                         field("id", ValueType::U64),

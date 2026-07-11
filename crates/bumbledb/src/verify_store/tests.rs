@@ -36,6 +36,7 @@ fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Holder".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -51,6 +52,7 @@ fn schema() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Booking".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -68,6 +70,7 @@ fn schema() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -85,6 +88,7 @@ fn schema() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Claim".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -544,6 +548,48 @@ fn low_high_water_is_found_against_the_max_row_id() {
             relation: BOOKING,
             stored: 0,
             max_row_id: 1,
+        }]
+    );
+}
+
+#[test]
+fn a_stored_row_for_a_closed_relation_is_the_finding() {
+    // Currency { minor_units: u64 } = { Usd(2) }: closed relations are
+    // virtual — the store holds no rows for them — so a raw-injected `F`
+    // entry is itself the one finding: the entry is exempt from every
+    // coherence walk (no membership/tally convictions ride along).
+    let dir = TempDir::new("verify-closed");
+    let decl = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: Some(Box::new([crate::schema::Row {
+                handle: "Usd".into(),
+                values: Box::new([Value::U64(2)]),
+            }])),
+            name: "Currency".into(),
+            fields: vec![FieldDescriptor {
+                name: "minor_units".into(),
+                value_type: ValueType::U64,
+                generation: Generation::None,
+            }],
+        }],
+        statements: vec![],
+    };
+    let db = Db::create(dir.path(), decl).expect("create");
+    let currency = RelationId(0);
+    let fact = db.schema().relation(currency).extension().expect("closed")[0]
+        .fact
+        .to_vec();
+    let f = key(|b| keys::fact_key(b, currency, 0));
+    raw_write(&db, |txn| {
+        let data = txn.env().data();
+        data.put(txn.raw_mut(), &f, &fact).expect("raw put");
+    });
+    let report = db.verify_store().expect("verify");
+    assert_eq!(
+        report.findings,
+        vec![StoreFinding::ClosedRelationEntry {
+            relation: currency,
+            key: f.into(),
         }]
     );
 }

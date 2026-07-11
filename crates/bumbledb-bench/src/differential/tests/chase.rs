@@ -147,6 +147,7 @@ fn walk_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Posting".into(),
                 fields: vec![
                     fresh("id"),
@@ -155,6 +156,7 @@ fn walk_descriptor() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![fresh("id"), field("holder", ValueType::U64)],
             },
@@ -234,10 +236,12 @@ fn du_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Grading".into(),
                 fields: vec![fresh("id"), field("kind", kind)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Det".into(),
                 fields: vec![
                     field("grading", ValueType::U64),

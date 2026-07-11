@@ -29,6 +29,7 @@ fn calendar() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Busy".into(),
                 fields: vec![
                     field("person", ValueType::U64),
@@ -42,6 +43,7 @@ fn calendar() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Ooo".into(),
                 fields: vec![field("person", ValueType::U64), field("during", during)],
             },

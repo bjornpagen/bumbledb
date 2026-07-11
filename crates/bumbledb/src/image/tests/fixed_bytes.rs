@@ -26,6 +26,7 @@ fn schema() -> Schema {
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "D".into(),
             fields: vec![
                 field("id", ValueType::U64),

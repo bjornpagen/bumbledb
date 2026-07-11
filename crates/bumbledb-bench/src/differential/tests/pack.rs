@@ -54,6 +54,7 @@ fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Busy".into(),
                 fields: vec![
                     field("id", ValueType::U64),
@@ -62,6 +63,7 @@ fn schema() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Shift".into(),
                 fields: vec![
                     field("id", ValueType::U64),

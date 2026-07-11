@@ -13,6 +13,7 @@ impl<S> WriteTx<'_, S> {
     ///
     /// As [`WriteTx::insert_dyn`].
     pub fn delete_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
+        self.refuse_closed(rel)?;
         if !self.encode_dyn(rel, values, InternMode::Resolve)? {
             return Ok(false);
         }

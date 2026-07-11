@@ -16,6 +16,7 @@ impl<S> WriteTx<'_, S> {
     ///
     /// As [`WriteTx::insert`].
     pub fn delete<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
+        self.refuse_closed(F::RELATION)?;
         self.with_scratch(|tx, bytes| {
             if !fact.encode_delete(tx, bytes)? {
                 return Ok(false);

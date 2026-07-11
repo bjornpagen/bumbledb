@@ -17,6 +17,7 @@ fn tagged_interval_schema(relations: usize) -> Schema {
     SchemaDescriptor {
         relations: (0..relations)
             .map(|r| RelationDescriptor {
+                extension: None,
                 name: format!("R{r}").into(),
                 fields: vec![
                     FieldDescriptor {
@@ -296,6 +297,7 @@ fn membership_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Payroll".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -313,6 +315,7 @@ fn membership_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Event".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -460,6 +463,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Payroll".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -477,6 +481,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Dept".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -492,6 +497,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Event".into(),
                 fields: vec![
                     FieldDescriptor {

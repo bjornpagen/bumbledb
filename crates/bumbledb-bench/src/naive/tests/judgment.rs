@@ -110,6 +110,7 @@ fn matrix_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Target".into(),
                 fields: vec![FieldDescriptor {
                     name: "id".into(),
@@ -118,10 +119,12 @@ fn matrix_schema() -> SchemaDescriptor {
                 }],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Keyed".into(),
                 fields: vec![field("x", ValueType::U64), field("y", ValueType::I64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Booking".into(),
                 fields: vec![
                     field("room", ValueType::U64),
@@ -130,6 +133,7 @@ fn matrix_schema() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Claim".into(),
                 fields: vec![field("holder", ValueType::U64)],
             },
@@ -346,14 +350,17 @@ mod source_side {
         SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
+                    extension: None,
                     name: "Parent".into(),
                     fields: vec![field("id", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Child".into(),
                     fields: vec![field("parent", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Account".into(),
                     fields: vec![
                         field("id", ValueType::U64),
@@ -361,10 +368,12 @@ mod source_side {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Transfer".into(),
                     fields: vec![field("account", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Shift".into(),
                     fields: vec![
                         field("worker", ValueType::U64),
@@ -373,14 +382,17 @@ mod source_side {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Session".into(),
                     fields: vec![field("worker", ValueType::U64), field("span", interval())],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Rest".into(),
                     fields: vec![field("worker", ValueType::U64), field("span", interval())],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Report".into(),
                     fields: vec![
                         field("subject", ValueType::U64),
@@ -623,10 +635,12 @@ mod source_side {
         let schema = SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
+                    extension: None,
                     name: "Cover".into(),
                     fields: vec![field("who", ValueType::U64), field("span", interval())],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Need".into(),
                     fields: vec![field("who", ValueType::U64), field("span", interval())],
                 },
@@ -732,34 +746,42 @@ mod target_side {
         SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
+                    extension: None,
                     name: "Target".into(),
                     fields: vec![field("id", ValueType::U64), field("note", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "ClaimA".into(),
                     fields: vec![field("t", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "ClaimB".into(),
                     fields: vec![field("t", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Shift".into(),
                     fields: vec![field("worker", ValueType::U64), field("span", interval())],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Session".into(),
                     fields: vec![field("worker", ValueType::U64), field("span", interval())],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Parent".into(),
                     fields: vec![field("id", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Child".into(),
                     fields: vec![field("parent", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Account".into(),
                     fields: vec![
                         field("id", ValueType::U64),
@@ -768,10 +790,12 @@ mod target_side {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Transfer".into(),
                     fields: vec![field("account", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Roster".into(),
                     fields: vec![
                         field("worker", ValueType::U64),
@@ -780,6 +804,7 @@ mod target_side {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Rest".into(),
                     fields: vec![field("worker", ValueType::U64), field("span", interval())],
                 },

@@ -151,6 +151,7 @@ fn guard_probe_queries_flow_through_the_same_surface() {
 fn booking_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Booking".into(),
             fields: vec![
                 FieldDescriptor {
@@ -331,6 +332,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     // Stay(owner u64, span interval<u64>), no statements — no keys.
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Stay".into(),
             fields: vec![
                 FieldDescriptor {
@@ -420,6 +422,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
     // Doc(name str, val u64) with the declared key `Doc(name) -> Doc`.
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Doc".into(),
             fields: vec![
                 FieldDescriptor {

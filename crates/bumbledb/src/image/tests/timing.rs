@@ -68,6 +68,7 @@ fn image_build_split_evidence() {
 fn posting_like_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "P".into(),
             fields: vec![
                 FieldDescriptor {

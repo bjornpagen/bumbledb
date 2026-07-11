@@ -16,6 +16,7 @@ fn schema(n: usize, arity: usize) -> Schema {
     SchemaDescriptor {
         relations: (0..n)
             .map(|r| RelationDescriptor {
+                extension: None,
                 name: format!("R{r}").into(),
                 fields: (0..arity)
                     .map(|f| FieldDescriptor {
@@ -216,6 +217,7 @@ fn pointwise_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "D".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -231,6 +233,7 @@ fn pointwise_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Cover".into(),
                 fields: vec![
                     FieldDescriptor {

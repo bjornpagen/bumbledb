@@ -9,8 +9,10 @@ impl<S> WriteTx<'_, S> {
     ///
     /// # Errors
     ///
-    /// `Lmdb` on the membership probe or dictionary reads.
+    /// `ClosedRelationWrite` on a closed relation (ground axioms are not
+    /// writable); `Lmdb` on the membership probe or dictionary reads.
     pub fn insert<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
+        self.refuse_closed(F::RELATION)?;
         self.with_scratch(|tx, bytes| {
             fact.encode_write(tx, bytes)?;
             tx.delta.insert(&tx.view, F::RELATION, bytes)

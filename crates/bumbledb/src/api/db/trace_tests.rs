@@ -10,6 +10,7 @@ use crate::testutil::TempDir;
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "R".into(),
             fields: vec![FieldDescriptor {
                 name: "v".into(),
@@ -117,14 +118,17 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
     let containment_schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Target".into(),
                 fields: vec![field("id")],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Claim".into(),
                 fields: vec![field("holder")],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Extra".into(),
                 fields: vec![field("v")],
             },
@@ -197,6 +201,7 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
 fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     let fresh_schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "S".into(),
             fields: vec![
                 FieldDescriptor {

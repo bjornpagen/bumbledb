@@ -36,6 +36,17 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             s.malformed(key, "F key relation");
             continue;
         };
+        // Closed relations are exempt from the coherence walks — they
+        // have no rows in the store — so the entry's existence is the
+        // finding (never tallied: the counter pass reconciles facts that
+        // may legally exist).
+        if relation.is_closed() {
+            s.push(StoreFinding::ClosedRelationEntry {
+                relation: rel,
+                key: key.into(),
+            });
+            continue;
+        }
         {
             let tally = s.tallies.entry(rel).or_default();
             tally.rows += 1;

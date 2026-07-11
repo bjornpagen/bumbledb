@@ -75,6 +75,7 @@ fn walk_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Posting".into(),
                 fields: vec![
                     fresh("id"),
@@ -83,6 +84,7 @@ fn walk_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![fresh("id"), field("name", ValueType::String)],
             },
@@ -161,10 +163,12 @@ fn du_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Grading".into(),
                 fields: vec![fresh("id"), field("kind", kind)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Det".into(),
                 fields: vec![
                     field("grading", ValueType::U64),
@@ -230,14 +234,17 @@ fn chain_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "A".into(),
                 fields: vec![fresh("id"), field("b_ref", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "B".into(),
                 fields: vec![fresh("id"), field("c_ref", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "C".into(),
                 fields: vec![fresh("id")],
             },
@@ -304,6 +311,7 @@ fn a_partial_key_join_refuses() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "D".into(),
                 fields: vec![
                     field("k1", ValueType::U64),
@@ -312,6 +320,7 @@ fn a_partial_key_join_refuses() {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "E".into(),
                 fields: vec![field("a", ValueType::U64), field("b", ValueType::U64)],
             },
@@ -386,6 +395,7 @@ fn a_negated_atom_referencing_the_target_refuses() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Posting".into(),
                 fields: vec![
                     fresh("id"),
@@ -394,10 +404,12 @@ fn a_negated_atom_referencing_the_target_refuses() {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![fresh("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Blocked".into(),
                 fields: vec![field("name", ValueType::String)],
             },
@@ -445,14 +457,17 @@ fn a_membership_point_sourced_from_the_target_refuses() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Ledger".into(),
                 fields: vec![fresh("id"), field("acct", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Acct".into(),
                 fields: vec![fresh("id"), field("ts", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Session".into(),
                 fields: vec![
                     field("acct", ValueType::U64),
@@ -516,10 +531,12 @@ fn a_missing_source_selection_refuses() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Grading".into(),
                 fields: vec![fresh("id"), field("kind", kind)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Det".into(),
                 fields: vec![field("grading", ValueType::U64)],
             },
@@ -617,6 +634,7 @@ fn an_interval_typed_pair_refuses() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Room".into(),
                 fields: vec![
                     field("room", ValueType::U64),
@@ -624,6 +642,7 @@ fn an_interval_typed_pair_refuses() {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Booking".into(),
                 fields: vec![field("room", ValueType::U64), field("span", during)],
             },
@@ -774,10 +793,12 @@ fn distinct_bodies_refuse_subsumption() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Grading".into(),
                 fields: vec![fresh("id"), field("kind", kind)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Det".into(),
                 fields: vec![
                     field("grading", ValueType::U64),

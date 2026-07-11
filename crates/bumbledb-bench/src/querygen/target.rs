@@ -189,10 +189,12 @@ fn descriptor() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
+                    extension: None,
                     name: "Holder".into(),
                     fields: vec![fresh("id"), field("name", ValueType::String)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Account".into(),
                     fields: vec![
                         fresh("id"),
@@ -201,10 +203,12 @@ fn descriptor() -> SchemaDescriptor {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Instrument".into(),
                     fields: vec![fresh("id"), field("symbol", ValueType::String)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "JournalEntry".into(),
                     fields: vec![
                         fresh("id"),
@@ -213,6 +217,7 @@ fn descriptor() -> SchemaDescriptor {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Posting".into(),
                     fields: vec![
                         fresh("id"),
@@ -226,6 +231,7 @@ fn descriptor() -> SchemaDescriptor {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "PostingTag".into(),
                     fields: vec![
                         field("posting", ValueType::U64),
@@ -233,10 +239,12 @@ fn descriptor() -> SchemaDescriptor {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Org".into(),
                     fields: vec![fresh("id"), field("name", ValueType::String)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "OrgParent".into(),
                     fields: vec![
                         field("child", ValueType::U64),
@@ -244,6 +252,7 @@ fn descriptor() -> SchemaDescriptor {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Mandate".into(),
                     fields: vec![
                         field("account", ValueType::U64),
@@ -257,6 +266,7 @@ fn descriptor() -> SchemaDescriptor {
                     ],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Transfer".into(),
                     fields: {
                         let mut fields = vec![
@@ -283,6 +293,7 @@ fn descriptor() -> SchemaDescriptor {
                     },
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "ImportBatch".into(),
                     fields: vec![
                         field("entry", ValueType::U64),

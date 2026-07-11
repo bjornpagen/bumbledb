@@ -574,14 +574,35 @@ fn resolve_target_key(
     })
 }
 
-/// One relation: field checks (duplicate names, enum shape, fresh typing),
-/// then the sealed [`Relation`]; the caller fills the statement indices
-/// from the materialized statement list.
+/// One relation: field checks (duplicate names, enum shape, fresh typing,
+/// the closed-relation column roster), the extension roster for a closed
+/// relation, then the sealed [`Relation`]; the caller fills the statement
+/// indices from the materialized statement list.
 fn validate_relation(
     rel_id: RelationId,
     decl: RelationDescriptor,
 ) -> Result<Relation, SchemaError> {
-    let RelationDescriptor { name, fields } = decl;
+    let RelationDescriptor {
+        name,
+        fields: declared,
+        extension,
+    } = decl;
+
+    // A closed relation's sealed field list opens with the synthetic
+    // (`id`, U64) field — the handle's declaration index — so guards,
+    // statements, and queries address it uniformly at `FieldId(0)`. The
+    // macro (the emission) never lets the user declare it; a hand-built
+    // descriptor declaring its own `id` collides here
+    // ([`SchemaError::DuplicateFieldName`]).
+    let mut fields = Vec::with_capacity(declared.len() + usize::from(extension.is_some()));
+    if extension.is_some() {
+        fields.push(FieldDescriptor {
+            name: "id".into(),
+            value_type: ValueType::U64,
+            generation: Generation::None,
+        });
+    }
+    fields.extend(declared);
 
     for (idx, field) in fields.iter().enumerate() {
         let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
@@ -633,6 +654,26 @@ fn validate_relation(
                 field: field_id,
             });
         }
+        // The closed-relation column roster: intrinsic columns are value
+        // types only (`docs/architecture/10-data-model.md`, the
+        // intrinsic-vs-policy law). `str` is refused — the handle IS the
+        // label, and interned columns on a virtual relation would force
+        // dictionary writes at open; `fresh` is refused — identity is the
+        // handle, and axioms are never minted.
+        if extension.is_some() {
+            if field.value_type == ValueType::String {
+                return Err(SchemaError::StrOnClosedRelation {
+                    relation: rel_id,
+                    field: field_id,
+                });
+            }
+            if field.generation == Generation::Fresh {
+                return Err(SchemaError::FreshOnClosedRelation {
+                    relation: rel_id,
+                    field: field_id,
+                });
+            }
+        }
     }
 
     let layout = FactLayout::new(
@@ -642,11 +683,95 @@ fn validate_relation(
             .collect::<Vec<_>>(),
     );
 
+    let extension = match extension {
+        None => None,
+        Some(rows) => Some(validate_extension(rel_id, &fields, &layout, &rows)?),
+    };
+
     Ok(Relation {
         name,
         fields: fields.into_boxed_slice(),
         layout,
+        extension,
         keys: Box::new([]),
         outgoing: Box::new([]),
     })
+}
+
+/// The extension roster (`docs/architecture/10-data-model.md` § closed
+/// relations): ground axioms validated through the one shared
+/// [`value_matches`] check and canonically encoded ONCE — each sealed row
+/// carries its full fact bytes (synthetic id ‖ intrinsic values), never
+/// re-encoded after validate (the staging law applied to the feature
+/// itself). `fields` is the sealed list, synthetic id first.
+fn validate_extension(
+    rel_id: RelationId,
+    fields: &[FieldDescriptor],
+    layout: &FactLayout,
+    rows: &[super::Row],
+) -> Result<Box<[super::SealedRow]>, SchemaError> {
+    // A closed relation with no rows is a vocabulary of nothing — write
+    // no relation.
+    if rows.is_empty() {
+        return Err(SchemaError::EmptyExtension { relation: rel_id });
+    }
+    if rows.len() > super::MAX_EXTENSION_ROWS {
+        return Err(SchemaError::ExtensionTooManyRows {
+            relation: rel_id,
+            count: rows.len(),
+        });
+    }
+    let columns = fields.len() - 1;
+    let mut sealed = Vec::with_capacity(rows.len());
+    for (row_idx, row) in rows.iter().enumerate() {
+        if rows[..row_idx].iter().any(|r| r.handle == row.handle) {
+            return Err(SchemaError::DuplicateExtensionHandle {
+                relation: rel_id,
+                handle: row.handle.clone(),
+            });
+        }
+        if row.values.len() != columns {
+            return Err(SchemaError::ExtensionArityMismatch {
+                relation: rel_id,
+                row: row_idx,
+                expected: columns,
+                supplied: row.values.len(),
+            });
+        }
+        let mut fact = Vec::with_capacity(layout.fact_width());
+        fact.extend_from_slice(&crate::encoding::encode_u64(
+            u64::try_from(row_idx).expect("row count fits u64"),
+        ));
+        for (value, (field_idx, field)) in row.values.iter().zip(fields.iter().enumerate().skip(1))
+        {
+            let field_id = FieldId(u16::try_from(field_idx).expect("field count fits u16"));
+            value_matches(value, &field.value_type).map_err(|mismatch| match mismatch {
+                // The constructor law holds for axioms too: a malformed
+                // ground axiom is a schema error, not corruption.
+                ValueMismatch::IntervalEmpty => SchemaError::ExtensionIntervalEmpty {
+                    relation: rel_id,
+                    row: row_idx,
+                    field: field_id,
+                },
+                // `str` columns are refused above, so Utf8 is unreachable;
+                // an out-of-range enum ordinal does not inhabit the type.
+                ValueMismatch::Type | ValueMismatch::EnumOrdinal(_) | ValueMismatch::Utf8 => {
+                    SchemaError::ExtensionValueTypeMismatch {
+                        relation: rel_id,
+                        row: row_idx,
+                        field: field_id,
+                    }
+                }
+            })?;
+            // Total here: String (refused column) and AllenMask (no field
+            // type) both fail `value_matches` before reaching the encoder.
+            crate::encoding::encode_literal(value, &mut fact);
+        }
+        debug_assert_eq!(fact.len(), layout.fact_width());
+        sealed.push(super::SealedRow {
+            handle: row.handle.clone(),
+            fact: fact.into_boxed_slice(),
+        });
+    }
+    Ok(sealed.into_boxed_slice())
 }

@@ -268,6 +268,56 @@ ruling 3; (b) generative insert (insert mints and returns the id) — lost becau
 splits insert into two semantics and breaks idempotence and the fact-hash membership
 check.
 
+## Closed relations: ground axioms
+
+A **closed relation** declares its extension in the schema:
+`RelationDescriptor { name, fields, extension: Option<Extension> }`, where
+`Some(rows)` is the kind — there is no relation-kind enum; the option *is* it. Its
+rows are **ground axioms** — atomic sentences of the theory. A schema was
+*signature + axioms* where every axiom was a universally quantified statement; a
+closed relation gives the theory constants, and vocabularies stop being a type to
+become what they always were relationally: unary-plus-payload relations with a
+fixed extension.
+
+- **Identity is the handle.** Each row declares a handle (`Usd`, `Q1`); its row id
+  is the declaration index — exactly the declaration-order rule relations, fields,
+  and statements already obey. The handle is NOT a column: the sealed relation
+  opens with a synthetic first field (`id`, U64), so guards, statements, and
+  queries address the id uniformly at field 0; the macro never lets the user
+  declare it (a hand-built descriptor that tries collides on the field name).
+- **The auto-key.** Closedness materializes `R(id) -> R` exactly as `fresh` does
+  (materialized order below) — ordinary in every way and targetable: a reference
+  to a closed relation is a plain u64 column plus a declared containment, like any
+  reference. Nested closed-to-closed references are the same shape — no narrow
+  encoding arm, ever (`docs/prd-comptime/README.md`, the refusal).
+- **Intrinsic columns are value types only**: U64, I64, Bool, `bytes<N>`,
+  Interval. `str` is refused — the handle IS the label and the renderer prints
+  handles from the theory; interned columns on a virtual relation would force
+  dictionary writes at open, breaking "the store contains zero vocabulary bytes".
+  `fresh` is refused — identity is the handle; axioms are never minted.
+- **The extension is validated at declaration and frozen by the fingerprint**:
+  distinct handles; per-column typing through the one shared value check; interval
+  axioms obey `start < end` (the constructor law holds for axioms too — a
+  malformed ground axiom is a schema error, not corruption); 1..=256 rows (an
+  empty extension is a vocabulary of nothing — write no relation; a larger one is
+  policy data wearing a vocabulary costume). Values are canonically encoded ONCE,
+  at validate — the sealed rows carry fact bytes and are never re-encoded (the
+  staging law applied to the feature itself).
+- **Writes are refused.** Any delta operation naming a closed relation —
+  insert/delete, typed or dynamic, `bulk_load`, `alloc` — is the typed
+  `ClosedRelationWrite`, checked at the write-surface entry before any encoding
+  runs. The store holds no rows for a closed relation, and the sweeper
+  (`verify_store`) convicts any `F`/`M`/`U`/`R` entry naming one as corruption.
+
+**The intrinsic-vs-policy law, normative.** Intrinsic properties of a vocabulary
+entry — what makes it *what it is* (a currency's minor-unit count, a quarter's
+span) — go on the closed relation: changing one is a new theory, and the
+fingerprint says so. Policy *over* a vocabulary — what the application currently
+decides about it (which currencies are enabled, which quarter is open) — lives in
+ordinary relations referencing the handle's id and changes by witnessed write. A
+vocabulary that must drift without a rebuild was never a vocabulary: declare an
+ordinary relation (the open-extension refusal, `docs/prd-comptime/README.md`).
+
 ## Relations are sets of facts; the fact is its own identity
 
 - Every relation is a set of full, typed facts. Canonical membership is implicit for
@@ -406,12 +456,15 @@ database (export surface: `70-api.md`).
 **Fingerprint inputs, exhaustively:** an encoding-format version label; relations in
 declaration order — for each: name and fields in declaration order (name, structural
 type description — including the full ordered variant list for enums and the element
-type for intervals — and generation flag); then the **dependency statements in
+type for intervals — and generation flag), then the closedness tag (ordinary = 0;
+closed = 1 followed by the ground axioms in declaration order — handle, then the
+row's canonical fact bytes); then the **dependency statements in
 materialized order** — for each: the judgment form (functionality or containment,
 with direction count) and both sides' (relation id, projection field-id list in
 statement order, selection list as (field id, literal value) pairs in statement
 order). Materialized order = the fresh auto-keys first (one per fresh field, in
-relation-then-field declaration order), then the declared statements in declaration
+relation-then-field declaration order), then the closed auto-keys (one per closed
+relation, in declaration order), then the declared statements in declaration
 order — a deterministic function of the declaration, so statement ids remain pinned
 by the fingerprint without being hashed separately. Relation and field ids are plain
 declaration order; statement ids are materialized order, schema-global.

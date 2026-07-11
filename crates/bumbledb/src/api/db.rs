@@ -292,6 +292,22 @@ pub struct WriteTx<'a, S> {
 }
 
 impl<S> WriteTx<'_, S> {
+    /// The closed-relation write refusal
+    /// (`docs/architecture/10-data-model.md` § closed relations): rows of
+    /// a closed relation are ground axioms — changing them is a new theory
+    /// (fingerprint), never a delta — so every write-surface entry types
+    /// the attempt away before any encoding runs. Total over
+    /// data-supplied ids: an unknown id passes through to the dynamic
+    /// surface's own shape check.
+    fn refuse_closed(&self, relation: RelationId) -> Result<()> {
+        match self.schema.relation_checked(relation) {
+            Some(rel) if rel.is_closed() => {
+                Err(crate::error::Error::ClosedRelationWrite { relation })
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Runs `body` with the encode scratch taken out (a typed encode
     /// borrows the whole transaction mutably alongside the buffer),
     /// restoring the buffer — and its capacity — afterward, success or

@@ -219,6 +219,7 @@ fn register_schema() -> SchemaDescriptor {
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Register".into(),
             fields: vec![field("slot"), field("value")],
         }],

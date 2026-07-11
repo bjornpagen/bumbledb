@@ -46,6 +46,7 @@ fn prepare<'s>(
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Posting".into(),
             fields: vec![
                 FieldDescriptor {

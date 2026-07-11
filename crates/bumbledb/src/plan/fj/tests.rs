@@ -24,6 +24,7 @@ fn schema(relations: usize, arity: usize) -> Schema {
     SchemaDescriptor {
         relations: (0..relations)
             .map(|r| RelationDescriptor {
+                extension: None,
                 name: format!("R{r}").into(),
                 fields: (0..arity)
                     .map(|f| FieldDescriptor {

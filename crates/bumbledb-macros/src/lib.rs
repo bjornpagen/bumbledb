@@ -734,11 +734,15 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst) {
                 if field.fresh { "Fresh" } else { "None" },
             );
         }
+        // The closed-relation grammar is the emission PRD's
+        // (`docs/prd-comptime/02-emission.md`); the macro emits ordinary
+        // relations only until it lands.
         let _ = write!(
             relations,
             "::bumbledb::schema::RelationDescriptor {{ \
                  name: ::std::boxed::Box::from(\"{}\"), \
-                 fields: ::std::vec![{fields}] }},",
+                 fields: ::std::vec![{fields}], \
+                 extension: ::std::option::Option::None }},",
             relation.name,
         );
     }

@@ -18,6 +18,7 @@ use crate::testutil::TempDir;
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "R".into(),
             fields: vec![
                 FieldDescriptor {
@@ -251,6 +252,7 @@ fn interval_schema() -> Schema {
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "P".into(),
             fields: vec![
                 field("id", ValueType::U64),

@@ -38,6 +38,15 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             s.malformed(key, "R key source relation");
             continue;
         }
+        // Closed sources never commit (writes refused), so an R edge
+        // naming one is corruption — the F pass's exemption, mirrored.
+        if schema.relation(source_rel).is_closed() {
+            s.push(StoreFinding::ClosedRelationEntry {
+                relation: source_rel,
+                key: key.into(),
+            });
+            continue;
+        }
         let Resolved::Containment {
             key_permutation, ..
         } = &statement.resolved

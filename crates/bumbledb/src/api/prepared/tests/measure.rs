@@ -29,6 +29,7 @@ fn measure_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Session".into(),
                 fields: vec![
                     fresh_id(),
@@ -43,6 +44,7 @@ fn measure_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Shift".into(),
                 fields: vec![
                     fresh_id(),
@@ -56,6 +58,7 @@ fn measure_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Window".into(),
                 fields: vec![
                     fresh_id(),

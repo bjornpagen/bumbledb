@@ -182,6 +182,7 @@ fn interval_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Payroll".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -199,6 +200,7 @@ fn interval_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Event".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -523,6 +525,7 @@ fn block_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Posting".into(),
                 fields: vec![
                     FieldDescriptor {
@@ -538,6 +541,7 @@ fn block_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Block".into(),
                 fields: vec![
                     FieldDescriptor {

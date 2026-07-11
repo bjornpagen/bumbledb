@@ -33,6 +33,7 @@ fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Posting".into(),
                 fields: vec![
                     field("id", ValueType::U64),
@@ -41,6 +42,7 @@ fn schema() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "PostingTag".into(),
                 fields: vec![
                     field("posting", ValueType::U64),
@@ -48,6 +50,7 @@ fn schema() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Mandate".into(),
                 fields: vec![
                     field("account", ValueType::U64),

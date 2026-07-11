@@ -90,17 +90,32 @@ impl Names for SealedNames<'_> {
 
 struct DeclaredNames<'a>(&'a SchemaDescriptor);
 
+/// The synthetic (`id`, U64) field a closed relation's sealed list opens
+/// with — the declared-side renderer resolves the same ids the sealed
+/// schema answers to.
+static SYNTHETIC_ID: std::sync::LazyLock<FieldDescriptor> =
+    std::sync::LazyLock::new(|| FieldDescriptor {
+        name: "id".into(),
+        value_type: ValueType::U64,
+        generation: super::Generation::None,
+    });
+
 impl Names for DeclaredNames<'_> {
     fn relation_name(&self, relation: RelationId) -> Option<&str> {
         self.0.relations.get(relation.0 as usize).map(|r| &*r.name)
     }
 
     fn field(&self, relation: RelationId, field: FieldId) -> Option<&FieldDescriptor> {
-        self.0
-            .relations
-            .get(relation.0 as usize)?
-            .fields
-            .get(usize::from(field.0))
+        let relation = self.0.relations.get(relation.0 as usize)?;
+        // Statement field ids address the sealed numbering: on a closed
+        // relation, 0 is the synthetic id and declared fields sit at +1.
+        if relation.extension.is_some() {
+            return match usize::from(field.0).checked_sub(1) {
+                None => Some(&SYNTHETIC_ID),
+                Some(idx) => relation.fields.get(idx),
+            };
+        }
+        relation.fields.get(usize::from(field.0))
     }
 }
 

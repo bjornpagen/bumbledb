@@ -80,6 +80,7 @@ fn structural_enum_equality_is_the_identity() {
 fn nullary_relation_constructs() {
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Flag".into(),
             fields: vec![],
         }],
@@ -102,10 +103,12 @@ fn example_schema_resolves_exactly() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Holder".into(),
                 fields: vec![fresh_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![
                     fresh_field("id"),
@@ -120,6 +123,7 @@ fn example_schema_resolves_exactly() {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "SavingsTerms".into(),
                 fields: vec![
                     field("account", ValueType::U64),
@@ -209,10 +213,12 @@ fn pointwise_key_and_containment_resolve() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Booking".into(),
                 fields: vec![field("room", ValueType::U64), field("during", iv.clone())],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Request".into(),
                 fields: vec![field("room", ValueType::U64), field("span", iv)],
             },
@@ -252,10 +258,12 @@ fn permuted_target_projection_resolves_with_permutation() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "T".into(),
                 fields: vec![field("a", ValueType::U64), field("b", ValueType::I64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "S".into(),
                 fields: vec![field("x", ValueType::I64), field("y", ValueType::U64)],
             },
@@ -290,4 +298,102 @@ fn accepts_enum_with_exactly_256_variants() {
         enum_type(&names.iter().map(String::as_str).collect::<Vec<_>>()),
     )]);
     decl.validate().expect("256 variants fit one byte");
+}
+
+/// Currency { minor_units: u64 } = { Usd(2), Eur(2) } — the closed
+/// fixture shared by the valid-side tests.
+fn currency() -> RelationDescriptor {
+    closed(
+        "Currency",
+        vec![field("minor_units", ValueType::U64)],
+        vec![
+            row("Usd", vec![Value::U64(2)]),
+            row("Eur", vec![Value::U64(2)]),
+        ],
+    )
+}
+
+#[test]
+fn a_closed_relation_seals_pre_encoded_ground_axioms() {
+    let schema = SchemaDescriptor {
+        relations: vec![currency()],
+        statements: vec![],
+    }
+    .validate()
+    .expect("a closed relation validates");
+    let relation = schema.relation(RelationId(0));
+    assert!(relation.is_closed());
+    // The synthetic id field opens the sealed list; declared columns
+    // shift by one — guards, statements, and queries address FieldId(0)
+    // uniformly.
+    assert_eq!(relation.fields()[0].name.as_ref(), "id");
+    assert_eq!(relation.fields()[0].value_type, ValueType::U64);
+    assert_eq!(relation.fields()[0].generation, Generation::None);
+    assert_eq!(relation.fields()[1].name.as_ref(), "minor_units");
+    assert_eq!(relation.layout().fact_width(), 16);
+    // Rows sealed as full canonical fact bytes (id ‖ values), encoded
+    // once at validate and never again.
+    let rows = relation.extension().expect("closed");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].handle.as_ref(), "Usd");
+    assert_eq!(rows[1].handle.as_ref(), "Eur");
+    let fact = |id: u64, units: u64| {
+        let mut fact = Vec::new();
+        fact.extend_from_slice(&id.to_be_bytes());
+        fact.extend_from_slice(&units.to_be_bytes());
+        fact.into_boxed_slice()
+    };
+    assert_eq!(rows[0].fact, fact(0, 2));
+    assert_eq!(rows[1].fact, fact(1, 2));
+    // The closed auto-key materialized: `Currency(id) -> Currency`.
+    assert_eq!(relation.keys(), &[StatementId(0)]);
+}
+
+/// The materialization-order pin, closed arm: ALL fresh auto-FDs first,
+/// then closed auto-keys (relation declaration order), then declared
+/// statements — the order is a fingerprint input, pinned by PRD 01 and
+/// never revisited. Holder declares AFTER Currency so the fresh/closed
+/// grouping (not relation order) is what the assertion pins; the declared
+/// containment also proves the closed auto-key targetable like any key.
+#[test]
+fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
+    let decl = SchemaDescriptor {
+        relations: vec![
+            currency(),
+            RelationDescriptor {
+                extension: None,
+                name: "Holder".into(),
+                fields: vec![fresh_field("id"), field("currency", ValueType::U64)],
+            },
+        ],
+        statements: vec![containment(
+            side(RelationId(1), &[FieldId(1)]),
+            side(RelationId(0), &[FieldId(0)]),
+        )],
+    };
+    assert_eq!(
+        decl.materialized_statements(),
+        vec![
+            // id 0: Holder's fresh auto-FD — fresh first, though Holder
+            // declares second.
+            fd(RelationId(1), &[FieldId(0)]),
+            // id 1: Currency's closed auto-key on the synthetic id.
+            fd(RelationId(0), &[FieldId(0)]),
+            // id 2: the declared containment.
+            containment(
+                side(RelationId(1), &[FieldId(1)]),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+        ]
+    );
+    let schema = decl.validate().expect("valid");
+    // The containment resolves to the closed auto-key.
+    assert_eq!(
+        schema.statement(StatementId(2)).resolved,
+        Resolved::Containment {
+            target_key: StatementId(1),
+            key_permutation: Box::new([0]),
+            interval_position: None
+        }
+    );
 }

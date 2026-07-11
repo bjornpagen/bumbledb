@@ -12,10 +12,12 @@ fn rejects_duplicate_relation_name() {
     let decl = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "R".into(),
                 fields: vec![],
             },
             RelationDescriptor {
+                extension: None,
                 name: "R".into(),
                 fields: vec![],
             },
@@ -131,10 +133,12 @@ fn two_relations(
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "S".into(),
                 fields: source_fields,
             },
             RelationDescriptor {
+                extension: None,
                 name: "T".into(),
                 fields: target_fields,
             },
@@ -654,3 +658,183 @@ fn rejects_duplicate_statement_up_to_selection_order() {
 // `Relation`'s fields are private, and no public constructor exists —
 // the only path in is `SchemaDescriptor::validate`. (Compile-time
 // property; recorded here as the sealing contract.)
+
+// --- The closed-relation roster (docs/architecture/10-data-model.md
+// § closed relations): one test per variant, fixtures hand-built — the
+// macro grammar for closed relations is the emission PRD's.
+
+/// One closed relation over one u64 column with the given rows.
+fn closed_currency(rows: Vec<Row>) -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![closed(
+            "Currency",
+            vec![field("minor_units", ValueType::U64)],
+            rows,
+        )],
+        statements: vec![],
+    }
+}
+
+#[test]
+fn rejects_an_empty_extension() {
+    // A closed relation with no rows is a vocabulary of nothing.
+    assert_eq!(
+        closed_currency(vec![]).validate().unwrap_err(),
+        SchemaError::EmptyExtension {
+            relation: RelationId(0)
+        }
+    );
+}
+
+#[test]
+fn rejects_an_extension_beyond_256_rows() {
+    let rows: Vec<Row> = (0..257)
+        .map(|i| row(&format!("H{i}"), vec![Value::U64(i)]))
+        .collect();
+    assert_eq!(
+        closed_currency(rows).validate().unwrap_err(),
+        SchemaError::ExtensionTooManyRows {
+            relation: RelationId(0),
+            count: 257
+        }
+    );
+}
+
+#[test]
+fn rejects_a_duplicate_handle() {
+    assert_eq!(
+        closed_currency(vec![
+            row("Usd", vec![Value::U64(2)]),
+            row("Usd", vec![Value::U64(0)]),
+        ])
+        .validate()
+        .unwrap_err(),
+        SchemaError::DuplicateExtensionHandle {
+            relation: RelationId(0),
+            handle: "Usd".into()
+        }
+    );
+}
+
+#[test]
+fn rejects_an_extension_arity_mismatch() {
+    // The handle is not a column and neither is the synthetic id: one
+    // declared column takes exactly one value.
+    assert_eq!(
+        closed_currency(vec![row("Usd", vec![Value::U64(2), Value::U64(9)])])
+            .validate()
+            .unwrap_err(),
+        SchemaError::ExtensionArityMismatch {
+            relation: RelationId(0),
+            row: 0,
+            expected: 1,
+            supplied: 2
+        }
+    );
+}
+
+#[test]
+fn rejects_an_extension_value_type_mismatch() {
+    // Field ids are the sealed numbering: the declared column sits at 1,
+    // after the synthetic id.
+    assert_eq!(
+        closed_currency(vec![row("Usd", vec![Value::Bool(true)])])
+            .validate()
+            .unwrap_err(),
+        SchemaError::ExtensionValueTypeMismatch {
+            relation: RelationId(0),
+            row: 0,
+            field: FieldId(1)
+        }
+    );
+}
+
+#[test]
+fn rejects_an_empty_interval_axiom() {
+    // The constructor law holds for axioms too: a malformed ground axiom
+    // is a schema error, not corruption.
+    let decl = SchemaDescriptor {
+        relations: vec![closed(
+            "Quarter",
+            vec![field(
+                "span",
+                ValueType::Interval {
+                    element: IntervalElement::U64,
+                },
+            )],
+            vec![row("Q1", vec![Value::IntervalU64(5, 5)])],
+        )],
+        statements: vec![],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ExtensionIntervalEmpty {
+            relation: RelationId(0),
+            row: 0,
+            field: FieldId(1)
+        }
+    );
+}
+
+#[test]
+fn rejects_str_on_a_closed_relation() {
+    // The handle IS the label; interned columns on a virtual relation
+    // would force dictionary writes at open.
+    let decl = SchemaDescriptor {
+        relations: vec![closed(
+            "Currency",
+            vec![field("label", ValueType::String)],
+            vec![row("Usd", vec![Value::String("dollar".as_bytes().into())])],
+        )],
+        statements: vec![],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::StrOnClosedRelation {
+            relation: RelationId(0),
+            field: FieldId(1)
+        }
+    );
+}
+
+#[test]
+fn rejects_fresh_on_a_closed_relation() {
+    // Identity is the handle; ground axioms are never minted.
+    let decl = SchemaDescriptor {
+        relations: vec![closed(
+            "Currency",
+            vec![fresh_field("code")],
+            vec![row("Usd", vec![Value::U64(0)])],
+        )],
+        statements: vec![],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::FreshOnClosedRelation {
+            relation: RelationId(0),
+            field: FieldId(1)
+        }
+    );
+}
+
+#[test]
+fn rejects_a_user_declared_id_on_a_closed_relation() {
+    // The synthetic id is validation's own: a declared `id` collides with
+    // it — the hand-built-descriptor arm of "the macro never lets the
+    // user declare it".
+    let decl = SchemaDescriptor {
+        relations: vec![closed(
+            "Currency",
+            vec![field("id", ValueType::U64)],
+            vec![row("Usd", vec![Value::U64(0)])],
+        )],
+        statements: vec![],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::DuplicateFieldName {
+            relation: RelationId(0),
+            name: "id".into()
+        }
+    );
+}

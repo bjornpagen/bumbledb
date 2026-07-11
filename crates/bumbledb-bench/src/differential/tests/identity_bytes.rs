@@ -58,6 +58,7 @@ fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Blob".into(),
                 fields: vec![
                     digest("hash", 32),
@@ -71,6 +72,7 @@ fn schema() -> SchemaDescriptor {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Ref".into(),
                 fields: vec![digest("hash", 32)],
             },

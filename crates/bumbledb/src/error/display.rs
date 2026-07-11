@@ -182,6 +182,64 @@ impl fmt::Display for SchemaError {
                 "relation {}, field {}: bytes<{len}> outside the 1..=64 width range",
                 r.0, fd.0
             ),
+            Self::EmptyExtension { relation: r } => write!(
+                f,
+                "relation {}: a closed relation with no rows is a vocabulary of nothing — write no relation",
+                r.0
+            ),
+            Self::ExtensionTooManyRows { relation: r, count } => write!(
+                f,
+                "relation {}: {count} ground axioms exceed the 256-row extension cap",
+                r.0
+            ),
+            Self::DuplicateExtensionHandle {
+                relation: r,
+                handle,
+            } => write!(f, "relation {}: duplicate handle `{handle}`", r.0),
+            Self::ExtensionArityMismatch {
+                relation: r,
+                row,
+                expected,
+                supplied,
+            } => write!(
+                f,
+                "relation {}, row {row}: {supplied} values for {expected} columns",
+                r.0
+            ),
+            Self::ExtensionValueTypeMismatch {
+                relation: r,
+                row,
+                field: fd,
+            } => write!(
+                f,
+                "relation {}, row {row}: value type mismatch at field {}",
+                r.0, fd.0
+            ),
+            Self::ExtensionIntervalEmpty {
+                relation: r,
+                row,
+                field: fd,
+            } => write!(
+                f,
+                "relation {}, row {row}: interval axiom start >= end at field {}",
+                r.0, fd.0
+            ),
+            Self::StrOnClosedRelation {
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "relation {}, field {}: str on a closed relation — the handle is the label",
+                r.0, fd.0
+            ),
+            Self::FreshOnClosedRelation {
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "relation {}, field {}: fresh on a closed relation — identity is the handle",
+                r.0, fd.0
+            ),
             Self::StatementUnknownRelation {
                 statement: s,
                 relation: r,
@@ -615,6 +673,11 @@ impl fmt::Display for Error {
                 "fresh sequence exhausted (relation {}, field {})",
                 relation.0, field.0
             ),
+            Self::ClosedRelationWrite { relation } => write!(
+                f,
+                "relation {}: closed — its rows are ground axioms; changing them is a new theory",
+                relation.0
+            ),
             Self::GenerationMoved { witnessed, current } => write!(
                 f,
                 "the witnessed generation moved ({witnessed} \u{2192} {current}): \
@@ -782,7 +845,15 @@ impl SchemaError {
             | Self::EnumTooManyVariants { .. }
             | Self::DuplicateEnumVariant { .. }
             | Self::FixedBytesWidthOutOfRange { .. }
-            | Self::FreshOnNonU64 { .. } => None,
+            | Self::FreshOnNonU64 { .. }
+            | Self::EmptyExtension { .. }
+            | Self::ExtensionTooManyRows { .. }
+            | Self::DuplicateExtensionHandle { .. }
+            | Self::ExtensionArityMismatch { .. }
+            | Self::ExtensionValueTypeMismatch { .. }
+            | Self::ExtensionIntervalEmpty { .. }
+            | Self::StrOnClosedRelation { .. }
+            | Self::FreshOnClosedRelation { .. } => None,
             Self::StatementUnknownRelation { statement, .. }
             | Self::StatementUnknownField { statement, .. }
             | Self::EmptyProjection { statement, .. }

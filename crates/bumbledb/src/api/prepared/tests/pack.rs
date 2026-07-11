@@ -26,6 +26,7 @@ fn pack_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Busy".into(),
                 fields: vec![
                     fresh_id(),
@@ -40,6 +41,7 @@ fn pack_schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Shift".into(),
                 fields: vec![
                     fresh_id(),

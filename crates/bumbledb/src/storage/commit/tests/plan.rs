@@ -60,6 +60,7 @@ fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
+                extension: None,
                 name: "Account".into(),
                 fields: vec![
                     field("id", ValueType::U64),
@@ -68,14 +69,17 @@ fn schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Transfer".into(),
                 fields: vec![field("account", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Grant".into(),
                 fields: vec![field("account", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Room".into(),
                 fields: vec![
                     field("room", ValueType::U64),
@@ -84,10 +88,12 @@ fn schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Stay".into(),
                 fields: vec![field("room", ValueType::U64), field("during", interval())],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Report".into(),
                 fields: vec![
                     field("subject", ValueType::U64),
@@ -95,18 +101,22 @@ fn schema() -> Schema {
                 ],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Parent".into(),
                 fields: vec![field("id", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Child".into(),
                 fields: vec![field("parent", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Combo".into(),
                 fields: vec![field("x", ValueType::U64), field("y", ValueType::U64)],
             },
             RelationDescriptor {
+                extension: None,
                 name: "Link".into(),
                 fields: vec![field("p", ValueType::U64), field("q", ValueType::U64)],
             },

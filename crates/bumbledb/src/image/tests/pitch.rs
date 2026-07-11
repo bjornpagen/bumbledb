@@ -26,6 +26,7 @@ fn twelve_column_bases_are_aligned_and_stagger_distinctly() {
         .collect();
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Wide".into(),
             fields,
         }],
@@ -98,6 +99,7 @@ fn big_column_pitches_avoid_the_tracker_band() {
         .collect();
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Big".into(),
             fields,
         }],

@@ -22,9 +22,11 @@ use crate::encoding::encode_literal;
 use crate::value::Value;
 
 /// Bumped whenever the canonical encoding format itself changes. `v1`:
-/// the statement redesign — a different format even for schemas that would
-/// encode identically under `v0` (none do).
-const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v1";
+/// the statement redesign. `v2`: closed relations — every relation gains a
+/// closedness tag byte (so ordinary and closed relations can never alias
+/// one byte stream), and a closed relation's ground axioms hash after its
+/// fields.
+const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v2";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
@@ -40,7 +42,10 @@ pub struct SchemaFingerprint(pub [u8; 32]);
 /// - relations in declaration order — for each: name and fields in
 ///   declaration order (name, structural type description — including the
 ///   full ordered variant list for enums and the element type for intervals
-///   — and generation flag);
+///   — and generation flag), then the closedness tag (ordinary = 0;
+///   closed = 1 followed by the ground axioms in declaration order — for
+///   each: handle bytes, then the row's canonical fact bytes, each
+///   length-prefixed like everything else);
 /// - the dependency statements in **materialized order** — for each: the
 ///   judgment form (Functionality = 0, Containment = 1) and its sides as
 ///   (relation id, projection field-id list in statement order, selection
@@ -58,6 +63,21 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                 Generation::None => 0,
                 Generation::Fresh => 1,
             });
+        }
+        // Closedness is theory identity: ground axioms hash in declaration
+        // order — the sealed pre-encoded fact bytes, whose per-value shape
+        // is a function of the field types already in the stream. The tag
+        // keeps ordinary and closed relations from aliasing.
+        match relation.extension() {
+            None => out.push(0),
+            Some(rows) => {
+                out.push(1);
+                put_len(out, rows.len());
+                for row in rows {
+                    put_bytes(out, row.handle.as_bytes());
+                    put_bytes(out, &row.fact);
+                }
+            }
         }
     }
     put_len(out, schema.statements().len());
@@ -185,10 +205,12 @@ mod tests {
         SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
+                    extension: None,
                     name: "Holder".into(),
                     fields: vec![fresh_field("id"), field("name", ValueType::String)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Account".into(),
                     fields: vec![
                         fresh_field("id"),
@@ -227,12 +249,12 @@ mod tests {
     #[test]
     fn golden_fingerprint_pins_the_hash() {
         // Pinned: the canonical encoding (and therefore blake3 of it)
-        // must not drift while the format label stays `v1`. `base()` covers
+        // must not drift while the format label stays `v2`. `base()` covers
         // every literal-adjacent input: enums, fresh auto-keys, a declared
         // key, and a containment with a selection literal.
         assert_eq!(
             hex_of(&base_fingerprint()),
-            "b7e792d16e7b1582fcaca3d3f591fc210bff4d5bbc6a922b46fb24c5eee4c25f"
+            "74509905fe7bda0f0328e15c0f9c01de8a607f39388b1920200dea9e0429fa4c"
         );
     }
 
@@ -260,7 +282,7 @@ mod tests {
         );
         assert_eq!(
             hex_of(&fingerprint(&schema)),
-            "e262a1a960e148f5d1371a9763481fb9b65c24f677bc2347950ad1bd29b8a073"
+            "20f2a9c48eb55461e57662b3c6dbdbc5d1a8e18780c286e2e95b4d5d80dd0594"
         );
     }
 
@@ -279,6 +301,7 @@ mod tests {
         let of_fields = |names: [&str; 2]| {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
+                    extension: None,
                     name: "R".into(),
                     fields: names
                         .iter()
@@ -369,6 +392,7 @@ mod tests {
         let of_projection = |fields: [u16; 2]| {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
+                    extension: None,
                     name: "R".into(),
                     fields: vec![field("a", ValueType::U64), field("b", ValueType::U64)],
                 }],
@@ -383,6 +407,7 @@ mod tests {
         let of_element = |element| {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
+                    extension: None,
                     name: "R".into(),
                     fields: vec![field("during", ValueType::Interval { element })],
                 }],
@@ -403,6 +428,7 @@ mod tests {
         // fingerprint invalidated (full ETL).
         let schema = schema_of(SchemaDescriptor {
             relations: vec![RelationDescriptor {
+                extension: None,
                 name: "R".into(),
                 fields: vec![fresh_field("x")],
             }],
@@ -413,7 +439,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v1");
+        expected.extend_from_slice(b"bumbledb-schema-v2");
         expected.extend_from_slice(&1u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&1u32.to_le_bytes()); // name len
         expected.extend_from_slice(b"R");
@@ -422,6 +448,7 @@ mod tests {
         expected.extend_from_slice(b"x");
         expected.push(2); // ValueType::U64 tag
         expected.push(1); // Generation::Fresh tag
+        expected.push(0); // ordinary: no extension
         expected.extend_from_slice(&1u32.to_le_bytes()); // statement count
         expected.push(0); // Functionality form tag
         expected.extend_from_slice(&0u32.to_le_bytes()); // relation id
@@ -438,10 +465,12 @@ mod tests {
         let schema = schema_of(SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
+                    extension: None,
                     name: "Holder".into(),
                     fields: vec![field("id", ValueType::U64)],
                 },
                 RelationDescriptor {
+                    extension: None,
                     name: "Account".into(),
                     fields: vec![
                         field("holder", ValueType::U64),
@@ -466,7 +495,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v1");
+        expected.extend_from_slice(b"bumbledb-schema-v2");
         expected.extend_from_slice(&2u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"Holder");
@@ -475,6 +504,7 @@ mod tests {
         expected.extend_from_slice(b"id");
         expected.push(2); // ValueType::U64 tag
         expected.push(0); // Generation::None tag
+        expected.push(0); // ordinary: no extension
         expected.extend_from_slice(&7u32.to_le_bytes());
         expected.extend_from_slice(b"Account");
         expected.extend_from_slice(&2u32.to_le_bytes()); // field count
@@ -491,6 +521,7 @@ mod tests {
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"Closed");
         expected.push(0); // Generation::None tag
+        expected.push(0); // ordinary: no extension
         expected.extend_from_slice(&2u32.to_le_bytes()); // statement count
         expected.push(0); // Functionality form tag
         expected.extend_from_slice(&0u32.to_le_bytes()); // relation id
@@ -510,6 +541,114 @@ mod tests {
         assert_eq!(bytes, expected);
     }
 
+    /// Currency { minor_units: u64 } = { Usd(2), Eur(2) } — the closed
+    /// mutation fixture.
+    fn closed_base() -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![crate::schema::tests::closed(
+                "Currency",
+                vec![field("minor_units", ValueType::U64)],
+                vec![
+                    crate::schema::tests::row("Usd", vec![Value::U64(2)]),
+                    crate::schema::tests::row("Eur", vec![Value::U64(2)]),
+                ],
+            )],
+            statements: vec![],
+        }
+    }
+
+    #[test]
+    fn identical_closed_declarations_yield_identical_fingerprints() {
+        // The invariance test, extended to ground axioms: the sealed
+        // pre-encoded rows (like `Resolved` and `mirror`) are deterministic
+        // functions of the hashed declaration, so two independently built
+        // identical closed declarations hash identically.
+        assert_eq!(
+            fingerprint(&schema_of(closed_base())),
+            fingerprint(&schema_of(closed_base()))
+        );
+    }
+
+    #[test]
+    fn reordering_extension_rows_changes_the_fingerprint() {
+        // Row order is identity: handles are declaration-order ids.
+        let mut decl = closed_base();
+        let rows = decl.relations[0].extension.as_mut().expect("closed");
+        rows.swap(0, 1);
+        assert_ne!(
+            fingerprint(&schema_of(closed_base())),
+            fingerprint(&schema_of(decl))
+        );
+    }
+
+    #[test]
+    fn changing_an_extension_value_changes_the_fingerprint() {
+        // Intrinsic values are theory identity — changing one is a new
+        // theory (the intrinsic-vs-policy law, `10-data-model.md`).
+        let mut decl = closed_base();
+        decl.relations[0].extension.as_mut().expect("closed")[1] =
+            crate::schema::tests::row("Eur", vec![Value::U64(3)]);
+        assert_ne!(
+            fingerprint(&schema_of(closed_base())),
+            fingerprint(&schema_of(decl))
+        );
+    }
+
+    #[test]
+    fn renaming_a_handle_changes_the_fingerprint() {
+        let mut decl = closed_base();
+        decl.relations[0].extension.as_mut().expect("closed")[0] =
+            crate::schema::tests::row("Chf", vec![Value::U64(2)]);
+        assert_ne!(
+            fingerprint(&schema_of(closed_base())),
+            fingerprint(&schema_of(decl))
+        );
+    }
+
+    #[test]
+    fn golden_bytes_pin_the_extension_encoding() {
+        // `closed_base()` pins the closedness tag, the synthetic id field,
+        // the pre-encoded row fact bytes (id ‖ values), and the closed
+        // auto-key's materialization.
+        let schema = schema_of(closed_base());
+        let mut bytes = Vec::new();
+        canonical_bytes(&schema, &mut bytes);
+
+        let mut expected: Vec<u8> = Vec::new();
+        expected.extend_from_slice(&18u32.to_le_bytes());
+        expected.extend_from_slice(b"bumbledb-schema-v2");
+        expected.extend_from_slice(&1u32.to_le_bytes()); // relation count
+        expected.extend_from_slice(&8u32.to_le_bytes());
+        expected.extend_from_slice(b"Currency");
+        expected.extend_from_slice(&2u32.to_le_bytes()); // field count: synthetic id + 1
+        expected.extend_from_slice(&2u32.to_le_bytes());
+        expected.extend_from_slice(b"id");
+        expected.push(2); // ValueType::U64 tag
+        expected.push(0); // Generation::None tag
+        expected.extend_from_slice(&11u32.to_le_bytes());
+        expected.extend_from_slice(b"minor_units");
+        expected.push(2); // ValueType::U64 tag
+        expected.push(0); // Generation::None tag
+        expected.push(1); // closed
+        expected.extend_from_slice(&2u32.to_le_bytes()); // row count
+        expected.extend_from_slice(&3u32.to_le_bytes());
+        expected.extend_from_slice(b"Usd");
+        expected.extend_from_slice(&16u32.to_le_bytes()); // fact len
+        expected.extend_from_slice(&0u64.to_be_bytes()); // id 0
+        expected.extend_from_slice(&2u64.to_be_bytes()); // minor_units 2
+        expected.extend_from_slice(&3u32.to_le_bytes());
+        expected.extend_from_slice(b"Eur");
+        expected.extend_from_slice(&16u32.to_le_bytes()); // fact len
+        expected.extend_from_slice(&1u64.to_be_bytes()); // id 1
+        expected.extend_from_slice(&2u64.to_be_bytes()); // minor_units 2
+        expected.extend_from_slice(&1u32.to_le_bytes()); // statement count
+        expected.push(0); // Functionality form tag (the closed auto-key)
+        expected.extend_from_slice(&0u32.to_le_bytes()); // relation id
+        expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
+        expected.extend_from_slice(&0u16.to_le_bytes()); // field id: the synthetic id
+        assert_eq!(bytes, expected);
+    }
+
     #[test]
     fn length_prefixes_prevent_name_aliasing() {
         // Without length prefixes, ("AB" + "C") and ("A" + "BC") would
@@ -517,6 +656,7 @@ mod tests {
         let of_names = |relation: &str, field_name: &str| {
             schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
+                    extension: None,
                     name: relation.into(),
                     fields: vec![field(field_name, ValueType::U64)],
                 }],

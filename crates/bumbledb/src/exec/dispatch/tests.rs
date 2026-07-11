@@ -20,6 +20,7 @@ use crate::testutil::TempDir;
 fn account_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Account".into(),
             fields: vec![
                 FieldDescriptor {
@@ -51,6 +52,7 @@ fn account_schema() -> Schema {
 fn booking_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Booking".into(),
             fields: vec![
                 FieldDescriptor {
@@ -86,6 +88,7 @@ fn booking_schema() -> Schema {
 fn stay_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Stay".into(),
             fields: vec![
                 FieldDescriptor {
@@ -113,6 +116,7 @@ fn stay_schema() -> Schema {
 fn shift_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Shift".into(),
             fields: vec![
                 FieldDescriptor {

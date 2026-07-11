@@ -1,11 +1,27 @@
 //! Field, layout, and statement-index accessors on a validated relation.
 
-use super::{FactLayout, FieldDescriptor, FieldId, Relation, StatementId};
+use super::{FactLayout, FieldDescriptor, FieldId, Relation, SealedRow, StatementId};
 
 impl Relation {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The sealed ground axioms of a closed relation, in declaration order
+    /// (row id = index); `None` = ordinary. The option *is* the kind —
+    /// there is no relation-kind enum
+    /// (`docs/architecture/10-data-model.md` § closed relations).
+    #[must_use]
+    pub fn extension(&self) -> Option<&[SealedRow]> {
+        self.extension.as_deref()
+    }
+
+    /// Whether the relation is closed: rows are ground axioms — frozen by
+    /// the fingerprint, virtual in storage, write-refused.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.extension.is_some()
     }
 
     #[must_use]

@@ -11,6 +11,7 @@ use crate::testutil::TempDir;
 fn named_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Named".into(),
             fields: vec![FieldDescriptor {
                 name: "name".into(),
@@ -131,6 +132,7 @@ fn a_typo_delete_leaves_the_dictionary_unchanged() {
 fn entry_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "Entry".into(),
             fields: vec![
                 FieldDescriptor {
@@ -316,6 +318,7 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
 fn fresh_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
+            extension: None,
             name: "S".into(),
             fields: vec![
                 FieldDescriptor {
@@ -431,4 +434,84 @@ fn a_bulk_load_error_keeps_its_committed_count_through_question_mark() {
         }
         other => panic!("expected Error::BulkLoad, got {other:?}"),
     }
+}
+
+/// Currency { minor_units: u64 } = { Usd(2), Eur(2) }: the closed fixture
+/// for the write-refusal tests (hand-built — the macro grammar for closed
+/// relations is the emission PRD's).
+fn closed_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: Some(Box::new([
+                crate::schema::Row {
+                    handle: "Usd".into(),
+                    values: Box::new([Value::U64(2)]),
+                },
+                crate::schema::Row {
+                    handle: "Eur".into(),
+                    values: Box::new([Value::U64(2)]),
+                },
+            ])),
+            name: "Currency".into(),
+            fields: vec![FieldDescriptor {
+                name: "minor_units".into(),
+                value_type: ValueType::U64,
+                generation: Generation::None,
+            }],
+        }],
+        statements: vec![],
+    }
+}
+
+/// Any delta operation naming a closed relation is `ClosedRelationWrite`,
+/// typed away before any encoding runs — the mis-shaped value below (one
+/// value where the sealed arity is two) never even reaches the shape
+/// check — and nothing reaches the delta: a closure that swallows the
+/// refusal commits empty, so the state-changing generation never moves
+/// and the store stays rowless.
+#[test]
+fn writes_to_a_closed_relation_are_refused_before_the_delta() {
+    let dir = TempDir::new("db-closed-write");
+    let db = Db::create(dir.path(), closed_schema()).expect("create");
+    let currency = RelationId(0);
+
+    let insert = db.write(|tx| tx.insert_dyn(currency, &[Value::U64(9)]).map(|_| ()));
+    assert!(matches!(
+        insert,
+        Err(Error::ClosedRelationWrite { relation }) if relation == currency
+    ));
+    let delete = db.write(|tx| tx.delete_dyn(currency, &[Value::U64(2)]).map(|_| ()));
+    assert!(matches!(
+        delete,
+        Err(Error::ClosedRelationWrite { relation }) if relation == currency
+    ));
+
+    // `bulk_load` shares `insert_dyn`'s per-fact entry: the first fact is
+    // refused and no chunk commits.
+    let bulk = db
+        .bulk_load(currency, vec![vec![Value::U64(9)]])
+        .expect_err("closed relations refuse bulk loads");
+    assert_eq!(bulk.committed, 0);
+    assert!(matches!(
+        bulk.error,
+        Error::ClosedRelationWrite { relation } if relation == currency
+    ));
+
+    // The delta stayed empty: swallowing the refusal commits nothing —
+    // no generation movement, no stored rows.
+    let before = db.generation().expect("generation");
+    db.write(|tx| {
+        assert!(matches!(
+            tx.insert_dyn(currency, &[Value::U64(9)]),
+            Err(Error::ClosedRelationWrite { .. })
+        ));
+        Ok(())
+    })
+    .expect("the refusal is the operation's, not the transaction's");
+    assert_eq!(db.generation().expect("generation"), before);
+    db.read(|snap| {
+        assert_eq!(snap.scan(currency)?.count(), 0);
+        Ok(())
+    })
+    .expect("read");
 }

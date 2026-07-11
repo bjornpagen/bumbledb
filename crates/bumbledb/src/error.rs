@@ -132,6 +132,64 @@ pub enum SchemaError {
         len: u16,
     },
 
+    // --- Closed-relation roster (10-data-model § closed relations) ---
+    /// A closed relation with no rows is a vocabulary of nothing — write
+    /// no relation.
+    EmptyExtension {
+        relation: RelationId,
+    },
+    /// More ground axioms than [`crate::schema::MAX_EXTENSION_ROWS`]: a
+    /// vocabulary larger than 256 is policy data wearing a vocabulary
+    /// costume, and the cap keeps every compiled word-set a fixed 4×u64
+    /// bitset.
+    ExtensionTooManyRows {
+        relation: RelationId,
+        count: usize,
+    },
+    /// Two extension rows declare one handle — the handle is the row's
+    /// identity, and an identity names one axiom.
+    DuplicateExtensionHandle {
+        relation: RelationId,
+        handle: Box<str>,
+    },
+    /// An extension row's value count differs from the declared intrinsic
+    /// columns (the handle is not a column; neither is the synthetic id).
+    ExtensionArityMismatch {
+        relation: RelationId,
+        row: usize,
+        expected: usize,
+        supplied: usize,
+    },
+    /// An extension value does not inhabit its column's structural type
+    /// (out-of-range enum ordinals included) — the one shared value check,
+    /// as selection literals.
+    ExtensionValueTypeMismatch {
+        relation: RelationId,
+        row: usize,
+        field: FieldId,
+    },
+    /// An interval ground axiom with `start >= end`: the constructor law
+    /// holds for axioms too — a malformed ground axiom is a schema error,
+    /// not corruption.
+    ExtensionIntervalEmpty {
+        relation: RelationId,
+        row: usize,
+        field: FieldId,
+    },
+    /// `str` on a closed relation: the handle IS the label, and interned
+    /// columns on a virtual relation would force dictionary writes at open
+    /// — the store contains zero vocabulary bytes.
+    StrOnClosedRelation {
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// `fresh` on a closed relation: identity is the handle, and ground
+    /// axioms are never minted.
+    FreshOnClosedRelation {
+        relation: RelationId,
+        field: FieldId,
+    },
+
     // --- Statement roster (30-dependencies § validation roster) ---
     /// Roster "unknown relation … ids": a statement names a relation
     /// outside the schema.
@@ -767,6 +825,13 @@ pub enum Error {
     FreshExhausted {
         relation: RelationId,
         field: FieldId,
+    },
+    /// A write operation named a closed relation: its rows are ground
+    /// axioms — changing them is a new theory (fingerprint), never a
+    /// delta. Checked at every write-surface entry before any encoding
+    /// runs (`docs/architecture/10-data-model.md` § closed relations).
+    ClosedRelationWrite {
+        relation: RelationId,
     },
     /// [`crate::Db::write_from`]'s witness compare failed: a
     /// state-changing commit landed after the witness snapshot was taken,
