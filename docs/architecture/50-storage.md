@@ -153,7 +153,10 @@ mechanics:
      from the guard entry at or before the source interval's start, walk start-
      ordered entries of the prefix group, requiring no gap before the source's end
      — O(log n + segments), sound because the target's pointwise key keeps its
-     intervals disjoint (`30-dependencies.md`).
+     intervals disjoint (`30-dependencies.md`). The frontier loop is the shared
+     segment sweep (`interval/sweep.rs`, one walk for the checker's gap verdict and
+     `Pack`'s coalescing fold); the commit site owns only entry-segment location
+     and the key-shape trust checks.
    - **Containment, target side:** every target key tuple deleted in step 1 and not
      re-established in step 2 probes its statements' `R` prefixes for surviving
      source entries; for interval positions the deleted-or-shrunk window's `R`

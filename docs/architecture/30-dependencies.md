@@ -225,7 +225,11 @@ because an untouched binding cannot change a judgment's truth:
 Guard namespaces (`U`, `R`) are **derived accelerators for these judgments, not
 definitions** — the reframe is normative in `50-storage.md`. The checker shares its
 anti-probe primitive with query-surface negation (`40-execution.md`): "no fact
-matches" is one mechanism with two callers.
+matches" is one mechanism with two callers. The coverage walk's frontier loop is
+the same move: one covered-frontier segment sweep (`interval/sweep.rs`) whose two
+continuations are the checker's gap verdict and `Pack`'s coalescing fold
+(`20-query-ir.md`) — the walk lives once, and each caller keeps only its own trust
+checks and its own outcome.
 
 Accepted statements also license planner rewrites: the chase-based occurrence
 elimination (`40-execution.md` § planner) deletes query joins a containment

@@ -4,6 +4,8 @@
 //! constructors return `Option`, so a held [`Interval`] always satisfies
 //! `start < end` and the encoder never re-checks it.
 
+pub(crate) mod sweep;
+
 /// A half-open interval `[start, end)`: a set of points, written as its
 /// bounds, strictly `start < end` — the empty interval is unrepresentable,
 /// because a fact never denotes nothing. Half-open and nonempty are

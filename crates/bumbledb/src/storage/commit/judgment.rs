@@ -17,7 +17,11 @@
 //! The probe machinery ([`Checker`], [`Probe`]) is deliberately
 //! transaction-agnostic: `Db::verify_store` runs the same scalar probe
 //! and the same coverage walk over a read snapshot to re-verify the
-//! judgments globally — one definition, never a sweeper copy.
+//! judgments globally — one definition, never a sweeper copy. The
+//! coverage walk's frontier loop is itself the shared segment sweep
+//! ([`crate::interval::sweep`]) with the checker as its gap-at
+//! continuation; this file owns entry-segment location and the key-shape
+//! trust checks, nothing of the walk.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -26,6 +30,7 @@ use heed::{AnyTls, RoTxn};
 
 use crate::encoding::{encode_literal, encode_u64, field_bytes, FactLayout};
 use crate::error::{CorruptionError, Direction, Error, Result};
+use crate::interval::sweep::{sweep, Continuation};
 use crate::obs;
 use crate::schema::{FieldId, RelationId, Resolved, Schema, StatementDescriptor, StatementId};
 use crate::storage::delta::WriteDelta;
@@ -466,12 +471,18 @@ impl<'a> Checker<'a> {
     /// ray demands coverage to ∞ — satisfiable only by a chain reaching a
     /// target ray — and the same gap check enforces it with no special
     /// case.
+    ///
+    /// This site owns what enters the walk — the LMDB seeks that locate
+    /// the entry segment and the key-shape corruption checks (trust
+    /// boundaries stay where the data enters); the frontier walk itself
+    /// is the shared segment sweep ([`crate::interval::sweep`]), driven
+    /// through [`GapAt`].
     pub(crate) fn check_coverage(&mut self, probe: &Probe<'_>) -> Result<()> {
         // The scratch holds the full guard key
         // `U | rel | stmt | prefix | s | e` (the acceptance gate puts the
         // interval last, so its 16 bytes are the tail). Only slices of it
         // are used: the group prefix, the seek key `group ‖ s`, and the
-        // source bounds.
+        // source window words.
         let full_len = keys::guard_key(
             &mut self.key,
             probe.target_relation,
@@ -480,22 +491,27 @@ impl<'a> Checker<'a> {
         );
         let group_len = full_len - 16;
         let seek_len = full_len - 8;
+        let source_start: [u8; 8] = self.key[group_len..seek_len]
+            .try_into()
+            .expect("fixed-width slice");
         let source_end: [u8; 8] = self.key[seek_len..full_len]
             .try_into()
             .expect("fixed-width slice");
 
-        // Entry (the walk's step 1): the segment covering `s`. A segment
-        // starting exactly at `s` has full key `seek ‖ its end`, so the ≥
-        // probe lands on it first when it exists; otherwise the group's
-        // predecessor must still be running at `s` — its start ≤ s by
-        // byte order, its end > s checked here. Anything else is the
-        // entry gap.
+        // Entry location: the one guard entry that can cover `s`. A
+        // segment starting exactly at `s` has full key `seek ‖ its end`,
+        // so the ≥ probe lands on it first when it exists; otherwise the
+        // group's predecessor — the segment with the largest start below
+        // `s` — may still be running at `s`. A predecessor that has
+        // ended (`end ≤ s`) proves nothing covers `s` (the group is
+        // disjoint and start-ordered), so there is no entry segment and
+        // the sweep gaps at `s` over an empty walk.
         let at_or_after = self
             .data
             .get_greater_than_or_equal_to(self.txn, &self.key[..seek_len])?
             .filter(|(k, _)| k.starts_with(&self.key[..seek_len]));
-        let (entry_key, entry_value) = match at_or_after {
-            Some(hit) => hit,
+        let located = match at_or_after {
+            Some(hit) => Some(hit),
             None => match self.data.get_lower_than(self.txn, &self.key[..seek_len])? {
                 Some((k, v)) if k.starts_with(&self.key[..group_len]) => {
                     if k.len() != full_len {
@@ -503,57 +519,44 @@ impl<'a> Checker<'a> {
                             "U guard key length",
                         )));
                     }
-                    if k[full_len - 8..] <= self.key[group_len..seek_len] {
-                        // Predecessor ended at or before s: entry gap.
-                        return Err(probe.unsatisfied());
-                    }
-                    (k, v)
+                    (k[full_len - 8..] > self.key[group_len..seek_len]).then_some((k, v))
                 }
-                _ => return Err(probe.unsatisfied()),
+                _ => None,
             },
         };
-        if entry_key.len() != full_len {
-            return Err(Error::Corruption(CorruptionError::MalformedValue(
-                "U guard key length",
-            )));
-        }
-        self.check_segment(probe, entry_value)?;
-        let mut covered: [u8; 8] = entry_key[full_len - 8..]
-            .try_into()
-            .expect("fixed-width slice");
-
-        // Chain (the walk's step 2): extend `covered` to the source's end.
-        let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Excluded(entry_key), Bound::Unbounded);
-        let mut chain = self.data.range(self.txn, &bounds)?;
-        while covered < source_end {
-            // Gap or prefix exhaustion before reaching `e` is the
-            // violation.
-            let Some(entry) = chain.next() else {
-                return Err(probe.unsatisfied());
-            };
-            let (k, v) = entry?;
-            if !k.starts_with(&self.key[..group_len]) {
-                return Err(probe.unsatisfied());
+        let (entry, chain) = match located {
+            Some((entry_key, entry_value)) => {
+                if entry_key.len() != full_len {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "U guard key length",
+                    )));
+                }
+                // The forward chain: everything past the entry, in key
+                // order — shape-checked and parsed by the adapter below,
+                // walked by the sweep.
+                let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
+                    (Bound::Excluded(entry_key), Bound::Unbounded);
+                (
+                    Some(segment_words(entry_key, entry_value)),
+                    Some(self.data.range(self.txn, &bounds)?),
+                )
             }
-            if k.len() != full_len {
-                return Err(Error::Corruption(CorruptionError::MalformedValue(
-                    "U guard key length",
-                )));
-            }
-            // The next segment must start at or before `covered`. The
-            // target key's own disjointness makes `start == covered` the
-            // only non-gap case, but the walk writes ≤ and lets the key's
-            // own invariant carry that proof.
-            if k[group_len..seek_len] > covered[..] {
-                return Err(probe.unsatisfied());
-            }
-            self.check_segment(probe, v)?;
-            let end = &k[full_len - 8..];
-            if end > &covered[..] {
-                covered.copy_from_slice(end);
-            }
-        }
-        Ok(())
+            None => (None, None),
+        };
+        let segments = GuardSegments {
+            entry,
+            chain,
+            group: &self.key[..group_len],
+            full_len,
+        };
+        sweep(
+            segments,
+            Some((source_start, source_end)),
+            &mut GapAt {
+                checker: self,
+                probe,
+            },
+        )
     }
 
     /// The per-segment target-selection check: with an empty σ the guard
@@ -571,5 +574,94 @@ impl<'a> Checker<'a> {
         } else {
             Err(probe.unsatisfied())
         }
+    }
+}
+
+/// One sweep segment out of the guard adapter: the 8-byte
+/// order-preserving interval halves off the key's tail, plus the guard
+/// value (the σ payload — a row id for the target-selection re-check).
+type GuardSegment<'t> = ([u8; 8], [u8; 8], &'t [u8]);
+
+/// Parses a shape-checked guard key into the sweep's word pair.
+fn segment_words<'t>(key: &[u8], value: &'t [u8]) -> GuardSegment<'t> {
+    let tail = key.len() - 16;
+    let start = key[tail..tail + 8].try_into().expect("fixed-width slice");
+    let end = key[tail + 8..].try_into().expect("fixed-width slice");
+    (start, end, value)
+}
+
+/// One prefix group's guard entries as sweep segments: the located entry
+/// first, then the forward chain, ending at the group boundary. The
+/// key-shape corruption checks live here — the trust boundary stays
+/// where the data enters — so the shared walk sees only parsed words.
+struct GuardSegments<'t, 'k, I> {
+    /// The entry segment, already shape-checked, yielded first; `None`
+    /// when nothing covers the source's start (the sweep gaps there).
+    entry: Option<GuardSegment<'t>>,
+    /// The chain cursor past the entry; `None` without an entry, and
+    /// dropped at the group boundary or on a malformed key.
+    chain: Option<I>,
+    /// The prefix-group bytes; a key outside them ends the walk.
+    group: &'k [u8],
+    /// Every key in the group has exactly this length; anything else is
+    /// corruption, never a silently skipped segment.
+    full_len: usize,
+}
+
+impl<'t, I> Iterator for GuardSegments<'t, '_, I>
+where
+    I: Iterator<Item = std::result::Result<(&'t [u8], &'t [u8]), heed::Error>>,
+{
+    type Item = Result<GuardSegment<'t>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(segment) = self.entry.take() {
+            return Some(Ok(segment));
+        }
+        let step = self.chain.as_mut()?.next();
+        let Some(step) = step else {
+            self.chain = None;
+            return None;
+        };
+        let (key, value) = match step {
+            Ok(kv) => kv,
+            Err(err) => {
+                self.chain = None;
+                return Some(Err(err.into()));
+            }
+        };
+        if !key.starts_with(self.group) {
+            self.chain = None;
+            return None;
+        }
+        if key.len() != self.full_len {
+            self.chain = None;
+            return Some(Err(Error::Corruption(CorruptionError::MalformedValue(
+                "U guard key length",
+            ))));
+        }
+        Some(Ok(segment_words(key, value)))
+    }
+}
+
+/// The checker's continuation shape: gap-at. Any maximal run short of
+/// the source window convicts the probe's side, and every consumed
+/// segment re-runs the target-selection check (one `F` get when σ is
+/// nonempty). `Pack`'s emit-maximal sibling drives the same sweep from
+/// its own call site (`docs/architecture/20-query-ir.md`).
+struct GapAt<'c, 'a, 'p> {
+    checker: &'c Checker<'a>,
+    probe: &'c Probe<'p>,
+}
+
+impl<'v> Continuation<[u8; 8], &'v [u8]> for GapAt<'_, '_, '_> {
+    type Error = Error;
+
+    fn segment(&mut self, value: &'v [u8]) -> Result<()> {
+        self.checker.check_segment(self.probe, value)
+    }
+
+    fn maximal(&mut self, _start: [u8; 8], _frontier: [u8; 8]) -> Result<()> {
+        Err(self.probe.unsatisfied())
     }
 }
