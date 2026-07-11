@@ -32,6 +32,23 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
         family_lane(lane, cfg, "empty family", &|_| None);
     });
 
+    // The calendar families over an empty pair of their own: every
+    // union arm empty, the Pack folding nothing, the anti-probe
+    // vacuously true against an empty gate.
+    let empty_cal_dir = cfg.out_dir.join("empty-cal-db");
+    let _ = std::fs::remove_dir_all(&empty_cal_dir);
+    let empty_cal =
+        Db::create(&empty_cal_dir, crate::calendar::Scheduling).expect("create empty calendar");
+    let cal_conn = rusqlite::Connection::open_in_memory().expect("empty calendar oracle");
+    for statement in crate::calendar::corpus::ddl() {
+        cal_conn
+            .execute(&statement, [])
+            .expect("empty calendar ddl");
+    }
+    run.lane(&empty_cal, &cal_conn, |lane| {
+        super::run_calendar::calendar_lane(lane, cfg, "empty calendar", false);
+    });
+
     // The randomized slice runs over an empty target-schema pair (the
     // generated queries speak the target ledger).
     let empty_target_dir = cfg.out_dir.join("empty-target-db");

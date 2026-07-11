@@ -103,7 +103,6 @@ impl ProjectionSink {
     /// The differential guard's override: back to the spanning regime,
     /// so a covered query runs both ways — the elision is *never*
     /// semantic, and forced-off results must be byte-identical.
-    #[cfg(test)]
     pub fn force_spanning(&mut self) {
         debug_assert!(self.rows.is_empty(), "override before the execution");
         self.disjoint = false;

@@ -66,6 +66,32 @@ pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measure
     })
 }
 
+/// `commit_witnessed` on bumbledb: one sample = one `Db::write_from`
+/// under a fresh read snapshot as the witness, inserting one seeded
+/// posting — `commit_single` plus the generation witness (the
+/// `70-api.md` conditional write). Single-threaded, so the witness
+/// never moves and every sample commits; the family prices the witness
+/// mechanism (a snapshot generation read + one integer compare inside
+/// the critical section), not contention.
+///
+/// # Errors
+///
+/// Engine errors, stringified.
+pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
+    let sizes = Sizes::of(cfg.scale);
+    let mut rng = Rng::new(cfg.seed ^ 0x0115_0003);
+    harness::measure(write_protocol("commit_witnessed"), || {
+        db.read(|snap| {
+            db.write_from(snap, |tx| {
+                let id: PostingId = tx.alloc()?;
+                tx.insert(&seeded_posting(&mut rng, &sizes, id))
+            })
+        })
+        .map(|_| 1)
+        .map_err(|e| format!("commit_witnessed: {e:?}"))
+    })
+}
+
 /// `commit_batch` on bumbledb: one sample = one `db.write` inserting 512
 /// seeded postings.
 ///
@@ -230,6 +256,11 @@ mod tests {
         let batch = commit_batch_bumbledb(&db, CFG).expect("commit_batch");
         assert!(batch.stats.min > 0);
         assert_eq!(batch.work, 512 * 32);
+        // The witnessed twin: single-threaded, so the witness never
+        // moves and every sample commits.
+        let witnessed = commit_witnessed_bumbledb(&db, CFG).expect("commit_witnessed");
+        assert!(witnessed.stats.min > 0);
+        assert_eq!(witnessed.work, 64, "one row per sample");
         assert!(db.generation().expect("generation") > generation_before);
         drop(db);
 

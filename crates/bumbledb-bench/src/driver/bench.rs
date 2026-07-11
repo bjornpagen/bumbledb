@@ -66,6 +66,7 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
     let all_names: Vec<&str> = families::all()
         .iter()
         .map(|f| f.name)
+        .chain(crate::calendar::families::all().iter().map(|f| f.name))
         .chain(families::write_families().iter().map(|f| f.name))
         .collect();
     if let Some(filter) = &args.families {
@@ -110,6 +111,11 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let conn =
         sqlite_run::open_for_bench(&paths.oracle).map_err(|e| format!("open oracle: {e}"))?;
     sqlite_run::FairnessCheck::run(&conn)?;
+    let cal_db = Db::open(&paths.cal_db, crate::calendar::Scheduling)
+        .map_err(|e| format!("open calendar db: {e:?}"))?;
+    let cal_conn = sqlite_run::open_for_bench(&paths.cal_oracle)
+        .map_err(|e| format!("open calendar oracle: {e}"))?;
+    sqlite_run::FairnessCheck::run_calendar(&cal_conn)?;
 
     // The DVFS ramp eater (measured): ≥ 200 ms of warm work before
     // the first family, so opening samples measure a settled clock.
@@ -130,12 +136,22 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         trace_dir: out_dir.join("trace"),
         db: &db,
         conn: &conn,
+        cal_db: &cal_db,
+        cal_conn: &cal_conn,
         flames: Vec::new(),
     };
     let mut reads = Vec::new();
     for family in families::all() {
         if selected(family.name) {
             reads.push(run.read_family(family)?);
+        }
+    }
+    // The calendar family set (docs/architecture/60-validation.md § the
+    // calendar benchmark): same protocol, second store pair; the DU
+    // whole-read contributes its elision-delta sub-measurement.
+    for family in crate::calendar::families::all() {
+        if selected(family.name) {
+            reads.extend(run.read_cal_family(family)?);
         }
     }
     let flames = std::mem::take(&mut run.flames);

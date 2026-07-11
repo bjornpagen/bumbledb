@@ -20,13 +20,18 @@ pub struct LoadStats {
     pub facts_per_sec: f64,
 }
 
-fn load_stats(facts: u64, wall: Duration) -> LoadStats {
-    #[allow(clippy::cast_precision_loss)] // reporting, not arithmetic
-    let facts_per_sec = facts as f64 / wall.as_secs_f64().max(f64::EPSILON);
-    LoadStats {
-        facts,
-        wall,
-        facts_per_sec,
+impl LoadStats {
+    /// One load's stats from its count and wall time (shared with the
+    /// calendar loader, `crate::calendar::corpus`).
+    #[must_use]
+    pub fn of(facts: u64, wall: Duration) -> Self {
+        #[allow(clippy::cast_precision_loss)] // reporting, not arithmetic
+        let facts_per_sec = facts as f64 / wall.as_secs_f64().max(f64::EPSILON);
+        Self {
+            facts,
+            wall,
+            facts_per_sec,
+        }
     }
 }
 
@@ -44,7 +49,7 @@ pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbl
         let rel = RelationId(rel);
         facts += db.bulk_load(rel, relation_rows(cfg, rel))?;
     }
-    Ok(load_stats(facts, start.elapsed()))
+    Ok(LoadStats::of(facts, start.elapsed()))
 }
 
 /// The `SQLite` session PRAGMAs for loading and benching, with fairness
@@ -163,7 +168,7 @@ pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection,
     }
     conn.execute_batch("ANALYZE")?;
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
-    Ok((conn, load_stats(facts, start.elapsed())))
+    Ok((conn, LoadStats::of(facts, start.elapsed())))
 }
 
 /// Cross-store equality: per-relation counts, then a seeded sample of

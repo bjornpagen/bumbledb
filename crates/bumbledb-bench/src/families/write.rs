@@ -15,6 +15,21 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 64,
             },
         },
+        // The witnessed-write row (the PRD-18 spine debt): commit_single
+        // through `Db::write_from` with a fresh snapshot witness per
+        // sample — the delta against commit_single prices the witness
+        // (one generation read + one integer compare). SQLite-unpaired
+        // by decision: SQLite has no snapshot-witness surface, and a
+        // BEGIN-IMMEDIATE + user-version emulation would time the
+        // emulation, not the engine.
+        WriteFamily {
+            name: "commit_witnessed",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
         WriteFamily {
             name: "commit_batch",
             kind: Kind::Report,

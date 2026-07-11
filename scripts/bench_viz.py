@@ -29,8 +29,13 @@ READ_ORDER = [
     "balance", "containment_walk", "postings_without_tag", "mandate_overlap",
     "skew", "range", "chain", "stats", "latest_posting_per_account",
     "spread", "triangle",
+    # The calendar family set (the second theory), in registry order;
+    # rsvp_union_off is the elision-delta sub-measurement.
+    "busy_scan", "meets_chain", "rsvp_union", "rsvp_union_off",
+    "conflict_pairs", "conflict_free", "free_busy", "claim_hours",
 ]
-WRITE_ORDER = ["commit_single", "commit_batch", "cold_containment_walk", "bulk"]
+WRITE_ORDER = ["commit_single", "commit_witnessed", "commit_batch",
+               "cold_containment_walk", "bulk"]
 
 OURS, THEIRS, FG, DIM, GRID, BG = (
     "#f0b429", "#8b949e", "#e6edf3", "#9da7b3", "#2d333b", "#0d1117",

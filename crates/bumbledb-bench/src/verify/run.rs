@@ -62,7 +62,14 @@ pub fn run_with_sql_override(
     corpus::load_bumbledb(&db, cfg.gen).expect("load bumbledb");
     let (conn, _) =
         corpus::load_sqlite(&cfg.out_dir.join("oracle.sqlite"), cfg.gen).expect("load oracle");
-    run_prepared(cfg, &db, &conn, override_sql)
+    eprintln!("verify: loading the calendar corpus");
+    let cal_db = Db::create(&cfg.out_dir.join("cal-db"), crate::calendar::Scheduling)
+        .expect("create calendar store");
+    crate::calendar::corpus::load_bumbledb(&cal_db, cfg.gen).expect("load calendar");
+    let (cal_conn, _) =
+        crate::calendar::corpus::load_sqlite(&cfg.out_dir.join("cal-oracle.sqlite"), cfg.gen)
+            .expect("load calendar oracle");
+    run_prepared(cfg, &db, &conn, &cal_db, &cal_conn, override_sql)
 }
 
 impl<S> Run<'_, S> {
@@ -260,11 +267,11 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: crate::gen::GenConfig) {
     }
 }
 
-/// The oracle against *pre-loaded* ledger stores (the CLI's digest-keyed
-/// cache path): stale bundles and the stamp are cleared, the stores are
-/// left untouched, and bundles/stamp land in `cfg.out_dir`. The
-/// randomized lane's target-schema store pair is tool scratch, built
-/// here per run.
+/// The oracle against *pre-loaded* ledger and calendar stores (the
+/// CLI's digest-keyed cache path): stale bundles and the stamp are
+/// cleared, the stores are left untouched, and bundles/stamp land in
+/// `cfg.out_dir`. The randomized lane's target-schema store pair is
+/// tool scratch, built here per run.
 ///
 /// # Errors
 ///
@@ -277,6 +284,8 @@ pub fn run_prepared(
     cfg: &VerifyConfig,
     db: &Db<Ledger>,
     conn: &rusqlite::Connection,
+    cal_db: &Db<crate::calendar::Scheduling>,
+    cal_conn: &rusqlite::Connection,
     override_sql: impl Fn(&str) -> Option<String>,
 ) -> Result<VerifyReport, VerifyFailure> {
     std::fs::create_dir_all(&cfg.out_dir).expect("out_dir");
@@ -299,12 +308,22 @@ pub fn run_prepared(
         out_dir: cfg.out_dir.clone(),
         cases: 0,
         total: 2 * family_cases
+            + super::run_calendar::calendar_case_count(cfg)
+            + super::run_calendar::calendar_fixed_count(cfg)
             + (u64::from(cfg.random_cases) + u64::from(EMPTY_STORE_RANDOM_CASES)) * 4,
         bundles: Vec::new(),
     };
 
     // The family lane: the ledger corpus.
     family_lane(&mut run, cfg, "family", &override_sql);
+
+    // The calendar family lane (fixed rotations + the randomized
+    // slice) against the calendar store pair.
+    if run.bundles.len() < MAX_BUNDLES {
+        run.lane(cal_db, cal_conn, |lane| {
+            super::run_calendar::calendar_lane(lane, cfg, "calendar", true);
+        });
+    }
 
     // The randomized lane: seeded random queries over the generator's
     // target schema and its own corpus (the target module carries the
@@ -331,6 +350,13 @@ pub fn run_prepared(
     // and family queries against the brute-force model.
     if run.bundles.len() < MAX_BUNDLES {
         run_naive_slice(cfg, &mut run);
+    }
+
+    // The calendar naive slice: the second theory's corpus stream, its
+    // four judgment-violating deltas, and every calendar family against
+    // the brute-force model.
+    if run.bundles.len() < MAX_BUNDLES {
+        super::run_calendar::run_calendar_naive(cfg, &mut run);
     }
 
     if !run.bundles.is_empty() {

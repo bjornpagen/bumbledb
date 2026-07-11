@@ -25,6 +25,8 @@ pub fn corpus_paths(dir: &Path, cfg: GenConfig) -> CorpusPaths {
     CorpusPaths {
         db: root.join("db"),
         oracle: root.join("oracle.sqlite"),
+        cal_db: root.join("cal-db"),
+        cal_oracle: root.join("cal-oracle.sqlite"),
         stamp: root.join("verify.stamp"),
         root,
     }
@@ -82,6 +84,19 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
         drop(db);
         std::fs::remove_dir_all(&load_dir).map_err(|e| format!("remove db-load: {e}"))?;
         corpus::load_sqlite(&paths.oracle, cfg).map_err(|e| format!("load sqlite: {e}"))?;
+
+        // The calendar theory: same discipline, second store pair.
+        let cal_load_dir = paths.root.join("cal-db-load");
+        let cal = Db::create(&cal_load_dir, crate::calendar::Scheduling)
+            .map_err(|e| format!("create cal db: {e:?}"))?;
+        crate::calendar::corpus::load_bumbledb(&cal, cfg)
+            .map_err(|e| format!("load calendar: {e:?}"))?;
+        cal.compact(&paths.cal_db)
+            .map_err(|e| format!("compact calendar: {e:?}"))?;
+        drop(cal);
+        std::fs::remove_dir_all(&cal_load_dir).map_err(|e| format!("remove cal-db-load: {e}"))?;
+        crate::calendar::corpus::load_sqlite(&paths.cal_oracle, cfg)
+            .map_err(|e| format!("load calendar sqlite: {e}"))?;
         Ok(())
     })
 }

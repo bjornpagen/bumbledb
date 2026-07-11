@@ -212,11 +212,16 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// The differential guard's override: forces the disjointness
-    /// elision off before an execution, so every covered query can run
-    /// both regimes against identical inputs — the elision is *never*
-    /// semantic, and the results must be byte-identical.
-    #[cfg(test)]
-    pub(super) fn force_disjoint_off(&mut self) {
+    /// elision off before any execution of this prepared query, so a
+    /// covered query can run both regimes against identical inputs — the
+    /// elision is *never* semantic, and the results must be
+    /// byte-identical. Public for the two callers the elision's number
+    /// answers to: the in-crate differential tests, and the benchmark's
+    /// named elision-delta sub-measurement (the calendar DU whole-read,
+    /// `docs/architecture/60-validation.md`). One-way by design: the
+    /// override sticks for the prepared query's lifetime — measure the
+    /// proof-on regime on a second prepared instance.
+    pub fn force_disjoint_off(&mut self) {
         self.sink.force_disjoint_off();
     }
 

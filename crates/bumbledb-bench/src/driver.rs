@@ -33,13 +33,17 @@ pub use scenarios::cmd_scenarios;
 pub use trace::cmd_trace;
 pub use verify_store::cmd_verify_store;
 
-/// The digest-keyed corpus locations.
+/// The digest-keyed corpus locations: the ledger store pair, the
+/// calendar store pair (the second theory shares the digest directory —
+/// one identity, one stamp), and the stamp.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CorpusPaths {
     /// `<dir>/<digest-prefix>/` — everything lives inside.
     pub root: PathBuf,
     pub db: PathBuf,
     pub oracle: PathBuf,
+    pub cal_db: PathBuf,
+    pub cal_oracle: PathBuf,
     pub stamp: PathBuf,
 }
 
@@ -73,5 +77,7 @@ struct BenchRun<'a> {
     trace_dir: PathBuf,
     db: &'a Db<Ledger>,
     conn: &'a Connection,
+    cal_db: &'a Db<crate::calendar::Scheduling>,
+    cal_conn: &'a Connection,
     flames: Vec<report::FlameEmbed>,
 }

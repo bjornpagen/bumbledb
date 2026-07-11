@@ -43,8 +43,10 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
 }
 
 /// The corpus identity: a blake3 over the engine's storage format
-/// version and every relation's streamed rows. Stamps, cache
-/// directories, and reports key on this. The format version is a live
+/// version and every relation's streamed rows — the ledger's, then the
+/// calendar's (the two corpora share one digest directory and one
+/// stamp, so both are identity). Stamps, cache directories, and reports
+/// key on this. The format version is a live
 /// ingredient by decision: a cached corpus is a *store*, and a store
 /// written under an older format must be regenerated, never reused —
 /// the ALG 17 dictionary cutover left a v1 cache silently mis-decoding
@@ -59,6 +61,16 @@ pub fn corpus_digest(cfg: GenConfig) -> [u8; 32] {
         let rel = RelationId(rel);
         digest.update(&rel.0.to_le_bytes());
         for row in relation_rows(cfg, rel) {
+            for value in &row {
+                value_bytes(&mut digest, value);
+            }
+        }
+    }
+    for rel in 0..crate::calendar::ids::RELATIONS {
+        let rel = RelationId(rel);
+        digest.update(b"cal");
+        digest.update(&rel.0.to_le_bytes());
+        for row in crate::calendar::gen::relation_rows(cfg, rel) {
             for value in &row {
                 value_bytes(&mut digest, value);
             }

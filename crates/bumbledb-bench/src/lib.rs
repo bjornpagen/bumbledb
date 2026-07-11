@@ -6,6 +6,7 @@
 //! (`docs/architecture/00-product.md`) allows exactly `rusqlite` — JSON,
 //! statistics, argument parsing, and randomness are hand-rolled.
 
+pub mod calendar;
 pub mod cli;
 pub mod clockproxy;
 pub mod compare;

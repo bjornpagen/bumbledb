@@ -19,10 +19,12 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
     });
     assert_ne!(a, other, "seeds diverge");
     // The golden: changing the generator — or the storage format, now a
-    // live ingredient — re-baselines every corpus.
+    // live ingredient — re-baselines every corpus. Re-baselined when
+    // the calendar theory's rows joined the digest (ALG 16 — one
+    // corpus identity, both theories inside).
     assert_eq!(
         digest_hex(&a),
-        "11e7ac2267a9e97fcb0dfcdea6d2dd3684633c4214ff860fa237289cf1468a81",
+        "96b067335ede49bd5d8a6db0989e14a6d4a81336f523ac2696a66db1bb8160fd",
         "generator output changed — re-baseline deliberately"
     );
 }

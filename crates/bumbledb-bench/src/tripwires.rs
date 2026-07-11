@@ -114,6 +114,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The calendar families' plan regimes, pinned (structural, no wall
+    /// clock — docs/architecture/60-validation.md § the calendar
+    /// benchmark):
+    /// - `rsvp_union` carries the rule-disjointness proof (distinct
+    ///   `rsvp` selections on one discriminant) — the elision the
+    ///   family exists to measure; a planner change that loses the
+    ///   proof fails here by name;
+    /// - `claim_hours` binds the claim key (`source`), so the fold's
+    ///   distinct-bindings elision engages (the `balance` regime);
+    /// - `busy_scan` is the O(n) scan family — never a guard probe
+    ///   (`skip_free()` is `Some`); its cost profile is the
+    ///   range-accelerator trigger's evidence, not a plan accident.
+    #[test]
+    fn calendar_family_regimes_are_pinned() {
+        use crate::calendar::{families as cal, Scheduling};
+        let dir = std::env::temp_dir().join("bumbledb-tripwires-calendar");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let db = bumbledb::Db::create(&dir, Scheduling).expect("create");
+        let prepared = |name: &str| {
+            let family = cal::all()
+                .iter()
+                .find(|f| f.name == name)
+                .expect("registered");
+            db.prepare(&(family.query)()).expect("prepares")
+        };
+        assert!(
+            prepared("rsvp_union").disjoint_rules(),
+            "the DU arms must prove disjointness — the elision family's premise"
+        );
+        assert!(
+            prepared("claim_hours").distinct_bindings(),
+            "the source binding covers the claim key — the fold elides its seen set"
+        );
+        assert!(
+            prepared("busy_scan").skip_free().is_some(),
+            "busy_scan is the O(n) scan, never a guard probe"
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The aggregate families' fold regimes, pinned: balance binds the
     /// posting fresh — distinct bindings proven, the seen-set elided.
     /// stats binds no key coverage **by design** (collapsing duplicate

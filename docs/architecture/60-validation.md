@@ -176,6 +176,100 @@ void until re-earned on the new format**. The "ratchet" is a manually re-run rep
 per meaningful change — not a CI gate. JOB and friends may be run for curiosity; they
 gate nothing.
 
+## The calendar benchmark: the second theory
+
+The algebra's earning (ledger-adjacent scheduling from the workload census —
+`00-product.md`): a second schema/corpus/family world under the **exact same
+protocol** (fully-indexed SQLite mirror, fullfsync parity, prepared statements,
+`ANALYZE`, `SELECT DISTINCT`, warm medians, verify-before-time), sharing the
+digest directory and the stamp with the ledger — one corpus identity, one
+stamp, both theories inside. The calendar families join the ALL-WIN set.
+Owned here, restated in the statement notation:
+
+```
+relation Account    { id: u64, fresh, name: str }
+relation Person     { id: u64, fresh, account: u64, name: str }
+relation Calendar   { id: u64, fresh, owner: u64 }
+relation Event      { id: u64, fresh, calendar: u64, span: interval<i64>,
+                      created_at: i64, hash: bytes<32> }
+relation Attendance { id: u64, fresh, event: u64, person: u64,
+                      rsvp: enum { Accepted, Tentative, Declined } }
+relation Claim      { source: u64, person: u64,
+                      arm: enum { Busy, Ooo }, span: interval<i64> }
+relation Room       { id: u64, fresh, name: str }
+relation Booking    { room: u64, event: u64, span: interval<i64> }
+relation WorkHours  { person: u64, hours: interval<i64> }
+
+Person(account)     <= Account(id);     Calendar(owner)   <= Person(id);
+Event(calendar)     <= Calendar(id);    Attendance(event) <= Event(id);
+Attendance(person)  <= Person(id);      Claim(person)     <= Person(id);
+Attendance(event, person) -> Attendance;
+Claim(source)       -> Claim;           Claim(person, span) -> Claim;
+Attendance(id | rsvp == Accepted) == Claim(source | arm == Busy);  // the DU
+Claim(person, span | arm == Busy) <= WorkHours(person, hours);     // coverage
+Booking(room)       <= Room(id);        Booking(event)    <= Event(id);
+Booking(room, span) -> Booking;                     // room exclusion, pointwise
+WorkHours(person)   <= Person(id);      WorkHours(person, hours) -> WorkHours;
+```
+
+`Event.hash` is the `bytes<32>` content-hash column (identity-shaped digests —
+the census's byte-shaped ruling). Corpus: seeded and streaming, stratified over
+persons × meeting density × ray fraction — a hand-rolled Zipfian density
+envelope (`max_segments >> ⌊log₂(rank + 1)⌋`, the 1/rank curve in closed form,
+no crate, no floats — the dependency quarantine), per-person segment chains
+valid under the pointwise keys **by construction** (sequential, every third
+boundary abutting), every fourth person's chain ending in a ray (`[s, ∞)`
+recurrence horizons — ray events, ray claims, and coverage-to-∞ exist
+structurally), busy segments spawning one event + accepted attendance + busy
+claim (the `==` holds by construction; the engine loads the Attendance/Claim
+cluster through joint chunked writes — either relation alone violates one
+direction), and exact-abutment working-hour chains from the epoch to ∞.
+
+**The families — each one times a named representation:**
+
+| family | representation timed |
+|---|---|
+| `busy_scan` | the Allen mask against a param window over an O(n) scan (03/04); the range-accelerator trigger's evidence |
+| `meets_chain` | named-relation probes: singleton `MEETS` chain join + `DURING` filter — singleton cost = composite cost (03) |
+| `rsvp_union` | the DU whole-read: three rules, one per RSVP arm, under the rule-disjointness elision (05/07/08) |
+| `conflict_pairs` | the Allen-mask self-join, `INTERSECTS` across one account's persons (04) |
+| `conflict_free` | the anti-probe: ¬Claim with a point-membership binding at an event-creation instant (04 + negation) |
+| `free_busy` | `Pack`, the coalescing fold, per person per window (11/12); free time is the host's gap walk (the `Gaps` refusal) |
+| `claim_hours` | the measure: `Sum(Duration)` by claim arm under the `Allen(DISJOINT)` ray guard (10) |
+
+**The elision delta is a named sub-measurement:** `rsvp_union` is measured
+twice — the proof on, then forced off (`PreparedQuery::force_disjoint_off`, the
+same override the differential guard uses; never semantic) — reported as the
+`rsvp_union_off` row plus a delta line. The elision's number exists in every
+report.
+
+**Mirror rules.** The calendar mirror follows the value-mapping and template
+rules above; `free_busy` is the one family the IR→SQL translator cannot express
+(`Pack` — the enumerated `Inexpressible` set), and it is **reported
+translator-unpaired, never dropped**: its SQLite side is a hand-written
+window-function coalesce (order each person's distinct claim windows, cut
+islands where a start exceeds the running max end, fold each island to
+`(MIN(start), MAX(end))`) — SQLite's honest best shot at Snodgrass coalescing
+(measured faster than the recursive-CTE row walk, so the fairer opponent),
+verified row-identical against the engine's `Pack` and the naive model before
+any timing.
+
+**Verify lanes.** The calendar corpus joins the verify pass before any timing:
+every family × its fixed rotation plus a seeded randomized draw slice against
+the mirror; the same families over an empty store pair; and a unit-scale naive
+differential slice — the corpus stream replayed through joint `==`-cluster
+chunks, four judgment-violating deltas (room exclusion, `==` totality, `==`
+arm validity, working-hours coverage — each violating exactly one statement,
+verdicts compared whole), and every family query against the brute-force
+model. The stamp digests both theories' family lists and both corpora.
+
+**The witnessed-write row** (`commit_witnessed`): `commit_single` through
+`Db::write_from` with a fresh snapshot witness per sample — the delta against
+`commit_single` prices the witness mechanism (a snapshot generation read plus
+one integer compare). SQLite-unpaired by decision: SQLite has no
+snapshot-witness surface, and a BEGIN-IMMEDIATE + user-version emulation would
+time the emulation, not the engine.
+
 ## Differential and property tests
 
 - The **naive model** (promoted above) executes the same IR and judges the same

@@ -294,7 +294,7 @@ fn s(text: &str) -> Value {
 }
 
 #[test]
-fn the_query_list_renders_all_fifteen_sections() {
+fn the_query_list_renders_every_section_of_both_theories() {
     let md = render_queries_md();
     assert!(md.starts_with("# The read query families"));
     for family in all() {
@@ -306,6 +306,20 @@ fn the_query_list_renders_all_fifteen_sections() {
         assert!(md.contains(family.golden_sql), "{} sql", family.name);
         assert!(md.contains(family.param_policy), "{} policy", family.name);
     }
-    assert!(md.contains("Family-list digest: `"));
-    assert_eq!(md.matches("```sql").count(), 15);
+    assert!(md.contains("# The calendar query families"));
+    for family in crate::calendar::families::all() {
+        assert!(
+            md.contains(&format!("## {}", family.name)),
+            "{}",
+            family.name
+        );
+        assert!(md.contains(family.golden_sql), "{} sql", family.name);
+        assert!(md.contains(family.param_policy), "{} policy", family.name);
+    }
+    assert_eq!(md.matches("Family-list digest: `").count(), 2);
+    // 15 ledger + 7 calendar sections, one ```sql block each.
+    assert_eq!(
+        md.matches("```sql").count(),
+        all().len() + crate::calendar::families::all().len()
+    );
 }

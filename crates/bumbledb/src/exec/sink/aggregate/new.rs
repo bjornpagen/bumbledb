@@ -283,7 +283,6 @@ impl AggregateSink {
     /// (whole-binding or head-projection keyed, matching the regime) so a
     /// covered query runs both ways — the elision is *never* semantic,
     /// and forced-off results must be byte-identical.
-    #[cfg(test)]
     pub fn force_seen(&mut self) {
         if self.seen.is_none() {
             let arity = if self.union_spans.is_some() {

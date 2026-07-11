@@ -20,6 +20,25 @@ impl FairnessCheck {
     ///
     /// A message naming the first failed rule.
     pub fn run(conn: &Connection) -> Result<(), String> {
+        let mut expected = sqlmap::expected_indexes(schema());
+        expected.extend(crate::families::expected_indexes());
+        Self::run_with(conn, &expected)
+    }
+
+    /// [`FairnessCheck::run`] for the calendar mirror: the same session
+    /// rules against the calendar schema's statement-derived registry
+    /// plus its family-owned composites.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the first failed rule.
+    pub fn run_calendar(conn: &Connection) -> Result<(), String> {
+        let mut expected = sqlmap::expected_indexes(crate::calendar::schema());
+        expected.extend(crate::calendar::families::expected_indexes());
+        Self::run_with(conn, &expected)
+    }
+
+    fn run_with(conn: &Connection, expected: &[(String, String)]) -> Result<(), String> {
         let mode: String = conn
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .map_err(|e| format!("journal_mode: {e}"))?;
@@ -45,8 +64,6 @@ impl FairnessCheck {
                 return Err(format!("fairness: {pragma} is OFF — flush to media"));
             }
         }
-        let mut expected = sqlmap::expected_indexes(schema());
-        expected.extend(crate::families::expected_indexes());
         for (table, index) in expected {
             let mut stmt = conn
                 .prepare(&format!("PRAGMA index_list(\"{table}\")"))
@@ -55,7 +72,7 @@ impl FairnessCheck {
                 .query_map([], |row| row.get::<_, String>(1))
                 .map_err(|e| format!("index_list: {e}"))?
                 .filter_map(std::result::Result::ok)
-                .any(|name| name == index);
+                .any(|name| name == *index);
             if !present {
                 return Err(format!("fairness: index {index} missing on {table}"));
             }

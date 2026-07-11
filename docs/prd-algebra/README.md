@@ -104,14 +104,19 @@ Phase D — the surface (**landed early**: implemented as `docs/prd/22` before
 this set began execution; the 13/14 reconciliation records are retired — done
 items leave the ledger, and 14's residual, the `Theory` rename, landed with 01).
 
-Phase E — the earning (15 — oracles and the generator — landed whole
-and retired: rules→UNION in the translator, the naive model's direct
+Phase E — the earning — landed whole and retired (15 — oracles and the
+generator: rules→UNION in the translator, the naive model's direct
 rules/tree/mask/measure/`Pack` evaluations, the converse-property and
 error-parity lanes, `Pack`'s naive-only routing through the enumerated
 inexpressible set, the boundary-shape ladder on every interval draw,
-and the str-extrema roster check; its rulings live in
-`60-validation.md`):
-- [16 — The calendar family](16-calendar-family.md)
+and the str-extrema roster check; and 16 — the calendar family: the
+second theory joins the protocol whole — schema, valid-by-construction
+Zipfian corpus, the six representation-named families plus the
+anti-probe variant, the hand-coalesce mirror for `Pack` reported
+translator-unpaired, the elision-delta sub-measurement, the
+`bytes<32>` content-hash column, the witnessed-write row, and the
+calendar verify lanes under the stamp); the rulings live in
+`60-validation.md` — § the calendar benchmark for 16.
 
 Phase F — the write side, the type ledger, and the surface ruling (17 —
 identity bytes — landed whole and retired: `bytes<N>` replaced variable
@@ -130,19 +135,18 @@ runs-before-judgment cross-reference):
 Phase G — the intuition:
 - [21 — The cookbook: modeling intuition as schemas (doc unit)](21-cookbook.md)
 
-Dependency spine: Phases A (01–04), B (05–09), and C (10–12) landed
-whole; 13/14 landed
-(residual landed with 01); 15 landed; 16 requires 15 (landed); 17 landed (its adversarial
+Dependency spine: Phases A (01–04), B (05–09), C (10–12), and E (15–16)
+landed whole; 13/14 landed
+(residual landed with 01); 17 landed (its adversarial
 digest rows are in the generator's target ledger, inherited by 15's families);
 18 landed; 19 requires 18 (landed); 20
 requires 05 (its sweep and renderer target the rules-shaped IR); 23 requires
 05 and 20 and coordinates with 21 (the cookbook's queries are written in the
 23 notation, round-trip-pinned against `ir::render`); 21 lands
 last (it is written against the whole set's surface and its recipes are
-rot-proofed by compilation). Phases A/B/C/F may interleave; E closes the
-measured half of the set (16 gains a `bytes<32>` content-hash column — 17
-landed, so the type exists — and a witnessed-write family row — 18 landed,
-so the row is owed); G closes the set itself.
+rot-proofed by compilation). E closed the measured half of the set (16
+carries the `bytes<32>` content-hash column 17 owed it and the
+witnessed-write row 18 owed it); G closes the set itself.
 
 ## Refusals (recorded with derivations — do not re-litigate)
 

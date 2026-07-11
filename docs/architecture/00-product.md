@@ -55,7 +55,10 @@ language. **Reverses if:** never — owner axiom.
   release, and data is ETL'd forward or regenerated.
 - Workload shape: ledger-like, highly normalized app data — many narrow relations,
   many joins, point lookups by key, reference walks, time-range and interval
-  queries, balance-style aggregates. Read-heavy. The shape is measured, not assumed:
+  queries, balance-style aggregates, and **scheduling** (ledger-adjacent
+  calendars: interval claims, discriminated-union RSVPs, room exclusion — its
+  measured form is the calendar benchmark family, `60-validation.md`).
+  Read-heavy. The shape is measured, not assumed:
   two of the owner's production schemas were censused (a 74-table Postgres app and a
   payroll SQLite app); their entire type usage collapses onto the seven types, their
   query operators onto this IR, and their app-enforced invariants onto the two

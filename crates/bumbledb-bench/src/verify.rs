@@ -23,6 +23,7 @@ mod check;
 mod display;
 mod run;
 mod run_algebra;
+mod run_calendar;
 mod run_converse;
 mod run_empty_store;
 mod run_naive;

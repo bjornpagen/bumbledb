@@ -52,7 +52,6 @@ impl EitherSink {
     /// aggregate seen-set reinstated — so a covered query runs both ways
     /// and the results must be byte-identical (the elision is *never*
     /// semantic).
-    #[cfg(test)]
     pub(super) fn force_disjoint_off(&mut self) {
         match self {
             Self::Projection(sink) => sink.force_spanning(),

@@ -44,7 +44,7 @@ pub(super) fn write_families(
     ];
 
     let mut out = Vec::new();
-    if PAIRED.iter().any(|(name, ..)| selected(name)) {
+    if PAIRED.iter().any(|(name, ..)| selected(name)) || selected("commit_witnessed") {
         eprintln!("bench: loading the scratch write corpus");
         let db = Db::create(&scratch.join("db"), Ledger).map_err(|e| format!("{e:?}"))?;
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("{e:?}"))?;
@@ -61,6 +61,21 @@ pub(super) fn write_families(
                 name: name.to_owned(),
                 ours: ours.stats,
                 theirs: Some(theirs.stats),
+                facts_per_sec: None,
+                ghz: Some(super::ghz_report(ghz)),
+            });
+        }
+        // The witnessed-write row (the PRD-18 spine debt): engine-only —
+        // SQLite has no snapshot-witness surface, so the row is
+        // unpaired by decision (an emulation would time the emulation).
+        if selected("commit_witnessed") {
+            eprintln!("bench: commit_witnessed");
+            let (ours, ghz) =
+                clockproxy::stamped(|| writebench::commit_witnessed_bumbledb(&db, cfg))?;
+            out.push(report::WriteFamilyReport {
+                name: "commit_witnessed".to_owned(),
+                ours: ours.stats,
+                theirs: None,
                 facts_per_sec: None,
                 ghz: Some(super::ghz_report(ghz)),
             });

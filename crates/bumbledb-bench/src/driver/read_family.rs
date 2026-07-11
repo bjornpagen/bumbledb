@@ -1,9 +1,10 @@
-use bumbledb::ResultBuffer;
+use bumbledb::{Db, Query, ResultBuffer};
 
-use crate::families::{has_sets, param_args, scalar_values, set_bindings};
+use crate::calendar;
+use crate::families::{has_sets, param_args, scalar_values, set_bindings, Draw, Kind};
 use crate::harness::{self, Modes, Rotation};
-use crate::schema::{schema, Ledger};
-use crate::translate::translate;
+use crate::schema::schema;
+use crate::translate::{translate, Translated};
 use crate::{clockproxy, families, report, sqlite_run, trace_out};
 
 use super::BenchRun;
@@ -51,26 +52,112 @@ fn alloc_report(
     })
 }
 
+/// One read family's identity, decoupled from its registry: the ledger
+/// families and the calendar families measure through the same core
+/// (one mechanism, two corpora), differing only in the store pair and
+/// the SQL provider.
+pub(super) struct ReadSpec<'a> {
+    pub name: &'a str,
+    pub kind: Kind,
+    pub query: Query,
+    pub sets: Vec<Draw>,
+    /// Per-draw SQL — the translator for the ledger and paired calendar
+    /// families, the hand-written coalesce for `free_busy`.
+    pub sql_for: &'a dyn Fn(&Query, &Draw) -> Result<Translated, String>,
+    /// The elision-delta sub-measurement's switch: force the
+    /// rule-disjointness elision off on the prepared query before any
+    /// execution (never semantic; the delta is the elision's number).
+    pub force_disjoint_off: bool,
+}
+
 impl BenchRun<'_> {
-    /// One read family on both engines.
-    #[allow(clippy::too_many_lines)] // one family's full protocol, linear
+    /// One read family on both engines — the ledger registry entry.
     pub(super) fn read_family(
         &mut self,
         family: &families::Family,
     ) -> Result<report::ReadFamilyReport, String> {
-        eprintln!("bench: read family {}", family.name);
-        let query = (family.query)();
-        let mut prepared = self
-            .db
-            .prepare(&query)
-            .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
-        let sets = (family.params)(&self.cfg);
+        let spec = ReadSpec {
+            name: family.name,
+            kind: family.kind,
+            query: (family.query)(),
+            sets: (family.params)(&self.cfg),
+            sql_for: &|query, draw| translate(query, schema(), &set_bindings(draw)),
+            force_disjoint_off: false,
+        };
+        let db = self.db;
+        let conn = self.conn;
+        self.measure_read(db, conn, &spec)
+    }
+
+    /// One calendar family on both engines — plus, for the DU
+    /// whole-read, the elision-delta sub-measurement: the same query
+    /// re-prepared with the disjointness proof forced off, reported as
+    /// the named `rsvp_union_off` row (`Kind::Report` — a diagnostic,
+    /// never a gate) with the delta printed.
+    pub(super) fn read_cal_family(
+        &mut self,
+        family: &calendar::families::CalFamily,
+    ) -> Result<Vec<report::ReadFamilyReport>, String> {
+        let sql_for = |query: &Query, draw: &Draw| family.sql_for(query, draw);
+        let spec = ReadSpec {
+            name: family.name,
+            kind: family.kind,
+            query: (family.query)(),
+            sets: (family.params)(&self.cfg),
+            sql_for: &sql_for,
+            force_disjoint_off: false,
+        };
+        let db = self.cal_db;
+        let conn = self.cal_conn;
+        let on = self.measure_read(db, conn, &spec)?;
+        let mut out = vec![on];
+        if family.name == "rsvp_union" {
+            let off_spec = ReadSpec {
+                name: "rsvp_union_off",
+                kind: Kind::Report,
+                query: (family.query)(),
+                sets: (family.params)(&self.cfg),
+                sql_for: &sql_for,
+                force_disjoint_off: true,
+            };
+            let off = self.measure_read(db, conn, &off_spec)?;
+            let on = &out[0];
+            #[allow(clippy::cast_precision_loss)]
+            let delta_pct =
+                (off.ours.p50 as f64 - on.ours.p50 as f64) / on.ours.p50.max(1) as f64 * 100.0;
+            eprintln!(
+                "bench: elision delta (rsvp_union): proof on p50 {} ns, forced off p50 {} ns \
+                 ({delta_pct:+.1}%)",
+                on.ours.p50, off.ours.p50
+            );
+            out.push(off);
+        }
+        Ok(out)
+    }
+
+    /// The shared measurement core: warm both engines under the exact
+    /// protocol, quantum-guarded, traced and profiled where the modes
+    /// ask.
+    #[allow(clippy::too_many_lines)] // one family's full protocol, linear
+    fn measure_read<S>(
+        &mut self,
+        db: &Db<S>,
+        conn: &rusqlite::Connection,
+        spec: &ReadSpec<'_>,
+    ) -> Result<report::ReadFamilyReport, String> {
+        eprintln!("bench: read family {}", spec.name);
+        let mut prepared = db
+            .prepare(&spec.query)
+            .map_err(|e| format!("{}: prepare: {e:?}", spec.name))?;
+        if spec.force_disjoint_off {
+            prepared.force_disjoint_off();
+        }
+        let sets = spec.sets.clone();
         let types: Vec<bumbledb::schema::ValueType> = prepared.column_types().cloned().collect();
 
         let mut rotation = Rotation::new(sets.clone());
         let mut buffer = ResultBuffer::new();
-        let db = self.db;
-        let mut run_ours = move |prepared: &mut bumbledb::PreparedQuery<'_, Ledger>| {
+        let mut run_ours = move |prepared: &mut bumbledb::PreparedQuery<'_, S>| {
             let args = param_args(rotation.next_set());
             db.read(|snap| snap.execute_args(prepared, &args, &mut buffer))
                 .map_err(|e| format!("execute: {e:?}"))?;
@@ -103,7 +190,7 @@ impl BenchRun<'_> {
         let (ours, ghz_ours) = if batch > 1 {
             eprintln!(
                 "bench: {} p50 under the {} ns quantum floor — re-measuring at batch {batch}",
-                family.name,
+                spec.name,
                 harness::QUANTUM_FLOOR_NS
             );
             clockproxy::guarded(|| {
@@ -117,7 +204,7 @@ impl BenchRun<'_> {
             let (engine, harness_events) = trace_out::split_harness(events);
             trace_out::write_trace_file(
                 &self.trace_dir,
-                &format!("{}.warm", family.name),
+                &format!("{}.warm", spec.name),
                 &engine,
                 &harness_events,
             )
@@ -128,7 +215,7 @@ impl BenchRun<'_> {
                 table.push_str(&phases);
             }
             self.flames.push(report::FlameEmbed {
-                name: family.name.to_owned(),
+                name: spec.name.to_owned(),
                 table,
             });
         }
@@ -138,8 +225,7 @@ impl BenchRun<'_> {
         let exec = if has_sets(&sets) {
             None
         } else {
-            let (_, stats) = self
-                .db
+            let (_, stats) = db
                 .read(|snap| snap.profile(&mut prepared, &scalar_values(&sets[0])))
                 .map_err(|e| format!("profile: {e:?}"))?;
             Some(exec_digest(&stats))
@@ -152,10 +238,10 @@ impl BenchRun<'_> {
         // prepared once and reused across the rotation's cycles.
         let mut sqlite_families = Vec::with_capacity(sets.len());
         for draw in &sets {
-            let translated = translate(&query, schema(), &set_bindings(draw))
-                .map_err(|e| format!("translate: {e}"))?;
+            let translated =
+                (spec.sql_for)(&spec.query, draw).map_err(|e| format!("translate: {e}"))?;
             sqlite_families.push(sqlite_run::PreparedFamily::new(
-                self.conn,
+                conn,
                 &translated,
                 types.clone(),
             )?);
@@ -176,8 +262,8 @@ impl BenchRun<'_> {
         #[cfg(not(feature = "obs"))]
         let alloc = None;
         Ok(report::ReadFamilyReport {
-            name: family.name.to_owned(),
-            verdict: report::verdict(family.kind, ours.stats.p50, theirs.stats.p50),
+            name: spec.name.to_owned(),
+            verdict: report::verdict(spec.kind, ours.stats.p50, theirs.stats.p50),
             p99_within_budget: report::within_budget(ours.stats.p99),
             ours: ours.stats,
             theirs: theirs.stats,
