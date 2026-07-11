@@ -51,6 +51,24 @@ pub const NS_REVERSE: u8 = b'R';
 pub const NS_FRESH: u8 = b'Q';
 pub const NS_STAT: u8 = b'S';
 
+/// Refusal hardening, debug builds (`docs/architecture/50-storage.md`
+/// § virtual relations): no `F`/`M`/`U`/`R` entry may name a closed
+/// relation — the theory is its storage, and the store contains zero
+/// vocabulary bytes. The commit plan asserts this at every fact-op
+/// derivation (the one place all four namespaces' key bytes originate);
+/// release builds rely on the write-surface refusal
+/// ([`ClosedRelationWrite`]) and the offline sweeper's
+/// `ClosedRelationEntry` conviction.
+///
+/// [`ClosedRelationWrite`]: crate::error::Error::ClosedRelationWrite
+#[inline]
+pub fn debug_assert_ordinary(schema: &crate::schema::Schema, relation: RelationId) {
+    debug_assert!(
+        !schema.relation(relation).is_closed(),
+        "no F/M/U/R namespace entry may name closed relation {relation:?}"
+    );
+}
+
 /// Which per-relation counter an `S` key addresses.
 ///
 /// `RowCount` is the planner's statistic (`docs/architecture/50-storage.md`);

@@ -25,7 +25,7 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
     counters: &mut C,
 ) -> Result<()> {
     let views_span = obs::span(obs::names::VIEWS, obs::Category::Execute);
-    let generation = txn.generation()?;
+    let txn_generation = txn.generation()?;
     memo.tick += 1;
     // Lowering routes every positive occurrence's Eq-constant into
     // selections; a leak here would silently resurrect the per-param
@@ -61,6 +61,15 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
         if matches!(occurrence.role, crate::ir::normalize::Role::Eliminated(_)) {
             continue;
         }
+        // A closed relation's view binds at the sentinel generation: its
+        // image is synthesized from the theory, so no commit can stale it
+        // — the memo stays warm across generations forever, and the
+        // stale-reaping pass never touches it (the sentinel is maximal).
+        let generation = if schema.relation(occurrence.relation).is_closed() {
+            super::view_memo::GENERATION_CLOSED
+        } else {
+            txn_generation
+        };
         // Warm fast path: an active or parked binding for this exact
         // (generation, resolved residual filters) pair — the COLT's view
         // is still exactly right, and so are its forced tries (selections

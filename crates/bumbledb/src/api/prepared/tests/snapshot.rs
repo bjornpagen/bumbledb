@@ -6,7 +6,7 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "old", 1)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let mut out = ResultBuffer::new();
@@ -45,7 +45,7 @@ fn prepare_pins_no_images_and_reaping_releases_them() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a", 10), (2, 7, "b", 20)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let held = cache
         .get_or_build(&txn, &schema, POSTING)
@@ -100,7 +100,7 @@ fn prepare_emits_no_image_events() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a", 10)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     obs::start_capture();

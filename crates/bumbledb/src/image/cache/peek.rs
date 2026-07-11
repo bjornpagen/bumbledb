@@ -23,6 +23,11 @@ impl ImageCache {
     ///
     /// Only on a poisoned cache mutex (a prior panic while holding it).
     pub fn peek(&self, txn: &ReadTxn<'_>, rel: RelationId) -> Result<Option<Arc<RelationImage>>> {
+        // A closed relation's slot, once synthesized, is resident forever
+        // — same never-builds contract, and no generation to read.
+        if let Some(slot) = self.closed_slot(rel) {
+            return Ok(slot.get().map(Arc::clone));
+        }
         let generation = txn.generation()?;
         let inner = self.inner.lock().expect("cache mutex");
         Ok(inner.map.get(&(rel, generation)).map(Arc::clone))

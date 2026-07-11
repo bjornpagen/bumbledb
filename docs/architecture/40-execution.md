@@ -521,6 +521,12 @@ durable truth; at ≤1 GB the whole working set caches and the write design poin
 (≥100 reads/generation) amortizes builds to noise. **Reverses if:** traced rebuild cost
 violates the latency budget despite the cache — then persist columns instead.
 
+**The closed carve-out:** a closed relation's image is not built from LMDB at
+all — it is *synthesized* from the theory's sealed extension into a
+per-relation `OnceLock` slot outside the generation map, once per process,
+never evicted, never rebuilt (`50-storage.md` § virtual relations). Execution
+consumes it exactly like any image; only its source and lifetime differ.
+
 ## Observability
 
 **EXPLAIN exists from day one** and is the debugging story. Mechanism — a
@@ -576,6 +582,14 @@ Five measured decisions, enforced structurally by
   never park. Sound because generational immutability makes a view valid
   for its whole generation. Memory bound: four COLT high-waters per
   occurrence per prepared query, current-generation images only.
+  **The sentinel generation:** a closed relation's occurrence binds at
+  `GENERATION_CLOSED = u64::MAX` — the theory is its image's generation, so
+  the binding can never go stale. The sentinel is maximal and storage
+  generations only advance, so the reaping pass (which drops parked bindings
+  *strictly below* the reader's generation) never touches it: warm forever,
+  zero rebuilds across commits. A sentinel constant, deliberately not an
+  `Option<Generation>` threaded through the memo — every existing comparison
+  keeps compiling and meaning the right thing.
 - **Magnitude-first cover choice.** `KeyCount` labels mean keys-exact vs
   positions-upper-bound; both are admissible iteration-cost bounds, so
   `better_cover` compares magnitudes and uses the label only on ties. A

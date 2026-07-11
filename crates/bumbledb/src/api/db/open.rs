@@ -40,7 +40,7 @@ impl<S: Theory> Db<S> {
     fn assemble(env: Environment, schema: Schema) -> Self {
         Self {
             env,
-            cache: ImageCache::new(),
+            cache: ImageCache::new(&schema),
             writer: Mutex::new(()),
             writer_thread: std::sync::atomic::AtomicU64::new(0),
             read_cache: Mutex::new(None),

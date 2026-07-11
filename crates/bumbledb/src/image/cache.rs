@@ -9,7 +9,7 @@
 //! is no memory-pressure eviction, ever — the scale axiom.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::image::RelationImage;
 use crate::schema::RelationId;
@@ -47,8 +47,30 @@ struct CacheInner {
 /// anything else that can panic stay outside the lock.
 pub struct ImageCache {
     inner: Mutex<CacheInner>,
+    /// Relation ordinal → closed-relation ordinal (`None` = ordinary),
+    /// fixed at construction from the schema — the index into `closed`.
+    closed_ordinals: Box<[Option<u32>]>,
+    /// Synthesized closed-relation images, indexed by closed ordinal —
+    /// keyed OUTSIDE the generation map (`docs/architecture/50-storage.md`
+    /// § virtual relations): a closed relation's storage is the theory
+    /// and its "generation" is the fingerprint, so each slot builds on
+    /// first touch and is **never evicted, never rebuilt** —
+    /// [`ImageCache::evict_older_than`] skips it by construction, because
+    /// it is not in the generation-keyed map at all.
+    closed: Box<[OnceLock<Arc<RelationImage>>]>,
     #[cfg(feature = "trace")]
     counters: stats::CacheCounters,
+}
+
+impl ImageCache {
+    /// The synthesized-image slot of `rel`: `None` = ordinary (a foreign
+    /// id also answers `None` — the ordinary path types that error).
+    fn closed_slot(&self, rel: RelationId) -> Option<&OnceLock<Arc<RelationImage>>> {
+        let ordinal = (*self
+            .closed_ordinals
+            .get(usize::try_from(rel.0).expect("64-bit usize"))?)?;
+        Some(&self.closed[usize::try_from(ordinal).expect("64-bit usize")])
+    }
 }
 
 #[cfg(feature = "trace")]

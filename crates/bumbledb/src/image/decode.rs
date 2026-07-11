@@ -141,7 +141,6 @@ pub(super) fn decode_plan(
 
 /// The scan loop: one width check per fact, then unchecked loads and
 /// slab stores through the plan. Returns the rows filled.
-#[allow(unsafe_code)] // 00-product policy: image decode kernels
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fill_columns(
     txn: &ReadTxn<'_>,
@@ -162,112 +161,132 @@ pub(super) fn fill_columns(
                 stored: row_count as u64,
             }));
         }
-        // One width check per fact makes every plan offset in-bounds.
-        if fact_bytes.len() != fact_width {
-            return Err(Error::Corruption(CorruptionError::WrongFactWidth {
-                relation: rel,
-                row_id: position as u64,
-                expected: fact_width,
-                actual: fact_bytes.len(),
-            }));
-        }
-        for step in plan {
-            match step {
-                Decode::Word { offset, start } => {
-                    // SAFETY: offset + 8 <= fact_width (layout-derived)
-                    // and the width was checked above; position <
-                    // row_count checked above, slabs sized to row_count.
+        decode_fact(rel, plan, fact_width, fact_bytes, position, words, bytes)?;
+        position += 1;
+    }
+    Ok(position)
+}
+
+/// Decodes one canonical fact through the plan into the slabs at
+/// `position` — one width check up front makes every plan offset
+/// in-bounds. Both fill paths run this: the LMDB scan ([`fill_columns`])
+/// and closed-relation synthesis ([`super::build::synthesize_closed`]),
+/// so a sealed extension decodes through exactly the machinery a stored
+/// fact does.
+#[allow(unsafe_code)] // 00-product policy: image decode kernels
+#[allow(clippy::too_many_arguments)]
+pub(super) fn decode_fact(
+    rel: RelationId,
+    plan: &[Decode],
+    fact_width: usize,
+    fact_bytes: &[u8],
+    position: usize,
+    words: &mut [u64],
+    bytes: &mut [u8],
+) -> Result<()> {
+    // One width check per fact makes every plan offset in-bounds.
+    if fact_bytes.len() != fact_width {
+        return Err(Error::Corruption(CorruptionError::WrongFactWidth {
+            relation: rel,
+            row_id: position as u64,
+            expected: fact_width,
+            actual: fact_bytes.len(),
+        }));
+    }
+    for step in plan {
+        match step {
+            Decode::Word { offset, start } => {
+                // SAFETY: offset + 8 <= fact_width (layout-derived)
+                // and the width was checked above; position <
+                // row_count checked above, slabs sized to row_count.
+                let word = u64::from_be_bytes(unsafe {
+                    fact_bytes
+                        .get_unchecked(*offset..*offset + 8)
+                        .try_into()
+                        .expect("8-byte field")
+                });
+                unsafe {
+                    *words.get_unchecked_mut(start + position) = word;
+                }
+            }
+            Decode::FixedBytes {
+                offset,
+                starts,
+                pad_mask,
+            } => {
+                // SAFETY: offset + 8 * starts.len() <= fact_width
+                // (layout-derived) and the width was checked above;
+                // slab bounds as for Word.
+                let mut last = 0u64;
+                for (i, start) in starts.iter().enumerate() {
                     let word = u64::from_be_bytes(unsafe {
                         fact_bytes
-                            .get_unchecked(*offset..*offset + 8)
+                            .get_unchecked(*offset + 8 * i..*offset + 8 * i + 8)
                             .try_into()
-                            .expect("8-byte field")
+                            .expect("8-byte word")
                     });
                     unsafe {
                         *words.get_unchecked_mut(start + position) = word;
                     }
+                    last = word;
                 }
-                Decode::FixedBytes {
-                    offset,
-                    starts,
-                    pad_mask,
-                } => {
-                    // SAFETY: offset + 8 * starts.len() <= fact_width
-                    // (layout-derived) and the width was checked above;
-                    // slab bounds as for Word.
-                    let mut last = 0u64;
-                    for (i, start) in starts.iter().enumerate() {
-                        let word = u64::from_be_bytes(unsafe {
-                            fact_bytes
-                                .get_unchecked(*offset + 8 * i..*offset + 8 * i + 8)
-                                .try_into()
-                                .expect("8-byte word")
-                        });
-                        unsafe {
-                            *words.get_unchecked_mut(start + position) = word;
-                        }
-                        last = word;
-                    }
-                    // The pad is encoding, not data: a nonzero trailing
-                    // pad byte is corruption — hard error, never a skip.
-                    if last & pad_mask != 0 {
-                        return Err(Error::Corruption(CorruptionError::NonzeroFixedBytesPad(
-                            last.to_be_bytes(),
-                        )));
-                    }
+                // The pad is encoding, not data: a nonzero trailing
+                // pad byte is corruption — hard error, never a skip.
+                if last & pad_mask != 0 {
+                    return Err(Error::Corruption(CorruptionError::NonzeroFixedBytesPad(
+                        last.to_be_bytes(),
+                    )));
                 }
-                Decode::Interval {
-                    offset,
-                    start_column,
-                    end_column,
-                } => {
-                    // SAFETY: offset + 16 <= fact_width (layout-derived),
-                    // width checked above; slab bounds as for Word.
-                    let halves: [u8; 16] = unsafe {
-                        fact_bytes
-                            .get_unchecked(*offset..*offset + 16)
-                            .try_into()
-                            .expect("16-byte field")
-                    };
-                    let start_word =
-                        u64::from_be_bytes(halves[..8].try_into().expect("8-byte half"));
-                    let end_word = u64::from_be_bytes(halves[8..].try_into().expect("8-byte half"));
-                    // The stored halves are order-preserving words (the
-                    // I64 sign-flip lives inside the encoding), so the
-                    // strict `start < end` invariant IS this u64 compare.
-                    // A violation is corruption: hard error, never a skip
-                    // (`docs/architecture/50-storage.md`).
-                    if start_word >= end_word {
-                        return Err(Error::Corruption(CorruptionError::InvalidInterval(halves)));
-                    }
-                    unsafe {
-                        *words.get_unchecked_mut(start_column + position) = start_word;
-                        *words.get_unchecked_mut(end_column + position) = end_word;
-                    }
+            }
+            Decode::Interval {
+                offset,
+                start_column,
+                end_column,
+            } => {
+                // SAFETY: offset + 16 <= fact_width (layout-derived),
+                // width checked above; slab bounds as for Word.
+                let halves: [u8; 16] = unsafe {
+                    fact_bytes
+                        .get_unchecked(*offset..*offset + 16)
+                        .try_into()
+                        .expect("16-byte field")
+                };
+                let start_word = u64::from_be_bytes(halves[..8].try_into().expect("8-byte half"));
+                let end_word = u64::from_be_bytes(halves[8..].try_into().expect("8-byte half"));
+                // The stored halves are order-preserving words (the
+                // I64 sign-flip lives inside the encoding), so the
+                // strict `start < end` invariant IS this u64 compare.
+                // A violation is corruption: hard error, never a skip
+                // (`docs/architecture/50-storage.md`).
+                if start_word >= end_word {
+                    return Err(Error::Corruption(CorruptionError::InvalidInterval(halves)));
                 }
-                Decode::Bool { offset, start } => {
-                    // SAFETY: as above.
-                    let byte = unsafe { *fact_bytes.get_unchecked(*offset) };
-                    decode_bool(byte)?;
-                    unsafe {
-                        *bytes.get_unchecked_mut(start + position) = byte;
-                    }
+                unsafe {
+                    *words.get_unchecked_mut(start_column + position) = start_word;
+                    *words.get_unchecked_mut(end_column + position) = end_word;
                 }
-                Decode::Enum {
-                    offset,
-                    start,
-                    variants,
-                } => {
-                    // SAFETY: as above.
-                    let byte = unsafe { *fact_bytes.get_unchecked(*offset) };
-                    decode_enum(byte, *variants)?;
-                    unsafe {
-                        *bytes.get_unchecked_mut(start + position) = byte;
-                    }
+            }
+            Decode::Bool { offset, start } => {
+                // SAFETY: as above.
+                let byte = unsafe { *fact_bytes.get_unchecked(*offset) };
+                decode_bool(byte)?;
+                unsafe {
+                    *bytes.get_unchecked_mut(start + position) = byte;
+                }
+            }
+            Decode::Enum {
+                offset,
+                start,
+                variants,
+            } => {
+                // SAFETY: as above.
+                let byte = unsafe { *fact_bytes.get_unchecked(*offset) };
+                decode_enum(byte, *variants)?;
+                unsafe {
+                    *bytes.get_unchecked_mut(start + position) = byte;
                 }
             }
         }
-        position += 1;
     }
-    Ok(position)
+    Ok(())
 }

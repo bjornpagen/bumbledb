@@ -33,7 +33,7 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
         predicates: vec![],
     });
     let txn = env.read_txn().expect("txn");
-    let cache = crate::image::cache::ImageCache::new();
+    let cache = crate::image::cache::ImageCache::new(&schema);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
     assert!(
         prepared.rules[0].guard_finds.is_some(),
@@ -89,7 +89,7 @@ fn a_guard_prepare_and_execute_build_no_image() {
         predicates: vec![],
     });
     let txn = env.read_txn().expect("txn");
-    let cache = crate::image::cache::ImageCache::new();
+    let cache = crate::image::cache::ImageCache::new(&schema);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
     assert!(
         prepared.rules[0].guard_finds.is_some(),
@@ -114,7 +114,7 @@ fn guard_probe_queries_flow_through_the_same_surface() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(5, 7, "found", 42)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     // Q(amount) :- Posting(id = 5, amount) — the fresh key: guard probe.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -234,7 +234,7 @@ fn pointwise_key_point_lookup_is_guarded_and_image_free() {
         &schema,
         &[(1, (5, 10), 100), (1, (20, 30), 200), (2, (5, 10), 300)],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = booking_query(Term::Literal(Value::IntervalU64(5, 10)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
@@ -286,7 +286,7 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
         &schema,
         &[(1, (5, 10), 100), (1, (20, 30), 200), (2, (5, 10), 300)],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     // span ∋ 7 — a U64 *point* literal on the interval field is a
     // membership binding (validation's typing, by the literal's shape),
@@ -366,7 +366,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     drop(view);
     commit(delta, &env).expect("commit");
 
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     // Q(count()) :- Stay(owner = 2, span = [5, 10)) — the existence shape.
     let count_stay = |span: (u64, u64)| {
@@ -458,7 +458,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
     drop(view);
     commit(delta, &env).expect("commit");
 
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     // Q(val) :- Doc(name = ?0, val).
     let query = Query::single(Rule {

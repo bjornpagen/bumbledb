@@ -264,7 +264,7 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     populate_du(&env, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
@@ -317,7 +317,7 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
     let schema = chase_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     populate(&env, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Projection sink: Q(pid, m) — posting ids keep duplicate amounts
@@ -385,7 +385,7 @@ fn per_rule_elimination_marks_one_rule_only() {
     let schema = chase_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     populate(&env, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     // rule 0: Q(pid, m) :- Posting(pid, x, m), Account(id = x);
     // rule 1: the same walk with Account(name == "cash") — the extra
@@ -460,7 +460,7 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     populate_du(&env, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],

@@ -59,7 +59,7 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let prepared = prepare(&txn, &cache, &schema, &union_query()).expect("multi-rule builds");
@@ -86,7 +86,7 @@ fn an_overlapping_union_has_no_duplicates_and_host_concatenation_does() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let floor = vec![BindValue::I64(0)];
 
@@ -140,7 +140,7 @@ fn params_bind_once_and_reach_all_rules() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let mut prepared = prepare(&txn, &cache, &schema, &union_query()).expect("prepare");
@@ -170,7 +170,7 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(Sum(amount), Count) :- rules over accounts 3 and 7.
@@ -223,7 +223,7 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(memo, Sum(amount)) :- account 3's ∪ account 7's postings.
@@ -288,7 +288,7 @@ fn the_all_count_head_counts_the_singleton_union() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let rule = |account: u64| Rule {
@@ -327,7 +327,7 @@ fn explain_reports_per_rule_stats_and_the_union_accounting() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let mut prepared = prepare(&txn, &cache, &schema, &union_query()).expect("prepare");
@@ -375,7 +375,7 @@ fn a_guard_rule_unions_through_the_sink() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Rule 0: account 3's (memo, amount). Rule 1: the point lookup
@@ -424,7 +424,7 @@ fn arg_restriction_across_rules_is_the_typed_validation_refusal() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let arg_rule = |account: u64| Rule {

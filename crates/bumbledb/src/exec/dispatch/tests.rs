@@ -270,6 +270,52 @@ fn a_second_atom_or_a_residual_stays_free_join() {
     assert!(classify(&with_residual, &schema).is_none());
 }
 
+/// The closed Currency { `minor_units` } = { Usd(2), Eur(0) }: statement 0
+/// is the closed auto-key on the synthetic `id`.
+fn currency_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: Some(Box::new([
+                crate::schema::Row {
+                    handle: "Usd".into(),
+                    values: Box::new([crate::ir::Value::U64(2)]),
+                },
+                crate::schema::Row {
+                    handle: "Eur".into(),
+                    values: Box::new([crate::ir::Value::U64(0)]),
+                },
+            ])),
+            name: "Currency".into(),
+            fields: vec![FieldDescriptor {
+                name: "minor_units".into(),
+                value_type: ValueType::U64,
+                generation: Generation::None,
+            }],
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+/// A closed relation never takes the guard path: no `U` guards and no `M`
+/// entries exist — its storage is the theory — so even a single atom
+/// fully binding the auto-key (or every field) classifies as Free Join
+/// and hits the virtual image.
+#[test]
+fn a_closed_relation_stays_free_join_even_fully_bound() {
+    let schema = currency_schema();
+    // id = 1 covers the closed auto-key's whole projection.
+    let key_bound = single(occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(1))]));
+    assert!(classify(&key_bound, &schema).is_none());
+    // Every field bound by value: the full-fact `M` path is refused too.
+    let fully_bound = single(occurrence(
+        &[],
+        vec![eq_filter(0, Const::Word(1)), eq_filter(1, Const::Word(0))],
+    ));
+    assert!(classify(&fully_bound, &schema).is_none());
+}
+
 #[test]
 fn a_partially_bound_key_stays_free_join() {
     let schema = account_schema();

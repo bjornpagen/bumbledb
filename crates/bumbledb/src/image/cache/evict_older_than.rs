@@ -7,7 +7,9 @@ impl ImageCache {
     /// Retains only entries at or above `generation`; called by the write
     /// path after each state-changing commit (the 60-api doc wires `CommitReport`
     /// here). The map drop only releases the map's reference — pinned
-    /// readers keep their images alive.
+    /// readers keep their images alive. Synthesized closed-relation
+    /// images are untouched by construction: they live in the `closed`
+    /// slot array, never in this generation-keyed map.
     ///
     /// # Panics
     ///

@@ -6,7 +6,7 @@ fn explain_reports_the_join_plan_with_actuals() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a", 1), (2, 7, "b", 2)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (rows, report) = prepared
@@ -31,7 +31,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
         &schema,
         &[(1, 7, "a", 1), (2, 7, "b", 2), (3, 9, "c", 3)],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
@@ -97,7 +97,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
             (3, 9, "gym", -80),
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");

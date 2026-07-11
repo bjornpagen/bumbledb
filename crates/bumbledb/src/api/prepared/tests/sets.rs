@@ -68,7 +68,7 @@ fn in_family_equals_the_union_of_per_element_executions() {
         .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
         .collect();
     insert_postings(&env, &schema, &borrowed);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let mut set_query = prepare(&txn, &cache, &schema, &by_account_set_query()).expect("prepare");
@@ -139,7 +139,7 @@ fn out_of_vocabulary_string_elements_contribute_nothing() {
             (3, 8, "rent", -900),
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(amount) :- Posting(memo = ?set0, amount).
@@ -282,7 +282,7 @@ fn membership_point_var_join_end_to_end() {
     let schema = interval_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_interval_fixture(&env, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(emp, at) :- Payroll(emp, during ∋ at), Event(emp, at).
@@ -327,7 +327,7 @@ fn set_membership_matches_any_element() {
     let schema = interval_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_interval_fixture(&env, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(emp) :- Payroll(emp, during ∋ ?set0).
@@ -416,7 +416,7 @@ fn membership_of_the_last_point_in_a_ray_is_true_and_the_ceiling_rejects() {
     let dir = TempDir::new("prepared-ray-membership");
     let schema = interval_schema();
     let env = ray_fixture(&dir, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let mut prepared = prepare(
@@ -454,7 +454,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
     let dir = TempDir::new("prepared-ray-point-param");
     let schema = interval_schema();
     let env = ray_fixture(&dir, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(emp) :- Payroll(emp, during ∋ ?0), Event(emp, at = ?0): the
@@ -602,7 +602,7 @@ fn negated_set_bindings_reject_under_any_element() {
     }
     drop(view);
     commit(delta, &env).expect("commit");
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(amount) :- Posting(account, amount), not Block(account, kind = ?set0).

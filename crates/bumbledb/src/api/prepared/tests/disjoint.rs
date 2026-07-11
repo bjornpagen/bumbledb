@@ -121,7 +121,7 @@ fn the_du_arm_union_proves_and_an_unselected_arm_unproves() {
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_items(&env, &schema, &item_rows());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let proven = prepare(
@@ -171,7 +171,7 @@ fn explain_names_the_disjointness_witness() {
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_items(&env, &schema, &item_rows());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let mut prepared = prepare(
@@ -221,7 +221,7 @@ fn count_over_a_proven_disjoint_union_elides_the_fold_seen_set() {
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_items(&env, &schema, &item_rows());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(id, Count) :- one rule per kind; the rule binds ONLY the key
@@ -333,7 +333,7 @@ fn the_randomized_corpus_is_byte_identical_elided_vs_forced_off() {
         rows.push((id, (lcg.next() % 3) as u8, 10 + lcg.next() % 4));
     }
     insert_items(&env, &schema, &rows);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // One corpus rule: bind the key (or not), select a kind (or not),
@@ -425,7 +425,7 @@ fn a_three_arm_union_survives_the_per_rule_drains() {
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_items(&env, &schema, &item_rows());
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let query = du_query(vec![arm_rule(0), arm_rule(1), arm_rule(2)]);

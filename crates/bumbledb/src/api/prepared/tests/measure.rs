@@ -166,7 +166,7 @@ fn duration_find_projects_the_measure_u64() {
             (3, 30, 0, (100, 350)),        // measure 250
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
@@ -207,7 +207,7 @@ fn duration_find_projects_the_measure_i64() {
             (3, 30, (7, 8)),                   // [x, x+1): measure 1
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
@@ -247,7 +247,7 @@ fn sum_min_max_over_the_measure() {
             (3, 20, 0, (5, 6)),   // 1
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let over = |op: AggOp| FindTerm::AggregateDuration { op, over: VarId(1) };
     let query = Query::single(Rule {
@@ -296,7 +296,7 @@ fn duration_comparisons_filter_and_join() {
         ],
     );
     insert_windows(&env, &schema, &[(1, 10, 2), (2, 20, 4), (3, 30, 1)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let session_atom = Atom {
         relation: SESSION,
@@ -420,7 +420,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
         ],
     );
     insert_windows(&env, &schema, &[(1, 10, 2), (2, 20, 2)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let session_atom = Atom {
         relation: SESSION,
@@ -547,7 +547,7 @@ fn sum_of_durations_overflow_is_the_typed_overflow_error() {
             (2, 10, 0, (1, u64::MAX - 1)), // measure MAX−2
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
         finds: vec![

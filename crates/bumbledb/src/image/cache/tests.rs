@@ -47,7 +47,7 @@ fn sequential_readers_share_one_image_instance() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_one(&env, &schema, 1);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
 
     let txn1 = env.read_txn().expect("txn");
     let first = cache.get_or_build(&txn1, &schema, R).expect("build");
@@ -64,7 +64,7 @@ fn eviction_after_commit_leaves_only_the_new_generation() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_one(&env, &schema, 1);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
 
     let old_txn = env.read_txn().expect("txn");
     let old_image = cache.get_or_build(&old_txn, &schema, R).expect("build");
@@ -95,7 +95,7 @@ fn old_generation_miss_builds_without_populating_the_map() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_one(&env, &schema, 1);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
 
     // Pin a reader at generation 1, then advance the world.
     let old_txn = env.read_txn().expect("txn");
@@ -115,7 +115,7 @@ fn concurrent_same_generation_builders_converge_on_one_arc() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_one(&env, &schema, 1);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
 
     let images = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..2)
@@ -145,7 +145,7 @@ fn a_no_op_commit_does_not_invalidate_the_cache() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_one(&env, &schema, 1);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
 
     let txn = env.read_txn().expect("txn");
     let before = cache.get_or_build(&txn, &schema, R).expect("build");
@@ -160,6 +160,83 @@ fn a_no_op_commit_does_not_invalidate_the_cache() {
     assert!(Arc::ptr_eq(&before, &after), "the cache stayed warm");
 }
 
+/// R(x u64 fresh) plus the closed Currency { `minor_units` } = { Usd(2),
+/// Eur(0) }: the ordinary relation drives generations, the closed one
+/// lives outside them.
+fn closed_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "R".into(),
+                fields: vec![FieldDescriptor {
+                    name: "x".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::Fresh,
+                }],
+            },
+            RelationDescriptor {
+                extension: Some(Box::new([
+                    crate::schema::Row {
+                        handle: "Usd".into(),
+                        values: Box::new([crate::ir::Value::U64(2)]),
+                    },
+                    crate::schema::Row {
+                        handle: "Eur".into(),
+                        values: Box::new([crate::ir::Value::U64(0)]),
+                    },
+                ])),
+                name: "Currency".into(),
+                fields: vec![FieldDescriptor {
+                    name: "minor_units".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                }],
+            },
+        ],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+const CURRENCY: RelationId = RelationId(1);
+
+/// The closed image is synthesized once into its `OnceLock` slot — every
+/// reader shares one Arc, the generation map never sees it, and a
+/// state-changing commit plus eviction leaves it untouched (never
+/// evicted, never rebuilt).
+#[test]
+fn closed_images_synthesize_once_and_survive_eviction() {
+    let dir = TempDir::new("cache-closed");
+    let schema = closed_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let cache = ImageCache::new(&schema);
+
+    let txn = env.read_txn().expect("txn");
+    let first = cache.get_or_build(&txn, &schema, CURRENCY).expect("build");
+    let second = cache.get_or_build(&txn, &schema, CURRENCY).expect("build");
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(first.row_count(), 2);
+    assert_eq!(cache.keys(), vec![], "never in the generation map");
+    drop(txn);
+
+    // A state-changing commit + eviction: the slot is untouched by
+    // construction — it is not in the generation-keyed map at all.
+    assert!(insert_one(&env, &schema, 1));
+    cache.evict_older_than(u64::MAX);
+    let txn = env.read_txn().expect("txn");
+    let third = cache.get_or_build(&txn, &schema, CURRENCY).expect("build");
+    assert!(Arc::ptr_eq(&first, &third), "warm across every generation");
+
+    // `peek` sees the resident slot without a build — same Arc.
+    let peeked = cache
+        .peek(&txn, CURRENCY)
+        .expect("peek")
+        .expect("resident forever");
+    assert!(Arc::ptr_eq(&first, &peeked));
+}
+
 #[cfg(feature = "trace")]
 #[test]
 fn counters_track_hit_miss_build_evict_exactly() {
@@ -167,7 +244,7 @@ fn counters_track_hit_miss_build_evict_exactly() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     assert!(insert_one(&env, &schema, 1));
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let base = cache.stats();

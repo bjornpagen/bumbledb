@@ -401,7 +401,7 @@ mod tests {
         let env = Environment::create(dir.path(), &schema).expect("create");
         populate(&env, &schema);
         let txn = env.read_txn().expect("txn");
-        let cache = ImageCache::new();
+        let cache = ImageCache::new(&schema);
 
         // Keyed (fresh id): estimate = rows / rows = 1, cold or warm.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(0, R), 64)
@@ -454,7 +454,7 @@ mod tests {
         let env = Environment::create(dir.path(), &schema).expect("create");
         populate(&env, &schema);
         let txn = env.read_txn().expect("txn");
-        let cache = ImageCache::new();
+        let cache = ImageCache::new(&schema);
 
         let mut occ = eq_on(0, R);
         occ.filters = vec![
@@ -576,7 +576,7 @@ mod tests {
         commit(delta, &env).expect("commit");
 
         let txn = env.read_txn().expect("txn");
-        let cache = ImageCache::new();
+        let cache = ImageCache::new(&schema);
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(1, SRC), 1600)
             .expect("estimate")
             .rows;
@@ -598,7 +598,7 @@ mod tests {
         let env = Environment::create(dir.path(), &schema).expect("create");
         populate(&env, &schema);
         let txn = env.read_txn().expect("txn");
-        let cache = ImageCache::new();
+        let cache = ImageCache::new(&schema);
 
         let mut occ = eq_on(0, R);
         occ.filters = vec![FilterPredicate::Compare {

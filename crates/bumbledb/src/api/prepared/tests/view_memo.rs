@@ -23,7 +23,7 @@ fn residual_bindings_memoize_under_lru() {
             (6, 7, "f", 60),
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let params = |floor: i64| vec![BindValue::U64(7), BindValue::I64(floor)];
@@ -104,7 +104,7 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 3, "a", 10), (2, 7, "b", 25)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Two rules over the SAME relation, each with a residual filter so
@@ -186,7 +186,7 @@ fn a_generation_bump_invalidates_the_memo() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "old", 10)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let params = vec![BindValue::U64(7), BindValue::I64(0)];
@@ -223,7 +223,7 @@ fn read_path_traces_phases_memo_hits_and_guard() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "rent", -1200), (2, 7, "food", -55)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let names = |events: &[obs::TraceEvent]| -> Vec<&'static str> {
@@ -327,4 +327,111 @@ fn read_path_traces_phases_memo_hits_and_guard() {
         .expect("execute");
     obs::start_capture();
     assert!(obs::finish_capture().is_empty());
+}
+
+/// A closed relation's view binds at the sentinel generation
+/// (`view_memo::GENERATION_CLOSED`): bind → commit → bind rebuilds
+/// nothing — the image slot is never evicted, the memo binding is never
+/// reaped (the sentinel is maximal), and the second execution is a pure
+/// memo hit across the storage-generation advance.
+#[test]
+fn closed_relation_views_stay_warm_across_generations() {
+    use crate::obs;
+
+    let dir = TempDir::new("prepared-closed-memo");
+    // R(x u64 fresh) drives generations; the closed Currency lives
+    // outside them.
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "R".into(),
+                fields: vec![FieldDescriptor {
+                    name: "x".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::Fresh,
+                }],
+            },
+            RelationDescriptor {
+                extension: Some(Box::new([
+                    crate::schema::Row {
+                        handle: "Usd".into(),
+                        values: Box::new([Value::U64(2)]),
+                    },
+                    crate::schema::Row {
+                        handle: "Eur".into(),
+                        values: Box::new([Value::U64(0)]),
+                    },
+                ])),
+                name: "Currency".into(),
+                fields: vec![FieldDescriptor {
+                    name: "minor_units".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                }],
+            },
+        ],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture");
+    let currency = RelationId(1);
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    // Q(id, units) :- Currency(id, units) — one occurrence, no params.
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![Atom {
+            relation: currency,
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+
+    let mut run = |txn: &crate::storage::env::ReadTxn<'_>| {
+        obs::start_capture();
+        let out = prepared.execute_collect(txn, &cache, &[]).expect("execute");
+        let events = obs::finish_capture();
+        let count = |name: &'static str| events.iter().filter(|e| e.name == name).count();
+        (
+            count(obs::names::VIEW_BUILD),
+            count(obs::names::VIEW_MEMO_HIT),
+            count(obs::names::IMAGE_BUILD),
+            out.len(),
+        )
+    };
+
+    // First execution: one image synthesis, one view build, both axioms.
+    let (builds, _, image_builds, rows) = run(&txn);
+    assert_eq!((builds, image_builds, rows), (1, 1, 2));
+    drop(txn);
+
+    // A state-changing commit advances the storage generation; the write
+    // path evicts the cache exactly as `Db` wires it.
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let mut bytes = Vec::new();
+    encode_fact(
+        &[ValueRef::U64(1)],
+        schema.relation(RelationId(0)).layout(),
+        &mut bytes,
+    );
+    delta.insert(&view, RelationId(0), &bytes).expect("insert");
+    drop(view);
+    let report = commit(delta, &env).expect("commit");
+    assert!(report.changed);
+    cache.evict_older_than(report.new_generation);
+
+    // Second execution at the new generation: zero rebuilds — the memo
+    // binding hits at the sentinel and the image Arc never moved.
+    let txn = env.read_txn().expect("txn");
+    let (builds, hits, image_builds, rows) = run(&txn);
+    assert_eq!((builds, hits, image_builds, rows), (0, 1, 0, 2));
 }

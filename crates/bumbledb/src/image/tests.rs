@@ -8,6 +8,7 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 
+mod closed;
 mod corruption;
 mod decode;
 mod fixed_bytes;

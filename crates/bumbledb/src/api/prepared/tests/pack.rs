@@ -160,7 +160,7 @@ fn pack_coalesces_overlap_adjacency_and_duplicates_per_group() {
             (7, 20, 0, (4, 6)),  //   they collapse in the sweep
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &pack_query()).expect("prepare");
     let out = prepared
@@ -191,7 +191,7 @@ fn pack_absorbs_rays_over_i64_spans() {
             (5, 20, (-10, -9)),     // bounded group stays bounded
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
         finds: vec![
@@ -245,7 +245,7 @@ fn pack_groups_exactly_as_sum_does() {
             (4, 30, 1, (2, 4)),
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let sum_query = Query::single(Rule {
         finds: vec![
@@ -305,7 +305,7 @@ fn multi_rule_pack_folds_the_union() {
             (3, 10, 9, (6, 8)), // high-cap rule only (adjacency merges)
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let rule = |op: CmpOp, param: u16| Rule {
         finds: vec![

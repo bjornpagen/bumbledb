@@ -214,12 +214,36 @@ impl<S> WriteTx<'_, S> {
     /// The shared lookup leg: delta guard map first (`Present` → the
     /// pending fact's bytes, `Absent` → known deleted), then the committed
     /// view — `U` get → `F` fetch.
+    ///
+    /// A **closed** relation resolves against its sealed extension instead
+    /// — virtual storage, no `U` guards exist
+    /// (`docs/architecture/50-storage.md` § virtual relations): the key's
+    /// guard bytes are re-derived per row by the same slicing the commit
+    /// path uses, and the scan is ≤256 rows, L1-resident — O(rows) is
+    /// honest and tiny. No delta arm: writes are refused at entry.
     fn fact_by_guard(
         &self,
         relation: RelationId,
         key: StatementId,
         guard: &[u8],
     ) -> Result<Option<&[u8]>> {
+        let rel = self.schema.relation(relation);
+        if let Some(extension) = rel.extension() {
+            let projection = self.schema.key_projection(key);
+            let mut derived = Vec::with_capacity(guard.len());
+            for row in extension {
+                crate::storage::keys::guard_bytes(
+                    rel.layout(),
+                    projection,
+                    &row.fact,
+                    &mut derived,
+                );
+                if derived == guard {
+                    return Ok(Some(&row.fact));
+                }
+            }
+            return Ok(None);
+        }
         match self.delta.guard_overlay(key, guard) {
             Some(GuardOverlay::Present(bytes)) => Ok(Some(bytes)),
             Some(GuardOverlay::Absent) => Ok(None),

@@ -58,6 +58,13 @@ facts, never interned, so the key hash carries no type tag: forward
 - Every namespace names its reader above (README rule 3); a namespace with no
   reader is deleted. Declared opt-in accelerator namespaces exist only with a
   benchmark that demands them (OPEN, README).
+- **Closed relations appear in no namespace.** Their extension is sealed in the
+  theory (§ Virtual relations below) — the store contains zero vocabulary bytes —
+  so no `F`/`M`/`U`/`R`/`Q`/`S` entry may name a closed `RelationId`: the write
+  surface refuses (`ClosedRelationWrite`), the commit plan debug-asserts at every
+  fact-op derivation (`keys::debug_assert_ordinary`), and `Db::verify_store`
+  convicts any stored entry (`ClosedRelationEntry` — the entry's existence is the
+  finding).
 - `fact_bytes` = the canonical encoding owned by `10-data-model.md`; identity = bytes.
 - `fact_hash` = full 32-byte blake3 of `fact_bytes`; an `M` hit is trusted without
   verification (collision axiom, recorded in `10-data-model.md`).
@@ -308,6 +315,34 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
 - Invariant test: two sequential read
   transactions with no intervening write share identical image instances; plus the
   concurrent families in `60-validation.md`.
+
+## Virtual relations (closed): the theory as storage
+
+A closed relation's image is **synthesized, not built**: the sealed extension —
+values canonically encoded ONCE, at validate — decodes through the ordinary
+decode plan into the ordinary SoA layout (implicit `id` column `0..rows` first,
+interval = two word columns, pitch padding, lazy exact distinct counters), with
+**no LMDB transaction anywhere** (`image::synthesize_closed` takes none;
+synthesis is pure). The fingerprint's preimage IS the storage: vocabulary can
+never desync, never bloat, and never needs the sweeper — its "generation" is
+the theory itself.
+
+- **Cache behavior:** the synthesized image lives in a per-relation `OnceLock`
+  slot on the cache, sized at cache construction from the schema and keyed
+  *outside* the generation map — built on first touch, **never evicted, never
+  rebuilt** (`evict_older_than` skips it by construction; it is not in the
+  generation-keyed map at all). `peek` answers it once resident, with no
+  generation read.
+- **Read surfaces:** `Snapshot::scan`/`scan_facts` yield the extension's
+  canonical fact bytes directly (row id = declaration index); `WriteTx`
+  point reads (`get_dyn`) resolve against the extension by re-deriving guard
+  bytes per row — ≤256 rows, L1-resident, an honest linear scan. There are no
+  `U` guards to probe: the closed auto-key is enforced by validation's
+  duplicate-handle check, and the guard-probe fast path refuses closed
+  relations at classification (`40-execution.md` § access paths).
+- **Write refusal, three layers:** the typed `ClosedRelationWrite` at every
+  write-surface entry, the commit plan's debug assertion, and the sweeper's
+  `ClosedRelationEntry` conviction (the namespace-table note above).
 
 ## Memory discipline
 

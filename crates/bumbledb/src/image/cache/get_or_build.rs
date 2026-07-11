@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use crate::error::Result;
-use crate::image::{build, RelationImage};
+use crate::image::{build, synthesize_closed, RelationImage};
 use crate::schema::{RelationId, Schema};
 use crate::storage::env::ReadTxn;
 
@@ -16,9 +16,16 @@ impl ImageCache {
     /// build may both build; insert-if-absent means the loser adopts the
     /// winner's `Arc` and drops its own (accepted waste, no latch).
     ///
+    /// A **closed** relation branches before the generation map is ever
+    /// touched: its image is synthesized from the sealed extension — the
+    /// theory is the storage, so there is no generation to key on, no
+    /// LMDB read, no eviction. First touch builds into the relation's
+    /// `OnceLock` slot; every later reader clones the same `Arc` forever.
+    ///
     /// # Errors
     ///
-    /// Build errors (`Lmdb`, `Corruption`) propagate.
+    /// Build errors (`Lmdb`, `Corruption`) propagate; synthesis is pure
+    /// and cannot fail.
     ///
     /// # Panics
     ///
@@ -29,6 +36,9 @@ impl ImageCache {
         schema: &Schema,
         rel: RelationId,
     ) -> Result<Arc<RelationImage>> {
+        if self.closed_slot(rel).is_some() {
+            return Ok(self.get_or_synthesize(schema, rel));
+        }
         let generation = txn.generation()?;
         let key = (rel, generation);
         let newest = {
@@ -105,5 +115,51 @@ impl ImageCache {
                 Ok(image)
             }
         }
+    }
+
+    /// The virtual branch: the synthesized image of a closed relation,
+    /// built into its `OnceLock` slot on first touch. Losers of an init
+    /// race block on the winner's synthesis (`OnceLock::get_or_init`) and
+    /// adopt its Arc — exactly one build per slot per process, ever.
+    ///
+    /// # Panics
+    ///
+    /// Only on a programmer-invariant violation: `rel` is not closed
+    /// (the caller probed `closed_slot` first).
+    fn get_or_synthesize(&self, schema: &Schema, rel: RelationId) -> Arc<RelationImage> {
+        let slot = self.closed_slot(rel).expect("caller probed closed_slot");
+        if let Some(image) = slot.get() {
+            #[cfg(feature = "trace")]
+            self.counters
+                .hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            crate::obs::event(
+                crate::obs::names::CACHE_HIT,
+                crate::obs::Category::Cache,
+                u64::from(rel.0),
+                0,
+            );
+            return Arc::clone(image);
+        }
+        #[cfg(feature = "trace")]
+        self.counters
+            .misses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let image = slot.get_or_init(|| {
+            let mut span = crate::obs::span_args(
+                crate::obs::names::IMAGE_BUILD,
+                crate::obs::Category::Image,
+                u64::from(rel.0),
+                0,
+            );
+            #[cfg(feature = "trace")]
+            self.counters
+                .builds
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let image = synthesize_closed(rel, schema.relation(rel));
+            span.set_args(u64::from(rel.0), image.byte_size() as u64);
+            image
+        });
+        Arc::clone(image)
     }
 }

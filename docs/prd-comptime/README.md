@@ -70,9 +70,6 @@ relation), *JIT/codegen* (refused).
 
 ## The PRDs
 
-Phase A — ground axioms:
-- [03 — Virtual images: the theory as storage](03-virtual-images.md)
-
 Phase B — the funeral:
 - [04 — Compiled subsets: statements over closed relations](04-compiled-subsets.md)
 - [05 — The enum funeral](05-enum-funeral.md)

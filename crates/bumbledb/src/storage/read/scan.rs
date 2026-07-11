@@ -1,14 +1,38 @@
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{RelationId, Schema};
+use crate::schema::{Relation, RelationId, Schema};
 use crate::storage::env::ReadTxn;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 
 use super::check_width::check_width;
 
+/// The two scan sources behind one iterator type: the `F` cursor for an
+/// ordinary relation, the sealed extension for a closed one — virtual
+/// storage, the store holds zero closed-relation bytes
+/// (`docs/architecture/50-storage.md` § virtual relations).
+enum Scan<S, C> {
+    Store(S),
+    Closed(C),
+}
+
+impl<T, S: Iterator<Item = T>, C: Iterator<Item = T>> Iterator for Scan<S, C> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        match self {
+            Self::Store(iter) => iter.next(),
+            Self::Closed(iter) => iter.next(),
+        }
+    }
+}
+
 /// One `F`-prefix cursor over a relation's live facts in `row_id` order.
 /// Holes from deletes are absent keys, not tombstones — they simply do not
 /// appear. A wrong-width fact yields `Err(Corruption)`; the caller is
 /// expected to stop at the first error (hard error, never a skip).
+///
+/// A **closed** relation never touches the cursor: its facts are the
+/// sealed extension's canonical bytes, yielded in declaration order (row
+/// id = declaration index) straight from the theory.
 ///
 /// # Errors
 ///
@@ -20,6 +44,14 @@ pub fn scan<'txn>(
     schema: &'txn Schema,
     rel: RelationId,
 ) -> Result<impl Iterator<Item = Result<(u64, &'txn [u8])>>> {
+    if let Some(extension) = schema.relation_checked(rel).and_then(Relation::extension) {
+        return Ok(Scan::Closed(
+            extension
+                .iter()
+                .enumerate()
+                .map(|(row_id, row)| Ok((row_id as u64, &*row.fact))),
+        ));
+    }
     let mut key: KeyBuf = [0; MAX_KEY];
     let len = keys::fact_prefix(&mut key, rel);
     let iter = txn.env().data().prefix_iter(txn.raw(), &key[..len])?;
@@ -27,7 +59,7 @@ pub fn scan<'txn>(
     // nothing more — "never a skip" is structural, not a caller
     // obligation (a caller ignoring an Err cannot resume past it).
     let mut dead = false;
-    Ok(iter.map_while(move |entry| {
+    Ok(Scan::Store(iter.map_while(move |entry| {
         if dead {
             return None;
         }
@@ -46,5 +78,5 @@ pub fn scan<'txn>(
         })();
         dead = item.is_err();
         Some(item)
-    }))
+    })))
 }

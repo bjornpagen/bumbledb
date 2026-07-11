@@ -28,7 +28,7 @@ fn selection_params_rotate_differentially() {
         .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
         .collect();
     insert_postings(&env, &schema, &borrowed);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
     for cycle in 0..3 {
@@ -81,7 +81,7 @@ fn selection_work_is_o_selected() {
         .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
         .collect();
     insert_postings(&env, &schema, &borrowed);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
     let (out, stats) = prepared
@@ -112,7 +112,7 @@ fn selection_params_rotate_without_view_rebuilds() {
             (4, 0, "m0", 40),
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
 

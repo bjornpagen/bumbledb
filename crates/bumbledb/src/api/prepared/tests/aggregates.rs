@@ -32,7 +32,7 @@ fn count_distinct_collapses_multiplicities_per_group_and_over_strings() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     posting_fixture(&env, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let query = Query::single(Rule {
@@ -96,7 +96,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
         &schema,
         &[(1, 3, "a", 10), (2, 3, "b", 10), (3, 3, "c", 25)],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let query = Query::single(Rule {
@@ -143,7 +143,7 @@ fn arg_max_picks_the_latest_posting_per_account() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     posting_fixture(&env, &schema);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let atoms = vec![Atom {
@@ -245,7 +245,7 @@ fn arg_ties_are_set_honest() {
             (5, 7, "dup", 9),
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(account, ArgMax_amount(memo)) — carries the memo.
@@ -393,7 +393,7 @@ fn interval_find_round_trips_through_the_result_buffer() {
         (3, 11, (i64::MIN, i64::MAX)),
     ];
     insert_payroll(&env, &schema, &stored);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(emp, during) :- Payroll(emp, during).
@@ -458,7 +458,7 @@ fn count_distinct_over_intervals_uses_value_identity() {
             (4, 11, (5, 9)),
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     let query = Query::single(Rule {

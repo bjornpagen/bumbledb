@@ -83,6 +83,13 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     };
 
     let relation = schema.relation(occurrence.relation);
+    // A closed relation has no `U` guards and no `M` entries — its
+    // storage is the theory (`docs/architecture/50-storage.md` § virtual
+    // relations) — so even a fully key-bound single atom classifies as
+    // Free Join and hits the synthesized image.
+    if relation.is_closed() {
+        return None;
+    }
     // Prefer a key-statement probe (one `U` get); fall back to the
     // full-fact membership check when every field is bound by value.
     let (statement, key_fields): (Option<StatementId>, Vec<FieldId>) = relation

@@ -35,7 +35,7 @@ fn overflow_errors_leave_the_buffer_reusable() {
         predicates: vec![],
     });
     let txn = env.read_txn().expect("txn");
-    let cache = crate::image::cache::ImageCache::new();
+    let cache = crate::image::cache::ImageCache::new(&schema);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
     let mut out = ResultBuffer::new();
     for _ in 0..2 {
@@ -85,7 +85,7 @@ fn buffer_reuse_retains_capacity_and_results_stay_identical() {
         &schema,
         &[(1, 7, "one", 1), (2, 7, "two", 2), (3, 7, "three", 3)],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let mut out = ResultBuffer::new();
@@ -136,7 +136,7 @@ fn finalize_resolves_each_distinct_intern_once() {
         .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
         .collect();
     insert_postings(&env, &schema, &borrowed);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
 

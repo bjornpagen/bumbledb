@@ -13,7 +13,7 @@ mod decode;
 mod distinct;
 mod pitch;
 
-pub use build::build;
+pub use build::{build, synthesize_closed};
 
 /// The 16 KiB granule two hardware structures key on (measured):
 /// the L1D's set congruence (256 sets × 64 B lines,

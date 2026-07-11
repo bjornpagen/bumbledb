@@ -172,6 +172,9 @@ fn fact_op<'d>(
     dependent_guards: &mut BTreeSet<(StatementId, Box<[u8]>)>,
     scratch: &mut Vec<u8>,
 ) -> FactOp<'d> {
+    // Every F/M/U/R key byte originates from this derivation — the
+    // refusal-hardening chokepoint (`keys::debug_assert_ordinary`).
+    keys::debug_assert_ordinary(schema, rel);
     let relation = schema.relation(rel);
     let layout = relation.layout();
     let guards = relation

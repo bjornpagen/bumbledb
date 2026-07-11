@@ -17,7 +17,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
         (6, 9, "f", 40),
     ];
     insert_postings(&env, &schema, rows);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
     // Q(id) :- Posting(id, account = a), a >= 7 — a u64 ordered
@@ -172,7 +172,7 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
         *expected.entry(*x).or_insert(0i64) += y;
     }
 
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
@@ -204,7 +204,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "rent", -1200), (2, 9, "food", -55)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
 
     // Literal path: Q(amount) :- Posting(memo = m, amount), m != "ghost".
     let query = Query::single(Rule {
@@ -266,7 +266,7 @@ fn results_decode_intern_ids_to_original_bytes() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a rather long memo text", 10)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let out = prepared

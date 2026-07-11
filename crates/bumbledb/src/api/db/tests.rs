@@ -509,9 +509,58 @@ fn writes_to_a_closed_relation_are_refused_before_the_delta() {
     })
     .expect("the refusal is the operation's, not the transaction's");
     assert_eq!(db.generation().expect("generation"), before);
+    // The read surface still answers — the extension, virtually: exactly
+    // the two ground axioms, never a stored row (the store contains zero
+    // vocabulary bytes; `verify_store` convicts any that appear).
     db.read(|snap| {
-        assert_eq!(snap.scan(currency)?.count(), 0);
+        let rows: Vec<Vec<Value>> = snap.scan(currency)?.collect::<crate::error::Result<_>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                vec![Value::U64(0), Value::U64(2)],
+                vec![Value::U64(1), Value::U64(2)],
+            ]
+        );
         Ok(())
     })
     .expect("read");
+}
+
+/// Point reads on a closed relation resolve against the sealed extension
+/// — the closed auto-key (`Currency(id) -> Currency`, statement 0: no
+/// fresh fields exist) probes no `U` namespace, and the error surface for
+/// unknown ids is exactly the ordinary one.
+#[test]
+fn closed_point_reads_resolve_against_the_extension() {
+    let dir = TempDir::new("db-closed-get");
+    let db = Db::create(dir.path(), closed_schema()).expect("create");
+    let currency = RelationId(0);
+    let auto_key = StatementId(0);
+
+    db.write(|tx| {
+        // A known handle id: the full row (synthetic id ‖ intrinsics).
+        let row = tx
+            .get_dyn(currency, auto_key, &[Value::U64(1)])?
+            .expect("Eur is row 1");
+        assert_eq!(row, vec![Value::U64(1), Value::U64(2)]);
+        // An id beyond the extension: absent, exactly like an ordinary
+        // relation's missing key.
+        assert_eq!(tx.get_dyn(currency, auto_key, &[Value::U64(9)])?, None);
+        // The existing typed error surface, unchanged: unknown relation,
+        // non-key statement, arity mismatch.
+        assert!(matches!(
+            tx.get_dyn(RelationId(7), auto_key, &[Value::U64(0)]),
+            Err(Error::FactShape(FactShapeError::UnknownRelation { .. }))
+        ));
+        assert!(matches!(
+            tx.get_dyn(currency, StatementId(9), &[Value::U64(0)]),
+            Err(Error::FactShape(FactShapeError::NotAKeyStatement { .. }))
+        ));
+        assert!(matches!(
+            tx.get_dyn(currency, auto_key, &[]),
+            Err(Error::FactShape(FactShapeError::ArityMismatch { .. }))
+        ));
+        Ok(())
+    })
+    .expect("write");
 }

@@ -14,7 +14,7 @@ fn prepare_once_execute_many_with_varying_params() {
             (3, 8, "coffee", -4),
         ],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let mut out = ResultBuffer::new();
@@ -58,7 +58,7 @@ fn bind_time_checks_reject_bad_params() {
     let dir = TempDir::new("prepared-bind-errors");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let mut out = ResultBuffer::new();
@@ -97,7 +97,7 @@ fn string_params_resolve_per_execution() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "rent", -1200)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
 
     // Q(amount) :- Posting(memo = ?0, amount).
     let query = Query::single(Rule {
@@ -207,7 +207,7 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
         &schema,
         &[(1, 1, 5), (2, 12, 18), (3, 5, 25), (4, 25, 30)],
     );
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
 
     // Q(a) :- Mandate(account = a, active = v), Allen(v, [10,20), ?0).
     let query = Query::single(Rule {
@@ -274,7 +274,7 @@ fn a_cross_atom_mask_param_resolves_into_the_executors_residual() {
     let schema = mandate_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_mandates(&env, &schema, &[(1, 10, 20), (2, 15, 25), (3, 30, 40)]);
-    let cache = ImageCache::new();
+    let cache = ImageCache::new(&schema);
 
     // Q(a, b) :- Mandate(account = a, active = u),
     //            Mandate(account = b, active = v),
