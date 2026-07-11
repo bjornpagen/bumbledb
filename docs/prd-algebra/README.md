@@ -1,11 +1,12 @@
 # PRD set — the algebra pass: one logic, three confinements
 
-This directory is the complete, ordered work plan for the next phase: the interval
-algebra cutover, the rules-shaped query IR, the temporal completions, and the
-borrowed/typed surface. It **follows** the correctness-and-elegance campaign
-(`docs/prd/`) and begins when that campaign closes (its gate plus the re-bench).
-When a PRD and an architecture chapter disagree, **the chapter wins** and the PRD
-is amended.
+This directory was the complete, ordered work plan for the algebra phase: the
+interval algebra cutover, the rules-shaped query IR, the temporal completions,
+and the borrowed/typed surface. It **followed** the correctness-and-elegance
+campaign (`docs/prd/`). **The set is closed** — every content PRD landed and
+retired; this file remains as the record (the principle, the policy, the phase
+ledger, the refusals). When this record and an architecture chapter disagree,
+**the chapter wins**.
 
 ## The organizing principle, applied to the letter
 
@@ -157,21 +158,30 @@ the rulings live in `20-query-ir.md` § the query notation and
 `70-api.md` § host-side sugar, with `00-product.md`'s dependency-law
 sentence).
 
-Phase G — the intuition:
-- [21 — The cookbook: modeling intuition as schemas (doc unit)](21-cookbook.md)
+Phase G — the intuition — landed whole and retired (21 — the cookbook:
+`docs/cookbook.md`, the 20-recipe roster written against the whole set's
+surface — foundations, structure, time and tilings, the write side, and
+the five-gravestone anti-recipe block, each recipe one `schema!` block
+with theorem-naming comments and queries in the 23 notation — rot-proofed
+by `crates/bumbledb-query/tests/cookbook.rs`: every schema compiled and
+validated as a token-pinned duplicate, the roster enumerated with a count
+assertion, the teachable queries round-tripped through `query!` + prepare
+against `ir::render`; the architecture README's document table carries its
+row, reader: the owner and any agent writing a theory).
 
-Dependency spine: Phases A (01–04), B (05–09), C (10–12), and E (15–16)
-landed whole; 13/14 landed
-(residual landed with 01); 17 landed (its adversarial
-digest rows are in the generator's target ledger, inherited by 15's families);
-18 landed; 19 landed; 20 landed (its sweep
+Dependency spine, discharged: Phases A (01–04), B (05–09), C (10–12), and
+E (15–16) landed whole; 13/14 landed (residual landed with 01); 17 landed
+(its adversarial digest rows are in the generator's target ledger,
+inherited by 15's families); 18 landed; 19 landed; 20 landed (its sweep
 and renderer target the rules-shaped IR); 23 landed (its notation is the
-render grammar, round-trip-pinned); 21 lands
-last (it is written against the whole set's surface, its queries written in
-the 23 notation and round-trip-pinned against `ir::render`, and its recipes
-rot-proofed by compilation). E closed the measured half of the set (16
-carries the `bytes<32>` content-hash column 17 owed it and the
-witnessed-write row 18 owed it); G closes the set itself.
+render grammar, round-trip-pinned); 21 landed last, written against the
+whole set's surface. E closed the measured half of the set (16 carries the
+`bytes<32>` content-hash column 17 owed it and the witnessed-write row 18
+owed it); G closed the set itself. **No content PRDs remain in this
+directory** — what stays is the record: the organizing principle, the
+vocabulary discipline, the policy, the phase ledger above, and the
+refusals below (cited by the cookbook's anti-recipes and by the
+architecture chapters).
 
 ## Refusals (recorded with derivations — do not re-litigate)
 

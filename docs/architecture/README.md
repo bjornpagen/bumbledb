@@ -41,6 +41,7 @@ documents themselves describe **only the current reality**.
 | `50-storage.md` | LMDB layout, guard namespaces as judgment accelerators, the delta write path, images |
 | `60-validation.md` | The two oracles (SQLite + naive model), ledger benchmark protocol, test families |
 | `70-api.md` | Embedding surface: the schema! grammar, transactions, point reads, results, ETL |
+| `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative (reader: the owner and any agent writing a theory) |
 
 ## OPEN items
 
