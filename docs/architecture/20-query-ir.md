@@ -598,9 +598,9 @@ a query in the **rule notation** — one clause per rule, set-builder shaped,
 in-atom selections `field == literal` (params admitted as `?N`), `!` negation,
 membership as `in`, `Allen(term, MASK, term)` with masks as named basics joined by
 `|` or the workload composites, clause-level `|` reading *such that*. (The
-notation's normative grammar block is the query-notation unit's; the renderer emits
-it.) When the write-side surface is data, the renderer **is** the pretty syntax —
-ergonomics on the side that costs nothing and crosses every boundary.
+notation's normative grammar block is § the query notation, below; the renderer
+emits it.) When the write-side surface is data, the renderer **is** the pretty
+syntax — ergonomics on the side that costs nothing and crosses every boundary.
 
 Deterministic, golden-pinned (the calendar union query and the Pack/Duration heads,
 byte-exact), and **total on plain data**: variables render as `v{id}` and params as
@@ -612,6 +612,79 @@ renderer's consumers are diagnostics: roster errors print the offending query
 report opens with the query it explains (`PreparedQuery::rendered_query` is the
 same string), and the oracle's arbitration bundles carry the notation beside the
 raw IR. Rendering allocates; it runs on no warm path.
+
+## The query notation (normative — the render grammar)
+
+**The notation is derived, not designed.** The schema grammar already contains a
+query notation: the two judgments are parameterized by single-atom queries written
+`R(X | φ)`, and `|` already reads *such that* — set-builder's own bar. The query
+notation is that form **promoted**: multi-atom, given a head, terminated by the
+statement's `;`. Borrowed grammar is refused (owner ruling 2026-07-10; the refusals
+ledger): Datalog's `head :- body` was considered and rejected — this engine's
+statements are already statements *about* queries, so the query surface must be the
+statement surface's query side, not an import. One notational family, schema to
+query.
+
+```text
+query   := clause+                     // two or more clauses denote set union
+clause  := '(' head ')' '|' body ';'
+head    := headterm (',' headterm)*
+headterm:= var | [name ':'] agg        // named positions become result columns
+agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
+           where t := v | Duration(v)
+body    := item (',' item)*
+item    := atom                        // positive occurrence
+         | '!' atom                    // negation (anti-probe; safety per roster)
+         | term 'in' term              // membership: point ∈ interval, value ∈ ?set
+         | Allen '(' term ',' mask ',' term ')'
+         | term cmp term               // ==  !=  <  <=  >  >=
+atom    := Relation '(' binding (',' binding)* ')'
+binding := field                       // punning: binds a var named after the field
+         | field ':' var               // explicit variable — the join spelling
+         | field '==' value            // selection, schema-grammar-verbatim
+mask    := MASK ('|' MASK)* | ?param   // masks are sets of basics; '|' is set union
+term    := var | ?param | literal
+```
+
+Every token is either the schema grammar's own or Rust's: atoms are `Relation(...)`
+as statements write them; in-atom selections are the schema's selections with
+params admitted (and a set-bound param is the binding's membership spelling, `field
+in ?N`); membership is the Rust keyword `in` (∈ is not a lexable token); negation
+is `!`; params keep `?`; `;` terminates clauses as it terminates statements. The
+two bars are the two the audit already upheld: clause-level `|` is *such that*;
+mask-level `|` is set union over the 13 basics — set-builder and set-union,
+context-separated exactly as the two levels of `==` are.
+
+**The punning law (B, decided; alternative (A) is in the refusals ledger).** A bare
+field name binds a **clause-local variable named after the field** — Rust's
+struct-shorthand instinct, used for projection. The same punned name appearing in
+two atoms of one clause is a macro error, spanned at the second occurrence
+("ambiguous punning — rename explicitly"); joins are always written `field: v` on
+both ends. Under the refused alternative — same-name-same-variable across the
+clause — every relation naming its key `id` makes a forgotten rename a *silent*
+join the roster cannot object to (structurally both u64); under (B) the wrong query
+is unwritable at the call site.
+
+**The macro and its placement.** `query!(Theory { ... })` lives in the downstream
+crate `crates/bumbledb-query` — the bench-crate quarantine verbatim: hosts may
+depend on it, the engine never depends back, and the surface ruling's
+no-query-grammar shape holds unamended. The parser is hand-rolled over the token
+stream, `syn`-free, on `bumbledb-macros`' precedent. Name checking rides the id
+constants (`70-api.md`): proc macros cannot see each other's output, so expansion
+emits paths to `Theory::BUSY` / `Theory::BUSY_PERSON` (and mask names to
+`AllenMask`'s constants) and ordinary rustc name resolution makes a typo a compile
+error at the query literal; variable *type* consistency stays the validation
+roster's, the same split the foreign surfaces have. **Constant text only**: the
+macro consumes a literal token tree and expansion constructs the `ir::Query` value
+— compile-time lowering, no runtime parser; dynamic composition stays on the raw
+IR layer, which exists regardless.
+
+**One notation, everywhere — the anti-drift discipline.** `ir::render` emits this
+grammar; the cookbook writes its queries in it; any foreign sugar (the anticipated
+TS binding) parses it. The renderer is the spec, and every implementation is pinned
+by **round-trip goldens**: `render(lower(text))` equals the normalized text,
+byte-exactly (`bumbledb-query/tests/notation.rs`). Three consumers, one grammar,
+zero drift by construction.
 
 ## Prepared queries
 

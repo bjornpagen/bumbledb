@@ -15,7 +15,7 @@ constructed and evaluated — data, in whatever language the host speaks
 (`20-query-ir.md`, the surface ruling). The asymmetry is not an ergonomics
 compromise; it is the line logic draws between a theory and its formulas. The
 notation reflects it: the query notation is the statement grammar's query side,
-promoted (`20-query-ir.md` § the renderer).
+promoted (`20-query-ir.md` § the query notation).
 
 ## The `schema!` grammar (normative)
 
@@ -412,9 +412,11 @@ names — so roster errors print beside the query they reject.
   knows it exists (the permanent surface ruling, `20-query-ir.md`; the
   text-language OPEN item is superseded by it). A typed builder is refused,
   recorded: closures and generics are what a foreign host cannot invoke, and the
-  roster's typed errors re-provide the checking for every caller equally. A Rust
-  `query!` macro, when wanted, is a downstream crate on the bench-crate
-  quarantine, resolving names through the emitted id constants.
+  roster's typed errors re-provide the checking for every caller equally. **The
+  blessed Rust sugar is `crates/bumbledb-query`'s `query!` macro** — a downstream
+  crate on the bench-crate quarantine, lowering the notation (`20-query-ir.md`
+  § the query notation) to the `ir::Query` value at compile time and resolving
+  names through the emitted id constants.
 
 ## Anticipated bindings — punted, recorded
 

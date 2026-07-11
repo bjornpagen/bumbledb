@@ -142,8 +142,20 @@ manifest, and `ir::render`, the read-side syntax; the rulings live in
 `20-query-ir.md` — the surface ruling, § validation boundary (the
 trust-boundary law), § the renderer — and `70-api.md` § the two surfaces,
 § id constants and the manifest, § anticipated bindings (the punt record),
-with `00-product.md`'s superseded OPEN item and non-goals note):
-- [23 — The query notation: set-builder, promoted from the schema grammar](23-query-notation.md)
+with `00-product.md`'s superseded OPEN item and non-goals note; and 23 —
+the query notation, set-builder promoted from the schema grammar — landed
+whole and retired: `query!(Theory { (head) | body; ... })` in the new
+quarantined downstream crate `crates/bumbledb-query` (hand-rolled parser,
+`syn`-free; hosts depend on it, the engine never depends back), punning
+law B with the ambiguity error spanned at the second occurrence, name
+checking through the id constants (a typo'd relation or field is a compile
+error at the query literal), compile-time lowering to the `ir::Query`
+value, the round-trip goldens pinning `render(lower(text))` byte-exact
+against the normalized text, and the compile-fail roster (typo'd
+relation/field, ambiguous punning, `?param` in a head, `:-` anywhere);
+the rulings live in `20-query-ir.md` § the query notation and
+`70-api.md` § host-side sugar, with `00-product.md`'s dependency-law
+sentence).
 
 Phase G — the intuition:
 - [21 — The cookbook: modeling intuition as schemas (doc unit)](21-cookbook.md)
@@ -153,10 +165,10 @@ landed whole; 13/14 landed
 (residual landed with 01); 17 landed (its adversarial
 digest rows are in the generator's target ledger, inherited by 15's families);
 18 landed; 19 landed; 20 landed (its sweep
-and renderer target the rules-shaped IR); 23 requires
-05 and 20 — both landed — and coordinates with 21 (the cookbook's queries are
-written in the 23 notation, round-trip-pinned against `ir::render`); 21 lands
-last (it is written against the whole set's surface and its recipes are
+and renderer target the rules-shaped IR); 23 landed (its notation is the
+render grammar, round-trip-pinned); 21 lands
+last (it is written against the whole set's surface, its queries written in
+the 23 notation and round-trip-pinned against `ir::render`, and its recipes
 rot-proofed by compilation). E closed the measured half of the set (16
 carries the `bytes<32>` content-hash column 17 owed it and the
 witnessed-write row 18 owed it); G closes the set itself.
@@ -221,3 +233,20 @@ witnessed-write row 18 owed it); G closes the set itself.
 - **JS/N-API bindings, now.** Pure anticipation, recorded with their
   quarantine shape in PRD 20; zero deliverable in this set, and no engine
   decision may lean on their existence.
+- **Borrowed query grammar (Datalog's `head :- body`).** Considered and
+  rejected (owner ruling 2026-07-10): this engine's statements are already
+  statements *about* queries, so the query surface must be the statement
+  surface's query side, promoted — `(head) | body;`, one notational family,
+  schema to query. `:-` does not parse, anywhere; the refusal is pinned by
+  compile-fail (`20-query-ir.md` § the query notation).
+- **Punning alternative (A) — same-name-same-variable across the clause.**
+  Set-builder-honest, and refused for exactly what it reads: it makes joins
+  silent. Every relation names its key `id`, so a forgotten rename silently
+  unifies a `HolderId` with an `AccountId` and the roster cannot object
+  (structurally both u64) — under (A) a *wrong* query compiles, validates,
+  and runs. Law (B) stands: a pun is clause-local projection; the same
+  punned name in two atoms is a macro error at the second occurrence; joins
+  are explicit `field: v` on both ends. Illegal states unrepresentable
+  outranks notational purism. *Reverses if:* ambiguity errors prove noisy on
+  real theories AND a schema-aware lint becomes possible (it is not today:
+  the macro cannot see the theory).

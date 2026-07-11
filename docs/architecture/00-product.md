@@ -211,7 +211,9 @@ member `bumbledb-bench` is the one quarantined exception: it may hold `rusqlite`
 (bundled — the system SQLite is irrelevant and the version pinned) and **nothing
 else**; argument parsing, JSON emission, statistics, and randomness are hand-rolled
 there. The quarantine is one-directional: nothing in the engine may ever depend on
-the bench crate.
+the bench crate. The downstream sugar member `bumbledb-query` (the `query!` macro,
+`70-api.md` § host-side sugar) carries zero foreign dependencies and sits under the
+same one-directional law: hosts may depend on it; nothing in the engine ever does.
 
 ## Non-goals and deleted vocabulary
 
