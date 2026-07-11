@@ -159,7 +159,9 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   written, and the two-txn idiom reintroduces the TOCTOU the single-writer design
   exists to kill (safe only under host-side write ordering nobody polices).
   **Reverses if:** never — the guards are already read inside commit; this exposes
-  the same gets one phase earlier.
+  the same gets one phase earlier. The ruling's **compensating control for
+  query-driven writes** is the generation witness (§ conditional writes below):
+  read on a snapshot, write through `write_from`.
 - **The transaction is a delta** (`50-storage.md`): operations are in-memory set
   arithmetic; operation order is semantically irrelevant; nothing touches LMDB until
   commit, and an abort never wrote anything. `delete(old); insert(new)` in either
@@ -170,6 +172,56 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   surface from the commit, not from the offending call site, carrying the statement
   id (renderable back to the algebra through the schema), the judgment direction for
   `==` statements, and the offending fact's bytes. The whole transaction aborts.
+
+## Conditional writes — the generation witness
+
+The writer mutex serializes write *transactions*, not read-compute-write
+*sequences*: query-driven writes — update-where-predicate, insert-select,
+everything SQL spells with data-modifying CTEs — must read on a snapshot first,
+then write, and two host threads interleaving snapshot-read → compute → write can
+clobber each other's premises. The answer is representation, not control flow: a
+snapshot already knows its generation, so *nothing changed since I looked* is a
+proposition the commit checks in one integer compare.
+
+- `db.write_from(&snap, |tx| ...)` — `db.write`, conditional on a witness:
+  identical in every respect except one compare inside the writer's critical
+  section. If a state-changing commit has landed since the witness snapshot's
+  generation, the transaction aborts **before any page is touched** with the typed
+  `GenerationMoved { witnessed, current }` (ids, never strings); the delta drops
+  exactly as any abort does, and the closure never ran. The environment-identity
+  guard runs first, exactly as prepared queries run it at every execution entry —
+  a witness snapshot of another database is the typed `ForeignSnapshot`.
+- **The witness is the snapshot, never an integer** (recorded refusal,
+  `docs/prd-algebra/README.md`): a snapshot is evidence — its generation was read
+  inside its own transaction — where an integer parameter would be a claim a
+  caller could fabricate or stale-cache (parse, don't validate). `Snapshot`
+  exposes no `generation()` accessor (decided: the witness consumes the
+  generation internally; the diagnostics surface is `Db::generation`, and nothing
+  more ships until the stats surface wants it).
+- **State-changing generations only:** the compare targets the storage tx id —
+  the same generation the image cache keys on — and a counters-only/no-op commit
+  never advances it, so no-ops trip no witness. The sloppy alternative (any
+  commit invalidates) is rejected: it would manufacture spurious retries out of
+  no-ops.
+- **Retry is host policy.** The engine ships the error, never a loop — the
+  staleness-signal doctrine verbatim: the engine's job is to make the condition
+  checkable. The host convention is re-run the query → re-compute → `write_from`
+  again; conflicts are rare by the bursty-write design point (`00-product.md`).
+- **The two guards compose into the complete conditional-write vocabulary:** the
+  witness is the scan-shaped guard (premises from full queries, whole-snapshot
+  precision), WriteTx point reads remain the key-shaped guard (per-fact
+  precision, zero retries, race-free by construction inside one transaction).
+  *Read the model, propose a delta, commit iff the model you read is still the
+  model.*
+- **The three idioms**, each query → compute → `write_from` → host retry:
+  - *Update-where:* query the matching facts on a snapshot, compute their
+    replacements, `write_from(&snap)` doing `delete(old); insert(new)` per fact.
+  - *Insert-select:* query the source rows, compute the derived facts,
+    `write_from(&snap)` inserting them — the data-modifying-CTE shapes with the
+    premises witnessed instead of locked.
+  - *Derived-relation maintenance:* re-run the deriving query, diff against the
+    stored relation's current facts, `write_from(&snap)` applying the diff — the
+    materialized-view refresh as an ordinary witnessed write.
 
 ## Facts and results
 
@@ -239,7 +291,9 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   error, never a skip — `50-storage.md`). They abort the query; the read transaction
   remains usable.
 - **Write errors:** `FunctionalityViolation`, `ContainmentViolation` (both raised at
-  commit, against the final state, carrying statement ids), `FreshExhausted`,
+  commit, against the final state, carrying statement ids), `GenerationMoved`
+  (the witness compare, § conditional writes — carrying the two generations),
+  `ForeignSnapshot` (a witness of another database), `FreshExhausted`,
   `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write transaction — and
   since the transaction is a delta, an aborted transaction never touched LMDB at all.
 - Error payloads carry ids, not formatted strings, on hot paths (allocation contract).

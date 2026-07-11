@@ -42,6 +42,10 @@ pub struct NaiveDb {
     /// the engine pins in its fingerprint).
     statements: Vec<StatementDescriptor>,
     relations: Vec<BTreeSet<Tuple>>,
+    /// The state-changing generation: bumped iff an applied delta
+    /// changed committed state — never by a no-op — mirroring the
+    /// engine's storage tx id (the number the image cache keys on).
+    generation: u64,
 }
 
 /// One write delta: facts to remove and facts to insert, as decoded value
@@ -67,6 +71,18 @@ pub enum Violation {
     },
 }
 
+/// A conditional write's abort cause ([`NaiveDb::apply_from`]): the
+/// witness compare failed, or the final state fails a statement — the
+/// model twin of the engine's `GenerationMoved` / commit violations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionalAbort {
+    /// The witnessed generation is no longer current (payload: the two
+    /// generations, exactly the engine's error payload).
+    Moved { witnessed: u64, current: u64 },
+    /// The witness held; the judgment aborted.
+    Violation(Violation),
+}
+
 impl NaiveDb {
     /// An empty model over a declared schema. The model consumes the raw
     /// descriptor — public data, no sealed accessors — and re-derives
@@ -77,6 +93,7 @@ impl NaiveDb {
             statements: schema.materialized_statements(),
             relations: vec![BTreeSet::new(); schema.relations.len()],
             schema: schema.clone(),
+            generation: 0,
         }
     }
 
@@ -84,6 +101,34 @@ impl NaiveDb {
     #[must_use]
     pub fn relation(&self, rel: RelationId) -> &BTreeSet<Tuple> {
         &self.relations[rel.0 as usize]
+    }
+
+    /// The current state-changing generation — the model's witness. The
+    /// model hands out the integer because the model *is* the semantics;
+    /// the engine's API refuses it and takes the snapshot (evidence,
+    /// never a claim — the recorded refusal).
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The generation witness, naively: one integer compare, then
+    /// [`NaiveDb::apply`] — the semantics is these two lines, which is
+    /// the point (PRD 18).
+    ///
+    /// # Errors
+    ///
+    /// [`ConditionalAbort::Moved`] when the witness is stale (the state
+    /// is untouched — the compare runs first); otherwise `apply`'s
+    /// verdict, wrapped.
+    pub fn apply_from(&mut self, witnessed: u64, delta: &Delta) -> Result<(), ConditionalAbort> {
+        if witnessed != self.generation {
+            return Err(ConditionalAbort::Moved {
+                witnessed,
+                current: self.generation,
+            });
+        }
+        self.apply(delta).map_err(ConditionalAbort::Violation)
     }
 
     /// Applies a write delta: remove the deletes, insert the inserts, then
@@ -114,6 +159,12 @@ impl NaiveDb {
         }
         if let Some(violation) = self.judge(&next, &inserted) {
             return Err(violation);
+        }
+        // State-changing commits only advance the generation — a no-op
+        // delta (deletes of absent facts, re-inserts of present ones)
+        // leaves it alone, exactly as the engine's tx id does.
+        if next != self.relations {
+            self.generation += 1;
         }
         self.relations = next;
         Ok(())

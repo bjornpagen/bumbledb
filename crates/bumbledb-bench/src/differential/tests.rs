@@ -8,6 +8,7 @@ mod chase;
 mod identity_bytes;
 mod measure;
 mod pack;
+mod witness;
 
 use std::path::{Path, PathBuf};
 

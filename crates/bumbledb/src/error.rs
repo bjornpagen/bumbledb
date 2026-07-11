@@ -758,6 +758,21 @@ pub enum Error {
         relation: RelationId,
         field: FieldId,
     },
+    /// [`crate::Db::write_from`]'s witness compare failed: a
+    /// state-changing commit landed after the witness snapshot was taken,
+    /// so the premises the host computed from are stale. Raised before
+    /// any page is touched; the delta drops exactly as any abort does.
+    /// Payload is the two generations (ids, never strings) — the same
+    /// generation the image cache keys on, so a counters-only/no-op
+    /// commit never raises this. Retry is host policy: re-run the query,
+    /// re-compute, `write_from` again (`docs/architecture/70-api.md`
+    /// § conditional writes).
+    GenerationMoved {
+        /// The witness snapshot's generation.
+        witnessed: u64,
+        /// The current committed generation.
+        current: u64,
+    },
     /// The commit's durability boundary failed: `mdb_txn_commit` surfaced
     /// a raw OS errno from its write/sync path — on macOS the data-page
     /// `pwrite`s, the `fcntl(F_FULLFSYNC)` data flush, or the `O_DSYNC`
@@ -792,6 +807,12 @@ pub enum Error {
     /// statistics, and view memo all belong to one environment — it
     /// executes only against snapshots of the database that prepared it.
     ForeignPreparedQuery,
+    /// A witness snapshot of a different database than the one being
+    /// written ([`crate::Db::write_from`]) — the same environment-identity
+    /// guard prepared queries run at every execution entry, on the write
+    /// side: another database's generation clock proves nothing about
+    /// this one.
+    ForeignSnapshot,
     /// Bind-time: the supplied parameter count does not match the query's.
     ParamCountMismatch {
         expected: usize,

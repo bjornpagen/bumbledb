@@ -112,8 +112,12 @@ Phase F — the write side, the type ledger, and the surface ruling (17 —
 identity bytes — landed whole and retired: `bytes<N>` replaced variable
 `bytes`, the dictionary went str-only and untagged, and the rulings live in
 `10-data-model.md` § the type layer and § interning, `50-storage.md`, and
-`00-product.md`'s census sentence):
-- [18 — The generation witness: read-compute-write as a value](18-generation-witness.md)
+`00-product.md`'s census sentence; 18 — the generation witness — landed
+whole and retired: `Db::write_from` takes the snapshot as the witness and
+aborts with `GenerationMoved` on a moved state-changing generation, and the
+rulings live in `70-api.md` § conditional writes, `00-product.md`'s
+deleted-vocabulary rows and concurrency sentence, and `30-dependencies.md`'s
+runs-before-judgment cross-reference):
 - [19 — Derived relations: the view story, canonized (doc unit)](19-derived-relations.md)
 - [20 — The data surface, ruled: schemas are code, queries are data](20-data-surface.md)
 - [23 — The query notation: set-builder, promoted from the schema grammar](23-query-notation.md)
@@ -125,15 +129,15 @@ Dependency spine: Phases A (01–04), B (05–09), and C (10–12) landed
 whole; 13/14 landed
 (residual landed with 01); 15 requires 05/12 (both landed); 16 requires 15; 17 landed (its adversarial
 digest rows are already in the generator's target ledger for 15 to inherit);
-18 free; 19 requires 18; 20
+18 landed; 19 requires 18 (landed); 20
 requires 05 (its sweep and renderer target the rules-shaped IR); 23 requires
 05 and 20 and coordinates with 21 (the cookbook's queries are written in the
 23 notation, round-trip-pinned against `ir::render`); 21 lands
 last (it is written against the whole set's surface and its recipes are
 rot-proofed by compilation). Phases A/B/C/F may interleave; E closes the
 measured half of the set (16 gains a `bytes<32>` content-hash column — 17
-landed, so the type exists — and a witnessed-write family row if 18 lands
-first); G closes the set itself.
+landed, so the type exists — and a witnessed-write family row — 18 landed,
+so the row is owed); G closes the set itself.
 
 ## Refusals (recorded with derivations — do not re-litigate)
 
@@ -178,7 +182,7 @@ first); G closes the set itself.
   them — sortedness is the index's need, not a query semantics.
 - **A raw-integer witness API.** `write_from` takes the `Snapshot`, never a
   generation number: a snapshot is evidence, an integer is a claim (parse,
-  don't validate). Recorded in PRD 18.
+  don't validate). Landed; recorded in `70-api.md` § conditional writes.
 - **A named-view registry in the engine.** A view is a host function
   returning atoms; a registry would be a second schema with none of the
   theory's guarantees. Recorded in PRD 19.

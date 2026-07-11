@@ -75,6 +75,14 @@ pub struct Environment {
 }
 
 impl Environment {
+    /// This environment's process-distinct identity (readers: prepared
+    /// queries via [`ReadTxn::env_instance`]; `Db::write_from`'s
+    /// witness guard, which compares a snapshot's identity against the
+    /// database being written).
+    pub(crate) fn instance(&self) -> u64 {
+        self.instance
+    }
+
     /// The `_dict` database handle (reader: `storage::dict`).
     pub(crate) fn dict(&self) -> Database<Bytes, Bytes> {
         self.dict

@@ -207,7 +207,10 @@ keyword features.
 
 The commit pipeline evaluates every statement **restricted to delta-touched
 bindings** against the final state — the incremental form of the judgment, sound
-because an untouched binding cannot change a judgment's truth:
+because an untouched binding cannot change a judgment's truth. The generation
+witness (`70-api.md` § conditional writes) runs before this pipeline entirely —
+an aborted witnessed write never reaches judgment, and judgment semantics are
+untouched by it. The phases:
 
 - FD: guard put conflicts (scalar) and ordered-neighbor probes (pointwise) during
   the insert phase.

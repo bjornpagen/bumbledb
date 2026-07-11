@@ -11,9 +11,13 @@
 
 use std::collections::BTreeSet;
 
+#[cfg(test)]
+use bumbledb::Snapshot;
 use bumbledb::{Db, Error, Query, ResultValue, Value};
 
 use crate::naive::query::{ParamValue, QueryError};
+#[cfg(test)]
+use crate::naive::ConditionalAbort;
 use crate::naive::{Delta, NaiveDb, Tuple, Violation};
 
 #[cfg(test)]
@@ -34,6 +38,17 @@ pub enum Op {
 pub enum Verdict {
     Committed,
     Aborted(Violation),
+}
+
+/// One conditional write's outcome, on either side: [`Verdict`] plus the
+/// witness refusal with its payload — compared whole, so verdict *and*
+/// generations must agree (error parity including typed identity, the
+/// direction-divergence lesson applied from birth).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionalVerdict {
+    Committed,
+    Aborted(Violation),
+    Moved { witnessed: u64, current: u64 },
 }
 
 /// One query's outcome, on either side: the result set, or one of the
@@ -149,6 +164,63 @@ fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
             direction,
         }),
         Err(other) => panic!("engine refused a differential write: {other:?}"),
+    }
+}
+
+/// One delta through the engine's conditional write path
+/// (`Db::write_from` under `witness`), as a [`ConditionalVerdict`] —
+/// the conditional sibling of [`engine_write`], mapping the typed
+/// `GenerationMoved` payload through whole (reader: the witness
+/// scenarios, `tests/witness.rs`).
+#[cfg(test)]
+pub(crate) fn engine_write_from<S>(
+    db: &Db<S>,
+    witness: &Snapshot<'_, S>,
+    delta: &Delta,
+) -> ConditionalVerdict {
+    let outcome = db.write_from(witness, |tx| {
+        for (rel, fact) in &delta.deletes {
+            tx.delete_dyn(*rel, fact)?;
+        }
+        for (rel, fact) in &delta.inserts {
+            tx.insert_dyn(*rel, fact)?;
+        }
+        Ok(())
+    });
+    match outcome {
+        Ok(()) => ConditionalVerdict::Committed,
+        Err(Error::GenerationMoved { witnessed, current }) => {
+            ConditionalVerdict::Moved { witnessed, current }
+        }
+        Err(Error::FunctionalityViolation { statement, .. }) => {
+            ConditionalVerdict::Aborted(Violation::Functionality { statement })
+        }
+        Err(Error::ContainmentViolation {
+            statement,
+            direction,
+            ..
+        }) => ConditionalVerdict::Aborted(Violation::Containment {
+            statement,
+            direction,
+        }),
+        Err(other) => panic!("engine refused a differential conditional write: {other:?}"),
+    }
+}
+
+/// The model side of one conditional write, as the same
+/// [`ConditionalVerdict`] shape.
+#[cfg(test)]
+pub(crate) fn naive_write_from(
+    naive: &mut NaiveDb,
+    witnessed: u64,
+    delta: &Delta,
+) -> ConditionalVerdict {
+    match naive.apply_from(witnessed, delta) {
+        Ok(()) => ConditionalVerdict::Committed,
+        Err(ConditionalAbort::Moved { witnessed, current }) => {
+            ConditionalVerdict::Moved { witnessed, current }
+        }
+        Err(ConditionalAbort::Violation(violation)) => ConditionalVerdict::Aborted(violation),
     }
 }
 

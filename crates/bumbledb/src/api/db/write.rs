@@ -1,7 +1,7 @@
 use std::sync::PoisonError;
 
-use super::{BulkLoadError, Db, WriteTx, WriterThreadReset, BULK_CHUNK};
-use crate::error::Result;
+use super::{BulkLoadError, Db, Snapshot, WriteTx, WriterThreadReset, BULK_CHUNK};
+use crate::error::{Error, Result};
 use crate::ir::Value;
 use crate::schema::RelationId;
 use crate::storage::commit::commit;
@@ -51,6 +51,62 @@ impl<S> Db<S> {
     /// `write` is non-reentrant, and a loud panic beats the silent
     /// forever-deadlock the writer mutex would otherwise become.
     pub fn write<R>(&self, f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>) -> Result<R> {
+        self.write_witnessed(None, f)
+    }
+
+    /// [`Db::write`], conditional on a witness: the read-compute-write
+    /// sequence as a value (`docs/architecture/70-api.md` § conditional
+    /// writes). The witness is the [`Snapshot`] the host read its
+    /// premises on — evidence, never a raw integer a caller could
+    /// fabricate or stale-cache (the recorded refusal). Inside the
+    /// writer's critical section, before any page is touched, the
+    /// current state-changing generation is compared against the
+    /// witness's: on mismatch the whole transaction aborts with
+    /// [`Error::GenerationMoved`] and the delta drops exactly as any
+    /// abort does — `f` never runs. The compare targets the same
+    /// generation the image cache keys on, so a counters-only/no-op
+    /// commit does not trip it.
+    ///
+    /// The engine ships the error, never a loop — retry is host policy:
+    /// re-run the query, re-compute, `write_from` again. `Snapshot`
+    /// exposes no `generation()` accessor: the witness consumes the
+    /// generation internally, and the diagnostics surface is
+    /// [`Db::generation`] (decided — nothing new ships until the stats
+    /// surface wants it).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ForeignSnapshot`] on a witness from another database
+    /// (the environment-identity guard prepared queries run);
+    /// [`Error::GenerationMoved`] when a state-changing commit landed
+    /// after the witness; otherwise as [`Db::write`].
+    ///
+    /// # Panics
+    ///
+    /// As [`Db::write`] (non-reentrant).
+    pub fn write_from<R>(
+        &self,
+        witness: &Snapshot<'_, S>,
+        f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
+    ) -> Result<R> {
+        if witness.txn().env_instance() != self.env.instance() {
+            return Err(Error::ForeignSnapshot);
+        }
+        // Read inside the witness's own transaction (snapshot-constant;
+        // the existing race-closer) — holding no lock across any read
+        // phase: the writer mutex is taken only below.
+        let witnessed = witness.txn().generation()?;
+        self.write_witnessed(Some(witnessed), f)
+    }
+
+    /// The one write body. `witnessed` is the only difference between
+    /// [`Db::write`] and [`Db::write_from`]: one integer compare inside
+    /// the critical section, cold on the success path.
+    fn write_witnessed<R>(
+        &self,
+        witnessed: Option<u64>,
+        f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
+    ) -> Result<R> {
         use std::sync::atomic::Ordering;
         let caller = thread_key();
         assert_ne!(
@@ -72,10 +128,20 @@ impl<S> Db<S> {
                 .unwrap_or_else(PoisonError::into_inner)
                 .take(),
         );
+        let view = self.env.read_txn()?;
+        // The generation witness (`Db::write_from`): current state-changing
+        // generation, read inside the critical section, against the
+        // witness's. Mismatch aborts before any page is touched.
+        if let Some(witnessed) = witnessed {
+            let current = view.generation()?;
+            if current != witnessed {
+                return Err(Error::GenerationMoved { witnessed, current });
+            }
+        }
         let mut txn_span =
             crate::obs::span(crate::obs::names::WRITE_TXN, crate::obs::Category::Commit);
         let mut tx = WriteTx {
-            view: self.env.read_txn()?,
+            view,
             delta: WriteDelta::new(&self.schema),
             schema: &self.schema,
             scratch: Vec::new(),

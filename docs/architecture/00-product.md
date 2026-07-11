@@ -106,7 +106,9 @@ language. **Reverses if:** never — owner axiom.
   plus WriteTx point reads over the same view (`50-storage.md`, `70-api.md`) means
   check-then-act inside one write transaction cannot race — the class of TOCTOU bug
   the surveyed workloads police with `FOR UPDATE` and app discipline is
-  unrepresentable here.
+  unrepresentable here. Across transactions, read-compute-write is optimistic:
+  witnessed by snapshots (`write_from`, `70-api.md` § conditional writes), checked
+  in O(1) at commit.
 - **Durability: fsync per commit** (LMDB defaults; no `NOSYNC`/`WRITEMAP`/`MAPASYNC`).
   A committed posting survives power loss — it's a ledger. SQLite is benchmarked at
   `synchronous=FULL` for fairness.
@@ -225,7 +227,10 @@ cluster demolition under final-state judgment; *restrict / no action / deferrabl
 final-state judgment is the only timing; *trigger* → nothing, on purpose; *null* →
 absent fact in a 0..1 child relation; *uuid* → fresh + explicit time columns;
 *update / upsert* → delete+insert, with WriteTx point reads for the read-modify-write
-idiom.
+idiom; *SELECT FOR UPDATE / row locks / SERIALIZABLE retry* → the generation witness
+(snapshot-witnessed `write_from`) plus WriteTx point reads under final-state
+judgment — locks protect what you remembered to lock; the witness protects
+everything the snapshot saw.
 
 ## Success criteria
 

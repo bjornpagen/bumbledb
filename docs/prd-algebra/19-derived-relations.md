@@ -1,6 +1,6 @@
 # PRD 19 — Derived relations: the view story, canonized (doc unit)
 
-**Depends on:** 18 (the maintenance idiom cites the witness); PRD 12 usefully
+**Depends on:** 18 (landed — the maintenance idiom cites the witness); PRD 12 usefully
 first (Pack output is the canonical derived-relation feedstock) but not
 required.
 **Modules:** documentation only — `10-data-model.md`, `70-api.md`,
@@ -32,7 +32,8 @@ with machinery it already has:
    materialization **uncommittable**: SQL matviews go stale silently and
    `REFRESH` is a prayer; here coherence is a theorem checked on every
    commit that touches either side. The host maintains; the engine judges.
-   Maintenance is exactly PRD 18's idiom: query the sources on a snapshot →
+   Maintenance is exactly the generation-witness idiom (landed;
+   `70-api.md` § conditional writes): query the sources on a snapshot →
    recompute → `write_from` the delta with the snapshot as witness — the
    derived relation cannot commit against sources it didn't actually read.
 3. **The honest limit, stated** (the value-agreement boundary from the
@@ -51,9 +52,9 @@ with machinery it already has:
 
 Write the chapter; it has three sections mirroring 1–3 above, one worked
 example each (calendar fragment; a Pack-fed coalesced-claims relation under
-`<=`; the interval-copy limit from the claim↔attendance `==` design). Cross
-reference PRD 18's conditional-write chapter rather than duplicating the
-idiom.
+`<=`; the interval-copy limit from the claim↔attendance `==` design). Cross-reference
+the conditional-write chapter (`70-api.md`, landed with PRD 18) rather than
+duplicating the idiom.
 
 ## Passing criteria
 

@@ -611,6 +611,12 @@ impl fmt::Display for Error {
                 "fresh sequence exhausted (relation {}, field {})",
                 relation.0, field.0
             ),
+            Self::GenerationMoved { witnessed, current } => write!(
+                f,
+                "the witnessed generation moved ({witnessed} \u{2192} {current}): \
+                 a state-changing commit landed after the witness snapshot — \
+                 re-run the query, re-compute, write_from again"
+            ),
             Self::CommitSync { retries, error } => write!(
                 f,
                 "commit durability boundary (page pwrite / F_FULLFSYNC) failed after {retries} retries: {error}"
@@ -619,6 +625,13 @@ impl fmt::Display for Error {
                 write!(
                     f,
                     "a prepared query executes only against snapshots of the database that prepared it"
+                )
+            }
+            Self::ForeignSnapshot => {
+                write!(
+                    f,
+                    "a witness snapshot proves nothing about another database — \
+                     write_from takes snapshots of the database being written"
                 )
             }
             Self::ParamCountMismatch { expected, supplied } => {
