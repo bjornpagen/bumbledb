@@ -70,6 +70,14 @@ silently coerces everything and is the oracle-corrupting bug class:
 | Bytes(N) | BLOB (fixed-length content) | never TEXT — DISTINCT distinguishes `X'41'` from `'A'`; the N raw bytes, unpadded (the word pad is bumbledb encoding, not data) |
 
 **Projection queries:** `SELECT DISTINCT` over the join with all find variables.
+**Rules:** one `SELECT DISTINCT` per rule joined by `UNION` — SQLite's `UNION` is
+exactly ∪ under `DISTINCT` discipline; a multi-rule *aggregate* head folds over the
+`UNION` of the rules' head-projected distinct rows (the union-fold template,
+mirroring the rules-IR definition: per-rule dedup at head granularity, one set
+union, then the fold), while the single-rule fold domain stays the distinct full
+binding set. **The measure:** `Duration` = `(end − start)` on the two stored
+interval columns — exact in SQLite's INTEGER for every generated corpus (the U64
+lane's sentinel end sits below 2⁶³).
 **Negation:** `NOT EXISTS` correlated subqueries — the translator owns the
 correlation variable mapping. **Param sets:** SQL `IN` lists expanded per execution
 (the translator re-renders; prepared-statement parity is not claimed for set-bound
@@ -84,6 +92,28 @@ set-honest semantics. **Empty-input global aggregates:** bumbledb yields the emp
 set; SQLite yields one NULL/0 row; the harness rule is that the oracle SQL wraps
 ungrouped aggregates to drop the empty-input row — a documented translation rule,
 not an ad-hoc comparison patch.
+
+**`Pack` is naive-only by decision.** SQLite has no coalescing aggregate — a
+relation-shaped fold (one row per (group, maximal segment)) is not a SQL fold, and
+a recursive-CTE emulation would test the emulation, not the engine. The
+expressibility gate is the enumerated `Inexpressible` set (`translate::
+sqlite_expressible`): `Pack` heads plus the two dependency judgments, consumed by
+the harness so nothing is ever *silently* skipped — the verify run counts and
+reports its naive-only cases. The naive model packs **from the point-set
+definition** (union of point sets → maximal segments, sort-and-merge over logical
+endpoints), independent of the engine's word sweep.
+
+**Error parity is typed identity, not agreement-in-kind** (the PRD-02
+direction-divergence lesson, generalized): wherever both oracles reject, the
+verdicts compare *whole* — the judgment verdict with statement id and `Direction`,
+`MeasureOfRay` and aggregate overflow as query verdicts through the differential
+runner, and the roster rejections against the naive model's own
+from-the-definition computation: a cap-exceeding predicate tree must be
+`DnfExceedsRules` with `produced` equal to the naive DNF width (leaf = 1, `And` =
+product, `Or` = sum), a program whose every disjunct vanishes is the empty union,
+and the vacuous masks (EMPTY and FULL) are the mask-cardinality rejections. A
+case where both sides error *unexpectedly* stays a bundle — agreement-in-error
+must not impersonate verification.
 
 **The IR→SQL translator is named infrastructure** with its own tests: hand-written SQL
 goldens pin its output for known queries. Arbitration for 3-way disagreements
@@ -177,9 +207,41 @@ gate nothing.
   constructed, not hoped for) and with the key projected; multi-aggregate find
   lists; and **duplicate-witness data that exercises the D2 subtree skip and the
   aggregate-sink binding dedup** (the two places a set-semantics bug would hide).
+  The algebra families extend the same contract: **multi-rule programs** at arm
+  counts 2–4 — provably-disjoint arms (distinct enum selections on one
+  discriminant, the DU-arm shape whose disjointness feeds the executor's
+  cross-rule-dedup elision, exercised adversarially against the oracles' plain
+  union), overlapping arms with duplicate head rows across rules (the union's
+  teeth), and the multi-rule aggregate union fold (`rules ∧ aggregate`, at least
+  once per run); **the measure** in all three construct kinds — find position,
+  order predicate, and `Sum`/`Min`/`Max` fold (`Sum` under a duration bound, the
+  same Sum-range duty) — over the ray-free U64 window lane, with ray-bearing
+  measure parity in the naive lane; **`Allen` masks** as named composites, all 13
+  singletons, and random masks (every basic reachable through some literal mask
+  per run, asserted cell by cell), plus the composites `mask ∧ negation` and
+  `membership ∧ Allen` at least once per run; and **the boundary-shape ladder** —
+  equal / adjacent-touching / strictly-nested / ray — systematized for *every*
+  interval literal the generator draws (shape literals, dressing literals, and
+  interval-typed param draws alike), each rung asserted per run.
   Empty relations are covered by the verify run's **empty-store pass**: every
   family plus a seeded randomized slice runs against a zero-row store pair each
   verify — every gate false, every scan empty, every aggregate folding nothing.
+- **The algebra oracle rows in every verify run** (the naive lane's extension):
+  multi-rule programs replayed engine-vs-naive, the naive model evaluating rules
+  **directly** — the union of per-rule binding sets from the definition, sharing
+  no lowering, kernel, or sweep code with the engine (the independence law: the
+  model imports the engine's *types* only); seeded random predicate **trees to
+  depth 3**, the naive model evaluating the *input tree* while the engine
+  evaluates the lowered rules — the differential is the DNF-lowering proof — with
+  the cap-exceeders and vanished programs in the error-parity cases above;
+  **`Pack`** rows (grouped, global, and the multi-rule union fold) naive-only per
+  the expressibility gate; the **measure's rays** (`MeasureOfRay` on both sides,
+  typed, and the `Allen(DISJOINT)` ray guard keeping the same query answering
+  rows); and the **converse-property lane**: for every generated Allen-bearing
+  query, the converse twin — operands swapped, mask conversed per leaf — must
+  produce the identical result set on the engine (`Allen(a, b, m) ≡
+  Allen(b, a, converse(m))`, the coordinate system's own theorem, quantified over
+  the generator's whole mask distribution).
 - **Dependency-judgment property family** (new, the redesign's write-side core):
   random statement sets over random schemas (within the acceptance gate), random
   write sequences; assert engine-vs-model verdict agreement; targeted subfamilies

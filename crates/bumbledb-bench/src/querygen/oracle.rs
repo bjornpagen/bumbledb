@@ -41,7 +41,9 @@ pub(super) struct Anchor {
 /// directly for atom bindings (positive and negated), through the
 /// variable side for predicates. Prefers a scalar-field position: a
 /// membership param's type is its element, established by the scalar
-/// anchor the generator constructs.
+/// anchor the generator constructs. Params are query-global; variables
+/// are rule-scoped, so the walk runs per rule with its own variable
+/// anchors, placing into one dense param table.
 pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
     let schema = target::schema();
     let is_interval = |rel: RelationId, field: FieldId| {
@@ -50,28 +52,20 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
             ValueType::Interval { .. }
         )
     };
-    let mut var_anchor = std::collections::HashMap::new();
-    for atom in &query.rules[0].atoms {
-        for (field, term) in &atom.bindings {
-            if let Term::Var(var) = term {
-                if !is_interval(atom.relation, *field) {
-                    var_anchor.entry(*var).or_insert((atom.relation, *field));
+    let mut count = 0u16;
+    for rule in &query.rules {
+        for atom in rule.atoms.iter().chain(&rule.negated) {
+            for (_, term) in &atom.bindings {
+                if let Term::Param(p) | Term::ParamSet(p) = term {
+                    count = count.max(p.0 + 1);
                 }
             }
         }
-    }
-    let mut count = 0u16;
-    for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
-        for (_, term) in &atom.bindings {
-            if let Term::Param(p) | Term::ParamSet(p) = term {
-                count = count.max(p.0 + 1);
-            }
-        }
-    }
-    for comparison in query.rules[0].predicates.iter().map(super::leaf) {
-        for term in [&comparison.lhs, &comparison.rhs] {
-            if let Term::Param(p) | Term::ParamSet(p) = term {
-                count = count.max(p.0 + 1);
+        for comparison in rule.predicates.iter().map(super::leaf) {
+            for term in [&comparison.lhs, &comparison.rhs] {
+                if let Term::Param(p) | Term::ParamSet(p) = term {
+                    count = count.max(p.0 + 1);
+                }
             }
         }
     }
@@ -97,23 +91,37 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
             }
         }
     };
-    for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
-        for (field, term) in &atom.bindings {
-            match term {
-                Term::Param(p) => place(&mut anchors, *p, atom.relation, *field, false),
-                Term::ParamSet(p) => place(&mut anchors, *p, atom.relation, *field, true),
-                _ => {}
+    for rule in &query.rules {
+        let mut var_anchor = std::collections::HashMap::new();
+        for atom in &rule.atoms {
+            for (field, term) in &atom.bindings {
+                if let Term::Var(var) = term {
+                    if !is_interval(atom.relation, *field) {
+                        var_anchor.entry(*var).or_insert((atom.relation, *field));
+                    }
+                }
             }
         }
-    }
-    for comparison in query.rules[0].predicates.iter().map(super::leaf) {
-        let (param, set, var) = match (&comparison.lhs, &comparison.rhs) {
-            (Term::Param(p), Term::Var(v)) | (Term::Var(v), Term::Param(p)) => (*p, false, *v),
-            (Term::ParamSet(p), Term::Var(v)) | (Term::Var(v), Term::ParamSet(p)) => (*p, true, *v),
-            _ => continue,
-        };
-        if let Some((relation, field)) = var_anchor.get(&var) {
-            place(&mut anchors, param, *relation, *field, set);
+        for atom in rule.atoms.iter().chain(&rule.negated) {
+            for (field, term) in &atom.bindings {
+                match term {
+                    Term::Param(p) => place(&mut anchors, *p, atom.relation, *field, false),
+                    Term::ParamSet(p) => place(&mut anchors, *p, atom.relation, *field, true),
+                    _ => {}
+                }
+            }
+        }
+        for comparison in rule.predicates.iter().map(super::leaf) {
+            let (param, set, var) = match (&comparison.lhs, &comparison.rhs) {
+                (Term::Param(p), Term::Var(v)) | (Term::Var(v), Term::Param(p)) => (*p, false, *v),
+                (Term::ParamSet(p), Term::Var(v)) | (Term::Var(v), Term::ParamSet(p)) => {
+                    (*p, true, *v)
+                }
+                _ => continue,
+            };
+            if let Some((relation, field)) = var_anchor.get(&var) {
+                place(&mut anchors, param, *relation, *field, set);
+            }
         }
     }
     anchors
@@ -245,19 +253,19 @@ fn param_value(
                 }
             }
         }
-        // An interval-typed param (no scalar anchor): an in-data window
-        // literal, whatever the draw kind — hit-vs-miss for interval
-        // values is a corpus alignment question, not a vocabulary one.
+        // An interval-typed param (no scalar anchor): a ladder literal
+        // — equal/adjacent/nested/ray against the drawn group, whatever
+        // the draw kind (hit-vs-miss for interval values is a corpus
+        // alignment question, and the ladder IS the alignment sweep).
         ValueType::Interval { element } => {
             let group = rng.range(64);
-            let k = rng.range(interval_data::PER_GROUP);
             match element {
                 IntervalElement::U64 => {
-                    let (start, end) = interval_data::group_u64(cfg.seed, group, k);
+                    let ((start, end), _) = interval_data::ladder_u64(cfg.seed, group, rng);
                     Value::IntervalU64(start, end)
                 }
                 IntervalElement::I64 => {
-                    let (start, end) = interval_data::group_i64(cfg.seed, group, k);
+                    let ((start, end), _) = interval_data::ladder_i64(cfg.seed, group, rng);
                     Value::IntervalI64(start, end)
                 }
             }

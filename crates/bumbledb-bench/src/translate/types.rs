@@ -12,9 +12,9 @@
 
 use std::collections::BTreeSet;
 
-use bumbledb::ir::{CmpOp, Comparison, Term};
+use bumbledb::ir::{CmpOp, Comparison, Rule, Term};
 use bumbledb::schema::ValueType;
-use bumbledb::{ParamId, Query, Schema, Value, VarId};
+use bumbledb::{ParamId, Schema, Value, VarId};
 
 /// The resolved scalar terms; everything else reads as interval-typed
 /// (the bivalent default).
@@ -59,15 +59,17 @@ impl TermTypes {
     }
 }
 
-/// Resolves every variable and param of a validated query. Anchors flow
-/// exactly as in validation: field bindings first, then a fixpoint over
-/// the predicates (comparison order cannot matter). `Allen` operands
-/// anchor the interval reading — the default, so they propagate nothing;
-/// `Contains`' right side is a point (the surviving point form), so it
-/// anchors scalar.
-pub(super) fn infer(query: &Query, schema: &Schema) -> TermTypes {
+/// Resolves every variable and param of one validated rule (variables
+/// are rule-scoped; the translator types each rule's core
+/// independently, exactly as validation's per-rule fixpoint does).
+/// Anchors flow exactly as in validation: field bindings first, then a
+/// fixpoint over the predicates (comparison order cannot matter).
+/// `Allen` operands anchor the interval reading — the default, so they
+/// propagate nothing; `Contains`' right side is a point (the surviving
+/// point form), so it anchors scalar.
+pub(super) fn infer(rule: &Rule, schema: &Schema) -> TermTypes {
     let mut types = TermTypes::default();
-    for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
+    for atom in rule.atoms.iter().chain(&rule.negated) {
         let relation = schema.relation(atom.relation);
         for (field, term) in &atom.bindings {
             let interval_field = matches!(
@@ -89,7 +91,7 @@ pub(super) fn infer(query: &Query, schema: &Schema) -> TermTypes {
     }
     loop {
         let mut changed = false;
-        for Comparison { op, lhs, rhs } in query.rules[0].predicates.iter().map(super::leaf) {
+        for Comparison { op, lhs, rhs } in rule.predicates.iter().map(super::leaf) {
             match op {
                 // Order operators are scalar-only by the type rules.
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {

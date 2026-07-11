@@ -1066,3 +1066,142 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
         Err(Inexpressible::ContainmentJudgment)
     );
 }
+
+#[test]
+fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
+    // Q(x) :- Posting(account = x).
+    // Q(x) :- PostingTag(posting = x).
+    // One SELECT DISTINCT per rule, joined by UNION — set union, the
+    // systematized rules translation.
+    let query = Query {
+        head: vec![bumbledb::HeadTerm::Var],
+        rules: vec![
+            Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    relation: ids::POSTING,
+                    bindings: vec![(ids::posting::ACCOUNT, var(0))],
+                }],
+                negated: vec![],
+                predicates: vec![],
+            },
+            Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    relation: ids::POSTING_TAG,
+                    bindings: vec![(ids::posting_tag::POSTING, var(0))],
+                }],
+                negated: vec![],
+                predicates: vec![],
+            },
+        ],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(
+        t.sql,
+        "SELECT DISTINCT t0.\"account\" FROM \"Posting\" AS t0 \
+         UNION \
+         SELECT DISTINCT t0.\"posting\" FROM \"PostingTag\" AS t0"
+    );
+    assert!(t.params.is_empty());
+}
+
+#[test]
+fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
+    // Q(x, Sum(y)) :- Posting(account = x, amount = y).
+    // Q(x, Sum(y)) :- Posting(account = x, amount = y), y >= ?0.
+    // The union fold: per-rule SELECT DISTINCT head projections
+    // (aliased hN), one UNION, the fold grouped by the variable
+    // positions. The param is query-global: one ?1 slot.
+    let arm = |predicates: Vec<PredicateTree>| Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Sum,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![
+                (ids::posting::ACCOUNT, var(0)),
+                (ids::posting::AMOUNT, var(1)),
+            ],
+        }],
+        negated: vec![],
+        predicates,
+    };
+    let query = Query {
+        head: arm(vec![]).head(),
+        rules: vec![
+            arm(vec![]),
+            arm(vec![PredicateTree::Leaf(Comparison {
+                op: CmpOp::Ge,
+                lhs: var(1),
+                rhs: Term::Param(ParamId(0)),
+            })]),
+        ],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(
+        t.sql,
+        "SELECT h0, SUM(h1) FROM (\
+         SELECT DISTINCT t0.\"account\" AS h0, t0.\"amount\" AS h1 FROM \"Posting\" AS t0 \
+         UNION \
+         SELECT DISTINCT t0.\"account\" AS h0, t0.\"amount\" AS h1 FROM \"Posting\" AS t0 \
+         WHERE t0.\"amount\" >= ?1\
+         ) GROUP BY h0"
+    );
+    assert_eq!(t.params, vec![ParamSlot::Whole(ParamId(0))]);
+}
+
+#[test]
+fn a_param_repeated_across_rules_keeps_one_positional_slot() {
+    // Q(x) :- Posting(account = ?0, amount = x).
+    // Q(x) :- Posting(instrument = ?0, amount = x).
+    // Params are query-global: both occurrences render ?1.
+    let arm = |field: bumbledb::FieldId| Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![
+                (field, Term::Param(ParamId(0))),
+                (ids::posting::AMOUNT, var(0)),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let query = Query {
+        head: vec![bumbledb::HeadTerm::Var],
+        rules: vec![arm(ids::posting::ACCOUNT), arm(ids::posting::INSTRUMENT)],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.params, vec![ParamSlot::Whole(ParamId(0))]);
+    assert_eq!(t.sql.matches("?1").count(), 2, "{}", t.sql);
+    assert_eq!(t.sql.matches(" UNION ").count(), 1, "{}", t.sql);
+}
+
+#[test]
+fn a_duration_find_is_end_minus_start_on_the_stored_columns() {
+    // Q(account, Duration(active)) :- Mandate(account, active) — the
+    // measure translates to arithmetic over the two interval columns.
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        atoms: vec![Atom {
+            relation: ids::MANDATE,
+            bindings: vec![
+                (ids::mandate::ACCOUNT, var(0)),
+                (ids::mandate::ACTIVE, var(1)),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    });
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(
+        t.sql,
+        "SELECT DISTINCT t0.\"account\", (t0.\"active_end\" - t0.\"active_start\") \
+         FROM \"Mandate\" AS t0"
+    );
+}

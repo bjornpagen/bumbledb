@@ -198,9 +198,13 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
 /// The naive-model differential slice (docs/architecture/60-validation.md
 /// § the two oracles): a fresh
 /// unit-scale store replays the corpus stream, five judgment-violating
-/// deltas, and every family query (its unit draw plus its seeded S
-/// rotation) against [`NaiveDb`]; any verdict, violator, or result-set
-/// disagreement is an arbitration bundle.
+/// deltas, every family query (its unit draw plus its seeded S
+/// rotation), and the algebra oracle rows (`run_algebra`: rules, DNF
+/// trees, `Pack` — naive-only by decision, counted and reported — and
+/// the measure's ray verdicts) against [`NaiveDb`]; any verdict,
+/// violator, or result-set disagreement is an arbitration bundle. The
+/// error-parity cases (cap-exceeding DNF, vacuous masks) run after the
+/// differential, against the same store.
 ///
 /// # Panics
 ///
@@ -222,6 +226,12 @@ pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
             });
         }
     }
+    let (algebra, naive_only) = super::run_algebra::algebra_ops(cfg.gen.seed, &sizes);
+    ops.extend(algebra);
+    eprintln!(
+        "verify: {naive_only} naive-only cases (Pack — SQLite-inexpressible by \
+         `Inexpressible::PackAggregate`, enumerated, never silently skipped)"
+    );
 
     let naive_dir = cfg.out_dir.join("naive-db");
     let _ = std::fs::remove_dir_all(&naive_dir);
@@ -248,5 +258,8 @@ pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
             eprintln!("verify: NAIVE MISMATCH -> {}", bundle.display());
             run.bundles.push(bundle);
         }
+    }
+    if run.bundles.len() < super::MAX_BUNDLES {
+        super::run_algebra::error_parity(&db, run);
     }
 }

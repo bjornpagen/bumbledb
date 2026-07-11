@@ -30,9 +30,14 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
 /// Storage format version, checked before the schema fingerprint on open.
 /// Version 1: statement-keyed `U` and statement-scoped `R` layouts
-/// (`docs/architecture/50-storage.md` § Key layout). No other version
-/// opens and no migration path exists — ETL is the story.
-pub const FORMAT_VERSION: u32 = 1;
+/// (`docs/architecture/50-storage.md` § Key layout). Version 2: the
+/// str-only untagged dictionary (`bytes<N>` inline in facts, never
+/// interned) — version 1 stores carry tagged dictionary entries that
+/// would decode wrong, so they refuse to open (the two-oracle run
+/// caught a v1 store silently mis-decoding; a format change without a
+/// version bump is that bug's whole class). No other version opens and
+/// no migration path exists — ETL is the story.
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Fixed map size: comfortably above the 1 GB scale axiom, allocated
 /// sparsely by the OS. Not configurable — path-only public surface.

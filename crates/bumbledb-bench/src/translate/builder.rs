@@ -78,8 +78,9 @@ fn op_sql(op: CmpOp) -> &'static str {
 }
 
 /// One Allen basic's endpoint formula over half-open interval halves —
-/// the per-basic SQL the mask disjunction ORs together (kept deliberately
-/// naive: correctness first; PRD 15 systematizes the translation).
+/// the per-basic SQL the mask disjunction ORs together (kept
+/// deliberately naive: correctness first, and the naive model's
+/// independent `basic_holds` arithmetic keeps it honest).
 fn basic_sql(basic: bumbledb::Basic, ls: &str, le: &str, rs: &str, re: &str) -> String {
     use bumbledb::Basic;
     match basic {
@@ -402,8 +403,8 @@ impl Builder<'_> {
                 None => Err(format!("comparison variable {} unbound", var.0)),
             },
             // The measure: end − start arithmetic over the halves —
-            // exact in SQLite's i64 for the generated corpora (PRD 15
-            // systematizes the measure's oracle rows).
+            // exact in SQLite's i64 for the generated corpora (the U64
+            // lane's sentinel end sits below 2⁶³).
             Term::Duration(var) => match self.columns.get(var) {
                 Some(VarCols::Interval { start, end }) => {
                     Ok(Rendered::One(format!("({end} - {start})")))
@@ -452,10 +453,13 @@ impl Builder<'_> {
             }
             // The Allen mask: per-basic endpoint formulas OR'd — the
             // query's SELECT DISTINCT keeps the disjunction honest
-            // (`60-validation.md`; PRD 15 systematizes).
+            // (`60-validation.md`).
             (CmpOp::Allen { mask }, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
                 let bumbledb::MaskTerm::Literal(mask) = mask else {
-                    return Err("param masks are not translated (PRD 15)".to_owned());
+                    // The fleet emits literal masks; a param mask would
+                    // re-render per execution like a set param — owed to
+                    // whichever family first needs one.
+                    return Err("param masks are not translated".to_owned());
                 };
                 let arms: Vec<String> = bumbledb::Basic::ALL
                     .iter()

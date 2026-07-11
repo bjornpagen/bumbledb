@@ -146,16 +146,19 @@ pub(super) fn at_window(domains: &Domains) -> (i64, i64) {
     (target::AT_BASE, target::AT_BASE + span)
 }
 
-/// An in-data interval literal for value-equality dressing.
-fn window_literal_u64(cfg: GenConfig, rng: &mut Rng) -> Value {
-    let (start, end) =
-        interval_data::group_u64(cfg.seed, rng.range(64), rng.range(interval_data::PER_GROUP));
+/// An interval literal for value-equality dressing, drawn off the
+/// boundary-shape ladder (equal literals hit; adjacent/nested/ray
+/// literals are exact-construction misses), rung-tagged for the
+/// coverage contract.
+fn window_literal_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
+    let ((start, end), drawn) = interval_data::ladder_u64(cfg.seed, rng.range(64), rng);
+    b.saw_rung(drawn);
     Value::IntervalU64(start, end)
 }
 
-fn active_literal_i64(cfg: GenConfig, rng: &mut Rng) -> Value {
-    let (start, end) =
-        interval_data::group_i64(cfg.seed, rng.range(64), rng.range(interval_data::PER_GROUP));
+fn active_literal_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
+    let ((start, end), drawn) = interval_data::ladder_i64(cfg.seed, rng.range(64), rng);
+    b.saw_rung(drawn);
     Value::IntervalI64(start, end)
 }
 
@@ -210,7 +213,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                     if !b.interval_valued(var) {
                         continue;
                     }
-                    let rhs = Term::Literal(window_literal_u64(cfg, rng));
+                    let rhs = Term::Literal(window_literal_u64(b, rng, cfg));
                     b.predicates.push(Comparison {
                         op: eq_ne(rng),
                         lhs: Term::Var(var),
@@ -305,7 +308,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                 if !b.interval_valued(var) {
                     continue;
                 }
-                let rhs = Term::Literal(active_literal_i64(cfg, rng));
+                let rhs = Term::Literal(active_literal_i64(b, rng, cfg));
                 b.predicates.push(Comparison {
                     op: eq_ne(rng),
                     lhs: Term::Var(var),

@@ -46,6 +46,27 @@ pub enum QueryError {
     MeasureOfRay,
 }
 
+/// One rule's DNF width, **from the definition**: the number of
+/// conjunctive rules its predicate trees would distribute to — a leaf
+/// is one disjunct, `And` multiplies its children's widths (the empty
+/// conjunction is true: one disjunct), `Or` sums them (the empty
+/// disjunction is false: zero), and the rule's conjoined trees
+/// multiply. Deliberately independent of the engine's structural count
+/// (`ir::normalize`): the verify error-parity lane compares the two —
+/// the cap-exceeder verdict must carry the same `produced` on both
+/// sides, typed identity included.
+#[must_use]
+pub fn dnf_width(rule: &Rule) -> usize {
+    fn width(tree: &PredicateTree) -> usize {
+        match tree {
+            PredicateTree::Leaf(_) => 1,
+            PredicateTree::And(children) => children.iter().map(width).product(),
+            PredicateTree::Or(children) => children.iter().map(width).sum(),
+        }
+    }
+    rule.predicates.iter().map(width).product()
+}
+
 /// The measure, from the definition: `|[s, e)| = e − s` over the logical
 /// element values — the model's own arithmetic, deliberately independent
 /// of the engine's encoded-word subtraction (the differential oracle

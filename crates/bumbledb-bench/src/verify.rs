@@ -22,6 +22,8 @@ mod binary_fingerprint;
 mod check;
 mod display;
 mod run;
+mod run_algebra;
+mod run_converse;
 mod run_empty_store;
 mod run_naive;
 mod stamp_matches;

@@ -104,8 +104,13 @@ Phase D — the surface (**landed early**: implemented as `docs/prd/22` before
 this set began execution; the 13/14 reconciliation records are retired — done
 items leave the ledger, and 14's residual, the `Theory` rename, landed with 01).
 
-Phase E — the earning:
-- [15 — Oracles and the generator](15-oracles.md)
+Phase E — the earning (15 — oracles and the generator — landed whole
+and retired: rules→UNION in the translator, the naive model's direct
+rules/tree/mask/measure/`Pack` evaluations, the converse-property and
+error-parity lanes, `Pack`'s naive-only routing through the enumerated
+inexpressible set, the boundary-shape ladder on every interval draw,
+and the str-extrema roster check; its rulings live in
+`60-validation.md`):
 - [16 — The calendar family](16-calendar-family.md)
 
 Phase F — the write side, the type ledger, and the surface ruling (17 —
@@ -127,8 +132,8 @@ Phase G — the intuition:
 
 Dependency spine: Phases A (01–04), B (05–09), and C (10–12) landed
 whole; 13/14 landed
-(residual landed with 01); 15 requires 05/12 (both landed); 16 requires 15; 17 landed (its adversarial
-digest rows are already in the generator's target ledger for 15 to inherit);
+(residual landed with 01); 15 landed; 16 requires 15 (landed); 17 landed (its adversarial
+digest rows are in the generator's target ledger, inherited by 15's families);
 18 landed; 19 requires 18 (landed); 20
 requires 05 (its sweep and renderer target the rules-shaped IR); 23 requires
 05 and 20 and coordinates with 21 (the cookbook's queries are written in the
@@ -166,8 +171,8 @@ so the row is owed); G closes the set itself.
 - **A `Gaps` operator.** Free time is a two-line host walk over sorted `Pack`
   output. *Trigger:* a measured need `Pack` + host cannot meet.
 - **Interval `Min`/`Max`** (no total order — standing ruling) and **`Min`/`Max`
-  over str/bytes** (intern words are not order-preserving; PRD 15 adds the
-  roster rejection if absent).
+  over str/bytes** (intern words are not order-preserving; the roster rejection
+  holds — `AggregateInputType`, pinned for str and bytes alike).
 - **Floats and embeddings.** Permanently out; fixed-point i64 is the modeling
   answer for scores and money; vector search belongs to other engines.
 - **A large-object storage class.** Facts are fixed-width; big payloads are

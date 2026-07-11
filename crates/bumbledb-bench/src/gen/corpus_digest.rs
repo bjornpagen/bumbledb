@@ -42,11 +42,17 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
     }
 }
 
-/// The corpus identity: a blake3 over every relation's streamed rows.
-/// Stamps, cache directories, and reports key on this.
+/// The corpus identity: a blake3 over the engine's storage format
+/// version and every relation's streamed rows. Stamps, cache
+/// directories, and reports key on this. The format version is a live
+/// ingredient by decision: a cached corpus is a *store*, and a store
+/// written under an older format must be regenerated, never reused —
+/// the ALG 17 dictionary cutover left a v1 cache silently mis-decoding
+/// until the two-oracle run caught it.
 #[must_use]
 pub fn corpus_digest(cfg: GenConfig) -> [u8; 32] {
     let mut digest = bumbledb::digest::Digest::new();
+    digest.update(&bumbledb::STORAGE_FORMAT_VERSION.to_le_bytes());
     digest.update(&cfg.seed.to_le_bytes());
     digest.update(cfg.scale.label().as_bytes());
     for rel in 0..ids::RELATIONS {

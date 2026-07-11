@@ -85,7 +85,10 @@ facts, never interned, so the key hash carries no type tag: forward
 - Open-time checks, in order: storage format version, then schema fingerprint — each
   mismatch is a hard failure. No other format version opens and no migration path
   exists (ETL is the story, `70-api.md`; compatibility is never a design input,
-  `00-product.md`).
+  `00-product.md`). **Every on-disk encoding change bumps the version** — the
+  untagged-dictionary cutover (version 2) initially shipped without a bump and a
+  stale cached store silently mis-decoded until the two-oracle run caught it; a
+  version bump turns that whole class into a loud open-time refusal.
 
 **Decision: one `_data` database with first-byte namespaces.** **Alternative:** one
 LMDB database per namespace (enables per-namespace append mode and integer-key layouts).

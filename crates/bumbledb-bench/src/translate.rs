@@ -6,11 +6,18 @@
 //!
 //! Semantics mapping:
 //! - Projection = `SELECT DISTINCT` over the find variables.
+//! - **Rules = `UNION`**: one `SELECT DISTINCT` per rule joined by
+//!   `UNION` (set-semantic union — `SQLite`'s `UNION` is exactly ∪
+//!   under `DISTINCT` discipline). A multi-rule aggregate head folds
+//!   over the `UNION` of the rules' head-projected distinct rows — the
+//!   union-fold template, mirroring the rules-IR definition; the
+//!   single-rule fold domain stays the distinct full binding set.
 //! - An `Interval(E)` field is two INTEGER columns (`crate::sqlmap`):
 //!   a membership binding becomes `f_start <= t AND t < f_end`, interval
 //!   value equality compares the halves pairwise, `Contains`' point
-//!   form is the membership formula, and an `Allen` mask is its basics'
-//!   endpoint formulas OR'd (PRD 15 systematizes).
+//!   form is the membership formula, an `Allen` mask is its basics'
+//!   endpoint formulas OR'd under the query's `SELECT DISTINCT`, and
+//!   `Duration` is `(end - start)` on the two stored columns.
 //! - Negation = one `NOT EXISTS (SELECT 1 FROM ...)` correlated subquery
 //!   per negated atom, appended to the core's WHERE. Correlation reuses
 //!   the positive joins' column aliases; the subqueries' own alias space
@@ -139,8 +146,8 @@ pub enum Inexpressible {
     /// A `Pack` head: `SQLite` has no coalescing aggregate — a
     /// relation-shaped GROUP BY (one row per (group, maximal segment))
     /// is not a SQL fold, and a recursive-CTE emulation would test the
-    /// emulation, not the engine. Naive-only by decision; PRD 15
-    /// systematizes the routing.
+    /// emulation, not the engine. Naive-only by decision; the verify
+    /// harness consumes this enumeration to route and report it.
     PackAggregate,
 }
 

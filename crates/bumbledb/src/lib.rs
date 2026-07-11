@@ -112,6 +112,11 @@ pub use interval::Interval;
 /// differential unit tests enable (as a dev-dependency).
 #[cfg(feature = "chase-off")]
 pub use plan::chase::with_chase_disabled;
+/// The storage format version (`storage/env.rs`), public so
+/// store-shaped derived identities (the bench corpus cache, stamps) can
+/// key on it: a format bump must regenerate every store-derived
+/// artifact, never reuse one.
+pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
 // The IR vocabulary a host needs to build a `Query`, and the id types that
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.

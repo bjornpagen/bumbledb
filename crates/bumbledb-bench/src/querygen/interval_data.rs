@@ -96,6 +96,92 @@ pub fn group_u64(seed: u64, group: u64, k: u64) -> (u64, u64) {
     }
 }
 
+/// One rung of the boundary-shape ladder — the relation a drawn query
+/// literal bears to the group's corpus intervals. The ladder is
+/// systematized for **every** interval literal draw: equal (an
+/// exact corpus interval), adjacent (touching a corpus endpoint —
+/// `[a,b) [b,c)` as query and data), nested (strictly inside the
+/// group's parent), and ray (an open end at the lane's sentinel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rung {
+    Equal,
+    Adjacent,
+    Nested,
+    Ray,
+}
+
+/// A rung draw: equal and adjacent dominate (they are where boundary
+/// bugs live); rays are the heavy filters, drawn least.
+fn draw_rung(rng: &mut Rng) -> Rung {
+    match rng.range(8) {
+        0..=2 => Rung::Equal,
+        3 | 4 => Rung::Adjacent,
+        5 | 6 => Rung::Nested,
+        _ => Rung::Ray,
+    }
+}
+
+/// A ladder literal over the I64 lane: `(start, end)` in the drawn
+/// group's neighborhood, at a drawn rung.
+///
+/// # Panics
+///
+/// Never in practice: the group-local arithmetic stays inside the span.
+#[must_use]
+pub fn ladder_i64(seed: u64, group: u64, rng: &mut Rng) -> ((i64, i64), Rung) {
+    let drawn = draw_rung(rng);
+    let interval = match drawn {
+        Rung::Equal => group_i64(seed, group, rng.range(PER_GROUP)),
+        Rung::Adjacent => {
+            let width = 16 + i64::try_from(rng.range(48)).expect("small");
+            if rng.chance(1, 2) {
+                let (s0, _) = group_i64(seed, group, 0);
+                (s0 - width, s0)
+            } else {
+                let (_, e1) = group_i64(seed, group, 1);
+                (e1, e1 + width)
+            }
+        }
+        Rung::Nested => {
+            // Strictly inside the parent (k = 2, width 256): both
+            // endpoints interior.
+            let (start, end) = group_i64(seed, group, 2);
+            let inset = 1 + i64::try_from(rng.range(64)).expect("small");
+            (start + inset, end - inset)
+        }
+        Rung::Ray => (group_i64(seed, group, 2).0, i64::MAX),
+    };
+    (interval, drawn)
+}
+
+/// A ladder literal over the U64 lane — [`ladder_i64`]'s twin; the ray
+/// rung ends at [`U64_SENTINEL_END`] (the lane's sentinel, inside the
+/// oracle mapping).
+#[must_use]
+pub fn ladder_u64(seed: u64, group: u64, rng: &mut Rng) -> ((u64, u64), Rung) {
+    let drawn = draw_rung(rng);
+    let interval = match drawn {
+        Rung::Equal => group_u64(seed, group, rng.range(PER_GROUP)),
+        Rung::Adjacent => {
+            let width = 16 + rng.range(48);
+            if rng.chance(1, 2) {
+                let (s0, _) = group_u64(seed, group, 0);
+                (s0 - width, s0)
+            } else {
+                let (_, e1) = group_u64(seed, group, 1);
+                (e1, e1 + width)
+            }
+        }
+        Rung::Nested => {
+            let (start, end) = group_u64(seed, group, 2);
+            let inset = 1 + rng.range(64);
+            (start + inset, end - inset)
+        }
+        Rung::Ray => (group_u64(seed, group, 2).0, U64_SENTINEL_END),
+    };
+    (interval, drawn)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +247,46 @@ mod tests {
     fn generation_is_a_pure_function() {
         assert_eq!(group_u64(SEED, 9, 3), group_u64(SEED, 9, 3));
         assert_ne!(group_u64(SEED, 9, 0), group_u64(SEED + 1, 9, 0));
+    }
+
+    /// The ladder draws every rung on both lanes, each literal nonempty,
+    /// and the rungs mean what they say: equal recomputes a corpus
+    /// interval, adjacent touches one exactly, nested sits strictly
+    /// inside the parent, a ray ends at the lane's sentinel.
+    #[test]
+    fn the_ladder_draws_every_rung_and_each_rung_is_exact() {
+        let mut rng = Rng::new(SEED);
+        let mut seen = [0u64; 4];
+        for group in 0..64 {
+            let ((start, end), drawn) = ladder_i64(SEED, group, &mut rng);
+            assert!(start < end, "i64 ladder literals are nonempty");
+            match drawn {
+                Rung::Equal => {
+                    assert!((0..PER_GROUP).any(|k| group_i64(SEED, group, k) == (start, end)));
+                    seen[0] += 1;
+                }
+                Rung::Adjacent => {
+                    let (s0, _) = group_i64(SEED, group, 0);
+                    let (_, e1) = group_i64(SEED, group, 1);
+                    assert!(end == s0 || start == e1, "the touch is exact");
+                    seen[1] += 1;
+                }
+                Rung::Nested => {
+                    let (ps, pe) = group_i64(SEED, group, 2);
+                    assert!(ps < start && end < pe, "strict nesting");
+                    seen[2] += 1;
+                }
+                Rung::Ray => {
+                    assert_eq!(end, i64::MAX);
+                    seen[3] += 1;
+                }
+            }
+            let ((start, end), drawn) = ladder_u64(SEED, group, &mut rng);
+            assert!(start < end, "u64 ladder literals are nonempty");
+            if drawn == Rung::Ray {
+                assert_eq!(end, U64_SENTINEL_END);
+            }
+        }
+        assert!(seen.iter().all(|count| *count > 0), "every rung: {seen:?}");
     }
 }

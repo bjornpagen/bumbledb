@@ -49,7 +49,8 @@ to the standard corpus points:
    claim distributions with realistic overlap (Zipfian meeting density —
    hand-rolled per the bench-crate dependency quarantine).
 2. Family definitions + goldens for the fixed queries; the randomized verify
-   pass (PRD 15) runs the same shapes first — no timing without the stamp.
+   pass (the oracle lanes, landed — `60-validation.md`) runs the same shapes
+   first — no timing without the stamp.
 3. Report: per-family medians into the standard report; the elision on/off
    delta as a named sub-measurement.
 

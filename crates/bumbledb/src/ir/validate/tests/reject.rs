@@ -340,6 +340,26 @@ fn rejects_sum_over_non_integer() {
 }
 
 #[test]
+fn rejects_min_and_max_over_str() {
+    // The str-extrema roster refusal (the README's recorded ruling):
+    // intern words are not order-preserving, so a str extreme would be
+    // a dictionary-id extreme — meaningless. Min/Max fold U64/I64 only.
+    for op in [AggOp::Min, AggOp::Max] {
+        let query = simple(
+            vec![FindTerm::Aggregate {
+                op,
+                over: Some(VarId(0)),
+            }],
+            vec![atom(HOLDER, vec![(1, var(0))])], // String
+        );
+        assert!(matches!(
+            expect_err(&query),
+            ValidationError::AggregateInputType { find: 0 }
+        ));
+    }
+}
+
+#[test]
 fn rejects_count_with_a_variable() {
     let query = simple(
         vec![FindTerm::Aggregate {

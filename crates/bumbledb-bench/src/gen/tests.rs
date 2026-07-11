@@ -18,10 +18,11 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
         scale: Scale::S,
     });
     assert_ne!(a, other, "seeds diverge");
-    // The golden: changing the generator re-baselines every corpus.
+    // The golden: changing the generator — or the storage format, now a
+    // live ingredient — re-baselines every corpus.
     assert_eq!(
         digest_hex(&a),
-        "d850ac5008aa7a97531d5cb1ff28712f4f753892bf4803eeddc5f973e2bf8bc3",
+        "11e7ac2267a9e97fcb0dfcdea6d2dd3684633c4214ff860fa237289cf1468a81",
         "generator output changed — re-baseline deliberately"
     );
 }

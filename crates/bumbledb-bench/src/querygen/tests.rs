@@ -49,6 +49,7 @@ fn a_thousand_queries_validate_and_translate() {
 /// every type, Arg-restriction variants — and the structural
 /// compositions at least once per run.
 #[test]
+#[allow(clippy::too_many_lines)] // the contract's assertion roster, one row per construct
 fn the_coverage_contract_holds_at_a_thousand() {
     let cov = coverage(N, SEED, CFG);
     let total: u64 = SHAPE_WEIGHTS.iter().map(|(_, w)| w).sum();
@@ -66,12 +67,14 @@ fn the_coverage_contract_holds_at_a_thousand() {
     band("gated", cov.gated, 8);
     band("aggregate", cov.aggregate, 14);
     band("membership", cov.membership, 10);
-    band("interval_join", cov.interval_join, 8);
-    band("boundary", cov.boundary, 4);
+    band("interval_join", cov.interval_join, 10);
+    band("boundary", cov.boundary, 6);
     band("count_distinct", cov.count_distinct, 10);
     band("arg", cov.arg, 8);
     band("existence_walk", cov.existence_walk, 8);
     band("du_walk", cov.du_walk, 6);
+    band("rules", cov.rules, 10);
+    band("measure", cov.measure, 8);
     for (name, count) in [
         ("gates", cov.gates),
         ("misses", cov.misses),
@@ -99,10 +102,28 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("allen_i64", cov.allen_i64),
         ("allen_composite", cov.allen_composite),
         ("allen_singleton", cov.allen_singleton),
+        ("allen_random_mask", cov.allen_random_mask),
         ("contains_u64", cov.contains_u64),
         ("contains_i64", cov.contains_i64),
         ("adjacent_left", cov.adjacent_left),
         ("adjacent_right", cov.adjacent_right),
+        // The boundary-shape ladder, drawn for every interval literal:
+        // equal/adjacent/nested/ray each appear per run.
+        ("ladder_equal", cov.ladder[0]),
+        ("ladder_adjacent", cov.ladder[1]),
+        ("ladder_nested", cov.ladder[2]),
+        ("ladder_ray", cov.ladder[3]),
+        // Multi-rule programs: every arm count and every variant.
+        ("rules_two_arms", cov.rules_arms[0]),
+        ("rules_three_arms", cov.rules_arms[1]),
+        ("rules_four_arms", cov.rules_arms[2]),
+        ("rules_disjoint", cov.rules_disjoint),
+        ("rules_overlap", cov.rules_overlap),
+        ("rules_aggregate", cov.rules_aggregate),
+        // The measure's three construct kinds.
+        ("duration_find", cov.duration_find),
+        ("duration_predicate", cov.duration_predicate),
+        ("duration_fold", cov.duration_fold),
         ("negations", cov.negations),
         ("negation_key_covered", cov.negation_key_covered),
         ("negation_open", cov.negation_open),
@@ -148,11 +169,21 @@ fn the_coverage_contract_holds_at_a_thousand() {
             }
         }
     }
+    // Every Allen basic is reachable through some literal mask per run
+    // (singletons, composites, and random masks jointly).
+    for (index, count) in cov.allen_basics.iter().enumerate() {
+        assert!(*count > 0, "Allen basic {index} never appeared in a mask");
+    }
     // The structural compositions where bugs hide: at least one query
     // per run carries each.
     assert!(cov.neg_and_aggregate > 0, "negation ∧ aggregate missing");
     assert!(cov.set_and_negation > 0, "param set ∧ negation missing");
     assert!(cov.membership_and_allen > 0, "membership ∧ Allen missing");
+    assert!(cov.mask_and_negation > 0, "mask ∧ negation missing");
+    assert!(
+        cov.rules_aggregate > 0,
+        "rules ∧ aggregate missing (asserted above; restated as the composite)"
+    );
     // The equality-spine cost bound (60-validation.md § the generator
     // contract): every emitted membership/overlap construct rides an
     // equality-connected spine — the keyless Cartesian degenerate
@@ -238,17 +269,19 @@ fn generated_string_literals_are_nul_free() {
     let mut rng = Rng::new(SEED);
     for _ in 0..N {
         let query = random_query(&mut rng, CFG);
-        for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
-            for (_, term) in &atom.bindings {
-                if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
-                    assert!(!raw.contains(&0), "a generated literal carries NUL");
+        for rule in &query.rules {
+            for atom in rule.atoms.iter().chain(&rule.negated) {
+                for (_, term) in &atom.bindings {
+                    if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
+                        assert!(!raw.contains(&0), "a generated literal carries NUL");
+                    }
                 }
             }
-        }
-        for comparison in query.rules[0].predicates.iter().map(crate::querygen::leaf) {
-            for term in [&comparison.lhs, &comparison.rhs] {
-                if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
-                    assert!(!raw.contains(&0), "a generated literal carries NUL");
+            for comparison in rule.predicates.iter().map(crate::querygen::leaf) {
+                for term in [&comparison.lhs, &comparison.rhs] {
+                    if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
+                        assert!(!raw.contains(&0), "a generated literal carries NUL");
+                    }
                 }
             }
         }

@@ -308,12 +308,17 @@ pub fn run_prepared(
 
     // The randomized lane: seeded random queries over the generator's
     // target schema and its own corpus (the target module carries the
-    // coverage extensions the seven-type matrix needs).
+    // coverage extensions the seven-type matrix needs), plus the Allen
+    // converse-property lane over the same store.
     if run.bundles.len() < MAX_BUNDLES && cfg.random_cases > 0 {
         eprintln!("verify: loading the randomized lane's target corpus");
         let (target_db, target_conn) = load_target_stores(&cfg.out_dir.join("target-db"), cfg.gen);
         run.lane(&target_db, &target_conn, |lane| {
             random_lane(lane, cfg, cfg.random_cases, 0x0112_0001, "random", |_| {});
+            if lane.bundles.len() < MAX_BUNDLES {
+                eprintln!("verify: converse-property lane");
+                super::run_converse::converse_lane(lane, cfg);
+            }
         });
     }
 

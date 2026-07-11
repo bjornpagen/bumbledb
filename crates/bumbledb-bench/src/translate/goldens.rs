@@ -53,8 +53,7 @@ pub const MEMBERSHIP_PARAM: &str = "SELECT DISTINCT t1.\"org\" FROM \"Posting\" 
 /// Mandate(account = a, org = o2, active = v),
 /// Allen(u, v, INTERSECTS)`: the mandate-intersection join. The mask
 /// renders as its per-basic endpoint formulas OR'd (the 9 sharing
-/// basics), under the query's SELECT DISTINCT — deliberately naive
-/// (PRD 15 systematizes).
+/// basics), under the query's SELECT DISTINCT — deliberately naive.
 pub const INTERSECTS: &str = "SELECT DISTINCT t0.\"org\", t1.\"org\" FROM \"Mandate\" AS t0, \"Mandate\" AS t1 WHERE t0.\"account\" = t1.\"account\" AND ((t0.\"active_start\" < t1.\"active_start\" AND t1.\"active_start\" < t0.\"active_end\" AND t0.\"active_end\" < t1.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t0.\"active_end\" < t1.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_end\" < t1.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" < t1.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" < t1.\"active_start\" AND t1.\"active_end\" < t0.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t1.\"active_end\" < t0.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_start\" < t1.\"active_end\" AND t1.\"active_end\" < t0.\"active_end\"))";
 
 /// `covers_param` — `Q(o) :- Mandate(org = o, active = v),

@@ -8,8 +8,8 @@
 //! Interval operators are constructed **only here**, and only over
 //! interval-typed terms; order operators never touch these shapes: the
 //! illegal (operator, type) matrix cells are unemittable by
-//! construction. Masks are literal: the param-mask surface belongs to
-//! PRD 15's systematized oracle (the translator does not render it yet).
+//! construction. Masks are literal: the translator does not render param
+//! masks — owed to whichever family first needs one.
 //!
 //! **The equality-spine cost bound** (`docs/architecture/60-validation.md`
 //! § the generator contract; `40-execution.md` names the degenerate): a
@@ -37,6 +37,20 @@ fn singleton_mask(rng: &mut Rng) -> AllenMask {
         .expect("a basic's bit is in range")
 }
 
+/// A random mask: any nonempty, non-full 13-bit subset — the coordinate
+/// system's whole space, not just the named composites (the vacuous
+/// EMPTY and FULL masks are roster rejections, exercised by the verify
+/// error-parity lane, so the generator never emits them).
+fn random_mask(rng: &mut Rng) -> AllenMask {
+    loop {
+        let bits = u16::try_from(rng.range(1 << 13)).expect("13 bits");
+        let mask = AllenMask::new(bits).expect("13 bits are in range");
+        if !mask.is_empty() && !mask.is_full() {
+            return mask;
+        }
+    }
+}
+
 use crate::gen::{GenConfig, Rng};
 use crate::querygen::interval_data;
 use crate::querygen::target::{self, ids, Domains};
@@ -61,22 +75,19 @@ fn u64_point(cfg: GenConfig, rng: &mut Rng) -> u64 {
     start + (end - start) / 2
 }
 
-/// An in-data interval literal (any shape of a drawn group).
-fn i64_interval(cfg: GenConfig, rng: &mut Rng) -> Value {
-    let (start, end) = interval_data::group_i64(
-        cfg.seed,
-        rng.range(GROUP_POOL),
-        rng.range(interval_data::PER_GROUP),
-    );
+/// An interval literal off the boundary-shape ladder
+/// ([`interval_data::ladder_i64`] — equal/adjacent/nested/ray,
+/// systematized for every interval literal draw), rung-tagged for the
+/// coverage contract.
+fn i64_interval(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
+    let ((start, end), drawn) = interval_data::ladder_i64(cfg.seed, rng.range(GROUP_POOL), rng);
+    b.saw_rung(drawn);
     Value::IntervalI64(start, end)
 }
 
-fn u64_interval(cfg: GenConfig, rng: &mut Rng) -> Value {
-    let (start, end) = interval_data::group_u64(
-        cfg.seed,
-        rng.range(GROUP_POOL),
-        rng.range(interval_data::PER_GROUP),
-    );
+fn u64_interval(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
+    let ((start, end), drawn) = interval_data::ladder_u64(cfg.seed, rng.range(GROUP_POOL), rng);
+    b.saw_rung(drawn);
     Value::IntervalU64(start, end)
 }
 
@@ -185,10 +196,11 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         let second = b.atom(ids::MANDATE);
         b.bind(second, ids::mandate::ORG, Term::Var(org));
         let active = b.bind_var(second, ids::mandate::ACTIVE);
+        let rhs = Term::Literal(i64_interval(b, rng, cfg));
         b.predicates.push(Comparison {
             op: allen(AllenMask::INTERSECTS),
             lhs: Term::Var(active),
-            rhs: Term::Literal(i64_interval(cfg, rng)),
+            rhs,
         });
     }
 }
@@ -239,10 +251,11 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         let second = b.atom(ids::TRANSFER);
         let _payload = pin_transfer(b, rng, cfg, domains, second);
         let window = b.bind_var(second, ids::transfer::WINDOW);
+        let rhs = Term::Literal(u64_interval(b, rng, cfg));
         b.predicates.push(Comparison {
             op: allen(AllenMask::INTERSECTS),
             lhs: Term::Var(window),
-            rhs: Term::Literal(u64_interval(cfg, rng)),
+            rhs,
         });
     }
 }
@@ -261,13 +274,16 @@ enum Right {
 /// An interval-vs-interval (or interval-vs-literal) comparison over one
 /// element lane: `Allen` masks — the workload composites (`INTERSECTS`,
 /// `COVERS`, `DISJOINT`), a random singleton basic per draw (all 13
-/// reachable over the run), and the `Eq`/`Ne` derived facts (the
-/// (Eq/Ne, interval) matrix cells) — plus `Contains`' point form.
-/// Var-vs-var joins build the second occurrence **on the spine**: the
-/// Mandate lane equality-joins on account; the Transfer lane pins each
-/// occurrence. Var-vs-literal filters build no second occurrence at all.
+/// reachable over the run), **random masks** (any nonempty proper
+/// subset of the 13 — the coordinate space itself), and the `Eq`/`Ne`
+/// derived facts (the (Eq/Ne, interval) matrix cells) — plus
+/// `Contains`' point form. Var-vs-var joins build the second occurrence
+/// **on the spine**: the Mandate lane equality-joins on account; the
+/// Transfer lane pins each occurrence. Var-vs-literal filters build no
+/// second occurrence at all; their literals draw from the
+/// boundary-shape ladder.
 pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
-    let draw = rng.range(12);
+    let draw = rng.range(14);
     let (op, right) = match draw {
         0 | 1 => (allen(AllenMask::INTERSECTS), Right::Var),
         2 => (allen(AllenMask::INTERSECTS), Right::Literal),
@@ -280,7 +296,16 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
         // Contains' point form: point membership as a predicate.
         9 => (CmpOp::Contains, Right::Element),
         10 => (CmpOp::Eq, Right::Var),
-        _ => (CmpOp::Ne, Right::Var),
+        11 => (CmpOp::Ne, Right::Var),
+        // Random masks, both operand shapes.
+        12 => {
+            b.random_mask = true;
+            (allen(random_mask(rng)), Right::Var)
+        }
+        _ => {
+            b.random_mask = true;
+            (allen(random_mask(rng)), Right::Literal)
+        }
     };
     let (lhs, rhs) = if rng.chance(1, 2) {
         // I64 lane: Mandate occurrences joined on account (the spine).
@@ -301,7 +326,7 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
                 let window = b.bind_var(second, ids::transfer::WINDOW);
                 Term::Var(window)
             }
-            Right::Literal => Term::Literal(u64_interval(cfg, rng)),
+            Right::Literal => Term::Literal(u64_interval(b, rng, cfg)),
             Right::Element => Term::Literal(Value::U64(u64_point(cfg, rng))),
         };
         (lhs, rhs)
@@ -329,7 +354,7 @@ fn mandate_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, right: Right) ->
             let active = b.bind_var(second, ids::mandate::ACTIVE);
             Term::Var(active)
         }
-        Right::Literal => Term::Literal(i64_interval(cfg, rng)),
+        Right::Literal => Term::Literal(i64_interval(b, rng, cfg)),
         Right::Element => Term::Literal(Value::I64(i64_point(cfg, rng))),
     };
     (lhs, rhs)
@@ -418,6 +443,65 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
         b.find_var(id);
         b.find_var(window);
         push_boundary_cmp(b, rng, window, literal, point);
+    }
+}
+
+/// The measure shape (`docs/architecture/20-query-ir.md` § the
+/// measure), over the U64 window lane — total here: the lane's
+/// sentinel end (`interval_data::U64_SENTINEL_END`) sits below the
+/// element domain's `MAX`, so no window is a ray and `Duration` is
+/// `(end − start)` on both oracles (ray-bearing measure parity is the
+/// verify naive lane's obligation). Three construct kinds: the measure
+/// in a find position, in an order predicate against a literal, and
+/// folded (`Sum`/`Min`/`Max` — `Sum` under a duration bound so the
+/// reachable sum stays far below 2⁶³, the generator's Sum-range duty).
+pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
+    let transfer = b.atom(ids::TRANSFER);
+    match rng.range(3) {
+        // Find position: `[extref, Duration(window)]` over a pinned
+        // occurrence, or the open distinct-durations scan.
+        0 => {
+            if rng.chance(1, 2) {
+                let _payload = pin_transfer(b, rng, cfg, domains, transfer);
+            } else {
+                let id = b.bind_var(transfer, ids::transfer::ID);
+                b.find_var(id);
+            }
+            let window = b.bind_var(transfer, ids::transfer::WINDOW);
+            b.finds.push(bumbledb::FindTerm::Duration(window));
+        }
+        // Predicate: `Duration(window) <op> literal` — an order
+        // comparison over the measure word, the selection form.
+        1 => {
+            let id = b.bind_var(transfer, ids::transfer::ID);
+            b.find_var(id);
+            let window = b.bind_var(transfer, ids::transfer::WINDOW);
+            b.predicates.push(Comparison {
+                op: crate::querygen::shapes::order_op(rng),
+                lhs: Term::Duration(window),
+                rhs: Term::Literal(Value::U64(rng.range(3 * interval_data::GROUP_SPAN))),
+            });
+        }
+        // Fold: a global Sum/Min/Max over the measure.
+        _ => {
+            let window = b.bind_var(transfer, ids::transfer::WINDOW);
+            let op = match rng.range(3) {
+                0 => bumbledb::AggOp::Sum,
+                1 => bumbledb::AggOp::Min,
+                _ => bumbledb::AggOp::Max,
+            };
+            if op == bumbledb::AggOp::Sum {
+                // The Sum bound: durations capped at a group span, so
+                // the sum tops out near transfers × 4096 ≪ 2⁶³.
+                b.predicates.push(Comparison {
+                    op: bumbledb::CmpOp::Le,
+                    lhs: Term::Duration(window),
+                    rhs: Term::Literal(Value::U64(4 * interval_data::GROUP_SPAN)),
+                });
+            }
+            b.finds
+                .push(bumbledb::FindTerm::AggregateDuration { op, over: window });
+        }
     }
 }
 

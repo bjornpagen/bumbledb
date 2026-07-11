@@ -31,6 +31,7 @@ mod oracle;
 mod shapes;
 mod shapes_chase;
 mod shapes_interval;
+mod shapes_rules;
 mod shapes_sink;
 pub mod target;
 #[cfg(test)]
@@ -53,12 +54,14 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::Gated, 8),
     (Shape::Aggregate, 14),
     (Shape::Membership, 10),
-    (Shape::IntervalJoin, 8),
-    (Shape::Boundary, 4),
+    (Shape::IntervalJoin, 10),
+    (Shape::Boundary, 6),
     (Shape::CountDistinct, 10),
     (Shape::Arg, 8),
     (Shape::ExistenceWalk, 8),
     (Shape::DuWalk, 6),
+    (Shape::Rules, 10),
+    (Shape::Measure, 8),
 ];
 
 /// Filter dressing applies to every shape with this percent chance…
@@ -95,6 +98,16 @@ enum Shape {
     /// The discriminated-union one-sided walk, both `==` directions,
     /// plus the missing-φ near-miss.
     DuWalk,
+    /// Multi-rule programs (`shapes_rules.rs`): rule counts 2–4,
+    /// overlapping and provably-disjoint arm sets (DU-arm unions — the
+    /// elision path exercised adversarially), duplicate head rows across
+    /// rules, and the rules ∧ aggregate union fold.
+    Rules,
+    /// The measure over the U64 window lane: `Duration` in a find
+    /// position, in a predicate, and folded — total here (the lane's
+    /// sentinel end sits below the ray); ray-bearing measure parity is
+    /// the verify naive lane's.
+    Measure,
 }
 
 /// Which chase-shape variant a query is ([`Shape::ExistenceWalk`] /
@@ -156,8 +169,26 @@ struct Builder {
     /// interval at the corpus interval's start / at its end.
     adjacent_left: bool,
     adjacent_right: bool,
+    /// Boundary-shape ladder rungs drawn for this query's interval
+    /// literals ([`interval_data::Rung`] — systematized for every
+    /// interval literal draw).
+    ladder: [bool; 4],
+    /// Whether an `Allen` predicate carries a random (unnamed) mask.
+    random_mask: bool,
     /// Which chase-shape variant this query is, when the shape is one.
     chase: Option<ChaseVariant>,
+}
+
+impl Builder {
+    /// Records one ladder-rung draw ([`interval_data::Rung`]).
+    fn saw_rung(&mut self, rung: interval_data::Rung) {
+        self.ladder[match rung {
+            interval_data::Rung::Equal => 0,
+            interval_data::Rung::Adjacent => 1,
+            interval_data::Rung::Nested => 2,
+            interval_data::Rung::Ray => 3,
+        }] = true;
+    }
 }
 
 /// Generation facts the query alone cannot reveal (hit-vs-miss and the
@@ -171,7 +202,26 @@ struct GenTags {
     bytes_miss: bool,
     adjacent_left: bool,
     adjacent_right: bool,
+    ladder: [bool; 4],
+    random_mask: bool,
     chase: Option<ChaseVariant>,
+    rules: Option<RulesVariant>,
+}
+
+/// Which multi-rule variant a [`Shape::Rules`] query is
+/// (`shapes_rules.rs`) — the generator's intent, held to its band by the
+/// coverage contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RulesVariant {
+    /// Provably-disjoint arms: one relation, distinct enum selections on
+    /// the discriminant field (the elision path).
+    Disjoint,
+    /// Overlapping arms with duplicate head rows across rules (the
+    /// union's teeth) — including the DU twin (`JournalEntry` import
+    /// arm vs `ImportBatch`, equal denotations by the `==` statement).
+    Overlap,
+    /// The multi-rule aggregate head (the union fold).
+    Aggregate,
 }
 
 /// The comparison-type axis of the coverage matrix — all seven types.
@@ -210,6 +260,8 @@ pub struct Coverage {
     pub arg: u64,
     pub existence_walk: u64,
     pub du_walk: u64,
+    pub rules: u64,
+    pub measure: u64,
     /// The chase variants (`shapes_chase.rs`): eliminable shapes
     /// (existence walks and both DU `==` directions) vs the near-miss
     /// refusals — the coverage contract asserts both appear per run,
@@ -253,17 +305,34 @@ pub struct Coverage {
     pub membership_u64: u64,
     pub membership_i64: u64,
     /// Interval comparisons by element type: `Allen` masks per lane,
-    /// composite (≥2 basics) vs singleton mask draws, and the point form
-    /// of `Contains` per lane.
+    /// composite (≥2 basics) vs singleton mask draws, random (unnamed)
+    /// masks, per-basic occurrence across every literal mask (all 13
+    /// reachable per run), and the point form of `Contains` per lane.
     pub allen_u64: u64,
     pub allen_i64: u64,
     pub allen_composite: u64,
     pub allen_singleton: u64,
+    pub allen_random_mask: u64,
+    pub allen_basics: [u64; 13],
     pub contains_u64: u64,
     pub contains_i64: u64,
     /// Boundary-shape polarities (corpus-adjacent query literals).
     pub adjacent_left: u64,
     pub adjacent_right: u64,
+    /// Boundary-shape ladder rungs (equal/adjacent/nested/ray) drawn by
+    /// the shapes' interval literals.
+    pub ladder: [u64; 4],
+    /// Multi-rule programs by arm count (2/3/4) and by variant; the
+    /// duplicate-head DU twin counts under overlap.
+    pub rules_arms: [u64; 3],
+    pub rules_disjoint: u64,
+    pub rules_overlap: u64,
+    pub rules_aggregate: u64,
+    /// The measure's construct kinds: `Duration` finds, predicates, and
+    /// folds (`Sum`/`Min`/`Max` over the measure).
+    pub duration_find: u64,
+    pub duration_predicate: u64,
+    pub duration_fold: u64,
     /// Negated atoms, and their binding-shape split: key-covered (a
     /// fresh key field bound) vs open; literal/param/set/membership
     /// bindings inside; zero-binding negated gates; open negations over
@@ -283,6 +352,7 @@ pub struct Coverage {
     pub neg_and_aggregate: u64,
     pub set_and_negation: u64,
     pub membership_and_allen: u64,
+    pub mask_and_negation: u64,
     /// Var-vs-var comparisons whose variables bind in different atoms.
     pub cross_residuals: u64,
     /// Wide projections — the >8-projected-word class the executor's

@@ -4,14 +4,15 @@
 //! sinks) are re-derived from the query itself; only corpus-content
 //! facts (hit-vs-miss, boundary polarity) come from generation tags.
 
+use bumbledb::ir::Rule;
 use bumbledb::schema::{Generation, IntervalElement, ValueType};
-use bumbledb::{AggOp, Atom, CmpOp, FindTerm, MaskTerm, Query, Term, VarId};
+use bumbledb::{AggOp, Atom, Basic, CmpOp, FindTerm, MaskTerm, Query, Term, VarId};
 use std::collections::{HashMap, HashSet};
 
 use crate::gen::{GenConfig, Rng};
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
-use crate::querygen::{ChaseVariant, Coverage, GenTags, Shape};
+use crate::querygen::{ChaseVariant, Coverage, GenTags, RulesVariant, Shape};
 
 /// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
 /// all seven types, order operators over the two integer types only,
@@ -72,7 +73,7 @@ fn field_type(atom: &Atom, field: bumbledb::FieldId) -> ValueType {
         .clone()
 }
 
-fn typing(query: &Query) -> Typing {
+fn typing(rule: &Rule) -> Typing {
     let mut t = Typing {
         var_types: HashMap::new(),
         scalar_params: HashSet::new(),
@@ -80,7 +81,7 @@ fn typing(query: &Query) -> Typing {
         var_pos: HashMap::new(),
     };
     // Pass one: scalar-field positions anchor vars and params.
-    for (atom_idx, atom) in query.rules[0].atoms.iter().enumerate() {
+    for (atom_idx, atom) in rule.atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
             let ty = field_type(atom, *field);
             if let Term::Var(var) = term {
@@ -102,7 +103,7 @@ fn typing(query: &Query) -> Typing {
             }
         }
     }
-    for atom in &query.rules[0].negated {
+    for atom in &rule.negated {
         for (field, term) in &atom.bindings {
             if matches!(field_type(atom, *field), ValueType::Interval { .. }) {
                 continue;
@@ -114,7 +115,7 @@ fn typing(query: &Query) -> Typing {
     }
     // Pass two: interval-field var positions with no scalar anchor are
     // interval-typed (the bivalent default).
-    for atom in &query.rules[0].atoms {
+    for atom in &rule.atoms {
         for (field, term) in &atom.bindings {
             let ty = field_type(atom, *field);
             if !matches!(ty, ValueType::Interval { .. }) {
@@ -145,13 +146,13 @@ fn element_of(ty: &ValueType) -> Option<IntervalElement> {
 /// (literal/param/set) on a scalar field; a negated atom whose only
 /// bindings are memberships is the same Cartesian. Returns the count of
 /// violating atoms — asserted zero by the contract test.
-fn spine_violations(query: &Query, t: &Typing) -> u64 {
+fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
     use std::collections::BTreeSet;
     // Equality positions: a var at a scalar field, or an interval-typed
     // var at an interval field (value equality). A membership position
     // (element-typed var at an interval field) is not an equality.
     let mut eq_atoms: HashMap<VarId, BTreeSet<usize>> = HashMap::new();
-    for (index, atom) in query.rules[0].atoms.iter().enumerate() {
+    for (index, atom) in rule.atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
             let Term::Var(var) = term else { continue };
             let field_interval = matches!(field_type(atom, *field), ValueType::Interval { .. });
@@ -174,7 +175,7 @@ fn spine_violations(query: &Query, t: &Typing) -> u64 {
     };
     // The atoms the rule binds: var-point membership occurrences…
     let mut needs: BTreeSet<usize> = BTreeSet::new();
-    for (index, atom) in query.rules[0].atoms.iter().enumerate() {
+    for (index, atom) in rule.atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
             if !matches!(field_type(atom, *field), ValueType::Interval { .. }) {
                 continue;
@@ -187,7 +188,7 @@ fn spine_violations(query: &Query, t: &Typing) -> u64 {
         }
     }
     // …and interval-typed sides of cross-atom Allen/Contains.
-    for comparison in query.rules[0].predicates.iter().map(super::leaf) {
+    for comparison in rule.predicates.iter().map(super::leaf) {
         if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::Contains) {
             continue;
         }
@@ -207,9 +208,9 @@ fn spine_violations(query: &Query, t: &Typing) -> u64 {
     }
     let mut violations = needs
         .into_iter()
-        .filter(|index| !has_eq_edge(*index) && !has_eq_selection(&query.rules[0].atoms[*index]))
+        .filter(|index| !has_eq_edge(*index) && !has_eq_selection(&rule.atoms[*index]))
         .count() as u64;
-    for atom in &query.rules[0].negated {
+    for atom in &rule.negated {
         let mut memberships = 0usize;
         let mut others = 0usize;
         for (field, term) in &atom.bindings {
@@ -251,6 +252,8 @@ impl Coverage {
             Shape::Arg => self.arg += 1,
             Shape::ExistenceWalk => self.existence_walk += 1,
             Shape::DuWalk => self.du_walk += 1,
+            Shape::Rules => self.rules += 1,
+            Shape::Measure => self.measure += 1,
         }
     }
 
@@ -277,9 +280,9 @@ impl Coverage {
     /// Membership bindings in the positive atoms: an interval-typed
     /// field carrying an element-typed term. Returns whether any exist
     /// (the composition detector's input).
-    fn record_membership(&mut self, query: &Query, t: &Typing) -> bool {
+    fn record_membership(&mut self, rule: &Rule, t: &Typing) -> bool {
         let mut any = false;
-        for atom in &query.rules[0].atoms {
+        for atom in &rule.atoms {
             for (field, term) in &atom.bindings {
                 let Some(element) = element_of(&field_type(atom, *field)) else {
                     continue;
@@ -313,9 +316,18 @@ impl Coverage {
         any
     }
 
-    fn record_comparisons(&mut self, query: &Query, t: &Typing) -> bool {
+    fn record_comparisons(&mut self, rule: &Rule, t: &Typing) -> bool {
         let mut has_allen = false;
-        for comparison in query.rules[0].predicates.iter().map(super::leaf) {
+        for comparison in rule.predicates.iter().map(super::leaf) {
+            // A measure side types the comparison u64 (the measure word)
+            // and is its own construct row.
+            if matches!(comparison.lhs, Term::Duration(_))
+                || matches!(comparison.rhs, Term::Duration(_))
+            {
+                self.duration_predicate += 1;
+                self.matrix[op_index(comparison.op)][0] += 1;
+                continue;
+            }
             let ty = match (&comparison.lhs, &comparison.rhs) {
                 (Term::Var(var), _) | (_, Term::Var(var)) => t
                     .var_types
@@ -334,12 +346,19 @@ impl Coverage {
                         None => unreachable!("Allen is interval-typed by construction"),
                     }
                     let MaskTerm::Literal(mask) = mask else {
-                        unreachable!("the generator emits literal masks (PRD 15 owns params)")
+                        unreachable!("the generator emits literal masks")
                     };
                     if mask.popcount() > 1 {
                         self.allen_composite += 1;
                     } else {
                         self.allen_singleton += 1;
+                    }
+                    // Per-basic reach: every literal mask feeds the
+                    // 13-cell roster (all 13 asserted per run).
+                    for (index, basic) in Basic::ALL.iter().enumerate() {
+                        if mask.contains(*basic) {
+                            self.allen_basics[index] += 1;
+                        }
                     }
                 }
                 CmpOp::Contains => match element_of(&ty) {
@@ -370,8 +389,8 @@ impl Coverage {
 
     /// Negated-atom shapes: gate / key-covered / open (with the
     /// multiply-witnessed relations tracked), and the binding-term mix.
-    fn record_negations(&mut self, query: &Query, t: &Typing) {
-        for atom in &query.rules[0].negated {
+    fn record_negations(&mut self, rule: &Rule, t: &Typing) {
+        for atom in &rule.negated {
             self.negations += 1;
             if atom.bindings.is_empty() {
                 self.negation_gate += 1;
@@ -413,14 +432,14 @@ impl Coverage {
         }
     }
 
-    fn record_finds(&mut self, query: &Query, t: &Typing) -> bool {
+    fn record_finds(&mut self, rule: &Rule, t: &Typing) -> bool {
         let mut aggregates = 0u64;
         let mut has_var_find = false;
         let mut arg_key: Option<VarId> = None;
         let mut arg_key_projected = false;
         let mut projected_words = 0u64;
         let mut interval_finds = 0u64;
-        for term in &query.rules[0].finds {
+        for term in &rule.finds {
             match term {
                 FindTerm::Var(var) => {
                     has_var_find = true;
@@ -453,10 +472,10 @@ impl Coverage {
                             arg_key = Some(*key);
                             arg_key_projected |= *over == Some(*key);
                         }
-                        // The fleet does not emit Pack yet (PRD 15 adds
-                        // the coalescing family's oracle rows — the SQL
-                        // lane cannot express it, so its rows are
-                        // naive-only by the expressibility gate).
+                        // Pack heads are naive-only by the
+                        // expressibility gate; their oracle rows live in
+                        // the verify naive lane's own generator, never
+                        // in the SQL-paired grammar here.
                         AggOp::Pack => {}
                     }
                     if let Some(var) = over {
@@ -465,13 +484,14 @@ impl Coverage {
                         }
                     }
                 }
-                // The measure positions: the generator does not emit them
-                // yet (PRD 15 adds the measure's oracle rows); counted as
-                // one projected word / one fold like their plain twins.
+                // The measure positions: one projected word / one fold
+                // like their plain twins, plus their own construct rows.
                 FindTerm::Duration(_) => {
+                    self.duration_find += 1;
                     projected_words += 1;
                 }
                 FindTerm::AggregateDuration { .. } => {
+                    self.duration_fold += 1;
                     aggregates += 1;
                 }
             }
@@ -501,66 +521,100 @@ impl Coverage {
         aggregates > 0
     }
 
+    /// The multi-rule bands: arm counts 2–4 and the generator's variant
+    /// intent (the arm count is re-derived from the query, never trusted
+    /// from the tag).
+    fn record_rules(&mut self, query: &Query, variant: Option<RulesVariant>) {
+        let Some(variant) = variant else { return };
+        match query.rules.len() {
+            2 => self.rules_arms[0] += 1,
+            3 => self.rules_arms[1] += 1,
+            4 => self.rules_arms[2] += 1,
+            arms => unreachable!("the rules shape emits 2-4 arms, got {arms}"),
+        }
+        match variant {
+            RulesVariant::Disjoint => self.rules_disjoint += 1,
+            RulesVariant::Overlap => self.rules_overlap += 1,
+            RulesVariant::Aggregate => self.rules_aggregate += 1,
+        }
+    }
+
     fn record(&mut self, query: &Query, shape: Shape, tags: GenTags) {
         self.record_shape(shape);
         self.record_chase(tags.chase);
-        self.gates += query.rules[0]
-            .atoms
-            .iter()
-            .filter(|atom| atom.bindings.is_empty())
-            .count() as u64;
+        self.record_rules(query, tags.rules);
         self.misses += u64::from(tags.miss);
         self.bytes_hits += u64::from(tags.bytes_hit);
         self.bytes_misses += u64::from(tags.bytes_miss);
         self.adjacent_left += u64::from(tags.adjacent_left);
         self.adjacent_right += u64::from(tags.adjacent_right);
-        let t = typing(query);
-        // Repeated in-atom variables.
-        for atom in &query.rules[0].atoms {
-            let vars: Vec<&Term> = atom
-                .bindings
-                .iter()
-                .filter(|(_, term)| matches!(term, Term::Var(_)))
-                .map(|(_, term)| term)
-                .collect();
-            if vars
-                .iter()
-                .enumerate()
-                .any(|(index, term)| vars[..index].contains(term))
-            {
-                self.repeated_vars += 1;
-            }
+        for (index, drawn) in tags.ladder.iter().enumerate() {
+            self.ladder[index] += u64::from(*drawn);
         }
-        // Param and param-set binding occurrences (positive + negated).
-        for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
-            for (_, term) in &atom.bindings {
-                match term {
-                    Term::Param(_) => self.params += 1,
-                    Term::ParamSet(_) => self.param_sets += 1,
-                    _ => {}
-                }
-            }
-        }
-        let has_membership = self.record_membership(query, &t);
-        let has_allen = self.record_comparisons(query, &t);
-        self.record_negations(query, &t);
-        let has_aggregate = self.record_finds(query, &t);
-        // The structural compositions where bugs hide.
-        let has_negation = !query.rules[0].negated.is_empty();
-        let uses_set =
-            query.rules[0]
+        self.allen_random_mask += u64::from(tags.random_mask);
+        // Per-query composition flags, accumulated across rules
+        // (variables are rule-scoped, so the typing walk runs per rule).
+        let (mut has_membership, mut has_allen, mut has_negation, mut has_aggregate) =
+            (false, false, false, false);
+        let mut uses_set = false;
+        for (rule_idx, rule) in query.rules.iter().enumerate() {
+            self.gates += rule
                 .atoms
                 .iter()
-                .chain(&query.rules[0].negated)
+                .filter(|atom| atom.bindings.is_empty())
+                .count() as u64;
+            let t = typing(rule);
+            // Repeated in-atom variables.
+            for atom in &rule.atoms {
+                let vars: Vec<&Term> = atom
+                    .bindings
+                    .iter()
+                    .filter(|(_, term)| matches!(term, Term::Var(_)))
+                    .map(|(_, term)| term)
+                    .collect();
+                if vars
+                    .iter()
+                    .enumerate()
+                    .any(|(index, term)| vars[..index].contains(term))
+                {
+                    self.repeated_vars += 1;
+                }
+            }
+            // Param and param-set binding occurrences (positive + negated).
+            for atom in rule.atoms.iter().chain(&rule.negated) {
+                for (_, term) in &atom.bindings {
+                    match term {
+                        Term::Param(_) => self.params += 1,
+                        Term::ParamSet(_) => self.param_sets += 1,
+                        _ => {}
+                    }
+                }
+            }
+            has_membership |= self.record_membership(rule, &t);
+            has_allen |= self.record_comparisons(rule, &t);
+            self.record_negations(rule, &t);
+            // The head is one row; rule 0 records it (rules align
+            // positionally by validation).
+            if rule_idx == 0 {
+                has_aggregate = self.record_finds(rule, &t);
+            }
+            has_negation |= !rule.negated.is_empty();
+            uses_set |= rule
+                .atoms
+                .iter()
+                .chain(&rule.negated)
                 .flat_map(|atom| &atom.bindings)
                 .any(|(_, term)| matches!(term, Term::ParamSet(_)))
-                || query.rules[0].predicates.iter().map(super::leaf).any(|c| {
+                || rule.predicates.iter().map(super::leaf).any(|c| {
                     matches!(c.lhs, Term::ParamSet(_)) || matches!(c.rhs, Term::ParamSet(_))
                 });
+            self.spine_violations += spine_violations(rule, &t);
+        }
+        // The structural compositions where bugs hide.
         self.neg_and_aggregate += u64::from(has_negation && has_aggregate);
         self.set_and_negation += u64::from(has_negation && uses_set);
         self.membership_and_allen += u64::from(has_membership && has_allen);
-        self.spine_violations += spine_violations(query, &t);
+        self.mask_and_negation += u64::from(has_allen && has_negation);
     }
 }
 

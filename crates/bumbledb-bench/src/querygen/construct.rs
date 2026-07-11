@@ -5,7 +5,8 @@ use crate::querygen::dress::dress;
 use crate::querygen::negate::negate;
 use crate::querygen::shapes::{aggregate, chain, guard, self_join, star};
 use crate::querygen::shapes_chase::{du_walk, existence_walk};
-use crate::querygen::shapes_interval::{boundary, interval_join, membership};
+use crate::querygen::shapes_interval::{boundary, interval_join, measure, membership};
+use crate::querygen::shapes_rules::rules;
 use crate::querygen::shapes_sink::{arg, count_distinct};
 use crate::querygen::target::{ids, Domains};
 use crate::querygen::{Builder, GenTags, Shape, SHAPE_WEIGHTS};
@@ -55,6 +56,8 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::Arg => arg(&mut b, rng),
         Shape::ExistenceWalk => existence_walk(&mut b, rng),
         Shape::DuWalk => du_walk(&mut b, rng),
+        Shape::Measure => measure(&mut b, rng, cfg, domains),
+        Shape::Rules => unreachable!("multi-rule programs assemble their own query"),
     }
     // The chase shapes are their own deliberate dressing: a random
     // predicate or negated probe landing on the target atom would flip
@@ -72,6 +75,19 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
 pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shape, GenTags) {
     let domains = Domains::of(cfg.scale);
     let shape = shape_of(rng);
+    if shape == Shape::Rules {
+        // Multi-rule programs bypass the single-rule Builder: variables
+        // are rule-scoped, so each arm carries its own scope and the
+        // shape assembles the `Query` itself (dressing and negation are
+        // deliberately withheld, like the chase shapes — the variants'
+        // bands are the point).
+        let (query, variant) = rules(rng, &domains);
+        let tags = GenTags {
+            rules: Some(variant),
+            ..GenTags::default()
+        };
+        return (query, shape, tags);
+    }
     let b = build(rng, shape, cfg, &domains);
     let tags = GenTags {
         miss: b.miss,
@@ -79,7 +95,10 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
         bytes_miss: b.bytes_miss,
         adjacent_left: b.adjacent_left,
         adjacent_right: b.adjacent_right,
+        ladder: b.ladder,
+        random_mask: b.random_mask,
         chase: b.chase,
+        rules: None,
     };
     (b.into_query(), shape, tags)
 }
