@@ -8,7 +8,7 @@ use crate::storage::env::ReadTxn;
 impl ResolveMemo {
     pub(super) fn new() -> Self {
         Self {
-            ranges: crate::exec::wordmap::WordMap::new(2),
+            ranges: crate::exec::wordmap::WordMap::new(1),
             last: None,
         }
     }
@@ -18,40 +18,37 @@ impl ResolveMemo {
         self.last = None;
     }
 
-    /// The byte range for one intern word: memoized, or resolved through
-    /// the dictionary (emitting `dict_resolve`), UTF-8-checked for
-    /// strings, and appended to the buffer once.
+    /// The byte range for one string intern word: memoized, or resolved
+    /// through the dictionary (emitting `dict_resolve`), UTF-8-checked,
+    /// and appended to the buffer once. Strings are the only interned
+    /// type, so the key is the bare word — the tag byte died with
+    /// variable bytes (docs/architecture/50-storage.md).
     pub(super) fn resolve(
         &mut self,
         txn: &ReadTxn<'_>,
         word: u64,
-        tag: u8,
         buffer: &mut ResultBuffer,
-        utf8: bool,
     ) -> Result<(usize, usize)> {
-        if let Some((last_key, range)) = self.last {
-            if last_key == (word, tag) {
+        if let Some((last_word, range)) = self.last {
+            if last_word == word {
                 return Ok(range);
             }
         }
-        let key = [word, u64::from(tag)];
+        let key = [word];
         if let (range, false) = self.ranges.get_or_insert_with(&key, || (0, 0)) {
             let range = (range.0 as usize, range.1 as usize);
-            self.last = Some(((word, tag), range));
+            self.last = Some((word, range));
             return Ok(range);
         }
-        let raw = dict::resolve(txn, word, tag)?;
+        let raw = dict::resolve(txn, word)?;
         obs::event(
             obs::names::DICT_RESOLVE,
             obs::Category::Storage,
             word,
             raw.len() as u64,
         );
-        if utf8 {
-            std::str::from_utf8(raw).map_err(|_| {
-                Error::Corruption(crate::error::CorruptionError::NonUtf8Intern(word))
-            })?;
-        }
+        std::str::from_utf8(raw)
+            .map_err(|_| Error::Corruption(crate::error::CorruptionError::NonUtf8Intern(word)))?;
         let start = buffer.bytes.len();
         buffer.bytes.extend_from_slice(raw);
         // The byte heap's offsets are u32: a >4 GiB distinct-payload
@@ -63,7 +60,7 @@ impl ResolveMemo {
         );
         let (slot, _) = self.ranges.get_or_insert_with(&key, || range);
         *slot = range;
-        self.last = Some(((word, tag), (start, raw.len())));
+        self.last = Some((word, (start, raw.len())));
         Ok((start, raw.len()))
     }
 }

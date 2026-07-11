@@ -142,7 +142,10 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// Binds one set slot in place, deduplicating into the slot's pooled
-    /// `WordSet` (PRD 17's internal representation).
+    /// `WordSet`. Elements land as flat column-word spans — one word per
+    /// scalar element, `⌈N/8⌉` per `bytes<N>` element — sorted and
+    /// deduplicated span-wise (docs/architecture/20-query-ir.md, § param
+    /// sets).
     fn bind_set_slot(&mut self, txn: &ReadTxn<'_>, idx: usize, values: &[Value]) -> Result<()> {
         let param = param_id(idx);
         if !self.param_is_set[idx] {
@@ -150,6 +153,12 @@ impl<S> PreparedQuery<'_, S> {
         }
         let ParamShape::Value(expected) = &self.param_types[idx] else {
             unreachable!("validated: a mask param is never a set")
+        };
+        // One element's column-word span — width fixed by the anchored
+        // element type.
+        let element_width = match expected {
+            ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(*len),
+            _ => 1,
         };
         // Pooled storage: steal the slot's previous `WordSet` so a warm
         // re-bind (any size within the documented assumption) reuses its
@@ -162,7 +171,7 @@ impl<S> PreparedQuery<'_, S> {
             _ => Vec::new(),
         };
         for (element, value) in values.iter().enumerate() {
-            let Some(word) = element_word(txn, value, expected)? else {
+            let Some(word_count) = element_words(txn, value, expected, &mut words)? else {
                 // Park the pooled Vec back before erroring: the slot
                 // keeps its capacity and the query stays bindable.
                 words.clear();
@@ -174,28 +183,39 @@ impl<S> PreparedQuery<'_, S> {
                     expected,
                 });
             };
+            debug_assert_eq!(word_count, element_width, "one span per element");
             // The point-domain law, per element: a point set's elements
             // are points, and the ceiling is the ray's ∞, not a point
             // (see `bind_scalar_slot` — the word compare is exact for
-            // both element encodings, and point sets are numeric).
-            if self.param_is_point[idx] && word == u64::MAX {
+            // both element encodings, and point sets are numeric, hence
+            // one word wide).
+            if self.param_is_point[idx] && words.last() == Some(&u64::MAX) {
                 words.clear();
                 self.resolved_params[idx] = Const::WordSet(words);
                 return Err(Error::PointParamAtCeiling { param });
             }
-            words.push(word);
         }
-        // Sets are sets: sorted, deduplicated
-        // (docs/architecture/20-query-ir.md, § param sets).
-        words.sort_unstable();
-        words.dedup();
+        // Sets are sets: sorted, deduplicated — span-wise for multi-word
+        // elements (docs/architecture/20-query-ir.md, § param sets).
+        if element_width == 1 {
+            words.sort_unstable();
+            words.dedup();
+        } else {
+            let mut spans: Vec<&[u64]> = words.chunks_exact(element_width).collect();
+            spans.sort_unstable();
+            spans.dedup();
+            let sorted: Vec<u64> = spans.into_iter().flatten().copied().collect();
+            words.clear();
+            words.extend_from_slice(&sorted);
+        }
         // Per-element intern misses resolved to the never-minted
         // sentinel; a sentinel matches nothing under `Eq`, so
         // dropping it here is the same semantics with a smaller
         // probe set ("out-of-vocabulary elements contribute
         // nothing"). Only the intern path mints sentinels —
-        // numeric u64::MAX elements are real values and stay.
-        if matches!(expected, ValueType::String | ValueType::Bytes) {
+        // numeric u64::MAX elements are real values and stay, and
+        // bytes<N> elements never touch the dictionary at all.
+        if matches!(expected, ValueType::String) {
             while words.last() == Some(&dict::SENTINEL_ID) {
                 words.pop();
             }
@@ -214,11 +234,18 @@ fn param_id(idx: usize) -> ParamId {
     ParamId(u16::try_from(idx).expect("param ids fit u16"))
 }
 
-/// One set element's column word; `None` = element type mismatch (the
-/// caller names the position). A String/Bytes miss resolves to the
-/// never-minted sentinel intern id (per-element miss semantics,
-/// `docs/architecture/20-query-ir.md`).
-fn element_word(txn: &ReadTxn<'_>, value: &Value, expected: &ValueType) -> Result<Option<u64>> {
+/// One set element's column-word span, appended to `out`; `Ok(None)` =
+/// element type mismatch (the caller names the position). A String miss
+/// resolves to the never-minted sentinel intern id (per-element miss
+/// semantics, `docs/architecture/20-query-ir.md`); a `bytes<N>` element
+/// contributes its `⌈N/8⌉` padded words with no dictionary traffic.
+/// Returns the span's word count.
+fn element_words(
+    txn: &ReadTxn<'_>,
+    value: &Value,
+    expected: &ValueType,
+    out: &mut Vec<u64>,
+) -> Result<Option<usize>> {
     let Some(view) = element_view(value) else {
         return Ok(None);
     };
@@ -226,8 +253,18 @@ fn element_word(txn: &ReadTxn<'_>, value: &Value, expected: &ValueType) -> Resul
         return Ok(None);
     };
     Ok(Some(match resolved {
-        Const::Word(word) => word,
-        Const::Byte(byte) => u64::from(byte),
+        Const::Word(word) => {
+            out.push(word);
+            1
+        }
+        Const::Byte(byte) => {
+            out.push(u64::from(byte));
+            1
+        }
+        Const::Words(words) => {
+            out.extend_from_slice(&words);
+            words.len()
+        }
         Const::Interval { .. } => {
             unreachable!("validated: no interval-typed param sets (IntervalParamSet)")
         }
@@ -305,13 +342,14 @@ fn resolve_selection_into(
     let push_const = |constant: &Const, out: &mut Vec<u64>| match constant {
         Const::Word(word) => out.push(*word),
         Const::Byte(byte) => out.push(u64::from(*byte)),
+        Const::Words(words) => out.extend_from_slice(words),
         Const::Interval { start, end } => out.extend([*start, *end]),
         Const::WordSet(_) | Const::Param(_) | Const::ParamSet(_) | Const::PendingIntern { .. } => {
             unreachable!("bind resolved params to column form")
         }
     };
     match &selection.value {
-        value @ (Const::Word(_) | Const::Byte(_) | Const::Interval { .. }) => {
+        value @ (Const::Word(_) | Const::Byte(_) | Const::Words(_) | Const::Interval { .. }) => {
             push_const(value, out);
         }
         Const::Param(param) => {
@@ -330,7 +368,7 @@ fn resolve_selection_into(
             out.extend_from_slice(words);
         }
         Const::WordSet(_) => unreachable!("lowering emits ParamSet markers, never resolved sets"),
-        Const::PendingIntern { tag, bytes } => match dict::lookup(txn, *tag, bytes)? {
+        Const::PendingIntern { bytes } => match dict::lookup(txn, bytes)? {
             Some(word) => out.push(word),
             None => return Ok(false),
         },
@@ -358,7 +396,9 @@ fn resolve_filter_into(
     match template {
         FilterPredicate::Compare { field, op, value } => {
             let resolved = match value {
-                Const::Word(_) | Const::Byte(_) | Const::Interval { .. } => value.clone(),
+                Const::Word(_) | Const::Byte(_) | Const::Words(_) | Const::Interval { .. } => {
+                    value.clone()
+                }
                 Const::Param(param) => {
                     if missed[usize::from(param.0)] && *op == CmpOp::Eq && !negated {
                         return Ok(false);
@@ -381,7 +421,7 @@ fn resolve_filter_into(
                     return Ok(true);
                 }
                 Const::WordSet(_) => unreachable!("templates carry ParamSet markers"),
-                Const::PendingIntern { tag, bytes } => match dict::lookup(txn, *tag, bytes)? {
+                Const::PendingIntern { bytes } => match dict::lookup(txn, bytes)? {
                     Some(id) => Const::Word(id),
                     None if *op == CmpOp::Eq && !negated => return Ok(false),
                     None => Const::Word(dict::SENTINEL_ID),
@@ -546,7 +586,7 @@ fn element_view(value: &Value) -> Option<BindValue<'_>> {
         Value::I64(v) => BindValue::I64(*v),
         Value::Enum(ordinal) => BindValue::Enum(*ordinal),
         Value::String(raw) => BindValue::Str(std::str::from_utf8(raw).ok()?),
-        Value::Bytes(raw) => BindValue::Bytes(raw),
+        Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
         Value::IntervalU64(start, end) => BindValue::IntervalU64(*start, *end),
         Value::IntervalI64(start, end) => BindValue::IntervalI64(*start, *end),
         // A mask is no element type — a set never holds masks; the
@@ -596,10 +636,13 @@ fn convert_scalar(
             Some(id) => Const::Word(id),
             None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
         },
-        (BindValue::Bytes(bytes), ValueType::Bytes) => match dict::lookup_bytes(txn, bytes)? {
-            Some(id) => Const::Word(id),
-            None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
-        },
+        // The length is the type; the padded words are the column form —
+        // zero dictionary traffic, no miss to flag.
+        (BindValue::FixedBytes(bytes), ValueType::FixedBytes { len })
+            if bytes.len() == usize::from(*len) =>
+        {
+            crate::ir::normalize::fixed_bytes_const(bytes)
+        }
         _ => return Ok(None),
     };
     Ok(Some((resolved, false)))

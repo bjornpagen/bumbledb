@@ -100,8 +100,9 @@ impl<S> Snapshot<'_, S> {
     }
 
     /// The export surface (`60-api.md` ETL story): a full-relation scan
-    /// yielding decoded dynamic facts (strings and bytes resolved) in
-    /// `row_id` order — a storage stream, not a query result set.
+    /// yielding decoded dynamic facts (strings resolved; bytes<N> values
+    /// are inline) in `row_id` order — a storage stream, not a query
+    /// result set.
     ///
     /// # Errors
     ///
@@ -115,12 +116,9 @@ impl<S> Snapshot<'_, S> {
         let iter = read::scan(&self.txn, self.schema, rel)?;
         Ok(iter.map(move |entry| {
             let (_, bytes) = entry?;
-            super::encode_dyn::decode_values(
-                bytes,
-                layout,
-                |id| Ok(Box::from(dict::resolve(&self.txn, id, dict::TAG_STRING)?)),
-                |id| Ok(Box::from(dict::resolve(&self.txn, id, dict::TAG_BYTES)?)),
-            )
+            super::encode_dyn::decode_values(bytes, layout, |id| {
+                Ok(Box::from(dict::resolve(&self.txn, id)?))
+            })
         }))
     }
 }

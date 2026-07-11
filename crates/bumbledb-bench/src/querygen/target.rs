@@ -12,9 +12,11 @@
 //! The declared ledger is `60-validation.md`'s, with the coverage
 //! extensions the seven-type matrix needs: `Posting.{memo, reconciled}`
 //! (interned-string vocabulary and the Bool column) and
-//! `Transfer { extref: bytes, window: interval<u64> }` (the Bytes
-//! exerciser and the U64-element interval lane; `Mandate.active` is the
-//! I64-element lane) — plus, for the chase shapes (`shapes_chase.rs`),
+//! `Transfer { extref: bytes<32>, window: interval<u64>, tag7..tag64 }`
+//! (the bytes<N> exerciser — extref is a keyed adversarial digest and
+//! the tags cover the pad-boundary widths 7/8/9/16/63/64 — and the
+//! U64-element interval lane; `Mandate.active` is the I64-element
+//! lane) — plus, for the chase shapes (`shapes_chase.rs`),
 //! the ledger's containment statements and one discriminated-union pair
 //! `JournalEntry(id | source == Import) == ImportBatch(entry)`, so the
 //! randomized lane exercises the occurrence elimination and its
@@ -107,6 +109,15 @@ pub mod ids {
         pub const ID: FieldId = FieldId(0);
         pub const EXTREF: FieldId = FieldId(1);
         pub const WINDOW: FieldId = FieldId(2);
+        /// The pad-boundary digest tags, in width order 7/8/9/16/63/64.
+        pub const TAGS: [FieldId; 6] = [
+            FieldId(3),
+            FieldId(4),
+            FieldId(5),
+            FieldId(6),
+            FieldId(7),
+            FieldId(8),
+        ];
     }
     pub mod import_batch {
         use super::FieldId;
@@ -172,6 +183,7 @@ pub fn schema() -> &'static Schema {
 }
 
 /// The declared target ledger, as the raw descriptor.
+#[allow(clippy::too_many_lines)] // the declared ledger, one relation per block
 fn descriptor() -> SchemaDescriptor {
     {
         SchemaDescriptor {
@@ -246,16 +258,29 @@ fn descriptor() -> SchemaDescriptor {
                 },
                 RelationDescriptor {
                     name: "Transfer".into(),
-                    fields: vec![
-                        fresh("id"),
-                        field("extref", ValueType::Bytes),
-                        field(
-                            "window",
-                            ValueType::Interval {
-                                element: IntervalElement::U64,
-                            },
-                        ),
-                    ],
+                    fields: {
+                        let mut fields = vec![
+                            fresh("id"),
+                            field("extref", ValueType::FixedBytes { len: 32 }),
+                            field(
+                                "window",
+                                ValueType::Interval {
+                                    element: IntervalElement::U64,
+                                },
+                            ),
+                        ];
+                        // The pad-boundary digest tags (7/8/9/16/63/64):
+                        // widths astride every word boundary, drawn from
+                        // small adversarial vocabularies — shared
+                        // prefixes, single-byte deltas, all-zeros.
+                        for width in DIGEST_WIDTHS {
+                            fields.push(field(
+                                &format!("tag{width}"),
+                                ValueType::FixedBytes { len: width },
+                            ));
+                        }
+                        fields
+                    },
                 },
                 RelationDescriptor {
                     name: "ImportBatch".into(),
@@ -271,8 +296,12 @@ fn descriptor() -> SchemaDescriptor {
 }
 
 /// The declared statements: `ImportBatch`'s key, the ledger's nine
-/// containments (`60-validation.md`'s block, in its source order), and
-/// the DU pair as its two containments (mirror-detected at sealing).
+/// containments (`60-validation.md`'s block, in its source order), the
+/// DU pair as its two containments (mirror-detected at sealing), and —
+/// appended last so no earlier statement id shifts — the bytes<32> key
+/// `Transfer(extref) -> Transfer`: every corpus load writes an
+/// adversarial-digest guard per transfer, and an `Eq` extref binding is
+/// key-covering (the guard-probe fast path over a multi-word key).
 fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
     use bumbledb::schema::{Side, StatementDescriptor};
     let side = |relation: bumbledb::RelationId,
@@ -334,8 +363,21 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
             side(ids::IMPORT_BATCH, ids::import_batch::ENTRY, &[]),
             side(ids::JOURNAL_ENTRY, ids::journal_entry::ID, &import),
         ),
+        StatementDescriptor::Functionality {
+            relation: ids::TRANSFER,
+            projection: Box::new([ids::transfer::EXTREF]),
+        },
     ]
 }
+
+/// The pad-boundary digest widths the tag fields cover, one field per
+/// width: astride the first word boundary (7/8/9), one exact word pair
+/// (16), and astride the ceiling (63/64).
+pub const DIGEST_WIDTHS: [u16; 6] = [7, 8, 9, 16, 63, 64];
+
+/// The digest-tag vocabulary size per width: small, so group-by and
+/// `CountDistinct` over bytes<N> see real multiplicity.
+pub const DIGEST_VOCAB: u64 = 61;
 
 /// Derived per-relation domains (dense ids are `0..n`) — the dressing
 /// draws literals in-domain so predicates select real subsets.
@@ -412,16 +454,46 @@ fn row_rng(seed: u64, tag: u64, row: u64) -> Rng {
     )
 }
 
-/// The seeded extref of one Transfer row — 16 bytes, a pure function of
-/// the config, so in-vocabulary Bytes literals recompute exactly.
+/// The seeded extref of one Transfer row — 32 bytes, a pure function of
+/// the row, so in-vocabulary bytes<32> literals recompute exactly.
+/// Deliberately adversarial for hashing and comparison: every extref
+/// shares a 24-byte zero prefix (word 0..2 collide across the whole
+/// corpus), consecutive rows are single-byte deltas at the tail, and
+/// row 0 is the all-zeros digest — while staying unique per row, so the
+/// appended `Transfer(extref) -> Transfer` key holds by construction.
 #[must_use]
 pub fn extref(cfg: GenConfig, row: u64) -> Value {
-    let mut rng = row_rng(cfg.seed, u64::from(ids::TRANSFER.0), row);
-    let mut raw = Vec::with_capacity(16);
-    for _ in 0..2 {
-        raw.extend_from_slice(&rng.u64().to_le_bytes());
-    }
-    Value::Bytes(raw.into())
+    let _ = cfg; // the shape is row-determined; the seed names nothing here
+    let mut raw = [0u8; 32];
+    raw[24..].copy_from_slice(&row.to_be_bytes());
+    Value::FixedBytes(raw.as_slice().into())
+}
+
+/// Vocabulary value `k` of the width-`width` digest tags: all-zero but
+/// for the last byte — every value shares the maximal prefix (whole
+/// zero words for width > 8), neighbors are single-byte deltas, and
+/// `k = 0` is the all-zeros digest.
+/// # Panics
+///
+/// Never in practice (`width >= 1` by the digest roster).
+#[must_use]
+pub fn digest_vocab_value(width: u16, k: u64) -> Value {
+    let mut raw = vec![0u8; usize::from(width)];
+    *raw.last_mut().expect("width >= 1") = u8::try_from(k % 256).expect("byte");
+    Value::FixedBytes(raw.into())
+}
+
+/// One Transfer row's digest tag at `width` — drawn from the
+/// [`DIGEST_VOCAB`]-value vocabulary (a pure function of the config, so
+/// hits recompute exactly).
+#[must_use]
+pub fn transfer_tag(cfg: GenConfig, row: u64, width: u16) -> Value {
+    let mut rng = row_rng(
+        cfg.seed ^ u64::from(width).wrapping_mul(0xD6E8_FEB8_6659_FD93),
+        u64::from(ids::TRANSFER.0),
+        row,
+    );
+    digest_vocab_value(width, rng.range(DIGEST_VOCAB))
 }
 
 /// One posting's quantized amount (see [`AMOUNT_LEVELS`]).
@@ -598,11 +670,13 @@ pub fn corpus_row(
         }
         ids::TRANSFER => {
             let (start, end) = transfer_window(cfg, i);
-            vec![
+            let mut row = vec![
                 Value::U64(i),
                 extref(cfg, i),
                 Value::IntervalU64(start, end),
-            ]
+            ];
+            row.extend(DIGEST_WIDTHS.map(|width| transfer_tag(cfg, i, width)));
+            row
         }
         ids::IMPORT_BATCH => vec![Value::U64(import_batch_entry(i)), Value::U64(i)],
         _ => unreachable!("eleven target relations"),
@@ -689,11 +763,43 @@ mod tests {
         );
     }
 
-    /// Extrefs recompute exactly (the dressing's in-vocabulary hits).
+    /// Extrefs recompute exactly (the dressing's in-vocabulary hits) and
+    /// carry the adversarial shape: shared 24-byte zero prefix, all-zeros
+    /// at row 0, single-byte deltas between neighbors — unique per row.
     #[test]
-    fn extref_recomputes() {
+    fn extref_recomputes_and_is_adversarial() {
         assert_eq!(extref(CFG, 9), extref(CFG, 9));
         assert_ne!(extref(CFG, 9), extref(CFG, 10));
+        let Value::FixedBytes(zero) = extref(CFG, 0) else {
+            panic!("extref is bytes<32>")
+        };
+        assert_eq!(&zero[..], &[0u8; 32]);
+        let (Value::FixedBytes(a), Value::FixedBytes(b)) = (extref(CFG, 5), extref(CFG, 6)) else {
+            panic!("extref is bytes<32>")
+        };
+        assert_eq!(a[..24], b[..24], "shared prefix");
+        assert_eq!(
+            a.iter().zip(b.iter()).filter(|(x, y)| x != y).count(),
+            1,
+            "neighbors differ in one byte"
+        );
+    }
+
+    /// Digest-tag vocabularies repeat (group-by sees multiplicity), stay
+    /// in-width, and include the all-zeros value.
+    #[test]
+    fn digest_tags_draw_from_small_adversarial_vocabularies() {
+        for width in DIGEST_WIDTHS {
+            let Value::FixedBytes(raw) = transfer_tag(CFG, 3, width) else {
+                panic!("tags are bytes<N>")
+            };
+            assert_eq!(raw.len(), usize::from(width));
+            assert_eq!(transfer_tag(CFG, 3, width), transfer_tag(CFG, 3, width));
+            let Value::FixedBytes(zero) = digest_vocab_value(width, 0) else {
+                panic!("vocab values are bytes<N>")
+            };
+            assert!(zero.iter().all(|&b| b == 0), "k = 0 is all-zeros");
+        }
     }
 
     /// Every mandate row's interval is valid and the group prefix

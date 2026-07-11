@@ -75,8 +75,9 @@ fn push_word_row(out: &mut ResultBuffer, types: &[ValueType], row: &[u64]) {
     }
 }
 
-/// One word row's cells, resolving regime: String/Bytes go through the
-/// intern memo; everything else decodes inline.
+/// One word row's cells, resolving regime: String goes through the
+/// intern memo, a `bytes<N>` find re-assembles its padded slot words
+/// (inline — no dictionary); everything else decodes inline.
 fn push_resolved_row(
     out: &mut ResultBuffer,
     txn: &ReadTxn<'_>,
@@ -86,16 +87,24 @@ fn push_resolved_row(
 ) -> Result<()> {
     let mut word = 0;
     for ty in types {
-        if let ValueType::Interval { element } = ty {
-            out.cells.push(ResultBuffer::interval_cell(
-                *element,
-                row[word],
-                row[word + 1],
-            ));
-            word += 2;
-        } else {
-            out.push_word(txn, ty, row[word], memo)?;
-            word += 1;
+        match ty {
+            ValueType::Interval { element } => {
+                out.cells.push(ResultBuffer::interval_cell(
+                    *element,
+                    row[word],
+                    row[word + 1],
+                ));
+                word += 2;
+            }
+            ValueType::FixedBytes { len } => {
+                let width = crate::encoding::fixed_bytes_words(*len);
+                out.push_fixed_bytes(*len, &row[word..word + width]);
+                word += width;
+            }
+            ty => {
+                out.push_word(txn, ty, row[word], memo)?;
+                word += 1;
+            }
         }
     }
     Ok(())

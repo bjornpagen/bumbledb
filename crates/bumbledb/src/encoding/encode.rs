@@ -1,6 +1,6 @@
 //! The encode side: canonical per-type encoders and the fact encoder.
 
-use super::{FactLayout, IntervalElement, TypeDesc, ValueRef, I64_SIGN_BIT};
+use super::{fixed_bytes_words, FactLayout, IntervalElement, TypeDesc, ValueRef, I64_SIGN_BIT};
 use crate::value::Value;
 
 /// Encodes a Bool as its canonical single byte.
@@ -53,19 +53,32 @@ fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
     out
 }
 
+/// Appends the canonical `bytes<N>` encoding: the N raw bytes themselves,
+/// zero-padded to the word boundary (`⌈N/8⌉ × 8` bytes) — the pad is
+/// encoding, not data. Injective for a fixed N, and memcmp order over the
+/// padded bytes equals byte order over the values (uniform width, zero
+/// tail), which is all the guard B-tree needs — order *operations* stay
+/// refused at the query surface.
+pub fn encode_fixed_bytes(raw: &[u8], out: &mut Vec<u8>) {
+    let width = fixed_bytes_words(u16::try_from(raw.len()).expect("validated: N <= 64")) * 8;
+    out.extend_from_slice(raw);
+    out.resize(out.len() + width - raw.len(), 0);
+}
+
 /// Appends the canonical encoding of a self-encoding literal — every
 /// [`Value`] variant whose canonical bytes are a pure function of the value.
 /// The one definition site for selection-literal encoding: the commit
 /// judgment's pre-encoded σ literals and the schema fingerprint's canonical
 /// encoding both call this, so the two can never drift apart.
-/// `String`/`Bytes` are the deliberate exception — their fact encoding is a
+/// `String` is the deliberate exception — its fact encoding is a
 /// per-database intern id, not a function of the value — so each consumer
-/// resolves them at its own boundary before calling.
+/// resolves it at its own boundary before calling. `FixedBytes` is
+/// self-encoding: the raw bytes, word-padded, inline in the fact.
 ///
 /// # Panics
 ///
-/// On `String`/`Bytes` — programmer invariant: callers peel the interned
-/// variants first.
+/// On `String` — programmer invariant: callers peel the interned
+/// variant first.
 pub fn encode_literal(value: &Value, out: &mut Vec<u8>) {
     match value {
         Value::Bool(v) => out.push(encode_bool(*v)),
@@ -74,13 +87,14 @@ pub fn encode_literal(value: &Value, out: &mut Vec<u8>) {
         Value::Enum(ordinal) => out.push(*ordinal),
         Value::U64(v) => out.extend_from_slice(&encode_u64(*v)),
         Value::I64(v) => out.extend_from_slice(&encode_i64(*v)),
+        Value::FixedBytes(raw) => encode_fixed_bytes(raw, out),
         Value::IntervalU64(start, end) => {
             out.extend_from_slice(&encode_interval_u64(*start, *end));
         }
         Value::IntervalI64(start, end) => {
             out.extend_from_slice(&encode_interval_i64(*start, *end));
         }
-        Value::String(_) | Value::Bytes(_) => {
+        Value::String(_) => {
             unreachable!("interned literals resolve at their consumer's boundary")
         }
         // A mask is not a field type; nothing storable carries one.
@@ -121,9 +135,12 @@ pub fn encode_fact(values: &[ValueRef], layout: &FactLayout, out: &mut Vec<u8>) 
                 debug_assert_eq!(desc, TypeDesc::String);
                 out.extend_from_slice(&encode_u64(id));
             }
-            ValueRef::Bytes(id) => {
-                debug_assert_eq!(desc, TypeDesc::Bytes);
-                out.extend_from_slice(&encode_u64(id));
+            ValueRef::FixedBytes(value) => {
+                debug_assert!(matches!(
+                    desc,
+                    TypeDesc::FixedBytes { len } if usize::from(len) == value.len()
+                ));
+                out.extend_from_slice(value.padded());
             }
             ValueRef::IntervalU64(start, end) => {
                 debug_assert_eq!(

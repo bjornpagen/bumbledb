@@ -364,7 +364,7 @@ mod selection_literals {
             offset: i64,
             live: bool,
             label: str,
-            tag: bytes,
+            tag: bytes<1>,
         }
         relation Reading { sensor: u64 as SensorId }
 
@@ -392,7 +392,7 @@ mod selection_literals {
                 (FieldId(2), Value::I64(-3)),
                 (FieldId(3), Value::Bool(true)),
                 (FieldId(4), Value::String(Box::from(&b"north"[..]))),
-                (FieldId(5), Value::Bytes(Box::from(&b"\x01"[..]))),
+                (FieldId(5), Value::FixedBytes(Box::from(&b"\x01"[..]))),
             ]
         );
     }
@@ -405,12 +405,84 @@ mod selection_literals {
             offset: -3,
             live: true,
             label: "north",
-            tag: &[0x01],
+            tag: [0x01],
         };
         let reading = Reading {
             sensor: SensorId(1),
         };
         assert_eq!(reading.sensor, sensor.id);
+    }
+}
+
+mod fixed_bytes_host_type {
+    //! `bytes<N>` emits `[u8; N]` — owned, `Copy`, lifetime-free — and
+    //! takes `as NewType` (order-free, like interval newtypes: a
+    //! digest's lexicographic order is an encoding artifact). The typed
+    //! round-trip goes fact → canonical bytes → fact with zero
+    //! dictionary traffic.
+
+    use bumbledb::{Db, Fact as _};
+
+    bumbledb::schema! {
+        pub Content;
+
+        relation Object {
+            id: u64 as ObjectId, fresh,
+            hash: bytes<32> as ContentHash,
+            head: bytes<9>,
+        }
+
+        Object(hash) -> Object;
+    }
+
+    #[test]
+    fn fixed_bytes_round_trip_through_the_typed_surface() {
+        let dir = crate::common::TempDir::new("macro-fixed-bytes");
+        let db = Db::create(dir.path(), Content).expect("create");
+        let mut digest = [0u8; 32];
+        digest[31] = 0x2A;
+        let original = Object {
+            id: ObjectId(1),
+            hash: ContentHash(digest),
+            head: [7u8; 9],
+        };
+        db.write(|tx| tx.insert(&original)).expect("write");
+        db.read(|snap| {
+            let back: Vec<Object> = snap.scan_facts()?.collect::<Result<_, _>>()?;
+            assert_eq!(back, vec![original.clone()]);
+            Ok(())
+        })
+        .expect("scan");
+        // The newtype is Copy and order-free; the value round-trips
+        // by identity.
+        let copied: ContentHash = original.hash;
+        assert_eq!(copied, ContentHash(digest));
+        // The bytes<32> key guards writes: a second object under the
+        // same hash is a functionality violation.
+        let err = db
+            .write(|tx| {
+                tx.insert(&Object {
+                    id: ObjectId(2),
+                    hash: ContentHash(digest),
+                    head: [8u8; 9],
+                })?;
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            bumbledb::Error::FunctionalityViolation { .. }
+        ));
+        // encode_read is infallible for bytes<N> (no dictionary miss
+        // exists for an inline value).
+        db.read(|snap| {
+            let mut bytes = Vec::new();
+            assert!(original.encode_read(snap, &mut bytes).expect("encode"));
+            let decoded = Object::decode(snap, &bytes).expect("decode");
+            assert_eq!(decoded, original);
+            Ok(())
+        })
+        .expect("read");
     }
 }
 

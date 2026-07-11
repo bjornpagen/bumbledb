@@ -116,13 +116,14 @@ pub struct WriteDelta<'s> {
     /// Net row-count change per relation, maintained alongside the
     /// changed-state reports (flushed to `S` by the 40-storage doc).
     row_count_delta: BTreeMap<RelationId, i64>,
-    /// Novel strings/bytes interned by this transaction: provisional ids
+    /// Novel strings interned by this transaction: provisional ids
     /// assigned from the committed dictionary counter (the counter is
     /// in-memory-then-flush like every other counter; single-writer
-    /// discipline makes provisional = final). One map per tag so probes
-    /// borrow the raw bytes (`BTreeMap<Box<[u8]>, _>` looks up by
-    /// `&[u8]`); the old `(u8, Box<[u8]>)` key boxed a copy per probe.
-    pending_interns: [BTreeMap<Box<[u8]>, u64>; 2],
+    /// discipline makes provisional = final). The dictionary is str-only
+    /// — bytes<N> values are inline, never interned — so one untagged
+    /// map; probes borrow the raw bytes (`BTreeMap<Box<[u8]>, _>` looks
+    /// up by `&[u8]`).
+    pending_interns: BTreeMap<Box<[u8]>, u64>,
     /// The next dictionary id, lazily read once per transaction.
     dict_next: Option<u64>,
 }

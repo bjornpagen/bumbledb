@@ -10,7 +10,8 @@ use crate::storage::env::ReadTxn;
 /// binding through the ordinary sink (sinks are reused, not special-cased
 /// — a guard rule inside a multi-rule program unions through the same
 /// spanning seen-set as every other rule). The emit is counted like a
-/// join emit (the rule loop's union accounting).
+/// join emit (the rule loop's union accounting). Multi-word variables
+/// (intervals, bytes<N>) occupy their whole slot span.
 ///
 /// # Errors
 ///
@@ -43,6 +44,12 @@ pub fn execute_guard<S: Sink, C: crate::exec::run::Counters>(
                 debug_assert_eq!(var.width, 2, "the SlotWidth layout");
                 bindings.set(var.slot, start);
                 bindings.set(var.slot + 1, end);
+            }
+            FactOperand::Block { words, count } => {
+                debug_assert_eq!(var.width, usize::from(count), "the SlotWidth layout");
+                for (offset, word) in words[..usize::from(count)].iter().enumerate() {
+                    bindings.set(var.slot + offset, *word);
+                }
             }
         }
     }

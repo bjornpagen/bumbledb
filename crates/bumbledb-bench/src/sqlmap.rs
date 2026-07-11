@@ -27,7 +27,7 @@ fn sql_type(ty: &ValueType) -> &'static str {
         | ValueType::I64
         | ValueType::Interval { .. } => "INTEGER",
         ValueType::String => "TEXT",
-        ValueType::Bytes => "BLOB",
+        ValueType::FixedBytes { .. } => "BLOB",
     }
 }
 
@@ -243,7 +243,7 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
         Value::String(raw) => {
             Sql::Text(String::from_utf8(raw.to_vec()).expect("Value::String carries UTF-8"))
         }
-        Value::Bytes(raw) => Sql::Blob(raw.to_vec()),
+        Value::FixedBytes(raw) => Sql::Blob(raw.to_vec()),
         Value::IntervalU64(..) | Value::IntervalI64(..) => {
             panic!("an interval maps to two columns — split through interval_halves")
         }
@@ -322,7 +322,7 @@ pub fn from_sql_value(
             .map_err(|_| format!("u64 column holds negative {v}")),
         (Sql::Integer(v), ValueType::I64) => Ok(Value::I64(*v)),
         (Sql::Text(text), ValueType::String) => Ok(Value::String(text.clone().into_bytes().into())),
-        (Sql::Blob(raw), ValueType::Bytes) => Ok(Value::Bytes(raw.clone().into())),
+        (Sql::Blob(raw), ValueType::FixedBytes { .. }) => Ok(Value::FixedBytes(raw.clone().into())),
         (_, ValueType::Interval { .. }) => {
             Err("an interval spans two columns — decode through interval_from_sql".to_owned())
         }
@@ -512,7 +512,10 @@ mod tests {
                 Value::String("héllo".as_bytes().to_vec().into()),
                 ValueType::String,
             ),
-            (Value::Bytes(vec![0, 255, 7].into()), ValueType::Bytes),
+            (
+                Value::FixedBytes(vec![0, 255, 7].into()),
+                ValueType::FixedBytes { len: 3 },
+            ),
         ];
         for (value, ty) in cases {
             let sql = to_sql_value(&value);

@@ -110,14 +110,9 @@ impl<S> WriteTx<'_, S> {
                     let Some(id) = id else { return Ok(false) };
                     ValueRef::String(id)
                 }
-                Value::Bytes(raw) => {
-                    let id = match mode {
-                        InternMode::Mint => Some(self.delta.intern_bytes(&self.view, raw)?),
-                        InternMode::Resolve => self.delta.resolve_bytes(&self.view, raw)?,
-                    };
-                    let Some(id) = id else { return Ok(false) };
-                    ValueRef::Bytes(id)
-                }
+                // Identity-shaped: bytes<N> values encode inline —
+                // no dictionary traffic in either mode.
+                Value::FixedBytes(raw) => ValueRef::fixed_bytes(raw),
             };
             refs.push(value_ref);
         }
@@ -129,13 +124,12 @@ impl<S> WriteTx<'_, S> {
 /// body behind [`WriteTx::get_dyn`]'s point-read decode and
 /// [`super::Snapshot::scan`]'s export decode; only intern resolution
 /// differs by context (pending-first inside a write transaction, the
-/// committed dictionary on a snapshot), so the resolvers are the
-/// parameters.
+/// committed dictionary on a snapshot), so the resolver is the
+/// parameter.
 pub(super) fn decode_values(
     fact: &[u8],
     layout: &FactLayout,
     mut resolve_str: impl FnMut(u64) -> Result<Box<[u8]>>,
-    mut resolve_bytes: impl FnMut(u64) -> Result<Box<[u8]>>,
 ) -> Result<Vec<Value>> {
     (0..layout.field_count())
         .map(|idx| {
@@ -145,7 +139,7 @@ pub(super) fn decode_values(
                 ValueRef::I64(v) => Value::I64(v),
                 ValueRef::Enum(ordinal) => Value::Enum(ordinal),
                 ValueRef::String(id) => Value::String(resolve_str(id)?),
-                ValueRef::Bytes(id) => Value::Bytes(resolve_bytes(id)?),
+                ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
                 ValueRef::IntervalU64(start, end) => Value::IntervalU64(start, end),
                 ValueRef::IntervalI64(start, end) => Value::IntervalI64(start, end),
             })

@@ -98,6 +98,28 @@ fn rejects_fresh_on_non_u64() {
     );
 }
 
+#[test]
+fn rejects_fixed_bytes_widths_outside_the_range() {
+    // The bytes<N> width gate: N = 0 denotes nothing and N = 65 crosses
+    // the 64-byte (8-word) ceiling — both typed rejections; every width
+    // in 1..=64 validates (the pad boundaries included).
+    for len in [0u16, 65] {
+        let decl = one_relation(vec![field("hash", ValueType::FixedBytes { len })]);
+        assert_eq!(
+            decl.validate().unwrap_err(),
+            SchemaError::FixedBytesWidthOutOfRange {
+                relation: RelationId(0),
+                field: FieldId(0),
+                len,
+            }
+        );
+    }
+    for len in [1u16, 7, 8, 9, 16, 32, 63, 64] {
+        let decl = one_relation(vec![field("hash", ValueType::FixedBytes { len })]);
+        assert!(decl.validate().is_ok(), "bytes<{len}> validates");
+    }
+}
+
 // --- The statement roster ---
 
 /// Two relations with no fresh ids: statement ids equal declaration order.

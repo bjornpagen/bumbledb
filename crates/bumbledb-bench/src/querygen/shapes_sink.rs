@@ -60,10 +60,29 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
             let holder = b.atom(ids::HOLDER);
             b.bind_var(holder, ids::holder::NAME)
         }
-        // Bytes: distinct extrefs, global.
+        // bytes<N>: distinct digests — the 32-byte extref (maximal
+        // cardinality), or a pad-boundary tag (widths 8/16/64 rotate:
+        // small vocabularies, so distinctness folds real duplicates),
+        // optionally per window-group id.
         5 => {
             let transfer = b.atom(ids::TRANSFER);
-            b.bind_var(transfer, ids::transfer::EXTREF)
+            match rng.range(4) {
+                0 => b.bind_var(transfer, ids::transfer::EXTREF),
+                which => {
+                    // TAGS is width order 7/8/9/16/63/64: pick 8/16/64.
+                    let field = ids::transfer::TAGS[match which {
+                        1 => 1,
+                        2 => 3,
+                        _ => 5,
+                    }];
+                    let over = b.bind_var(transfer, field);
+                    if rng.chance(1, 2) {
+                        let id = b.bind_var(transfer, ids::transfer::ID);
+                        b.find_var(id);
+                    }
+                    over
+                }
+            }
         }
         // Interval: distinct active windows, optionally per account —
         // distinctness of interval *values*, the two-word type.

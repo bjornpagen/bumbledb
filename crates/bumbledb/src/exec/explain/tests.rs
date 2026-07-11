@@ -145,7 +145,7 @@ fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
         .collect();
     let slot_widths: BTreeMap<VarId, SlotWidth> = occurrences
         .iter()
-        .flat_map(|o| o.vars.iter().map(|(_, v)| (*v, SlotWidth::One)))
+        .flat_map(|o| o.vars.iter().map(|(_, v)| (*v, SlotWidth::ONE)))
         .collect();
     NormalizedQuery {
         occurrences,

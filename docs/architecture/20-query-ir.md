@@ -101,9 +101,9 @@ join costume.
 - `Count` is **nullary**: |the group's binding set|, result type U64.
 - `CountDistinct(x)`: |the set of distinct values of x across the group's binding
   set|, result type U64; legal over every type (equality is all it needs).
-- `Min`/`Max` accept U64 and I64 only (the orderable types — intervals excluded,
-  `10-data-model.md`); result type = input type; deterministic (a set has one
-  minimum).
+- `Min`/`Max` accept U64 and I64 only (the orderable types — intervals and
+  `bytes<N>` excluded, `10-data-model.md`); result type = input type;
+  deterministic (a set has one minimum).
 - **Arg-restriction (`ArgMax`/`ArgMin`), semantics before shape:** when a find list
   contains Arg terms, the group's binding set is first **restricted to the bindings
   attaining the extreme of the key variable** (max for ArgMax, min for ArgMin), and
@@ -192,7 +192,8 @@ Value      = Bool(bool) | U64(u64) | I64(i64)
            | IntervalU64(u64, u64)    // start < end enforced at the boundary
            | IntervalI64(i64, i64)
            | String(Box<[u8]>)        // raw UTF-8 bytes; interning is the engine's job
-           | Bytes(Box<[u8]>)
+           | FixedBytes(Box<[u8]>)    // a bytes<N> value: exactly N raw bytes — the
+                                      //   length is the type; inline, never interned
            | AllenMask(AllenMask)     // the mask value shape — a param payload,
                                       //   never a field type (10-data-model.md)
 FindTerm   = Var(VarId)
@@ -246,8 +247,9 @@ comparison needs no shared point variable: that is the `Allen` predicate.
 
 **Comparison rules, complete:** both sides must have the same structural type except
 where stated (no U64-vs-I64, no silent coercion). `Eq`/`Ne` are legal for all seven
-types; `Lt/Le/Gt/Ge` only for U64/U64 and I64/I64 — **never intervals**
-(`10-data-model.md` orderability). `Allen { mask }` requires two interval terms of
+types; `Lt/Le/Gt/Ge` only for U64/U64 and I64/I64 — **never intervals, never
+`bytes<N>`** (`10-data-model.md` orderability; each refusal named in its own
+diagnostic). `Allen { mask }` requires two interval terms of
 one element type — **the** interval-pair comparison (next section). `Contains`
 requires an interval left side and an **element-typed** right side (point
 membership as a predicate — the predicate form of the binding rule, for terms
@@ -377,10 +379,12 @@ payloads by reference — `70-api.md`). An *unanchored* param is unwritable by c
 comparisons) — the roster discharges that item by representation. Conflicting anchors
 and non-dense param ids (a gap would be a positional slot whose supplied value is never
 type-checked) are validation errors. At execution bind time the supplied values are
-checked for count and structural type; String/Bytes params (and literals) resolve to
+checked for count and structural type; String params (and literals) resolve to
 intern ids by read-only dictionary lookup **per execution** — never an insert, never an
 error, and a value interned by a later write is picked up on the next execution (no
-stale-resolution trap; the lookup is one LMDB get, allocation-free). **Miss semantics
+stale-resolution trap; the lookup is one LMDB get, allocation-free). A `bytes<N>`
+param or literal is self-encoding — its padded column words, zero dictionary
+traffic, no miss to speak of. **Miss semantics
 are per operator:** a missed value resolves to the never-minted sentinel intern id
 (u64::MAX — the mint path asserts it is never issued), so an `Eq` use matches nothing
 (and may short-circuit the query to empty, the only case where that is sound) while an
@@ -515,8 +519,8 @@ literals included); element-typed point literals at the domain ceiling in
 membership bindings and `Contains` operands (the point-domain law — point params
 get the same rejection at bind, where the value exists); enum ordinal out of range for the field's variant list (in
 bindings and in comparisons, each precisely diagnosed); comparisons violating the
-type rules above (order operators on intervals named in their own diagnostic —
-the predictable mistake gets the good error); the Allen vacuity rules (the ∅
+type rules above (order operators on intervals and on `bytes<N>` each named in
+their own diagnostic — the predictable mistake gets the good error); the Allen vacuity rules (the ∅
 and full literal masks, distinct typed errors; mask params get the same two at
 bind); constant comparisons;
 self-comparisons; a ParamId used both scalar and set, or a ParamSet under any

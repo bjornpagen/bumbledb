@@ -47,9 +47,10 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             continue;
         }
 
-        // Referenced intern ids, bounded by the dictionary next-id.
+        // Referenced intern ids, bounded by the dictionary next-id
+        // (String only — bytes<N> values are inline, never interned).
         for idx in 0..layout.field_count() {
-            if matches!(layout.field_type(idx), TypeDesc::String | TypeDesc::Bytes) {
+            if matches!(layout.field_type(idx), TypeDesc::String) {
                 let id = u64::from_be_bytes(
                     field_bytes(fact, layout, idx)
                         .try_into()

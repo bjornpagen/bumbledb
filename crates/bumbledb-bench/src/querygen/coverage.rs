@@ -48,7 +48,7 @@ fn type_index(ty: &ValueType) -> usize {
         ValueType::Enum { .. } => 2,
         ValueType::Bool => 3,
         ValueType::String => 4,
-        ValueType::Bytes => 5,
+        ValueType::FixedBytes { .. } => 5,
         ValueType::Interval { .. } => 6,
     }
 }

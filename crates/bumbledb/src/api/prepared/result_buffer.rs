@@ -3,7 +3,6 @@ use super::{Cell, ResolveMemo, ResultBuffer, ResultValue, Row, ValueType};
 use crate::error::Result;
 use crate::interval::Interval;
 use crate::schema::IntervalElement;
-use crate::storage::dict;
 use crate::storage::env::ReadTxn;
 
 impl ResultBuffer {
@@ -36,7 +35,8 @@ impl ResultBuffer {
     }
 
     /// The byte heap's length — memory observability (each distinct
-    /// String/Bytes value is stored once per buffer, docs/architecture/40-execution.md).
+    /// String value is stored once per buffer; bytes<N> cells copy their
+    /// N bytes per row — docs/architecture/40-execution.md).
     #[must_use]
     pub fn byte_len(&self) -> usize {
         self.bytes.len()
@@ -60,7 +60,9 @@ impl ResultBuffer {
                 std::str::from_utf8(&self.bytes[start..start + len])
                     .expect("validated at materialization"),
             ),
-            Cell::Bytes { start, len } => ResultValue::Bytes(&self.bytes[start..start + len]),
+            Cell::FixedBytes { start, len } => {
+                ResultValue::FixedBytes(&self.bytes[start..start + len])
+            }
             Cell::IntervalU64(interval) => ResultValue::IntervalU64(interval),
             Cell::IntervalI64(interval) => ResultValue::IntervalI64(interval),
         }
@@ -86,13 +88,31 @@ impl ResultBuffer {
             ),
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
-            ValueType::String | ValueType::Bytes => {
+            ValueType::String => {
                 unreachable!("interned finds take the resolving path")
+            }
+            ValueType::FixedBytes { .. } => {
+                unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
             }
             ValueType::Interval { .. } => {
                 unreachable!("interval finds take the two-word path (interval_cell)")
             }
         }
+    }
+
+    /// Materializes a `bytes<N>` find's padded slot words as one cell:
+    /// the words' big-endian bytes, truncated to the declared N, copied
+    /// into the byte heap (inline values — no dictionary, ever).
+    pub(super) fn push_fixed_bytes(&mut self, len: u16, words: &[u64]) {
+        let start = self.bytes.len();
+        for word in words {
+            self.bytes.extend_from_slice(&word.to_be_bytes());
+        }
+        self.bytes.truncate(start + usize::from(len));
+        self.cells.push(Cell::FixedBytes {
+            start,
+            len: usize::from(len),
+        });
     }
 
     /// Materializes an interval find's two slot words as one cell,
@@ -137,12 +157,11 @@ impl ResultBuffer {
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::String => {
-                let (start, len) = memo.resolve(txn, word, dict::TAG_STRING, self, true)?;
+                let (start, len) = memo.resolve(txn, word, self)?;
                 Cell::String { start, len }
             }
-            ValueType::Bytes => {
-                let (start, len) = memo.resolve(txn, word, dict::TAG_BYTES, self, false)?;
-                Cell::Bytes { start, len }
+            ValueType::FixedBytes { .. } => {
+                unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
             }
             ValueType::Interval { .. } => {
                 unreachable!("interval finds take the two-word path (interval_cell)")

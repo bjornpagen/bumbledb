@@ -135,7 +135,12 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
         ValueType::U64 => out.push(2),
         ValueType::I64 => out.push(3),
         ValueType::String => out.push(4),
-        ValueType::Bytes => out.push(5),
+        // The length is hashed: a width change is a new theory
+        // (`docs/architecture/10-data-model.md`).
+        ValueType::FixedBytes { len } => {
+            out.push(5);
+            out.extend_from_slice(&len.to_le_bytes());
+        }
         ValueType::Interval { element } => {
             out.push(6);
             out.push(match element {
@@ -151,12 +156,14 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
 /// judgment) — never a `Debug` or ad-hoc format. No variant tag: the
 /// selected field's type is already in the stream (relations encode
 /// before statements), so the literal's shape is a function of bytes already
-/// hashed and no two schemas can alias here. String/Bytes literals hash
+/// hashed and no two schemas can alias here. String literals hash
 /// their raw bytes, length-prefixed — the fact encoding's intern id is
-/// per-database state, not schema identity.
+/// per-database state, not schema identity. `FixedBytes` literals are
+/// self-encoding (their canonical bytes ARE the value, word-padded), so
+/// they take the shared encoder like every other literal.
 fn put_literal(out: &mut Vec<u8>, literal: &Value) {
     match literal {
-        Value::String(bytes) | Value::Bytes(bytes) => put_bytes(out, bytes),
+        Value::String(bytes) => put_bytes(out, bytes),
         encoded => encode_literal(encoded, out),
     }
 }

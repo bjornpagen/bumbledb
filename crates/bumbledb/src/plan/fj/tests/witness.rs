@@ -160,7 +160,7 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
         witness.occurrence(OccId(1)).trie_schema,
         vec![vec![x], vec![y]]
     );
-    assert_eq!(witness.slots(), &[(x, SlotWidth::One), (y, SlotWidth::One)]);
+    assert_eq!(witness.slots(), &[(x, SlotWidth::ONE), (y, SlotWidth::ONE)]);
     // B's bound fields (a, at) cover no key of B — no elision proof.
     assert!(!witness.distinct_bindings());
 }
@@ -268,10 +268,10 @@ fn allen_residual_query_validates_into_the_witness() {
     assert_eq!(
         witness.slots(),
         &[
-            (e1, SlotWidth::One),
-            (d1, SlotWidth::Two),
-            (e2, SlotWidth::One),
-            (d2, SlotWidth::Two),
+            (e1, SlotWidth::ONE),
+            (d1, SlotWidth::TWO),
+            (e2, SlotWidth::ONE),
+            (d2, SlotWidth::TWO),
         ]
     );
     assert_eq!(witness.slot_of(d1), 1);
@@ -341,6 +341,6 @@ fn interval_value_equality_joins_with_a_two_word_key() {
     assert_eq!(witness.occurrence(OccId(1)).key_widths, vec![2, 0]);
     assert_eq!(
         witness.slots(),
-        &[(e1, SlotWidth::One), (d, SlotWidth::Two)]
+        &[(e1, SlotWidth::ONE), (d, SlotWidth::TWO)]
     );
 }

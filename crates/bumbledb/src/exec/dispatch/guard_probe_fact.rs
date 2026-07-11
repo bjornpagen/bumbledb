@@ -24,6 +24,13 @@ fn const_bytes(
     match value {
         Const::Word(w) => out.extend_from_slice(&w.to_be_bytes()),
         Const::Byte(b) => out.push(*b),
+        // A bytes<N> constant's padded words ARE its canonical key
+        // bytes — the same encoding `guard_bytes` slices out of a fact.
+        Const::Words(words) => {
+            for word in words {
+                out.extend_from_slice(&word.to_be_bytes());
+            }
+        }
         Const::Interval { start, end } => {
             out.extend_from_slice(&start.to_be_bytes());
             out.extend_from_slice(&end.to_be_bytes());
@@ -34,8 +41,8 @@ fn const_bytes(
         Const::ParamSet(_) | Const::WordSet(_) => {
             unreachable!("classification: a param-set binding never reaches the guard path")
         }
-        Const::PendingIntern { tag, bytes } => {
-            let id = dict::lookup(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID);
+        Const::PendingIntern { bytes } => {
+            let id = dict::lookup(txn, bytes)?.unwrap_or(dict::SENTINEL_ID);
             out.extend_from_slice(&id.to_be_bytes());
         }
     }
@@ -51,13 +58,21 @@ fn const_operand(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<F
     match value {
         Const::Word(w) => Ok(FactOperand::Word(*w)),
         Const::Byte(b) => Ok(FactOperand::Word(u64::from(*b))),
+        Const::Words(block) => {
+            let mut words = [0u64; 8];
+            words[..block.len()].copy_from_slice(block);
+            Ok(FactOperand::Block {
+                words,
+                count: u8::try_from(block.len()).expect("at most 8 words"),
+            })
+        }
         Const::Interval { start, end } => Ok(FactOperand::Pair(*start, *end)),
         Const::Param(p) => const_operand(txn, &params[usize::from(p.0)], params),
         Const::ParamSet(_) | Const::WordSet(_) => {
             unreachable!("classification: a param-set binding never reaches the guard path")
         }
-        Const::PendingIntern { tag, bytes } => Ok(FactOperand::Word(
-            dict::lookup(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID),
+        Const::PendingIntern { bytes } => Ok(FactOperand::Word(
+            dict::lookup(txn, bytes)?.unwrap_or(dict::SENTINEL_ID),
         )),
     }
 }
@@ -96,11 +111,15 @@ fn fact_matches(
     let operand = |field| fact_operand(schema, plan.relation, fact, field);
     let pair = |field| match operand(field) {
         FactOperand::Pair(start, end) => (start, end),
-        FactOperand::Word(_) => unreachable!("validated: interval predicates read interval fields"),
+        FactOperand::Word(_) | FactOperand::Block { .. } => {
+            unreachable!("validated: interval predicates read interval fields")
+        }
     };
     let word = |field| match operand(field) {
         FactOperand::Word(word) => word,
-        FactOperand::Pair(..) => unreachable!("validated: point operands are scalar fields"),
+        FactOperand::Pair(..) | FactOperand::Block { .. } => {
+            unreachable!("validated: point operands are scalar fields")
+        }
     };
     Ok(match filter {
         FilterPredicate::Compare { field, op, value } => {
@@ -112,6 +131,14 @@ fn fact_matches(
                     CmpOp::Eq => s == start && e == end,
                     _ => unreachable!("validated: interval constants compare under Eq only"),
                 },
+                // bytes<N>: word-wise identity — Eq/Ne only by validation.
+                (FactOperand::Block { words: a, count }, FactOperand::Block { words: b, .. }) => {
+                    match op {
+                        CmpOp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
+                        CmpOp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
+                        _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
+                    }
+                }
                 _ => unreachable!("validated: filter constants match their field's shape"),
             }
         }
@@ -125,6 +152,14 @@ fn fact_matches(
                     CmpOp::Ne => a_s != b_s || a_e != b_e,
                     _ => unreachable!("validated: no order comparison over intervals"),
                 },
+                // bytes<N> fields compare word-wise, Eq/Ne only.
+                (FactOperand::Block { words: a, count }, FactOperand::Block { words: b, .. }) => {
+                    match op {
+                        CmpOp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
+                        CmpOp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
+                        _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
+                    }
+                }
                 _ => unreachable!("same-fact comparison joins same-typed fields"),
             }
         }
@@ -165,7 +200,7 @@ fn fact_matches(
             };
             match operand(*field) {
                 FactOperand::Word(w) => contains_point(start, end, w),
-                FactOperand::Pair(..) => {
+                FactOperand::Pair(..) | FactOperand::Block { .. } => {
                     unreachable!("validated: within-comparands are scalar words")
                 }
             }

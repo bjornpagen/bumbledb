@@ -126,12 +126,10 @@ impl fmt::Display for CorruptionError {
             ),
             Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
             Self::NonUtf8Intern(id) => write!(f, "intern id {id}: stored bytes are not UTF-8"),
-            Self::InternTagMismatch(id) => {
-                write!(
-                    f,
-                    "intern id {id}: reverse-entry tag disagrees with the field type"
-                )
-            }
+            Self::NonzeroFixedBytesPad(tail) => write!(
+                f,
+                "bytes<N> trailing word {tail:02x?}: nonzero pad byte — the pad is encoding, not data"
+            ),
         }
     }
 }
@@ -175,6 +173,15 @@ impl fmt::Display for SchemaError {
             } => {
                 write!(f, "relation {}, field {}: fresh requires u64", r.0, fd.0)
             }
+            Self::FixedBytesWidthOutOfRange {
+                relation: r,
+                field: fd,
+                len,
+            } => write!(
+                f,
+                "relation {}, field {}: bytes<{len}> outside the 1..=64 width range",
+                r.0, fd.0
+            ),
             Self::StatementUnknownRelation {
                 statement: s,
                 relation: r,
@@ -428,6 +435,11 @@ impl fmt::Display for ValidationError {
             Self::OrderComparisonOnInterval { index } => write!(
                 f,
                 "comparison {index}: order operator on an interval — intervals are unordered"
+            ),
+            Self::OrderComparisonOnFixedBytes { index } => write!(
+                f,
+                "comparison {index}: order operator on bytes<N> — a digest's \
+                 lexicographic order is an encoding artifact; identity only"
             ),
             Self::ConstantComparison { index } => {
                 write!(f, "comparison {index}: neither side is a variable")
@@ -752,6 +764,7 @@ impl SchemaError {
             | Self::EnumWithoutVariants { .. }
             | Self::EnumTooManyVariants { .. }
             | Self::DuplicateEnumVariant { .. }
+            | Self::FixedBytesWidthOutOfRange { .. }
             | Self::FreshOnNonU64 { .. } => None,
             Self::StatementUnknownRelation { statement, .. }
             | Self::StatementUnknownField { statement, .. }

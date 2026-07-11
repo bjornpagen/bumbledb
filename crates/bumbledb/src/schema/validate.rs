@@ -615,6 +615,18 @@ fn validate_relation(
                 }
             }
         }
+        if let ValueType::FixedBytes { len } = field.value_type {
+            // The bytes<N> width gate: N ∈ 1..=64 — 64 bytes = 8 words =
+            // two cache lines of key material; 0 denotes nothing
+            // (`docs/architecture/10-data-model.md`).
+            if len == 0 || usize::from(len) > crate::encoding::MAX_FIXED_BYTES {
+                return Err(SchemaError::FixedBytesWidthOutOfRange {
+                    relation: rel_id,
+                    field: field_id,
+                    len,
+                });
+            }
+        }
         if field.generation == Generation::Fresh && field.value_type != ValueType::U64 {
             return Err(SchemaError::FreshOnNonU64 {
                 relation: rel_id,

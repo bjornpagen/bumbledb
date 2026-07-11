@@ -16,6 +16,15 @@ pub(super) enum Decode {
         offset: usize,
         start: usize,
     },
+    /// A `bytes<N>` field: its `⌈N/8⌉` padded words go to consecutive
+    /// word columns (`starts`, one slab start per column), with the
+    /// trailing pad validated zero — the pad is encoding, not data
+    /// (`pad_mask` covers the last word's pad bytes; 0 for N % 8 == 0).
+    FixedBytes {
+        offset: usize,
+        starts: Vec<usize>,
+        pad_mask: u64,
+    },
     /// An interval field: the first 8 bytes go to the start column, the
     /// second 8 to the end column (two ordinary word columns —
     /// `docs/architecture/50-storage.md`).
@@ -76,6 +85,33 @@ pub(super) fn decode_plan(
             let offset = layout.field_offset(field_idx);
             let first = usize::from(span.first_column);
             match (span.width, desc) {
+                // A bytes<N> field of any span shape: word loads plus the
+                // pad check (a bytes<8> field has no pad and decodes as a
+                // plain word).
+                (ColumnWidth::Word | ColumnWidth::Words { .. }, TypeDesc::FixedBytes { len }) => {
+                    let words = crate::encoding::fixed_bytes_words(*len);
+                    let pad_bytes = words * 8 - usize::from(*len);
+                    if pad_bytes == 0 && words == 1 {
+                        Decode::Word {
+                            offset,
+                            start: words_start(columns[first]),
+                        }
+                    } else {
+                        Decode::FixedBytes {
+                            offset,
+                            starts: (0..words)
+                                .map(|i| words_start(columns[first + i]))
+                                .collect(),
+                            // BE words put the pad in the last word's low
+                            // bytes; a zero mask means no pad to check.
+                            pad_mask: if pad_bytes == 0 {
+                                0
+                            } else {
+                                (1u64 << (8 * pad_bytes)) - 1
+                            },
+                        }
+                    }
+                }
                 (ColumnWidth::Word, _) => Decode::Word {
                     offset,
                     start: words_start(columns[first]),
@@ -85,6 +121,9 @@ pub(super) fn decode_plan(
                     start_column: words_start(columns[first]),
                     end_column: words_start(columns[first + 1]),
                 },
+                (ColumnWidth::Words { .. }, _) => {
+                    unreachable!("Words spans cover bytes<N> fields")
+                }
                 (ColumnWidth::Byte, TypeDesc::Bool) => Decode::Bool {
                     offset,
                     start: bytes_start(columns[first]),
@@ -146,6 +185,35 @@ pub(super) fn fill_columns(
                     });
                     unsafe {
                         *words.get_unchecked_mut(start + position) = word;
+                    }
+                }
+                Decode::FixedBytes {
+                    offset,
+                    starts,
+                    pad_mask,
+                } => {
+                    // SAFETY: offset + 8 * starts.len() <= fact_width
+                    // (layout-derived) and the width was checked above;
+                    // slab bounds as for Word.
+                    let mut last = 0u64;
+                    for (i, start) in starts.iter().enumerate() {
+                        let word = u64::from_be_bytes(unsafe {
+                            fact_bytes
+                                .get_unchecked(*offset + 8 * i..*offset + 8 * i + 8)
+                                .try_into()
+                                .expect("8-byte word")
+                        });
+                        unsafe {
+                            *words.get_unchecked_mut(start + position) = word;
+                        }
+                        last = word;
+                    }
+                    // The pad is encoding, not data: a nonzero trailing
+                    // pad byte is corruption — hard error, never a skip.
+                    if last & pad_mask != 0 {
+                        return Err(Error::Corruption(CorruptionError::NonzeroFixedBytesPad(
+                            last.to_be_bytes(),
+                        )));
                     }
                 }
                 Decode::Interval {

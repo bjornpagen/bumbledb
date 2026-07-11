@@ -204,10 +204,8 @@ impl<S> WriteTx<'_, S> {
                         None => return Ok(false),
                     }
                 }
-                Value::Bytes(raw) => match self.delta.resolve_bytes(&self.view, raw)? {
-                    Some(id) => out.extend_from_slice(&encode_u64(id)),
-                    None => return Ok(false),
-                },
+                // Self-encoding: the padded canonical bytes, no dictionary.
+                Value::FixedBytes(raw) => crate::encoding::encode_fixed_bytes(raw, out),
             }
         }
         Ok(true)
@@ -236,16 +234,11 @@ impl<S> WriteTx<'_, S> {
     /// ids pending-first (a fact inserted this transaction carries
     /// provisional ids) — the dynamic sibling of [`Fact::decode_write`].
     fn decode_values(&self, relation: RelationId, fact: &[u8]) -> Result<Vec<Value>> {
-        super::encode_dyn::decode_values(
-            fact,
-            self.schema.relation(relation).layout(),
-            |id| {
-                Ok(Box::from(
-                    plumbing::resolve_string_write(self, id)?.as_bytes(),
-                ))
-            },
-            |id| Ok(Box::from(plumbing::resolve_bytes_write(self, id)?)),
-        )
+        super::encode_dyn::decode_values(fact, self.schema.relation(relation).layout(), |id| {
+            Ok(Box::from(
+                plumbing::resolve_string_write(self, id)?.as_bytes(),
+            ))
+        })
     }
 
     /// The auto-materialized `Functionality` statement for one fresh

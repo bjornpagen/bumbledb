@@ -535,7 +535,7 @@ mod tests {
             Value::I64(i64::MIN),
             Value::Enum(3),
             Value::String(Box::from(&b"text"[..])),
-            Value::Bytes(Box::from(&[0xDEu8, 0xAD][..])),
+            Value::FixedBytes(Box::from(&[0xDEu8, 0xAD][..])),
             Value::IntervalU64(0, u64::MAX),
             Value::IntervalI64(i64::MIN, i64::MAX),
             // Plus the one non-field value shape: the Allen mask (a

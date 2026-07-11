@@ -13,15 +13,6 @@ pub fn intern_str_write<S>(tx: &mut WriteTx<'_, S>, value: &str) -> Result<u64> 
     tx.delta.intern_str(&tx.view, value)
 }
 
-/// Write-context interning for bytes.
-///
-/// # Errors
-///
-/// Storage errors from the dictionary reads.
-pub fn intern_bytes_write<S>(tx: &mut WriteTx<'_, S>, value: &[u8]) -> Result<u64> {
-    tx.delta.intern_bytes(&tx.view, value)
-}
-
 /// Delete-context resolution: pending id, else committed id, else
 /// `None` — the fact cannot exist; nothing minted.
 ///
@@ -30,15 +21,6 @@ pub fn intern_bytes_write<S>(tx: &mut WriteTx<'_, S>, value: &[u8]) -> Result<u6
 /// Storage errors from the dictionary reads.
 pub fn intern_str_delete<S>(tx: &WriteTx<'_, S>, value: &str) -> Result<Option<u64>> {
     tx.delta.resolve_str(&tx.view, value)
-}
-
-/// Delete-context resolution for bytes.
-///
-/// # Errors
-///
-/// Storage errors from the dictionary reads.
-pub fn intern_bytes_delete<S>(tx: &WriteTx<'_, S>, value: &[u8]) -> Result<Option<u64>> {
-    tx.delta.resolve_bytes(&tx.view, value)
 }
 
 /// Read-context lookup: `None` means never interned — the fact cannot
@@ -51,15 +33,6 @@ pub fn intern_str_read<S>(snap: &Snapshot<'_, S>, value: &str) -> Result<Option<
     dict::lookup_str(&snap.txn, value)
 }
 
-/// Read-context lookup for bytes.
-///
-/// # Errors
-///
-/// Storage errors from the dictionary reads.
-pub fn intern_bytes_read<S>(snap: &Snapshot<'_, S>, value: &[u8]) -> Result<Option<u64>> {
-    dict::lookup_bytes(&snap.txn, value)
-}
-
 /// Resolves an intern id to a `&str` view of the committed dictionary
 /// (decode boundary): mmap pages, transaction-stable by LMDB `CoW`. UTF-8
 /// is validated here, without a copy (parse, don't validate).
@@ -68,18 +41,8 @@ pub fn intern_bytes_read<S>(snap: &Snapshot<'_, S>, value: &[u8]) -> Result<Opti
 ///
 /// `Corruption` on a dangling id or non-UTF-8 stored bytes.
 pub fn resolve_string<'a, S>(snap: &'a Snapshot<'_, S>, id: u64) -> Result<&'a str> {
-    let raw = dict::resolve(&snap.txn, id, dict::TAG_STRING)?;
+    let raw = dict::resolve(&snap.txn, id)?;
     std::str::from_utf8(raw).map_err(|_| Error::Corruption(CorruptionError::NonUtf8Intern(id)))
-}
-
-/// Resolves an intern id to a bytes view of the committed dictionary
-/// (decode boundary).
-///
-/// # Errors
-///
-/// `Corruption` on a dangling id.
-pub fn resolve_bytes<'a, S>(snap: &'a Snapshot<'_, S>, id: u64) -> Result<&'a [u8]> {
-    dict::resolve(&snap.txn, id, dict::TAG_BYTES)
 }
 
 /// Write-context sibling of [`resolve_string`], for the point-read decode:
@@ -91,23 +54,11 @@ pub fn resolve_bytes<'a, S>(snap: &'a Snapshot<'_, S>, id: u64) -> Result<&'a [u
 ///
 /// `Corruption` on a dangling id or non-UTF-8 stored bytes.
 pub fn resolve_string_write<'a, S>(tx: &'a WriteTx<'_, S>, id: u64) -> Result<&'a str> {
-    let raw = match tx.delta.pending_raw(dict::TAG_STRING, id) {
+    let raw = match tx.delta.pending_raw(id) {
         Some(raw) => raw,
-        None => dict::resolve(&tx.view, id, dict::TAG_STRING)?,
+        None => dict::resolve(&tx.view, id)?,
     };
     std::str::from_utf8(raw).map_err(|_| Error::Corruption(CorruptionError::NonUtf8Intern(id)))
-}
-
-/// Write-context sibling of [`resolve_bytes`]; see [`resolve_string_write`].
-///
-/// # Errors
-///
-/// `Corruption` on a dangling id.
-pub fn resolve_bytes_write<'a, S>(tx: &'a WriteTx<'_, S>, id: u64) -> Result<&'a [u8]> {
-    match tx.delta.pending_raw(dict::TAG_BYTES, id) {
-        Some(raw) => Ok(raw),
-        None => dict::resolve(&tx.view, id, dict::TAG_BYTES),
-    }
 }
 
 /// Appends the canonical fact bytes for a write-context encode.

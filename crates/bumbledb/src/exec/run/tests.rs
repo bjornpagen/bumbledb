@@ -216,7 +216,7 @@ fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<PlacedComparison>) ->
         .collect();
     let slot_widths: BTreeMap<VarId, SlotWidth> = occurrences
         .iter()
-        .flat_map(|o| o.vars.iter().map(|(_, v)| (*v, SlotWidth::One)))
+        .flat_map(|o| o.vars.iter().map(|(_, v)| (*v, SlotWidth::ONE)))
         .collect();
     NormalizedQuery {
         occurrences,

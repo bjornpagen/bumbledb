@@ -52,17 +52,22 @@ impl Colt {
     /// unforced chunk lists for the trie's whole lifetime — the
     /// invariant `union_positions` reads.
     fn select_union(&mut self, cursor: Cursor, level: usize, words: &[u64]) -> Option<Cursor> {
-        debug_assert_eq!(self.arity_at(level), 1, "set elements are scalar words");
+        // One key per element: a scalar element is one word, a bytes<N>
+        // element its ⌈N/8⌉-word span — the level's arity names the width.
+        let arity = self.arity_at(level);
+        debug_assert_eq!(words.len() % arity, 0, "flat element-major rows");
         debug_assert!(
-            words.windows(2).all(|w| w[0] < w[1]),
-            "bind sorts and dedups set words — distinct keys make the \
+            words
+                .chunks_exact(arity)
+                .zip(words.chunks_exact(arity).skip(1))
+                .all(|(a, b)| a < b),
+            "bind sorts and dedups set elements — distinct keys make the \
              survivor lists disjoint by construction"
         );
         debug_assert!(!words.is_empty(), "an empty set short-circuits at resolve");
         let mut hits = std::mem::take(&mut self.select_hits);
         hits.clear();
-        for word in words {
-            let key = std::slice::from_ref(word);
+        for key in words.chunks_exact(arity) {
             if let Some(child) = self.probe_child_at(cursor, level, key, hash_words(key)) {
                 hits.push(child);
             }

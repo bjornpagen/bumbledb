@@ -55,7 +55,7 @@ fn schema() -> Schema {
                     field("account", ValueType::U64),
                     field("amount", ValueType::I64),
                     field("at", ValueType::I64),
-                    field("memo", ValueType::Bytes),
+                    field("memo", ValueType::FixedBytes { len: 32 }),
                     field("flag", ValueType::Bool),
                     field("span", interval_u64),
                 ],

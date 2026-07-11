@@ -125,7 +125,11 @@ downstream re-checks.
 ## Set semantics in the executor
 
 Bindings are **VarId-indexed slot arrays**, written in place by the recursion and read
-in place by sinks; plan variable order is therefore irrelevant to sinks.
+in place by sinks; plan variable order is therefore irrelevant to sinks. Slots are
+words: an interval variable occupies two consecutive slots (start, end) and a
+`bytes<N>` variable its ⌈N/8⌉ padded words — multi-word values enter seen-sets,
+group keys, and probe keys as word tuples, the wordmap's native shape, and every
+consumer walks widths rather than assuming one.
 
 Two facts identical on all *bound* variables produce the same binding; the solution is a
 **set** of bindings, so duplicates must collapse before folding:

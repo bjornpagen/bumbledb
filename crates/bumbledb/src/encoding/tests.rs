@@ -1,4 +1,4 @@
-use super::decode::{decode_i64, decode_interval_i64, decode_interval_u64};
+use super::decode::{decode_fixed_bytes, decode_i64, decode_interval_i64, decode_interval_u64};
 use super::encode::{encode_interval_i64, encode_interval_u64};
 use super::*;
 use crate::error::CorruptionError;
@@ -120,7 +120,7 @@ fn mixed_layout() -> FactLayout {
         TypeDesc::U64,
         TypeDesc::I64,
         TypeDesc::String,
-        TypeDesc::Bytes,
+        TypeDesc::FixedBytes { len: 12 },
         TypeDesc::Interval {
             element: IntervalElement::U64,
         },
@@ -134,17 +134,17 @@ fn mixed_layout() -> FactLayout {
 fn layout_offsets_are_cumulative_widths_with_no_padding() {
     let layout = mixed_layout();
     assert_eq!(layout.field_count(), 8);
-    // 1 + 1 + 8 + 8 + 8 + 8 + 16 + 16 — 1-byte fields sit flush against
-    // 8- and 16-byte ones.
+    // 1 + 1 + 8 + 8 + 8 + 16 + 16 + 16 — 1-byte fields sit flush against
+    // wider ones; the bytes<12> field is word-padded to 16.
     assert_eq!(layout.field_offset(0), 0);
     assert_eq!(layout.field_offset(1), 1);
     assert_eq!(layout.field_offset(2), 2);
     assert_eq!(layout.field_offset(3), 10);
     assert_eq!(layout.field_offset(4), 18);
     assert_eq!(layout.field_offset(5), 26);
-    assert_eq!(layout.field_offset(6), 34);
-    assert_eq!(layout.field_offset(7), 50);
-    assert_eq!(layout.fact_width(), 66);
+    assert_eq!(layout.field_offset(6), 42);
+    assert_eq!(layout.field_offset(7), 58);
+    assert_eq!(layout.fact_width(), 74);
 }
 
 fn mixed_values() -> Vec<ValueRef> {
@@ -154,7 +154,7 @@ fn mixed_values() -> Vec<ValueRef> {
         ValueRef::U64(u64::MAX),
         ValueRef::I64(i64::MIN),
         ValueRef::String(7),
-        ValueRef::Bytes(9),
+        ValueRef::fixed_bytes(&[0xAA; 12]),
         ValueRef::IntervalU64(3, u64::MAX),
         ValueRef::IntervalI64(i64::MIN, -5),
     ]
@@ -171,7 +171,9 @@ fn encode_fact_matches_independent_field_encodings() {
     expected.extend_from_slice(&encode_u64(u64::MAX));
     expected.extend_from_slice(&encode_i64(i64::MIN));
     expected.extend_from_slice(&encode_u64(7));
-    expected.extend_from_slice(&encode_u64(9));
+    // bytes<12>: the 12 raw bytes zero-padded to the 16-byte word boundary.
+    expected.extend_from_slice(&[0xAA; 12]);
+    expected.extend_from_slice(&[0x00; 4]);
     expected.extend_from_slice(&encode_interval_u64(3, u64::MAX));
     expected.extend_from_slice(&encode_interval_i64(i64::MIN, -5));
     assert_eq!(fact, expected);
@@ -188,7 +190,9 @@ fn field_bytes_slices_equal_independent_encodings() {
     assert_eq!(field_bytes(&fact, &layout, 2), encode_u64(u64::MAX));
     assert_eq!(field_bytes(&fact, &layout, 3), encode_i64(i64::MIN));
     assert_eq!(field_bytes(&fact, &layout, 4), encode_u64(7));
-    assert_eq!(field_bytes(&fact, &layout, 5), encode_u64(9));
+    let mut padded = Vec::new();
+    encode_fixed_bytes(&[0xAA; 12], &mut padded);
+    assert_eq!(field_bytes(&fact, &layout, 5), padded);
     assert_eq!(
         field_bytes(&fact, &layout, 6),
         encode_interval_u64(3, u64::MAX)
@@ -230,13 +234,64 @@ fn decode_field_surfaces_corruption() {
         })
     );
     fact[1] = 0x02;
-    // Invert the IntervalU64 field (offset 34): end half below its start.
-    fact[42..50].copy_from_slice(&encode_u64(0));
-    let corrupt: [u8; 16] = fact[34..50].try_into().expect("16-byte field");
+    // Invert the IntervalU64 field (offset 42): end half below its start.
+    fact[50..58].copy_from_slice(&encode_u64(0));
+    let corrupt: [u8; 16] = fact[42..58].try_into().expect("16-byte field");
     assert_eq!(
         decode_field(&fact, &layout, 6),
         Err(CorruptionError::InvalidInterval(corrupt))
     );
+    fact[50..58].copy_from_slice(&encode_u64(u64::MAX));
+    // The pad-corruption fixture: a nonzero byte in the bytes<12> field's
+    // trailing pad (offsets 26 + 12 .. 26 + 16) is typed corruption —
+    // the pad is encoding, not data.
+    fact[39] = 0x5A;
+    let tail: [u8; 8] = fact[34..42].try_into().expect("trailing word");
+    assert_eq!(
+        decode_field(&fact, &layout, 5),
+        Err(CorruptionError::NonzeroFixedBytesPad(tail))
+    );
+    fact[39] = 0x00;
+    assert_eq!(
+        decode_field(&fact, &layout, 5),
+        Ok(ValueRef::fixed_bytes(&[0xAA; 12]))
+    );
+}
+
+#[test]
+fn fixed_bytes_round_trip_at_pad_boundaries() {
+    // Widths astride the word boundaries — 1/7/8/9/63/64 — round-trip
+    // through the padded encoding, and the padded width is ⌈N/8⌉ × 8.
+    for len in [1usize, 7, 8, 9, 63, 64] {
+        let raw: Vec<u8> = (0..len)
+            .map(|i| u8::try_from(i % 251).unwrap() + 1)
+            .collect();
+        let mut padded = Vec::new();
+        encode_fixed_bytes(&raw, &mut padded);
+        assert_eq!(padded.len(), len.div_ceil(8) * 8);
+        assert_eq!(&padded[..len], &raw[..]);
+        assert!(padded[len..].iter().all(|&b| b == 0));
+        let decoded =
+            decode_fixed_bytes(&padded, u16::try_from(len).unwrap()).expect("zero pad decodes");
+        assert_eq!(decoded.as_bytes(), &raw[..]);
+        assert_eq!(decoded.padded(), &padded[..]);
+    }
+}
+
+#[test]
+fn fixed_bytes_padded_order_is_byte_order() {
+    // The guard B-tree's need: memcmp order over the padded encodings of
+    // equal-width values equals byte order over the values (sortedness
+    // is the index's need — order *operations* stay refused).
+    let mut rng = Lcg(0x0303);
+    for _ in 0..500 {
+        let a: Vec<u8> = (0..9).map(|_| (rng.next() & 0xFF) as u8).collect();
+        let b: Vec<u8> = (0..9).map(|_| (rng.next() & 0xFF) as u8).collect();
+        let (mut pa, mut pb) = (Vec::new(), Vec::new());
+        encode_fixed_bytes(&a, &mut pa);
+        encode_fixed_bytes(&b, &mut pb);
+        assert_eq!(pa.cmp(&pb), a.cmp(&b));
+    }
 }
 
 /// A random valid U64 interval: two distinct draws, ordered.

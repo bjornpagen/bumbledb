@@ -63,14 +63,10 @@ impl WriteDelta<'_> {
     }
 
     /// Pending intern entries to flush to `_dict` (reader: the 40-storage doc phase 4).
-    pub(crate) fn pending_interns(&self) -> impl Iterator<Item = (u8, &[u8], u64)> + '_ {
+    pub(crate) fn pending_interns(&self) -> impl Iterator<Item = (&[u8], u64)> + '_ {
         self.pending_interns
             .iter()
-            .enumerate()
-            .flat_map(|(tag, map)| {
-                map.iter()
-                    .map(move |(raw, id)| (u8::try_from(tag).expect("two tags"), raw.as_ref(), *id))
-            })
+            .map(|(raw, id)| (raw.as_ref(), *id))
     }
 
     /// The recorded disposition for a fact, if any (last one wins).

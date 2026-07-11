@@ -56,7 +56,16 @@ pub enum ValueType {
     U64,
     I64,
     String,
-    Bytes,
+    /// `bytes<N>`: exactly `len` raw bytes, identity-shaped — stored
+    /// inline in the fact, word-padded, never interned (*intern what
+    /// repeats; inline what identifies* —
+    /// `docs/architecture/10-data-model.md`). The length is part of the
+    /// type: `bytes<16>` and `bytes<32>` are different types, and the
+    /// fingerprint feeds the length (a width change is a new theory).
+    /// `len` is validated to `1..=64` at declaration.
+    FixedBytes {
+        len: u16,
+    },
     /// A half-open `[start, end)` over the element domain, strictly
     /// `start < end` — a finite set of points, written as its bounds
     /// (`docs/architecture/10-data-model.md`).
@@ -135,8 +144,16 @@ pub(crate) fn value_matches(value: &Value, expected: &ValueType) -> Result<(), V
     match (value, expected) {
         (Value::Bool(_), ValueType::Bool)
         | (Value::U64(_), ValueType::U64)
-        | (Value::I64(_), ValueType::I64)
-        | (Value::Bytes(_), ValueType::Bytes) => Ok(()),
+        | (Value::I64(_), ValueType::I64) => Ok(()),
+        // The length is the type: a bytes<N> literal of any other width
+        // is a kind mismatch, exactly like a wrong variant.
+        (Value::FixedBytes(raw), ValueType::FixedBytes { len }) => {
+            if raw.len() == usize::from(*len) {
+                Ok(())
+            } else {
+                Err(ValueMismatch::Type)
+            }
+        }
         (Value::String(raw), ValueType::String) => {
             if std::str::from_utf8(raw).is_ok() {
                 Ok(())

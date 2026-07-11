@@ -90,7 +90,7 @@ fn build_occurrences(
                                 .iter()
                                 .find(|(slot_var, _)| slot_var == v)
                                 .expect("trie variables are slot-bound");
-                            u16::try_from(width.slots()).expect("width is 1 or 2")
+                            u16::try_from(width.slots()).expect("widths are at most 8 words")
                         })
                         .sum()
                 })

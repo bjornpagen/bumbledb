@@ -162,9 +162,9 @@ fn single_with_widths(occurrence: Occurrence, wide_vars: &[u16]) -> NormalizedQu
         .iter()
         .map(|(_, var)| {
             let width = if wide_vars.contains(&var.0) {
-                SlotWidth::Two
+                SlotWidth::TWO
             } else {
-                SlotWidth::One
+                SlotWidth::ONE
             };
             (*var, width)
         })
@@ -250,7 +250,7 @@ fn a_second_atom_or_a_residual_stays_free_join() {
         allen_residuals: Vec::new(),
         duration_residuals: Vec::new(),
         anti_probes: vec![],
-        slot_widths: [(VarId(0), SlotWidth::One)].into_iter().collect(),
+        slot_widths: [(VarId(0), SlotWidth::ONE)].into_iter().collect(),
     };
     assert!(classify(&two_atoms, &schema).is_none());
 
@@ -469,7 +469,6 @@ fn pending_intern_miss_is_empty_and_never_interns() {
             eq_filter(
                 2,
                 Const::PendingIntern {
-                    tag: 0,
                     bytes: Box::from(&b"ghost"[..]),
                 },
             ),

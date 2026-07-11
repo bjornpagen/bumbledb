@@ -48,8 +48,10 @@ S | relation_id | stat              -> u64            counters: stat 0 = row cou
 
 Plus `_meta` (format version, schema fingerprint, storage tx id, and the dictionary
 next-id counter — the delta's pending-intern design mints provisional ids against it
-from read snapshots) and `_dict` (forward `blake3(tag‖bytes) → id`, reverse
-`id → bytes`; collision axiom in `10-data-model.md`). Key components are big-endian
+from read snapshots) and `_dict` (**str-only** — `bytes<N>` values are inline in
+facts, never interned, so the key hash carries no type tag: forward
+`blake3(bytes) → id`, reverse `id → bytes`; collision axiom in
+`10-data-model.md`). Key components are big-endian
 (order-sensitive); stored values are not order-sensitive and are little-endian
 (dictionary ids big-endian) — pinned here for the offline checker this doc defers.
 
@@ -63,8 +65,12 @@ from read snapshots) and `_dict` (forward `blake3(tag‖bytes) → id`, reverse
   concatenated in statement order. An interval field (always last —
   `30-dependencies.md` gate) contributes its 16 bytes, so within one scalar-prefix
   group the guard B-tree is **ordered by interval start**: the property the
-  pointwise check and the coverage walk stand on. `MAX_GUARD_WIDTH` admits the
-  16-byte contribution; width overflow is a declaration-time error.
+  pointwise check and the coverage walk stand on. A `bytes<N>` field contributes
+  its ⌈N/8⌉ padded words — memcmp order over the uniform-width padded encodings is
+  value-byte order, which is all the guard needs (order *operations* on `bytes<N>`
+  stay refused at the query surface; sortedness is the index's need, not a
+  semantics). `MAX_GUARD_WIDTH` admits the 16-byte interval contribution and the
+  widest `bytes<64>` one; width overflow is a declaration-time error.
 - **`R` keys are statement-scoped**, not relation-scoped: `statement` is the
   schema-global materialized statement id (`10-data-model.md` fingerprint), and
   `key` is the *target-side* projection value the source fact requires. One source
@@ -250,8 +256,11 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   row count. **An interval field decodes into two parallel 8-byte columns**
   (start, end) — the image layer has no 16-byte column kind, membership and overlap
   lower to word comparisons over the pair (`40-execution.md`), and every existing
-  kernel shape (predicate scan, compaction, gather, fold) applies unchanged. The
-  16-byte unit exists only in `fact_bytes` and guard keys, where ordering needs it.
+  kernel shape (predicate scan, compaction, gather, fold) applies unchanged. A
+  `bytes<N>` field generalizes the same precedent: ⌈N/8⌉ parallel word columns
+  (one plain word column for N ≤ 8), with the trailing pad validated zero at
+  decode. The multi-byte unit exists only in `fact_bytes` and guard keys, where
+  ordering needs it.
   At ~60 GB/s of single-core scan bandwidth a build is single-digit milliseconds per
   100 MB — the number that makes the whole cache design sound. **Column pitches are
   padded off 16 KiB multiples** (measured): L1D set congruence (256 sets × 64 B

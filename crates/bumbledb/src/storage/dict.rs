@@ -1,37 +1,33 @@
-//! The interning dictionary (docs/architecture/50-storage.md): one global dictionary for String and
-//! Bytes, segregated by a type-tag byte inside the hashed key
-//! (`docs/architecture/10-data-model.md`).
+//! The interning dictionary (docs/architecture/50-storage.md): the
+//! compression representation for repeated text — **str-only**. Digest-
+//! shaped values (`bytes<N>`) live inline in facts and never touch it
+//! (`docs/architecture/10-data-model.md`, *intern what repeats; inline
+//! what identifies*), so the key hash carries no type tag: with one
+//! interned type there is nothing to segregate.
 //!
 //! Facts carry 8-byte intern ids; the `_dict` database holds both maps:
 //!
 //! ```text
-//! 0x00 | blake3(tag ‖ raw_bytes)   -> id (u64 BE)      forward
-//! 0x01 | id (u64 BE)               -> tag ‖ raw_bytes  reverse
+//! 0x00 | blake3(raw_bytes)   -> id (u64 BE)   forward
+//! 0x01 | id (u64 BE)         -> raw_bytes     reverse
 //! ```
 //!
 //! Ids are monotonic, never reused, append-only; interning happens only
 //! inside write transactions. There is no GC — deleted facts leak their
-//! interned values (accepted design).
+//! interned values (accepted design: the leak is scoped to repeated text,
+//! the population interning compresses).
 
 use crate::error::{CorruptionError, Error, Result};
 use crate::storage::env::{ReadTxn, WriteTxn};
-
-/// Type-tag byte hashed into the forward key: a String and a Bytes with
-/// identical raw bytes get distinct ids.
-pub(crate) const TAG_STRING: u8 = 0;
-pub(crate) const TAG_BYTES: u8 = 1;
 
 /// `_dict` key prefixes.
 const FORWARD: u8 = 0x00;
 const REVERSE: u8 = 0x01;
 
-fn forward_key(tag: u8, raw: &[u8]) -> [u8; 33] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(&[tag]);
-    hasher.update(raw);
+fn forward_key(raw: &[u8]) -> [u8; 33] {
     let mut key = [0u8; 33];
     key[0] = FORWARD;
-    key[1..].copy_from_slice(hasher.finalize().as_bytes());
+    key[1..].copy_from_slice(blake3::hash(raw).as_bytes());
     key
 }
 
@@ -51,23 +47,9 @@ fn reverse_key(id: u64) -> [u8; 9] {
 /// `Lmdb` on storage failure, `Corruption` on a malformed id counter.
 #[cfg(test)]
 pub fn intern_str(txn: &mut WriteTxn<'_>, value: &str) -> Result<u64> {
-    intern(txn, TAG_STRING, value.as_bytes())
-}
-
-/// Interns a byte sequence, returning its id.
-///
-/// # Errors
-///
-/// `Lmdb` on storage failure, `Corruption` on a malformed id counter.
-#[cfg(test)]
-pub fn intern_bytes(txn: &mut WriteTxn<'_>, value: &[u8]) -> Result<u64> {
-    intern(txn, TAG_BYTES, value)
-}
-
-#[cfg(test)]
-fn intern(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
+    let raw = value.as_bytes();
     let dict = txn.env().dict();
-    let fwd = forward_key(tag, raw);
+    let fwd = forward_key(raw);
     // Collision axiom (10-data-model): a forward hit returns the existing id
     // with no byte verification — hash equality is identity, 2⁻¹²⁸-scale
     // collisions are accepted, not checked for.
@@ -84,11 +66,8 @@ fn intern(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
     let id = txn.dict_next_id()?;
     txn.put_dict_next_id(id + 1)?;
 
-    let mut reverse_value = Vec::with_capacity(1 + raw.len());
-    reverse_value.push(tag);
-    reverse_value.extend_from_slice(raw);
     dict.put(txn.raw_mut(), &fwd, id.to_be_bytes().as_slice())?;
-    dict.put(txn.raw_mut(), &reverse_key(id), &reverse_value)?;
+    dict.put(txn.raw_mut(), &reverse_key(id), raw)?;
     Ok(id)
 }
 
@@ -108,25 +87,16 @@ pub(crate) const SENTINEL_ID: u64 = u64::MAX;
 ///
 /// `Lmdb` on storage failure, `Corruption` on a malformed stored id.
 pub fn lookup_str(txn: &ReadTxn<'_>, value: &str) -> Result<Option<u64>> {
-    lookup(txn, TAG_STRING, value.as_bytes())
+    lookup(txn, value.as_bytes())
 }
 
-/// Read-only lookup of a byte sequence's id.
-///
-/// # Errors
-///
-/// `Lmdb` on storage failure, `Corruption` on a malformed stored id.
-pub fn lookup_bytes(txn: &ReadTxn<'_>, value: &[u8]) -> Result<Option<u64>> {
-    lookup(txn, TAG_BYTES, value)
-}
-
-/// Read-only tagged lookup (readers: the string/bytes fronts above; the
+/// Read-only raw-bytes lookup (readers: the string front above; the
 /// delta's pending-intern path, which must consult the committed
 /// dictionary before minting a provisional id; the sweeper's
 /// committed-only selection encoding).
-pub(crate) fn lookup(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
+pub(crate) fn lookup(txn: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<u64>> {
     let dict = txn.env().dict();
-    match dict.get(txn.raw(), &forward_key(tag, raw))? {
+    match dict.get(txn.raw(), &forward_key(raw))? {
         None => Ok(None),
         Some(bytes) => {
             let id: [u8; 8] = bytes.try_into().map_err(|_| {
@@ -140,14 +110,14 @@ pub(crate) fn lookup(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u6
 /// Writes one pending intern entry minted by the delta (reader: the 40-storage doc's
 /// commit counter flush). The provisional id was assigned from the same
 /// counter this commit flushes, under the single-writer discipline.
-pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8], id: u64) -> Result<()> {
+pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: u64) -> Result<()> {
     let dict = txn.env().dict();
-    let fwd = forward_key(tag, raw);
-    let mut reverse_value = Vec::with_capacity(1 + raw.len());
-    reverse_value.push(tag);
-    reverse_value.extend_from_slice(raw);
-    dict.put(txn.raw_mut(), &fwd, id.to_be_bytes().as_slice())?;
-    dict.put(txn.raw_mut(), &reverse_key(id), &reverse_value)?;
+    dict.put(
+        txn.raw_mut(),
+        &forward_key(raw),
+        id.to_be_bytes().as_slice(),
+    )?;
+    dict.put(txn.raw_mut(), &reverse_key(id), raw)?;
     Ok(())
 }
 
@@ -178,27 +148,17 @@ pub(crate) fn reverse_ids<'txn>(
     }))
 }
 
-/// Resolves an id to its raw bytes (the tag byte is stripped), borrowed from
-/// the LMDB page for the transaction's lifetime.
+/// Resolves an id to its raw bytes, borrowed from the LMDB page for the
+/// transaction's lifetime.
 ///
 /// # Errors
 ///
 /// `Corruption(DanglingInternId)` when the id has no reverse entry — a fact
-/// referencing it is corrupt; never a skip. `Corruption(InternTagMismatch)`
-/// when the entry's tag disagrees with the referencing field's type (a
-/// String field carrying a Bytes id): one byte compare on a page the read
-/// already touched.
-pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: u64, expected_tag: u8) -> Result<&'txn [u8]> {
+/// referencing it is corrupt; never a skip.
+pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: u64) -> Result<&'txn [u8]> {
     let dict = txn.env().dict();
-    match dict.get(txn.raw(), &reverse_key(id))? {
-        Some([tag, raw @ ..]) => {
-            if *tag != expected_tag {
-                return Err(Error::Corruption(CorruptionError::InternTagMismatch(id)));
-            }
-            Ok(raw)
-        }
-        Some([]) | None => Err(Error::Corruption(CorruptionError::DanglingInternId(id))),
-    }
+    dict.get(txn.raw(), &reverse_key(id))?
+        .ok_or(Error::Corruption(CorruptionError::DanglingInternId(id)))
 }
 
 #[cfg(test)]
@@ -237,22 +197,11 @@ mod tests {
     }
 
     #[test]
-    fn string_and_bytes_with_identical_bytes_get_distinct_ids() {
-        let dir = TempDir::new("dict-tag-segregation");
-        let env = env(&dir);
-        let mut wtxn = env.write_txn().expect("txn");
-        let as_str = intern_str(&mut wtxn, "A").expect("intern");
-        let as_bytes = intern_bytes(&mut wtxn, b"A").expect("intern");
-        assert_ne!(as_str, as_bytes);
-    }
-
-    #[test]
     fn lookup_of_never_interned_value_is_none() {
         let dir = TempDir::new("dict-lookup-miss");
         let env = env(&dir);
         let rtxn = env.read_txn().expect("txn");
         assert_eq!(lookup_str(&rtxn, "ghost").expect("lookup"), None);
-        assert_eq!(lookup_bytes(&rtxn, b"ghost").expect("lookup"), None);
     }
 
     #[test]
@@ -261,21 +210,26 @@ mod tests {
         let env = env(&dir);
         let mut wtxn = env.write_txn().expect("txn");
         let s = intern_str(&mut wtxn, "posting").expect("intern");
-        let b = intern_bytes(&mut wtxn, &[0xDE, 0xAD]).expect("intern");
         wtxn.commit().expect("commit");
 
         let rtxn = env.read_txn().expect("txn");
         assert_eq!(lookup_str(&rtxn, "posting").expect("lookup"), Some(s));
-        assert_eq!(resolve(&rtxn, s, TAG_STRING).expect("resolve"), b"posting");
-        assert_eq!(
-            resolve(&rtxn, b, TAG_BYTES).expect("resolve"),
-            &[0xDE, 0xAD]
-        );
-        // Cross-tag resolution is the tag-mismatch corruption, not a value.
-        assert!(matches!(
-            resolve(&rtxn, s, TAG_BYTES),
-            Err(Error::Corruption(CorruptionError::InternTagMismatch(id))) if id == s
-        ));
+        assert_eq!(resolve(&rtxn, s).expect("resolve"), b"posting");
+    }
+
+    #[test]
+    fn reverse_entries_carry_raw_bytes_with_no_tag() {
+        // The contraction's shape pin: with the dictionary str-only, the
+        // reverse value IS the raw bytes — no tag byte survives anywhere
+        // in the codec (docs/architecture/50-storage.md).
+        let dir = TempDir::new("dict-untagged");
+        let env = env(&dir);
+        let mut wtxn = env.write_txn().expect("txn");
+        let id = intern_str(&mut wtxn, "A").expect("intern");
+        wtxn.commit().expect("commit");
+        let rtxn = env.read_txn().expect("txn");
+        assert_eq!(resolve(&rtxn, id).expect("resolve"), b"A");
+        assert_eq!(resolve(&rtxn, id).expect("resolve").len(), 1);
     }
 
     #[test]
@@ -283,7 +237,7 @@ mod tests {
         let dir = TempDir::new("dict-dangling");
         let env = env(&dir);
         let rtxn = env.read_txn().expect("txn");
-        let err = resolve(&rtxn, 12345, TAG_STRING).unwrap_err();
+        let err = resolve(&rtxn, 12345).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -304,7 +258,7 @@ mod tests {
             .collect();
         wtxn.commit().expect("commit");
         let mut wtxn = env.write_txn().expect("txn");
-        let e = intern_bytes(&mut wtxn, b"e").expect("intern");
+        let e = intern_str(&mut wtxn, "e").expect("intern");
         wtxn.commit().expect("commit");
         for pair in ids.windows(2) {
             assert!(pair[0] < pair[1]);
@@ -322,7 +276,7 @@ mod tests {
 
         let rtxn = env.read_txn().expect("txn");
         assert_eq!(lookup_str(&rtxn, "phantom").expect("lookup"), None);
-        assert!(resolve(&rtxn, id, TAG_STRING).is_err());
+        assert!(resolve(&rtxn, id).is_err());
         drop(rtxn);
 
         // The counter did not advance either: the next intern re-issues the

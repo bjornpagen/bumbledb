@@ -221,8 +221,8 @@ fn flush_counters(
         let len = keys::fresh_key(&mut key, rel, field);
         data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
     }
-    for (tag, raw, id) in delta.pending_interns() {
-        crate::storage::dict::put_pending(txn, tag, raw, id)?;
+    for (raw, id) in delta.pending_interns() {
+        crate::storage::dict::put_pending(txn, raw, id)?;
     }
     if let Some(dict_next) = delta.dict_next() {
         txn.put_dict_next_id(dict_next)?;

@@ -442,8 +442,7 @@ fn pending_interns_flush_at_commit_and_advance_the_counter() {
         Some(id)
     );
     assert_eq!(
-        crate::storage::dict::resolve(&rtxn, id, crate::storage::dict::TAG_STRING)
-            .expect("resolve"),
+        crate::storage::dict::resolve(&rtxn, id).expect("resolve"),
         b"holder-name"
     );
     drop(rtxn);

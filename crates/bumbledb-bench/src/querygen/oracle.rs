@@ -220,18 +220,31 @@ fn param_value(
         // Both bool values are boundary values; every draw kind draws
         // uniformly.
         ValueType::Bool => Value::Bool(rng.chance(1, 2)),
-        ValueType::Bytes => match kind {
-            // The hit (and boundary) is a real seeded extref; the miss a
-            // fresh 16-byte value no corpus row carries.
-            DrawKind::Hit | DrawKind::Boundary => target::extref(cfg, rng.range(domains.transfers)),
-            DrawKind::Miss => {
-                let mut raw = Vec::with_capacity(16);
-                for _ in 0..2 {
-                    raw.extend_from_slice(&rng.u64().to_le_bytes());
+        // bytes<N>: the hit (and boundary) is a real corpus digest of the
+        // anchored width — extref for the 32-byte key, a vocabulary value
+        // for the pad-boundary tags; the miss is adversarial, a
+        // single-byte delta of a real digest (never in the corpus:
+        // extrefs pin their tail to the row id and tag vocabularies pin
+        // every byte but the last).
+        ValueType::FixedBytes { len } => {
+            let hit = if *len == 32 {
+                target::extref(cfg, rng.range(domains.transfers))
+            } else {
+                target::digest_vocab_value(*len, rng.range(target::DIGEST_VOCAB))
+            };
+            match kind {
+                DrawKind::Hit | DrawKind::Boundary => hit,
+                DrawKind::Miss => {
+                    let Value::FixedBytes(mut raw) = hit else {
+                        unreachable!("digests are bytes<N>")
+                    };
+                    // Flip one byte outside the vocabulary's live range:
+                    // the first byte is zero in every corpus digest.
+                    raw[0] = 0xA5;
+                    Value::FixedBytes(raw)
                 }
-                Value::Bytes(raw.into())
             }
-        },
+        }
         // An interval-typed param (no scalar anchor): an in-data window
         // literal, whatever the draw kind — hit-vs-miss for interval
         // values is a corpus alignment question, not a vocabulary one.

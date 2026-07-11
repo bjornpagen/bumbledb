@@ -35,6 +35,12 @@ pub use build_with_filters::build_with_filters;
 pub enum Const {
     Word(u64),
     Byte(u8),
+    /// A multi-word `bytes<N>` constant (N > 8): its `⌈N/8⌉` encoded
+    /// column words, in column order — the padded canonical bytes read as
+    /// big-endian words, exactly what the image's word columns hold. A
+    /// bytes<N ≤ 8> constant is one padded word and rides [`Const::Word`]
+    /// like every other scalar. Compared word-wise under `Eq`/`Ne` only.
+    Words(Box<[u64]>),
     /// An interval constant as its two encoded column words (each half
     /// byte-order-normalized exactly like a `Word`, so u64 word order is
     /// value order). Compared pairwise under `Eq`, and the constant side
@@ -56,13 +62,17 @@ pub enum Const {
     /// of the bound elements, in pooled storage — the `Vec` is reused
     /// across binds (warm re-binds of a differently-sized set reuse its
     /// capacity, docs/architecture/40-execution.md § allocation contract).
-    /// Lives in the evaluator's param slice and in resolved filters — a
-    /// `ParamSet` marker resolves to one of these.
+    /// Flat element-major rows: each element contributes its column-word
+    /// span (1 word for every scalar, `⌈N/8⌉` for a `bytes<N>` element —
+    /// the anchored field's span names the width), sorted and
+    /// deduplicated span-wise. Lives in the evaluator's param slice and
+    /// in resolved filters — a `ParamSet` marker resolves to one of
+    /// these.
     WordSet(Vec<u64>),
-    /// A raw String/Bytes literal awaiting per-execution intern resolution
-    /// (`tag` is the dictionary type tag).
+    /// A raw String literal awaiting per-execution intern resolution —
+    /// the dictionary is str-only, so no type tag exists
+    /// (docs/architecture/50-storage.md).
     PendingIntern {
-        tag: u8,
         bytes: Box<[u8]>,
     },
 }

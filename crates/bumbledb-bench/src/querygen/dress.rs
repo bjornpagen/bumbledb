@@ -163,6 +163,7 @@ fn active_literal_i64(cfg: GenConfig, rng: &mut Rng) -> Value {
 /// dressed atom's relation: integer range ops, string/bytes hits and
 /// misses, enum and bool equalities, interval-value `Eq`/`Ne` against
 /// in-data literals, and same-typed var-vs-var.
+#[allow(clippy::too_many_lines)] // one arm per dressed relation, in id order
 pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     if !rng.chance(DRESS_PCT, 100) {
         return;
@@ -215,11 +216,13 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                         lhs: Term::Var(var),
                         rhs,
                     });
-                } else {
-                    // Bytes Eq/Ne on extref: the hit literal is the
+                } else if rng.chance(1, 2) {
+                    // bytes<32> Eq/Ne on extref: the hit literal is the
                     // *actual* extref of a seeded row (recomputed — the
                     // corpus is a pure function of the config); the miss
-                    // is a fresh 16-byte value.
+                    // is adversarial — a single-byte delta of a real
+                    // extref (the corpus pins byte 0 to zero, so the
+                    // flipped digest exists nowhere).
                     let Some(var) = b.var_at(atom, ids::transfer::EXTREF) else {
                         continue;
                     };
@@ -232,13 +235,58 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                         1 => {
                             b.miss = true;
                             b.bytes_miss = true;
-                            let mut raw = Vec::with_capacity(16);
-                            for _ in 0..2 {
-                                raw.extend_from_slice(&rng.u64().to_le_bytes());
-                            }
-                            Term::Literal(Value::Bytes(raw.into()))
+                            let Value::FixedBytes(mut raw) =
+                                target::extref(cfg, rng.range(domains.transfers))
+                            else {
+                                unreachable!("extref is bytes<32>")
+                            };
+                            raw[0] = 0xA5;
+                            Term::Literal(Value::FixedBytes(raw))
                         }
                         _ => Term::Param(b.fresh_param()),
+                    };
+                    b.predicates.push(Comparison {
+                        op,
+                        lhs: Term::Var(var),
+                        rhs,
+                    });
+                } else {
+                    // A pad-boundary digest tag (widths 7/8/9/16/63/64):
+                    // Eq/Ne against a vocabulary hit, an adversarial
+                    // single-byte-delta miss, a param, or — under Eq —
+                    // a param set of digests.
+                    let which = usize::try_from(rng.range(target::DIGEST_WIDTHS.len() as u64))
+                        .expect("small");
+                    let width = target::DIGEST_WIDTHS[which];
+                    let Some(var) = b.var_at(atom, ids::transfer::TAGS[which]) else {
+                        continue;
+                    };
+                    let op = eq_ne(rng);
+                    let rhs = if op == CmpOp::Eq && rng.chance(1, 4) {
+                        Term::ParamSet(b.fresh_param())
+                    } else {
+                        match rng.range(3) {
+                            0 => {
+                                b.bytes_hit = true;
+                                Term::Literal(target::digest_vocab_value(
+                                    width,
+                                    rng.range(target::DIGEST_VOCAB),
+                                ))
+                            }
+                            1 => {
+                                b.miss = true;
+                                b.bytes_miss = true;
+                                let Value::FixedBytes(mut raw) = target::digest_vocab_value(
+                                    width,
+                                    rng.range(target::DIGEST_VOCAB),
+                                ) else {
+                                    unreachable!("digests are bytes<N>")
+                                };
+                                raw[0] = 0xA5;
+                                Term::Literal(Value::FixedBytes(raw))
+                            }
+                            _ => Term::Param(b.fresh_param()),
+                        }
                     };
                     b.predicates.push(Comparison {
                         op,

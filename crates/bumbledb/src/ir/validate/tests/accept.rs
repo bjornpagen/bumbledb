@@ -291,7 +291,7 @@ fn accepts_literals_params_and_sets_inside_negated_atoms() {
             }
         )
     );
-    assert_eq!(params[1], (ParamId(1), &ValueType::Bytes));
+    assert_eq!(params[1], (ParamId(1), &ValueType::FixedBytes { len: 32 }));
     assert!(witness.set_params().contains(&ParamId(1)));
     assert!(!witness.set_params().contains(&ParamId(0)));
 }
@@ -421,4 +421,43 @@ fn accepts_pack_across_rules() {
         ],
     };
     validate(&schema(), &query).expect("valid");
+}
+
+#[test]
+fn accepts_identity_operations_over_fixed_bytes() {
+    // The bytes<N> roster: Eq/Ne (literal, param, var-var) and
+    // membership sets — identity only; CountDistinct folds it (equality
+    // is all it needs). Posting.memo is bytes<32>.
+    let query = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::CountDistinct,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![
+            atom(POSTING, vec![(0, var(0)), (4, var(1))]),
+            atom(POSTING, vec![(0, var(2)), (4, Term::ParamSet(ParamId(0)))]),
+        ],
+        negated: vec![],
+        predicates: vec![
+            PredicateTree::Leaf(Comparison {
+                op: CmpOp::Ne,
+                lhs: var(1),
+                rhs: Term::Literal(Value::FixedBytes(vec![7u8; 32].into())),
+            }),
+            PredicateTree::Leaf(Comparison {
+                op: CmpOp::Eq,
+                lhs: var(1),
+                rhs: Term::Param(ParamId(1)),
+            }),
+        ],
+    });
+    let witness = validate(&schema(), &query).expect("valid");
+    assert_eq!(
+        witness.param_type(ParamId(0)),
+        &ValueType::FixedBytes { len: 32 }
+    );
+    assert!(witness.set_params().contains(&ParamId(0)));
 }

@@ -98,10 +98,10 @@ fn interval_pair_query(
         },
     ];
     let slot_widths: BTreeMap<VarId, SlotWidth> = [
-        (VarId(0), SlotWidth::One),
-        (VarId(1), SlotWidth::Two),
-        (VarId(2), SlotWidth::One),
-        (VarId(3), SlotWidth::Two),
+        (VarId(0), SlotWidth::ONE),
+        (VarId(1), SlotWidth::TWO),
+        (VarId(2), SlotWidth::ONE),
+        (VarId(3), SlotWidth::TWO),
     ]
     .into_iter()
     .collect();
@@ -406,7 +406,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
             filters: vec![],
         },
     ];
-    let slot_widths: BTreeMap<VarId, SlotWidth> = [(x, SlotWidth::One), (t, SlotWidth::One)]
+    let slot_widths: BTreeMap<VarId, SlotWidth> = [(x, SlotWidth::ONE), (t, SlotWidth::ONE)]
         .into_iter()
         .collect();
     let query = NormalizedQuery {
@@ -574,9 +574,9 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
         },
     ];
     let slot_widths: BTreeMap<VarId, SlotWidth> = [
-        (x, SlotWidth::One),
-        (d, SlotWidth::One),
-        (t, SlotWidth::One),
+        (x, SlotWidth::ONE),
+        (d, SlotWidth::ONE),
+        (t, SlotWidth::ONE),
     ]
     .into_iter()
     .collect();
@@ -683,7 +683,7 @@ fn negated_membership_rejects_only_covered_events() {
         word_residuals: vec![],
         allen_residuals: vec![],
         duration_residuals: Vec::new(),
-        slot_widths: [(x, SlotWidth::One), (t, SlotWidth::One)]
+        slot_widths: [(x, SlotWidth::ONE), (t, SlotWidth::ONE)]
             .into_iter()
             .collect(),
     };
@@ -823,8 +823,8 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
     let slot_widths: BTreeMap<VarId, SlotWidth> = (0..3u16)
         .flat_map(|occ| {
             [
-                (VarId(occ * 2), SlotWidth::One),
-                (VarId(occ * 2 + 1), SlotWidth::Two),
+                (VarId(occ * 2), SlotWidth::ONE),
+                (VarId(occ * 2 + 1), SlotWidth::TWO),
             ]
         })
         .collect();

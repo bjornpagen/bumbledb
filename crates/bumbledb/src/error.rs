@@ -77,10 +77,11 @@ pub enum CorruptionError {
     /// A stored string's bytes are not UTF-8 — distinct from a dangling id
     /// (the reverse entry exists; its content is mojibake).
     NonUtf8Intern(u64),
-    /// The reverse dictionary entry's tag byte disagrees with the field
-    /// type that referenced it (a String field carrying a Bytes id, or
-    /// vice versa).
-    InternTagMismatch(u64),
+    /// A stored `bytes<N>` field with a nonzero byte in its trailing pad
+    /// — the pad is encoding, not data, so a nonzero pad byte is exactly
+    /// as corrupt as a non-0/1 Bool byte. Carries the offending trailing
+    /// word's 8 bytes.
+    NonzeroFixedBytesPad([u8; 8]),
 }
 
 /// A schema declaration error (the validation boundary,
@@ -120,6 +121,15 @@ pub enum SchemaError {
     FreshOnNonU64 {
         relation: RelationId,
         field: FieldId,
+    },
+    /// A `bytes<N>` field with N = 0 or N > 64: zero bytes denote
+    /// nothing, and 64 bytes (8 words, two cache lines of key material)
+    /// is the width ceiling — digests in the wild are 16/20/32/64
+    /// (`docs/architecture/10-data-model.md`).
+    FixedBytesWidthOutOfRange {
+        relation: RelationId,
+        field: FieldId,
+        len: u16,
     },
 
     // --- Statement roster (30-dependencies § validation roster) ---
@@ -452,6 +462,14 @@ pub enum ValidationError {
     /// intervals are unordered; the predictable mistake gets the dedicated
     /// diagnostic (`docs/architecture/20-query-ir.md` § comparison rules).
     OrderComparisonOnInterval {
+        index: usize,
+    },
+    /// An order operator with a `bytes<N>` operand — a digest's
+    /// lexicographic order is an encoding artifact, and admitting it
+    /// would make hash-function choice semantically visible. Identity
+    /// only: `Eq`/`Ne` and membership (`docs/architecture/10-data-model.md`,
+    /// the order-on-bytes refusal).
+    OrderComparisonOnFixedBytes {
         index: usize,
     },
     /// Neither side is a variable — write the query you mean.

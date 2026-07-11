@@ -127,9 +127,12 @@ pub(crate) fn prepare<'s, S>(
             .expect("at least one rule"),
     );
 
+    // The byte-heap types keep the resolving finalize: String resolves
+    // through the dictionary; a bytes<N> find re-assembles its slot words
+    // into the byte heap (no dictionary — inline values).
     let all_words = column_types
         .iter()
-        .all(|ty| !matches!(ty, ValueType::String | ValueType::Bytes));
+        .all(|ty| !matches!(ty, ValueType::String | ValueType::FixedBytes { .. }));
     Ok(PreparedQuery {
         schema,
         env_instance: txn.env_instance(),
@@ -352,16 +355,14 @@ fn build_view_memo(exec_plan: &ExecPlan) -> ViewMemo {
     };
     for occurrence in plan.occurrences() {
         // Field→column through the span map (docs/architecture/
-        // 50-storage.md image layout): an interval field contributes its
-        // start/end column pair, and every field after one is shifted —
-        // spans, never raw field indices.
+        // 50-storage.md image layout): a multi-word field contributes its
+        // whole column run (interval start/end pair, a bytes<N> field's
+        // ⌈N/8⌉ words), and every field after one is shifted — spans,
+        // never raw field indices.
         let columns_of = |field: crate::schema::FieldId| -> Vec<usize> {
             let span = occurrence.spans[usize::from(field.0)];
             let first = usize::from(span.first_column);
-            match span.width {
-                crate::image::ColumnWidth::WordPair => vec![first, first + 1],
-                crate::image::ColumnWidth::Word | crate::image::ColumnWidth::Byte => vec![first],
-            }
+            (first..first + usize::from(span.width.column_count())).collect()
         };
         let columns: Vec<Vec<usize>> = occurrence
             .trie_schema

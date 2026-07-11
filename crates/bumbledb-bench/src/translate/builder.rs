@@ -37,7 +37,7 @@ fn sql_literal(value: &Value) -> Result<String, String> {
         Value::U64(v) => sql_u64(*v)?,
         Value::I64(v) => v.to_string(),
         Value::String(raw) => sql_string_literal(raw)?,
-        Value::Bytes(raw) => {
+        Value::FixedBytes(raw) => {
             let mut hex = String::with_capacity(raw.len() * 2 + 3);
             hex.push_str("X'");
             for b in raw {

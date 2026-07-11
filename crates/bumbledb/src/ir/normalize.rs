@@ -27,7 +27,7 @@ mod normalize;
 mod place_comparisons;
 
 pub use dnf::{collapse, disjunct_count, distribute, LoweredRule};
-pub(crate) use lower_literal::lower_literal;
+pub(crate) use lower_literal::{fixed_bytes_const, lower_literal};
 pub use normalize::normalize;
 
 /// Dense atom-occurrence id. Everything downstream (plan validity, trie
@@ -201,40 +201,45 @@ pub struct AntiProbe {
     pub probe_bindings: Vec<(FieldId, VarId)>,
 }
 
-/// Binding-slot width of one variable — **the two-slot interval layout
-/// decision, made here and nowhere else**: an interval-typed variable
-/// occupies **two consecutive u64 slots** — (start word, end word), in
-/// encoded column-word order — in the VarId-indexed binding-slot array;
-/// every other variable occupies one. Exported through
+/// Binding-slot width of one variable — **the multi-slot layout decision,
+/// made here and nowhere else**: an interval-typed variable occupies
+/// **two consecutive u64 slots** — (start word, end word), in encoded
+/// column-word order — in the VarId-indexed binding-slot array; a
+/// `bytes<N>` variable occupies its `⌈N/8⌉` padded-word slots in byte
+/// order (the interval two-slot precedent, generalized); every other
+/// variable occupies one. Exported through
 /// [`NormalizedQuery::slot_widths`] into the plan witness's binding-slot
 /// layout and consumed everywhere slots are addressed: residual word
-/// comparisons ([`VarWord`] selects within the pair via
+/// comparisons ([`VarWord`] selects within an interval pair via
 /// [`IntervalWord::offset`]), the executor's slot arrays and probe keys,
 /// and the sinks' binding reads (PRDs 15/16/17/18).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SlotWidth {
-    One,
-    Two,
-}
+pub struct SlotWidth(u8);
 
 impl SlotWidth {
+    /// The scalar width (every single-word type).
+    pub const ONE: Self = Self(1);
+    /// The interval width: (start word, end word).
+    pub const TWO: Self = Self(2);
+
     /// The width of a variable of this type (see the type-level comment —
     /// the one place the layout is decided).
     #[must_use]
     pub fn of(value_type: &ValueType) -> Self {
         match value_type {
-            ValueType::Interval { .. } => Self::Two,
-            _ => Self::One,
+            ValueType::Interval { .. } => Self::TWO,
+            ValueType::FixedBytes { len } => Self(
+                u8::try_from(crate::encoding::fixed_bytes_words(*len))
+                    .expect("validated schema: at most 8 words"),
+            ),
+            _ => Self::ONE,
         }
     }
 
     /// Number of consecutive u64 slots.
     #[must_use]
     pub fn slots(self) -> usize {
-        match self {
-            Self::One => 1,
-            Self::Two => 2,
-        }
+        usize::from(self.0)
     }
 }
 

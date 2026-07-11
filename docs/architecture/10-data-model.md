@@ -12,15 +12,33 @@ Enum(variants)           1 byte, ordinal into an ordered variant-name list
 U64                      8 bytes, big-endian (order-preserving)
 I64                      8 bytes, sign-flipped big-endian (order-preserving)
 String                   8 bytes in facts: interned dictionary id
-Bytes                    8 bytes in facts: interned dictionary id
+Bytes(N), N ∈ 1..=64     ⌈N/8⌉ × 8 bytes in facts: the N raw bytes, zero-padded
+                         to the word boundary — the pad is encoding, not data
+                         (a nonzero pad byte is corruption); never interned
 Interval(element)        16 bytes: start ‖ end, each the element encoding;
                          element ∈ {U64, I64}; strictly start < end
 ```
 
-Seven types, three physical widths (1, 8, and 16 bytes). Type equality is **structural
+Seven types (`bytes<N>` replaced variable `bytes` — the roster stays at seven; the
+width is part of the type, so `bytes<16>` and `bytes<32>` are different types and a
+width change is a new theory, fed to the fingerprint). Type equality is **structural
 equality of the description**; unification, comparison legality, and dependency
 compatibility are all just that equality. There is no `name` field anywhere in the type
 layer.
+
+**The decision rule for byte-shaped data: intern what repeats; inline what
+identifies.** `str` is the reuse-shaped population (names, labels: low cardinality,
+high reuse) — content-addressing is compression and id-equality is the win. `bytes<N>`
+is the identity-shaped population (content hashes, external opaque ids: maximal
+cardinality, near-zero reuse) — the value lives *in the fact*, exactly as the engine's
+own `M` namespace stores its 32 inline blake3 bytes, uninterned. One law, uniform
+across engine and schema; the two byte-shaped types share no axis (variable/fixed,
+interned/inline, text/raw, reuse/identity). Variable-width *binary* with genuine reuse
+had zero sightings in either deep-port target — a type without a population is
+symmetry, not design; that cut reverses if a real schema surfaces one (the dictionary
+machinery it would need survives intact under `str`). N ≤ 64: 64 bytes = 8 words = two
+cache lines of key material; digests in the wild are 16/20/32/64. Not `fresh`-eligible,
+not an interval element; the host type is `[u8; N]` — owned, `Copy`, borrow-free.
 
 **Enum identity is its ordered variant-name list.** Two fields declaring
 `[Active, Closed, Frozen]` are the same type and unify, whatever the schema calls them.
@@ -40,8 +58,13 @@ operator), and point membership** (below) — never `Lt`-family order or
 `Min`/`Max`: the value order that
 exists (lexicographic by start) is an encoding accident, and offering it would invite
 queries that mean intersection and say "less than". Everything else is equality-only. Enum
-ordinal order is a declaration-order accident, not semantics; String/Bytes intern ids
-are meaningless to order; Bool ordering is noise.
+ordinal order is a declaration-order accident, not semantics; String intern ids
+are meaningless to order; Bool ordering is noise. **`bytes<N>` is identity-only by
+refusal** (`Eq`/`Ne` and membership; order comparisons and `Min`/`Max` are typed
+validation errors): a digest's lexicographic order is an encoding artifact, and
+admitting it would make hash-function choice semantically visible. The guard B-tree
+still sorts the padded encodings — sortedness is the index's need, not a query
+semantics (the padded bytes memcmp in value-byte order, which is all the guard asks).
 
 **The mask value shape:** the interval-pair relation itself is a value —
 `AllenMask`, a 13-bit word, bit *i* = Allen basic *i* in the palindromic order
@@ -292,7 +315,8 @@ intra-row alignment a pure waste, `00-product.md`). Canonical means injective an
 unique: Bool is strictly 0/1 (any other byte is corruption, never a distinct "true");
 Enum is the declaration-order ordinal; integers are their order-preserving encodings;
 Interval is `start ‖ end` with `start < end` (violation is corruption);
-String/Bytes are their intern ids (one byte sequence ⇒ exactly one id, ever).
+String is its intern id (one byte sequence ⇒ exactly one id, ever); `bytes<N>` is its
+N raw bytes zero-padded to the word boundary (nonzero pad is corruption).
 Storage (`50-storage.md`) implements membership as blake3-256 of `fact_bytes`;
 **hash equality is treated as fact equality — collisions are an accepted axiom**
 (2⁻¹²⁸-scale event), not verified against, and the same axiom applies to the
@@ -327,9 +351,11 @@ they answer different questions ("is this stored?" vs "what does it mean?").
 
 ## Interning
 
-One global dictionary for String and Bytes, segregated by a type-tag byte inside the
-hashed key (a String and a Bytes with identical bytes get distinct ids). Forward map:
-blake3(tag ‖ bytes) → id (collision axiom above); reverse map: id → bytes. Ids are
+**The dictionary is the compression representation for repeated text.** It is
+str-only: `bytes<N>` values are inline in facts and never touch it (*intern what
+repeats; inline what identifies*, above), so the key hash carries no type tag —
+with one interned type there is nothing to segregate. Forward map:
+blake3(bytes) → id (collision axiom above); reverse map: id → bytes. Ids are
 monotonic, never reused, append-only; interning happens only inside write transactions.
 Strings are validated UTF-8 at intern time (parse, don't validate). On the read path,
 query literals resolve by read-only lookup — a dictionary miss means the literal cannot
@@ -338,9 +364,11 @@ per-execution; see `20-query-ir.md`). Known accepted limitation: no GC — delet
 facts leak their interned values, and a value interned for an insert that turned
 out to be a storage no-op leaks even though no committed fact ever referenced it
 (pending interns flush with any state-changing commit; filtering them would be
-commit-path machinery spent against an accepted leak). At design scale both
-classes are noise (revisit trigger recorded in the README OPEN list, counting
-both).
+commit-path machinery spent against an accepted leak). The leak is scoped to the
+population interning compresses — repeated text; the digest population that would
+have turned it into an unbounded tax left the dictionary with variable `bytes`.
+At design scale both classes are noise (revisit trigger recorded in the README
+OPEN list, counting both).
 
 Consequence: string equality is cheap (id compare); string ordering, prefix search, and
 text search are unsupported and would require explicit ordered text indexes if ever

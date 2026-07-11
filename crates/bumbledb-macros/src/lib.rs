@@ -29,12 +29,13 @@
 //! the typestate `Db<Ledger>` carries. Multiple schemas coexist in one
 //! module — their headers disambiguate.
 //!
-//! Types: `bool`, `u64`, `i64`, `str`, `bytes`, inline `enum Name { .. }`
-//! (the name names the generated Rust enum only — engine identity is the
-//! structural variant list), `interval<i64>`, `interval<u64>`. `as NewType`
-//! generates the host-side nominal newtype (legal on u64, i64, and both
-//! intervals). `fresh` auto-materializes `R(field) -> R` at schema
-//! resolution. **There are no field-level constraint modifiers** — everything
+//! Types: `bool`, `u64`, `i64`, `str`, `bytes<N>` (N ∈ 1..=64 — the
+//! width is mandatory; bare `bytes` does not exist), inline
+//! `enum Name { .. }` (the name names the generated Rust enum only —
+//! engine identity is the structural variant list), `interval<i64>`,
+//! `interval<u64>`. `as NewType` generates the host-side nominal newtype
+//! (legal on u64, i64, `bytes<N>`, and both intervals). `fresh`
+//! auto-materializes `R(field) -> R` at schema resolution. **There are no field-level constraint modifiers** — everything
 //! relational is a dependency statement between the relation blocks
 //! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality),
 //! `A(X | σ) <= B(Y | ψ)` (containment), `==` lowered here to the two
@@ -43,9 +44,10 @@
 //! the same invocation, so variant names resolve to ordinals here); interval
 //! literals are written `start..end`, half-open.
 //!
-//! Generated fact structs borrow their variable-width fields (`str` →
-//! `&'a str`, `bytes` → `&'a [u8]`): a struct with any variable-width
-//! field gains one lifetime; all-fixed-width structs stay lifetime-free.
+//! Generated fact structs borrow their one variable-width field kind
+//! (`str` → `&'a str`): a struct with any `str` field gains one lifetime.
+//! `bytes<N>` fields are `[u8; N]` — owned, `Copy`, lifetime-free (the
+//! fixed-width law) — so all-fixed-width structs stay lifetime-free.
 //!
 //! The macro validates only its own grammar plus name-to-id resolution
 //! (both are compile errors at the call site): expansion emits
@@ -91,8 +93,13 @@ enum FieldTy {
     U64,
     I64,
     Str,
-    Bytes,
-    Enum { name: String, variants: Vec<String> },
+    /// `bytes<N>` — the width is part of the type (mandatory in the
+    /// grammar; range-validated at `Db::create`/`open`).
+    FixedBytes(u64),
+    Enum {
+        name: String,
+        variants: Vec<String>,
+    },
     Interval(IntervalElement),
 }
 
@@ -246,14 +253,31 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
 
 /// Parses a field's type, optional `as NewType`, and optional `, fresh`.
 fn parse_field(name: String, tokens: &mut Tokens) -> Field {
-    let ty_name = expect_ident(tokens, "a type (bool/u64/i64/str/bytes/enum/interval)");
+    let ty_name = expect_ident(tokens, "a type (bool/u64/i64/str/bytes<N>/enum/interval)");
     reject_deleted_word(&ty_name);
     let ty = match ty_name.as_str() {
         "bool" => FieldTy::Bool,
         "u64" => FieldTy::U64,
         "i64" => FieldTy::I64,
         "str" => FieldTy::Str,
-        "bytes" => FieldTy::Bytes,
+        // The width is mandatory: bare `bytes` is not a type — the
+        // variable-width binary type is deleted (identity-shaped values
+        // are bytes<N>; reuse-shaped text is str).
+        "bytes" => {
+            assert!(
+                peek_punct(tokens, '<'),
+                "schema!: unknown type `bytes` — write `bytes<N>` (the width is the type; \
+                 variable-width bytes does not exist)"
+            );
+            expect_punct(tokens, '<');
+            let (negative, text) = parse_int(tokens, "the bytes<N> width");
+            assert!(!negative, "schema!: bytes<N> width must be positive");
+            expect_punct(tokens, '>');
+            let width: u64 = text
+                .parse()
+                .unwrap_or_else(|_| panic!("schema!: malformed bytes<N> width `{text}`"));
+            FieldTy::FixedBytes(width)
+        }
         "enum" => {
             let enum_name = expect_ident(tokens, "an enum type name");
             let body = take_group(tokens, Delimiter::Brace, "an enum variant list");
@@ -283,8 +307,11 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
     if peek_ident(tokens).as_deref() == Some("as") {
         tokens.next();
         assert!(
-            matches!(field.ty, FieldTy::U64 | FieldTy::I64 | FieldTy::Interval(_)),
-            "schema!: `as NewType` applies to u64/i64/interval fields only"
+            matches!(
+                field.ty,
+                FieldTy::U64 | FieldTy::I64 | FieldTy::FixedBytes(_) | FieldTy::Interval(_)
+            ),
+            "schema!: `as NewType` applies to u64/i64/bytes<N>/interval fields only"
         );
         field.newtype = Some(expect_ident(tokens, "a newtype name"));
     }
@@ -577,7 +604,7 @@ fn value_type_expr(ty: &FieldTy) -> String {
         FieldTy::U64 => format!("{value_type}::U64"),
         FieldTy::I64 => format!("{value_type}::I64"),
         FieldTy::Str => format!("{value_type}::String"),
-        FieldTy::Bytes => format!("{value_type}::Bytes"),
+        FieldTy::FixedBytes(len) => format!("{value_type}::FixedBytes {{ len: {len} }}"),
         FieldTy::Enum { variants, .. } => {
             let list = variants
                 .iter()
@@ -634,8 +661,8 @@ fn value_expr(declaration: &Relation, field: &str, literal: &Literal) -> String 
         (FieldTy::Str, Literal::Str(text)) => {
             format!("{value}::String(::std::boxed::Box::from({text}.as_bytes()))")
         }
-        (FieldTy::Bytes, Literal::Bytes(text)) => {
-            format!("{value}::Bytes(::std::boxed::Box::from(&{text}[..]))")
+        (FieldTy::FixedBytes(_), Literal::Bytes(text)) => {
+            format!("{value}::FixedBytes(::std::boxed::Box::from(&{text}[..]))")
         }
         (
             FieldTy::Interval(IntervalElement::U64),
@@ -769,13 +796,18 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
             let Some(name) = &field.newtype else {
                 continue;
             };
+            // The bool marks order-free newtypes: intervals carry no
+            // order (an encoding accident, not semantics) and bytes<N>
+            // deliberately none either — a digest's lexicographic order
+            // is an encoding artifact (the order-on-bytes refusal).
             let inner = match field.ty {
                 FieldTy::U64 => ("u64".to_owned(), false),
                 FieldTy::I64 => ("i64".to_owned(), false),
+                FieldTy::FixedBytes(len) => (format!("[u8; {len}]"), true),
                 FieldTy::Interval(element) => {
                     (format!("::bumbledb::Interval<{}>", element.rust()), true)
                 }
-                _ => unreachable!("parser restricts `as` to u64/i64/interval"),
+                _ => unreachable!("parser restricts `as` to u64/i64/bytes<N>/interval"),
             };
             if let Some(existing) = newtypes.get(name) {
                 assert_eq!(
@@ -787,12 +819,8 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
             newtypes.insert(name.clone(), inner);
         }
     }
-    for (name, (inner, wraps_interval)) in newtypes {
-        let order = if wraps_interval {
-            ""
-        } else {
-            ", PartialOrd, Ord"
-        };
+    for (name, (inner, order_free)) in newtypes {
+        let order = if order_free { "" } else { ", PartialOrd, Ord" };
         let _ = write!(
             out,
             "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash{order})]\n\
@@ -838,9 +866,10 @@ fn emit_enums(out: &mut String, relations: &[Relation]) {
 }
 
 /// Whether the field is variable-width — borrowed in the generated struct
-/// (`&'a str` / `&'a [u8]`), the reason its struct gains a lifetime.
+/// (`&'a str`), the reason its struct gains a lifetime. `bytes<N>` is
+/// fixed-width and owned (`[u8; N]`, `Copy`) — no borrow surface.
 fn is_borrowed(field: &Field) -> bool {
-    matches!(field.ty, FieldTy::Str | FieldTy::Bytes)
+    matches!(field.ty, FieldTy::Str)
 }
 
 fn rust_field_ty(field: &Field) -> String {
@@ -852,7 +881,7 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::U64 => "u64".to_owned(),
         FieldTy::I64 => "i64".to_owned(),
         FieldTy::Str => "&'a str".to_owned(),
-        FieldTy::Bytes => "&'a [u8]".to_owned(),
+        FieldTy::FixedBytes(len) => format!("[u8; {len}]"),
         FieldTy::Enum { name, .. } => name.clone(),
         FieldTy::Interval(element) => format!("::bumbledb::Interval<{}>", element.rust()),
     }
@@ -882,8 +911,12 @@ fn encode_exprs(field: &Field) -> (String, String, String) {
             "::bumbledb::__private::ValueRef::Interval{}({access}.start(), {access}.end())",
             element.suffix()
         )),
+        // Inline in every context: bytes<N> never touches the dictionary,
+        // so write/delete/read share one self-encoding expression.
+        FieldTy::FixedBytes(_) => same(format!(
+            "::bumbledb::__private::ValueRef::fixed_bytes(&{access})"
+        )),
         FieldTy::Str => interned_exprs("str", "String", &field.name),
-        FieldTy::Bytes => interned_exprs("bytes", "Bytes", &field.name),
     }
 }
 
@@ -891,8 +924,8 @@ fn encode_exprs(field: &Field) -> (String, String, String) {
 /// selects the plumbing functions (`intern_{family}_{write,delete,read}`)
 /// and `variant` the `ValueRef` constructor. Delete and read share the
 /// miss shape — `Ok(false)`, the fact provably absent — differing only
-/// in context binding. The field is already a borrow (`&'a str` /
-/// `&'a [u8]`), so it passes straight through.
+/// in context binding. The field is already a borrow (`&'a str`), so it
+/// passes straight through.
 fn interned_exprs(family: &str, variant: &str, name: &str) -> (String, String, String) {
     let miss = |boundary: &str, ctx: &str| {
         format!(
@@ -955,9 +988,11 @@ fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
             "String(id)".to_owned(),
             format!("::bumbledb::__private::resolve_string{suffix}({ctx}, id)?"),
         ),
-        FieldTy::Bytes => arm(
-            "Bytes(id)".to_owned(),
-            format!("::bumbledb::__private::resolve_bytes{suffix}({ctx}, id)?"),
+        FieldTy::FixedBytes(len) => arm(
+            "FixedBytes(value)".to_owned(),
+            wrap(&format!(
+                "<[u8; {len}]>::try_from(value.as_bytes()).expect(\"schema-typed width\")"
+            )),
         ),
     }
 }

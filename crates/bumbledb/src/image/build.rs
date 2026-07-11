@@ -81,9 +81,9 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         .map(|f| f.value_type.type_desc())
         .collect();
     // The field→column map drives the layout: an interval field spans two
-    // consecutive 8-byte columns (start, end), everything else one column
-    // of its width — the image layer has no 16-byte column
-    // (`docs/architecture/50-storage.md`).
+    // consecutive 8-byte columns (start, end), a bytes<N> field its
+    // ⌈N/8⌉ word columns, everything else one column of its width — the
+    // image layer has no wide column (`docs/architecture/50-storage.md`).
     let spans = column_spans(&field_types);
     let byte_cols = spans
         .iter()
@@ -120,6 +120,7 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
             }
             ColumnWidth::Word => 1,
             ColumnWidth::WordPair => 2,
+            ColumnWidth::Words { count } => usize::from(count),
         };
         for _ in 0..word_columns {
             let start = stagger.place(words_addr, 8, word_cursor);

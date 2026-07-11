@@ -275,24 +275,25 @@ enum Source {
 }
 
 /// One whole-value residual compare over a variable's slot words: width
-/// 1 is the scalar compare; width 2 is an interval pair, compared
-/// **pairwise** (`docs/architecture/20-query-ir.md` — interval-pair
-/// predicates travel as Allen mask residuals and point containment as
-/// word residuals, so width 2 is the repeated-variable equality only).
+/// 1 is the scalar compare; any wider span — an interval pair or a
+/// `bytes<N>` block — compares **word-wise** under `Eq`/`Ne` only
+/// (`docs/architecture/20-query-ir.md` — interval-pair predicates travel
+/// as Allen mask residuals, point containment as word residuals, and
+/// order over multi-word values is a validation-typed refusal, so a wide
+/// residual is whole-value identity only).
 fn compare_wide(
     op: crate::ir::CmpOp,
     width: usize,
     lhs: impl Fn(usize) -> u64,
     rhs: impl Fn(usize) -> u64,
 ) -> bool {
-    match width {
-        1 => op.compare(&lhs(0), &rhs(0)),
-        2 => match op {
-            crate::ir::CmpOp::Eq => lhs(0) == rhs(0) && lhs(1) == rhs(1),
-            crate::ir::CmpOp::Ne => lhs(0) != rhs(0) || lhs(1) != rhs(1),
-            _ => unreachable!("validated: intervals admit Eq/Ne only as whole values"),
-        },
-        _ => unreachable!("slot widths are 1 or 2"),
+    if width == 1 {
+        return op.compare(&lhs(0), &rhs(0));
+    }
+    match op {
+        crate::ir::CmpOp::Eq => (0..width).all(|i| lhs(i) == rhs(i)),
+        crate::ir::CmpOp::Ne => (0..width).any(|i| lhs(i) != rhs(i)),
+        _ => unreachable!("validated: multi-word values admit Eq/Ne only as whole values"),
     }
 }
 

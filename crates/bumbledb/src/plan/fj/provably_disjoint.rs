@@ -136,15 +136,12 @@ fn provably_different(a: &Const, b: &Const) -> bool {
                 end: other_end,
             },
         ) => (start, end) != (other_start, other_end),
+        (Const::Words(a), Const::Words(b)) => a != b,
         // Distinct raw literals resolve injectively (or miss, emptying
-        // their rule) — the dictionary is one-to-one per tag.
-        (
-            Const::PendingIntern { tag, bytes },
-            Const::PendingIntern {
-                tag: other_tag,
-                bytes: other_bytes,
-            },
-        ) => tag == other_tag && bytes != other_bytes,
+        // their rule) — the str-only dictionary is one-to-one.
+        (Const::PendingIntern { bytes }, Const::PendingIntern { bytes: other_bytes }) => {
+            bytes != other_bytes
+        }
         _ => false,
     }
 }

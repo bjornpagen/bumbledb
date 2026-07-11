@@ -48,8 +48,8 @@ pub(crate) enum SelectionCheck {
     /// Byte-compare each selected field's slice against its literal's
     /// canonical encoding.
     Compare(Box<[(FieldId, Box<[u8]>)]>),
-    /// A String/Bytes literal was never interned: no stored fact can
-    /// carry its id, so no fact satisfies σ.
+    /// A String literal was never interned: no stored fact can carry its
+    /// id, so no fact satisfies σ.
     Never,
 }
 
@@ -59,11 +59,11 @@ pub(crate) struct SideChecks {
     pub(crate) target: SelectionCheck,
 }
 
-/// An intern resolver: maps a dictionary tag plus raw bytes to an intern
+/// An intern resolver: maps a string literal's raw bytes to an intern
 /// id, or `None` when no fact can carry the value — the one seam between
 /// [`Selections::encode`] (delta-aware) and [`Selections::encode_committed`]
 /// (committed dictionary only).
-type InternResolver<'a> = dyn FnMut(u8, &[u8]) -> Result<Option<u64>> + 'a;
+type InternResolver<'a> = dyn FnMut(&[u8]) -> Result<Option<u64>> + 'a;
 
 /// Pre-encoded selections for every `Containment` statement, built once
 /// per commit — the commit-local scratch that keeps literal encoding out
@@ -75,24 +75,20 @@ pub(crate) struct Selections {
 
 impl Selections {
     /// Encodes every containment statement's selection literals. String
-    /// and Bytes literals resolve to intern ids through the delta's
-    /// pending map, then the committed dictionary — a double miss proves
-    /// no fact can satisfy the selection ([`SelectionCheck::Never`]).
+    /// literals resolve to intern ids through the delta's pending map,
+    /// then the committed dictionary — a double miss proves no fact can
+    /// satisfy the selection ([`SelectionCheck::Never`]).
     pub(crate) fn encode(delta: &WriteDelta<'_>, view: &ReadTxn<'_>) -> Result<Self> {
-        Self::encode_with(delta.schema(), &mut |tag, raw| {
-            delta.resolve(view, tag, raw)
-        })
+        Self::encode_with(delta.schema(), &mut |raw| delta.resolve(view, raw))
     }
 
     /// The read-only sibling of [`Selections::encode`] for
-    /// `Db::verify_store`: no delta exists, so String and Bytes literals
-    /// resolve through the committed dictionary alone — a miss proves no
+    /// `Db::verify_store`: no delta exists, so String literals resolve
+    /// through the committed dictionary alone — a miss proves no
     /// *committed* fact can satisfy the selection, exactly the judgment
     /// the sweeper re-checks.
     pub(crate) fn encode_committed(schema: &Schema, view: &ReadTxn<'_>) -> Result<Self> {
-        Self::encode_with(schema, &mut |tag, raw| {
-            crate::storage::dict::lookup(view, tag, raw)
-        })
+        Self::encode_with(schema, &mut |raw| crate::storage::dict::lookup(view, raw))
     }
 
     /// The shared constructor over an [`InternResolver`].
@@ -137,15 +133,12 @@ fn encode_selection(
     }
     let mut fields = Vec::with_capacity(selection.len());
     for (field, literal) in selection {
-        // The interned types resolve at this boundary (dictionary state is
-        // per-database); everything else takes the one canonical encoding
-        // shared with the fingerprint ([`encode_literal`]).
+        // The interned type resolves at this boundary (dictionary state
+        // is per-database); everything else — bytes<N> included, whose
+        // canonical bytes ARE the value — takes the one canonical
+        // encoding shared with the fingerprint ([`encode_literal`]).
         let encoded: Box<[u8]> = match literal {
-            Value::String(raw) => match resolve(crate::storage::dict::TAG_STRING, raw)? {
-                Some(id) => Box::new(encode_u64(id)),
-                None => return Ok(SelectionCheck::Never),
-            },
-            Value::Bytes(raw) => match resolve(crate::storage::dict::TAG_BYTES, raw)? {
+            Value::String(raw) => match resolve(raw)? {
                 Some(id) => Box::new(encode_u64(id)),
                 None => return Ok(SelectionCheck::Never),
             },

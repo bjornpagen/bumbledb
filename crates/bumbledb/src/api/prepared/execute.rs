@@ -275,9 +275,29 @@ impl<S> PreparedQuery<'_, S> {
                     .push(ResultBuffer::interval_cell(*element, start, end));
                 continue;
             }
+            if let ValueType::FixedBytes { len } = ty {
+                // Inline value: the padded words come straight off the
+                // fact — no dictionary.
+                let words = match crate::exec::dispatch::fact_operand(
+                    self.schema,
+                    guard.relation,
+                    fact,
+                    *field,
+                ) {
+                    crate::exec::dispatch::FactOperand::Word(word) => vec![word],
+                    crate::exec::dispatch::FactOperand::Block { words, count } => {
+                        words[..usize::from(count)].to_vec()
+                    }
+                    crate::exec::dispatch::FactOperand::Pair(..) => {
+                        unreachable!("validated: bytes<N> finds read bytes<N> fields")
+                    }
+                };
+                out.push_fixed_bytes(*len, &words);
+                continue;
+            }
             let word = crate::exec::dispatch::fact_word(self.schema, guard.relation, fact, *field);
             match ty {
-                ValueType::String | ValueType::Bytes => {
+                ValueType::String => {
                     out.push_word(txn, ty, word, &mut self.resolve_memo)?;
                 }
                 _ => out.cells.push(ResultBuffer::word_cell(ty, word)),

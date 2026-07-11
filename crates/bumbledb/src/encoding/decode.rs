@@ -1,7 +1,7 @@
 //! The decode side: canonical per-type decoders, field slicing, and the
 //! corruption-checked field decoder.
 
-use super::{FactLayout, IntervalElement, TypeDesc, ValueRef, I64_SIGN_BIT};
+use super::{FactLayout, FixedBytesValue, IntervalElement, TypeDesc, ValueRef, I64_SIGN_BIT};
 use crate::error::CorruptionError;
 
 /// Decodes a canonical Bool byte.
@@ -79,6 +79,27 @@ pub const fn decode_interval_i64(bytes: [u8; 16]) -> Result<(i64, i64), Corrupti
     }
 }
 
+/// Decodes a `bytes<len>` field's word-padded encoding, validating the
+/// pad: `padded` is the field's `⌈len/8⌉ × 8` stored bytes, and every
+/// byte past `len` must be zero — the pad is encoding, not data, so a
+/// nonzero pad byte is corruption exactly like a non-0/1 Bool byte.
+///
+/// # Errors
+///
+/// [`CorruptionError::NonzeroFixedBytesPad`] on any nonzero trailing pad
+/// byte (carrying the offending trailing word).
+pub fn decode_fixed_bytes(padded: &[u8], len: u16) -> Result<FixedBytesValue, CorruptionError> {
+    debug_assert_eq!(padded.len(), super::fixed_bytes_words(len) * 8);
+    let len = usize::from(len);
+    if padded[len..].iter().any(|&byte| byte != 0) {
+        let tail: [u8; 8] = padded[padded.len() - 8..]
+            .try_into()
+            .expect("8-byte trailing word");
+        return Err(CorruptionError::NonzeroFixedBytesPad(tail));
+    }
+    Ok(FixedBytesValue::new(&padded[..len]))
+}
+
 const fn split_halves(bytes: [u8; 16]) -> ([u8; 8], [u8; 8]) {
     let (mut start, mut end) = ([0; 8], [0; 8]);
     let mut i = 0;
@@ -103,8 +124,9 @@ pub fn field_bytes<'a>(fact_bytes: &'a [u8], layout: &FactLayout, field_idx: usi
 /// # Errors
 ///
 /// [`CorruptionError`] on a Bool byte that is not `0x00`/`0x01`, an Enum
-/// ordinal outside the declared variant list, or an Interval whose
-/// `start >= end` — never a skip, never a default.
+/// ordinal outside the declared variant list, a `bytes<N>` field with a
+/// nonzero pad byte, or an Interval whose `start >= end` — never a skip,
+/// never a default.
 ///
 /// # Panics
 ///
@@ -127,7 +149,7 @@ pub fn decode_field(
             bytes.try_into().expect("8-byte field slice"),
         ))),
         TypeDesc::String => Ok(ValueRef::String(word(bytes))),
-        TypeDesc::Bytes => Ok(ValueRef::Bytes(word(bytes))),
+        TypeDesc::FixedBytes { len } => decode_fixed_bytes(bytes, len).map(ValueRef::FixedBytes),
         TypeDesc::Interval { element } => {
             let bytes: [u8; 16] = bytes.try_into().expect("16-byte field slice");
             match element {

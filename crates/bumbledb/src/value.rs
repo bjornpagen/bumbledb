@@ -14,8 +14,8 @@
 
 /// A literal value. Exactly one variant per data-model type — no universal
 /// integer (U64 and I64 literals are exact-typed; out-of-range is
-/// unrepresentable rather than truncated), and Bytes exists by construction
-/// (the v5 hole, post-mortem §13).
+/// unrepresentable rather than truncated), and the fixed-bytes variant
+/// exists by construction (the v5 hole, post-mortem §13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Bool(bool),
@@ -27,8 +27,12 @@ pub enum Value {
     /// Raw UTF-8 bytes; interning is the engine's job (resolved to an
     /// intern id per execution — a dictionary miss means empty result).
     String(Box<[u8]>),
-    /// Raw bytes; interning as above.
-    Bytes(Box<[u8]>),
+    /// A `bytes<N>` value: exactly N raw bytes, self-encoding — the
+    /// length is the type (`ValueType::FixedBytes`), so a length mismatch
+    /// is a type mismatch. Never interned: identity-shaped values live
+    /// inline in the fact (*intern what repeats; inline what
+    /// identifies* — `docs/architecture/10-data-model.md`).
+    FixedBytes(Box<[u8]>),
     /// A half-open `[start, end)` over U64 (`docs/architecture/20-query-ir.md`).
     /// Dumb data by decision: `start < end` is a validation-boundary rule,
     /// not a constructor invariant — hosts construct through the checked

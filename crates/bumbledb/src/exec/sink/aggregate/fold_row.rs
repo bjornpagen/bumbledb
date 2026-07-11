@@ -100,7 +100,7 @@ impl AggregateSink {
                     *best = (*best).max(word);
                 }
                 (FoldOp::CountDistinct, Acc::CountDistinct(set)) => {
-                    // The value's 1–2 word span inserts into the group's
+                    // The value's 1–8 word span inserts into the group's
                     // word-set — the projection-dedup mechanism scoped
                     // per group. The binding-level dedup above (or its
                     // elision) stays correct beneath this: distinct

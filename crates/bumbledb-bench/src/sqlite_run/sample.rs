@@ -58,7 +58,7 @@ fn drain(
                     std::hint::black_box(value.as_str().map_err(|e| format!("str: {e}"))?);
                     column += 1;
                 }
-                ValueType::Bytes => {
+                ValueType::FixedBytes { .. } => {
                     let value = row.get_ref(column).map_err(|e| format!("read: {e}"))?;
                     std::hint::black_box(value.as_blob().map_err(|e| format!("blob: {e}"))?);
                     column += 1;

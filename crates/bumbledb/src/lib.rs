@@ -198,6 +198,17 @@ pub use verify_store::{StoreFinding, StoreReport};
 ///     Holder(nope) -> Holder;
 /// }
 /// ```
+///
+/// Bare `bytes` is not a type — the width is the type
+/// (``schema!: unknown type `bytes` — write `bytes<N>` ``); variable-width
+/// binary does not exist (`docs/architecture/10-data-model.md`):
+///
+/// ```compile_fail
+/// bumbledb::schema! {
+///     pub Ledger;
+///     relation Blob { id: u64 as BlobId, fresh, payload: bytes }
+/// }
+/// ```
 pub use bumbledb_macros::schema;
 
 /// `schema!` expansion plumbing. Not API: no stability promises, nothing
@@ -205,9 +216,8 @@ pub use bumbledb_macros::schema;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::api::db::plumbing::{
-        decode, decode_write, encode_read_fact, encode_write_fact, intern_bytes_delete,
-        intern_bytes_read, intern_bytes_write, intern_str_delete, intern_str_read,
-        intern_str_write, resolve_bytes, resolve_bytes_write, resolve_string, resolve_string_write,
+        decode, decode_write, encode_read_fact, encode_write_fact, intern_str_delete,
+        intern_str_read, intern_str_write, resolve_string, resolve_string_write,
     };
     pub use crate::encoding::ValueRef;
 }

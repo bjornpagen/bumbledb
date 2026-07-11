@@ -108,8 +108,11 @@ Phase E — the earning:
 - [15 — Oracles and the generator](15-oracles.md)
 - [16 — The calendar family](16-calendar-family.md)
 
-Phase F — the write side, the type ledger, and the surface ruling:
-- [17 — Identity bytes: `bytes<N>` replaces `bytes`, roster stays at seven](17-identity-bytes.md)
+Phase F — the write side, the type ledger, and the surface ruling (17 —
+identity bytes — landed whole and retired: `bytes<N>` replaced variable
+`bytes`, the dictionary went str-only and untagged, and the rulings live in
+`10-data-model.md` § the type layer and § interning, `50-storage.md`, and
+`00-product.md`'s census sentence):
 - [18 — The generation witness: read-compute-write as a value](18-generation-witness.md)
 - [19 — Derived relations: the view story, canonized (doc unit)](19-derived-relations.md)
 - [20 — The data surface, ruled: schemas are code, queries are data](20-data-surface.md)
@@ -120,15 +123,17 @@ Phase G — the intuition:
 
 Dependency spine: Phases A (01–04), B (05–09), and C (10–12) landed
 whole; 13/14 landed
-(residual landed with 01); 15 requires 05/12 (both landed); 16 requires 15; 17–18 free
-(17's oracle rows fold into 15 if it lands first); 19 requires 18; 20
+(residual landed with 01); 15 requires 05/12 (both landed); 16 requires 15; 17 landed (its adversarial
+digest rows are already in the generator's target ledger for 15 to inherit);
+18 free; 19 requires 18; 20
 requires 05 (its sweep and renderer target the rules-shaped IR); 23 requires
 05 and 20 and coordinates with 21 (the cookbook's queries are written in the
 23 notation, round-trip-pinned against `ir::render`); 21 lands
 last (it is written against the whole set's surface and its recipes are
 rot-proofed by compilation). Phases A/B/C/F may interleave; E closes the
-measured half of the set (16 gains a `bytes<32>` content-hash column and a
-witnessed-write family row if F lands first); G closes the set itself.
+measured half of the set (16 gains a `bytes<32>` content-hash column — 17
+landed, so the type exists — and a witnessed-write family row if 18 lands
+first); G closes the set itself.
 
 ## Refusals (recorded with derivations — do not re-litigate)
 

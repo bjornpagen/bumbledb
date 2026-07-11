@@ -25,7 +25,7 @@ bumbledb::schema! {
         key: str,
         bucket: u64 as PBucketId,
         size: i64,
-        payload: bytes,
+        payload: bytes<32>,
     }
 
     Doc(key) -> Doc;
@@ -78,7 +78,8 @@ fn doc_row(seed: u64, i: u64) -> Vec<Value> {
         Value::String(format!("doc/{i:08x}").into_bytes().into()),
         Value::U64(rng.range(BUCKETS)),
         Value::I64(i64::try_from(rng.range(1_000_000)).expect("small")),
-        Value::Bytes(payload.into()),
+        // Identity-shaped: a random 32-byte payload digest, inline.
+        Value::FixedBytes(payload.into()),
     ]
 }
 

@@ -60,7 +60,10 @@ language. **Reverses if:** never — owner axiom.
   payroll SQLite app); their entire type usage collapses onto the seven types, their
   query operators onto this IR, and their app-enforced invariants onto the two
   judgments. The census drove the feature set; nothing shipped without a sighting
-  in it.
+  in it — and it cuts as well as it admits: every byte-shaped sighting split into
+  reuse-shaped text (`str`, interned) or identity-shaped digests (`bytes<N>`,
+  inline), with variable-width binary carrying genuine reuse sighted zero times,
+  so that type died and `bytes<N>` took its roster seat.
 - **Write design point:** writes are bursty and batched — one write transaction per
   burst; the design assumes **≥100 query executions per committed write generation**.
   Continuous high-frequency commits are out of the envelope (they would defeat the

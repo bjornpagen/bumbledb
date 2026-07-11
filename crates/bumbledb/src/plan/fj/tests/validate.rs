@@ -390,10 +390,10 @@ fn binding_slots_follow_node_order() {
     assert_eq!(
         validated.slots(),
         &[
-            (X, SlotWidth::One),
-            (A, SlotWidth::One),
-            (B, SlotWidth::One),
-            (C, SlotWidth::One),
+            (X, SlotWidth::ONE),
+            (A, SlotWidth::ONE),
+            (B, SlotWidth::ONE),
+            (C, SlotWidth::ONE),
         ]
     );
     assert_eq!(validated.slot_of(C), 3);

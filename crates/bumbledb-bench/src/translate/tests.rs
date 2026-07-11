@@ -168,7 +168,10 @@ fn schema() -> &'static Schema {
                 },
                 RelationDescriptor {
                     name: "Transfer".into(),
-                    fields: vec![fresh("id"), field("extref", ValueType::Bytes)],
+                    fields: vec![
+                        fresh("id"),
+                        field("extref", ValueType::FixedBytes { len: 32 }),
+                    ],
                 },
             ],
             statements: vec![],
@@ -838,7 +841,7 @@ fn every_scalar_construct_translates() {
                 relation: ids::TRANSFER,
                 bindings: vec![(
                     ids::transfer::EXTREF,
-                    Term::Literal(Value::Bytes(vec![0xDE, 0xAD].into())),
+                    Term::Literal(Value::FixedBytes(vec![0xDE; 32].into())),
                 )],
             },
             Atom {
@@ -872,7 +875,11 @@ fn every_scalar_construct_translates() {
         t.sql
     );
     assert!(t.sql.contains("'it''s a ''quote'''"), "{}", t.sql);
-    assert!(t.sql.contains("X'DEAD'"), "{}", t.sql);
+    assert!(
+        t.sql.contains(&format!("X'{}'", "DE".repeat(32))),
+        "{}",
+        t.sql
+    );
     assert!(t.sql.contains("t0.\"amount\" < t0.\"at\""), "{}", t.sql);
     assert!(t.sql.contains(">= -5"), "{}", t.sql);
     assert!(t.sql.contains("<> ?1"), "{}", t.sql);

@@ -223,7 +223,15 @@ fn distinct_of(
         let first = usize::from(span.first_column);
         let distinct = match span.width {
             ColumnWidth::Byte | ColumnWidth::Word => image.distinct(first),
-            ColumnWidth::WordPair => image.distinct(first).max(image.distinct(first + 1)),
+            // Multi-word fields: each column's distinct count lower-
+            // bounds the tuple's, so the max is the tightest sound
+            // estimate one-column counters give (exact tuple distincts
+            // stay the sinks' k-word map job, not the planner's).
+            ColumnWidth::WordPair | ColumnWidth::Words { .. } => (first
+                ..first + usize::from(span.width.column_count()))
+                .map(|column| image.distinct(column))
+                .max()
+                .expect("at least one column"),
         };
         return Ok(distinct.max(1));
     }

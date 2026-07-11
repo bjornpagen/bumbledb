@@ -110,6 +110,7 @@ pub(crate) fn mask_of(mask: MaskConst, params: &[Const]) -> crate::allen::AllenM
 /// bind-time resolution slice, indexed by `ParamId`: `Word`/`Byte` for
 /// scalar params, `Interval` for interval params, `WordSet` for set
 /// params.
+#[allow(clippy::too_many_lines)] // one arm per filter kind, in kind order
 fn row_matches(
     image: &RelationImage,
     predicates: &[FilterPredicate],
@@ -131,11 +132,39 @@ fn row_matches(
                     CmpOp::Eq => s == *start && e == *end,
                     _ => unreachable!("validated: interval constants compare under Eq only"),
                 },
+                // bytes<N>: word-wise identity — Eq/Ne only by validation.
+                (Operand::Block { words, count }, Const::Words(c)) => match op {
+                    CmpOp::Eq => words[..usize::from(count)] == **c,
+                    CmpOp::Ne => words[..usize::from(count)] != **c,
+                    _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
+                },
                 // A bound set: `Eq` matches any element (validation admits
                 // sets under `Eq` only).
                 (Operand::Word(word), Const::WordSet(set)) => set.binary_search(&word).is_ok(),
                 (Operand::Byte(byte), Const::WordSet(set)) => {
                     set.binary_search(&u64::from(byte)).is_ok()
+                }
+                // A multi-word element set: span-wise binary search over
+                // the flat sorted rows.
+                (Operand::Block { words, count }, Const::WordSet(set)) => {
+                    let width = usize::from(count);
+                    debug_assert_eq!(set.len() % width, 0, "flat element-major rows");
+                    let value = &words[..width];
+                    let mut lo = 0usize;
+                    let mut hi = set.len() / width;
+                    let mut hit = false;
+                    while lo < hi {
+                        let mid = usize::midpoint(lo, hi);
+                        match set[mid * width..(mid + 1) * width].cmp(value) {
+                            std::cmp::Ordering::Less => lo = mid + 1,
+                            std::cmp::Ordering::Greater => hi = mid,
+                            std::cmp::Ordering::Equal => {
+                                hit = true;
+                                break;
+                            }
+                        }
+                    }
+                    hit
                 }
                 // Width mismatches are unrepresentable through validation,
                 // and PendingIntern constants are resolved before execution
@@ -157,6 +186,12 @@ fn row_matches(
                     CmpOp::Eq => a_s == b_s && a_e == b_e,
                     CmpOp::Ne => a_s != b_s || a_e != b_e,
                     _ => unreachable!("validated: no order comparison over intervals"),
+                },
+                // bytes<N> fields compare word-wise, Eq/Ne only.
+                (Operand::Block { words: a, count }, Operand::Block { words: b, .. }) => match op {
+                    CmpOp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
+                    CmpOp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
+                    _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
                 },
                 _ => unreachable!("same-fact comparison joins same-typed fields"),
             }
@@ -205,7 +240,7 @@ fn row_matches(
                 // (the field is scalar by construction — an interval
                 // field under a constant is `FieldAllen`).
                 Operand::Word(word) => contains_point(*start, *end, word),
-                Operand::Pair(..) | Operand::Byte(_) => {
+                Operand::Pair(..) | Operand::Byte(_) | Operand::Block { .. } => {
                     unreachable!("validated: within-comparands are scalar words")
                 }
             }
@@ -220,18 +255,35 @@ fn row_matches(
 }
 
 /// One field's value at a position, through its span: the scalar word or
-/// byte, or an interval field's `(start, end)` word pair.
+/// byte, an interval field's `(start, end)` word pair, or a
+/// `bytes<N > 8>` field's padded word block.
 enum Operand {
     Word(u64),
     Byte(u8),
     Pair(u64, u64),
+    Block { words: [u64; 8], count: u8 },
 }
 
 fn scalar_or_pair(image: &RelationImage, field: FieldId, position: usize) -> Operand {
-    match image.span(field).width {
+    let span = image.span(field);
+    match span.width {
         ColumnWidth::WordPair => {
             let (start, end) = interval_at(image, field, position);
             Operand::Pair(start, end)
+        }
+        ColumnWidth::Words { count } => {
+            let first = usize::from(span.first_column);
+            let mut words = [0u64; 8];
+            for (i, slot) in words[..usize::from(count)].iter_mut().enumerate() {
+                let ColumnView::Words(column) = image.column(first + i) else {
+                    unreachable!("a Words span covers word columns")
+                };
+                *slot = column[position];
+            }
+            Operand::Block {
+                words,
+                count: u8::try_from(count).expect("at most 8 words"),
+            }
         }
         ColumnWidth::Word | ColumnWidth::Byte => match scalar_column(image, field) {
             ColumnView::Words(words) => Operand::Word(words[position]),
@@ -585,6 +637,34 @@ fn kernel_scan(
         // Interval value equality (`Eq` on a negated occurrence's view)
         // has no fixed-width scan shape, like scalar `Ne`: scalar loop.
         return false;
+    }
+    if let ColumnWidth::Words { count } = span.width {
+        // A multi-word bytes<N> Eq: the existing fixed-width Eq scan,
+        // widened by word count — the first column's kernel pass seeds
+        // the survivors, the remaining columns refine them word-wise
+        // (no new NEON shapes). `Ne` has no scan shape, like scalar Ne.
+        let (Const::Words(words), CmpOp::Eq) = (value, op) else {
+            return false;
+        };
+        debug_assert_eq!(words.len(), usize::from(count), "validated width");
+        let first = usize::from(span.first_column);
+        let ColumnView::Words(column0) = image.column(first) else {
+            unreachable!("a Words span covers word columns")
+        };
+        crate::exec::kernel::filter_eq_u64(column0, words[0], out);
+        for (i, expected) in words.iter().enumerate().skip(1) {
+            let ColumnView::Words(column) = image.column(first + i) else {
+                unreachable!("a Words span covers word columns")
+            };
+            let mut cursor = 0usize;
+            for read in 0..out.len() {
+                let position = out[read] as usize;
+                out[cursor] = out[read];
+                cursor += usize::from(column[position] == *expected);
+            }
+            out.truncate(cursor);
+        }
+        return true;
     }
     match (image.column(usize::from(span.first_column)), value) {
         (ColumnView::Words(words), Const::Word(c)) => {

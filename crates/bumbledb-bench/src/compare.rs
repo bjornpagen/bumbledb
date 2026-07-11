@@ -39,7 +39,7 @@ pub fn from_buffer(buffer: &ResultBuffer, types: &[ValueType]) -> Vec<Row> {
                     ResultValue::I64(v) => Owned::I64(v),
                     ResultValue::Enum(v) => Owned::Enum(v),
                     ResultValue::String(v) => Owned::Str(v.to_owned()),
-                    ResultValue::Bytes(v) => Owned::Bytes(v.to_vec()),
+                    ResultValue::FixedBytes(v) => Owned::Bytes(v.to_vec()),
                     ResultValue::IntervalU64(iv) => Owned::IntervalU64(iv.start(), iv.end()),
                     ResultValue::IntervalI64(iv) => Owned::IntervalI64(iv.start(), iv.end()),
                 })
@@ -98,7 +98,7 @@ pub fn from_sqlite(
                     String::from_utf8(raw.to_vec())
                         .map_err(|_| format!("column {}: non-UTF-8 text", column - 1))?,
                 ),
-                Value::Bytes(raw) => Owned::Bytes(raw.to_vec()),
+                Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
                 Value::IntervalU64(start, end) => Owned::IntervalU64(start, end),
                 Value::IntervalI64(start, end) => Owned::IntervalI64(start, end),
                 Value::AllenMask(_) => {
@@ -250,7 +250,7 @@ mod tests {
             ValueType::U64,
             ValueType::I64,
             ValueType::String,
-            ValueType::Bytes,
+            ValueType::FixedBytes { len: 2 },
         ];
         let mut stmt = conn.prepare("SELECT * FROM t").expect("prepare");
         let rows = from_sqlite(&mut stmt, &[], &[], &types).expect("decode");
@@ -276,7 +276,7 @@ mod tests {
             ValueType::U64,
             ValueType::U64, // the -7 column misdeclared
             ValueType::String,
-            ValueType::Bytes,
+            ValueType::FixedBytes { len: 2 },
         ];
         let mut stmt = conn.prepare("SELECT * FROM t").expect("prepare");
         let err = from_sqlite(&mut stmt, &[], &[], &wrong).unwrap_err();

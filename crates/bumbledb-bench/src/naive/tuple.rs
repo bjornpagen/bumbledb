@@ -38,7 +38,7 @@ fn rank(value: &Value) -> u8 {
         Value::I64(_) => 2,
         Value::Enum(_) => 3,
         Value::String(_) => 4,
-        Value::Bytes(_) => 5,
+        Value::FixedBytes(_) => 5,
         Value::IntervalU64(..) => 6,
         Value::IntervalI64(..) => 7,
         // Never stored in a tuple (masks are comparison arguments, not
@@ -54,7 +54,9 @@ pub(crate) fn cmp_value(a: &Value, b: &Value) -> Ordering {
         (Value::U64(x), Value::U64(y)) => x.cmp(y),
         (Value::I64(x), Value::I64(y)) => x.cmp(y),
         (Value::Enum(x), Value::Enum(y)) => x.cmp(y),
-        (Value::String(x), Value::String(y)) | (Value::Bytes(x), Value::Bytes(y)) => x.cmp(y),
+        (Value::String(x), Value::String(y)) | (Value::FixedBytes(x), Value::FixedBytes(y)) => {
+            x.cmp(y)
+        }
         (Value::IntervalU64(xs, xe), Value::IntervalU64(ys, ye)) => (xs, xe).cmp(&(ys, ye)),
         (Value::IntervalI64(xs, xe), Value::IntervalI64(ys, ye)) => (xs, xe).cmp(&(ys, ye)),
         (Value::AllenMask(x), Value::AllenMask(y)) => x.bits().cmp(&y.bits()),

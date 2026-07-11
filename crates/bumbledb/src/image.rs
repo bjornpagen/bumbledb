@@ -47,18 +47,25 @@ enum Column {
 }
 
 /// How many columns a field occupies and what they hold. The image layer
-/// has exactly two column kinds — there is no 16-byte column: an interval
-/// field decodes into two parallel 8-byte columns (start, end) and every
+/// has exactly two column *kinds* — there is no 16-byte column: a
+/// multi-word field decodes into parallel 8-byte columns and every
 /// existing kernel shape applies unchanged (`docs/architecture/50-storage.md`).
+/// An interval field is two columns with start/end semantics; a
+/// `bytes<N>` field with N > 8 is `⌈N/8⌉` plain word columns (the
+/// interval two-column precedent, generalized) — and a `bytes<N ≤ 8>`
+/// field is ONE word column, exactly like every other 8-byte scalar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnWidth {
     /// One 1-byte column (Bool/Enum).
     Byte,
-    /// One 8-byte column (U64/I64/String/Bytes).
+    /// One 8-byte column (U64/I64/String/bytes<N ≤ 8>).
     Word,
     /// Two consecutive 8-byte columns: the interval's start word at
     /// `first_column`, its end word at `first_column + 1`.
     WordPair,
+    /// `count ≥ 2` consecutive 8-byte columns: a `bytes<N > 8>` field's
+    /// padded value words, in byte order.
+    Words { count: u16 },
 }
 
 impl ColumnWidth {
@@ -68,6 +75,7 @@ impl ColumnWidth {
         match self {
             Self::Byte | Self::Word => 1,
             Self::WordPair => 2,
+            Self::Words { count } => count,
         }
     }
 }
@@ -86,19 +94,28 @@ pub struct ColumnSpan {
 
 /// Builds the per-relation field→column map from the relation's
 /// encoding-level field types, once per image (and once per plan witness):
-/// an interval field spans two consecutive 8-byte columns, every other
-/// field one column of its width.
+/// an interval field spans two consecutive 8-byte columns, a `bytes<N>`
+/// field its `⌈N/8⌉` word columns (one plain word column for N ≤ 8),
+/// every other field one column of its width.
 #[must_use]
 pub fn column_spans(field_types: &[crate::encoding::TypeDesc]) -> Box<[ColumnSpan]> {
+    use crate::encoding::TypeDesc;
     let mut next_column = 0u16;
     field_types
         .iter()
         .map(|desc| {
-            let width = match desc.width() {
-                1 => ColumnWidth::Byte,
-                8 => ColumnWidth::Word,
-                16 => ColumnWidth::WordPair,
-                _ => unreachable!("field widths are 1, 8, or 16"),
+            let width = match desc {
+                TypeDesc::Bool | TypeDesc::Enum { .. } => ColumnWidth::Byte,
+                TypeDesc::U64 | TypeDesc::I64 | TypeDesc::String => ColumnWidth::Word,
+                TypeDesc::FixedBytes { len } => {
+                    match u16::try_from(crate::encoding::fixed_bytes_words(*len))
+                        .expect("validated schema: at most 8 words")
+                    {
+                        1 => ColumnWidth::Word,
+                        count => ColumnWidth::Words { count },
+                    }
+                }
+                TypeDesc::Interval { .. } => ColumnWidth::WordPair,
             };
             let span = ColumnSpan {
                 first_column: next_column,

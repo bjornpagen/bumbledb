@@ -27,12 +27,13 @@
 //! multiplicity-adding relation multiplies the binding set, exactly as in
 //! SQL.
 //!
-//! Slots are **words**, not variables: an interval-typed variable occupies
-//! two consecutive binding slots (the [`crate::ir::normalize::SlotWidth`]
-//! layout), so every [`FindSpec`] carries its slot span and every consumer
-//! walks widths — the seen-set keys the full slot array (both interval
-//! words hashed), the group key concatenates spans, and emitted rows are
-//! word rows the result buffer re-assembles by find type.
+//! Slots are **words**, not variables: a multi-word variable occupies
+//! consecutive binding slots — two for an interval, ⌈N/8⌉ for a
+//! bytes<N> value (the [`crate::ir::normalize::SlotWidth`] layout) — so
+//! every [`FindSpec`] carries its slot span and every consumer walks
+//! widths: the seen-set keys the full slot array (every span word
+//! hashed), the group key concatenates spans, and emitted rows are word
+//! rows the result buffer re-assembles by find type.
 
 use crate::encoding::encode_i64;
 use crate::exec::wordmap::WordMap;
@@ -48,7 +49,8 @@ mod tests;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindSpec {
     /// A projected (group-key) variable: first binding slot + width in
-    /// words (2 for an interval variable, 1 for everything else).
+    /// words (2 for an interval variable, ⌈N/8⌉ for bytes<N>, 1 for
+    /// everything else).
     Var { slot: usize, width: usize },
     /// The measure at a find position: ONE projected u64 word computed
     /// from the interval variable's two-slot span at `slot` —
@@ -311,7 +313,7 @@ pub struct AggregateSink {
     /// (group, `CountDistinct` find) and the arity sequence repeats, so a
     /// reused map always matches its span width). Exactly the
     /// projection-dedup mechanism scoped per group, keyed on the value's
-    /// 1–2 word span with the seen-set's tuple hashing.
+    /// 1–8 word span with the seen-set's tuple hashing.
     value_sets: Vec<WordMap<()>>,
     /// Pool high-water: sets `< value_sets_live` belong to this
     /// execution's groups.

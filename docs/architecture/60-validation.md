@@ -67,7 +67,7 @@ silently coerces everything and is the oracle-corrupting bug class:
 | Enum | INTEGER (ordinal) | Min/Max never apply (equality-only type) |
 | Interval | two INTEGER columns (start, end) | value equality = pairwise; an `Allen` mask translates to its basics' endpoint formulas OR'd (under the query's SELECT DISTINCT); membership is the endpoint pair — fully expressible in SQL; the *judgments* over intervals are the naive model's lane |
 | String | TEXT | intern ids decoded to bytes **before** comparison, outside any timed region |
-| Bytes | BLOB | never TEXT — DISTINCT distinguishes `X'41'` from `'A'` |
+| Bytes(N) | BLOB (fixed-length content) | never TEXT — DISTINCT distinguishes `X'41'` from `'A'`; the N raw bytes, unpadded (the word pad is bumbledb encoding, not data) |
 
 **Projection queries:** `SELECT DISTINCT` over the join with all find variables.
 **Negation:** `NOT EXISTS` correlated subqueries — the translator owns the

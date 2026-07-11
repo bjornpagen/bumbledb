@@ -10,6 +10,7 @@ use crate::testutil::TempDir;
 
 mod corruption;
 mod decode;
+mod fixed_bytes;
 mod interval;
 mod pitch;
 mod timing;

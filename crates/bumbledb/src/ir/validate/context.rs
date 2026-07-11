@@ -34,7 +34,10 @@ fn literal_anchor_type(value: &Value) -> Option<ValueType> {
         Value::U64(_) => ValueType::U64,
         Value::I64(_) => ValueType::I64,
         Value::String(_) => ValueType::String,
-        Value::Bytes(_) => ValueType::Bytes,
+        // The length is the type: a bytes<N> literal anchors bytes<N>.
+        Value::FixedBytes(raw) => ValueType::FixedBytes {
+            len: u16::try_from(raw.len()).unwrap_or(u16::MAX),
+        },
         Value::IntervalU64(..) => ValueType::Interval {
             element: IntervalElement::U64,
         },
@@ -667,8 +670,17 @@ impl Context {
     /// predictable mistake gets the good error.
     fn check_order(&mut self, index: usize, lhs: &Term, rhs: &Term) -> Result<(), ValidationError> {
         for term in [lhs, rhs] {
-            if matches!(self.term_mono_type(term), Some(ValueType::Interval { .. })) {
-                return Err(ValidationError::OrderComparisonOnInterval { index });
+            match self.term_mono_type(term) {
+                Some(ValueType::Interval { .. }) => {
+                    return Err(ValidationError::OrderComparisonOnInterval { index });
+                }
+                // The order-on-bytes refusal: a digest's lexicographic
+                // order is an encoding artifact — identity only
+                // (docs/architecture/10-data-model.md).
+                Some(ValueType::FixedBytes { .. }) => {
+                    return Err(ValidationError::OrderComparisonOnFixedBytes { index });
+                }
+                _ => {}
             }
         }
         // The measure side, if any (comparison_shapes admitted at most

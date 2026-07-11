@@ -62,9 +62,19 @@ documents themselves describe **only the current reality**.
   latency budget violation on a range/interval family.*
 - **Dictionary GC**: interned values are never reclaimed — including ids no
   committed fact ever referenced (a no-op insert's interns flush with any
-  state-changing commit; accepted leak, `10-data-model.md`). *Trigger: measured
-  dictionary growth — both classes counted — dominating store size on a real churn
-  workload.*
+  state-changing commit; accepted leak, `10-data-model.md`). The trigger profile
+  is **repeated-text churn only**: the content-churn (digest) population left the
+  dictionary entirely with variable `bytes` — `bytes<N>` values are inline — so
+  the accepted leak is back to its original compression scope. *Trigger: measured
+  dictionary growth — both classes counted — dominating store size on a real
+  text-churn workload.*
+- **The dictionary contraction**: with the dictionary str-only, the forward key
+  hashes raw bytes with no type tag and the reverse entry is the raw bytes — a
+  storage-format simplification confirming the deleted type was accidental. A
+  *re*-expansion (any second interned type) would resurrect the tag byte and is a
+  format change. *Trigger: a real schema surfacing variable-width binary with
+  genuine reuse — the recorded reversal condition of the `bytes<N>` cut
+  (`10-data-model.md`).*
 - **`M`-key width**: membership keys carry the full 32-byte blake3; truncating to
   16 bytes shrinks every `M` key ~40% (B-tree fanout and node count — a real,
   benchmarkable write-path and store-size effect) at the cost of dropping the
@@ -98,6 +108,11 @@ re-litigated by accident:
 - **Interval is the seventh type**, with the point-set denotation; pointwise keys and
   coverage containments as theorems; order operators and Min/Max refused on it; uuid
   rejected with the fresh rationale (`10-data-model.md`).
+- **`bytes<N>` replaced variable `bytes`** — the roster stays at seven: intern what
+  repeats (`str`), inline what identifies (`bytes<N>`); order operators and Min/Max
+  refused on it (a digest's lexicographic order is an encoding artifact); the
+  dictionary is str-only and its key hash carries no tag (`10-data-model.md`,
+  `50-storage.md`).
 - **The IR carries** negation (anti-join atoms with the safety rule), point membership
   (a typing rule), param sets (`IN`), `CountDistinct`, Arg-restriction with
   set-honest ties, and the relation-shaped `Pack` (one row per (group, maximal

@@ -512,6 +512,65 @@ fn order_operator_on_two_bivalent_interval_variables() {
 }
 
 #[test]
+fn order_operator_on_fixed_bytes_gets_the_dedicated_diagnostic() {
+    // Lt over Posting.memo (bytes<32>): a digest's lexicographic order
+    // is an encoding artifact — identity only, refused typed
+    // (docs/architecture/10-data-model.md, the order-on-bytes refusal).
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(POSTING, vec![(0, var(0)), (4, var(1))])],
+        negated: vec![],
+        predicates: vec![PredicateTree::Leaf(Comparison {
+            op: CmpOp::Lt,
+            lhs: var(1),
+            rhs: Term::Literal(Value::FixedBytes(vec![0u8; 32].into())),
+        })],
+    });
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::OrderComparisonOnFixedBytes { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_min_and_max_over_fixed_bytes() {
+    // Min/Max fold an order that bytes<N> refuses to have.
+    for op in [AggOp::Min, AggOp::Max] {
+        let query = simple(
+            vec![FindTerm::Aggregate {
+                op,
+                over: Some(VarId(0)),
+            }],
+            vec![atom(POSTING, vec![(4, var(0)), (0, var(1))])], // bytes<32>
+        );
+        assert!(matches!(
+            expect_err(&query),
+            ValidationError::AggregateInputType { find: 0 }
+        ));
+    }
+}
+
+#[test]
+fn rejects_a_wrong_width_fixed_bytes_literal() {
+    // The length is the type: a 16-byte literal against bytes<32> is a
+    // type mismatch, exactly like a wrong variant.
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![atom(
+            POSTING,
+            vec![
+                (0, var(0)),
+                (4, Term::Literal(Value::FixedBytes(vec![0u8; 16].into()))),
+            ],
+        )],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::LiteralTypeMismatch { atom: 0, .. }
+    ));
+}
+
+#[test]
 fn rejects_param_set_under_ne() {
     // Ne(x, set) reads as ambiguous quantification: a param set is legal
     // only in atom bindings and under Eq.

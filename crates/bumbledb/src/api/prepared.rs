@@ -53,7 +53,10 @@ pub enum BindValue<'a> {
     /// Declaration-order ordinal.
     Enum(u8),
     Str(&'a str),
-    Bytes(&'a [u8]),
+    /// A `bytes<N>` value: exactly the anchored field's N bytes (any
+    /// other length is a bind-time type mismatch — the length is the
+    /// type). Only hashed into column words at bind; never interned.
+    FixedBytes(&'a [u8]),
     /// A half-open `[start, end)`.
     IntervalU64(u64, u64),
     /// A half-open `[start, end)`.
@@ -88,7 +91,8 @@ pub enum ResultValue<'a> {
     /// Declaration-order ordinal.
     Enum(u8),
     String(&'a str),
-    Bytes(&'a [u8]),
+    /// A `bytes<N>` find: the value's N raw bytes.
+    FixedBytes(&'a [u8]),
     /// An interval find, rematerialized through the checked host type
     /// (the stored `start < end` invariant makes the re-parse
     /// infallible — the comment lives at the materialization site).
@@ -96,10 +100,10 @@ pub enum ResultValue<'a> {
     IntervalI64(crate::interval::Interval<i64>),
 }
 
-/// One stored cell: fixed-width values inline, String/Bytes as ranges into
-/// the buffer's byte heap. An interval find is ONE cell (the buffer's
-/// arity counts find terms, not words — the two-word slot span collapses
-/// at materialization).
+/// One stored cell: fixed-width values inline, String and `bytes<N>`
+/// payloads as ranges into the buffer's byte heap. A multi-word find is
+/// ONE cell (the buffer's arity counts find terms, not words — the slot
+/// span collapses at materialization).
 #[derive(Debug, Clone, Copy)]
 enum Cell {
     Bool(bool),
@@ -107,7 +111,7 @@ enum Cell {
     I64(i64),
     Enum(u8),
     String { start: usize, len: usize },
-    Bytes { start: usize, len: usize },
+    FixedBytes { start: usize, len: usize },
     IntervalU64(crate::interval::Interval<u64>),
     IntervalI64(crate::interval::Interval<i64>),
 }
@@ -124,23 +128,21 @@ pub struct ResultBuffer {
 }
 
 /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md): each
-/// distinct `(intern word, dictionary tag)` pair is resolved through
-/// LMDB exactly once per finalize, and its bytes land in the output
-/// buffer exactly once — K rows sharing one memo string cost one B-tree
-/// lookup and one byte copy, not K. Cleared per finalize (the ranges
-/// point into that call's buffer); capacity is retained, growing to the
-/// distinct-string high-water like every other execution scratch.
-///
-/// The key carries the tag even though intern ids mint from one shared
-/// counter (string and bytes words are numerically disjoint today) —
-/// tag disambiguation must not depend on that allocation detail.
+/// distinct string intern word is resolved through LMDB exactly once per
+/// finalize, and its bytes land in the output buffer exactly once — K
+/// rows sharing one memo string cost one B-tree lookup and one byte
+/// copy, not K. Cleared per finalize (the ranges point into that call's
+/// buffer); capacity is retained, growing to the distinct-string
+/// high-water like every other execution scratch. Keys are bare words:
+/// strings are the one interned type, so the tag byte died with variable
+/// bytes (docs/architecture/50-storage.md).
 #[derive(Debug)]
 struct ResolveMemo {
-    /// `(word, tag)` → packed `(start, len)` into the buffer's bytes.
+    /// word → packed `(start, len)` into the buffer's bytes.
     ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
     /// The last resolution: run-coherent columns
     /// (few distinct interns, clustered rows) skip even the map probe.
-    last: Option<((u64, u8), (usize, usize))>,
+    last: Option<(u64, (usize, usize))>,
 }
 
 /// One result row, borrowed from a [`ResultBuffer`].

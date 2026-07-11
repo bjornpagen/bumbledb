@@ -248,7 +248,7 @@ fn literal(
             }
             write!(f, "\"")
         }
-        Value::Bytes(bytes) => {
+        Value::FixedBytes(bytes) => {
             write!(f, "b\"")?;
             for byte in bytes.as_ref() {
                 write!(f, "{}", byte.escape_ascii())?;

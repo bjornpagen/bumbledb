@@ -1,13 +1,15 @@
-use crate::encoding::{encode_bool, encode_i64};
+use crate::encoding::{encode_bool, encode_fixed_bytes, encode_i64};
 use crate::image::view::Const;
 use crate::ir::Value;
-use crate::storage::dict::{TAG_BYTES, TAG_STRING};
 
-/// Lowers a literal into column-form constant representation. String/Bytes
-/// stay raw bytes (`PendingIntern`) — resolution to intern-id words happens
-/// per execution, where a dictionary miss means an empty result. Interval
-/// literals lower to their two encoded column words (each half exactly as
-/// the scalar of its element type, so u64 word order is value order —
+/// Lowers a literal into column-form constant representation. String
+/// stays raw bytes (`PendingIntern`) — resolution to an intern-id word
+/// happens per execution, where a dictionary miss means an empty result.
+/// A `bytes<N>` literal is self-encoding: its padded canonical bytes read
+/// as big-endian column words — one `Word` for N ≤ 8, a `Words` span
+/// otherwise — with zero dictionary traffic ever. Interval literals lower
+/// to their two encoded column words (each half exactly as the scalar of
+/// its element type, so u64 word order is value order —
 /// `docs/architecture/50-storage.md`).
 pub(crate) fn lower_literal(value: &Value) -> Const {
     match value {
@@ -16,13 +18,9 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
         Value::U64(v) => Const::Word(*v),
         Value::I64(v) => Const::Word(i64_word(*v)),
         Value::String(bytes) => Const::PendingIntern {
-            tag: TAG_STRING,
             bytes: bytes.clone(),
         },
-        Value::Bytes(bytes) => Const::PendingIntern {
-            tag: TAG_BYTES,
-            bytes: bytes.clone(),
-        },
+        Value::FixedBytes(raw) => fixed_bytes_const(raw),
         Value::IntervalU64(start, end) => Const::Interval {
             start: *start,
             end: *end,
@@ -35,6 +33,27 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
         // position, which lowers through `MaskConst`, never through here.
         Value::AllenMask(_) => unreachable!("validated: mask values are not terms"),
     }
+}
+
+/// A `bytes<N>` value's column-form constant: the padded words (readers:
+/// this lowering and the bind path — one definition of the word form).
+pub(crate) fn fixed_bytes_const(raw: &[u8]) -> Const {
+    let words = fixed_bytes_words(raw);
+    match &words[..] {
+        [word] => Const::Word(*word),
+        many => Const::Words(many.into()),
+    }
+}
+
+/// A `bytes<N>` value's `⌈N/8⌉` column words: the padded canonical bytes
+/// as big-endian words — exactly what the image's word columns hold.
+fn fixed_bytes_words(raw: &[u8]) -> Vec<u64> {
+    let mut padded = Vec::with_capacity(raw.len().div_ceil(8) * 8);
+    encode_fixed_bytes(raw, &mut padded);
+    padded
+        .chunks_exact(8)
+        .map(|chunk| u64::from_be_bytes(chunk.try_into().expect("8-byte chunk")))
+        .collect()
 }
 
 /// The column word of a point literal — the interval element domain: U64

@@ -13,7 +13,6 @@ use crate::schema::{
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
-use crate::storage::dict::{TAG_BYTES, TAG_STRING};
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 
@@ -128,7 +127,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
         }]
     );
     assert!(norm.anti_probes.is_empty());
-    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::One);
+    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::ONE);
 
     // ...and the lowered filter executes on a real image.
     let dir = TempDir::new("normalize-execute");
@@ -199,16 +198,40 @@ fn string_literals_stay_raw_as_pending_interns() {
     assert_eq!(
         lower_literal(&Value::String(Box::from(&b"acme"[..]))),
         Const::PendingIntern {
-            tag: TAG_STRING,
             bytes: Box::from(&b"acme"[..]),
         }
     );
+}
+
+#[test]
+fn fixed_bytes_literals_lower_to_padded_words_with_no_dict_traffic() {
+    // bytes<N> is self-encoding: N ≤ 8 is one padded BE word, N > 8 its
+    // ⌈N/8⌉ words — never a PendingIntern (zero dictionary traffic).
     assert_eq!(
-        lower_literal(&Value::Bytes(Box::from(&[7u8][..]))),
-        Const::PendingIntern {
-            tag: TAG_BYTES,
-            bytes: Box::from(&[7u8][..]),
-        }
+        lower_literal(&Value::FixedBytes(Box::from(&[7u8][..]))),
+        Const::Word(0x0700_0000_0000_0000)
+    );
+    let digest: Vec<u8> = (0u8..32).collect();
+    let words = match lower_literal(&Value::FixedBytes(digest.clone().into())) {
+        Const::Words(words) => words,
+        other => panic!("expected a word block, got {other:?}"),
+    };
+    assert_eq!(words.len(), 4);
+    assert_eq!(
+        words[0],
+        u64::from_be_bytes(digest[..8].try_into().unwrap())
+    );
+    assert_eq!(
+        words[3],
+        u64::from_be_bytes(digest[24..].try_into().unwrap())
+    );
+    // A pad-boundary width: 9 bytes = 2 words, tail zero-padded.
+    let nine: Vec<u8> = (1u8..=9).collect();
+    assert_eq!(
+        lower_literal(&Value::FixedBytes(nine.into())),
+        Const::Words(Box::from(
+            [0x0102_0304_0506_0708u64, 0x0900_0000_0000_0000].as_slice()
+        ))
     );
 }
 
@@ -501,8 +524,8 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
         }]
     );
     // Interval variables occupy two slots each.
-    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::Two);
-    assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::Two);
+    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::TWO);
+    assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::TWO);
 
     // Interval Eq canonicalizes to the EQUALS mask (Ne to its
     // complement): exactly one interval-pair form leaves normalization.
@@ -568,7 +591,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
             point: P_AT,
         }]
     );
-    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::One);
+    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::ONE);
 }
 
 #[test]
@@ -681,8 +704,8 @@ fn cross_atom_allen_becomes_the_mask_residual() {
             mask: MaskTerm::Literal(AllenMask::EQUALS),
         }]
     );
-    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::Two);
-    assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::Two);
+    assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::TWO);
+    assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::TWO);
 
     // Cross-atom Contains over a point variable: x.start ≤ t AND t < x.end
     // — the point variable's single word is its Start word.
@@ -728,7 +751,7 @@ fn cross_atom_allen_becomes_the_mask_residual() {
             },
         ]
     );
-    assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::One);
+    assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::ONE);
 }
 
 #[test]

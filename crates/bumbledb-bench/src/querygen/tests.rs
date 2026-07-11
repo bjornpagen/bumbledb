@@ -362,9 +362,16 @@ fn check_miss(
             let domain = u64_domain(relation, field, domains);
             assert!(*v > domain, "miss-draw u64 params are out of domain");
         }
-        Value::Bytes(raw) => {
+        Value::FixedBytes(raw) => {
             *saw_bytes = true;
-            assert_eq!(raw.len(), 16, "a fresh 16-byte miss value");
+            // Adversarial single-byte-delta misses: a real digest of the
+            // anchored width with byte 0 flipped out of the corpus range.
+            assert!(
+                matches!(raw.len(), 7 | 8 | 9 | 16 | 32 | 63 | 64),
+                "miss digests carry an anchored width, got {}",
+                raw.len()
+            );
+            assert_eq!(raw[0], 0xA5, "the flipped byte marks the miss");
         }
         _ => {}
     }

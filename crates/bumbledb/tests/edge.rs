@@ -35,7 +35,7 @@ bumbledb::schema! {
     }
     relation Blob {
         id: u64 as BlobId, fresh,
-        payload: bytes,
+        payload: bytes<16>,
         name: str,
     }
     relation Posting {
@@ -88,15 +88,16 @@ fn cyclic_containments_insert_in_one_transaction() {
     assert!(matches!(err, Error::ContainmentViolation { .. }));
 }
 
-/// Empty strings and empty byte sequences intern, round-trip, and query —
-/// the reverse dictionary entry is exactly the tag byte.
+/// Empty strings intern and round-trip (the reverse dictionary entry is
+/// the empty byte string), and a bytes<16> payload rides inline beside
+/// them — no dictionary traffic for the fixed-width field.
 #[test]
 fn empty_strings_and_bytes_round_trip() {
     let dir = common::TempDir::new("edge-empty-intern");
     let db = Db::create(dir.path(), Ledger).expect("create");
     let original = Blob {
         id: BlobId(1),
-        payload: &[],
+        payload: [0u8; 16],
         name: "",
     };
     db.write(|tx| tx.insert(&original)).expect("write");

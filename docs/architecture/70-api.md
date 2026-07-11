@@ -30,9 +30,12 @@ bumbledb::schema! {
 ```
 
 - **Field syntax:** `name: type` with optional `as NewType` and optional `fresh`.
-  Types: `bool`, `u64`, `i64`, `str`, `bytes`, `enum Name { Variants }`,
-  `interval<i64>`, `interval<u64>`. `as` is legal on u64, i64, and intervals (the
-  newtype wraps the engine value; rustc polices domains — `10-data-model.md`).
+  Types: `bool`, `u64`, `i64`, `str`, `bytes<N>` (N ∈ 1..=64 — the width is
+  mandatory and part of the type; bare `bytes` does not parse), `enum Name {
+  Variants }`, `interval<i64>`, `interval<u64>`. `as` is legal on u64, i64,
+  `bytes<N>`, and intervals (the newtype wraps the engine value; rustc polices
+  domains — `10-data-model.md`; bytes and interval newtypes derive no order —
+  both refusals are semantics, `10-data-model.md`).
   `fresh` is legal on `u64` only and auto-materializes `R(field) -> R`.
   **There are no field-level constraint modifiers** — no `unique`, no `fk(...)`;
   those words do not parse.
@@ -56,9 +59,10 @@ bumbledb::schema! {
   `Db::create`/`Db::open` and surfaces as the typed `SchemaError`.
 - The macro generates: the header's `Theory` unit struct, relation descriptors,
   dependency statement descriptors, the host newtypes, and per-relation fact structs
-  (`Account { id, holder, kind, active }`). **Variable-width fields are borrowed**:
-  `str` → `&'a str`, `bytes` → `&'a [u8]` — a struct with any variable-width field
-  gains one lifetime; all-fixed-width structs stay lifetime-free.
+  (`Account { id, holder, kind, active }`). **The one variable-width field kind is
+  borrowed**: `str` → `&'a str` — a struct with any `str` field gains one lifetime.
+  `bytes<N>` → `[u8; N]`: owned, `Copy`, borrow-free (the fixed-width law), so
+  all-fixed-width structs stay lifetime-free.
 
 **Decision: the macro surface is the algebra, with no sugar keywords.** Owner ruling
 (`30-dependencies.md` records the alternative and its loss). The macro
@@ -175,9 +179,9 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   Interval<u64>` values whose `start < end` invariant is enforced at construction —
   parse, don't validate, in the host too). A dynamic (untyped) fact form exists for
   ETL tooling.
-- **Borrowed structs:** generated structs carry variable-width fields by reference
-  (`str` → `&'a str`, `bytes` → `&'a [u8]`; one lifetime iff the relation has a
-  variable-width field). Insert takes the struct at any lifetime — the encode path
+- **Borrowed structs:** generated structs carry `str` fields by reference
+  (`str` → `&'a str`; one lifetime iff the relation has one — `bytes<N>` is
+  `[u8; N]`, owned and `Copy`). Insert takes the struct at any lifetime — the encode path
   reads the fields as borrows into the engine's arena copy. Typed reads
   (`tx.get`, `snap.scan_facts`) return views at the resolver's lifetime, UTF-8
   validated at resolve without a copy. There are no owned twins and no modes;
@@ -204,8 +208,9 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   luck. Inference hides the parameter at call sites; same-schema/different-
   environment confusion stays a runtime check (`ForeignPreparedQuery`).
 - Query results: one concrete `ResultBuffer` (decided: columnar cells + a byte heap,
-  no caller-buffer trait) — rows of decoded values (String/Bytes decoded from intern
-  ids at materialization, into the buffer's byte heap; intervals as start/end word
+  no caller-buffer trait) — rows of decoded values (String decoded from intern
+  ids at materialization, into the buffer's byte heap; `bytes<N>` re-assembled
+  from its inline slot words with no dictionary touch; intervals as start/end word
   pairs), a `rows()` iterator, and column metadata via
   `PreparedQuery::column_types()` (the buffer itself stays typeless: stamping owned
   types per execution would allocate on the warm path). Contract on `Err`: the
@@ -214,8 +219,9 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   path: caller-provided reusable buffer (`40-execution.md`); convenience path
   allocates a fresh buffer.
 - Params are supplied positionally by `ParamId` at execution — scalars as
-  `BindValue<'a>` (str/bytes payloads **by reference**: the engine only hashes and
-  probes them, so a warm re-bind allocates nothing host-side; `ir::Value` stays
+  `BindValue<'a>` (str/bytes payloads **by reference**: the engine only hashes or
+  encodes them to column words, so a warm re-bind allocates nothing host-side —
+  and a `bytes<N>` param touches no dictionary, ever; `ir::Value` stays
   owned — IR literals are long-lived query data), **param sets as slices** of owned
   `Value`s (a set is long-lived host data re-bound by reference; deduplicated at
   bind; the documented small-set planning assumption is `20-query-ir.md`'s); count
