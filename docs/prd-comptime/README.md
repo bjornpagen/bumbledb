@@ -71,7 +71,6 @@ relation), *JIT/codegen* (refused).
 ## The PRDs
 
 Phase A — ground axioms:
-- [02 — The emission: handles, host enums, the manifest](02-emission.md)
 - [03 — Virtual images: the theory as storage](03-virtual-images.md)
 
 Phase B — the funeral:

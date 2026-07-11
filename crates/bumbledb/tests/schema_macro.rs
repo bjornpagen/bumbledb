@@ -572,6 +572,176 @@ mod two_schemas_per_module {
     }
 }
 
+mod closed_relations {
+    //! The emission (`docs/architecture/70-api.md` § the `schema!`
+    //! grammar): closed relations declare their extension in the schema.
+    //! The host enum is an emission, not a type — the engine's vocabulary
+    //! is relational, projected into a Rust enum so rustc's pattern
+    //! checking keeps working; the weld test pinning `id`/`from_id` is
+    //! EMITTED per closed relation (`__bumbledb_weld_status`,
+    //! `__bumbledb_weld_kind` — running in this very module), so it cannot
+    //! be forgotten for a new theory. No fact struct and no `Fact` impl
+    //! exist for `Status`/`Kind` — closed relations are unwritable.
+
+    use bumbledb::schema::{FieldId, RelationId, Row, StatementDescriptor};
+    use bumbledb::{Db, Theory as _, Value};
+
+    bumbledb::schema! {
+        pub Review;
+
+        closed relation Status as StatusId = { Open, Frozen, Closed };
+        closed relation Kind as KindId {
+            mastered: bool,
+        } = {
+            DirectPass { mastered: true },
+            Failed     { mastered: false },
+        };
+
+        relation Submission {
+            id: u64 as SubmissionId, fresh,
+            status: u64 as StatusId,
+            kind: u64 as KindId,
+        }
+
+        Submission(status) <= Status(id);
+        Submission(kind | status == Frozen) <= Kind(id | mastered == true);
+    }
+
+    /// The two grammar tiers expand, and the emitted descriptor
+    /// round-trips through `validate()` — the tie to the declaration
+    /// roster.
+    #[test]
+    fn the_two_tiers_expand_and_validate() {
+        Review
+            .descriptor()
+            .validate()
+            .expect("the declared schema is valid");
+        // And through the real boundary: `Db::create` validates and
+        // fingerprints the same descriptor.
+        let dir = crate::common::TempDir::new("macro-closed-relations");
+        Db::create(dir.path(), Review).expect("create");
+    }
+
+    /// The descriptor carries the extension: ground axioms in declaration
+    /// order, values through the same literal machine as statement
+    /// selections (declared columns only — the synthetic id is
+    /// `validate()`'s to prepend).
+    #[test]
+    fn the_descriptor_carries_the_extension() {
+        let descriptor = Review.descriptor();
+        let status = &descriptor.relations[0];
+        assert!(status.fields.is_empty());
+        let row = |handle: &str, values: &[Value]| Row {
+            handle: handle.into(),
+            values: values.into(),
+        };
+        assert_eq!(
+            status.extension.as_deref(),
+            Some(&[row("Open", &[]), row("Frozen", &[]), row("Closed", &[])][..])
+        );
+        let kind = &descriptor.relations[1];
+        assert_eq!(kind.fields.len(), 1);
+        assert_eq!(&*kind.fields[0].name, "mastered");
+        assert_eq!(
+            kind.extension.as_deref(),
+            Some(
+                &[
+                    row("DirectPass", &[Value::Bool(true)]),
+                    row("Failed", &[Value::Bool(false)]),
+                ][..]
+            )
+        );
+        assert_eq!(descriptor.relations[2].extension, None);
+    }
+
+    /// A bare handle in a selection resolves through the field's newtype
+    /// to its owning closed relation's declaration-order row id; the
+    /// synthetic id field is addressable as `id` — `FieldId(0)` — on both
+    /// statement sides.
+    #[test]
+    fn handles_resolve_to_declaration_order_row_ids() {
+        let schema = Review
+            .descriptor()
+            .validate()
+            .expect("the declared schema is valid");
+        // Materialized order: Submission.id's fresh auto-FD, the two
+        // closed auto-keys (Status, Kind), then the declared containments.
+        assert_eq!(schema.statements().len(), 5);
+        let StatementDescriptor::Containment { source, target } =
+            &schema.statements()[4].descriptor
+        else {
+            panic!("the second declared statement is a containment");
+        };
+        // `Submission(kind | status == Frozen)` — Frozen is row id 1.
+        assert_eq!(source.relation, Review::SUBMISSION);
+        assert_eq!(source.projection[..], [Review::SUBMISSION_KIND]);
+        assert_eq!(
+            source.selection[..],
+            [(Review::SUBMISSION_STATUS, Value::U64(1))]
+        );
+        // `Kind(id | mastered == true)` — the synthetic id at FieldId(0),
+        // the declared column shifted to FieldId(1).
+        assert_eq!(target.relation, Review::KIND);
+        assert_eq!(target.projection[..], [FieldId(0)]);
+        assert_eq!(
+            target.selection[..],
+            [(Review::KIND_MASTERED, Value::Bool(true))]
+        );
+    }
+
+    /// The id constants see the sealed shape: the synthetic id at
+    /// `FieldId(0)`, declared columns shifted.
+    #[test]
+    fn id_constants_address_the_sealed_field_list() {
+        assert_eq!(Review::STATUS, RelationId(0));
+        assert_eq!(Review::KIND, RelationId(1));
+        assert_eq!(Review::SUBMISSION, RelationId(2));
+        assert_eq!(Review::STATUS_ID, FieldId(0));
+        assert_eq!(Review::KIND_ID, FieldId(0));
+        assert_eq!(Review::KIND_MASTERED, FieldId(1));
+        assert_eq!(Review::SUBMISSION_STATUS, FieldId(1));
+    }
+
+    /// The host-enum weld, hand-checked (the exhaustive sibling is the
+    /// emitted test): `id`/`from_id` are `const fn` — usable in const
+    /// contexts — and the ids are the declaration-order row ids.
+    #[test]
+    fn the_host_enum_welds_to_row_ids() {
+        const FROZEN: StatusId = Status::Frozen.id();
+        assert_eq!(FROZEN, StatusId(1));
+        assert_eq!(Kind::from_id(Kind::DirectPass.id()), Some(Kind::DirectPass));
+        assert_eq!(Kind::from_id(KindId(2)), None);
+        // The host enum is the constant namespace: matching stays
+        // rustc-checked for exhaustiveness.
+        let mastered = match Kind::Failed {
+            Kind::DirectPass => true,
+            Kind::Failed => false,
+        };
+        assert!(!mastered);
+    }
+
+    /// The manifest carries the extension — the vocabulary as plain data,
+    /// for foreign surfaces that take their numbers as values.
+    #[test]
+    fn the_manifest_carries_the_extension() {
+        let manifest = Review.manifest();
+        let status = &manifest.relations[0];
+        assert_eq!(&*status.name, "Status");
+        let rows = status.extension.as_ref().expect("Status is closed");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(&*rows[1].handle, "Frozen");
+        assert_eq!(rows[1].id, 1);
+        assert!(rows[1].values.is_empty());
+        let kind = &manifest.relations[1];
+        // The field list opens with the synthetic id the sealed schema
+        // answers to.
+        assert_eq!(&*kind.fields[0].name, "id");
+        let rows = kind.extension.as_ref().expect("Kind is closed");
+        assert_eq!(rows[0].values[..], [("mastered".into(), Value::Bool(true))]);
+        assert_eq!(manifest.relations[2].extension, None);
+    }
+}
+
 mod invalid_declaration {
     //! Semantic validation lives in `Db::create`/`Db::open`, not the
     //! macro: a declaration the grammar accepts but the acceptance gate

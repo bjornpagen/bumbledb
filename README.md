@@ -168,6 +168,13 @@ code still speaks a pre-algebra name, that set is the gap ledger.)
 | `str` | `s: str` | intern id — the dictionary maps repeated text to words; UTF-8 parsed at intern | text under reuse | `==` `!=`, ∈-sets; **order/prefix refused** |
 | `bytes<N>` | `h: bytes<32>` | N raw bytes inline, word-padded; never interned | an identity (digest) | `==` `!=`, ∈-sets; **order refused** (a hash's order is an encoding artifact) |
 | `interval<E>` | `d: interval<i64>` | two order-preserving words `(start, end)`, half-open `[s, e)`, `s < e`; `end = MAX` denotes the ray `[s, ∞)` | **the set of points** `{p : s ≤ p < e}` | `p ∈ d` (membership), `Allen(mask)` (all 8,192 pair relations), `Duration` (the measure), `Pack` (coalesce) |
+| `closed relation` | `closed relation Status as StatusId = { Open, Frozen }` | virtual — rows are **ground axioms** sealed at validate, handle id = declaration order; the store holds zero vocabulary bytes | a vocabulary: the theory's named constants | referenced as a `u64` + containment to its key; handles resolve at expansion; `==` `!=`, ∈-sets; **order refused** |
+
+`closed relation` is a relation form, not an eighth value type: its rows
+live in the schema (frozen by the fingerprint, never written), the macro
+emits a **host enum** welded to the row ids — an emission, not a type —
+and a reference to it is an ordinary `u64` field under the handle newtype
+plus a containment statement.
 
 The two byte-shaped types split by one law — **intern what repeats; inline
 what identifies** — and share no other axis. The interval's preconditions

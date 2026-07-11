@@ -44,6 +44,35 @@
 //! the same invocation, so variant names resolve to ordinals here); interval
 //! literals are written `start..end`, half-open.
 //!
+//! **Closed relations** declare their extension in the schema — rows are
+//! ground axioms, handle = declaration-order row id
+//! (`docs/architecture/70-api.md` § the `schema!` grammar):
+//!
+//! ```text
+//! closed relation Status as StatusId = { Open, Frozen, Closed };
+//! closed relation Kind as KindId {
+//!     mastered: bool,
+//! } = {
+//!     DirectPass { mastered: true },
+//!     Failed     { mastered: false },
+//! };
+//! ```
+//!
+//! `as NewType` is required (the handle needs a host type); the column
+//! block is optional; the extension block is non-empty, each row carrying
+//! every declared column exactly once (missing/extra/duplicate columns,
+//! duplicate handles, and type-mismatched literals are expansion panics
+//! naming the offender). The emission per closed relation: the **host
+//! enum** (an emission, not a type — the engine's vocabulary is
+//! relational; the macro projects it into a Rust enum so rustc's pattern
+//! checking keeps working, welded to the row ids by const `id`/`from_id`
+//! and pinned by an emitted weld test), the handle newtype through the
+//! ordinary newtype machinery, and the descriptor's extension. **No fact
+//! struct and no `Fact` impl** — closed relations are unwritable. A bare
+//! handle in a statement selection (`| status == Frozen`) resolves through
+//! the selected field's newtype to its owning closed relation's row id,
+//! exactly as enum variants resolve to ordinals.
+//!
 //! Generated fact structs borrow their one variable-width field kind
 //! (`str` → `&'a str`): a struct with any `str` field gains one lifetime.
 //! `bytes<N>` fields are `[u8; N]` — owned, `Copy`, lifetime-free (the
@@ -114,7 +143,31 @@ struct Field {
 #[derive(Debug, Clone)]
 struct Relation {
     name: String,
+    /// The sealed field list: for a closed relation the synthetic
+    /// (`id`, `u64 as Handle`) field is materialized at index 0 at parse,
+    /// so statement field ids, id constants, and the newtype emission all
+    /// see the sealed shape (`FieldId(0)` = the handle's row id). The
+    /// descriptor emission skips it — `validate()` prepends its own.
     fields: Vec<Field>,
+    /// `Some` declares the relation **closed**: its extension is the row
+    /// list, ground axioms in declaration order. The option is the kind,
+    /// mirroring `RelationDescriptor.extension`.
+    closed: Option<Closed>,
+}
+
+/// A closed relation's parsed extension.
+#[derive(Debug, Clone)]
+struct Closed {
+    rows: Vec<ClosedRow>,
+}
+
+/// One ground axiom as written: the handle plus (column, literal) pairs
+/// reordered to column-declaration order at parse (coverage checked there
+/// — every declared column exactly once).
+#[derive(Debug, Clone)]
+struct ClosedRow {
+    handle: String,
+    values: Vec<(String, Literal)>,
 }
 
 /// A selection literal as written — classified by its own syntax, typed
@@ -237,6 +290,7 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
     let mut relation = Relation {
         name,
         fields: Vec::new(),
+        closed: None,
     };
     let mut tokens = body.into_iter().peekable();
     while tokens.peek().is_some() {
@@ -345,6 +399,135 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         }
     }
     field
+}
+
+/// Whether the next token is a brace-delimited group.
+fn peek_brace(tokens: &mut Tokens) -> bool {
+    matches!(tokens.peek(), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace)
+}
+
+/// Parses one closed relation, `closed relation` already consumed:
+/// `Name as Handle [ { columns } ] = { rows };`. The `as NewType` is
+/// required (the handle needs a host type); the column block is optional;
+/// the extension block is required and non-empty. The returned relation's
+/// field list opens with the synthetic (`id`, `u64 as Handle`) field —
+/// the sealed shape, materialized here so statement field ids, id
+/// constants, and the newtype emission all address it uniformly.
+fn parse_closed_relation(tokens: &mut Tokens) -> Relation {
+    let name = expect_ident(tokens, "a relation name");
+    assert_eq!(
+        peek_ident(tokens).as_deref(),
+        Some("as"),
+        "schema!: closed relation `{name}` needs `as NewType` — the handle needs a host type \
+         (docs/architecture/70-api.md)"
+    );
+    tokens.next();
+    let newtype = expect_ident(tokens, "the handle newtype's name");
+    let mut relation = if peek_brace(tokens) {
+        let body = take_group(tokens, Delimiter::Brace, "a relation body");
+        parse_relation(name, body)
+    } else {
+        Relation {
+            name,
+            fields: Vec::new(),
+            closed: None,
+        }
+    };
+    for field in &relation.fields {
+        assert_ne!(
+            field.name, "id",
+            "schema!: closed relation `{}` declares a column `id` — the synthetic \
+             handle-id field owns that name",
+            relation.name
+        );
+    }
+    expect_punct(tokens, '=');
+    let body = take_group(tokens, Delimiter::Brace, "the extension block");
+    relation.closed = Some(parse_extension(&relation, body));
+    expect_punct(tokens, ';');
+    relation.fields.insert(
+        0,
+        Field {
+            name: "id".to_owned(),
+            ty: FieldTy::U64,
+            newtype: Some(newtype),
+            fresh: false,
+        },
+    );
+    relation
+}
+
+/// Parses the extension block: each row is `Handle` or
+/// `Handle { column: literal, ... }` with every declared column present
+/// exactly once — duplicate handles and missing/extra/duplicate columns
+/// panic naming the offender. `declaration` still holds declared columns
+/// only (the synthetic id lands after this returns). Row values are
+/// reordered to column-declaration order.
+fn parse_extension(declaration: &Relation, body: TokenStream) -> Closed {
+    let mut tokens = body.into_iter().peekable();
+    let mut rows: Vec<ClosedRow> = Vec::new();
+    while tokens.peek().is_some() {
+        let handle = expect_ident(&mut tokens, "a handle");
+        assert!(
+            rows.iter().all(|row| row.handle != handle),
+            "schema!: closed relation `{}` declares the handle `{handle}` twice",
+            declaration.name
+        );
+        let mut entries: Vec<(String, Literal)> = Vec::new();
+        if peek_brace(&mut tokens) {
+            let body = take_group(&mut tokens, Delimiter::Brace, "a row's column block");
+            let mut row_tokens = body.into_iter().peekable();
+            while row_tokens.peek().is_some() {
+                let column = expect_ident(&mut row_tokens, "a column name");
+                expect_punct(&mut row_tokens, ':');
+                let literal = parse_literal(&mut row_tokens);
+                assert!(
+                    declaration.fields.iter().any(|f| f.name == column),
+                    "schema!: row `{handle}` of closed relation `{}` names an extra \
+                     column `{column}`",
+                    declaration.name
+                );
+                assert!(
+                    entries.iter().all(|(name, _)| *name != column),
+                    "schema!: row `{handle}` of closed relation `{}` supplies the \
+                     column `{column}` twice",
+                    declaration.name
+                );
+                entries.push((column, literal));
+                if peek_punct(&mut row_tokens, ',') {
+                    row_tokens.next();
+                }
+            }
+        }
+        let values = declaration
+            .fields
+            .iter()
+            .map(|field| {
+                entries
+                    .iter()
+                    .find(|(name, _)| *name == field.name)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "schema!: row `{handle}` of closed relation `{}` is missing \
+                             the column `{}`",
+                            declaration.name, field.name
+                        )
+                    })
+            })
+            .collect();
+        rows.push(ClosedRow { handle, values });
+        if peek_punct(&mut tokens, ',') {
+            tokens.next();
+        }
+    }
+    assert!(
+        !rows.is_empty(),
+        "schema!: closed relation `{}` declares an empty extension — rows are the \
+         relation's ground axioms, and a vocabulary of nothing is no relation",
+        declaration.name
+    );
+    Closed { rows }
 }
 
 /// The integer-literal token shape: digits first, no float dot. Shared
@@ -534,8 +717,15 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
         statements: Vec::new(),
     };
     while tokens.peek().is_some() {
-        let ident = expect_ident(&mut tokens, "`relation` or a statement");
-        if ident == "relation" {
+        let ident = expect_ident(&mut tokens, "`relation`, `closed relation`, or a statement");
+        if ident == "closed" {
+            let keyword = expect_ident(&mut tokens, "`relation` after `closed`");
+            assert_eq!(
+                keyword, "relation",
+                "schema!: expected `relation` after `closed`, found `{keyword}`"
+            );
+            schema.relations.push(parse_closed_relation(&mut tokens));
+        } else if ident == "relation" {
             let name = expect_ident(&mut tokens, "a relation name");
             let body = take_group(&mut tokens, Delimiter::Brace, "a relation body");
             schema.relations.push(parse_relation(name, body));
@@ -562,15 +752,50 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
 #[proc_macro]
 pub fn schema(input: TokenStream) -> TokenStream {
     let schema = parse_schema(input);
+    let closed = closed_map(&schema.relations);
     let mut out = String::new();
-    emit_schema_def(&mut out, &schema);
+    emit_schema_def(&mut out, &schema, &closed);
     emit_id_constants(&mut out, &schema);
     emit_newtypes(&mut out, &schema.relations);
     emit_enums(&mut out, &schema.relations);
+    emit_closed(&mut out, &schema.relations);
     for (index, relation) in schema.relations.iter().enumerate() {
+        // No fact struct and no `Fact`/`Fresh` impls for a closed relation:
+        // its rows are ground axioms and the relation is unwritable — a
+        // writable struct would be a lie the type system tells. Reads go
+        // through queries and the dyn surface
+        // (`docs/architecture/70-api.md`).
+        if relation.closed.is_some() {
+            continue;
+        }
         emit_fact_struct(&mut out, &schema.name, index, relation);
     }
     out.parse().expect("schema!: generated code parses")
+}
+
+/// The handle namespace: newtype name → its owning closed relation. A
+/// handle literal in a selection or row resolves through the referenced
+/// field's newtype, so each handle newtype must name exactly one closed
+/// relation — two claimants panic with both named.
+fn closed_map(relations: &[Relation]) -> BTreeMap<&str, &Relation> {
+    let mut map: BTreeMap<&str, &Relation> = BTreeMap::new();
+    for relation in relations {
+        if relation.closed.is_none() {
+            continue;
+        }
+        let newtype = relation.fields[0]
+            .newtype
+            .as_deref()
+            .expect("closed relations carry the handle newtype");
+        if let Some(existing) = map.insert(newtype, relation) {
+            panic!(
+                "schema!: handle newtype `{newtype}` is declared by two closed relations \
+                 (`{}` and `{}`) — a handle newtype names exactly one closed relation",
+                existing.name, relation.name
+            );
+        }
+    }
+    map
 }
 
 /// Resolves a statement-named relation to its declaration index — the
@@ -631,14 +856,22 @@ fn signed(bound: &(bool, String)) -> String {
     }
 }
 
-/// Renders one selection literal as a shared `Value` expression, typed
-/// against the selected field's declaration (enum variants resolve to
-/// ordinals here — every variant list is in the same invocation). Integer
-/// and string/byte-string token text is spliced verbatim, so rustc polices
-/// the value itself.
-fn value_expr(declaration: &Relation, field: &str, literal: &Literal) -> String {
+/// Renders one literal — a statement selection's or a closed row's — as a
+/// shared `Value` expression, typed against the field's declaration: one
+/// machine, same errors, both call sites. Enum variants resolve to
+/// ordinals here (every variant list is in the same invocation); a bare
+/// handle resolves through the field's newtype to its owning closed
+/// relation's declaration-order row id. Integer and string/byte-string
+/// token text is spliced verbatim, so rustc polices the value itself.
+fn value_expr(
+    closed: &BTreeMap<&str, &Relation>,
+    declaration: &Relation,
+    field: &str,
+    literal: &Literal,
+) -> String {
     let relation = &declaration.name;
-    let ty = &declaration.fields[field_index(declaration, field)].ty;
+    let field_decl = &declaration.fields[field_index(declaration, field)];
+    let ty = &field_decl.ty;
     let value = "::bumbledb::Value";
     match (ty, literal) {
         (FieldTy::Bool, Literal::Bool(v)) => format!("{value}::Bool({v})"),
@@ -659,6 +892,39 @@ fn value_expr(declaration: &Relation, field: &str, literal: &Literal) -> String 
             let ordinal = u8::try_from(ordinal).expect("variant count fits u8");
             format!("{value}::Enum({ordinal})")
         }
+        // A bare handle: legal on a field whose newtype is a closed
+        // relation's handle newtype — the handle namespace is
+        // per-closed-relation, resolved through the reference. It compiles
+        // to the row's declaration-order id, exactly as enum variants
+        // compile to ordinals.
+        (_, Literal::Variant(name)) => {
+            let owner = field_decl
+                .newtype
+                .as_deref()
+                .and_then(|newtype| closed.get(newtype));
+            let Some(owner) = owner else {
+                panic!(
+                    "schema!: `{relation}.{field}` is not a closed-relation reference — \
+                     the handle literal `{name}` is legal only on a field whose newtype \
+                     is a closed relation's handle newtype"
+                );
+            };
+            let rows = &owner
+                .closed
+                .as_ref()
+                .expect("closed-map entries are closed")
+                .rows;
+            let id = rows
+                .iter()
+                .position(|row| row.handle == *name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "schema!: closed relation `{}` has no handle `{name}`",
+                        owner.name
+                    )
+                });
+            format!("{value}::U64({id})")
+        }
         (FieldTy::Str, Literal::Str(text)) => {
             format!("{value}::String(::std::boxed::Box::from({text}.as_bytes()))")
         }
@@ -676,7 +942,7 @@ fn value_expr(declaration: &Relation, field: &str, literal: &Literal) -> String 
             format!("{value}::IntervalI64({}, {})", signed(start), signed(end))
         }
         _ => panic!(
-            "schema!: selection literal for `{relation}.{field}` does not fit \
+            "schema!: the literal for `{relation}.{field}` does not fit \
              the field's declared type"
         ),
     }
@@ -697,7 +963,7 @@ fn field_id_list(declaration: &Relation, fields: &[String]) -> String {
 }
 
 /// Renders one side as a `Side` expression, ids pre-resolved.
-fn side_expr(relations: &[Relation], side: &Side) -> String {
+fn side_expr(relations: &[Relation], closed: &BTreeMap<&str, &Relation>, side: &Side) -> String {
     let relation = relation_index(relations, &side.relation);
     let declaration = &relations[relation];
     let mut selection = String::new();
@@ -706,7 +972,7 @@ fn side_expr(relations: &[Relation], side: &Side) -> String {
             selection,
             "(::bumbledb::schema::FieldId({}), {}),",
             field_index(declaration, field),
-            value_expr(declaration, field, literal)
+            value_expr(closed, declaration, field, literal)
         );
     }
     format!(
@@ -718,11 +984,15 @@ fn side_expr(relations: &[Relation], side: &Side) -> String {
     )
 }
 
-fn emit_schema_def(out: &mut String, schema: &SchemaAst) {
+fn emit_schema_def(out: &mut String, schema: &SchemaAst, closed: &BTreeMap<&str, &Relation>) {
     let mut relations = String::new();
     for relation in &schema.relations {
         let mut fields = String::new();
-        for field in &relation.fields {
+        // The descriptor carries declared columns only: the AST's
+        // synthetic (`id`, U64) field at index 0 of a closed relation is
+        // `validate()`'s to prepend — emitting it too would collide.
+        let declared = &relation.fields[usize::from(relation.closed.is_some())..];
+        for field in declared {
             let _ = write!(
                 fields,
                 "::bumbledb::schema::FieldDescriptor {{ \
@@ -734,15 +1004,35 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst) {
                 if field.fresh { "Fresh" } else { "None" },
             );
         }
-        // The closed-relation grammar is the emission PRD's
-        // (`docs/prd-comptime/02-emission.md`); the macro emits ordinary
-        // relations only until it lands.
+        // The extension: ground axioms as `Row` values in declaration
+        // order, literals through the same `value_expr` machine as
+        // statement selections.
+        let extension = match &relation.closed {
+            None => "::std::option::Option::None".to_owned(),
+            Some(extension) => {
+                let mut rows = String::new();
+                for row in &extension.rows {
+                    let mut values = String::new();
+                    for (field, literal) in &row.values {
+                        let _ = write!(values, "{},", value_expr(closed, relation, field, literal));
+                    }
+                    let _ = write!(
+                        rows,
+                        "::bumbledb::schema::Row {{ \
+                             handle: ::std::boxed::Box::from(\"{}\"), \
+                             values: ::std::boxed::Box::new([{values}]) }},",
+                        row.handle,
+                    );
+                }
+                format!("::std::option::Option::Some(::std::boxed::Box::new([{rows}]))")
+            }
+        };
         let _ = write!(
             relations,
             "::bumbledb::schema::RelationDescriptor {{ \
                  name: ::std::boxed::Box::from(\"{}\"), \
                  fields: ::std::vec![{fields}], \
-                 extension: ::std::option::Option::None }},",
+                 extension: {extension} }},",
             relation.name,
         );
     }
@@ -766,8 +1056,8 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst) {
                 let _ = write!(
                     statements,
                     "::bumbledb::schema::StatementDescriptor::Containment {{ source: {}, target: {} }},",
-                    side_expr(&schema.relations, source),
-                    side_expr(&schema.relations, target),
+                    side_expr(&schema.relations, closed, source),
+                    side_expr(&schema.relations, closed, target),
                 );
             }
         }
@@ -970,6 +1260,88 @@ fn emit_enums(out: &mut String, relations: &[Relation]) {
              }}\n",
         );
     }
+}
+
+/// The per-closed-relation emission (`docs/architecture/70-api.md`): the
+/// **host enum** — an emission, not a type. The engine's vocabulary is
+/// relational; the macro projects it into a Rust enum so rustc's pattern
+/// checking keeps working — one vocabulary, two checkers, zero drift: the
+/// ids are the same declaration-order numbers on both sides, welded by
+/// const `id`/`from_id` (explicit matches, no `as` casts — the mapping is
+/// the declaration order stated, not a repr accident) and pinned by an
+/// EMITTED weld test per closed relation, so the weld cannot be forgotten
+/// for a new theory. The host enum is the constant namespace: no separate
+/// per-handle constants exist.
+fn emit_closed(out: &mut String, relations: &[Relation]) {
+    for relation in relations {
+        let Some(extension) = &relation.closed else {
+            continue;
+        };
+        let name = &relation.name;
+        let newtype = relation.fields[0]
+            .newtype
+            .as_deref()
+            .expect("closed relations carry the handle newtype");
+        let handles: Vec<&str> = extension
+            .rows
+            .iter()
+            .map(|row| row.handle.as_str())
+            .collect();
+        let list = handles.join(", ");
+        let mut id_arms = String::new();
+        let mut from_arms = String::new();
+        let mut weld = String::new();
+        for (id, handle) in handles.iter().enumerate() {
+            let _ = write!(id_arms, "Self::{handle} => {newtype}({id}),");
+            let _ = write!(from_arms, "{id} => Some(Self::{handle}),");
+            let _ = write!(
+                weld,
+                "assert_eq!(super::{name}::{handle}.id(), super::{newtype}({id}));\
+                 assert_eq!(super::{name}::from_id(super::{newtype}({id})), \
+                            Some(super::{name}::{handle}));"
+            );
+        }
+        let _ = write!(
+            out,
+            "/// The host enum of the closed relation `{name}` — an emission, not a\n\
+             /// type: variants are the handles in declaration order, welded to the\n\
+             /// engine's row ids by [`{name}::id`]/[`{name}::from_id`].\n\
+             #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n\
+             pub enum {name} {{ {list} }}\n\
+             impl {name} {{\n\
+                 /// The handle's declaration-order row id.\n\
+                 #[must_use] pub const fn id(self) -> {newtype} {{\n\
+                     match self {{ {id_arms} }}\n\
+                 }}\n\
+                 /// The handle a row id names; `None` beyond the extension.\n\
+                 #[must_use] pub const fn from_id(id: {newtype}) -> Option<Self> {{\n\
+                     match id.0 {{ {from_arms} _ => None }}\n\
+                 }}\n\
+             }}\n",
+        );
+        let beyond = handles.len();
+        let _ = write!(
+            out,
+            "#[cfg(test)]\n\
+             mod __bumbledb_weld_{module} {{\n\
+                 /// The emitted weld test: `from_id(h.id()) == Some(h)` for every\n\
+                 /// handle, exhaustively, plus the beyond-roster miss — emitted per\n\
+                 /// closed relation so the weld cannot be forgotten for a new theory.\n\
+                 #[test]\n\
+                 fn host_enum_weld() {{\n\
+                     {weld}\n\
+                     assert_eq!(super::{name}::from_id(super::{newtype}({beyond})), None);\n\
+                 }}\n\
+             }}\n",
+            module = snake(name),
+        );
+    }
+}
+
+/// A declaration name as a `snake_case` module name (`SavingsTerms` →
+/// `savings_terms`) — the emitted weld-test module's.
+fn snake(name: &str) -> String {
+    screaming_snake(name).to_ascii_lowercase()
 }
 
 /// Whether the field is variable-width — borrowed in the generated struct

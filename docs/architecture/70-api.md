@@ -51,6 +51,48 @@ bumbledb::schema! {
   `fresh` is legal on `u64` only and auto-materializes `R(field) -> R`.
   **There are no field-level constraint modifiers** — no `unique`, no `fk(...)`;
   those words do not parse.
+- **Closed relations** (`10-data-model.md` § closed relations) declare their
+  extension in the schema — two tiers, one production:
+
+  ```rust
+  closed relation Status as StatusId = { Open, Frozen, Closed };
+
+  closed relation Kind as KindId {
+      mastered: bool,
+  } = {
+      DirectPass { mastered: true },
+      Failed     { mastered: false },
+  };
+  ```
+
+  `closed` is a leading keyword on the `relation` production; `as NewType` is
+  **required** (the handle needs a host type); the column block is optional;
+  the `= { … }` extension block is required and non-empty. Each row is
+  `Handle` or `Handle { column: literal, … }` with every declared column
+  present exactly once — duplicate handles, missing/extra/duplicate columns,
+  and type-mismatched literals are expansion errors naming the offender. Row
+  literals ride the selection-literal machine (same typing, same errors). In
+  statement selections a bare handle is legal on any field whose newtype is a
+  closed relation's handle newtype (`| status == Frozen`), resolving to the
+  handle's declaration-order row id at expansion exactly as enum variants
+  resolve to ordinals; a handle on any other field is an expansion error.
+
+  **The emission per closed relation:** the **host enum** (`pub enum Status {
+  Open, Frozen, Closed }`) — an *emission, not a type*: the engine's
+  vocabulary is relational, and the macro projects it into a Rust enum so
+  rustc's pattern checking keeps working — one vocabulary, two checkers, zero
+  drift. The weld is `const fn id(self) -> StatusId` and `const fn
+  from_id(StatusId) -> Option<Status>` (explicit matches, usable in const
+  contexts), and a **weld test is emitted per closed relation** under
+  `#[cfg(test)]` (`from_id(h.id()) == Some(h)` for every handle, plus the
+  beyond-roster miss), so the weld cannot be forgotten for a new theory. The
+  handle newtype (`StatusId(pub u64)`) comes through the ordinary newtype
+  machinery; the id constants address the sealed shape (the synthetic `id`
+  field at `FieldId(0)`, declared columns shifted). The host enum is the
+  constant namespace — no separate per-handle constants exist. **No fact
+  struct and no `Fact` impl are emitted** — closed relations are unwritable,
+  and a writable struct would be a lie the type system tells; reads go
+  through queries and the dyn surface.
 - **Dependency statements:** `Rel(fields...) -> Rel;` (FD, key form only),
   `A(fields... | field == Literal, ...) <= B(fields...);` (containment),
   `==` for bidirectional. Projection lists are positional between the two sides;
@@ -110,10 +152,12 @@ how a typo'd relation becomes a compile error).
 The theory renders a **manifest** (`Theory::manifest()` → `schema::Manifest`): every
 name → id pairing as a plain Rust value straight off the descriptor — relations and
 fields with their ids stated explicitly, each field's structural type, enum variant
-lists whose ordinal is the index. A foreign host gets the same numbers as data. No
-serde anywhere (the dependency law): a downstream binding serializes the value
-however it likes; the engine never learns the wire format. Both are emission; the
-grammar is untouched.
+lists whose ordinal is the index, and each closed relation's **extension table**
+(relation → handle → declaration-order row id → (column, value) pairs), so foreign
+surfaces see the vocabulary without touching Rust. A foreign host gets the same
+numbers as data. No serde anywhere (the dependency law): a downstream binding
+serializes the value however it likes; the engine never learns the wire format.
+Both are emission; the grammar is untouched.
 
 ## Environment lifecycle
 

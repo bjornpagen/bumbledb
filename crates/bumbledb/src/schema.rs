@@ -19,7 +19,7 @@ use crate::encoding::FactLayout;
 use crate::error::FactShapeError;
 use crate::value::Value;
 
-pub use manifest::{FieldManifest, Manifest, RelationManifest};
+pub use manifest::{FieldManifest, Manifest, RelationManifest, RowManifest};
 
 /// Dense relation id: the relation's index in schema declaration order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
