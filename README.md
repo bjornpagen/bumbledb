@@ -5,13 +5,16 @@ LMDB, executing conjunctive queries with **Free Join** — and tuned, one
 measured PRD at a time, for Apple Silicon.
 
 There is no SQL and no interpreter in the hot path. You declare a schema with
-a macro, write plain structs, and run conjunctive queries (joins, negation,
-interval membership, comparisons, aggregates) that are planned once and
-executed over columnar in-memory images with a lazy trie join. Results are
-sets. Invariants are dependency statements — functional and inclusion
-dependencies, judged at commit against the final state. Everything the
-engine claims about performance is a pinned, reproducible measurement with
-two differential oracles standing behind it.
+a macro, write plain structs, and run queries — rule programs with joins,
+negation, the full Allen interval algebra (one 13-bit mask, one branchless
+kernel), point membership, `Duration`, and the coalescing `Pack` aggregate —
+planned once and executed over columnar in-memory images with a lazy trie
+join. Results are sets; a multi-rule query's union *is* the sink's dedup.
+Invariants are dependency statements — functional and inclusion dependencies,
+judged at commit against the final state — and read-compute-write is
+optimistic, witnessed by snapshots, checked in one compare at commit.
+Everything the engine claims about performance is a pinned, reproducible
+measurement with two differential oracles standing behind it.
 
 ```rust
 bumbledb::schema! {
@@ -46,11 +49,16 @@ db.write(|tx| {
     Ok(())
 })?;
 
-// Queries are prepared once, executed on snapshots into a reusable buffer —
-// zero allocations per execution after warmup.
-let mut q = db.prepare(&query)?;   // ir::Query: conjunctive atoms + predicates + finds
+// Queries are rule programs in set-builder notation (the `query!` macro
+// lowers to plain-data IR at compile time; the raw IR remains the contract).
+// Prepared once, executed on snapshots into a reusable buffer — zero
+// allocations per execution after warmup.
+let q = bumbledb_query::query!(Ledger {
+    (h, name) | Holder(id: h, name), Account(holder: h, status == Status::Open);
+});
+let mut prepared = db.prepare(&q)?;
 db.read(|snap| {
-    snap.execute(&mut q, &params, &mut results)?;
+    snap.execute(&mut prepared, &params, &mut results)?;
     Ok(())
 })?;
 ```
@@ -63,12 +71,14 @@ type discipline is enforced by rustc, not by runtime checks.
 
 Same corpus, same queries, results verified identical against SQLite — and
 every write judged identically by an independent naive model — across a
-2,586-case differential oracle before any timing is believed:
+2,822-case differential oracle before any timing is believed:
 
 ![read families vs SQLite](assets/bench-vs-sqlite.svg)
 
-The same data as multiples — the ledger's fifteen read families, point
-lookups through negation, interval probes, and the triangle join:
+The same data as multiples — twenty-three read families across two theories:
+the ledger (point lookups through negation, interval probes, and the triangle
+join) and the calendar (Allen-mask scans, the RSVP-arm union, conflict pairs,
+`Pack` free-busy, `Sum(Duration)` accounting):
 
 ![speedup over SQLite](assets/bench-speedup.svg)
 
@@ -89,12 +99,17 @@ engines, and bulk load favors SQLite's write path; we publish it anyway:
 
 ![writes and cold](assets/bench-writes.svg)
 
-**Context that keeps these numbers honest:** S-scale ledger corpus (10⁵-row
-fact table), Apple M2 Max, engine-favorable workload class (point lookups
-through multi-way joins and aggregates — exactly what a set-semantic Free
-Join engine is built for). SQLite is measured warm, prepared, and
-well-indexed on the identical data. This is a research engine validated at
-this scale, not a production database. Regenerate everything yourself:
+**Context that keeps these numbers honest:** S-scale corpora (a 10⁵-row-
+fact-table ledger and a calendar world of interval claims, RSVP arms, and
+ray horizons), Apple M2 Max, engine-favorable workload class (point lookups
+through multi-way joins, interval algebra, and aggregates — exactly what a
+set-semantic Free Join engine is built for). SQLite is measured warm,
+prepared, and well-indexed on the identical data. One internal sub-
+measurement is currently a recorded loss: the rule-disjointness elision
+(`rsvp_union` vs `rsvp_union_off`) measures ~14% slower than the seen-set
+it removes, pending the owner's ratchet ruling. This is a research engine
+validated at this scale, not a production database. Regenerate everything
+yourself:
 
 ```sh
 cargo build --release -p bumbledb-bench
@@ -234,7 +249,12 @@ broken until they agree.
 | [40 — Execution](docs/architecture/40-execution.md) | Free Join, COLT, anti-probes, batching, the Apple Silicon model |
 | [50 — Storage](docs/architecture/50-storage.md) | LMDB layout, guards as judgment accelerators, the delta write path |
 | [60 — Validation](docs/architecture/60-validation.md) | the two oracles, the bench ledger, measurement discipline |
-| [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, prepared queries |
+| [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, witnessed writes, prepared queries |
+
+The intuition-transfer companion is [`docs/cookbook.md`](docs/cookbook.md) —
+twenty worked schemas (unions, trees, calendars, tax brackets, ledgers), each
+rot-proofed by a compile test, each comment naming the theorem its statement
+buys.
 
 The algorithmic reference is Wang, Willsey & Suciu, *Free Join: Unifying
 Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in
@@ -245,7 +265,7 @@ Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in
 The part of this repo most worth stealing. Performance claims here are gated
 by machinery, not judgment:
 
-- **Two differential oracles before every timing run**: 2,586 cases —
+- **Two differential oracles before every timing run**: 2,822 cases —
   family queries and randomized queries against SQLite, plus a randomized
   write stream whose every commit verdict (accept or abort, and the
   violated statement) must match an independent brute-force naive model;
@@ -274,8 +294,9 @@ crates/bumbledb/         the engine (LMDB via heed + blake3 are the only deps)
   src/api/               Db, transactions, prepared queries
   src/plan/, src/ir/     planner and query IR
 crates/bumbledb-macros/  the schema! proc macro (hand-rolled, no syn/quote)
+crates/bumbledb-query/   the query! notation macro (downstream sugar; lowers to IR)
 crates/bumbledb-bench/   the oracle + benchmark suite (gen/verify/bench/trace)
-docs/                    the normative architecture + pinned measurement records
+docs/                    the normative architecture + the cookbook (docs/cookbook.md)
 scripts/                 measure.sh, check-asm.sh, check.sh, bench_viz.py
 ```
 
