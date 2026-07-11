@@ -658,11 +658,21 @@ fn validate_relation(
         // types only (`docs/architecture/10-data-model.md`, the
         // intrinsic-vs-policy law). `str` is refused — the handle IS the
         // label, and interned columns on a virtual relation would force
-        // dictionary writes at open; `fresh` is refused — identity is the
-        // handle, and axioms are never minted.
+        // dictionary writes at open; an enum is refused — a vocabulary
+        // column on a vocabulary nests a closed reference as a type, and
+        // a reference to a closed relation is a plain u64 column plus a
+        // declared containment (the nested-closed-refs refusal,
+        // `docs/prd-comptime/README.md`); `fresh` is refused — identity
+        // is the handle, and axioms are never minted.
         if extension.is_some() {
             if field.value_type == ValueType::String {
                 return Err(SchemaError::StrOnClosedRelation {
+                    relation: rel_id,
+                    field: field_id,
+                });
+            }
+            if matches!(field.value_type, ValueType::Enum { .. }) {
+                return Err(SchemaError::EnumOnClosedRelation {
                     relation: rel_id,
                     field: field_id,
                 });
@@ -753,8 +763,8 @@ fn validate_extension(
                     row: row_idx,
                     field: field_id,
                 },
-                // `str` columns are refused above, so Utf8 is unreachable;
-                // an out-of-range enum ordinal does not inhabit the type.
+                // `str` and enum columns are refused above, so Utf8 and
+                // EnumOrdinal are unreachable — kept total, not clever.
                 ValueMismatch::Type | ValueMismatch::EnumOrdinal(_) | ValueMismatch::Utf8 => {
                     SchemaError::ExtensionValueTypeMismatch {
                         relation: rel_id,
@@ -763,8 +773,26 @@ fn validate_extension(
                     }
                 }
             })?;
-            // Total here: String (refused column) and AllenMask (no field
-            // type) both fail `value_matches` before reaching the encoder.
+            // The ray refusal (`docs/prd-comptime/README.md`): `[s, ∞)`
+            // says the theory's constant is still running, and a
+            // still-running span is policy, not an intrinsic property —
+            // the witnessed write that eventually closes it needs an
+            // ordinary relation. Rays stay honest values everywhere else.
+            let is_ray = match value {
+                Value::IntervalU64(_, end) => *end == crate::Interval::<u64>::MAX_END,
+                Value::IntervalI64(_, end) => *end == crate::Interval::<i64>::MAX_END,
+                _ => false,
+            };
+            if is_ray {
+                return Err(SchemaError::ExtensionIntervalRay {
+                    relation: rel_id,
+                    row: row_idx,
+                    field: field_id,
+                });
+            }
+            // Total here: String and enums (refused columns) and AllenMask
+            // (no field type) all fail `value_matches` before reaching the
+            // encoder.
             crate::encoding::encode_literal(value, &mut fact);
         }
         debug_assert_eq!(fact.len(), layout.fact_width());

@@ -436,7 +436,7 @@ fn a_bulk_load_error_keeps_its_committed_count_through_question_mark() {
     }
 }
 
-/// Currency { minor_units: u64 } = { Usd(2), Eur(2) }: the closed fixture
+/// Currency { `minor_units`: u64 } = { Usd(2), Eur(2) }: the closed fixture
 /// for the write-refusal tests (hand-built — the macro grammar for closed
 /// relations is the emission PRD's).
 fn closed_schema() -> SchemaDescriptor {

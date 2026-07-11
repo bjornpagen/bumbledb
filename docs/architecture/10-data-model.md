@@ -294,15 +294,21 @@ fixed extension.
   Interval. `str` is refused — the handle IS the label and the renderer prints
   handles from the theory; interned columns on a virtual relation would force
   dictionary writes at open, breaking "the store contains zero vocabulary bytes".
+  An enum column is refused — an enum is a vocabulary, so the column would nest
+  one closed reference inside another as a type: the nested-closed-refs refusal
+  (`docs/prd-comptime/README.md`); declare the plain u64 + containment instead.
   `fresh` is refused — identity is the handle; axioms are never minted.
 - **The extension is validated at declaration and frozen by the fingerprint**:
   distinct handles; per-column typing through the one shared value check; interval
   axioms obey `start < end` (the constructor law holds for axioms too — a
-  malformed ground axiom is a schema error, not corruption); 1..=256 rows (an
-  empty extension is a vocabulary of nothing — write no relation; a larger one is
-  policy data wearing a vocabulary costume). Values are canonically encoded ONCE,
-  at validate — the sealed rows carry fact bytes and are never re-encoded (the
-  staging law applied to the feature itself).
+  malformed ground axiom is a schema error, not corruption) and are bounded — a
+  ray `[s, ∞)` says the theory's constant is still running, and a still-running
+  span is policy, not an intrinsic property (the ray refusal,
+  `docs/prd-comptime/README.md`; rays stay honest values in ordinary relations);
+  1..=256 rows (an empty extension is a vocabulary of nothing — write no
+  relation; a larger one is policy data wearing a vocabulary costume). Values are
+  canonically encoded ONCE, at validate — the sealed rows carry fact bytes and
+  are never re-encoded (the staging law applied to the feature itself).
 - **Writes are refused.** Any delta operation naming a closed relation —
   insert/delete, typed or dynamic, `bulk_load`, `alloc` — is the typed
   `ClosedRelationWrite`, checked at the write-surface entry before any encoding

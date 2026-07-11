@@ -300,7 +300,7 @@ fn accepts_enum_with_exactly_256_variants() {
     decl.validate().expect("256 variants fit one byte");
 }
 
-/// Currency { minor_units: u64 } = { Usd(2), Eur(2) } — the closed
+/// Currency { `minor_units`: u64 } = { Usd(2), Eur(2) } — the closed
 /// fixture shared by the valid-side tests.
 fn currency() -> RelationDescriptor {
     closed(

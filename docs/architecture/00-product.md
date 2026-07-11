@@ -246,7 +246,10 @@ absent fact in a 0..1 child relation; *uuid* → fresh + explicit time columns;
 idiom; *SELECT FOR UPDATE / row locks / SERIALIZABLE retry* → the generation witness
 (snapshot-witnessed `write_from`) plus WriteTx point reads under final-state
 judgment — locks protect what you remembered to lock; the witness protects
-everything the snapshot saw.
+everything the snapshot saw; *enum* → closed relation (a vocabulary is a relation
+whose rows are ground axioms, `10-data-model.md` § closed relations; the type is
+mid-funeral — it dies when the schema macro emits closed relations, and the
+value-type roster drops to six).
 
 ## Success criteria
 

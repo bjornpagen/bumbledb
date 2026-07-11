@@ -777,6 +777,63 @@ fn rejects_an_empty_interval_axiom() {
 }
 
 #[test]
+fn rejects_a_ray_axiom() {
+    // The ray refusal (`docs/prd-comptime/README.md`): `[s, ∞)` says the
+    // theory's constant is still running, and a still-running span is
+    // policy, not an intrinsic property — the write that eventually
+    // closes it needs an ordinary relation. Both element domains.
+    let of_element = |element, value| SchemaDescriptor {
+        relations: vec![closed(
+            "Quarter",
+            vec![field("span", ValueType::Interval { element })],
+            vec![row("Q1", vec![value])],
+        )],
+        statements: vec![],
+    };
+    let expected = SchemaError::ExtensionIntervalRay {
+        relation: RelationId(0),
+        row: 0,
+        field: FieldId(1),
+    };
+    assert_eq!(
+        of_element(IntervalElement::U64, Value::IntervalU64(5, u64::MAX))
+            .validate()
+            .unwrap_err(),
+        expected
+    );
+    assert_eq!(
+        of_element(IntervalElement::I64, Value::IntervalI64(5, i64::MAX))
+            .validate()
+            .unwrap_err(),
+        expected
+    );
+}
+
+#[test]
+fn rejects_an_enum_column_on_a_closed_relation() {
+    // The nested-closed-refs refusal (`docs/prd-comptime/README.md`): an
+    // enum is a vocabulary — the very thing a closed relation is — so an
+    // enum column nests one closed reference inside another as a type. A
+    // reference to a closed relation is a plain u64 column plus a
+    // declared containment, like any reference.
+    let decl = SchemaDescriptor {
+        relations: vec![closed(
+            "Currency",
+            vec![field("kind", enum_type(&["Fiat", "Metal"]))],
+            vec![row("Usd", vec![Value::Enum(0)])],
+        )],
+        statements: vec![],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::EnumOnClosedRelation {
+            relation: RelationId(0),
+            field: FieldId(1)
+        }
+    );
+}
+
+#[test]
 fn rejects_str_on_a_closed_relation() {
     // The handle IS the label; interned columns on a virtual relation
     // would force dictionary writes at open.

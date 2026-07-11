@@ -224,12 +224,29 @@ impl fmt::Display for SchemaError {
                 "relation {}, row {row}: interval axiom start >= end at field {}",
                 r.0, fd.0
             ),
+            Self::ExtensionIntervalRay {
+                relation: r,
+                row,
+                field: fd,
+            } => write!(
+                f,
+                "relation {}, row {row}: ray axiom at field {} — a still-running span is policy, not an intrinsic property",
+                r.0, fd.0
+            ),
             Self::StrOnClosedRelation {
                 relation: r,
                 field: fd,
             } => write!(
                 f,
                 "relation {}, field {}: str on a closed relation — the handle is the label",
+                r.0, fd.0
+            ),
+            Self::EnumOnClosedRelation {
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "relation {}, field {}: enum on a closed relation — a nested closed reference is a plain u64 column plus a containment",
                 r.0, fd.0
             ),
             Self::FreshOnClosedRelation {
@@ -852,7 +869,9 @@ impl SchemaError {
             | Self::ExtensionArityMismatch { .. }
             | Self::ExtensionValueTypeMismatch { .. }
             | Self::ExtensionIntervalEmpty { .. }
+            | Self::ExtensionIntervalRay { .. }
             | Self::StrOnClosedRelation { .. }
+            | Self::EnumOnClosedRelation { .. }
             | Self::FreshOnClosedRelation { .. } => None,
             Self::StatementUnknownRelation { statement, .. }
             | Self::StatementUnknownField { statement, .. }

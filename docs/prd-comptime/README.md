@@ -71,7 +71,6 @@ relation), *JIT/codegen* (refused).
 ## The PRDs
 
 Phase A — ground axioms:
-- [01 — Closed relations in the theory](01-closed-relations.md)
 - [02 — The emission: handles, host enums, the manifest](02-emission.md)
 - [03 — Virtual images: the theory as storage](03-virtual-images.md)
 

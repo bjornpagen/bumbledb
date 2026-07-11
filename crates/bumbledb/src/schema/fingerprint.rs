@@ -541,7 +541,7 @@ mod tests {
         assert_eq!(bytes, expected);
     }
 
-    /// Currency { minor_units: u64 } = { Usd(2), Eur(2) } — the closed
+    /// Currency { `minor_units`: u64 } = { Usd(2), Eur(2) } — the closed
     /// mutation fixture.
     fn closed_base() -> SchemaDescriptor {
         SchemaDescriptor {

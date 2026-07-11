@@ -169,7 +169,9 @@ mod tests {
     /// The golden fingerprint: changing the schema re-baselines every
     /// corpus digest and report — this test makes that a deliberate act,
     /// never an accident. Update the constant ONLY alongside a conscious
-    /// schema change.
+    /// schema change. Last moved by the canonical-format `v2` bump
+    /// (closed relations: the per-relation closedness tag) — the ledger
+    /// declaration itself is unchanged.
     #[test]
     fn the_fingerprint_is_pinned() {
         let fp = bumbledb::schema::fingerprint::fingerprint(schema());
@@ -179,7 +181,7 @@ mod tests {
             acc
         });
         assert_eq!(
-            hex, "2de5c610582eaa84fab6530ba997698bb6981197979e589d7f2a60467781fa81",
+            hex, "c64e3142a655bc9c60d0f0488540aa559210c650dd5ceb3e06761c7f3088cee8",
             "the ledger schema changed — re-baseline corpora and reports deliberately"
         );
     }

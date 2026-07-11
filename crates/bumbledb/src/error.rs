@@ -160,9 +160,8 @@ pub enum SchemaError {
         expected: usize,
         supplied: usize,
     },
-    /// An extension value does not inhabit its column's structural type
-    /// (out-of-range enum ordinals included) — the one shared value check,
-    /// as selection literals.
+    /// An extension value does not inhabit its column's structural type —
+    /// the one shared value check, as selection literals.
     ExtensionValueTypeMismatch {
         relation: RelationId,
         row: usize,
@@ -176,10 +175,32 @@ pub enum SchemaError {
         row: usize,
         field: FieldId,
     },
+    /// A ray `[start, ∞)` as a ground axiom: an unbounded end says the
+    /// theory's constant is still running, and a still-running span is
+    /// policy, not an intrinsic property (the intrinsic-vs-policy law) —
+    /// rays live in ordinary relations, where the witnessed write that
+    /// eventually closes them is expressible
+    /// (`docs/prd-comptime/README.md`, the refusal).
+    ExtensionIntervalRay {
+        relation: RelationId,
+        row: usize,
+        field: FieldId,
+    },
     /// `str` on a closed relation: the handle IS the label, and interned
     /// columns on a virtual relation would force dictionary writes at open
     /// — the store contains zero vocabulary bytes.
     StrOnClosedRelation {
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// An enum column on a closed relation: an enum is a vocabulary — the
+    /// very thing a closed relation is — so the column nests one closed
+    /// reference inside another as a type. Refused: a reference to a
+    /// closed relation is a plain u64 column plus a declared containment,
+    /// like any reference (`docs/prd-comptime/README.md`, the
+    /// nested-closed-refs refusal — intrinsic columns are value types
+    /// only).
+    EnumOnClosedRelation {
         relation: RelationId,
         field: FieldId,
     },
