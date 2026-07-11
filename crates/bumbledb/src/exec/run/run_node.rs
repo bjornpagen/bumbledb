@@ -115,6 +115,19 @@ impl Executor {
                 resolve(residual.rhs, *rhs_slot),
             ));
         }
+        // Measure residuals: the interval side at its word base (pair
+        // read at offsets 0/1), the u64 side at its single word.
+        scratch.duration_sources.clear();
+        for (residual, interval_slot, scalar_slot) in &self.duration_residual_slots[node_idx] {
+            let resolve = |var: crate::ir::VarId, slot: usize| {
+                super::word_base(cover_vars, var, |v| self.width_of(v))
+                    .map_or(Source::Slot(slot), Source::Batch)
+            };
+            scratch.duration_sources.push((
+                resolve(residual.interval, *interval_slot),
+                resolve(residual.scalar, *scalar_slot),
+            ));
+        }
 
         let mut token = BatchToken::default();
         let mut flow = Flow::Continue;
@@ -343,6 +356,42 @@ impl Executor {
                 );
                 for &keep in &scratch.mask {
                     counters.residual(node_idx, keep != 0);
+                }
+                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+            }
+            // Measure residuals: per survivor, read the interval pair at
+            // the word base, test the ray — `end == MAX` poisons the
+            // execution with the offending words (`execute` raises the
+            // typed `MeasureOfRay`) — subtract, and compare the u64 word;
+            // survivors compact on the same cursor-write. The gathered
+            // shape stays scalar per the standing rule (the dense
+            // stride-1 twin is the view kernel,
+            // `exec::kernel::filter_duration_range_u64`).
+            for (r_idx, (interval_src, scalar_src)) in scratch.duration_sources.iter().enumerate() {
+                let op = self.duration_residual_slots[node_idx][r_idx].0.op;
+                let n = scratch.survivors.len();
+                scratch.mask.clear();
+                scratch.mask.resize(n, 0);
+                for k in 0..n {
+                    let e = scratch.survivors[k];
+                    let entry = usize::try_from(e).expect("batch fits usize");
+                    let value = |src: &Source, offset: usize| match *src {
+                        Source::Batch(word) => scratch.entry_keys[entry * arity + word + offset],
+                        Source::Slot(slot) => bindings.get(slot + offset),
+                    };
+                    let (start, end) = (value(interval_src, 0), value(interval_src, 1));
+                    if end == u64::MAX {
+                        self.measure_of_ray = Some([start, end]);
+                        self.all_cancelled = true;
+                        break;
+                    }
+                    let pass = op.compare(&(end - start), &value(scalar_src, 0));
+                    counters.residual(node_idx, pass);
+                    scratch.mask[k] = u8::from(pass);
+                }
+                if self.measure_of_ray.is_some() {
+                    counters.phase_end(node_idx, JoinPhase::Residual);
+                    break 'outer;
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }

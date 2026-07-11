@@ -2,8 +2,8 @@
 
 use super::{
     AntiProbeSpec, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
-    PipeTables, PlacedAllen, PlacedComparison, PlacedWordComparison, PointProbeSpec, Sink,
-    ValidatedPlan, BATCH,
+    PipeTables, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
+    PointProbeSpec, Sink, ValidatedPlan, BATCH,
 };
 
 /// The membership-filter column/slot table shared by both probe kinds:
@@ -210,6 +210,18 @@ impl Executor {
                     .collect()
             })
             .collect();
+        // Measure residuals: the interval side's base slot (pair read at
+        // offsets 0/1) and the scalar side's single slot.
+        let duration_residual_slots: Vec<Vec<(PlacedDuration, usize, usize)>> = plan
+            .nodes()
+            .iter()
+            .map(|node| {
+                node.duration_residuals
+                    .iter()
+                    .map(|r| (*r, plan.slot_of(r.interval), plan.slot_of(r.scalar)))
+                    .collect()
+            })
+            .collect();
         let anti_probe_slots = anti_probe_slots(plan);
         let point_probe_slots = point_probe_slots(plan);
         let scratch = plan
@@ -249,6 +261,7 @@ impl Executor {
                     residual_sources: Vec::new(),
                     word_residual_sources: Vec::new(),
                     allen_sources: Vec::new(),
+                    duration_sources: Vec::new(),
                     allen_gather: Vec::new(),
                     allen_codes: Vec::new(),
                     anti_sources: anti_specs.iter().map(|_| Vec::new()).collect(),
@@ -272,6 +285,7 @@ impl Executor {
             word_residual_slots,
             allen_residual_slots,
             allen_masks,
+            duration_residual_slots,
             point_probe_slots,
             var_widths,
             anti_probe_slots,
@@ -288,6 +302,7 @@ impl Executor {
             next_origin: 0,
             all_cancelled: false,
             origin_overflow: false,
+            measure_of_ray: None,
         }
     }
 
@@ -350,6 +365,7 @@ impl Executor {
         assert_eq!(colts.len(), plan.occurrences().len());
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
+        self.measure_of_ray = None;
         self.cursors.clear();
         // Each occurrence starts below its selection levels — the root
         // when it has none, the post-`select` cursor otherwise
@@ -364,6 +380,12 @@ impl Executor {
             self.run_pipeline(plan, colts, bindings, sink, counters);
         } else {
             self.run_node(plan, 0, colts, bindings, sink, counters);
+        }
+        // The measure's ray poison outranks the origin overflow: a ray
+        // reached `Duration`, so the execution's one honest answer is the
+        // engine's one runtime type error, whatever else stopped early.
+        if let Some([start, end]) = self.measure_of_ray {
+            return Err(crate::error::Error::MeasureOfRay { start, end });
         }
         if self.origin_overflow {
             return Err(crate::error::Error::Overflow(

@@ -55,7 +55,8 @@ fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
         })
         .collect();
 
-    let (residuals, word_residuals, allen_residuals) = place_comparisons(rule, &mut occurrences);
+    let (residuals, word_residuals, allen_residuals, duration_residuals) =
+        place_comparisons(rule, &mut occurrences);
 
     // The binding-slot widths — the two-slot interval layout, decided at
     // [`SlotWidth`] and exported here to the plan witness.
@@ -73,6 +74,7 @@ fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
         .map(|r| (r.lhs, r.rhs))
         .chain(word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)))
         .chain(allen_residuals.iter().map(|r| (r.lhs, r.rhs)))
+        .chain(duration_residuals.iter().map(|r| (r.interval, r.scalar)))
         .all(|(lhs, rhs)| {
             !occurrences
                 .iter()
@@ -88,6 +90,7 @@ fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
         residuals,
         word_residuals,
         allen_residuals,
+        duration_residuals,
         anti_probes,
         slot_widths,
     }
@@ -119,7 +122,9 @@ fn lower_atom(
     // Pass 1 — variable positions: the first *domain* binding of each
     // variable (a scalar field, or an interval field read by value).
     // Membership positions bind no variable — they are conditions, lowered
-    // to filters in pass 2.
+    // to filters in pass 2. `Term::Duration` never appears in a binding
+    // (validation: `DurationInBinding`), so both passes match it
+    // unreachable.
     let mut vars: Vec<(FieldId, VarId)> = Vec::new();
     for (field, term) in &atom.bindings {
         if let Term::Var(var) = term {
@@ -206,6 +211,7 @@ fn lower_atom(
                     });
                 }
             }
+            Term::Duration(_) => unreachable!("validated: no measure in bindings"),
             Term::Literal(value) => {
                 let membership = matches!(field_type, ValueType::Interval { .. })
                     && !matches!(value, Value::IntervalU64(..) | Value::IntervalI64(..));

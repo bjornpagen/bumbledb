@@ -104,7 +104,8 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                     &[],
                     &[],
                     Vec::new(),
-                ),
+                )
+                .expect("no measure filters"),
                 &[],
                 columns,
             )
@@ -151,6 +152,7 @@ fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: vec![],
+        duration_residuals: Vec::new(),
         anti_probes,
         slot_widths,
     }

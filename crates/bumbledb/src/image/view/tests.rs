@@ -149,7 +149,7 @@ fn conjunction_over_mixed_width_fields_matches_the_naive_oracle() {
             value: Const::Word(u64::from_be_bytes(encode_i64(15))),
         },
     ];
-    let view = apply(&image, &predicates, &[], Vec::new());
+    let view = apply(&image, &predicates, &[], Vec::new()).expect("no measure filters");
     let expected = oracle(&env, &schema, |_, flag, a, _| {
         flag && (-10..15).contains(&a)
     });
@@ -169,7 +169,7 @@ fn same_fact_field_equality_pairs_work() {
         right: FieldId(3),
         op: CmpOp::Eq,
     }];
-    let view = apply(&image, &predicates, &[], Vec::new());
+    let view = apply(&image, &predicates, &[], Vec::new()).expect("no measure filters");
     let expected = oracle(&env, &schema, |_, _, a, b| a == b);
     assert_eq!(survivor_ids(&view), expected);
     assert!(!expected.is_empty(), "fixture exercises the equality");
@@ -187,7 +187,7 @@ fn unsatisfiable_filter_yields_an_empty_survivor_set() {
         op: CmpOp::Eq,
         value: Const::Word(u64::MAX),
     }];
-    let view = apply(&image, &predicates, &[], Vec::new());
+    let view = apply(&image, &predicates, &[], Vec::new()).expect("no measure filters");
     assert_eq!(view.len(), 0);
     assert!(view.is_empty());
     assert_eq!(view.positions().count(), 0);
@@ -200,7 +200,7 @@ fn no_predicates_yield_the_all_variant() {
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
     let image = build(&txn, &schema, R).expect("build");
-    let view = apply(&image, &[], &[], Vec::new());
+    let view = apply(&image, &[], &[], Vec::new()).expect("no measure filters");
     assert!(matches!(view, View::All(_)));
     assert_eq!(view.len(), 50);
     let positions: Vec<u32> = view.positions().collect();
@@ -227,7 +227,7 @@ fn cold_dual_output_matches_separate_build_and_apply() -> DbResult<()> {
         assert_eq!(image.column(field), reference.column(field));
     }
     // ...and the view equals apply() over that image.
-    let reapplied = apply(&image, &predicates, &[], Vec::new());
+    let reapplied = apply(&image, &predicates, &[], Vec::new()).expect("no measure filters");
     assert_eq!(
         view.positions().collect::<Vec<_>>(),
         reapplied.positions().collect::<Vec<_>>()
@@ -336,7 +336,10 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
         field: P_DURING,
         point: ResolvedWordSource::Word(w(9)),
     }];
-    assert_eq!(sorted_ids(&apply(&image, &at_nine, &[], Vec::new())), [2]);
+    assert_eq!(
+        sorted_ids(&apply(&image, &at_nine, &[], Vec::new()).expect("no measure filters")),
+        [2]
+    );
 
     // 2 == start of [2,9) (survives), == end of [-5,2) (dies), and an
     // interior point of [1,3).
@@ -345,7 +348,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
         point: ResolvedWordSource::Word(w(2)),
     }];
     assert_eq!(
-        sorted_ids(&apply(&image, &at_two, &[], Vec::new())),
+        sorted_ids(&apply(&image, &at_two, &[], Vec::new()).expect("no measure filters")),
         [1, 4, 5]
     );
 
@@ -355,7 +358,10 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
         point: ResolvedWordSource::Param(ParamId(0)),
     }];
     assert_eq!(
-        sorted_ids(&apply(&image, &via_param, &[Const::Word(w(9))], Vec::new())),
+        sorted_ids(
+            &apply(&image, &via_param, &[Const::Word(w(9))], Vec::new())
+                .expect("no measure filters")
+        ),
         [2]
     );
 }
@@ -372,21 +378,24 @@ fn any_point_in_matches_any_element_of_the_bound_set() {
     // {-4, 10}: -4 lies in [-5,2) (row 3), 10 in [9,12) (row 2).
     let params = [Const::WordSet(vec![w(-4), w(10)])];
     assert_eq!(
-        sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
+        sorted_ids(&apply(&image, &predicates, &params, Vec::new()).expect("no measure filters")),
         [2, 3]
     );
 
     // The empty set lies in no interval.
     let empty = [Const::WordSet(Vec::new())];
-    assert!(apply(&image, &predicates, &empty, Vec::new()).is_empty());
+    assert!(apply(&image, &predicates, &empty, Vec::new())
+        .expect("no measure filters")
+        .is_empty());
 }
 
 #[test]
 fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
     let dir = TempDir::new("view-interval-shapes");
     let image = interval_image(&dir);
-    let run =
-        |predicate: FilterPredicate| sorted_ids(&apply(&image, &[predicate], &[], Vec::new()));
+    let run = |predicate: FilterPredicate| {
+        sorted_ids(&apply(&image, &[predicate], &[], Vec::new()).expect("no measure filters"))
+    };
 
     // INTERSECTS: the point-sets share a point (the 9-bit composite).
     assert_eq!(
@@ -458,7 +467,7 @@ fn field_within_is_scalar_membership_in_the_constant_interval() {
         },
     }];
     assert_eq!(
-        sorted_ids(&apply(&image, &scalar_within, &[], Vec::new())),
+        sorted_ids(&apply(&image, &scalar_within, &[], Vec::new()).expect("no measure filters")),
         [1, 3, 4]
     );
 }
@@ -480,7 +489,7 @@ fn field_allen_classifies_against_the_constant_interval() {
             },
             mask,
         }];
-        sorted_ids(&apply(&image, &predicates, params, Vec::new()))
+        sorted_ids(&apply(&image, &predicates, params, Vec::new()).expect("no measure filters"))
     };
 
     // Value equality and its complement — the Eq/Ne derived facts.
@@ -534,7 +543,7 @@ fn interval_constants_compare_pairwise_under_eq() {
         },
     }];
     assert_eq!(
-        sorted_ids(&apply(&image, &predicates, &[], Vec::new())),
+        sorted_ids(&apply(&image, &predicates, &[], Vec::new()).expect("no measure filters")),
         [1]
     );
 }
@@ -550,7 +559,7 @@ fn param_set_eq_matches_any_element_over_a_scalar_column() {
     }];
     let params = [Const::WordSet(vec![1u64, 3])];
     assert_eq!(
-        sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
+        sorted_ids(&apply(&image, &predicates, &params, Vec::new()).expect("no measure filters")),
         [1, 3]
     );
 }

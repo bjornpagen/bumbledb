@@ -185,13 +185,17 @@ fn validate_rule(
     ctx.check_comparisons(rule)?;
     ctx.check_membership_domains()?;
     // The group key (non-aggregated find variables) is computed once and
-    // shared between the find checks and the witness.
+    // shared between the find checks and the witness. A measure find's
+    // variable is a group-key variable: the position projects a value per
+    // binding (the measure word), so its variable is grouped-by exactly
+    // like a plain projected variable — and an aggregate over it would be
+    // constant per group (`AggregateOverGroupKey`).
     let group_key: BTreeSet<VarId> = rule
         .finds
         .iter()
         .filter_map(|term| match term {
-            FindTerm::Var(var) => Some(*var),
-            FindTerm::Aggregate { .. } => None,
+            FindTerm::Var(var) | FindTerm::Duration(var) => Some(*var),
+            FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => None,
         })
         .collect();
     ctx.check_finds(rule, &group_key)?;
@@ -230,6 +234,8 @@ fn head_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
         .iter()
         .map(|term| match term {
             FindTerm::Var(var) => var_type(var),
+            // The measure is u64 by definition — projected or folded.
+            FindTerm::Duration(_) | FindTerm::AggregateDuration { .. } => ValueType::U64,
             FindTerm::Aggregate { op, over } => match op {
                 AggOp::Count => ValueType::U64,
                 AggOp::Sum

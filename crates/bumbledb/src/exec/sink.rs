@@ -50,6 +50,22 @@ pub enum FindSpec {
     /// A projected (group-key) variable: first binding slot + width in
     /// words (2 for an interval variable, 1 for everything else).
     Var { slot: usize, width: usize },
+    /// The measure at a find position: ONE projected u64 word computed
+    /// from the interval variable's two-slot span at `slot` —
+    /// `end − start`, the two-slot read + subtraction (docs/architecture/20-query-ir.md, § the measure). Exact
+    /// for both element types: the encodings are unit-spaced
+    /// order-preserving maps onto u64 words (u64 the identity, I64 the
+    /// +2⁶³ bias, which cancels in the difference), and the constructor
+    /// invariant `end > start` keeps it positive. `end == MAX` is the
+    /// ray — no finite measure: the sink poisons and the execution
+    /// raises the typed [`crate::Error::MeasureOfRay`].
+    Duration { slot: usize },
+    /// A fold over the measure (`Sum`/`Min`/`Max` of `Duration`): the
+    /// interval variable's two-slot span at `slot`, folded as an
+    /// unsigned u64 input — Sum in the wide accumulator with the single
+    /// finalize range check, like every Sum. Ray semantics as
+    /// [`FindSpec::Duration`].
+    AggDuration { op: FoldOp, slot: usize },
     /// A fold aggregate over a slot span (`over_slot: None` for the
     /// nullary Count; `over_width` > 1 only for `CountDistinct` — the
     /// arithmetic folds are validated scalar).
@@ -93,8 +109,74 @@ fn word_to_i64(word: u64) -> i64 {
     (word ^ (1 << 63)).cast_signed()
 }
 
+/// The measure over encoded interval words: `Some(end − start)`, or
+/// `None` for the ray (`end == MAX` is ∞ in both element encodings — no
+/// finite measure; the caller poisons and the execution raises the typed
+/// [`crate::Error::MeasureOfRay`]). One subtraction, exact for both
+/// element types (see [`FindSpec::Duration`]).
+fn measure(start: u64, end: u64) -> Option<u64> {
+    (end != u64::MAX).then(|| end - start)
+}
+
 fn i64_to_word(value: i64) -> u64 {
     u64::from_be_bytes(encode_i64(value))
+}
+
+/// One projected word's source: a binding slot read verbatim, or the
+/// measure of an interval variable's two-slot span (`end − start`, one
+/// computed word — [`FindSpec::Duration`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjSource {
+    Slot(usize),
+    Measure { start: usize },
+}
+
+impl ProjSource {
+    /// The plain slot — the measure-free fast paths' accessor (they run
+    /// only when the sink projects no measure).
+    fn plain_slot(self) -> usize {
+        match self {
+            Self::Slot(slot) => slot,
+            Self::Measure { .. } => unreachable!("measure sinks take the per-row paths"),
+        }
+    }
+}
+
+/// Expands find specs into projected word sources, find-**word** order:
+/// an interval find contributes its two consecutive slots (the
+/// `SlotWidth` layout), a measure find one computed word.
+pub(crate) fn sources_of(finds: &[FindSpec]) -> Vec<ProjSource> {
+    let mut sources = Vec::new();
+    extend_sources(finds, &mut sources);
+    sources
+}
+
+/// [`sources_of`]'s in-place body — the rule loop's re-aim path rebuilds
+/// into retained capacity (the warm allocation contract).
+fn extend_sources(finds: &[FindSpec], out: &mut Vec<ProjSource>) {
+    out.clear();
+    for spec in finds {
+        match spec {
+            FindSpec::Var { slot, width } => {
+                out.extend((*slot..slot + width).map(ProjSource::Slot));
+            }
+            FindSpec::Duration { slot } => out.push(ProjSource::Measure { start: *slot }),
+            FindSpec::Agg { .. } | FindSpec::AggDuration { .. } | FindSpec::Arg { .. } => {
+                unreachable!("projection sinks project plain variables and measures")
+            }
+        }
+    }
+}
+
+/// One projected word's batch-resolved source on the measured emit paths
+/// (rebuilt at batch/scan entry, per-word work): prefilled in the
+/// scratch row (outer slot, or an outer measure computed once), a batch
+/// key / leaf column word, or a measure over two key/column words.
+#[derive(Debug, Clone, Copy)]
+enum MeasuredSource {
+    Const,
+    Key(usize),
+    MeasureKeys(usize, usize),
 }
 
 /// The projection sink: dedups projected find tuples, and reports
@@ -102,10 +184,22 @@ fn i64_to_word(value: i64) -> u64 {
 /// nothing projection-relevant (D2 — legal for this sink only).
 #[derive(Debug)]
 pub struct ProjectionSink {
-    /// The projected binding slots in find-**word** order: an interval
+    /// The projected word sources in find-**word** order: an interval
     /// find contributes its two consecutive slots (the `SlotWidth` layout,
-    /// expanded by the constructor's caller from the plan's layout map).
-    slots: Vec<usize>,
+    /// expanded by the constructor's caller from the plan's layout map);
+    /// a measure find contributes ONE computed word
+    /// ([`ProjSource::Measure`]).
+    sources: Vec<ProjSource>,
+    /// Whether any source is a measure — the per-row measure paths'
+    /// gate; the measure-free fast paths are untouched when false.
+    has_measures: bool,
+    /// The measure poison: the first ray the projection reached
+    /// (`end == MAX` has no finite measure) — surfaced after the run as
+    /// the typed [`crate::Error::MeasureOfRay`].
+    ray: Option<[u64; 2]>,
+    /// The measured paths' batch-resolved sources, aligned with
+    /// `sources` (rebuilt at batch/scan entry; empty on the fast paths).
+    measured_sources: Vec<MeasuredSource>,
     seen: WordMap<()>,
     /// The disjoint-rules regime (docs/architecture/40-execution.md § set
     /// semantics): the rules are provably pairwise disjoint, so the
@@ -170,7 +264,28 @@ struct ArgSpec {
 /// signaled by mistake would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
+    /// The find specs in **derived-slot form**: the constructor rewrites
+    /// every measure spec onto a derived binding-scratch word —
+    /// `Duration { slot }` becomes `Var { slot: derived, width: 1 }` and
+    /// `AggDuration { op, slot }` becomes an unsigned
+    /// `Agg { over_slot: derived }` — so group keys, dedup keys, folds,
+    /// and finalize consume plain words with zero measure awareness. The
+    /// representation move: the measure gets a word in the sink's row,
+    /// not a branch in its folds.
     finds: Vec<FindSpec>,
+    /// The measure table behind the rewrite: (derived scratch word,
+    /// interval variable's first slot) — computed once per row landing
+    /// in `binding_scratch` (`fold_scratch_row`), ray-checked
+    /// (`end == MAX` poisons [`Self::ray`]). Non-empty forces the
+    /// per-row fold arm (`row_fold_only`): derived words exist only in
+    /// the scratch row, so no gather kernel or scan pushdown can read
+    /// them.
+    measures: Vec<(usize, usize)>,
+    /// The rule's real binding-slot count — `binding_scratch` extends
+    /// past it by one derived word per measure.
+    real_slots: usize,
+    /// The measure poison (see [`ProjectionSink::ray`]).
+    ray: Option<[u64; 2]>,
     /// Group-key slot spans (the `Var` specs, in find order): (first
     /// slot, width in words) — the `SlotWidth` layout, never assumed 1.
     group_spans: Vec<(usize, usize)>,

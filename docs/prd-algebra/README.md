@@ -89,8 +89,9 @@ witness form and consumers are recorded there and in
 per-rule chase and the rule-subsumption witness, with the refused
 NP-hard general form.
 
-Phase C — the temporal completions:
-- [10 — Measure: `Duration`](10-measure.md)
+Phase C — the temporal completions (10 — the measure — landed and
+retired; its rulings live in `20-query-ir.md` § the measure and
+`10-data-model.md`'s one-arithmetic sentence):
 - [11 — The sweep: one walk, two callers](11-sweep.md)
 - [12 — `Pack`: the coalescing fold](12-pack.md)
 
@@ -112,9 +113,9 @@ Phase F — the write side, the type ledger, and the surface ruling:
 Phase G — the intuition:
 - [21 — The cookbook: modeling intuition as schemas (doc unit)](21-cookbook.md)
 
-Dependency spine: Phase A (01–04) and Phase B (05–09) landed whole;
-10 free (its dependency, 02, landed); 11→12; 13/14 landed
-(residual landed with 01); 15 requires 05/10/12 (03 landed); 16 requires 15; 17–18 free
+Dependency spine: Phase A (01–04) and Phase B (05–09) landed whole, and
+10 followed; 11→12; 13/14 landed
+(residual landed with 01); 15 requires 05/12 (03 and 10 landed); 16 requires 15; 17–18 free
 (17's oracle rows fold into 15 if it lands first); 19 requires 18; 20
 requires 05 (its sweep and renderer target the rules-shaped IR); 23 requires
 05 and 20 and coordinates with 21 (the cookbook's queries are written in the

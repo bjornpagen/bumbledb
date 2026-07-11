@@ -420,6 +420,32 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
                 },
                 rule.var_type(*var).clone(),
             ),
+            // The measure positions: one u64 word computed from the
+            // interval variable's two-slot span (the sinks own the
+            // subtraction and the ray check — `exec::sink`).
+            FindTerm::Duration(var) => (
+                FindSpec::Duration {
+                    slot: exec_plan.slot_of(*var),
+                },
+                ValueType::U64,
+            ),
+            FindTerm::AggregateDuration { op, over } => (
+                FindSpec::AggDuration {
+                    op: match op {
+                        AggOp::Sum => crate::exec::sink::FoldOp::Sum,
+                        AggOp::Min => crate::exec::sink::FoldOp::Min,
+                        AggOp::Max => crate::exec::sink::FoldOp::Max,
+                        AggOp::Count
+                        | AggOp::CountDistinct
+                        | AggOp::ArgMax { .. }
+                        | AggOp::ArgMin { .. } => {
+                            unreachable!("validated: measure folds are Sum/Min/Max")
+                        }
+                    },
+                    slot: exec_plan.slot_of(*over),
+                },
+                ValueType::U64,
+            ),
             FindTerm::Aggregate { op, over } => match op {
                 // Arg-restriction: the carry's span plus the shared key
                 // slot (orderable — validated U64/I64, one word).
@@ -489,8 +515,11 @@ fn guard_find_table(
                         .expect("find slots come from the guard plan's layout");
                     Some((var.field, ty.clone()))
                 }
-                // aggregate guards keep the sink path
-                FindSpec::Agg { .. } | FindSpec::Arg { .. } => None,
+                // aggregate and measure guards keep the sink path
+                FindSpec::Agg { .. }
+                | FindSpec::Arg { .. }
+                | FindSpec::Duration { .. }
+                | FindSpec::AggDuration { .. } => None,
             })
             .collect::<Option<Vec<_>>>(),
         ExecPlan::FreeJoin(_) => None,
@@ -528,7 +557,19 @@ fn disjointness(
 /// deleted at plan time.
 fn union_elision(rules: &[PreparedRule]) -> bool {
     rules.iter().all(|rule| {
-        rule.plan.distinct_bindings() && head_reads_every_slot(&rule.finds, rule.plan.slot_count())
+        // A measure position breaks the within-rule leg outright:
+        // distinct bindings project through a NON-injective map (two
+        // distinct intervals may share one measure), so the dedup-key
+        // stream is not proven duplicate-free — the seen-set stays.
+        let no_measures = rule.finds.iter().all(|find| {
+            !matches!(
+                find,
+                FindSpec::Duration { .. } | FindSpec::AggDuration { .. }
+            )
+        });
+        no_measures
+            && rule.plan.distinct_bindings()
+            && head_reads_every_slot(&rule.finds, rule.plan.slot_count())
     })
 }
 
@@ -547,6 +588,10 @@ fn head_reads_every_slot(finds: &[FindSpec], slot_count: usize) -> bool {
                 over_width,
                 ..
             } => (*slot, *over_width),
+            // A measure reads its interval variable's two slots — but
+            // `union_elision` already refused measure heads, so the
+            // coverage answer here is moot; recorded for the read set.
+            FindSpec::Duration { slot } | FindSpec::AggDuration { slot, .. } => (*slot, 2),
             // The nullary Count reads nothing; Arg never crosses rules
             // (validation), so a multi-rule head cannot carry it.
             FindSpec::Agg {
@@ -578,21 +623,14 @@ fn make_sink(
 ) -> EitherSink {
     let all_plain = finds
         .iter()
-        .all(|spec| matches!(spec, FindSpec::Var { .. }));
+        .all(|spec| matches!(spec, FindSpec::Var { .. } | FindSpec::Duration { .. }));
     if all_plain {
-        // Word-level slot expansion through the layout map: an interval
-        // find contributes its two consecutive slots, so the projection
-        // sink's rows are word rows the finalize pass re-assembles by
-        // find type.
-        let slots = finds
-            .iter()
-            .flat_map(|spec| match spec {
-                FindSpec::Var { slot, width } => *slot..slot + width,
-                FindSpec::Agg { .. } | FindSpec::Arg { .. } => unreachable!("no aggregates here"),
-            })
-            .collect();
+        // Word-level source expansion through the layout map: an
+        // interval find contributes its two consecutive slots and a
+        // measure find one computed word, so the projection sink's rows
+        // are word rows the finalize pass re-assembles by find type.
         EitherSink::Projection(ProjectionSink::with_capacity_hint(
-            slots,
+            crate::exec::sink::sources_of(finds),
             hint,
             union && disjoint,
         ))

@@ -26,6 +26,7 @@ impl LeafPrecompute {
             && plan.nodes()[last].point_probes.is_empty()
             && plan.nodes()[last].word_residuals.is_empty()
             && plan.nodes()[last].allen_residuals.is_empty()
+            && plan.nodes()[last].duration_residuals.is_empty()
             && residual_slots[last]
                 .iter()
                 .all(|(_, _, _, width)| *width == 1)

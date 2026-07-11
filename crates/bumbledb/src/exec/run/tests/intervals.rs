@@ -110,6 +110,7 @@ fn interval_pair_query(
         residuals: vec![],
         word_residuals,
         allen_residuals,
+        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     }
@@ -413,6 +414,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: Vec::new(),
+        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     };
@@ -583,6 +585,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: Vec::new(),
+        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     };
@@ -679,6 +682,7 @@ fn negated_membership_rejects_only_covered_events() {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: vec![],
+        duration_residuals: Vec::new(),
         slot_widths: [(x, SlotWidth::One), (t, SlotWidth::One)]
             .into_iter()
             .collect(),
@@ -834,6 +838,7 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
                 rhs: VarId(3),
                 mask: MaskTerm::Literal(mask),
             }],
+            duration_residuals: Vec::new(),
             anti_probes: vec![],
             slot_widths: slot_widths.clone(),
         };

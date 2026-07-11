@@ -62,6 +62,7 @@ fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
         residuals: vec![],
         word_residuals: vec![],
         allen_residuals: vec![],
+        duration_residuals: Vec::new(),
         anti_probes: vec![],
         slot_widths,
     }

@@ -97,7 +97,8 @@ fn typing(query: &Query) -> Typing {
                 Term::Param(p) | Term::ParamSet(p) => {
                     t.scalar_params.insert(p.0);
                 }
-                Term::Literal(_) => {}
+                // The measure never appears in bindings (validated).
+                Term::Literal(_) | Term::Duration(_) => {}
             }
         }
     }
@@ -394,6 +395,7 @@ impl Coverage {
                     Term::Literal(_) => self.negation_literal += 1,
                     Term::Param(_) => self.negation_param += 1,
                     Term::ParamSet(_) => self.negation_set += 1,
+                    Term::Duration(_) => unreachable!("validated: no measure in bindings"),
                     Term::Var(var) => {
                         // Membership inside negation: an element-typed
                         // var at an interval field.
@@ -457,6 +459,15 @@ impl Coverage {
                             self.agg_u64 += 1;
                         }
                     }
+                }
+                // The measure positions: the generator does not emit them
+                // yet (PRD 15 adds the measure's oracle rows); counted as
+                // one projected word / one fold like their plain twins.
+                FindTerm::Duration(_) => {
+                    projected_words += 1;
+                }
+                FindTerm::AggregateDuration { .. } => {
+                    aggregates += 1;
                 }
             }
         }

@@ -56,6 +56,38 @@ pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out
     reference::filter_any_point_in_u64(starts, ends, points, out);
 }
 
+/// The measure scan — the one gather+subtract shape
+/// (docs/architecture/20-query-ir.md, § the measure): positions whose
+/// duration `ends[i] − starts[i]` lies within `lo..=hi`, appended
+/// in ascending order. The subtraction feeds the existing range shape —
+/// one fused stride-1 pass, NEON on the dense case per the port-topology
+/// law (subtraction is not flag-bound); strided/gathered callers stay
+/// scalar until measured, per the standing rule. Encoded-word
+/// subtraction is exact for both element types: the encodings are
+/// unit-spaced order-preserving maps onto u64 words (u64 the identity,
+/// I64 the +2⁶³ bias, which cancels), and the constructor invariant
+/// `end > start` keeps the difference positive.
+///
+/// # Errors
+///
+/// The first ray in scan order (`ends[i] == u64::MAX` — ∞ in both
+/// element encodings): a ray has no finite measure, and the caller
+/// raises the typed [`crate::Error::MeasureOfRay`]. `out`'s contents are
+/// unspecified after an error.
+pub fn filter_duration_range_u64(
+    starts: &[u64],
+    ends: &[u64],
+    lo: u64,
+    hi: u64,
+    out: &mut Vec<u32>,
+) -> Result<(), usize> {
+    debug_assert_eq!(starts.len(), ends.len(), "an interval span's column pair");
+    #[cfg(target_arch = "aarch64")]
+    return neon::filter_duration_range_u64(starts, ends, lo, hi, out);
+    #[cfg(not(target_arch = "aarch64"))]
+    reference::filter_duration_range_u64(starts, ends, lo, hi, out)
+}
+
 // The old interval-vs-constant comparison kernels (overlaps, contains,
 // within-over-pairs) are gone with their operators: interval-pair
 // predicates are Allen masks, evaluated by the configuration kernel

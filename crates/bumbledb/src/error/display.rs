@@ -497,6 +497,30 @@ impl fmt::Display for ValidationError {
             Self::NonOrderableArgKey { find } => {
                 write!(f, "find {find}: the Arg key must be U64 or I64")
             }
+            Self::DurationInBinding { atom, field } => write!(
+                f,
+                "atom {atom}, field {}: Duration is a computation, not a bindable value",
+                field.0
+            ),
+            Self::DurationOverNonInterval { var } => {
+                write!(
+                    f,
+                    "Duration over variable {}, which is not an interval",
+                    var.0
+                )
+            }
+            Self::DurationAggregateOp { find } => {
+                write!(f, "find {find}: Duration aggregates are Sum/Min/Max only")
+            }
+            Self::DurationComparisonOperator { index } => write!(
+                f,
+                "comparison {index}: Duration compares under order operators only"
+            ),
+            Self::DurationBothSides { index } => write!(
+                f,
+                "comparison {index}: Duration on both sides — one measure side \
+                 against a u64 term or literal"
+            ),
             Self::TooManyAtoms { count } => {
                 write!(f, "{count} atom occurrences exceed the planner cap")
             }
@@ -623,6 +647,11 @@ impl fmt::Display for Error {
                 "parameter {}: full Allen mask — every pair satisfies it; \
                  write no predicate",
                 param.0
+            ),
+            Self::MeasureOfRay { start, end } => write!(
+                f,
+                "Duration of a ray: encoded interval [{start}, {end}) has no finite \
+                 measure — exclude rays with an Allen guard or a bounded-end filter"
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")

@@ -1,6 +1,7 @@
 use super::{
     lower_literal::{lower_literal, point_word},
-    IntervalWord, Occurrence, PlacedAllen, PlacedComparison, PlacedWordComparison, VarWord,
+    IntervalWord, Occurrence, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
+    VarWord,
 };
 use crate::allen::AllenMask;
 use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
@@ -40,6 +41,7 @@ fn interval_const(constant: &Term) -> Const {
         Term::Literal(literal) => lower_literal(literal),
         Term::ParamSet(_) => unreachable!("validated: sets only under Eq"),
         Term::Var(_) => unreachable!("matched the var-var arm above"),
+        Term::Duration(_) => unreachable!("measure comparisons lower before this match"),
     }
 }
 
@@ -112,12 +114,28 @@ pub(super) fn place_comparisons(
     Vec<PlacedComparison>,
     Vec<PlacedWordComparison>,
     Vec<PlacedAllen>,
+    Vec<PlacedDuration>,
 ) {
     let mut residuals = Vec::new();
     let mut word_residuals = Vec::new();
     let mut allen_residuals = Vec::new();
+    let mut duration_residuals = Vec::new();
     for comparison in &rule.rule().predicates {
         let op = canonicalize(rule, comparison);
+        // The measure comparisons first (validation admitted exactly the
+        // order operators with one Duration side — 20-query-ir, § the
+        // measure): the two Term::Var arms below would otherwise claim
+        // the u64 variable side and misread the measure as a constant.
+        if let (Term::Duration(interval), other) | (other, Term::Duration(interval)) =
+            (&comparison.lhs, &comparison.rhs)
+        {
+            // The measure stays the left operand; a comparison written
+            // measure-second mirrors its operator (`flip`).
+            let measure_on_left = matches!(&comparison.lhs, Term::Duration(_));
+            let op = if measure_on_left { op } else { flip(op) };
+            place_duration(occurrences, &mut duration_residuals, *interval, op, other);
+            continue;
+        }
         match (&comparison.lhs, &comparison.rhs) {
             (Term::Var(lhs), Term::Var(rhs)) => {
                 let same_atom = occurrences
@@ -208,6 +226,9 @@ pub(super) fn place_comparisons(
                         },
                         Term::ParamSet(_) => unreachable!("validated: sets only under Eq"),
                         Term::Var(_) => unreachable!("matched the var-var arm above"),
+                        Term::Duration(_) => {
+                            unreachable!("measure comparisons lower before this match")
+                        }
                     },
                     // `constant ∋ var`: the variable's scalar field lies
                     // within the constant interval.
@@ -225,6 +246,9 @@ pub(super) fn place_comparisons(
                             Term::ParamSet(param) => Const::ParamSet(*param),
                             Term::Literal(literal) => lower_literal(literal),
                             Term::Var(_) => unreachable!("matched the var-var arm above"),
+                            Term::Duration(_) => {
+                                unreachable!("measure comparisons lower before this match")
+                            }
                         };
                         FilterPredicate::Compare { field, op, value }
                     }
@@ -234,5 +258,75 @@ pub(super) fn place_comparisons(
             _ => unreachable!("validated: constant comparisons are rejected"),
         }
     }
-    (residuals, word_residuals, allen_residuals)
+    (
+        residuals,
+        word_residuals,
+        allen_residuals,
+        duration_residuals,
+    )
+}
+
+/// Places one measure comparison, `Duration(interval) <op> other` (the
+/// measure already on the left). Constant sides and same-atom variable
+/// sides push down as filters on the measured variable's first positive
+/// occurrence — where the filter-order law holds: an occurrence's other
+/// filters (an `Allen` guard, a bounded-end filter) run first, so a
+/// guarded fact never reaches the subtraction
+/// ([`crate::image::view::FilterPredicate::DurationCompare`]). Only the
+/// cross-atom variable side becomes a residual ([`PlacedDuration`]).
+fn place_duration(
+    occurrences: &mut [Occurrence],
+    duration_residuals: &mut Vec<PlacedDuration>,
+    interval: VarId,
+    op: CmpOp,
+    other: &Term,
+) {
+    let (occ_idx, interval_field) = field_of(occurrences, interval);
+    match other {
+        Term::Var(scalar) => {
+            // Same-atom when the u64 variable is bound on the measured
+            // variable's occurrence; cross-atom is the residual.
+            let same_atom = occurrences[occ_idx]
+                .vars
+                .iter()
+                .find(|(_, v)| v == scalar)
+                .map(|(field, _)| *field);
+            match same_atom {
+                Some(scalar_field) => {
+                    occurrences[occ_idx]
+                        .filters
+                        .push(FilterPredicate::DurationFieldsCompare {
+                            interval: interval_field,
+                            op,
+                            scalar: scalar_field,
+                        });
+                }
+                None => duration_residuals.push(PlacedDuration {
+                    interval,
+                    op,
+                    scalar: *scalar,
+                }),
+            }
+        }
+        Term::Param(param) => {
+            occurrences[occ_idx]
+                .filters
+                .push(FilterPredicate::DurationCompare {
+                    field: interval_field,
+                    op,
+                    value: Const::Param(*param),
+                });
+        }
+        Term::Literal(literal) => {
+            occurrences[occ_idx]
+                .filters
+                .push(FilterPredicate::DurationCompare {
+                    field: interval_field,
+                    op,
+                    value: lower_literal(literal),
+                });
+        }
+        Term::ParamSet(_) => unreachable!("validated: sets only under Eq"),
+        Term::Duration(_) => unreachable!("validated: one measure side per comparison"),
+    }
 }

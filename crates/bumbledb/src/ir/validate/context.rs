@@ -314,6 +314,15 @@ impl Context {
             Term::Literal(value) => {
                 check_interval_field_literal(occ_idx, field, element, value)?;
             }
+            // The measure is a computation over a bound variable, not a
+            // bindable value (docs/architecture/20-query-ir.md, § the
+            // measure).
+            Term::Duration(_) => {
+                return Err(ValidationError::DurationInBinding {
+                    atom: occ_idx,
+                    field,
+                });
+            }
         }
         Ok(())
     }
@@ -345,6 +354,12 @@ impl Context {
             Term::ParamSet(param) => {
                 self.note_param_kind(*param, ParamKind::Set)?;
                 self.anchor_param_mono(*param, field_type)?;
+            }
+            Term::Duration(_) => {
+                return Err(ValidationError::DurationInBinding {
+                    atom: occ_idx,
+                    field,
+                });
             }
             Term::Literal(value) => match literal_matches(value, field_type) {
                 Ok(()) => {}
@@ -428,14 +443,32 @@ impl Context {
                     return Err(ValidationError::SelfComparison { index });
                 }
             }
+            // The measure's comparison discipline (20-query-ir, § the
+            // measure): one `Duration` side at most, and only under the
+            // order operators — every other operator is a typed
+            // rejection here, so the typed phase below never sees a
+            // measure outside `check_order`.
+            match (lhs, rhs) {
+                (Term::Duration(_), Term::Duration(_)) => {
+                    return Err(ValidationError::DurationBothSides { index });
+                }
+                (Term::Duration(_), _) | (_, Term::Duration(_))
+                    if !matches!(op, CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge) =>
+                {
+                    return Err(ValidationError::DurationComparisonOperator { index });
+                }
+                _ => {}
+            }
             // A comparison with no variable side is a constant comparison —
-            // write the query you mean.
-            if !matches!(lhs, Term::Var(_)) && !matches!(rhs, Term::Var(_)) {
+            // write the query you mean (a measure varies with its bound
+            // variable, so it is a variable side).
+            let varies = |term: &Term| matches!(term, Term::Var(_) | Term::Duration(_));
+            if !varies(lhs) && !varies(rhs) {
                 return Err(ValidationError::ConstantComparison { index });
             }
             for term in [lhs, rhs] {
                 match term {
-                    Term::Var(var) => {
+                    Term::Var(var) | Term::Duration(var) => {
                         if !self.var_slots.contains_key(var) {
                             return Err(ValidationError::ComparisonOnlyVariable { var: *var });
                         }
@@ -496,6 +529,10 @@ impl Context {
                 _ => None,
             },
             Term::Literal(value) => literal_anchor_type(value),
+            // The measure is u64-valued by definition, whatever its
+            // variable resolves to (the interval requirement is checked
+            // in `check_order` against final types).
+            Term::Duration(_) => Some(ValueType::U64),
         }
     }
 
@@ -526,8 +563,9 @@ impl Context {
                 _ => false,
             },
             // A set never takes an interval type; its collapse would be
-            // its own error, diagnosed in `comparison_types`.
-            Term::ParamSet(_) | Term::Literal(_) => false,
+            // its own error, diagnosed in `comparison_types` — and a
+            // measure names its own type (u64), never its variable's.
+            Term::ParamSet(_) | Term::Literal(_) | Term::Duration(_) => false,
         }
     }
 
@@ -615,18 +653,32 @@ impl Context {
                 self.anchor_param_mono(*param, &var_type)?;
             }
             Term::Literal(value) => self.check_literal_against(index, value, &var_type)?,
+            Term::Duration(_) => {
+                unreachable!("comparison_shapes admits measures under order operators only")
+            }
         }
         Ok(())
     }
 
-    /// `Lt`/`Le`/`Gt`/`Ge`: U64/U64 and I64/I64 only. An interval operand
-    /// gets the dedicated diagnostic — the predictable mistake gets the
-    /// good error.
+    /// `Lt`/`Le`/`Gt`/`Ge`: U64/U64 and I64/I64 only — plus the measure
+    /// side, `Duration(v)`, whose variable must have resolved to an
+    /// interval and whose value side is u64 (20-query-ir, § the
+    /// measure). An interval operand gets the dedicated diagnostic — the
+    /// predictable mistake gets the good error.
     fn check_order(&mut self, index: usize, lhs: &Term, rhs: &Term) -> Result<(), ValidationError> {
         for term in [lhs, rhs] {
             if matches!(self.term_mono_type(term), Some(ValueType::Interval { .. })) {
                 return Err(ValidationError::OrderComparisonOnInterval { index });
             }
+        }
+        // The measure side, if any (comparison_shapes admitted at most
+        // one): the measured variable must be an interval; the other
+        // side checks against u64 exactly as a u64 variable side would.
+        if let (Term::Duration(var), other) | (other, Term::Duration(var)) = (lhs, rhs) {
+            if !matches!(self.resolved_var_type(*var), ValueType::Interval { .. }) {
+                return Err(ValidationError::DurationOverNonInterval { var: *var });
+            }
+            return self.check_order_side(index, other, &ValueType::U64);
         }
         let (var, other) = match (lhs, rhs) {
             (Term::Var(var), other) | (other, Term::Var(var)) => (*var, other),
@@ -636,15 +688,29 @@ impl Context {
         if !matches!(var_type, ValueType::U64 | ValueType::I64) {
             return Err(ValidationError::IllegalComparison { index });
         }
+        self.check_order_side(index, other, &var_type)
+    }
+
+    /// One order comparison's non-anchoring side against the anchoring
+    /// side's resolved type (a variable's, or u64 for a measure).
+    fn check_order_side(
+        &mut self,
+        index: usize,
+        other: &Term,
+        expected: &ValueType,
+    ) -> Result<(), ValidationError> {
         match other {
             Term::Var(other_var) => {
-                if *self.resolved_var_type(*other_var) != var_type {
+                if self.resolved_var_type(*other_var) != expected {
                     return Err(ValidationError::IllegalComparison { index });
                 }
             }
-            Term::Param(param) => self.anchor_param_mono(*param, &var_type)?,
+            Term::Param(param) => self.anchor_param_mono(*param, expected)?,
             Term::ParamSet(_) => unreachable!("comparison_shapes rejected sets under order ops"),
-            Term::Literal(value) => self.check_literal_against(index, value, &var_type)?,
+            Term::Literal(value) => self.check_literal_against(index, value, expected)?,
+            Term::Duration(_) => {
+                unreachable!("comparison_shapes rejected two-measure comparisons")
+            }
         }
         Ok(())
     }
@@ -670,6 +736,9 @@ impl Context {
             Term::Param(param) => self.anchor_param_mono(*param, &var_type)?,
             Term::ParamSet(_) => unreachable!("comparison_shapes rejected sets under Allen"),
             Term::Literal(value) => self.check_literal_against(index, value, &var_type)?,
+            Term::Duration(_) => {
+                unreachable!("comparison_shapes admits measures under order operators only")
+            }
         }
         Ok(())
     }
@@ -719,6 +788,9 @@ impl Context {
             Term::ParamSet(_) => {
                 unreachable!("comparison_shapes rejected sets under Contains")
             }
+            Term::Duration(_) => {
+                unreachable!("comparison_shapes admits measures under order operators only")
+            }
         };
         match rhs {
             Term::Var(var) => {
@@ -744,6 +816,9 @@ impl Context {
             },
             Term::ParamSet(_) => {
                 unreachable!("comparison_shapes rejected sets under Contains")
+            }
+            Term::Duration(_) => {
+                unreachable!("comparison_shapes admits measures under order operators only")
             }
         }
         Ok(())

@@ -9,6 +9,7 @@ use crate::schema::ValueType;
 use std::collections::BTreeSet;
 
 impl Context {
+    #[allow(clippy::too_many_lines)] // the aggregate roster, one arm per shape
     pub(super) fn check_finds(
         &self,
         rule: &LoweredRule,
@@ -24,6 +25,37 @@ impl Context {
                 FindTerm::Var(var) => {
                     if !self.atom_vars.contains(var) {
                         return Err(ValidationError::UnboundFindVariable { var: *var });
+                    }
+                }
+                // The measure positions (20-query-ir, § the measure):
+                // both require an atom-bound, interval-resolved variable;
+                // the fold form admits Sum/Min/Max only and folds a u64
+                // input, so the aggregate-input type rule is satisfied by
+                // construction.
+                FindTerm::Duration(var) => {
+                    if !self.atom_vars.contains(var) {
+                        return Err(ValidationError::UnboundFindVariable { var: *var });
+                    }
+                    if !matches!(self.resolved_var_type(*var), ValueType::Interval { .. }) {
+                        return Err(ValidationError::DurationOverNonInterval { var: *var });
+                    }
+                }
+                FindTerm::AggregateDuration { op, over } => {
+                    fold_seen = true;
+                    if !matches!(op, AggOp::Sum | AggOp::Min | AggOp::Max) {
+                        return Err(ValidationError::DurationAggregateOp { find: find_idx });
+                    }
+                    if !self.atom_vars.contains(over) {
+                        return Err(ValidationError::UnboundFindVariable { var: *over });
+                    }
+                    if !matches!(self.resolved_var_type(*over), ValueType::Interval { .. }) {
+                        return Err(ValidationError::DurationOverNonInterval { var: *over });
+                    }
+                    if group_key.contains(over) {
+                        return Err(ValidationError::AggregateOverGroupKey { find: find_idx });
+                    }
+                    if arg_seen {
+                        return Err(ValidationError::MixedArgAndFold { find: find_idx });
                     }
                 }
                 FindTerm::Aggregate { op, over } => {

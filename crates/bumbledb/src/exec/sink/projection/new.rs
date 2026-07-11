@@ -1,15 +1,14 @@
-use crate::exec::sink::{FindSpec, ProjectionSink};
+use crate::exec::sink::{extend_sources, FindSpec, ProjSource, ProjectionSink};
 use crate::exec::wordmap::WordMap;
 
 impl ProjectionSink {
-    /// `slots`: the projected binding slots in find-**word** order — an
-    /// interval find contributes both its consecutive slots (the
-    /// `SlotWidth` layout; callers expand widths through the plan's layout
-    /// map). (Tests; production sinks are hint-sized.)
+    /// `sources`: the projected word sources in find-**word** order (see
+    /// [`crate::exec::sink::sources_of`]). (Tests; production sinks are
+    /// hint-sized.)
     #[cfg(test)]
     #[must_use]
     pub fn new(slots: Vec<usize>) -> Self {
-        Self::with_capacity_hint(slots, 0, false)
+        Self::with_capacity_hint(slots.into_iter().map(ProjSource::Slot).collect(), 0, false)
     }
 
     /// Presized construction: `hint` is the plan's
@@ -20,10 +19,16 @@ impl ProjectionSink {
     /// guard is dropped — [`Self::aim`] drains the map per rule — while
     /// per-rule dedup stays, as the semantics require.
     #[must_use]
-    pub fn with_capacity_hint(slots: Vec<usize>, hint: usize, disjoint: bool) -> Self {
-        let arity = slots.len();
+    pub fn with_capacity_hint(sources: Vec<ProjSource>, hint: usize, disjoint: bool) -> Self {
+        let arity = sources.len();
+        let has_measures = sources
+            .iter()
+            .any(|s| matches!(s, ProjSource::Measure { .. }));
         Self {
-            slots,
+            sources,
+            has_measures,
+            ray: None,
+            measured_sources: Vec::new(),
             seen: WordMap::with_capacity_hint(arity, hint),
             disjoint,
             rows: Vec::new(),
@@ -34,7 +39,7 @@ impl ProjectionSink {
         }
     }
 
-    /// Re-aims the projected slots at one rule's binding layout (the
+    /// Re-aims the projected sources at one rule's binding layout (the
     /// rule loop, docs/architecture/40-execution.md): the head's word
     /// arity is fixed — types and widths are the head's — but each rule
     /// supplies its own slots. Spanning regime: the seen-set is untouched
@@ -53,15 +58,13 @@ impl ProjectionSink {
             }
             self.seen.clear();
         }
-        self.slots.clear();
-        self.slots.extend(finds.iter().flat_map(|spec| match spec {
-            FindSpec::Var { slot, width } => *slot..slot + width,
-            FindSpec::Agg { .. } | FindSpec::Arg { .. } => {
-                unreachable!("projection sinks project plain variables")
-            }
-        }));
+        extend_sources(finds, &mut self.sources);
+        self.has_measures = self
+            .sources
+            .iter()
+            .any(|s| matches!(s, ProjSource::Measure { .. }));
         debug_assert_eq!(
-            self.slots.len(),
+            self.sources.len(),
             self.scratch.len(),
             "one head, fixed word arity"
         );
@@ -89,6 +92,14 @@ impl ProjectionSink {
         self.len() == 0
     }
 
+    /// The measure poison: the first ray a projected measure reached —
+    /// the execution's answer is the typed
+    /// [`crate::Error::MeasureOfRay`], checked after the rule loop.
+    #[must_use]
+    pub fn measure_of_ray(&self) -> Option<[u64; 2]> {
+        self.ray
+    }
+
     /// The differential guard's override: back to the spanning regime,
     /// so a covered query runs both ways — the elision is *never*
     /// semantic, and forced-off results must be byte-identical.
@@ -102,5 +113,6 @@ impl ProjectionSink {
     pub fn reset(&mut self) {
         self.rows.clear();
         self.seen.clear();
+        self.ray = None;
     }
 }

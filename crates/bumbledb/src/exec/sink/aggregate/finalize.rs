@@ -46,6 +46,9 @@ impl AggregateSink {
                     FindSpec::Arg { .. } => {
                         unreachable!("validated: Arg terms and folds never mix")
                     }
+                    FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
+                        unreachable!("the constructor's rewrite ran")
+                    }
                 }
             }
             emit(row_scratch)?;
@@ -81,6 +84,9 @@ impl AggregateSink {
                     }
                     FindSpec::Agg { .. } => {
                         unreachable!("validated: Arg terms and folds never mix")
+                    }
+                    FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
+                        unreachable!("the constructor's rewrite ran")
                     }
                 }
             }

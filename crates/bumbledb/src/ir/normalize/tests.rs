@@ -149,7 +149,8 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
     commit(delta, &env).expect("commit");
     let txn = env.read_txn().expect("txn");
     let image = crate::image::build(&txn, &schema, R).expect("build");
-    let filtered = crate::image::view::apply(&image, &norm.occurrences[0].filters, &[], Vec::new());
+    let filtered = crate::image::view::apply(&image, &norm.occurrences[0].filters, &[], Vec::new())
+        .expect("no measure filters");
     // Exactly the a == b rows survive.
     let ids: Vec<u64> = filtered
         .positions()

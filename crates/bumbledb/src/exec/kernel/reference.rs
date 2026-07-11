@@ -61,6 +61,31 @@ pub fn allen_keep(codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
     }
 }
 
+/// Scalar reference of [`super::filter_duration_range_u64`]: the ray
+/// test first (`end == MAX` is the first-in-scan-order error), then the
+/// exact encoded-word subtraction against the inclusive range.
+pub fn filter_duration_range_u64(
+    starts: &[u64],
+    ends: &[u64],
+    lo: u64,
+    hi: u64,
+    out: &mut Vec<u32>,
+) -> Result<(), usize> {
+    let start = out.len();
+    out.resize(start + starts.len(), 0);
+    let mut write = start;
+    for i in 0..starts.len() {
+        if ends[i] == u64::MAX {
+            return Err(i);
+        }
+        let duration = ends[i] - starts[i];
+        out[write] = u32::try_from(i).expect("positions fit u32");
+        write += usize::from((lo..=hi).contains(&duration));
+    }
+    out.truncate(write);
+    Ok(())
+}
+
 /// Branchless cursor-write over the whole column.
 fn push_matching(len: usize, out: &mut Vec<u32>, keep: impl Fn(usize) -> bool) {
     let start = out.len();

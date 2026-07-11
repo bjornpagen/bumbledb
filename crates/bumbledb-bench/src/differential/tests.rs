@@ -5,6 +5,7 @@
 //! chase differential ([`chase`]).
 
 mod chase;
+mod measure;
 
 use std::path::{Path, PathBuf};
 

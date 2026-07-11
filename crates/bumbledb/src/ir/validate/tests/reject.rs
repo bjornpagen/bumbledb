@@ -905,3 +905,173 @@ fn rejects_a_mask_param_with_a_value_anchor() {
         ValidationError::ParamTypeConflict { param: ParamId(0) }
     ));
 }
+
+// --- The measure's typed rejections (20-query-ir § the measure: every other position) ---
+
+/// A `Duration` rule with the interval variable bound on `Posting.span`
+/// and the given predicate — the measure rejection fixtures' one shape.
+fn duration_predicate(comparison: Comparison) -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(POSTING, vec![(0, var(0)), (SPAN, var(1))])],
+        negated: vec![],
+        predicates: vec![PredicateTree::Leaf(comparison)],
+    })
+}
+
+#[test]
+fn rejects_duration_in_a_binding() {
+    // The measure is a computation, not a bindable value.
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![atom(
+            POSTING,
+            vec![(0, var(0)), (1, Term::Duration(VarId(1))), (SPAN, var(1))],
+        )],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::DurationInBinding {
+            atom: 0,
+            field: FieldId(1)
+        }
+    ));
+}
+
+#[test]
+fn rejects_duration_over_a_non_interval_variable() {
+    // Var 1 is I64 (Posting.amount): the measure is defined by the
+    // interval denotation and by nothing else.
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(POSTING, vec![(0, var(0)), (2, var(1))])],
+        negated: vec![],
+        predicates: vec![PredicateTree::Leaf(Comparison {
+            op: CmpOp::Gt,
+            lhs: Term::Duration(VarId(1)),
+            rhs: Term::Literal(Value::U64(5)),
+        })],
+    });
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::DurationOverNonInterval { var: VarId(1) }
+    ));
+}
+
+#[test]
+fn rejects_a_duration_find_over_a_non_interval_variable() {
+    let query = simple(
+        vec![FindTerm::Duration(VarId(0))],
+        vec![atom(POSTING, vec![(1, var(0))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::DurationOverNonInterval { var: VarId(0) }
+    ));
+}
+
+#[test]
+fn rejects_a_duration_aggregate_outside_sum_min_max() {
+    // Count is nullary; CountDistinct and the Arg ops are refused too.
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::AggregateDuration {
+                op: AggOp::CountDistinct,
+                over: VarId(1),
+            },
+        ],
+        vec![atom(POSTING, vec![(0, var(0)), (SPAN, var(1))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::DurationAggregateOp { find: 1 }
+    ));
+}
+
+#[test]
+fn rejects_duration_under_equality() {
+    // Only the order comparisons take a measure side.
+    let query = duration_predicate(Comparison {
+        op: CmpOp::Eq,
+        lhs: Term::Duration(VarId(1)),
+        rhs: Term::Literal(Value::U64(5)),
+    });
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::DurationComparisonOperator { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_duration_on_both_sides() {
+    let query = duration_predicate(Comparison {
+        op: CmpOp::Lt,
+        lhs: Term::Duration(VarId(1)),
+        rhs: Term::Duration(VarId(1)),
+    });
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::DurationBothSides { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_duration_against_a_non_u64_side() {
+    // Posting.amount is I64: the measure's value side is u64.
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(
+            POSTING,
+            vec![(0, var(0)), (2, var(2)), (SPAN, var(1))],
+        )],
+        negated: vec![],
+        predicates: vec![PredicateTree::Leaf(Comparison {
+            op: CmpOp::Gt,
+            lhs: Term::Duration(VarId(1)),
+            rhs: var(2),
+        })],
+    });
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::IllegalComparison { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_a_duration_fold_over_a_group_key_variable() {
+    // Duration(v) projected makes v a group-key variable, so a fold over
+    // its measure is constant per group.
+    let query = simple(
+        vec![
+            FindTerm::Duration(VarId(1)),
+            FindTerm::AggregateDuration {
+                op: AggOp::Sum,
+                over: VarId(1),
+            },
+        ],
+        vec![atom(POSTING, vec![(0, var(0)), (SPAN, var(1))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::AggregateOverGroupKey { find: 1 }
+    ));
+}
+
+#[test]
+fn rejects_a_comparison_only_duration_variable() {
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(POSTING, vec![(0, var(0))])],
+        negated: vec![],
+        predicates: vec![PredicateTree::Leaf(Comparison {
+            op: CmpOp::Gt,
+            lhs: Term::Duration(VarId(9)),
+            rhs: Term::Literal(Value::U64(5)),
+        })],
+    });
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::ComparisonOnlyVariable { var: VarId(9) }
+    ));
+}

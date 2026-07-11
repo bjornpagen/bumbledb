@@ -1,6 +1,43 @@
 use crate::exec::sink::{AggregateSink, ArgSpec, FindSpec, FoldOp};
 use crate::exec::wordmap::WordMap;
 
+/// The derived-slot rewrite (the measure's representation move (20-query-ir § the measure)): every
+/// measure spec becomes a plain word spec over a **derived scratch
+/// word** past the rule's real slots, and the measure table records
+/// (derived word, interval slot) for the one place the subtraction runs
+/// (`fold_scratch_row`). Group keys, dedup keys, folds, and finalize
+/// then consume plain words with zero measure awareness — the measure is
+/// a word in the row, not a branch in the folds.
+fn rewrite_measures(finds: &mut [FindSpec], slot_count: usize, measures: &mut Vec<(usize, usize)>) {
+    measures.clear();
+    for find in finds {
+        let (op_slot, rewritten) = match *find {
+            FindSpec::Duration { slot } => (
+                slot,
+                FindSpec::Var {
+                    slot: slot_count + measures.len(),
+                    width: 1,
+                },
+            ),
+            FindSpec::AggDuration { op, slot } => (
+                slot,
+                FindSpec::Agg {
+                    op,
+                    over_slot: Some(slot_count + measures.len()),
+                    over_width: 1,
+                    // The measure is u64 — the unsigned wide accumulator
+                    // with the single finalize range check, like every
+                    // Sum(U64).
+                    signed: false,
+                },
+            ),
+            FindSpec::Var { .. } | FindSpec::Agg { .. } | FindSpec::Arg { .. } => continue,
+        };
+        measures.push((slot_count + measures.len(), op_slot));
+        *find = rewritten;
+    }
+}
+
 impl AggregateSink {
     /// Builds the sink. `slot_count` is the plan's binding-slot count in
     /// **words** (an interval variable holds two — the `SlotWidth` layout);
@@ -31,18 +68,27 @@ impl AggregateSink {
     /// elision is a representation (`seen: None`), never a hot-loop
     /// branch.
     #[must_use]
+    #[allow(clippy::too_many_lines)] // one table per sink concern, in order
     pub fn with_capacity_hint(
-        finds: Vec<FindSpec>,
+        mut finds: Vec<FindSpec>,
         slot_count: usize,
         distinct: bool,
         union: bool,
         hint: usize,
     ) -> Self {
+        // The measure rewrite first: everything below sees plain word
+        // specs over the extended scratch row.
+        let mut measures = Vec::new();
+        rewrite_measures(&mut finds, slot_count, &mut measures);
+        let scratch_words = slot_count + measures.len();
         let group_spans: Vec<(usize, usize)> = finds
             .iter()
             .filter_map(|f| match f {
                 FindSpec::Var { slot, width } => Some((*slot, *width)),
                 FindSpec::Agg { .. } | FindSpec::Arg { .. } => None,
+                FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
+                    unreachable!("rewrite_measures ran")
+                }
             })
             .collect();
         let key_words: usize = group_spans.iter().map(|(_, width)| width).sum();
@@ -55,6 +101,9 @@ impl AggregateSink {
             .filter_map(|f| match f {
                 FindSpec::Arg { width, .. } => Some(*width),
                 FindSpec::Var { .. } | FindSpec::Agg { .. } => None,
+                FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
+                    unreachable!("rewrite_measures ran")
+                }
             })
             .sum();
         // Validation guarantees every Arg term names one key and one
@@ -66,16 +115,26 @@ impl AggregateSink {
                 max: *max,
             }),
             FindSpec::Var { .. } | FindSpec::Agg { .. } => None,
+            FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
+                unreachable!("rewrite_measures ran")
+            }
         });
         debug_assert!(
             finds.iter().all(|f| match f {
                 FindSpec::Arg { key_slot, max, .. } =>
                     arg.is_some_and(|spec| spec.key_slot == *key_slot && spec.max == *max),
-                FindSpec::Var { .. } | FindSpec::Agg { .. } => true,
+                FindSpec::Var { .. }
+                | FindSpec::Agg { .. }
+                | FindSpec::Duration { .. }
+                | FindSpec::AggDuration { .. } => true,
             }),
             "validated: all Arg terms share one key and one direction"
         );
+        // Measures fold per row too: their derived words exist only in
+        // the scratch row, so no gather kernel or scan pushdown can read
+        // them.
         let row_fold_only = arg.is_some()
+            || !measures.is_empty()
             || finds.iter().any(|f| {
                 matches!(
                     f,
@@ -96,12 +155,12 @@ impl AggregateSink {
         Self {
             groups: WordMap::with_capacity_hint(key_words, hint.min(4096)),
             key_scratch: vec![0; key_words],
-            binding_scratch: vec![0; slot_count],
+            binding_scratch: vec![0; scratch_words],
             // Single-rule: whole-binding key. Multi-rule: head-projection
             // key. Either is elided exactly when the caller proved its
             // stream duplicate-free (`distinct`).
             seen: (!distinct).then(|| {
-                WordMap::with_capacity_hint(if union { union_words } else { slot_count }, hint)
+                WordMap::with_capacity_hint(if union { union_words } else { scratch_words }, hint)
             }),
             union_scratch: vec![0; union_words],
             union_spans,
@@ -123,6 +182,9 @@ impl AggregateSink {
             group_probes: 0,
             group_spans,
             finds,
+            measures,
+            real_slots: slot_count,
+            ray: None,
             accs: Vec::new(),
             n_aggs,
         }
@@ -139,22 +201,34 @@ impl AggregateSink {
         debug_assert_eq!(finds.len(), self.finds.len(), "one head, fixed arity");
         self.finds.clear();
         self.finds.extend_from_slice(finds);
+        // The measure rewrite, per rule: derived words sit past this
+        // rule's real slots (the head's measure positions are fixed, so
+        // the measure count never changes across rules) — rebuilt into
+        // retained capacity (the warm allocation contract).
+        let mut measures = std::mem::take(&mut self.measures);
+        rewrite_measures(&mut self.finds, slot_count, &mut measures);
+        self.measures = measures;
+        self.real_slots = slot_count;
         self.group_spans.clear();
         self.group_spans
-            .extend(finds.iter().filter_map(|f| match f {
+            .extend(self.finds.iter().filter_map(|f| match f {
                 FindSpec::Var { slot, width } => Some((*slot, *width)),
                 FindSpec::Agg { .. } | FindSpec::Arg { .. } => None,
+                FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
+                    unreachable!("rewrite_measures ran")
+                }
             }));
         if let Some(spans) = &mut self.union_spans {
             spans.clear();
-            spans.extend(finds.iter().filter_map(union_span));
+            spans.extend(self.finds.iter().filter_map(union_span));
         }
         debug_assert!(
-            self.arg.is_none() && !finds.iter().any(|f| matches!(f, FindSpec::Arg { .. })),
+            self.arg.is_none() && !self.finds.iter().any(|f| matches!(f, FindSpec::Arg { .. })),
             "validated: Arg-restriction never crosses rules"
         );
         self.binding_scratch.clear();
-        self.binding_scratch.resize(slot_count, 0);
+        self.binding_scratch
+            .resize(slot_count + self.measures.len(), 0);
     }
 
     /// Groups held (finalize's reservation).
@@ -219,9 +293,18 @@ impl AggregateSink {
         self.accs.clear();
         self.value_sets_live = 0;
         self.arg_best.clear();
+        self.ray = None;
         if let Some(seen) = &mut self.seen {
             seen.clear();
         }
+    }
+
+    /// The measure poison: the first ray a measure position reached —
+    /// the execution's answer is the typed
+    /// [`crate::Error::MeasureOfRay`], checked after the rule loop.
+    #[must_use]
+    pub fn measure_of_ray(&self) -> Option<[u64; 2]> {
+        self.ray
     }
 }
 
@@ -243,6 +326,9 @@ fn union_span(find: &FindSpec) -> Option<(usize, usize)> {
             over_slot: None, ..
         } => None,
         FindSpec::Arg { .. } => unreachable!("validated: no Arg across rules"),
+        FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
+            unreachable!("rewrite_measures ran")
+        }
     }
 }
 

@@ -467,8 +467,25 @@ fn resolve_filter_into(
                 mask: MaskConst::Mask(crate::image::view::mask_of(*mask, params)),
             };
         }
+        // The measure-vs-constant kind: the u64 bound resolves like any
+        // scalar param (numeric — never a dictionary miss, and order
+        // operators have no Eq short-circuit).
+        FilterPredicate::DurationCompare { field, op, value } => {
+            let resolved = match value {
+                Const::Word(_) => value.clone(),
+                Const::Param(param) => params[usize::from(param.0)].clone(),
+                _ => unreachable!("validated: a measure compares against a u64 word"),
+            };
+            *dst = FilterPredicate::DurationCompare {
+                field: *field,
+                op: *op,
+                value: resolved,
+            };
+        }
         // Constant-free kinds copy through (cheap: field ids only).
-        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsContainPoint { .. } => {
+        FilterPredicate::FieldsCompare { .. }
+        | FilterPredicate::FieldsContainPoint { .. }
+        | FilterPredicate::DurationFieldsCompare { .. } => {
             dst.clone_from(template);
         }
     }

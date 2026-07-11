@@ -9,7 +9,8 @@
 use crate::image::view::{Const, FilterPredicate};
 use crate::image::ColumnSpan;
 use crate::ir::normalize::{
-    AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedWordComparison, Role, SlotWidth,
+    AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison, Role,
+    SlotWidth,
 };
 use crate::ir::VarId;
 use crate::schema::{FieldId, RelationId};
@@ -88,6 +89,8 @@ pub enum PlanError {
     UnplacedWordResidual { residual: usize },
     /// An `Allen` residual's variables are never both bound.
     UnplacedAllenResidual { residual: usize },
+    /// A measure residual's variables are never both bound.
+    UnplacedDurationResidual { residual: usize },
     /// An anti-probe's variable set is never fully bound (validation
     /// guarantees negated-atom variables are positive-atom-bound, so
     /// this names a hand-built plan or query).
@@ -220,6 +223,12 @@ pub struct PlanNode {
     /// `residuals` (a fourth grouped-by-kind list, per the refusal above:
     /// masks are pure ALU over gathered batch words too).
     pub allen_residuals: Vec<PlacedAllen>,
+    /// Cross-atom measure residuals evaluated at this node — two-slot
+    /// read + ray test + subtraction feeding the ordinary word compare;
+    /// same placement rule as `residuals` (a fifth grouped-by-kind list,
+    /// per the refusal above: the subtraction is pure ALU over gathered
+    /// batch words).
+    pub duration_residuals: Vec<PlacedDuration>,
     /// Anti-probes evaluated at this node: each negated occurrence
     /// attaches to the earliest node binding its whole variable set —
     /// its probe keys **and** its point-filter variables

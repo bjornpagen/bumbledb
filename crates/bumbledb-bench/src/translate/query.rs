@@ -79,7 +79,19 @@ pub fn translate(
                     }
                     None => return Err(format!("find variable {} unbound", var.0)),
                 },
-                FindTerm::Aggregate { .. } => unreachable!("no aggregates here"),
+                // The measure: end − start arithmetic over the halves.
+                FindTerm::Duration(var) => match b.columns.get(var) {
+                    Some(VarCols::Interval { start, end }) => {
+                        cols.push(format!("({end} - {start})"));
+                    }
+                    Some(VarCols::Scalar(_)) => {
+                        return Err(format!("Duration over scalar variable {}", var.0))
+                    }
+                    None => return Err(format!("find variable {} unbound", var.0)),
+                },
+                FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => {
+                    unreachable!("no aggregates here")
+                }
             }
         }
         format!(
@@ -158,6 +170,22 @@ fn fold_sql(query: &Query, b: &Builder, from: &str, where_clause: &str) -> Resul
                 group.extend(names.iter().cloned());
                 outer.extend(names);
             }
+            // The measure as a group-key expression: end − start over the
+            // subquery's halves.
+            FindTerm::Duration(var) => {
+                let expr = format!("(v{0}_end - v{0}_start)", var.0);
+                group.push(expr.clone());
+                outer.push(expr);
+            }
+            FindTerm::AggregateDuration { op, over } => outer.push({
+                let agg = match op {
+                    AggOp::Sum => "SUM",
+                    AggOp::Min => "MIN",
+                    AggOp::Max => "MAX",
+                    _ => return Err("measure folds are Sum/Min/Max".to_owned()),
+                };
+                format!("{agg}(v{0}_end - v{0}_start)", over.0)
+            }),
             FindTerm::Aggregate { op, over } => outer.push(match op {
                 AggOp::Sum | AggOp::Min | AggOp::Max => {
                     let var = over.ok_or("fold aggregate without a variable")?;
@@ -216,17 +244,37 @@ fn arg_sql(
         "SELECT DISTINCT {} FROM {from}{where_clause}",
         inner_columns(b).join(", ")
     );
-    let mut group: Vec<String> = Vec::new();
+    // Per group position: (the m-subquery's select entry with alias, the
+    // GROUP BY expression, the join equality). A plain column aliases to
+    // itself; a measure aliases its end − start expression so the
+    // join-back can name it.
+    let mut group: Vec<(String, String, String)> = Vec::new();
     let mut outer: Vec<String> = Vec::new();
     for find in &query.rules[0].finds {
         match find {
             FindTerm::Var(var) => {
-                group.extend(var_names(b, *var, "")?);
+                for name in var_names(b, *var, "")? {
+                    group.push((name.clone(), name.clone(), format!("d.{name} = m.{name}")));
+                }
                 outer.extend(var_names(b, *var, "d.")?);
+            }
+            // The measure as an aliased group-key expression on both
+            // sides of the join-back.
+            FindTerm::Duration(var) => {
+                let expr = format!("(v{0}_end - v{0}_start)", var.0);
+                group.push((
+                    format!("{expr} AS dur{}", var.0),
+                    expr,
+                    format!("(d.v{0}_end - d.v{0}_start) = m.dur{0}", var.0),
+                ));
+                outer.push(format!("(d.v{0}_end - d.v{0}_start)", var.0));
             }
             FindTerm::Aggregate { over, .. } => {
                 let carry = over.ok_or("Arg term without a carried variable")?;
                 outer.extend(var_names(b, carry, "d.")?);
+            }
+            FindTerm::AggregateDuration { .. } => {
+                return Err("Arg terms and measure folds never mix".to_owned())
             }
         }
     }
@@ -242,13 +290,22 @@ fn arg_sql(
     }
     let group_eq = group
         .iter()
-        .map(|col| format!("d.{col} = m.{col}"))
+        .map(|(_, _, eq)| eq.clone())
         .collect::<Vec<_>>()
         .join(" AND ");
-    let group = group.join(", ");
+    let select = group
+        .iter()
+        .map(|(select, _, _)| select.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let group_by = group
+        .iter()
+        .map(|(_, by, _)| by.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
     Ok(format!(
         "WITH d AS ({inner}) SELECT DISTINCT {outer} FROM d \
-         JOIN (SELECT {group}, {extreme}({key_col}) AS mk FROM d GROUP BY {group}) m \
+         JOIN (SELECT {select}, {extreme}({key_col}) AS mk FROM d GROUP BY {group_by}) m \
          ON {group_eq} AND d.{key_col} = m.mk"
     ))
 }

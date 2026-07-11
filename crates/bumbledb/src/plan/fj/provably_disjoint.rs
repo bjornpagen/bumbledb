@@ -197,6 +197,12 @@ fn head_reads(term: &FindTerm) -> Option<VarId> {
             op: AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::CountDistinct,
             over,
         } => *over,
-        FindTerm::Aggregate { .. } => None,
+        // The remaining positions witness nothing: the nullary Count and
+        // Arg terms as before, and the measure positions — `end − start`
+        // is a NON-injective map of its variable, so equal head rows do
+        // not force equal interval values.
+        FindTerm::Aggregate { .. } | FindTerm::Duration(_) | FindTerm::AggregateDuration { .. } => {
+            None
+        }
     }
 }

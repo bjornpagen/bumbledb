@@ -36,12 +36,14 @@ pub enum Verdict {
     Aborted(Violation),
 }
 
-/// One query's outcome, on either side: the result set, or the one
-/// defined runtime error.
+/// One query's outcome, on either side: the result set, or one of the
+/// two defined runtime errors (aggregate overflow, and the measure of a
+/// ray — the engine's one runtime type error).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Rows {
     Ok(BTreeSet<Tuple>),
     Overflow,
+    MeasureOfRay,
 }
 
 /// The first disagreement: which op, and what each side said.
@@ -105,6 +107,7 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
                 let model = match naive.query(query, params) {
                     Ok(rows) => Rows::Ok(rows),
                     Err(QueryError::Overflow { .. }) => Rows::Overflow,
+                    Err(QueryError::MeasureOfRay) => Rows::MeasureOfRay,
                 };
                 if engine != model {
                     return Err(Divergence::Query {
@@ -170,6 +173,7 @@ pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) 
                 .collect(),
         ),
         Err(Error::Overflow { .. }) => Rows::Overflow,
+        Err(Error::MeasureOfRay { .. }) => Rows::MeasureOfRay,
         Err(other) => panic!("engine refused a differential query: {other:?}"),
     }
 }

@@ -51,6 +51,19 @@ pub enum Term {
     /// (`docs/architecture/20-query-ir.md`, § param sets).
     ParamSet(ParamId),
     Literal(Value),
+    /// The **measure** of an interval-typed rule variable: `|[s, e)| =
+    /// e − s`, type u64 — the one arithmetic the point-set denotation
+    /// defines (`docs/architecture/10-data-model.md`; everything else is
+    /// endpoint math and stays refused). Legal in exactly one term
+    /// position: one side of an order comparison (`Lt`/`Le`/`Gt`/`Ge`)
+    /// against a u64-typed term or literal — never in an atom binding
+    /// (the measure is a computation, not a bindable value; typed
+    /// rejection), never under `Eq`/`Ne`/`Allen`/`Contains`, never on
+    /// both sides. A ray (`end == MAX`) has no finite measure: the
+    /// subtraction raises the typed execution error
+    /// [`crate::Error::MeasureOfRay`] — hosts exclude rays with an
+    /// `Allen` guard or a bounded-end filter on the same atom first.
+    Duration(VarId),
 }
 
 /// One atom: a relation with named-field bindings. Absence of a field *is*
@@ -112,16 +125,39 @@ pub enum AggOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FindTerm {
     Var(VarId),
-    Aggregate { op: AggOp, over: Option<VarId> },
+    Aggregate {
+        op: AggOp,
+        over: Option<VarId>,
+    },
+    /// The measure at a find position: projects `Duration(over)` — one
+    /// u64 value per binding, `end − start` of the interval variable
+    /// (see [`Term::Duration`]; the variable must be interval-typed and
+    /// atom-bound). The projected measure is a group-key position under
+    /// aggregation, exactly like a plain variable find.
+    Duration(VarId),
+    /// A fold over the measure: `Sum`/`Min`/`Max` of `Duration(over)` —
+    /// the only three ops the measure admits (`Count` is nullary;
+    /// `CountDistinct` and the Arg ops are typed rejections). Accumulates
+    /// exactly as `Sum`/`Min`/`Max` over a u64 variable — Sum in the wide
+    /// accumulator with the single finalize range check.
+    AggregateDuration {
+        op: AggOp,
+        over: VarId,
+    },
 }
 
 impl FindTerm {
     /// The head position this term projects into — its var-free shape.
+    /// A measure find is a value position (`HeadTerm::Var`): the head
+    /// names shapes, and the positional type row (u64 for a measure)
+    /// keeps rules aligned.
     #[must_use]
     pub fn head_term(&self) -> HeadTerm {
         match self {
-            Self::Var(_) => HeadTerm::Var,
-            Self::Aggregate { op, .. } => HeadTerm::Aggregate(op.head_op()),
+            Self::Var(_) | Self::Duration(_) => HeadTerm::Var,
+            Self::Aggregate { op, .. } | Self::AggregateDuration { op, .. } => {
+                HeadTerm::Aggregate(op.head_op())
+            }
         }
     }
 }

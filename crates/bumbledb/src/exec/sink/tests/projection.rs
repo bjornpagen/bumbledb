@@ -202,7 +202,14 @@ fn the_disjoint_regime_drains_per_rule_and_keeps_per_rule_dedup() {
             },
         ]
     };
-    let mut sink = crate::exec::sink::ProjectionSink::with_capacity_hint(vec![0, 1], 0, true);
+    let mut sink = crate::exec::sink::ProjectionSink::with_capacity_hint(
+        vec![
+            crate::exec::sink::ProjSource::Slot(0),
+            crate::exec::sink::ProjSource::Slot(1),
+        ],
+        0,
+        true,
+    );
     sink.reset(); // once per execution, never per rule
 
     // Rule A: a within-rule duplicate is absorbed by the per-rule map.

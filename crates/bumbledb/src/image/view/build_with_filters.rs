@@ -36,6 +36,6 @@ pub fn build_with_filters(
     buf: Vec<u32>,
 ) -> Result<(Arc<RelationImage>, View)> {
     let image = build(txn, schema, rel)?;
-    let view = apply(&image, predicates, params, buf);
+    let view = apply(&image, predicates, params, buf)?;
     Ok((image, view))
 }

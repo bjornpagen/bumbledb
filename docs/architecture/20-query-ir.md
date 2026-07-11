@@ -149,13 +149,18 @@ PredicateTree = Leaf(Comparison)      // the input predicate grammar: any
               | Or(Vec<PredicateTree>)   // comparisons — lowered at validation
 HeadTerm   = Var | Aggregate(HeadOp)  // var-free: variables are rule-scoped,
                                       //   so the head names shapes and the
-                                      //   rules supply the variables
+                                      //   rules supply the variables (a
+                                      //   Duration find is a Var position:
+                                      //   a u64 value per binding)
 HeadOp     = Sum | Min | Max | Count | CountDistinct | ArgMax | ArgMin
 Atom {
     relation:   RelationId,
     bindings:   Vec<(FieldId, Term)>, // named-field; absence of a field IS the wildcard
 }
 Term       = Var(VarId) | Param(ParamId) | ParamSet(ParamId) | Literal(Value)
+           | Duration(VarId)          // the measure — comparison side only
+                                      //   (§ the measure; a binding position
+                                      //   is a typed rejection)
 Value      = Bool(bool) | U64(u64) | I64(i64)
            | Enum(u8)                 // declaration-order ordinal, range-checked
            | IntervalU64(u64, u64)    // start < end enforced at the boundary
@@ -166,6 +171,11 @@ Value      = Bool(bool) | U64(u64) | I64(i64)
                                       //   never a field type (10-data-model.md)
 FindTerm   = Var(VarId)
            | Aggregate { op: AggOp, over: Option<VarId> }   // over: None for Count
+           | Duration(VarId)                                // the measure, projected
+           | AggregateDuration { op: AggOp, over: VarId }   // Sum/Min/Max of the
+                                                            //   measure (only those
+                                                            //   three; typed rejection
+                                                            //   otherwise)
 AggOp      = Sum | Min | Max | Count | CountDistinct
            | ArgMax { key: VarId } | ArgMin { key: VarId }  // over = the carried var
 Comparison { op: CmpOp, lhs: Term, rhs: Term }
@@ -215,7 +225,9 @@ requires an interval left side and an **element-typed** right side (point
 membership as a predicate — the predicate form of the binding rule, for terms
 already bound elsewhere); its old interval⊇interval form is not an operator —
 that predicate is `Allen(COVERS)`. `Eq` between
-two variables is unification and obeys identical type rules. Any comparison without
+two variables is unification and obeys identical type rules. `Duration(t)` is
+a u64-valued variable side legal under the order operators only (§ the
+measure). Any comparison without
 a variable side (literal-vs-literal, param-vs-literal, param-vs-param) is a
 validation error, and so is a variable compared with itself — both are
 constant-valued: write the query you mean.
@@ -275,6 +287,59 @@ judgment's meaning — per-group pairwise disjointness — is the statement
 "every pair satisfies `DISJOINT`" (`30-dependencies.md`); the checker's
 neighbor probe is its O(log n) enforcement plan. One vocabulary, both sides
 of the engine.
+
+## The measure (normative — the denotation's one arithmetic)
+
+`Duration(t)` over an interval-typed rule variable is the measure of its
+point set, `|[s, e)| = e − s`, type u64 (`10-data-model.md`: the one
+arithmetic the denotation defines; everything else that looks like interval
+arithmetic is endpoint math and stays refused). **Legal positions,
+exhaustively:** a find term (`FindTerm::Duration` — a group-key position
+under aggregation, exactly like a plain variable find); the aggregated
+input of `Sum`/`Min`/`Max` (`FindTerm::AggregateDuration` — `Sum` in the
+wide accumulator with the single finalize range check, like every Sum); and
+one side of an **order comparison** (`Lt`/`Le`/`Gt`/`Ge`) against a
+u64-typed term or literal — "meetings longer than an hour". Every other
+position is a typed validation rejection: a binding position (the measure
+is a computation, not a bindable value), a non-order operator, both sides
+of one comparison, a non-interval variable, and any fold but the three.
+
+- **Exactness, recorded:** the engine evaluates the measure as one
+  subtraction over the encoded column words, exact for both element types —
+  the encodings are unit-spaced order-preserving maps onto u64 words (u64
+  the identity, I64 the +2⁶³ bias, which cancels in the difference), and
+  the constructor invariant `end > start` keeps the difference positive and
+  below 2⁶⁴. No overflow, no decode.
+- **The ray error:** a ray has no finite measure (`10-data-model.md`, the
+  point-domain law), and boundedness is not provable at validation, so the
+  subtraction path tests `end == MAX` and raises the typed execution error
+  `MeasureOfRay`, carrying the offending interval's two encoded words —
+  **the engine's one runtime type error**. Hosts exclude rays first: an
+  `Allen(DISJOINT)` guard against the ray probe `[MAX−1, MAX)` (an interval
+  intersects it iff its end is MAX — exactly the rays), or a bounded-end
+  filter (`Allen(COVERED_BY)` a bounded window) on the measured atom.
+- **The filter-order law:** a measure comparison lowered to an atom's
+  filter list evaluates only on facts surviving the atom's *other* filters
+  — a same-atom guard always runs before the subtraction, so a guarded
+  fact never reaches it. Cross-atom measure comparisons are residuals
+  (evaluated where whole-value residuals attach), and the measure in finds
+  and folds evaluates at emit — after every predicate — so guards protect
+  those positions unconditionally.
+- **Lowering:** normalization lowers the measure to a two-slot read +
+  subtraction feeding the existing word machinery — a constant or same-atom
+  comparison becomes an occurrence filter, a cross-atom comparison a
+  measure residual, and the sink positions a derived word in the sink's row
+  representation. The one new executor shape is the fused gather+subtract
+  scan (dense case NEON per the port-topology law — subtraction is not
+  flag-bound; strided/gathered shapes stay scalar until measured, per the
+  standing rule).
+- **Selectivity:** a measure comparison is a range predicate over the
+  derived duration word; the existing range keep-fraction floor applies
+  unmodified.
+- The measure position weakens no proof silently: rule-disjointness and
+  the union elision treat a measure head position as non-witnessing
+  (`end − start` is a non-injective map of its variable, so distinct
+  bindings may project equal head rows).
 
 **Params:** a param's type is inferred from its anchors — the fields it binds and the
 typed terms it compares against. `ir::Value` stays owned by decision: IR literals are
@@ -434,7 +499,10 @@ negated-atom variables not bound by any positive atom; unbound find variables;
 comparison-only variables; empty finds; duplicate find terms; no positive atoms;
 aggregate input-type violations; aggregate-over-group-key; mixed Arg and fold
 aggregates, Arg terms with differing keys or directions, or a non-orderable Arg
-key; and the planner caps (more atom occurrences than the DP accepts — negated
+key; the measure's position roster (§ the measure — a `Duration` in a binding,
+over a non-interval variable, under a non-order operator, on both sides of one
+comparison, or folded by anything but `Sum`/`Min`/`Max`, each with its own
+typed error); and the planner caps (more atom occurrences than the DP accepts — negated
 occurrences counted, they consume plan-time work — more than 128 distinct
 variables) — enforced here so downstream id widths and bitset sizes are true
 invariants.

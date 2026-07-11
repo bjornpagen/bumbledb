@@ -100,6 +100,87 @@ fn interval_filter_compositions_match_the_scalar_reference_bit_for_bit() {
     }
 }
 
+/// The measure scan (20-query-ir § the measure) — the one gather+subtract shape — is
+/// bit-identical to the scalar reference across the boundary shapes,
+/// range extremes included, and both report the SAME first ray position
+/// when a ray is present.
+#[test]
+fn duration_filter_matches_the_scalar_reference_bit_for_bit() {
+    let mut rng = Lcg(1010);
+    for &len in LENGTHS {
+        for with_ray in [false, true] {
+            let starts: Vec<u64> = (0..len)
+                .map(|_| match rng.next() % 8 {
+                    0 => 0,
+                    1 => u64::MAX - 3,
+                    n => n % 6,
+                })
+                .collect();
+            let ends: Vec<u64> = starts
+                .iter()
+                .map(|s| {
+                    if with_ray && rng.next().is_multiple_of(5) {
+                        u64::MAX // the ray: no finite measure
+                    } else {
+                        s.saturating_add(rng.next() % 7 + 1).min(u64::MAX - 1)
+                    }
+                })
+                .collect();
+            for (lo, hi) in [(0u64, 2u64), (1, 1), (3, u64::MAX), (1, 0), (0, u64::MAX)] {
+                let (mut kernel, mut reference) = (Vec::new(), Vec::new());
+                let kernel_result = filter_duration_range_u64(&starts, &ends, lo, hi, &mut kernel);
+                let reference_result = super::reference::filter_duration_range_u64(
+                    &starts,
+                    &ends,
+                    lo,
+                    hi,
+                    &mut reference,
+                );
+                assert_eq!(
+                    kernel_result, reference_result,
+                    "ray verdict len {len} {lo}..={hi}"
+                );
+                if kernel_result.is_ok() {
+                    assert_eq!(kernel, reference, "duration len {len} {lo}..={hi}");
+                }
+            }
+        }
+    }
+}
+
+/// The measure boundary values, pinned at the kernel level: `[x, x+1)`
+/// measures 1, `[MIN, MAX−1)` measures `MAX−1`, and `end == MAX` is the
+/// typed ray refusal, not a value.
+#[test]
+fn duration_filter_boundary_intervals_and_the_ray() {
+    let starts = [10u64, 0, 7];
+    let ends = [11u64, u64::MAX - 1, u64::MAX];
+    let mut out = Vec::new();
+    // The ray at position 2 outranks any survivors.
+    assert_eq!(
+        filter_duration_range_u64(&starts, &ends, 0, u64::MAX, &mut out),
+        Err(2)
+    );
+    out.clear();
+    assert_eq!(
+        filter_duration_range_u64(&starts[..2], &ends[..2], 1, 1, &mut out),
+        Ok(())
+    );
+    assert_eq!(out, vec![0], "[x, x+1) measures exactly 1");
+    out.clear();
+    assert_eq!(
+        filter_duration_range_u64(
+            &starts[..2],
+            &ends[..2],
+            u64::MAX - 1,
+            u64::MAX - 1,
+            &mut out
+        ),
+        Ok(())
+    );
+    assert_eq!(out, vec![1], "[MIN, MAX-1) measures MAX-1");
+}
+
 /// The membership boundary rule, pinned at the kernel level: `p == start`
 /// survives, `p == end` does not (half-open, `10-data-model.md`).
 #[test]

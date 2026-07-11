@@ -83,7 +83,7 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
         );
         let image = cache.get_or_build(txn, schema, occurrence.relation)?;
         let buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
-        let view = apply(&image, &resolved_filters[occ_idx], &[], buffer);
+        let view = apply(&image, &resolved_filters[occ_idx], &[], buffer)?;
         build_span.set_args(occ_idx as u64, view.len() as u64);
         let old = memo.colts[occ_idx].reset(view);
         memo.spare_buffers[occ_idx] = old.recycle();

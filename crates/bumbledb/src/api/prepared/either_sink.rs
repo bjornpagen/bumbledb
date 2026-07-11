@@ -35,6 +35,17 @@ impl EitherSink {
         }
     }
 
+    /// The measure poison: the first ray a measure position reached
+    /// during the rule loop — checked once after the rules run, before
+    /// finalize, and raised as the typed
+    /// [`crate::Error::MeasureOfRay`](crate::error::Error::MeasureOfRay).
+    pub(super) fn measure_of_ray(&self) -> Option<[u64; 2]> {
+        match self {
+            Self::Projection(sink) => sink.measure_of_ray(),
+            Self::Aggregate(sink) => sink.measure_of_ray(),
+        }
+    }
+
     /// The differential guard's override (docs/architecture/
     /// 40-execution.md § set semantics): forces the disjointness elision
     /// off — the projection sink back to the spanning regime, the

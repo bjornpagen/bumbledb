@@ -1,6 +1,6 @@
 use std::arch::aarch64::{
     uint64x2_t, vandq_u64, vceqq_u64, vceqq_u8, vcgeq_u64, vcgtq_u64, vcleq_u64, vdupq_n_u64,
-    vdupq_n_u8, vgetq_lane_u64, vld1q_u64, vld1q_u8, vorrq_u64, vst1q_u8,
+    vdupq_n_u8, vgetq_lane_u64, vld1q_u64, vld1q_u8, vorrq_u64, vst1q_u8, vsubq_u64,
 };
 
 pub(super) fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
@@ -103,6 +103,60 @@ unsafe fn filter_pair_u64(
         }
     }
     out.truncate(write);
+}
+
+/// The measure scan (the one gather+subtract shape, 20-query-ir § the
+/// measure): NEON on the dense stride-1 column pair — `vsubq_u64` runs on the vector pipes, so
+/// the subtraction competes with no flag port (the port-topology law) —
+/// with the ray test fused as one more lane compare. The ray branch is
+/// predicted never-taken; on a hit the scalar re-scan of the two-lane
+/// chunk names the first offending position in scan order.
+pub(super) fn filter_duration_range_u64(
+    starts: &[u64],
+    ends: &[u64],
+    lo: u64,
+    hi: u64,
+    out: &mut Vec<u32>,
+) -> Result<(), usize> {
+    let base = out.len();
+    out.resize(base + starts.len(), 0);
+    let mut write = base;
+    // SAFETY: every vld1q_u64 reads exactly two u64s from within
+    // `chunks_exact(2)` of equal-length columns; unaligned loads are
+    // legal for vld1q.
+    unsafe {
+        let lo_v = vdupq_n_u64(lo);
+        let hi_v = vdupq_n_u64(hi);
+        let inf = vdupq_n_u64(u64::MAX);
+        let chunks = starts.chunks_exact(2);
+        let tail_start = starts.len() - chunks.remainder().len();
+        for (chunk_idx, chunk) in chunks.enumerate() {
+            let s = vld1q_u64(chunk.as_ptr());
+            let e = vld1q_u64(ends.as_ptr().add(chunk_idx * 2));
+            let ray = vceqq_u64(e, inf);
+            if (vgetq_lane_u64(ray, 0) | vgetq_lane_u64(ray, 1)) != 0 {
+                return Err(chunk_idx * 2 + usize::from(vgetq_lane_u64(ray, 0) == 0));
+            }
+            let duration = vsubq_u64(e, s);
+            let ge = vcgeq_u64(duration, lo_v);
+            let le = vcleq_u64(duration, hi_v);
+            let out_base = u32::try_from(chunk_idx * 2).expect("positions fit u32");
+            out[write] = out_base;
+            write += usize::from(vgetq_lane_u64(ge, 0) != 0 && vgetq_lane_u64(le, 0) != 0);
+            out[write] = out_base + 1;
+            write += usize::from(vgetq_lane_u64(ge, 1) != 0 && vgetq_lane_u64(le, 1) != 0);
+        }
+        for i in tail_start..starts.len() {
+            if ends[i] == u64::MAX {
+                return Err(i);
+            }
+            let duration = ends[i] - starts[i];
+            out[write] = u32::try_from(i).expect("positions fit u32");
+            write += usize::from((lo..=hi).contains(&duration));
+        }
+    }
+    out.truncate(write);
+    Ok(())
 }
 
 pub(super) fn filter_point_in_u64(starts: &[u64], ends: &[u64], point: u64, out: &mut Vec<u32>) {

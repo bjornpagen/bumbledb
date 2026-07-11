@@ -331,6 +331,13 @@ fn var_is_dead(
         return false;
     }
     if normalized
+        .duration_residuals
+        .iter()
+        .any(|r| r.interval == var || r.scalar == var)
+    {
+        return false;
+    }
+    if normalized
         .anti_probes
         .iter()
         .any(|p| p.probe_bindings.iter().any(|(_, v)| *v == var))
@@ -433,6 +440,7 @@ fn subsumes(
         && subset(&keeper.residuals, &candidate.residuals)
         && subset(&keeper.word_residuals, &candidate.word_residuals)
         && subset(&keeper.allen_residuals, &candidate.allen_residuals)
+        && subset(&keeper.duration_residuals, &candidate.duration_residuals)
         && negated_within(keeper, candidate)
 }
 
@@ -548,7 +556,11 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
     let mut vars = BTreeSet::new();
     for term in finds {
         match term {
-            FindTerm::Var(var) => {
+            // A projected variable, and the measure positions' interval
+            // variable (the measure reads it).
+            FindTerm::Var(var)
+            | FindTerm::Duration(var)
+            | FindTerm::AggregateDuration { over: var, .. } => {
                 vars.insert(*var);
             }
             FindTerm::Aggregate { op, over } => {

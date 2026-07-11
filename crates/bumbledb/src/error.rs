@@ -554,6 +554,40 @@ pub enum ValidationError {
     NonOrderableArgKey {
         find: usize,
     },
+    /// A `Term::Duration` in an atom binding: the measure is a
+    /// computation over a bound interval variable, not a bindable value
+    /// — its legal positions are a find term, the aggregated input of
+    /// `Sum`/`Min`/`Max`, and one side of an order comparison
+    /// (`docs/architecture/20-query-ir.md`, § the measure).
+    DurationInBinding {
+        atom: usize,
+        field: FieldId,
+    },
+    /// `Duration(v)` over a variable that did not resolve to an interval
+    /// type: the measure is defined by the interval denotation and by
+    /// nothing else.
+    DurationOverNonInterval {
+        var: VarId,
+    },
+    /// A `FindTerm::AggregateDuration` whose op is not `Sum`/`Min`/`Max`
+    /// — `Count` is nullary, `CountDistinct` over a measure is a count
+    /// over derived values with no sighted use, and the Arg ops key on
+    /// variables, not computations.
+    DurationAggregateOp {
+        find: usize,
+    },
+    /// A `Term::Duration` under any operator but the order comparisons
+    /// (`Lt`/`Le`/`Gt`/`Ge`) — the measure's one comparison position
+    /// (`docs/architecture/20-query-ir.md`, § the measure).
+    DurationComparisonOperator {
+        index: usize,
+    },
+    /// `Duration` on both sides of one comparison: the legal shape is one
+    /// measure side against a u64 term or literal — write two
+    /// comparisons against a shared bound, or compute in the host.
+    DurationBothSides {
+        index: usize,
+    },
     /// Planner cap: the exhaustive left-deep DP accepts at most
     /// `plan::planner::MAX_OCCURRENCES` atom occurrences — negated
     /// occurrences counted, they consume plan-time work.
@@ -770,6 +804,26 @@ pub enum Error {
     /// [`ValidationError::FullAllenMask`]).
     FullAllenMaskParam {
         param: ParamId,
+    },
+    /// `Duration` reached a ray: an interval with `end == MAX` denotes
+    /// `[s, ∞)`, and a ray has no finite measure — **the engine's one
+    /// runtime type error** (`docs/architecture/10-data-model.md`, the
+    /// point-domain law). Boundedness is not provable at validation, so
+    /// the subtraction path tests `end == MAX` and raises here, carrying
+    /// the offending fact's two encoded interval words (order-preserving
+    /// column form — I64 endpoints are the sign-flipped biased words).
+    /// The alternative — silently yielding `MAX` — would fabricate
+    /// arithmetic. Hosts exclude rays first: an `Allen` guard
+    /// (`DISJOINT` from the ray-detecting probe `[MAX−1, MAX)`) or a
+    /// bounded-end filter on the measured atom runs before the measure
+    /// by the filter-order law (`docs/architecture/20-query-ir.md`,
+    /// § the measure).
+    MeasureOfRay {
+        /// The offending interval's encoded start word.
+        start: u64,
+        /// The offending interval's encoded end word (`u64::MAX` — the
+        /// ray's ∞ in both element encodings).
+        end: u64,
     },
     /// A computed value crossed its representation — valid input whose
     /// result cannot be represented, so a typed error, never a panic.

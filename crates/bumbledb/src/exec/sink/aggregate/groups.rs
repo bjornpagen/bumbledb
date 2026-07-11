@@ -25,7 +25,10 @@ impl AggregateSink {
     /// constancy) at batch entry — per-slot work, never per-row.
     pub(super) fn refresh_shape_cache(&mut self, batch: &LeafBatch<'_>) {
         self.cached_outer_slots.clear();
-        for slot in 0..self.binding_scratch.len() {
+        // Real slots only: the derived measure words past `real_slots`
+        // are the sink's own (computed per row in `fold_scratch_row`),
+        // never a binding to prefill.
+        for slot in 0..self.real_slots {
             if matches!(batch.source_of(slot), LeafSource::Outer) {
                 self.cached_outer_slots.push(slot);
             }
@@ -71,6 +74,9 @@ impl AggregateSink {
                         self.accs.push(acc);
                     }
                     FindSpec::Var { .. } | FindSpec::Arg { .. } => {}
+                    FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
+                        unreachable!("the constructor's rewrite ran")
+                    }
                 }
             }
             if self.arg.is_some() {

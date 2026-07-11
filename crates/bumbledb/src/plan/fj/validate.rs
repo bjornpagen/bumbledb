@@ -254,6 +254,16 @@ pub fn validate(
         };
         nodes[node].allen_residuals.push(*residual);
     }
+    // Measure residuals: the same rule — the earliest node binding the
+    // interval variable and its u64 comparison side.
+    for (residual_idx, residual) in normalized.duration_residuals.iter().enumerate() {
+        let Some(node) = earliest_bound_node(&bound, &[residual.interval, residual.scalar]) else {
+            return Err(PlanError::UnplacedDurationResidual {
+                residual: residual_idx,
+            });
+        };
+        nodes[node].duration_residuals.push(*residual);
+    }
     // Anti-probe attachment: the earliest node binding the negated
     // occurrence's whole variable set — probe keys plus point-filter
     // variables (a membership check reads its point variable inside the

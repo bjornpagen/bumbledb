@@ -33,7 +33,20 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     if !normalized.residuals.is_empty()
         || !normalized.word_residuals.is_empty()
         || !normalized.allen_residuals.is_empty()
+        || !normalized.duration_residuals.is_empty()
     {
+        return None;
+    }
+    // A measure filter disqualifies the fast path: its evaluation is
+    // fallible (the ray raises `MeasureOfRay`) and ordered after the
+    // occurrence's other filters — both are the filtered view's job, so
+    // the query keeps the Free Join path where the view runs.
+    if occurrence.filters.iter().any(|filter| {
+        matches!(
+            filter,
+            FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. }
+        )
+    }) {
         return None;
     }
     // Decision: a `ParamSet`-bound field disqualifies the fast path in v0

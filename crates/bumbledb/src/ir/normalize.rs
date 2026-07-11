@@ -104,6 +104,28 @@ pub struct PlacedComparison {
     pub rhs: VarId,
 }
 
+/// A cross-atom measure residual: `Duration(interval) <op> scalar` where
+/// the u64 side is another occurrence's variable — the measure always on
+/// the left (a comparison written scalar-first mirrors its operator at
+/// lowering, so no operand-order flag exists). Evaluated at the earliest
+/// plan node binding both variables, exactly where whole-value residuals
+/// attach: read the interval variable's two slot words, test the ray
+/// (`end == MAX` raises [`crate::Error::MeasureOfRay`] — the engine's
+/// one runtime type error), subtract, compare the u64 word. Var-vs-
+/// constant and same-atom measure comparisons never reach here — they
+/// lower to the occurrence's filter list
+/// ([`FilterPredicate::DurationCompare`] /
+/// [`FilterPredicate::DurationFieldsCompare`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlacedDuration {
+    /// The measured interval variable (two slot words).
+    pub interval: VarId,
+    /// The order operator, measure-side-left.
+    pub op: CmpOp,
+    /// The u64 comparison side.
+    pub scalar: VarId,
+}
+
 /// A cross-atom `Allen` residual: two interval variables and the mask —
 /// four endpoint slot words (each side's pair at its slot base) plus the
 /// mask, evaluated classify-then-test at the earliest plan node where
@@ -232,6 +254,10 @@ pub struct NormalizedQuery {
     /// (interval `Eq`/`Ne` comparisons canonicalize here too — exactly
     /// one interval-pair form reaches the planner).
     pub allen_residuals: Vec<PlacedAllen>,
+    /// Cross-atom measure residuals: two-slot read + ray test +
+    /// subtraction feeding the ordinary word comparison
+    /// ([`PlacedDuration`]).
+    pub duration_residuals: Vec<PlacedDuration>,
     /// Anti-probe descriptors, one per negated occurrence, in occurrence
     /// order.
     pub anti_probes: Vec<AntiProbe>,

@@ -161,12 +161,18 @@ fn occurrence_estimate(
                     unreachable!("same-atom interval predicates lower to their fixed shapes")
                 }
             },
-            // The fixed membership compositions: word ranges over the
-            // start/end pair.
+            // The fixed membership compositions (word ranges over the
+            // start/end pair), and the measure comparisons — a range
+            // predicate over the derived duration word, riding the
+            // existing range keep-fraction floor unmodified (20-query-ir § the measure;
+            // validation admits order operators only, so the range class
+            // is exact, not a default).
             FilterPredicate::PointIn { .. }
             | FilterPredicate::AnyPointIn { .. }
             | FilterPredicate::FieldsContainPoint { .. }
-            | FilterPredicate::FieldWithin { .. } => RANGE_KEEP_DEN,
+            | FilterPredicate::FieldWithin { .. }
+            | FilterPredicate::DurationCompare { .. }
+            | FilterPredicate::DurationFieldsCompare { .. } => RANGE_KEEP_DEN,
             FilterPredicate::FieldsAllen { .. } | FilterPredicate::FieldAllen { .. } => {
                 unreachable!("handled above")
             }

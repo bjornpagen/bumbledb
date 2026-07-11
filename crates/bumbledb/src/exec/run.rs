@@ -20,7 +20,7 @@
 //! future work" caveat is retired: deep nodes see full batches.
 
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
-use crate::ir::normalize::{PlacedAllen, PlacedComparison, PlacedWordComparison};
+use crate::ir::normalize::{PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison};
 use crate::plan::fj::ValidatedPlan;
 
 /// The sink's reply to one emitted binding: `SkipSuffix` requests the D2
@@ -374,6 +374,10 @@ struct NodeScratch {
     /// 0/1 (batch key words and binding slots lay intervals out
     /// identically — the `SlotWidth` layout).
     allen_sources: Vec<(Source, Source)>,
+    /// Measure-residual operand sources, aligned with the node's
+    /// `duration_residuals` list: the interval side at its word base
+    /// (pair read at offsets 0/1), the u64 side at its single word.
+    duration_sources: Vec<(Source, Source)>,
     /// Allen-residual endpoint gather scratch: the four per-survivor
     /// endpoint streams `[a.start | a.end | b.start | b.end]`, each of
     /// the survivor count, gathered per residual pass and classified
@@ -445,6 +449,9 @@ pub struct Executor {
     /// before every execution (the executor never sees the param slice
     /// on the hot path).
     allen_masks: Vec<Vec<crate::allen::AllenMask>>,
+    /// Per measure residual: (residual, interval base slot, scalar slot),
+    /// aligned with each node's `duration_residuals`.
+    duration_residual_slots: Vec<Vec<(PlacedDuration, usize, usize)>>,
     /// Per membership probe, aligned with each node's `point_probes`
     /// list ([`PointProbeSpec`]).
     point_probe_slots: Vec<Vec<PointProbeSpec>>,
@@ -490,6 +497,13 @@ pub struct Executor {
     /// granularity in `probe_pass`): the pipeline stopped early and
     /// `execute` reports [`crate::error::Error::Overflow`].
     origin_overflow: bool,
+    /// A measure residual reached a ray (`end == MAX`): the offending
+    /// interval's two encoded words. The pipeline stops early and
+    /// `execute` raises the typed
+    /// [`crate::error::Error::MeasureOfRay`] — the engine's one runtime
+    /// type error (the poison-flag shape `origin_overflow` established:
+    /// no `Result` on the per-tuple path).
+    measure_of_ray: Option<[u64; 2]>,
 }
 
 /// The pipelined executor's static shape tables:

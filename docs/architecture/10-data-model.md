@@ -128,15 +128,22 @@ needs ray awareness. Consequences, typed rather than left to be discovered:
   for point params — never a silently-unmatchable query. Parse, don't validate.
 - A **ray has no finite measure**: `Duration` over a ray is the typed execution
   error `MeasureOfRay` — the one runtime type error in the engine, since
-  boundedness is not provable at validation (recorded here as law; the measure
-  itself is PRD 10's). The alternative — silently yield MAX — fabricates
-  arithmetic.
+  boundedness is not provable at validation. The alternative — silently yield
+  MAX — fabricates arithmetic.
 - **Coverage judgments over rays**: a source ray requires target coverage to ∞,
   satisfiable only by a target chain reaching a ray; the coverage walk's ordinary
   gap check enforces it with no special case.
 
 The alternative — first-class ∞ — buys a 17th byte or a stolen sentinel anyway,
 and changes nothing the neighbor probe can observe.
+
+**The denotation defines exactly one arithmetic, and `Duration` is it:** a
+point set has a measure, `|[s, e)| = e − s`, u64-valued for both element
+types — and everything else that looks like interval arithmetic is endpoint
+math and stays refused (the README refusals; `Duration` is not the thin end
+of a wedge, it is the entire wedge, provably: the denotation defines nothing
+else). The measure's query positions and the ray error's placement are
+`20-query-ir.md` § the measure.
 
 **Coalescing is an aggregate, never a write rule.** Two facts `(x, [1,5))` and
 `(x, [3,8))` are distinct facts whose denotations overlap; the engine stores what it

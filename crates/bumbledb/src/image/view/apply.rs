@@ -210,6 +210,12 @@ fn row_matches(
                 }
             }
         }
+        // The measure kinds never enter the infallible conjunction: they
+        // evaluate last, over the other filters' survivors, on the
+        // fallible refinement pass (`apply` — the filter-order law).
+        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
+            unreachable!("measure filters take the fallible refinement pass")
+        }
     })
 }
 
@@ -238,12 +244,167 @@ fn scalar_or_pair(image: &RelationImage, field: FieldId, position: usize) -> Ope
 /// into `buf` (caller-owned, reused across executions — capacity is
 /// retained). An empty predicate list yields the unfiltered [`View::All`].
 ///
+/// **The filter-order law** (docs/architecture/20-query-ir.md, § the
+/// measure): the measure kinds evaluate last, over the survivors of every
+/// other predicate of the atom — an `Allen` ray guard or a bounded-end
+/// filter on the same atom always runs before the subtraction, so a
+/// guarded fact never reaches it. On the survivors, `end == MAX` raises
+/// the typed [`crate::Error::MeasureOfRay`] — the engine's one runtime
+/// type error.
+///
+/// # Errors
+///
+/// `MeasureOfRay` when a measure filter's subtraction reaches a ray.
+///
 /// # Panics
 ///
 /// Only on programmer-invariant violations: an image beyond the u32
 /// position space (the 10⁷ scale axiom sits orders of magnitude below).
-#[must_use]
 pub fn apply(
+    image: &Arc<RelationImage>,
+    predicates: &[FilterPredicate],
+    params: &[Const],
+    buf: Vec<u32>,
+) -> crate::error::Result<View> {
+    let is_measure = |p: &FilterPredicate| {
+        matches!(
+            p,
+            FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. }
+        )
+    };
+    if !predicates.iter().any(is_measure) {
+        return Ok(apply_infallible(image, predicates, params, buf));
+    }
+    // The measure path (cold by shape, correct by order): the other
+    // predicates run through the ordinary machinery first, then each
+    // measure predicate refines their survivors — dense survivors take
+    // the fused gather+subtract kernel; everything else is the scalar
+    // subtraction (strided stays scalar until measured, the standing
+    // rule).
+    let others: Vec<FilterPredicate> = predicates
+        .iter()
+        .filter(|p| !is_measure(p))
+        .cloned()
+        .collect();
+    let mut view = apply_infallible(image, &others, params, buf);
+    for predicate in predicates.iter().filter(|p| is_measure(p)) {
+        view = refine_measure(image, predicate, params, view)?;
+    }
+    Ok(view)
+}
+
+/// One measure predicate over the current survivors. A full view takes
+/// the fused dense kernel (subtract + range test + ray test in one
+/// stride-1 pass); survivor views refine scalar, position by position.
+fn refine_measure(
+    image: &Arc<RelationImage>,
+    predicate: &FilterPredicate,
+    params: &[Const],
+    view: View,
+) -> crate::error::Result<View> {
+    let ray = |start: u64, end: u64| crate::error::Error::MeasureOfRay { start, end };
+    match predicate {
+        FilterPredicate::DurationCompare { field, op, value } => {
+            let Const::Word(bound) = resolve(value, params) else {
+                unreachable!("validated: a measure compares against a u64 word")
+            };
+            // The order operator as an inclusive duration range — the
+            // subtraction feeds the existing range machinery.
+            let (lo, hi) = match op {
+                CmpOp::Lt => match bound.checked_sub(1) {
+                    Some(hi) => (0, hi),
+                    None => (1, 0), // dur < 0: empty (lo > hi keeps nothing)
+                },
+                CmpOp::Le => (0, *bound),
+                CmpOp::Gt => match bound.checked_add(1) {
+                    Some(lo) => (lo, u64::MAX),
+                    None => (1, 0), // dur > MAX: empty
+                },
+                CmpOp::Ge => (*bound, u64::MAX),
+                _ => unreachable!("validated: measures compare under order operators"),
+            };
+            let (starts, ends) = interval_columns(image, *field);
+            match view {
+                View::All(_) => {
+                    let mut positions = Vec::new();
+                    crate::exec::kernel::filter_duration_range_u64(
+                        starts,
+                        ends,
+                        lo,
+                        hi,
+                        &mut positions,
+                    )
+                    .map_err(|position| ray(starts[position], ends[position]))?;
+                    Ok(View::Survivors {
+                        image: Arc::clone(image),
+                        positions,
+                    })
+                }
+                View::Survivors {
+                    image: view_image,
+                    mut positions,
+                } => {
+                    let mut cursor = 0usize;
+                    for read in 0..positions.len() {
+                        let p = positions[read] as usize;
+                        let (start, end) = (starts[p], ends[p]);
+                        if end == u64::MAX {
+                            return Err(ray(start, end));
+                        }
+                        positions[cursor] = positions[read];
+                        cursor += usize::from(lo <= end - start && end - start <= hi);
+                    }
+                    positions.truncate(cursor);
+                    Ok(View::Survivors {
+                        image: view_image,
+                        positions,
+                    })
+                }
+                View::Unbound => unreachable!("apply binds the view it filters"),
+            }
+        }
+        FilterPredicate::DurationFieldsCompare {
+            interval,
+            op,
+            scalar,
+        } => {
+            // Two varying columns per position — no constant side, no
+            // kernel shape (the `FieldsCompare` precedent): scalar over
+            // whatever positions survive.
+            let (starts, ends) = interval_columns(image, *interval);
+            let scalars = match scalar_column(image, *scalar) {
+                ColumnView::Words(words) => words,
+                ColumnView::Bytes(_) => unreachable!("validated: the measure side is u64"),
+            };
+            let row_count = view.len();
+            let mut positions = view.recycle();
+            let survivors_input = !positions.is_empty() || row_count == 0;
+            if !survivors_input {
+                positions.extend(0..u32::try_from(row_count).expect("positions fit u32"));
+            }
+            let mut cursor = 0usize;
+            for read in 0..positions.len() {
+                let p = positions[read] as usize;
+                let (start, end) = (starts[p], ends[p]);
+                if end == u64::MAX {
+                    return Err(ray(start, end));
+                }
+                positions[cursor] = positions[read];
+                cursor += usize::from(op.compare(&(end - start), &scalars[p]));
+            }
+            positions.truncate(cursor);
+            Ok(View::Survivors {
+                image: Arc::clone(image),
+                positions,
+            })
+        }
+        _ => unreachable!("refine_measure takes the measure kinds"),
+    }
+}
+
+/// The infallible conjunction — every non-measure predicate kind.
+#[must_use]
+fn apply_infallible(
     image: &Arc<RelationImage>,
     predicates: &[FilterPredicate],
     params: &[Const],
@@ -335,6 +496,7 @@ fn interval_columns(image: &RelationImage, field: FieldId) -> (&[u64], &[u64]) {
 /// inverts at the hit, exactly like every other predicate class.
 /// Returns whether the scan ran; `false` falls back to the scalar
 /// `row_matches` loop.
+#[allow(clippy::too_many_lines)] // one arm per kernel-shaped predicate kind
 fn kernel_scan(
     image: &RelationImage,
     predicate: &FilterPredicate,
@@ -407,6 +569,11 @@ fn kernel_scan(
         // them.
         FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsContainPoint { .. } => {
             return false
+        }
+        // The measure kinds never reach the infallible machinery: they
+        // evaluate on the fallible refinement pass (`apply`).
+        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
+            unreachable!("measure filters take the fallible refinement pass")
         }
     }
     let FilterPredicate::Compare { field, op, value } = predicate else {

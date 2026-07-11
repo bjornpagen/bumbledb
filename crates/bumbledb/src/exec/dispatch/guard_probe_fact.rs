@@ -170,6 +170,12 @@ fn fact_matches(
                 }
             }
         }
+        // Measure filters disqualify guard classification (`classify`):
+        // their evaluation is fallible and filter-ordered — the filtered
+        // view's job, never the guard's.
+        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
+            unreachable!("classify refused measure filters")
+        }
     })
 }
 

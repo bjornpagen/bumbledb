@@ -259,6 +259,45 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
+        // Measure residuals: the line-parallel twin of `run_node`'s pass
+        // — per-parent Slot reads, ray poison (`execute` raises the typed
+        // `MeasureOfRay`), subtraction feeding the ordinary word compare.
+        for (residual, interval_slot, scalar_slot) in &self.duration_residual_slots[node_idx] {
+            let cover_vars = &node.subatoms[cover_sub].vars;
+            let interval_word =
+                super::word_base(cover_vars, residual.interval, |v| self.width_of(v));
+            let scalar_word = super::word_base(cover_vars, residual.scalar, |v| self.width_of(v));
+            let n = scratch.survivors.len();
+            scratch.mask.clear();
+            scratch.mask.resize(n, 0);
+            for k in 0..n {
+                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                let parent = scratch.parents[element] as usize;
+                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
+                    Some(word) => scratch.entry_keys[element * arity + word + offset],
+                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
+                };
+                let start = value(interval_word, *interval_slot, 0);
+                let end = value(interval_word, *interval_slot, 1);
+                if end == u64::MAX {
+                    self.measure_of_ray = Some([start, end]);
+                    self.all_cancelled = true; // stops the pump loops upstream
+                    break;
+                }
+                let pass = residual
+                    .op
+                    .compare(&(end - start), &value(scalar_word, *scalar_slot, 0));
+                counters.residual(node_idx, pass);
+                scratch.mask[k] = u8::from(pass);
+            }
+            if self.measure_of_ray.is_some() {
+                counters.phase_end(node_idx, JoinPhase::Residual);
+                scratch.parents.clear();
+                scratch.element_origins.clear();
+                return;
+            }
+            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+        }
         // Membership probes (docs/architecture/40-execution.md, the
         // point-membership scan): scan the occurrence's remaining
         // positions per surviving binding — cursors assembled exactly as

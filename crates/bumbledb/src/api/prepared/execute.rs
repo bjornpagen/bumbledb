@@ -104,6 +104,13 @@ impl<S> PreparedQuery<'_, S> {
         };
         #[cfg(not(feature = "trace"))]
         let ran = self.run_rules(txn, cache, &mut NoopCounters)?;
+        // The sink-side measure poison (a ray reached a projected or
+        // folded `Duration`): the engine's one runtime type error,
+        // raised before finalize — never a partial result. Executor-side
+        // rays (measure residuals) already surfaced through `run_join`.
+        if let Some([start, end]) = self.sink.measure_of_ray() {
+            return Err(crate::error::Error::MeasureOfRay { start, end });
+        }
         if !ran {
             return Ok(()); // every rule short-circuited: empty result
         }

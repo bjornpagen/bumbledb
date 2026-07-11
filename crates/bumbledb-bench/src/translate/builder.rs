@@ -189,6 +189,7 @@ impl Builder<'_> {
             }
             Term::ParamSet(param) => out.push(self.in_list(column, *param)?),
             Term::Var(_) => unreachable!("variable arms are polarity-specific"),
+            Term::Duration(_) => unreachable!("validated: no measure in bindings"),
         }
         Ok(())
     }
@@ -228,6 +229,7 @@ impl Builder<'_> {
             }
             Term::ParamSet(param) => out.push(self.set_membership(start, end, *param)?),
             Term::Var(_) => unreachable!("variable arms are polarity-specific"),
+            Term::Duration(_) => unreachable!("validated: no measure in bindings"),
         }
         Ok(())
     }
@@ -397,6 +399,16 @@ impl Builder<'_> {
                 Some(VarCols::Interval { start, end }) => {
                     Ok(Rendered::Pair(start.clone(), end.clone()))
                 }
+                None => Err(format!("comparison variable {} unbound", var.0)),
+            },
+            // The measure: end − start arithmetic over the halves —
+            // exact in SQLite's i64 for the generated corpora (PRD 15
+            // systematizes the measure's oracle rows).
+            Term::Duration(var) => match self.columns.get(var) {
+                Some(VarCols::Interval { start, end }) => {
+                    Ok(Rendered::One(format!("({end} - {start})")))
+                }
+                Some(VarCols::Scalar(_)) => Err(format!("Duration over scalar variable {}", var.0)),
                 None => Err(format!("comparison variable {} unbound", var.0)),
             },
             Term::Literal(value @ (Value::IntervalU64(..) | Value::IntervalI64(..))) => {

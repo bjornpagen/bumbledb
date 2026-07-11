@@ -174,6 +174,37 @@ pub enum FilterPredicate {
     /// by construction; the field is scalar by construction (an interval
     /// field under a constant is [`FilterPredicate::FieldAllen`]).
     FieldWithin { field: FieldId, outer: Const },
+    /// The measure against a constant: `(end − start) <op> value` over
+    /// the interval field's two encoded column words — one subtraction,
+    /// exact for both element types (the encodings are unit-spaced
+    /// order-preserving maps onto u64 words: u64 is the identity, I64
+    /// the +2⁶³ bias, so the bias cancels and `end > start` by the
+    /// constructor invariant keeps the difference exact). `op` is an
+    /// order operator and `value` a u64 word (`Word` or `Param`) by
+    /// validation.
+    ///
+    /// **The filter-order law (normative for both measure kinds):** the
+    /// measure evaluates only on facts surviving the atom's *other*
+    /// filters — an `Allen` ray guard or a bounded-end filter on the
+    /// same atom always runs first, so a guarded fact never reaches the
+    /// subtraction. On the survivors the subtraction path tests
+    /// `end == MAX` and raises [`crate::Error::MeasureOfRay`] — the
+    /// engine's one runtime type error — before comparing.
+    DurationCompare {
+        field: FieldId,
+        op: CmpOp,
+        value: Const,
+    },
+    /// The same-atom measure comparison: `(end − start) <op> scalar`
+    /// where the u64 side is another field of the same fact (the
+    /// lowering of `Duration(v) <op> w` with both variables bound on one
+    /// occurrence). Ray semantics and the filter-order law as
+    /// [`FilterPredicate::DurationCompare`].
+    DurationFieldsCompare {
+        interval: FieldId,
+        op: CmpOp,
+        scalar: FieldId,
+    },
 }
 
 /// A query-local view over an image: not yet bound to any generation
