@@ -221,7 +221,9 @@ proposition the commit checks in one integer compare.
     premises witnessed instead of locked.
   - *Derived-relation maintenance:* re-run the deriving query, diff against the
     stored relation's current facts, `write_from(&snap)` applying the diff — the
-    materialized-view refresh as an ordinary witnessed write.
+    materialized-view refresh as an ordinary witnessed write
+    (`10-data-model.md` § derived relations owns the pattern and its
+    statements).
 
 ## Facts and results
 
@@ -347,7 +349,10 @@ surface it is built from.
 
 - Newtype wrappers per schema type (`AccountId(u64)`, `Cents(i64)`,
   `ActiveDuring(Interval<i64>)`) — the nominal safety layer (`10-data-model.md`).
-- Query-fragment functions as the rule/view layer (`20-query-ir.md`).
+- Query-fragment functions as the view layer — *a view is a function returning
+  atoms*; the pattern and its worked calendar example (`busy_claims`, one
+  fragment spliced positive, negated, and `Pack`-folded) are
+  `10-data-model.md` § derived relations.
 - The outer-join merge: run the positive and the negated query, concatenate — the
   sanctioned decomposition (`20-query-ir.md`), a two-line host function.
 - Zero-default aggregates: the host maps an absent aggregate row to 0 where the

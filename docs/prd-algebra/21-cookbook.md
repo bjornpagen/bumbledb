@@ -76,8 +76,9 @@ the comments are the prose.
     insert-select, and read-modify-write with point-read guards for
     key-shaped premises.
 18. *Derived relations* — a Pack-fed rollup under `<=`, maintained by
-    witnessed writes; staleness uncommittable (cross-reference PRD 19's
-    chapter, one worked block here).
+    witnessed writes; staleness uncommittable (cross-reference
+    `10-data-model.md` § derived relations — PRD 19's chapter, landed —
+    one worked block here).
 19. *Union reads* — the DU whole-read as rules (one head, one rule per
     arm); the exclusivity elision noted as the free lunch.
 

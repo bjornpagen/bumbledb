@@ -172,7 +172,7 @@ else). The measure's query positions and the ray error's placement are
 `(x, [3,8))` are distinct facts whose denotations overlap; the engine stores what it
 was given (identity is bytes, below). The packed canonical form — maximal disjoint
 intervals per group, the temporal literature's *coalesce*, Postgres's `range_agg` —
-is a future aggregate (`Pack`, OPEN in `20-query-ir.md`). A relation that *wants*
+is an aggregate (`Pack`, `20-query-ir.md` § aggregation). A relation that *wants*
 its intervals disjoint declares the pointwise key; the dependency system expresses
 the policy, the engine never imposes it.
 
@@ -452,3 +452,92 @@ save a modeling shortcut).
 - **Large content** — facts stay fixed-width; big payloads live in external
   storage referenced by identity, with content churn recorded on the
   dictionary-GC OPEN item as its trigger profile.
+
+### Derived relations (the view story)
+
+SQL's *view* is one word for two different things, and each is answered with
+machinery this design already has. No engine surface exists or is coming; the
+precomputed transitive closures the discipline blesses above are this section's
+standing instance.
+
+**Virtual views are host-level IR composition — a view is a function returning
+atoms.** Queries are plain data (`20-query-ir.md`), so the composition layer is
+the host language: a derived predicate is a Rust function returning IR fragments
+(atoms, predicates, rule bodies) that callers splice into their queries. Worked,
+from the calendar theory (`60-validation.md`):
+
+```rust
+/// A person's busy claims — the one place `arm == Busy` is spelled.
+fn busy_claims(person: VarId, span: VarId) -> Atom {
+    Atom { relation: CLAIM, bindings: vec![
+        (CLAIM_PERSON, Term::Var(person)),
+        (CLAIM_ARM,    Term::Literal(Value::Enum(ARM_BUSY))),
+        (CLAIM_SPAN,   Term::Var(span)),
+    ] }
+}
+```
+
+One fragment, three of the family's queries, three positions: `busy_scan` takes
+it as the positive atom under `Allen` against the param window; `conflict_free`
+pushes the *same* fragment into `negated` with a point-membership binding
+(negation is a position in the query, not a kind of atom — `20-query-ir.md`);
+`free_busy` folds its span variable under `Pack`. Change what "busy" means —
+an added arm, an added guard — and every consumer follows at the next compile.
+**Refusal, permanent (`docs/prd-algebra/README.md`): no named-view registry in
+the engine, ever.** A registry would be a second schema with none of the
+theory's guarantees — names resolved at run time, fragments outside the
+fingerprint, no typing fixpoint until use — while rustc already polices the
+real one: functions have names, types, visibility, and dead-code warnings.
+
+**Materialized views are a relation plus statements — strictly stronger than
+SQL's.** Materialize derived data into an ordinary relation and *state* its
+relationship to the sources; the commit judgment (`30-dependencies.md`) then
+decides which lies can never be stored. Worked, `Pack`-fed (`20-query-ir.md`
+§ aggregation):
+
+```rust
+relation BusySpan { person: u64, span: interval<i64> }
+BusySpan(person, span) -> BusySpan;                           // packed ⇒ disjoint: statable
+BusySpan(person, span) <= Claim(person, span | arm == Busy);  // soundness, pointwise
+```
+
+The `<=` reads through the denotation: every point of every stored span is
+covered by that person's busy claims, so an **unsound** materialization —
+claiming busy time that isn't, or surviving its sources' deletion — is
+**uncommittable**, judged on every commit that touches either side. Incomplete-
+until-refresh stays representable; that is what a refresh window *is*, and the
+direction is the dial: where the derivation is exact and the host commits to
+same-transaction maintenance, `==` (gate permitting — the reverse projection
+must target a pointwise key, as here) makes *any* divergence uncommittable —
+the discriminated union's totality theorem replayed for derived data. SQL
+matviews invert every default: stale silently, in both directions, and
+`REFRESH` is a prayer. Here the host maintains and the engine judges;
+maintenance is the generation-witness idiom verbatim (`70-api.md`
+§ conditional writes, the third idiom): query the sources on a snapshot →
+recompute (`Pack` is the coalesce) → diff → `write_from` with that snapshot as
+the witness — the derived relation cannot commit against sources it didn't
+actually read (`GenerationMoved` otherwise).
+
+**The honest limit: statements prove presence and topology, never arithmetic
+agreement.** Containment proves every derived row justified and — reversed —
+every source represented; keys prove shape; selections pin arms; pointwise
+lifting proves coverage. What no statement can say is that a *value* equals a
+*computation* over its sources: the calendar's `Attendance(id | rsvp ==
+Accepted) == Claim(source | arm == Busy)` proves every accepted attendance has
+its busy claim and cannot add "…and the claim's span equals the attended
+event's span" — copied intervals and summed balances are computations, outside
+the ∀∃ vocabulary by the acceptance gate (`30-dependencies.md`: statements are
+projections and literal selections; expression agreement has no O(log n)
+enforcement plan). **Refusal, recorded (`docs/prd-algebra/README.md`): no
+arithmetic-agreement statements.** The answer is host discipline — one function
+owns each derivation, which the composition idiom above makes natural — plus,
+where wanted, an offline `verify_store`-grade re-derivation: re-run the
+deriving query on a snapshot and compare against the stored relation, the same
+posture the store's own integrity sweep takes (`60-validation.md`). *Trigger:*
+a sighted agreement invariant that host discipline plus offline re-derivation
+demonstrably fails to hold; the candidate form would be projected copy-equality
+across a containment's sides — never expression evaluation.
+
+**Deleted vocabulary** (rows in `00-product.md`): *view* → a function returning
+atoms; *materialized view / refresh* → a relation under statements, maintained
+by witnessed writes.

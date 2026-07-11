@@ -127,8 +127,12 @@ whole and retired: `Db::write_from` takes the snapshot as the witness and
 aborts with `GenerationMoved` on a moved state-changing generation, and the
 rulings live in `70-api.md` § conditional writes, `00-product.md`'s
 deleted-vocabulary rows and concurrency sentence, and `30-dependencies.md`'s
-runs-before-judgment cross-reference):
-- [19 — Derived relations: the view story, canonized (doc unit)](19-derived-relations.md)
+runs-before-judgment cross-reference; 19 — derived relations, the doc unit —
+landed whole and retired: the view story is canonized in `10-data-model.md`
+§ derived relations — composition, materialization under statements, the
+arithmetic-agreement limit, both refusals — with the vocabulary rows in
+`00-product.md` and the composition idiom named in `70-api.md` § host-side
+sugar):
 - [20 — The data surface, ruled: schemas are code, queries are data](20-data-surface.md)
 - [23 — The query notation: set-builder, promoted from the schema grammar](23-query-notation.md)
 
@@ -139,7 +143,7 @@ Dependency spine: Phases A (01–04), B (05–09), C (10–12), and E (15–16)
 landed whole; 13/14 landed
 (residual landed with 01); 17 landed (its adversarial
 digest rows are in the generator's target ledger, inherited by 15's families);
-18 landed; 19 requires 18 (landed); 20
+18 landed; 19 landed; 20
 requires 05 (its sweep and renderer target the rules-shaped IR); 23 requires
 05 and 20 and coordinates with 21 (the cookbook's queries are written in the
 23 notation, round-trip-pinned against `ir::render`); 21 lands
@@ -194,11 +198,12 @@ witnessed-write row 18 owed it); G closes the set itself.
   don't validate). Landed; recorded in `70-api.md` § conditional writes.
 - **A named-view registry in the engine.** A view is a host function
   returning atoms; a registry would be a second schema with none of the
-  theory's guarantees. Recorded in PRD 19.
+  theory's guarantees. Landed; recorded in `10-data-model.md` § derived
+  relations.
 - **Arithmetic-agreement statements** (a derived column equaling a
   computation over its sources). Outside the ∀∃ vocabulary by the acceptance
   gate; host discipline plus offline re-derivation, with the trigger
-  recorded in PRD 19.
+  recorded in `10-data-model.md` § derived relations.
 - **A typed query builder, and any engine-side query ergonomics.** Queries
   are data (PRD 20's ruling): builders bind construction to Rust closures
   and generics — exactly what a foreign host cannot invoke — and the

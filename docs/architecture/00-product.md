@@ -227,7 +227,9 @@ identity; *unique* → functional dependency statement; *foreign key* → contai
 statement; *check constraint* → host newtype constructors; *exclusion constraint* →
 functional dependency over an interval position; *cascade* → same-transaction
 cluster demolition under final-state judgment; *restrict / no action / deferrable* →
-final-state judgment is the only timing; *trigger* → nothing, on purpose; *null* →
+final-state judgment is the only timing; *trigger* → nothing, on purpose; *view* → a function returning atoms;
+*materialized view / refresh* → a relation under statements, maintained by
+witnessed writes; *null* →
 absent fact in a 0..1 child relation; *uuid* → fresh + explicit time columns;
 *update / upsert* → delete+insert, with WriteTx point reads for the read-modify-write
 idiom; *SELECT FOR UPDATE / row locks / SERIALIZABLE retry* → the generation witness
