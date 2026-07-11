@@ -89,6 +89,14 @@ pub enum FindSpec {
         /// `true` for `ArgMax`, `false` for `ArgMin`.
         max: bool,
     },
+    /// The coalescing fold (`Pack` — 20-query-ir § aggregation): the
+    /// interval variable's two-slot span. Relation-shaped group state —
+    /// per group the sink accumulates the claim list; finalize sorts by
+    /// start word and drives the shared segment sweep
+    /// (`crate::interval::sweep`), one head row per maximal segment.
+    /// Validation admits at most one per head and no fold or Arg
+    /// companions.
+    Pack { slot: usize },
 }
 
 /// A fold aggregate's operator, execution-side: exactly the ops that fold
@@ -161,7 +169,10 @@ fn extend_sources(finds: &[FindSpec], out: &mut Vec<ProjSource>) {
                 out.extend((*slot..slot + width).map(ProjSource::Slot));
             }
             FindSpec::Duration { slot } => out.push(ProjSource::Measure { start: *slot }),
-            FindSpec::Agg { .. } | FindSpec::AggDuration { .. } | FindSpec::Arg { .. } => {
+            FindSpec::Agg { .. }
+            | FindSpec::AggDuration { .. }
+            | FindSpec::Arg { .. }
+            | FindSpec::Pack { .. } => {
                 unreachable!("projection sinks project plain variables and measures")
             }
         }
@@ -323,6 +334,18 @@ pub struct AggregateSink {
     carry_words: usize,
     /// Arg row assembly scratch.
     carry_scratch: Vec<u64>,
+    /// The Pack term's interval slot span start, when the head carries
+    /// one (validation: at most one, never beside folds or Arg terms).
+    /// Re-aimed per rule like every slot table.
+    pack: Option<usize>,
+    /// Per group: `Pack`'s claim accumulation list — `[start, end]`
+    /// encoded word pairs, appended raw at fold time (identical and
+    /// overlapping claims collapse in the finalize sweep, never here)
+    /// and pooled by group index exactly like the Arg row sets (capacity
+    /// retained across executions, cleared at group creation). Memory is
+    /// O(the group's claims) — the allocation contract's retained
+    /// high-water scratch.
+    pack_claims: Vec<Vec<[u64; 2]>>,
     /// `CountDistinct` and Arg fold per row — their group state is a set,
     /// not a scalar accumulator, so no gather kernel or scan pushdown
     /// applies; batches route through the per-row scratch fold.

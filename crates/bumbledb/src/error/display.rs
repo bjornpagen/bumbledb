@@ -497,6 +497,18 @@ impl fmt::Display for ValidationError {
             Self::NonOrderableArgKey { find } => {
                 write!(f, "find {find}: the Arg key must be U64 or I64")
             }
+            Self::MultiplePackTerms { find } => {
+                write!(f, "find {find}: at most one Pack term per head")
+            }
+            Self::MixedPackAndFold { find } => {
+                write!(f, "find {find}: Pack and fold aggregates may not mix")
+            }
+            Self::MixedPackAndArg { find } => {
+                write!(f, "find {find}: Pack and Arg terms may not mix")
+            }
+            Self::PackInputType { find } => {
+                write!(f, "find {find}: Pack folds an interval variable only")
+            }
             Self::DurationInBinding { atom, field } => write!(
                 f,
                 "atom {atom}, field {}: Duration is a computation, not a bindable value",

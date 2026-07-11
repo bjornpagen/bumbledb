@@ -554,6 +554,32 @@ pub enum ValidationError {
     NonOrderableArgKey {
         find: usize,
     },
+    /// A second `Pack` term in one head: the multi-`Pack` product has no
+    /// sighting and is refused. *Trigger* for admitting it: a real query
+    /// needing two coalesced columns in one row
+    /// (`docs/architecture/20-query-ir.md` § aggregation).
+    MultiplePackTerms {
+        find: usize,
+    },
+    /// `Pack` beside a fold aggregate (Sum/Min/Max/Count/CountDistinct):
+    /// `Pack` is relation-shaped — a fold column repeated per segment row
+    /// is a join in aggregate costume. Coalesced-time accounting
+    /// (`Sum∘Duration∘Pack`) is two prepared queries or a host fold over
+    /// packed rows; *trigger* for a composed form: a measured two-pass
+    /// budget violation.
+    MixedPackAndFold {
+        find: usize,
+    },
+    /// `Pack` beside Arg terms — the two relation-shaped aggregates do
+    /// not compose in one head (the Arg/fold mixing rule, extended).
+    MixedPackAndArg {
+        find: usize,
+    },
+    /// `Pack` over a non-interval variable: the coalesce is defined by
+    /// the interval point-set denotation and by nothing else.
+    PackInputType {
+        find: usize,
+    },
     /// A `Term::Duration` in an atom binding: the measure is a
     /// computation over a bound interval variable, not a bindable value
     /// — its legal positions are a find term, the aggregated input of

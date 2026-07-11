@@ -453,6 +453,11 @@ impl Coverage {
                             arg_key = Some(*key);
                             arg_key_projected |= *over == Some(*key);
                         }
+                        // The fleet does not emit Pack yet (PRD 15 adds
+                        // the coalescing family's oracle rows — the SQL
+                        // lane cannot express it, so its rows are
+                        // naive-only by the expressibility gate).
+                        AggOp::Pack => {}
                     }
                     if let Some(var) = over {
                         if matches!(t.var_types.get(var), Some(ValueType::U64)) {

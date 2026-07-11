@@ -31,11 +31,26 @@ fn rewrite_measures(finds: &mut [FindSpec], slot_count: usize, measures: &mut Ve
                     signed: false,
                 },
             ),
-            FindSpec::Var { .. } | FindSpec::Agg { .. } | FindSpec::Arg { .. } => continue,
+            FindSpec::Var { .. }
+            | FindSpec::Agg { .. }
+            | FindSpec::Arg { .. }
+            | FindSpec::Pack { .. } => continue,
         };
         measures.push((slot_count + measures.len(), op_slot));
         *find = rewritten;
     }
+}
+
+/// The one Pack slot of a find list, if any (validation: at most one
+/// Pack per head — shared by construction and per-rule re-aiming).
+fn pack_slot(finds: &[FindSpec]) -> Option<usize> {
+    let mut packs = finds.iter().filter_map(|f| match f {
+        FindSpec::Pack { slot } => Some(*slot),
+        _ => None,
+    });
+    let slot = packs.next();
+    debug_assert!(packs.next().is_none(), "validated: at most one Pack");
+    slot
 }
 
 impl AggregateSink {
@@ -85,7 +100,7 @@ impl AggregateSink {
             .iter()
             .filter_map(|f| match f {
                 FindSpec::Var { slot, width } => Some((*slot, *width)),
-                FindSpec::Agg { .. } | FindSpec::Arg { .. } => None,
+                FindSpec::Agg { .. } | FindSpec::Arg { .. } | FindSpec::Pack { .. } => None,
                 FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
                     unreachable!("rewrite_measures ran")
                 }
@@ -100,7 +115,7 @@ impl AggregateSink {
             .iter()
             .filter_map(|f| match f {
                 FindSpec::Arg { width, .. } => Some(*width),
-                FindSpec::Var { .. } | FindSpec::Agg { .. } => None,
+                FindSpec::Var { .. } | FindSpec::Agg { .. } | FindSpec::Pack { .. } => None,
                 FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
                     unreachable!("rewrite_measures ran")
                 }
@@ -114,7 +129,7 @@ impl AggregateSink {
                 key_slot: *key_slot,
                 max: *max,
             }),
-            FindSpec::Var { .. } | FindSpec::Agg { .. } => None,
+            FindSpec::Var { .. } | FindSpec::Agg { .. } | FindSpec::Pack { .. } => None,
             FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
                 unreachable!("rewrite_measures ran")
             }
@@ -125,15 +140,19 @@ impl AggregateSink {
                     arg.is_some_and(|spec| spec.key_slot == *key_slot && spec.max == *max),
                 FindSpec::Var { .. }
                 | FindSpec::Agg { .. }
+                | FindSpec::Pack { .. }
                 | FindSpec::Duration { .. }
                 | FindSpec::AggDuration { .. } => true,
             }),
             "validated: all Arg terms share one key and one direction"
         );
+        let pack = pack_slot(&finds);
         // Measures fold per row too: their derived words exist only in
         // the scratch row, so no gather kernel or scan pushdown can read
-        // them.
+        // them. Pack is set-valued group state like Arg — per-row as
+        // well.
         let row_fold_only = arg.is_some()
+            || pack.is_some()
             || !measures.is_empty()
             || finds.iter().any(|f| {
                 matches!(
@@ -177,6 +196,8 @@ impl AggregateSink {
             arg_rows: Vec::new(),
             carry_words,
             carry_scratch: Vec::with_capacity(carry_words),
+            pack,
+            pack_claims: Vec::new(),
             row_fold_only,
             #[cfg(test)]
             group_probes: 0,
@@ -213,11 +234,14 @@ impl AggregateSink {
         self.group_spans
             .extend(self.finds.iter().filter_map(|f| match f {
                 FindSpec::Var { slot, width } => Some((*slot, *width)),
-                FindSpec::Agg { .. } | FindSpec::Arg { .. } => None,
+                FindSpec::Agg { .. } | FindSpec::Arg { .. } | FindSpec::Pack { .. } => None,
                 FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
                     unreachable!("rewrite_measures ran")
                 }
             }));
+        // The Pack slot is the rule's (the head position is fixed;
+        // validation aligned every rule's Pack term against it).
+        self.pack = pack_slot(&self.finds);
         if let Some(spans) = &mut self.union_spans {
             spans.clear();
             spans.extend(self.finds.iter().filter_map(union_span));
@@ -309,11 +333,14 @@ impl AggregateSink {
 }
 
 /// One head position's contribution to the union dedup key: the slot
-/// span the position reads — a group variable's span or a fold input's
-/// span; the nullary `Count` reads nothing and contributes nothing (the
-/// naive model's "constant filler", represented as absence). Arg terms
-/// are unreachable here (validation refuses Arg-restriction across
-/// rules — 20-query-ir § aggregation).
+/// span the position reads — a group variable's span, a fold input's
+/// span, or a Pack input's two-word span (the fold domain projected to
+/// the head carries the *raw claim*, so the spanning seen-set keys
+/// (group, claim) pairs and the coalesce folds the union — 20-query-ir
+/// § aggregation); the nullary `Count` reads nothing and contributes
+/// nothing (the naive model's "constant filler", represented as
+/// absence). Arg terms are unreachable here (validation refuses
+/// Arg-restriction across rules).
 fn union_span(find: &FindSpec) -> Option<(usize, usize)> {
     match find {
         FindSpec::Var { slot, width } => Some((*slot, *width)),
@@ -322,6 +349,7 @@ fn union_span(find: &FindSpec) -> Option<(usize, usize)> {
             over_width,
             ..
         } => Some((*slot, *over_width)),
+        FindSpec::Pack { slot } => Some((*slot, 2)),
         FindSpec::Agg {
             over_slot: None, ..
         } => None,

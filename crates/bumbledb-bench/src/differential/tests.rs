@@ -6,6 +6,7 @@
 
 mod chase;
 mod measure;
+mod pack;
 
 use std::path::{Path, PathBuf};
 

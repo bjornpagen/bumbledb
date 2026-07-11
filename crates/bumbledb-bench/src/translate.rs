@@ -120,12 +120,12 @@ pub enum LaneCase<'a> {
     Judgment(&'a StatementDescriptor),
 }
 
-/// What the `SQLite` lane cannot express — exactly the dependency
-/// judgments (`docs/architecture/60-validation.md` § the two oracles:
-/// "`SQLite` cannot express the judgments"). The naive model is the oracle
-/// for every listed case; the verify harness consumes this enumeration so
-/// nothing is ever *silently* skipped. Trigger emulation is refused by
-/// decision, not deferred.
+/// What the `SQLite` lane cannot express — the dependency judgments
+/// (`docs/architecture/60-validation.md` § the two oracles: "`SQLite`
+/// cannot express the judgments") and the `Pack` aggregate. The naive
+/// model is the oracle for every listed case; the verify harness consumes
+/// this enumeration so nothing is ever *silently* skipped. Trigger
+/// emulation is refused by decision, not deferred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Inexpressible {
     /// A functionality verdict, scalar or pointwise: SQL has no
@@ -136,19 +136,37 @@ pub enum Inexpressible {
     /// target-required), σ-conditional sides and interval coverage
     /// included.
     ContainmentJudgment,
+    /// A `Pack` head: `SQLite` has no coalescing aggregate — a
+    /// relation-shaped GROUP BY (one row per (group, maximal segment))
+    /// is not a SQL fold, and a recursive-CTE emulation would test the
+    /// emulation, not the engine. Naive-only by decision; PRD 15
+    /// systematizes the routing.
+    PackAggregate,
 }
 
-/// The `SQLite` lane's expressibility gate. Every query construct
+/// The `SQLite` lane's expressibility gate. Every other query construct
 /// translates — negation, membership, param sets, `CountDistinct`,
-/// Arg-restriction included — so the `Query` arm is unconditionally
-/// expressible; only the dependency judgments are the naive lane's alone.
+/// Arg-restriction included — so a `Pack`-free `Query` arm is
+/// unconditionally expressible; `Pack` heads and the dependency
+/// judgments are the naive lane's alone.
 ///
 /// # Errors
 ///
-/// The [`Inexpressible`] judgment kind for a write-side statement verdict.
+/// The [`Inexpressible`] case: a `Pack`-bearing query, or the judgment
+/// kind for a write-side statement verdict.
 pub fn sqlite_expressible(case: &LaneCase<'_>) -> Result<(), Inexpressible> {
     match case {
-        LaneCase::Query(_) => Ok(()),
+        LaneCase::Query(query) => {
+            if query
+                .head
+                .iter()
+                .any(|term| matches!(term, bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Pack)))
+            {
+                Err(Inexpressible::PackAggregate)
+            } else {
+                Ok(())
+            }
+        }
         LaneCase::Judgment(StatementDescriptor::Functionality { .. }) => {
             Err(Inexpressible::FunctionalityJudgment)
         }

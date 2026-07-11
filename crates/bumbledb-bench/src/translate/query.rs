@@ -213,6 +213,9 @@ fn fold_sql(query: &Query, b: &Builder, from: &str, where_clause: &str) -> Resul
                 AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
                     unreachable!("Arg terms take the join-back template")
                 }
+                // The expressibility gate (`super::sqlite_expressible`)
+                // routes Pack heads to the naive lane before translation.
+                AggOp::Pack => return Err("Pack is naive-only (no SQL coalesce)".to_owned()),
             }),
         }
     }

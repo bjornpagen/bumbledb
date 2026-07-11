@@ -22,6 +22,7 @@ mod disjoint;
 mod explain;
 mod guard;
 mod measure;
+mod pack;
 mod params;
 mod rules;
 mod selection;

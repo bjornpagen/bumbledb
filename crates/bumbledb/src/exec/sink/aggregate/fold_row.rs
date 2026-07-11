@@ -54,6 +54,15 @@ impl AggregateSink {
             return; // validated: Arg terms and folds never mix
         }
 
+        if let Some(slot) = self.pack {
+            // One coalescing-fold step: append the claim raw — identical
+            // and overlapping claims collapse in the finalize sweep,
+            // never here (20-query-ir § aggregation).
+            self.pack_claims[group_idx]
+                .push([self.binding_scratch[slot], self.binding_scratch[slot + 1]]);
+            return; // validated: Pack mixes with no other aggregate
+        }
+
         let mut acc_cursor = 0;
         for find in &self.finds {
             let FindSpec::Agg {

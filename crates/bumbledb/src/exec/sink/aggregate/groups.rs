@@ -73,7 +73,7 @@ impl AggregateSink {
                         };
                         self.accs.push(acc);
                     }
-                    FindSpec::Var { .. } | FindSpec::Arg { .. } => {}
+                    FindSpec::Var { .. } | FindSpec::Arg { .. } | FindSpec::Pack { .. } => {}
                     FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
                         unreachable!("the constructor's rewrite ran")
                     }
@@ -81,6 +81,9 @@ impl AggregateSink {
             }
             if self.arg.is_some() {
                 self.seed_arg_group(group_idx);
+            }
+            if self.pack.is_some() {
+                self.seed_pack_group(group_idx);
             }
         }
         group_idx
@@ -111,6 +114,17 @@ impl AggregateSink {
         }
         self.value_sets_live += 1;
         idx
+    }
+
+    /// Seeds a fresh group's Pack state: an empty claim list, pooled by
+    /// group index (capacity retained across executions — the Arg row-set
+    /// precedent).
+    fn seed_pack_group(&mut self, group_idx: usize) {
+        if group_idx < self.pack_claims.len() {
+            self.pack_claims[group_idx].clear();
+        } else {
+            self.pack_claims.push(Vec::new());
+        }
     }
 
     /// Seeds a fresh group's Arg state: the identity extreme (any first

@@ -137,7 +137,7 @@ impl<S> PreparedQuery<'_, S> {
         }
         if ran {
             finalize(
-                &self.sink,
+                &mut self.sink,
                 &mut self.row_scratch,
                 &mut self.resolve_memo,
                 txn,

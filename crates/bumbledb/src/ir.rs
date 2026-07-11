@@ -116,6 +116,18 @@ pub enum AggOp {
     /// Arg-restriction toward the **minimum** of `key`; rules as
     /// [`AggOp::ArgMax`].
     ArgMin { key: VarId },
+    /// The coalescing fold (Snodgrass coalesce) over an interval-typed
+    /// variable: per group, the result is the set of **maximal disjoint
+    /// half-open segments** of the union of the group's interval point
+    /// sets. `Pack` is **relation-shaped** — one result row per (group,
+    /// maximal segment); the result position is interval-typed
+    /// (`docs/architecture/20-query-ir.md` § aggregation). Adjacency
+    /// merges (`end == next.start` — the half-open law), a packed ray is
+    /// a ray, and identical claims collapse in the coalesce. At most one
+    /// `Pack` per head, never beside fold or Arg terms — the group
+    /// variables are the only companions (validation, each refusal
+    /// typed).
+    Pack,
 }
 
 /// One find term: a projected variable or an aggregate. `over` is `None`
@@ -175,6 +187,7 @@ pub enum HeadOp {
     CountDistinct,
     ArgMax,
     ArgMin,
+    Pack,
 }
 
 impl AggOp {
@@ -189,6 +202,7 @@ impl AggOp {
             Self::CountDistinct => HeadOp::CountDistinct,
             Self::ArgMax { .. } => HeadOp::ArgMax,
             Self::ArgMin { .. } => HeadOp::ArgMin,
+            Self::Pack => HeadOp::Pack,
         }
     }
 }

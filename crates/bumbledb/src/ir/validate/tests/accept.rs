@@ -365,3 +365,60 @@ fn accepts_an_arg_carry_equal_to_its_key() {
     );
     validate(&schema(), &query).expect("valid");
 }
+
+#[test]
+fn accepts_pack_and_pins_the_interval_result_type() {
+    // finds [account, Pack(span)]: the coalescing fold — the result
+    // position is interval-typed (a packed segment shares its input's
+    // type), pinned in the head's positional row.
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+        ],
+        vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
+    );
+    let witness = validate(&schema(), &query).expect("valid");
+    assert_eq!(
+        witness.head_types(),
+        &[
+            ValueType::U64,
+            ValueType::Interval {
+                element: IntervalElement::U64
+            }
+        ]
+    );
+}
+
+#[test]
+fn accepts_pack_across_rules() {
+    // Pack folds the union (unlike Arg-restriction, whose key is
+    // rule-scoped): two rules over one Pack head are legal — the fold
+    // domain is the union of the rules' claims projected to the head.
+    let rule = |atoms: Vec<crate::ir::Atom>| Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms,
+        negated: vec![],
+        predicates: vec![],
+    };
+    let query = Query {
+        head: vec![
+            crate::ir::HeadTerm::Var,
+            crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Pack),
+        ],
+        rules: vec![
+            rule(vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])]),
+            rule(vec![atom(ACCOUNT, vec![(1, var(0)), (VALIDITY, var(1))])]),
+        ],
+    };
+    validate(&schema(), &query).expect("valid");
+}

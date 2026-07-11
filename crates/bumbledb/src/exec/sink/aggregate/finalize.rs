@@ -1,5 +1,6 @@
 use crate::error::{Error, OverflowKind, Result};
 use crate::exec::sink::{i64_to_word, Acc, AggregateSink, FindSpec};
+use crate::interval::sweep::{sweep, Continuation};
 
 impl AggregateSink {
     /// Finalizes each group into `emit` as **word rows** (find order,
@@ -13,18 +14,36 @@ impl AggregateSink {
     /// Fold groups emit one row each; Arg-restriction groups emit
     /// **every stored row** — the rows projected from the bindings
     /// attaining the key's extreme, ties included (set-honest,
-    /// 20-query-ir § aggregation).
+    /// 20-query-ir § aggregation); Pack groups emit **one row per
+    /// maximal segment** of the group's claim union (relation-shaped —
+    /// the claim lists sort here, hence `&mut self`).
     ///
     /// # Errors
     ///
     /// `Overflow` when a Sum's final value exceeds its result type; errors
     /// from `emit` propagate.
     pub fn finalize_into(
-        &self,
+        &mut self,
         row_scratch: &mut Vec<u64>,
         mut emit: impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
+        // Pack's sort pass, ahead of the emit loop (which iterates the
+        // group map immutably): each live group's claim list orders by
+        // start word — the sweep's precondition. The sort is
+        // `sort_unstable` — the existing in-place machinery, allocation-
+        // free, so the warm gate covers it; a pooled radix over the start
+        // words stays unearned until PRD 16's bench shows this pass on a
+        // profile (the measured-choice record).
+        if self.pack.is_some() {
+            for claims in &mut self.pack_claims[..self.groups.len()] {
+                claims.sort_unstable();
+            }
+        }
         for (key, group_idx) in self.groups.iter() {
+            if self.pack.is_some() {
+                self.emit_pack_group(key, *group_idx, row_scratch, &mut emit)?;
+                continue;
+            }
             if self.arg.is_some() {
                 self.emit_arg_group(key, *group_idx, row_scratch, &mut emit)?;
                 continue;
@@ -43,8 +62,8 @@ impl AggregateSink {
                         row_scratch.push(self.finalize_acc(accs[acc_cursor], find_idx)?);
                         acc_cursor += 1;
                     }
-                    FindSpec::Arg { .. } => {
-                        unreachable!("validated: Arg terms and folds never mix")
+                    FindSpec::Arg { .. } | FindSpec::Pack { .. } => {
+                        unreachable!("validated: relation-shaped terms and folds never mix")
                     }
                     FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
                         unreachable!("the constructor's rewrite ran")
@@ -54,6 +73,78 @@ impl AggregateSink {
             emit(row_scratch)?;
         }
         Ok(())
+    }
+
+    /// One Pack group's emission: the sweep's maximal-run continuation
+    /// (`crate::interval::sweep` — the one segment walk, this is its
+    /// second caller) over the group's start-sorted claims, one head row
+    /// per maximal segment — group key interleaved per find order, the
+    /// segment's two words at the Pack position. Adjacency merges,
+    /// identical claims collapse, and a ray (`end == MAX`) is the
+    /// frontier no later claim exceeds, so a packed ray is a ray — all
+    /// three are the sweep's laws, not cases here.
+    fn emit_pack_group(
+        &self,
+        key: &[u64],
+        group_idx: usize,
+        row_scratch: &mut Vec<u64>,
+        emit: &mut impl FnMut(&[u64]) -> Result<()>,
+    ) -> Result<()> {
+        /// The emit continuation: consumed segments need nothing; a
+        /// maximal run is one result row.
+        struct PackEmit<'a, F> {
+            finds: &'a [FindSpec],
+            key: &'a [u64],
+            row_scratch: &'a mut Vec<u64>,
+            emit: &'a mut F,
+        }
+
+        impl<F: FnMut(&[u64]) -> Result<()>> Continuation<u64, ()> for PackEmit<'_, F> {
+            type Error = Error;
+
+            fn segment(&mut self, (): ()) -> Result<()> {
+                Ok(())
+            }
+
+            fn maximal(&mut self, start: u64, frontier: u64) -> Result<()> {
+                self.row_scratch.clear();
+                let mut key_cursor = 0;
+                for find in self.finds {
+                    match find {
+                        FindSpec::Var { width, .. } => {
+                            self.row_scratch
+                                .extend_from_slice(&self.key[key_cursor..key_cursor + width]);
+                            key_cursor += width;
+                        }
+                        FindSpec::Pack { .. } => {
+                            self.row_scratch.push(start);
+                            self.row_scratch.push(frontier);
+                        }
+                        FindSpec::Agg { .. } | FindSpec::Arg { .. } => {
+                            unreachable!("validated: Pack mixes with no other aggregate")
+                        }
+                        FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
+                            unreachable!("the constructor's rewrite ran")
+                        }
+                    }
+                }
+                (self.emit)(self.row_scratch)
+            }
+        }
+
+        let claims = self.pack_claims[group_idx]
+            .iter()
+            .map(|&[start, end]| Ok((start, end, ())));
+        sweep(
+            claims,
+            None,
+            &mut PackEmit {
+                finds: &self.finds,
+                key,
+                row_scratch,
+                emit,
+            },
+        )
     }
 
     /// One Arg group's emission: every row of the restricted set,
@@ -82,8 +173,8 @@ impl AggregateSink {
                             .extend_from_slice(&carry_row[carry_cursor..carry_cursor + width]);
                         carry_cursor += width;
                     }
-                    FindSpec::Agg { .. } => {
-                        unreachable!("validated: Arg terms and folds never mix")
+                    FindSpec::Agg { .. } | FindSpec::Pack { .. } => {
+                        unreachable!("validated: Arg terms mix with no other aggregate")
                     }
                     FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
                         unreachable!("the constructor's rewrite ran")
@@ -115,7 +206,7 @@ impl AggregateSink {
     ///
     /// As [`Self::finalize_into`].
     #[cfg(test)]
-    pub fn into_rows(self) -> Result<Vec<Vec<u64>>> {
+    pub fn into_rows(mut self) -> Result<Vec<Vec<u64>>> {
         let mut rows = Vec::with_capacity(self.groups.len());
         let mut scratch = Vec::new();
         self.finalize_into(&mut scratch, |row| {

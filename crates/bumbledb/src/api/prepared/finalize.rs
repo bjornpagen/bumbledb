@@ -5,13 +5,16 @@ use crate::storage::env::ReadTxn;
 
 /// Drains the sink into the result buffer, decoding words by result type
 /// (each distinct intern resolved once, docs/architecture/40-execution.md).
+/// The aggregate sink finalizes mutably (`Pack`'s claim lists sort in
+/// place); the buffer reservation is a hint — Pack emits one row per
+/// (group, maximal segment), so groups is a floor there, not the count.
 ///
 /// Sink rows are **word rows** (the `SlotWidth` layout): each find
 /// contributes its width — an interval find spans two words that
 /// materialize as ONE interval cell — so both loops walk a word cursor
 /// per find, never a bare column index.
 pub(super) fn finalize(
-    sink: &EitherSink,
+    sink: &mut EitherSink,
     row_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
     txn: &ReadTxn<'_>,

@@ -72,6 +72,56 @@ fn measure_value(value: &Value) -> Result<u64, QueryError> {
     }
 }
 
+/// `Pack` from the definition (`docs/architecture/20-query-ir.md`
+/// § aggregation): the union of the claims' point sets as **maximal
+/// disjoint half-open segments** — sort the endpoint pairs, then merge
+/// while `next.start <= frontier` (equality merges: half-open segments
+/// sharing a boundary leave no hole — the adjacency law). The model's
+/// own arithmetic over logical endpoint values, deliberately independent
+/// of the engine's word sweep (the differential oracle would otherwise
+/// test a function against itself). A ray's `end` is the element
+/// domain's `MAX`, so it is simply the frontier no later claim exceeds —
+/// the packed ray is a ray, no case needed. Identical claims merge like
+/// any overlap.
+fn pack_segments(claims: &[&Value]) -> Vec<Value> {
+    let mut segments: Vec<(i128, i128)> = claims.iter().map(|value| endpoints(value)).collect();
+    segments.sort_unstable();
+    let mut merged: Vec<(i128, i128)> = Vec::new();
+    for segment in segments {
+        match merged.last_mut() {
+            Some(last) if segment.0 <= last.1 => last.1 = last.1.max(segment.1),
+            _ => merged.push(segment),
+        }
+    }
+    let rebuild = |(start, end): (i128, i128)| match claims[0] {
+        Value::IntervalU64(..) => Value::IntervalU64(
+            u64::try_from(start).expect("u64 endpoints round-trip"),
+            u64::try_from(end).expect("u64 endpoints round-trip"),
+        ),
+        Value::IntervalI64(..) => Value::IntervalI64(
+            i64::try_from(start).expect("i64 endpoints round-trip"),
+            i64::try_from(end).expect("i64 endpoints round-trip"),
+        ),
+        other => panic!("validated: Pack takes an interval, got {other:?}"),
+    };
+    merged.into_iter().map(rebuild).collect()
+}
+
+/// The head's one `Pack` position, if any (validation: at most one).
+fn pack_position(finds: &[FindTerm]) -> Option<(usize, VarId)> {
+    finds.iter().enumerate().find_map(|(index, find)| {
+        if let FindTerm::Aggregate {
+            op: AggOp::Pack,
+            over,
+        } = find
+        {
+            Some((index, over.expect("validated: Pack carries a variable")))
+        } else {
+            None
+        }
+    })
+}
+
 /// A term after parameter substitution.
 #[derive(Debug, Clone)]
 enum Substituted {
@@ -274,8 +324,34 @@ impl NaiveDb {
             );
             groups.entry(key).or_default().push(row);
         }
+        let pack = pack_position(head);
         let mut rows = BTreeSet::new();
         for group in groups.values() {
+            // A Pack head folds the union: the domain rows carry the raw
+            // claims at the Pack position (per rule, deduplicated as a
+            // set above), and the group coalesces them — ∪ then maximal
+            // segments, one row per segment. Every other position is a
+            // group-key position (validation).
+            if let Some((position, _)) = pack {
+                let claims: Vec<&Value> = group.iter().map(|row| &row.0[position]).collect();
+                for segment in pack_segments(&claims) {
+                    let row: Result<Vec<Value>, QueryError> = head
+                        .iter()
+                        .enumerate()
+                        .map(|(index, term)| match term {
+                            FindTerm::Var(_) | FindTerm::Duration(_) => {
+                                Ok(group[0].0[index].clone())
+                            }
+                            FindTerm::Aggregate { .. } if index == position => Ok(segment.clone()),
+                            FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => {
+                                unreachable!("validated: Pack mixes with no other aggregate")
+                            }
+                        })
+                        .collect();
+                    rows.insert(Tuple(row?));
+                }
+                continue;
+            }
             let row: Result<Vec<Value>, QueryError> = head
                 .iter()
                 .enumerate()
@@ -728,6 +804,41 @@ fn basic_holds(basic: Basic, a: (i128, i128), b: (i128, i128)) -> bool {
     }
 }
 
+/// One group's `Pack` rows: relation-shaped — one row per maximal
+/// segment of the group's claim union ([`pack_segments`], the point-set
+/// definition); every other position is a group-key position
+/// (validation: Pack mixes with no other aggregate).
+fn pack_group_rows(
+    finds: &[FindTerm],
+    position: usize,
+    over: VarId,
+    group: &[&Tuple],
+    rows: &mut BTreeSet<Tuple>,
+) -> Result<(), QueryError> {
+    let claims: Vec<&Value> = group
+        .iter()
+        .map(|binding| &binding.0[usize::from(over.0)])
+        .collect();
+    for segment in pack_segments(&claims) {
+        let row: Result<Vec<Value>, QueryError> = finds
+            .iter()
+            .enumerate()
+            .map(|(index, find)| match find {
+                FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
+                FindTerm::Duration(var) => {
+                    measure_value(&group[0].0[usize::from(var.0)]).map(Value::U64)
+                }
+                FindTerm::Aggregate { .. } if index == position => Ok(segment.clone()),
+                FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => {
+                    unreachable!("validated: Pack mixes with no other aggregate")
+                }
+            })
+            .collect();
+        rows.insert(Tuple(row?));
+    }
+    Ok(())
+}
+
 /// Projects and folds the distinct full bindings per the find list: group
 /// key = the values of the plain-variable finds; every aggregate folds
 /// over its group's binding set. No bindings means no groups — the empty
@@ -760,9 +871,12 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
         } => Some((usize::from(key.0), false)),
         _ => None,
     });
+    let pack = pack_position(finds);
     let mut rows = BTreeSet::new();
     for group in groups.values() {
-        if let Some((key_var, is_max)) = arg {
+        if let Some((position, over)) = pack {
+            pack_group_rows(finds, position, over, group, &mut rows)?;
+        } else if let Some((key_var, is_max)) = arg {
             // Arg-restriction: restrict the group to the bindings
             // attaining the key's extreme, then project every survivor —
             // a tie yields every attaining row.
@@ -865,6 +979,7 @@ fn fold_position(op: AggOp, index: usize, group: &[&Tuple]) -> Result<Value, Que
         AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
             unreachable!("multi-rule Arg terms are rejected by the caller")
         }
+        AggOp::Pack => unreachable!("Pack heads take the segment path"),
     }
 }
 
@@ -952,5 +1067,6 @@ fn fold(
         AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
             unreachable!("Arg terms take the restriction path")
         }
+        AggOp::Pack => unreachable!("Pack heads take the segment path"),
     }
 }

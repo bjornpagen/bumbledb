@@ -121,6 +121,32 @@ join costume.
   so "the extreme over the union" is undefined. Modeling answer: one Arg query per
   disjunct, host-merged. *Trigger* for defining a cross-rule restriction: a real
   query.
+- **`Pack` (the coalescing fold — Snodgrass's coalesce), semantics:** over an
+  interval-typed variable, per group the result is the set of **maximal disjoint
+  half-open segments** of the union of the group's interval point sets. **`Pack`
+  is relation-shaped: one result row per (group, maximal segment)** — the
+  one-row-per-group convention was never a law (`ArgMax`'s tie sets were the
+  precedent), and a set-semantic query's result is already a set of rows, which
+  is exactly what dissolved the old OPEN item's "a set per group" blocker. Head
+  shape: the group variables plus **one interval-typed result position** (the
+  packed segment shares its input's element type); at most one `Pack` per head —
+  the multi-`Pack` product has no sighting and is refused with the trigger "a
+  real query needing two coalesced columns in one row". `Pack` mixes with **no
+  other aggregate** (the Arg/fold mixing rule, extended: a fold column repeated
+  per segment row is a join in aggregate costume, and two relation-shaped
+  aggregates do not compose in one head); its companions are group-key positions
+  only. Adjacency merges (`end == next.start` — the half-open law), identical
+  claims collapse in the coalesce (set-semantic dedup upstream is unchanged),
+  and a ray absorbs everything after its start — **the packed ray is a ray** (no
+  measure is taken, so no `MeasureOfRay` interaction). **Across rules `Pack`
+  folds the union** (unlike Arg-restriction): the head projection carries the
+  raw claim, so the spanning seen-set keys (group, claim) pairs and the coalesce
+  runs over ∪. Composition refusals, recorded: coalesced-time accounting
+  (`Sum∘Duration∘Pack`) is **two prepared queries or a host fold over packed
+  rows** — aggregates of aggregates stay refused (no nesting; the standing
+  aggregate law) — with the trigger "a measured two-pass budget violation"; free
+  time (`Gaps`) stays a two-line host walk over sorted packed output (README
+  refusals ledger).
 - **All-aggregate finds are legal** (empty group key, one global group). Over empty
   input the result is the **empty set** — not a 0 or NULL row. "The balance of an
   account with no postings is an absent row, not 0." This is a documented divergence
@@ -152,7 +178,7 @@ HeadTerm   = Var | Aggregate(HeadOp)  // var-free: variables are rule-scoped,
                                       //   rules supply the variables (a
                                       //   Duration find is a Var position:
                                       //   a u64 value per binding)
-HeadOp     = Sum | Min | Max | Count | CountDistinct | ArgMax | ArgMin
+HeadOp     = Sum | Min | Max | Count | CountDistinct | ArgMax | ArgMin | Pack
 Atom {
     relation:   RelationId,
     bindings:   Vec<(FieldId, Term)>, // named-field; absence of a field IS the wildcard
@@ -178,6 +204,8 @@ FindTerm   = Var(VarId)
                                                             //   otherwise)
 AggOp      = Sum | Min | Max | Count | CountDistinct
            | ArgMax { key: VarId } | ArgMin { key: VarId }  // over = the carried var
+           | Pack                                           // over = the packed interval var;
+                                                            //   relation-shaped (§ aggregation)
 Comparison { op: CmpOp, lhs: Term, rhs: Term }
 CmpOp      = Eq | Ne | Lt | Le | Gt | Ge
            | Allen { mask: MaskTerm }  // THE interval-pair comparison (below)
@@ -499,7 +527,9 @@ negated-atom variables not bound by any positive atom; unbound find variables;
 comparison-only variables; empty finds; duplicate find terms; no positive atoms;
 aggregate input-type violations; aggregate-over-group-key; mixed Arg and fold
 aggregates, Arg terms with differing keys or directions, or a non-orderable Arg
-key; the measure's position roster (§ the measure — a `Duration` in a binding,
+key; the `Pack` roster (a second `Pack` term, `Pack` beside a fold or an Arg
+term, `Pack` over a non-interval variable — each its own typed error); the
+measure's position roster (§ the measure — a `Duration` in a binding,
 over a non-interval variable, under a non-order operator, on both sides of one
 comparison, or folded by anything but `Sum`/`Min`/`Max`, each with its own
 typed error); and the planner caps (more atom occurrences than the DP accepts — negated
@@ -538,8 +568,5 @@ shows a stale-plan regression a re-prepare wouldn't have.
 the surveyed workloads precompute their closures and the modeling discipline blesses
 that (`10-data-model.md`). The rules shape is its landing pad, deliberately
 not entered: a query is already a non-recursive Datalog program, one step
-short of the fixpoint — a rule's head is never a body atom. **`Pack`** = the coalescing aggregate over interval
-variables (maximal disjoint intervals per group — Snodgrass's coalesce, Postgres's
-`range_agg`); its result is a *set* of intervals per group, which breaks the
-one-row-per-group aggregate shape, so it waits for both a real need and a shape
-decision. Both arrive as new IR node kinds; nothing above assumes they never come.
+short of the fixpoint — a rule's head is never a body atom. It arrives as a
+new IR node kind; nothing above assumes it never comes.

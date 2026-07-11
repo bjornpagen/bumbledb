@@ -142,6 +142,20 @@ Two facts identical on all *bound* variables produce the same binding; the solut
   equal key inserts (ties are set-honest, `20-query-ir.md`), a worse key is a
   no-op. Memory is O(groups × ties), and ties are structurally rare (fresh keys
   cannot tie).
+- **`Pack`** is a group-state fold with a **relation-shaped finalize**
+  (semantics in `20-query-ir.md` § aggregation): per group the sink accumulates
+  the claim list — `[start, end]` encoded word pairs appended raw, pooled by
+  group index (the Arg row-set precedent, capacity retained across executions);
+  finalize sorts each group's list by start word (`sort_unstable` — the in-place
+  machinery, allocation-free; a pooled radix stays unearned until the bench
+  shows the sort on a profile) and drives the shared segment sweep's
+  (`interval/sweep.rs` — the coverage judgment's walk, `Pack`'s finalize is its
+  second continuation) maximal-run emission: one head row per maximal segment.
+  Identical and overlapping claims collapse in the sweep, never at fold time;
+  memory is O(the group's claims) — retained high-water scratch under the
+  allocation contract, gated like every sink pool. Like `CountDistinct` and
+  Arg, the set-valued group state folds per row (no gather kernel or scan
+  pushdown applies).
 - **Elision optimization:** if every atom occurrence's bound fields cover a key of
   its relation (typical for ledger queries that bind fresh ids), distinct facts ⇒
   distinct bindings, and the plan carries a proof flag that lets the aggregate sink
@@ -185,8 +199,8 @@ private sink trait; projection-dedup and aggregate folds (semantics normative in
 `20-query-ir.md`) are the two sinks. Aggregation never materializes the join. Group
 maps live in sink arena state; aggregate result types: Sum(I64)→I64, Sum(U64)→U64
 (i128/u128 accumulators, one final range check), Count/CountDistinct→U64,
-Min/Max→input type, Arg carries→their variables' types. **Reverses if:** never
-structurally.
+Min/Max→input type, Arg carries→their variables' types, Pack→its input's
+interval type. **Reverses if:** never structurally.
 
 ## The rule loop
 
@@ -234,6 +248,11 @@ and stays a non-goal.
 - **Arg-restriction never crosses rules** — refused at validation
   (`20-query-ir.md` § aggregation): the restriction key is rule-scoped, outside the
   head's vocabulary.
+- **`Pack` does cross rules**: its head position reads the raw claim's two
+  words, so the spanning head-projection seen-set keys (group, claim) pairs —
+  a claim two rules derive folds once — and the coalesce runs over the union:
+  ∪ first, maximal segments at finalize (`20-query-ir.md` § aggregation,
+  "across rules `Pack` folds the union").
 
 ## Planner
 

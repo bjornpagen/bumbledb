@@ -238,14 +238,16 @@ fn head_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
             FindTerm::Duration(_) | FindTerm::AggregateDuration { .. } => ValueType::U64,
             FindTerm::Aggregate { op, over } => match op {
                 AggOp::Count => ValueType::U64,
+                // A Pack position's row entry is an interval — the packed
+                // segment shares its input's interval type, so the pinned
+                // row carries `Interval(E)` there like any interval find.
                 AggOp::Sum
                 | AggOp::Min
                 | AggOp::Max
                 | AggOp::CountDistinct
                 | AggOp::ArgMax { .. }
-                | AggOp::ArgMin { .. } => {
-                    var_type(&over.expect("validated: only Count is nullary"))
-                }
+                | AggOp::ArgMin { .. }
+                | AggOp::Pack => var_type(&over.expect("validated: only Count is nullary")),
             },
         })
         .collect()

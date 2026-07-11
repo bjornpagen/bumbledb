@@ -1075,3 +1075,157 @@ fn rejects_a_comparison_only_duration_variable() {
         ValidationError::ComparisonOnlyVariable { var: VarId(9) }
     ));
 }
+
+#[test]
+fn rejects_a_second_pack_term() {
+    // The multi-Pack product has no sighting — refused with its trigger
+    // recorded on the error variant.
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(2)),
+            },
+        ],
+        vec![
+            atom(POSTING, vec![(1, var(0)), (SPAN, var(1))]),
+            atom(ACCOUNT, vec![(1, var(0)), (VALIDITY, var(2))]),
+        ],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::MultiplePackTerms { find: 2 }
+    ));
+}
+
+#[test]
+fn rejects_pack_beside_a_fold_aggregate() {
+    // Pack is relation-shaped: a fold column repeated per segment row is
+    // refused — coalesced-time accounting is two queries or a host fold.
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::Count,
+                over: None,
+            },
+        ],
+        vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::MixedPackAndFold { find: 2 }
+    ));
+}
+
+#[test]
+fn rejects_pack_beside_a_measure_fold() {
+    // The AggregateDuration form is a fold too — Sum∘Duration∘Pack in
+    // one head stays two queries (the composition refusal).
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::AggregateDuration {
+                op: AggOp::Sum,
+                over: VarId(1),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+        ],
+        vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::MixedPackAndFold { find: 2 }
+    ));
+}
+
+#[test]
+fn rejects_pack_beside_arg_terms() {
+    let query = simple(
+        vec![
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax { key: VarId(2) },
+                over: Some(VarId(2)),
+            },
+        ],
+        vec![atom(POSTING, vec![(3, var(2)), (SPAN, var(1))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::MixedPackAndArg { find: 1 }
+    ));
+}
+
+#[test]
+fn rejects_pack_over_a_non_interval_variable() {
+    // Posting.amount is I64: the coalesce is defined by the interval
+    // point-set denotation and by nothing else.
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+        ],
+        vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::PackInputType { find: 1 }
+    ));
+}
+
+#[test]
+fn rejects_pack_without_a_variable() {
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: None,
+            },
+        ],
+        vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::AggregateWithoutVariable { find: 1 }
+    ));
+}
+
+#[test]
+fn rejects_pack_over_a_group_key_variable() {
+    // The packed variable projected plain makes it a group key; packing
+    // it too would coalesce a constant per group.
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(1)),
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+        ],
+        vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::AggregateOverGroupKey { find: 1 }
+    ));
+}

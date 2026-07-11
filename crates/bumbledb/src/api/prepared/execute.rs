@@ -116,7 +116,7 @@ impl<S> PreparedQuery<'_, S> {
         }
         let _s = obs::span(obs::names::FINALIZE, obs::Category::Execute);
         finalize(
-            &self.sink,
+            &mut self.sink,
             &mut self.row_scratch,
             &mut self.resolve_memo,
             txn,

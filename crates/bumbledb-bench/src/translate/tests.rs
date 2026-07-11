@@ -983,8 +983,40 @@ fn a_nul_string_literal_is_a_named_error() {
     assert!(err.contains("NUL byte in string literal"), "{err}");
 }
 
+/// `Pack` is the one query construct in the inexpressible set: `SQLite`
+/// has no coalescing aggregate, so a `Pack` head routes to the naive
+/// lane — never silently skipped, never translated.
+#[test]
+fn pack_heads_are_inexpressible_and_route_to_the_naive_lane() {
+    let query = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: bumbledb::AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![Atom {
+            relation: ids::MANDATE,
+            bindings: vec![
+                (ids::mandate::ACCOUNT, var(0)),
+                (ids::mandate::ACTIVE, var(1)),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    });
+    assert_eq!(
+        sqlite_expressible(&LaneCase::Query(&query)),
+        Err(Inexpressible::PackAggregate)
+    );
+    let err = translate(&query, schema(), &[]).unwrap_err();
+    assert!(err.contains("Pack is naive-only"), "{err}");
+}
+
 /// The `[shape]` criterion pinned as a golden: the inexpressible set is
-/// exactly the dependency judgments; no query construct is in it.
+/// the dependency judgments plus the `Pack` head (its own golden above);
+/// every other query construct translates.
 #[test]
 fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
     let query = Query::single(Rule {

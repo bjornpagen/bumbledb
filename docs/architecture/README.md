@@ -50,9 +50,6 @@ documents themselves describe **only the current reality**.
 - **Recursion** (explicit semi-naive fixpoint): not designed in; no IR decision may
   assume it never comes. The modeling discipline (precomputed closures) has absorbed
   every sighting so far. *Trigger: first real query that needs one.*
-- **`Pack`** (the coalescing interval aggregate — Snodgrass coalesce, `range_agg`):
-  semantics sketched, result shape (a set per group) unresolved. *Trigger: a real
-  need plus the shape decision (`20-query-ir.md`).*
 - **Ordering/limit conveniences and top-k pushdown**: presentation-layer; results are
   sets, the host sorts. *Trigger: owner pain, or a measured materialize-then-sort
   latency-budget violation.*
@@ -102,9 +99,10 @@ re-litigated by accident:
   coverage containments as theorems; order operators and Min/Max refused on it; uuid
   rejected with the fresh rationale (`10-data-model.md`).
 - **The IR carries** negation (anti-join atoms with the safety rule), point membership
-  (a typing rule), param sets (`IN`), `CountDistinct`, and Arg-restriction with
-  set-honest ties; the outer join is a documented decomposition, never a node
-  (`20-query-ir.md`).
+  (a typing rule), param sets (`IN`), `CountDistinct`, Arg-restriction with
+  set-honest ties, and the relation-shaped `Pack` (one row per (group, maximal
+  segment) — the coalescing fold); the outer join is a documented decomposition,
+  never a node (`20-query-ir.md`).
 - **WriteTx point reads** (`contains`/`get` against the delta-overlaid final-state
   view); full queries in write transactions are forbidden (`70-api.md`).
 - **The naive model is required infrastructure** — the second oracle, judging

@@ -438,7 +438,8 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
                         AggOp::Count
                         | AggOp::CountDistinct
                         | AggOp::ArgMax { .. }
-                        | AggOp::ArgMin { .. } => {
+                        | AggOp::ArgMin { .. }
+                        | AggOp::Pack => {
                             unreachable!("validated: measure folds are Sum/Min/Max")
                         }
                     },
@@ -461,6 +462,18 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
                         rule.var_type(carry).clone(),
                     )
                 }
+                // Pack: the interval variable's two-slot span; the result
+                // position is interval-typed (the packed segment shares
+                // its input's type).
+                AggOp::Pack => {
+                    let over = over.expect("validated: Pack carries a variable");
+                    (
+                        FindSpec::Pack {
+                            slot: exec_plan.slot_of(over),
+                        },
+                        rule.var_type(over).clone(),
+                    )
+                }
                 AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Count | AggOp::CountDistinct => {
                     let (over_slot, over_width, over_ty) = match over {
                         Some(var) => (
@@ -478,7 +491,7 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
                         AggOp::CountDistinct => {
                             (crate::exec::sink::FoldOp::CountDistinct, ValueType::U64)
                         }
-                        AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
+                        AggOp::ArgMax { .. } | AggOp::ArgMin { .. } | AggOp::Pack => {
                             unreachable!("handled above")
                         }
                     };
@@ -518,6 +531,7 @@ fn guard_find_table(
                 // aggregate and measure guards keep the sink path
                 FindSpec::Agg { .. }
                 | FindSpec::Arg { .. }
+                | FindSpec::Pack { .. }
                 | FindSpec::Duration { .. }
                 | FindSpec::AggDuration { .. } => None,
             })
@@ -588,10 +602,15 @@ fn head_reads_every_slot(finds: &[FindSpec], slot_count: usize) -> bool {
                 over_width,
                 ..
             } => (*slot, *over_width),
-            // A measure reads its interval variable's two slots — but
-            // `union_elision` already refused measure heads, so the
-            // coverage answer here is moot; recorded for the read set.
-            FindSpec::Duration { slot } | FindSpec::AggDuration { slot, .. } => (*slot, 2),
+            // Two-slot readers: a Pack position reads its claim's two
+            // words raw (the fold-time dedup key is injective there,
+            // unlike the measure), and a measure reads its interval
+            // variable's two slots — moot for the elision, which
+            // `union_elision` already refused on measure heads, but
+            // recorded for the read set.
+            FindSpec::Pack { slot }
+            | FindSpec::Duration { slot }
+            | FindSpec::AggDuration { slot, .. } => (*slot, 2),
             // The nullary Count reads nothing; Arg never crosses rules
             // (validation), so a multi-rule head cannot carry it.
             FindSpec::Agg {

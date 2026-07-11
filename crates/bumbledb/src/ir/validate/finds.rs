@@ -16,10 +16,15 @@ impl Context {
         group_key: &BTreeSet<VarId>,
     ) -> Result<(), ValidationError> {
         // The Arg discipline: all Arg terms share one key variable and one
-        // direction, and Arg terms and fold aggregates may not mix.
+        // direction, and Arg terms and fold aggregates may not mix. Pack
+        // extends the same rule — the relation-shaped aggregates admit no
+        // companions but the group variables, and at most one Pack per
+        // head (the multi-Pack product is refused with its trigger on the
+        // error).
         let mut arg_spec: Option<(VarId, bool)> = None; // (key, is_max)
         let mut arg_seen = false;
         let mut fold_seen = false;
+        let mut pack_seen = false;
         for (find_idx, term) in rule.finds.iter().enumerate() {
             match term {
                 FindTerm::Var(var) => {
@@ -57,6 +62,9 @@ impl Context {
                     if arg_seen {
                         return Err(ValidationError::MixedArgAndFold { find: find_idx });
                     }
+                    if pack_seen {
+                        return Err(ValidationError::MixedPackAndFold { find: find_idx });
+                    }
                 }
                 FindTerm::Aggregate { op, over } => {
                     match (op, over) {
@@ -72,7 +80,8 @@ impl Context {
                             | AggOp::Max
                             | AggOp::CountDistinct
                             | AggOp::ArgMax { .. }
-                            | AggOp::ArgMin { .. },
+                            | AggOp::ArgMin { .. }
+                            | AggOp::Pack,
                             None,
                         ) => {
                             return Err(ValidationError::AggregateWithoutVariable {
@@ -107,6 +116,27 @@ impl Context {
                                 return Err(ValidationError::AggregateOverGroupKey {
                                     find: find_idx,
                                 });
+                            }
+                        }
+                        // Pack: interval-typed input only, one Pack per
+                        // head, and — like the Arg discipline — no fold
+                        // companions (the pairwise checks run after the
+                        // match, where every flag is current).
+                        (AggOp::Pack, Some(var)) => {
+                            if pack_seen {
+                                return Err(ValidationError::MultiplePackTerms { find: find_idx });
+                            }
+                            pack_seen = true;
+                            if !self.atom_vars.contains(var) {
+                                return Err(ValidationError::UnboundFindVariable { var: *var });
+                            }
+                            if group_key.contains(var) {
+                                return Err(ValidationError::AggregateOverGroupKey {
+                                    find: find_idx,
+                                });
+                            }
+                            if !matches!(self.resolved_var_type(*var), ValueType::Interval { .. }) {
+                                return Err(ValidationError::PackInputType { find: find_idx });
                             }
                         }
                         // Arg-restriction: `over` is the carried variable
@@ -146,6 +176,12 @@ impl Context {
                     }
                     if arg_seen && fold_seen {
                         return Err(ValidationError::MixedArgAndFold { find: find_idx });
+                    }
+                    if pack_seen && fold_seen {
+                        return Err(ValidationError::MixedPackAndFold { find: find_idx });
+                    }
+                    if pack_seen && arg_seen {
+                        return Err(ValidationError::MixedPackAndArg { find: find_idx });
                     }
                 }
             }

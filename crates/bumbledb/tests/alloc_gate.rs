@@ -32,7 +32,8 @@ use bumbledb::{BindValue, Db, PredicateTree, PreparedQuery, ResultBuffer, Snapsh
 mod common;
 
 /// Posting(id fresh, account u64, amount i64, memo str) +
-/// Account(id fresh, holder u64), with
+/// Account(id fresh, holder u64) +
+/// Busy(id fresh, person u64, slot interval<u64>), with
 /// `Posting(account) <= Account(id)`.
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
@@ -77,6 +78,28 @@ fn schema() -> SchemaDescriptor {
                     },
                 ],
             },
+            RelationDescriptor {
+                name: "Busy".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::Fresh,
+                    },
+                    FieldDescriptor {
+                        name: "person".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "slot".into(),
+                        value_type: ValueType::Interval {
+                            element: bumbledb::schema::IntervalElement::U64,
+                        },
+                        generation: Generation::None,
+                    },
+                ],
+            },
         ],
         statements: vec![StatementDescriptor::Containment {
             source: Side {
@@ -95,6 +118,7 @@ fn schema() -> SchemaDescriptor {
 
 const POSTING: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
+const BUSY: RelationId = RelationId(2);
 
 // The borrowed-struct gate's typed schema (PRD 22): a str-bearing
 // relation whose generated struct borrows its memo (`&'a str`).
@@ -126,6 +150,26 @@ fn populate(db: &Db<SchemaDescriptor>) {
                     Value::U64(id % 20),
                     Value::I64((id.cast_signed() % 100) - 50),
                     Value::String(format!("memo-{}", id % 4).into_bytes().into()),
+                ],
+            )?;
+        }
+        // The Pack fixture: per person, overlapping, adjacent, nested,
+        // duplicate, and ray-bearing claims — the warm coalescing fold's
+        // group lists, sort, and sweep all inside the measured window.
+        for id in 0..120u64 {
+            let person = id % 6;
+            let start = (id * 7) % 40;
+            let end = if id % 5 == 4 {
+                u64::MAX // the ray
+            } else {
+                start + 1 + id % 9
+            };
+            tx.insert_dyn(
+                BUSY,
+                &[
+                    Value::U64(id),
+                    Value::U64(person),
+                    Value::IntervalU64(start, end),
                 ],
             )?;
         }
@@ -450,6 +494,33 @@ fn union_aggregate_query() -> Query {
     }
 }
 
+/// Q(person, Pack(slot)) :- Busy(person, slot) — the coalescing-fold
+/// shape (docs/architecture/40-execution.md § set semantics): warm
+/// executions exercise the pooled per-group claim lists, the finalize
+/// sort (`sort_unstable`, in-place), and the sweep's emit continuation —
+/// all covered by the zero-allocation window as retained high-water
+/// scratch.
+fn pack_query() -> Query {
+    Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Pack,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![Atom {
+            relation: BUSY,
+            bindings: vec![
+                (FieldId(1), Term::Var(VarId(0))),
+                (FieldId(2), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    })
+}
+
 /// Q(amount) :- Posting(id = ?0, amount) — the guard-probe shape.
 fn guard_query() -> Query {
     Query::single(Rule {
@@ -653,6 +724,12 @@ fn zero_warm_allocation_gate() {
         gate("string", &mut strings, snap, &no_params);
         let mut minmax = db.prepare(&minmax_query())?;
         gate("minmax", &mut minmax, snap, &no_params);
+
+        // The coalescing fold: a warm Pack execution is allocation-free
+        // (per-group claim lists pooled by group index, in-place sort,
+        // sweep-driven finalize).
+        let mut pack = db.prepare(&pack_query())?;
+        gate("pack", &mut pack, snap, &no_params);
 
         let mut guard = db.prepare(&guard_query())?;
         gate("guard", &mut guard, snap, &guard_params);
