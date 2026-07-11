@@ -215,11 +215,20 @@ the bench crate.
 
 ## Non-goals and deleted vocabulary
 
-SQL. Server mode. Network protocol. Text query language (OPEN). Nulls. Floats in
+SQL. Server mode. Network protocol. Engine-side query syntax — text, builder, or
+macro (the former OPEN item, superseded by the sharper ruling: queries are pure-data
+IR permanently; sugar is downstream-package territory in any language, lowering to
+IR — `20-query-ir.md`). Nulls. Floats in
 persistent data. Bag semantics. Nominal typing. Runtime DDL. Migrations (ETL into a
 new database is the schema-change story; export surface in `70-api.md`). Async API.
 Multiple writers. Multi-process access. Data beyond RAM. Intra-query parallelism.
 Encryption/access control. Compatibility with any prior on-disk format.
+
+**Anticipated, not built:** JS/N-API bindings are punted with zero deliverable and
+a recorded quarantine shape — a downstream crate on the bench-crate precedent (it
+may hold the N-API dependency; the engine never depends on it; no engine decision
+may lean on its existence), compiling the application's `schema!` in and marshaling
+IR-as-data in, result copies out (`70-api.md` § anticipated bindings).
 
 **Deleted vocabulary** (each word's replacement, one line, normative in
 `30-dependencies.md` and `10-data-model.md`): *primary key* → the fact is its own

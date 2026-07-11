@@ -26,7 +26,7 @@ mod lower_literal;
 mod normalize;
 mod place_comparisons;
 
-pub use dnf::{collapse, disjunct_count, distribute, LoweredRule};
+pub use dnf::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
 pub(crate) use lower_literal::{fixed_bytes_const, lower_literal};
 pub use normalize::normalize;
 

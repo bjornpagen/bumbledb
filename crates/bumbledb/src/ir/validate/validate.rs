@@ -1,7 +1,7 @@
 use super::{Context, ParamKind, RuleTyping, TypeSlot, ValidatedQuery};
 use crate::error::ValidationError;
-use crate::ir::normalize::{collapse, disjunct_count, distribute, LoweredRule};
-use crate::ir::{AggOp, FindTerm, ParamId, Query, VarId, MAX_RULES};
+use crate::ir::normalize::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
+use crate::ir::{AggOp, FindTerm, ParamId, Query, VarId, MAX_PREDICATE_DEPTH, MAX_RULES};
 use crate::schema::{Schema, ValueType};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,6 +42,21 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     }
     if query.head.is_empty() {
         return Err(ValidationError::EmptyFinds);
+    }
+
+    // The nesting boundary guard runs before ANY recursive tree walk
+    // (the trust-boundary law: `disjunct_count` and `distribute` recurse
+    // by depth, so a hostile depth must be a typed rejection here, judged
+    // by the iterative `nesting_depth`, never a stack exhaustion there).
+    for (rule_idx, rule) in query.rules.iter().enumerate() {
+        let depth = nesting_depth(&rule.predicates);
+        if depth > MAX_PREDICATE_DEPTH {
+            return Err(ValidationError::PredicateNestingTooDeep {
+                rule: rule_idx,
+                depth,
+                cap: MAX_PREDICATE_DEPTH,
+            });
+        }
     }
 
     // DNF distribution: the cap is judged on the structural term count —

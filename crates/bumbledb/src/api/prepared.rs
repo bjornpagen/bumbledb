@@ -246,6 +246,11 @@ pub struct PreparedQuery<'s, S> {
     resolve_memo: ResolveMemo,
     /// Guard-key byte scratch.
     guard_key: Vec<u8>,
+    /// The query in the rule notation ([`crate::ir::render`]), rendered
+    /// once at prepare — the EXPLAIN report's header and the
+    /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
+    /// on diagnostic surfaces, never on the warm path.
+    rendered: String,
     /// Marker: a prepared query is single-threaded scratch (`Cell` makes
     /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
     /// independent of `S`).

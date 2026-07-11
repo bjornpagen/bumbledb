@@ -6,6 +6,7 @@
 //! downstream trusts the sealed witness without re-checking.
 
 pub mod fingerprint;
+pub mod manifest;
 pub mod render;
 
 mod relation;
@@ -17,6 +18,8 @@ mod validate;
 use crate::encoding::FactLayout;
 use crate::error::FactShapeError;
 use crate::value::Value;
+
+pub use manifest::{FieldManifest, Manifest, RelationManifest};
 
 /// Dense relation id: the relation's index in schema declaration order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -264,6 +267,19 @@ pub trait Theory: Sized {
     /// The schema as declared. Consumes the definition value —
     /// implementers are unit structs or one-shot carriers.
     fn descriptor(self) -> SchemaDescriptor;
+
+    /// The theory's manifest: every name → id pairing as a plain Rust
+    /// value ([`Manifest`]) — the id constants' runtime twin, for
+    /// foreign hosts that take their numbers as data
+    /// (`docs/architecture/70-api.md` § the manifest). Rendered off the
+    /// descriptor; no serde anywhere — a downstream binding serializes
+    /// it however it likes.
+    fn manifest(self) -> Manifest {
+        // The inherent method, named in full: on a `SchemaDescriptor`
+        // receiver the plain `.manifest()` call would resolve to *this*
+        // trait method (by-value candidates win) and recurse forever.
+        SchemaDescriptor::manifest(&self.descriptor())
+    }
 }
 
 impl Theory for SchemaDescriptor {

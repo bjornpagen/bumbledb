@@ -29,6 +29,29 @@ pub struct LoweredRule {
     pub predicates: Vec<Comparison>,
 }
 
+/// The nesting depth of a rule's predicate trees — a leaf is depth 1, a
+/// node one more than its deepest child, the empty combinations depth 1,
+/// no trees depth 0. Computed **iteratively** (an explicit work list):
+/// this is the guard for [`crate::ir::MAX_PREDICATE_DEPTH`], so it must
+/// itself survive the hostile input it exists to reject — every
+/// *recursive* tree walk ([`disjunct_count`], [`distribute`], the
+/// renderer) runs only after validation judged this bound.
+#[must_use]
+pub fn nesting_depth(trees: &[PredicateTree]) -> usize {
+    let mut work: Vec<(&PredicateTree, usize)> = trees.iter().map(|tree| (tree, 1)).collect();
+    let mut max = 0;
+    while let Some((tree, depth)) = work.pop() {
+        max = max.max(depth);
+        match tree {
+            PredicateTree::Leaf(_) => {}
+            PredicateTree::And(children) | PredicateTree::Or(children) => {
+                work.extend(children.iter().map(|child| (child, depth + 1)));
+            }
+        }
+    }
+    max
+}
+
 /// The number of DNF terms [`distribute`] would produce for the rule,
 /// computed structurally **without materializing** — the cap
 /// (`ValidationError::DnfExceedsRules`) is judged on this count, so the

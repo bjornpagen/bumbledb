@@ -122,7 +122,7 @@ pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
 // module-path scavenger hunt.
 pub use ir::{
     AggOp, Atom, CmpOp, Comparison, FindTerm, HeadOp, HeadTerm, MaskTerm, ParamId, PredicateTree,
-    Query, Rule, Term, Value, VarId, MAX_RULES,
+    Query, Rule, Term, Value, VarId, MAX_PREDICATE_DEPTH, MAX_RULES,
 };
 pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
 pub use verify_store::{StoreFinding, StoreReport};

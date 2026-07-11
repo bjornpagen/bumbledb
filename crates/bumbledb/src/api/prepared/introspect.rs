@@ -40,7 +40,19 @@ impl<S> PreparedQuery<'_, S> {
                 .collect(),
             stats,
         };
-        Ok((out, format!("{report}")))
+        // The report opens with the query in the rule notation
+        // (`crate::ir::render` — the read-side syntax): EXPLAIN prints
+        // what it explains.
+        Ok((out, format!("query:\n{}\n{report}", self.rendered)))
+    }
+
+    /// The query in the rule notation, rendered at prepare
+    /// ([`crate::ir::render`] — one clause per rule, `;`-terminated):
+    /// the diagnostic twin of the EXPLAIN report's header, for hosts
+    /// that log or display the query a prepared handle answers.
+    #[must_use]
+    pub fn rendered_query(&self) -> &str {
+        &self.rendered
     }
 
     /// ANALYZE with structured output: executes with counting

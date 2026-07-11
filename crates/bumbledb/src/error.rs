@@ -354,6 +354,16 @@ pub enum ValidationError {
         produced: usize,
         cap: usize,
     },
+    /// A rule's predicate trees nest deeper than
+    /// [`crate::ir::MAX_PREDICATE_DEPTH`] — the boundary guard for every
+    /// recursive tree walk (the trust-boundary law: hostile nesting must
+    /// be a typed rejection, never a stack exhaustion). Judged
+    /// iteratively, before any recursion sees the tree.
+    PredicateNestingTooDeep {
+        rule: usize,
+        depth: usize,
+        cap: usize,
+    },
     /// A rule's find-term count differs from the head's arity — rules
     /// align against the head position by position.
     HeadArityMismatch {

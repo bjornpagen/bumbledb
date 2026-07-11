@@ -5,6 +5,18 @@ builders/macros are host-side sugar, never the contract (`20-query-ir.md`). The 
 exception with teeth is the `schema!` macro, whose grammar is normative here because
 the schema is compiled into the binary (`10-data-model.md`).
 
+## The two surfaces — theory and data
+
+The code/data boundary is logic's own. A schema is the **theory**: signature plus
+axioms, fixed at build time, type-providing — which is why `schema!` is
+structurally forced (type providers cannot live in expression position) and why it
+is Rust's alone. A query is a **sentence in** the theory: a runtime object,
+constructed and evaluated — data, in whatever language the host speaks
+(`20-query-ir.md`, the surface ruling). The asymmetry is not an ergonomics
+compromise; it is the line logic draws between a theory and its formulas. The
+notation reflects it: the query notation is the statement grammar's query side,
+promoted (`20-query-ir.md` § the renderer).
+
 ## The `schema!` grammar (normative)
 
 The invocation's first item is the **header** `pub Name;` — it names the schema.
@@ -67,6 +79,41 @@ bumbledb::schema! {
 **Decision: the macro surface is the algebra, with no sugar keywords.** Owner ruling
 (`30-dependencies.md` records the alternative and its loss). The macro
 remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
+
+**Decision: the `schema!` grammar is OPEN-ENDED — owner-evolvable, forever**
+(owner-ruled 2026-07-10). This is a research database: the dependency calculus is
+not done growing (richer statement forms, deeper selections, whatever the theory
+needs next), and compatibility is never a design input (`00-product.md`), so the
+grammar changes whenever the design improves — the fingerprint makes every
+grammar-visible change a new theory, and ETL is the story, exactly as for any other
+break. Grammar growth is governed by the **acceptance gate**
+(`30-dependencies.md`), not by stability promises: a statement form enters when it
+carries an enforcement plan, and by nothing else. The one boundary that holds is
+categorical, not temporal: **the macro speaks the theory language — schema and
+statements, whatever dependency theory grows into — and never the query language.**
+Statements are code; queries are data; that line does not move even as everything
+on the theory side of it does. The descriptor path (`SchemaDescriptor` implementing
+`Theory`) remains the *data* schema surface — the bench crate, the oracle, and any
+future binding that needs runtime schemas — existing, not blessed.
+
+## Id constants and the manifest — named data, not ergonomics
+
+The macro emits **declaration-order id constants on the theory**: per relation
+(`Ledger::ACCOUNT: RelationId`), per field (`Ledger::ACCOUNT_KIND: FieldId`), per
+enum variant (`Ledger::KIND_SAVINGS: u8` — the ordinal), names converted to
+`SCREAMING_SNAKE` with a collision diagnosed at expansion naming both claimants. The
+Rust host never writes a magic number into an `ir::Query` — and a downstream
+`query!` macro checks its names through ordinary rustc resolution by emitting paths
+to these constants (proc macros cannot see each other's output; the constants are
+how a typo'd relation becomes a compile error).
+
+The theory renders a **manifest** (`Theory::manifest()` → `schema::Manifest`): every
+name → id pairing as a plain Rust value straight off the descriptor — relations and
+fields with their ids stated explicitly, each field's structural type, enum variant
+lists whose ordinal is the index. A foreign host gets the same numbers as data. No
+serde anywhere (the dependency law): a downstream binding serializes the value
+however it likes; the engine never learns the wire format. Both are emission; the
+grammar is untouched.
 
 ## Environment lifecycle
 
@@ -342,8 +389,12 @@ feature registers the counting allocator (events + bytes + live/peak, the gate's
 the benchmark's memory truth), and the `trace` feature enables `bumbledb::obs` —
 explicit per-thread capture of nanosecond spans and point events over every prepare/
 execute/commit phase, drained by tooling into Chrome-trace artifacts. Always
-available: `snap.explain(..)` (rendered report) and the structured execution-stats
-surface it is built from.
+available: `snap.explain(..)` (rendered report — it opens with the query in the
+rule notation, `20-query-ir.md` § the renderer; `PreparedQuery::rendered_query`
+exposes the same string) and the structured execution-stats surface it is built
+from. For a query prepare *rejected* there is no handle to ask:
+`Db::render_query` renders any query — malformed included, with placeholder
+names — so roster errors print beside the query they reject.
 
 ## Host-side sugar (blessed patterns, never the contract)
 
@@ -357,8 +408,27 @@ surface it is built from.
   sanctioned decomposition (`20-query-ir.md`), a two-line host function.
 - Zero-default aggregates: the host maps an absent aggregate row to 0 where the
   domain wants it (`20-query-ir.md` empty-set semantics).
-- Future: a typed builder or `query!` macro emitting IR; a text frontend (OPEN,
-  README) — either would lower to statements and IR, never around them.
+- Downstream query sugar — in any language — lowers to IR data; the engine never
+  knows it exists (the permanent surface ruling, `20-query-ir.md`; the
+  text-language OPEN item is superseded by it). A typed builder is refused,
+  recorded: closures and generics are what a foreign host cannot invoke, and the
+  roster's typed errors re-provide the checking for every caller equally. A Rust
+  `query!` macro, when wanted, is a downstream crate on the bench-crate
+  quarantine, resolving names through the emitted id constants.
+
+## Anticipated bindings — punted, recorded
+
+JS/N-API bindings are **punted**: pure anticipation, zero deliverable, and no
+engine decision may lean on their existence. The recorded shape for whenever the
+owner wants them: a quarantined downstream crate on the bench-crate precedent (it
+may hold the N-API dependency; the engine never depends on it), compiling the
+application's `schema!` in, exposing prepared-query handles, the dyn read/write
+surfaces, and the manifest; marshaling IR-as-data in and result copies out. The
+engine-side surface is already correct the day they are wanted: the trust-boundary
+law makes foreign IR safe (`20-query-ir.md` § validation boundary), the manifest
+carries the ids as data, the memoized one-copy result heap crosses a language
+boundary where a borrowed result could not, and the dyn write surface's typed
+errors are the portable half of the API.
 
 ## OPEN (this doc's honest list)
 

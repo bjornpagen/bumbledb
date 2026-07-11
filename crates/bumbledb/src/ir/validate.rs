@@ -14,7 +14,12 @@
 //!     against the head position by position — rule 0's resolved type row
 //!     pins the head's positional types, and every later rule must agree)
 //!
-//! Between the program shape and the per-rule roster, **DNF
+//! Between the program shape and the per-rule roster, first the
+//! **nesting boundary guard**: predicate trees deeper than
+//! [`crate::ir::MAX_PREDICATE_DEPTH`] are the typed
+//! `PredicateNestingTooDeep` — judged by an iterative depth walk before
+//! any recursive tree walk runs, so hostile nesting is a rejection,
+//! never a stack exhaustion (the trust-boundary law). Then **DNF
 //! distribution** ([`crate::ir::distribute`]): each rule's predicate
 //! trees distribute to disjunctive normal form and each disjunct becomes
 //! a rule — the structural term count past [`crate::ir::MAX_RULES`] is

@@ -17,7 +17,7 @@ chase-off = []
 [dependencies]
 blake3 = "1"
 bumbledb-macros = { path = "../bumbledb-macros" }
-heed = "0.22"
+heed = { version = "0.22", default-features = false } # no serde codecs: the engine reads raw bytes; the dependency law's serde grep stays empty
 
 [lints]
 workspace = true

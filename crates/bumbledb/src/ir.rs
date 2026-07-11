@@ -7,6 +7,7 @@
 //! debugging sidecar the engine never stores.
 
 pub(crate) mod normalize;
+pub mod render;
 pub(crate) mod validate;
 
 use crate::schema::{FieldId, RelationId};
@@ -28,6 +29,19 @@ pub use normalize::{distribute, LoweredRule};
 /// time, so the roster bounds the program's breadth here and each rule's
 /// width there.
 pub const MAX_RULES: usize = 16;
+
+/// The predicate-tree nesting cap: a [`PredicateTree`] deeper than this
+/// is rejected at validation (`ValidationError::PredicateNestingTooDeep`)
+/// — a **boundary guard**, not planner hygiene (the trust-boundary law,
+/// `docs/architecture/20-query-ir.md`): queries arrive as data, the tree
+/// walks (DNF counting, distribution, rendering) recurse by depth, and an
+/// unbounded depth would let hostile input exhaust the stack — a crash,
+/// not a typed error. Depth is measured **iteratively** (an explicit work
+/// list, [`normalize::nesting_depth`]), so the guard itself is total; the
+/// recursive walks run only on guarded trees. The cap is generous: a
+/// meaningful tree's depth is bounded by its leaf count, and the DNF
+/// blowup cap ([`MAX_RULES`]) already limits leaves per disjunct.
+pub const MAX_PREDICATE_DEPTH: usize = 64;
 
 /// Dense query-variable id — **rule-scoped**: the same `VarId` in two
 /// rules names two unrelated variables (each rule is its own scope).

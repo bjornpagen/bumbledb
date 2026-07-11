@@ -564,6 +564,7 @@ pub fn schema(input: TokenStream) -> TokenStream {
     let schema = parse_schema(input);
     let mut out = String::new();
     emit_schema_def(&mut out, &schema);
+    emit_id_constants(&mut out, &schema);
     emit_newtypes(&mut out, &schema.relations);
     emit_enums(&mut out, &schema.relations);
     for (index, relation) in schema.relations.iter().enumerate() {
@@ -784,6 +785,108 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst) {
              }}\n\
          }}\n",
     );
+}
+
+/// A declaration name as a `SCREAMING_SNAKE` constant name:
+/// `SavingsTerms` → `SAVINGS_TERMS`, `rate_bps` → `RATE_BPS` — an
+/// underscore lands before an uppercase letter that starts a new word
+/// (after a lowercase/digit, or heading a lowercase run after an
+/// uppercase run).
+fn screaming_snake(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::new();
+    for (index, c) in chars.iter().enumerate() {
+        if c.is_ascii_uppercase() && index > 0 {
+            let prev = chars[index - 1];
+            let heads_word = chars.get(index + 1).is_some_and(char::is_ascii_lowercase);
+            if prev.is_ascii_lowercase()
+                || prev.is_ascii_digit()
+                || (prev.is_ascii_uppercase() && heads_word)
+            {
+                out.push('_');
+            }
+        }
+        out.push(c.to_ascii_uppercase());
+    }
+    out
+}
+
+/// The declaration-order id constants on the theory
+/// (docs/architecture/70-api.md § id constants — named data, not
+/// ergonomics): per relation `Theory::BUSY: RelationId`, per field
+/// `Theory::BUSY_PERSON: FieldId`, per enum variant
+/// `Theory::KIND_CHECKING: u8` (the ordinal), so the Rust host never
+/// writes a magic number into an `ir::Query` — and the downstream
+/// `query!` macro resolves names through ordinary rustc name resolution
+/// (proc macros cannot see each other's output; paths to these constants
+/// are how a typo'd relation becomes a compile error).
+fn emit_id_constants(out: &mut String, schema: &SchemaAst) {
+    // name → what it names; a collision (`Busy.person` vs a relation
+    // `BusyPerson`, say) is diagnosed here with both claimants named,
+    // not left to rustc's duplicate-item error.
+    let mut claimed: BTreeMap<String, String> = BTreeMap::new();
+    let mut claim = |name: String, names: String| {
+        if let Some(existing) = claimed.get(&name) {
+            panic!(
+                "schema!: id constants collide: `{name}` would name both {existing} \
+                 and {names} — rename one declaration"
+            );
+        }
+        claimed.insert(name.clone(), names);
+        name
+    };
+    let mut body = String::new();
+    let mut enums_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (rel_idx, relation) in schema.relations.iter().enumerate() {
+        let rel_const = claim(
+            screaming_snake(&relation.name),
+            format!("relation `{}`", relation.name),
+        );
+        let _ = write!(
+            body,
+            "/// `{}` — the declaration-order relation id.\n\
+             pub const {rel_const}: ::bumbledb::schema::RelationId = \
+             ::bumbledb::schema::RelationId({rel_idx});\n",
+            relation.name,
+        );
+        for (field_idx, field) in relation.fields.iter().enumerate() {
+            let field_const = claim(
+                format!(
+                    "{}_{}",
+                    screaming_snake(&relation.name),
+                    screaming_snake(&field.name)
+                ),
+                format!("field `{}.{}`", relation.name, field.name),
+            );
+            let _ = write!(
+                body,
+                "/// `{}.{}` — the declaration-order field id.\n\
+                 pub const {field_const}: ::bumbledb::schema::FieldId = \
+                 ::bumbledb::schema::FieldId({field_idx});\n",
+                relation.name, field.name,
+            );
+            let FieldTy::Enum { name, variants } = &field.ty else {
+                continue;
+            };
+            // One constant set per enum name (enums deduplicate by name;
+            // `emit_enums` rejects conflicting redeclarations).
+            if !enums_seen.insert(name.clone()) {
+                continue;
+            }
+            for (ordinal, variant) in variants.iter().enumerate() {
+                let variant_const = claim(
+                    format!("{}_{}", screaming_snake(name), screaming_snake(variant)),
+                    format!("enum variant `{name}::{variant}`"),
+                );
+                let _ = write!(
+                    body,
+                    "/// `{name}::{variant}` — the declaration-order enum ordinal.\n\
+                     pub const {variant_const}: u8 = {ordinal};\n",
+                );
+            }
+        }
+    }
+    let _ = write!(out, "impl {} {{\n{body}}}\n", schema.name);
 }
 
 fn emit_newtypes(out: &mut String, relations: &[Relation]) {

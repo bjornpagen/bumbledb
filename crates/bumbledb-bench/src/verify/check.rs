@@ -91,9 +91,17 @@ impl<S> Run<'_, S> {
                 .out_dir
                 .join(format!("mismatch-{}", self.bundles.len()));
             std::fs::create_dir_all(&bundle).expect("bundle dir");
+            // The rule notation first (`ir::render` — total on malformed
+            // queries, so a roster rejection still shows its query), the
+            // raw IR after for arbitration by structure.
             std::fs::write(
                 bundle.join("query.txt"),
-                format!("{}\n{:#?}\n", case.label, case.query),
+                format!(
+                    "{}\n{}\n\n{:#?}\n",
+                    case.label,
+                    self.db.render_query(case.query),
+                    case.query
+                ),
             )
             .expect("bundle");
             std::fs::write(bundle.join("query.sql"), case.sql).expect("bundle");

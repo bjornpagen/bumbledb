@@ -351,6 +351,10 @@ impl fmt::Display for ValidationError {
                 f,
                 "DNF distribution produces {produced} rules against the cap of {cap}"
             ),
+            Self::PredicateNestingTooDeep { rule, depth, cap } => write!(
+                f,
+                "rule {rule}: predicate trees nest {depth} deep against the cap of {cap}"
+            ),
             Self::HeadArityMismatch {
                 rule,
                 expected,

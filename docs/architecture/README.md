@@ -85,8 +85,6 @@ documents themselves describe **only the current reality**.
 - **Incremental image maintenance**: images rebuild whole per state-changing commit
   by design (the write design point amortizes it). *Trigger: traced rebuild cost
   violating the latency budget despite the cache — recorded with D1's reversal.*
-- **Text query language**: none; if one returns it is pure sugar lowering to
-  statements and IR. *Trigger: owner want.*
 - **Vectorized batch size**: 64–256 starting range decided; the number is
   measurement-owned. *Trigger: the ledger benchmark.*
 - **EXPLAIN output shape**: ANALYZE semantics shipped; text stability not promised.
@@ -118,6 +116,13 @@ re-litigated by accident:
   set-honest ties, and the relation-shaped `Pack` (one row per (group, maximal
   segment) — the coalescing fold); the outer join is a documented decomposition,
   never a node (`20-query-ir.md`).
+- **The query surface is the IR, permanently — pure data** (the text-language OPEN
+  item, closed by the sharper ruling): no builder, macro, or text syntax in the
+  engine, ever; sugar is downstream territory in any language, lowering to IR; the
+  `schema!` grammar is open-ended with one categorical boundary — the macro speaks
+  the theory language, never the query language; the IR-validation path is a trust
+  boundary (no panic reachable from IR data, adversarially swept); `ir::render` is
+  the read-side syntax (`20-query-ir.md`, `70-api.md`).
 - **WriteTx point reads** (`contains`/`get` against the delta-overlaid final-state
   view); full queries in write transactions are forbidden (`70-api.md`).
 - **The naive model is required infrastructure** — the second oracle, judging

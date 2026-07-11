@@ -132,8 +132,17 @@ landed whole and retired: the view story is canonized in `10-data-model.md`
 § derived relations — composition, materialization under statements, the
 arithmetic-agreement limit, both refusals — with the vocabulary rows in
 `00-product.md` and the composition idiom named in `70-api.md` § host-side
-sugar):
-- [20 — The data surface, ruled: schemas are code, queries are data](20-data-surface.md)
+sugar; 20 — the data surface, ruled — landed whole and retired: schemas are
+code (the open-ended theory grammar with its categorical boundary), queries
+are data (the permanent surface ruling), the adversarial panic sweep
+enforcing the trust-boundary law — whose founding find, hostile predicate
+nesting exhausting the stack, closed as the iterative `MAX_PREDICATE_DEPTH`
+boundary guard — the declaration-order id constants and the `Theory`
+manifest, and `ir::render`, the read-side syntax; the rulings live in
+`20-query-ir.md` — the surface ruling, § validation boundary (the
+trust-boundary law), § the renderer — and `70-api.md` § the two surfaces,
+§ id constants and the manifest, § anticipated bindings (the punt record),
+with `00-product.md`'s superseded OPEN item and non-goals note):
 - [23 — The query notation: set-builder, promoted from the schema grammar](23-query-notation.md)
 
 Phase G — the intuition:
@@ -143,10 +152,10 @@ Dependency spine: Phases A (01–04), B (05–09), C (10–12), and E (15–16)
 landed whole; 13/14 landed
 (residual landed with 01); 17 landed (its adversarial
 digest rows are in the generator's target ledger, inherited by 15's families);
-18 landed; 19 landed; 20
-requires 05 (its sweep and renderer target the rules-shaped IR); 23 requires
-05 and 20 and coordinates with 21 (the cookbook's queries are written in the
-23 notation, round-trip-pinned against `ir::render`); 21 lands
+18 landed; 19 landed; 20 landed (its sweep
+and renderer target the rules-shaped IR); 23 requires
+05 and 20 — both landed — and coordinates with 21 (the cookbook's queries are
+written in the 23 notation, round-trip-pinned against `ir::render`); 21 lands
 last (it is written against the whole set's surface and its recipes are
 rot-proofed by compilation). E closed the measured half of the set (16
 carries the `bytes<32>` content-hash column 17 owed it and the

@@ -152,6 +152,7 @@ pub(crate) fn prepare<'s, S>(
         all_words,
         resolve_memo: ResolveMemo::new(),
         guard_key: Vec::new(),
+        rendered: crate::ir::render::render(schema, query),
         marker: std::marker::PhantomData,
     })
 }

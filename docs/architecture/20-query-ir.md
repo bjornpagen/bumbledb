@@ -1,11 +1,23 @@
 # 20 — Query IR
 
-## Decision: no text query language; the IR is pure data
+## Decision: the query surface is the IR, permanently — pure data
 
 Queries are **plain Rust data structures** — encodable in principle (plain owned
 data, no borrows, no behavior), inspectable. The IR is the engine's public contract,
 and it is also the language dependencies are written in (`30-dependencies.md`): one
 representation for "what holds" and "what do you want".
+
+**The ruling (owner-ruled 2026-07-10), permanent:** no builder API, no typed query
+variables, no text language, no ergonomic layer in the engine — ever. Any
+convenience syntax lives in a downstream package (in any language) and lowers to IR
+data; the engine never knows it exists. The code/data boundary is logic's own — a
+schema is the *theory*, a query is a *sentence in* the theory (`70-api.md` § the two
+surfaces) — and the pure-data doctrine, recorded above for testability, has a second
+reader: **a foreign-function boundary can only carry data**, and the IR already is
+data. Two earlier decisions are vindicated by a requirement that did not exist when
+they were made: the memoized one-copy result heap (a snapshot-lifetime borrow cannot
+cross a language boundary; the copy can) and the dyn write surface's typed-error
+discipline (the portable half of the API, not ETL plumbing).
 
 **Alternative 1 — a Logica text frontend**: investigated deeply (findings
 summarized here). Logica's syntax and rule model are excellent; its semantics are
@@ -20,11 +32,15 @@ named-argument atoms, group-key-from-output aggregation, membership as a binding
 "derived predicate" is a Rust function returning an IR fragment; the engine has no
 view/rule/module concept.
 
-**Alternative 2 — typed builder/generics as the contract.** **Why it lost:** owner
-ruling — builders bake a Rust calling convention into the contract and translate poorly
-to other-language bindings; data structures translate to anything. Builders/macros may
-appear later as sugar *producing* the IR. (Host newtypes still give compile-time nominal
-safety at the app layer — see `10-data-model.md`.)
+**Alternative 2 — typed builder/generics as the contract, and its stronger 2026-07-10
+form, a typed builder beside the contract.** **Why both lost:** owner ruling —
+builders bake a Rust calling convention into the surface (closures and generics are
+exactly what a foreign host cannot invoke) and translate poorly to other-language
+bindings; data structures translate to anything; and the builder's
+compile-time-checking dividend is re-provided by the validation roster's typed
+errors, which foreign callers need anyway. Sugar *producing* the IR is downstream-
+package territory, in any language, permanently. (Host newtypes still give
+compile-time nominal safety at the app layer — see `10-data-model.md`.)
 
 ## The query shape: one head, a set of rules
 
@@ -425,6 +441,13 @@ disjoin by writing rules, which is what rules are for.
   `DnfExceedsRules { produced, cap }` — the exponential case is rejected at
   declaration, exactly like guard-width overflow. (A program *written* with
   more than `MAX_RULES` rules is still `TooManyRules`, judged first.)
+- **The nesting cap:** trees deeper than `MAX_PREDICATE_DEPTH` (64) are the
+  typed `PredicateNestingTooDeep`, judged **iteratively** (an explicit work
+  list) before the count or the distribution runs — those walks recurse by
+  depth, so an unguarded hostile depth would be a stack exhaustion, not an
+  error (the trust-boundary law, § validation boundary). The cap is generous:
+  a meaningful tree's depth is bounded by its leaf count, and the blowup cap
+  already limits leaves.
 - **Duplicate rules after distribution collapse** — set semantics at the
   representation level, the duplicate-statement machinery's sibling:
   identical normalized bodies (finds, atoms, negated verbatim; predicate
@@ -489,6 +512,22 @@ atom is invalid (use one variable twice across fields for equality, or a filter)
 Malformed IR is rejected once, at the boundary, yielding a `ValidatedQuery` witness that
 everything downstream trusts — no inner layer re-validates.
 
+**The trust-boundary law.** Queries arrive as data — eventually foreign data — so
+every panic reachable from an `ir::Query` value is a crash a caller can trigger.
+The law, extended from the dyn write surface's ("ETL input is data, not code",
+`70-api.md`): **no panic is reachable from IR data** — validation, DNF lowering,
+normalization, and prepare return `Ok` or a typed error on *arbitrary* input:
+out-of-range ids, duplicate bindings, vacuous masks, MAX-point literals,
+cap-exceeders, hostile nesting. The caps (`MAX_RULES`, the DNF blowup cap,
+`MAX_PREDICATE_DEPTH`, `MAX_OCCURRENCES`, the 128-variable cap) are **boundary
+guards**, not planner hygiene — the nesting cap in particular exists because the
+tree walks recurse by depth, and its own judge is iterative so the guard is total.
+Enforced mechanically: the adversarial sweep (a property test in the engine's
+integration suite) drives 10⁴+ structurally random malformed queries through
+validate → normalize → prepare and reddens on any panic; `unreachable!` arms
+*downstream* of validation are exempt — they are guarded by it, and the sweep's
+job is proving the guard total.
+
 The program shape first, each with a distinct typed error: an **empty rule
 set** (the empty union is no query); more than **`MAX_RULES` (16) rules**
 (the roster cap, documented at the definition and counted independently of
@@ -499,7 +538,10 @@ whose term shape (variable vs aggregate-op kind) differs at a position, or
 whose resolved positional type differs from the pinned row (rule 0's
 resolved types pin the head's positional type row in the witness; every
 later rule must agree position by position). Between the program shape and
-the per-rule roster, **DNF distribution** (§ the input predicate grammar):
+the per-rule roster, the **nesting boundary guard** (trees deeper than
+`MAX_PREDICATE_DEPTH` are the typed `PredicateNestingTooDeep`, judged
+iteratively before any recursive walk — the trust-boundary law above), then
+**DNF distribution** (§ the input predicate grammar):
 the blowup past `MAX_RULES` is the typed `DnfExceedsRules { produced, cap }`
 on the structural term count, duplicates collapse, and a program whose every
 disjunction is empty is the empty union. Rules then validate **one at a
@@ -540,6 +582,36 @@ typed error); and the planner caps (more atom occurrences than the DP accepts �
 occurrences counted, they consume plan-time work — more than 128 distinct
 variables) — enforced here so downstream id widths and bitset sizes are true
 invariants.
+
+## The renderer — `ir::render`, the read-side syntax
+
+The statement renderer's sibling (`schema/render.rs`): `ir::render::render` prints
+a query in the **rule notation** — one clause per rule, set-builder shaped,
+`;`-terminated —
+
+```text
+(v0, v1) | Busy(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);
+(v0, v1) | Ooo(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);
+```
+
+— the schema grammar's own query side, promoted: atoms as statements write them,
+in-atom selections `field == literal` (params admitted as `?N`), `!` negation,
+membership as `in`, `Allen(term, MASK, term)` with masks as named basics joined by
+`|` or the workload composites, clause-level `|` reading *such that*. (The
+notation's normative grammar block is the query-notation unit's; the renderer emits
+it.) When the write-side surface is data, the renderer **is** the pretty syntax —
+ergonomics on the side that costs nothing and crosses every boundary.
+
+Deterministic, golden-pinned (the calendar union query and the Pack/Duration heads,
+byte-exact), and **total on plain data**: variables render as `v{id}` and params as
+`?{id}` (ids are all the IR carries), unresolvable ids as `relation#N`/`field#N`
+placeholders, and a nested predicate tree functionally (`and(..)`/`or(..)`, depth-
+budgeted at `MAX_PREDICATE_DEPTH`) — malformed queries must render, because the
+renderer's consumers are diagnostics: roster errors print the offending query
+(`Db::render_query` — prepare rejected it, so no prepared handle exists), EXPLAIN's
+report opens with the query it explains (`PreparedQuery::rendered_query` is the
+same string), and the oracle's arbitration bundles carry the notation beside the
+raw IR. Rendering allocates; it runs on no warm path.
 
 ## Prepared queries
 

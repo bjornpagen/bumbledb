@@ -300,6 +300,54 @@ fn typed_round_trip_through_fact_bytes() {
     .expect("read");
 }
 
+#[test]
+fn id_constants_are_declaration_order_named_data() {
+    // The macro emits declaration-order id constants on the theory
+    // (docs/architecture/70-api.md § id constants): per relation, per
+    // field, per enum variant — the Rust host never writes a magic
+    // number into an `ir::Query`.
+    assert_eq!(Ledger::HOLDER, RelationId(0));
+    assert_eq!(Ledger::ACCOUNT, RelationId(1));
+    assert_eq!(Ledger::SAVINGS_TERMS, RelationId(2));
+    assert_eq!(Ledger::HOLDER_ID, FieldId(0));
+    assert_eq!(Ledger::HOLDER_NAME, FieldId(1));
+    assert_eq!(Ledger::ACCOUNT_KIND, FieldId(2));
+    assert_eq!(Ledger::ACCOUNT_ACTIVE, FieldId(3));
+    assert_eq!(Ledger::SAVINGS_TERMS_RATE_BPS, FieldId(1));
+    // Enum-variant ordinals, matching the generated host enum.
+    assert_eq!(Ledger::KIND_CHECKING, 0);
+    assert_eq!(Ledger::KIND_SAVINGS, 1);
+    assert_eq!(Ledger::KIND_SAVINGS, Kind::Savings.ordinal());
+}
+
+#[test]
+fn the_manifest_is_the_constants_runtime_twin() {
+    // The manifest (docs/architecture/70-api.md § the manifest): the
+    // same numbers as plain data, reachable from the theory, for hosts
+    // that cannot see Rust constants. No serde anywhere — the value is
+    // the surface.
+    use bumbledb::Theory as _;
+    let manifest = Ledger.manifest();
+    assert_eq!(manifest.relations.len(), 3);
+    let account = &manifest.relations[1];
+    assert_eq!(&*account.name, "Account");
+    assert_eq!(account.id, Ledger::ACCOUNT);
+    let kind = &account.fields[2];
+    assert_eq!(&*kind.name, "kind");
+    assert_eq!(kind.id, Ledger::ACCOUNT_KIND);
+    // Enum variants ride in the field's structural type; the ordinal is
+    // the index, by the declaration-order law.
+    let ValueType::Enum { variants } = &kind.value_type else {
+        panic!("kind is an enum field");
+    };
+    assert_eq!(
+        variants
+            .get(usize::from(Ledger::KIND_SAVINGS))
+            .map(|v| &**v),
+        Some("Savings")
+    );
+}
+
 mod interval_newtype {
     use bumbledb::schema::{FieldId, IntervalElement, ValueType};
     use bumbledb::{Fact, Interval};
