@@ -554,7 +554,7 @@ always-on counters, no diagnostics allocation anywhere in the join loops.
 
 ## Measured mechanisms
 
-Five measured decisions, enforced structurally by
+Six measured decisions, enforced structurally by
 `crates/bumbledb-bench/src/tripwires.rs` (never by wall clock):
 
 - **Selection levels.** Every Eq-against-a-constant (literal or param — the
@@ -606,7 +606,26 @@ Five measured decisions, enforced structurally by
   byte range per finalize: each distinct string resolves through LMDB once
   and lands in the result buffer once (`dict_resolve` fires per miss, so the
   trace count is the distinct count). Cross-execution caching stays out — an
-  unbounded-memory policy the measured problem never needed.
+  unbounded-memory policy the measured problem never needed. (Literal
+  resolution on the *input* side is the latch below — the two memos face
+  opposite directions and share nothing.)
+- **The literal latch.** The dictionary is append-only, so `str`-literal
+  resolution is **monotone**: a hit is a hit forever, a miss may become a
+  hit but never the reverse — and ids outlive the environment (never
+  reused, never reclaimed; the accepted-leak axiom's second dividend). A
+  resolved `PendingIntern` therefore rewrites its plan-template slot to its
+  `Const::Word` once, permanently (the latch IS the rewrite — no parallel
+  resolution state), decrementing the prepared query's pending-literal
+  count; `literal_latch` fires once per distinct literal, ever. A miss
+  stays live: the template keeps its bytes and re-checks each execution,
+  with the miss semantics (`Eq` short-circuit, `Ne` sentinel) verbatim.
+  When the count is zero and the query has no params of any shape,
+  `resolve_predicates` is **skipped entirely** — the resolved tables were
+  written once and are final (one cold branch at rule entry). Sound
+  because the prepared query owns its plan (`!Sync`, env-instance-guarded)
+  and generational immutability never invalidates a word. The latch writes
+  fixed-size words into existing slots — the alloc gate's `literal-latch`
+  scenario pins zero allocation across the crossing.
 
 Prepare-time statistics live in `plan/selectivity.rs` (the distinct ladder:
 key-exact, resident-image exact via `ImageCache::peek` — prepare never

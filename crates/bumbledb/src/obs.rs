@@ -129,6 +129,12 @@ pub mod names {
     /// One dictionary resolution in finalize — fires per *distinct*
     /// intern per finalize (docs/architecture/40-execution.md). (intern word, byte length)
     pub const DICT_RESOLVE: &str = "dict_resolve";
+    /// A `str` literal latched: the dictionary is append-only, so its
+    /// resolved word rewrites the plan template once, permanently —
+    /// fires once per distinct literal over the prepared query's
+    /// lifetime (docs/architecture/40-execution.md § the literal
+    /// latch). (latched word, -)
+    pub const LITERAL_LATCH: &str = "literal_latch";
 
     // Write path (docs/architecture/60-validation.md).
 

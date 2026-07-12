@@ -21,6 +21,7 @@ mod correctness;
 mod disjoint;
 mod explain;
 mod guard;
+mod latch;
 mod measure;
 mod pack;
 mod params;

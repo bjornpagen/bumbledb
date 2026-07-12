@@ -75,7 +75,6 @@ Phase B — the funeral:
 
 Phase C — the folds:
 - [07 — The chase-evaluator: folding stage-zero atoms](07-chase-evaluator.md)
-- [09 — The literal latch: monotone resolution](09-literal-latch.md)
 - [10 — Statically empty: predicate folding at normalize](10-statically-empty.md)
 
 Phase D — the surface:

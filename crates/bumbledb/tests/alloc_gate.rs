@@ -339,6 +339,30 @@ fn minmax_query() -> Query {
     })
 }
 
+/// Q(amount) :- Posting(memo == "memo-1", amount) — the param-free
+/// str-literal selection (the literal latch, PRD 09): the first
+/// (sanctioned) execution resolves and latches the literal into the
+/// plan template; every measured execution rides the fully-latched
+/// fast path — the latch wrote a fixed-size word into an existing
+/// slot, so the steady-state zero stays zero.
+fn latch_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: POSTING,
+            bindings: vec![
+                (
+                    FieldId(3),
+                    Term::Literal(Value::String(Box::from(&b"memo-1"[..]))),
+                ),
+                (FieldId(2), Term::Var(VarId(0))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    })
+}
+
 /// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
 /// (docs/architecture/40-execution.md): a rotating Eq param on a non-key field probes the
 /// COLT's selection level; after the rotation's first cycle forces every
@@ -762,6 +786,11 @@ fn zero_warm_allocation_gate() {
             .collect();
         let mut selection = db.prepare(&selection_query())?;
         gate("selection", &mut selection, snap, &selection_params);
+
+        // The literal latch (PRD 09): the first warmup crosses the
+        // latch; the measured window is the fully-latched fast path.
+        let mut latch = db.prepare(&latch_query())?;
+        gate("literal-latch", &mut latch, snap, &no_params);
 
         // String projections across rotating params (docs/architecture/40-execution.md): the
         // intern-resolution memo joins the zero-alloc steady state.

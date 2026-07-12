@@ -173,8 +173,14 @@ impl<S> PreparedQuery<'_, S> {
         // The rule-shared binding-slot scratch, sized to this rule's
         // layout (capacity is the high-water across all rules).
         self.bindings.resize(self.rules[rule_idx].plan.slot_count());
+        // The fully-latched fast path: zero pending literals and zero
+        // params of any shape means the resolved tables were written
+        // once and are final — `resolve_predicates` is skipped entirely
+        // (one cold branch; the latch only removes work).
+        let fast_eligible = self.unresolved_literals == 0 && self.param_types.is_empty();
+        let mut latched = 0u32;
         let rule = &mut self.rules[rule_idx];
-        let ran = match &rule.plan {
+        let ran = match &mut rule.plan {
             ExecPlan::GuardProbe(guard) => {
                 execute_guard(
                     guard,
@@ -189,16 +195,23 @@ impl<S> PreparedQuery<'_, S> {
                 true
             }
             ExecPlan::FreeJoin(plan) => {
-                let resolved = {
+                let resolved = if fast_eligible && rule.resolved_complete {
+                    true
+                } else {
                     let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
-                    resolve_predicates(
+                    let complete = resolve_predicates(
                         txn,
                         plan,
                         &self.resolved_params,
                         &self.missed_params,
                         &mut rule.resolved_filters,
                         &mut rule.resolved_selections,
-                    )?
+                        &mut latched,
+                    )?;
+                    // A short-circuited pass leaves later slots
+                    // unwritten; only a completed one arms the skip.
+                    rule.resolved_complete = complete;
+                    complete
                 };
                 if resolved {
                     // This execution's Allen-residual masks (literal or
@@ -241,6 +254,7 @@ impl<S> PreparedQuery<'_, S> {
         // Saturating: an uncounted path reports emitted = 0 against a
         // real seen-set delta — the honest args there are (0, 0).
         rule_span.set_args(emitted, emitted.saturating_sub(newly_seen));
+        self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
         Ok(ran)
     }
 

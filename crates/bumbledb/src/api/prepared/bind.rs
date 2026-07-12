@@ -6,6 +6,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::image::view::{MaskConst, ResolvedWordSource};
 use crate::ir::{CmpOp, ParamId, Value};
+use crate::obs;
 use crate::schema::IntervalElement;
 use crate::storage::dict;
 use crate::storage::env::ReadTxn;
@@ -286,14 +287,20 @@ fn element_words(
 /// to the sentinel id and matches everything).
 pub(super) fn resolve_predicates(
     txn: &ReadTxn<'_>,
-    plan: &crate::plan::fj::ValidatedPlan,
+    plan: &mut crate::plan::fj::ValidatedPlan,
     params: &[Const],
     missed: &[bool],
     out_filters: &mut [Vec<FilterPredicate>],
     out_selections: &mut [Vec<Vec<u64>>],
+    latched: &mut u32,
 ) -> Result<bool> {
-    for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-        let negated = plan.is_negated(occurrence.occ_id);
+    for (occ_idx, occurrence) in plan.occurrences_mut().iter_mut().enumerate() {
+        // Templates are mutable for exactly one write: the literal latch
+        // — a resolved `PendingIntern` becomes its `Const::Word` in
+        // place, once, permanently (the dictionary is append-only, the
+        // prepared query owns its plan — `!Sync`, env-guarded — and ids
+        // outlive the environment).
+        let negated = occurrence.role == crate::ir::normalize::Role::Negated;
         let filters = &mut out_filters[occ_idx];
         if filters.len() != occurrence.filters.len() {
             // First execution (or a plan-shape change, which cannot
@@ -302,8 +309,8 @@ pub(super) fn resolve_predicates(
             filters.clear();
             filters.extend(occurrence.filters.iter().cloned());
         }
-        for (template, slot) in occurrence.filters.iter().zip(filters.iter_mut()) {
-            if !resolve_filter_into(txn, template, params, missed, negated, slot)? {
+        for (template, slot) in occurrence.filters.iter_mut().zip(filters.iter_mut()) {
+            if !resolve_filter_into(txn, template, params, missed, negated, slot, latched)? {
                 return Ok(false);
             }
         }
@@ -316,8 +323,8 @@ pub(super) fn resolve_predicates(
             !negated || occurrence.selections.is_empty(),
             "negated occurrences keep Eq-constants in their filters"
         );
-        for (selection, words) in occurrence.selections.iter().zip(selections.iter_mut()) {
-            if !resolve_selection_into(txn, selection, params, missed, words)? {
+        for (selection, words) in occurrence.selections.iter_mut().zip(selections.iter_mut()) {
+            if !resolve_selection_into(txn, selection, params, missed, words, latched)? {
                 return Ok(false);
             }
         }
@@ -333,12 +340,23 @@ pub(super) fn resolve_predicates(
 /// short-circuit (selections exist on positive occurrences only).
 fn resolve_selection_into(
     txn: &ReadTxn<'_>,
-    selection: &crate::plan::fj::Selection,
+    selection: &mut crate::plan::fj::Selection,
     params: &[Const],
     missed: &[bool],
     out: &mut Vec<u64>,
+    latched: &mut u32,
 ) -> Result<bool> {
     out.clear();
+    // The literal latch: a dictionary hit rewrites the template once —
+    // this selection never touches the dictionary again.
+    if let Const::PendingIntern { bytes } = &selection.value {
+        let Some(word) = dict::lookup(txn, bytes)? else {
+            return Ok(false);
+        };
+        selection.value = Const::Word(word);
+        *latched += 1;
+        obs::event(obs::names::LITERAL_LATCH, obs::Category::Execute, word, 0);
+    }
     let push_const = |constant: &Const, out: &mut Vec<u64>| match constant {
         Const::Word(word) => out.push(*word),
         Const::Byte(byte) => out.push(u64::from(*byte)),
@@ -368,10 +386,7 @@ fn resolve_selection_into(
             out.extend_from_slice(words);
         }
         Const::WordSet(_) => unreachable!("lowering emits ParamSet markers, never resolved sets"),
-        Const::PendingIntern { bytes } => match dict::lookup(txn, bytes)? {
-            Some(word) => out.push(word),
-            None => return Ok(false),
-        },
+        Const::PendingIntern { .. } => unreachable!("latched or short-circuited above"),
     }
     Ok(true)
 }
@@ -387,14 +402,34 @@ fn resolve_selection_into(
 #[allow(clippy::too_many_lines)] // one arm per filter kind, in kind order
 fn resolve_filter_into(
     txn: &ReadTxn<'_>,
-    template: &FilterPredicate,
+    template: &mut FilterPredicate,
     params: &[Const],
     missed: &[bool],
     negated: bool,
     dst: &mut FilterPredicate,
+    latched: &mut u32,
 ) -> Result<bool> {
     match template {
         FilterPredicate::Compare { field, op, value } => {
+            // The literal latch: a dictionary hit rewrites the template
+            // once; a miss keeps the template pending (live — something
+            // may intern it later) and resolves this execution's slot to
+            // the miss semantics verbatim.
+            if let Const::PendingIntern { bytes } = value {
+                match dict::lookup(txn, bytes)? {
+                    Some(id) => {
+                        let word = Const::Word(id);
+                        *value = word;
+                        *latched += 1;
+                        obs::event(obs::names::LITERAL_LATCH, obs::Category::Execute, id, 0);
+                    }
+                    None if *op == CmpOp::Eq && !negated => return Ok(false),
+                    None => {
+                        write_compare(dst, *field, *op, Some(Const::Word(dict::SENTINEL_ID)));
+                        return Ok(true);
+                    }
+                }
+            }
             let resolved = match value {
                 Const::Word(_) | Const::Byte(_) | Const::Words(_) | Const::Interval { .. } => {
                     value.clone()
@@ -421,11 +456,7 @@ fn resolve_filter_into(
                     return Ok(true);
                 }
                 Const::WordSet(_) => unreachable!("templates carry ParamSet markers"),
-                Const::PendingIntern { bytes } => match dict::lookup(txn, bytes)? {
-                    Some(id) => Const::Word(id),
-                    None if *op == CmpOp::Eq && !negated => return Ok(false),
-                    None => Const::Word(dict::SENTINEL_ID),
-                },
+                Const::PendingIntern { .. } => unreachable!("latched or short-circuited above"),
             };
             write_compare(dst, *field, *op, Some(resolved));
         }

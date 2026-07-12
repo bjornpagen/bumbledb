@@ -279,6 +279,18 @@ impl ValidatedPlan {
         &self.occurrences
     }
 
+    /// Mutable occurrence access for exactly one writer: the literal
+    /// latch (`api/prepared/bind.rs`). The dictionary is append-only, so
+    /// a resolved `PendingIntern` rewrites its template slot once,
+    /// permanently — the latch IS the rewrite; no parallel resolution
+    /// state exists. Sound because the prepared query owns its plan
+    /// (`!Sync`, env-guarded), and a latched word is valid for the
+    /// environment's lifetime (ids never reused, dictionary never
+    /// shrinks).
+    pub(crate) fn occurrences_mut(&mut self) -> &mut [PlanOccurrence] {
+        &mut self.occurrences
+    }
+
     #[must_use]
     pub fn nodes(&self) -> &[PlanNode] {
         &self.nodes

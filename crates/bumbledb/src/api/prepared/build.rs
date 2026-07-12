@@ -133,6 +133,7 @@ pub(crate) fn prepare<'s, S>(
     let all_words = column_types
         .iter()
         .all(|ty| !matches!(ty, ValueType::String | ValueType::FixedBytes { .. }));
+    let unresolved_literals = rules.iter().map(pending_literals).sum();
     Ok(PreparedQuery {
         schema,
         env_instance: txn.env_instance(),
@@ -145,6 +146,7 @@ pub(crate) fn prepare<'s, S>(
         param_is_set,
         param_is_point,
         resolved_params: Vec::new(),
+        unresolved_literals,
         missed_params: Vec::new(),
         sink,
         bindings,
@@ -155,6 +157,38 @@ pub(crate) fn prepare<'s, S>(
         rendered: crate::ir::render::render(schema, query),
         marker: std::marker::PhantomData,
     })
+}
+
+/// The rule's `str` literals awaiting dictionary words — the latch
+/// counter's initial value ([`PreparedQuery::unresolved_literals`]).
+/// Guard plans resolve their key constants per probe and stay outside
+/// the latch (the templates the latch rewrites are Free Join plan
+/// arrays).
+fn pending_literals(rule: &PreparedRule) -> u32 {
+    let ExecPlan::FreeJoin(plan) = &rule.plan else {
+        return 0;
+    };
+    let pending = |value: &crate::image::view::Const| {
+        matches!(value, crate::image::view::Const::PendingIntern { .. })
+    };
+    plan.occurrences()
+        .iter()
+        .map(|occurrence| {
+            let filters = occurrence
+                .filters
+                .iter()
+                .filter(|filter| {
+                    matches!(filter, crate::image::view::FilterPredicate::Compare { value, .. } if pending(value))
+                })
+                .count();
+            let selections = occurrence
+                .selections
+                .iter()
+                .filter(|selection| pending(&selection.value))
+                .count();
+            u32::try_from(filters + selections).expect("occurrence literal count fits u32")
+        })
+        .sum()
 }
 
 /// Dense param typing for bind-time checks (validation rejected gaps —
@@ -329,6 +363,7 @@ fn prepare_rule(
             finds: specs,
             resolved_filters: vec![Vec::new(); occurrence_count],
             resolved_selections: vec![Vec::new(); occurrence_count],
+            resolved_complete: false,
             memo,
             guard_finds,
             pinned: pins.into_boxed_slice(),

@@ -212,6 +212,12 @@ pub struct PreparedQuery<'s, S> {
     /// is rebound in place (sorted, deduplicated words; capacity
     /// retained across differently-sized warm re-binds).
     resolved_params: Vec<Const>,
+    /// `str` literals in the rules' templates still awaiting their
+    /// dictionary word ([`Const::PendingIntern`]): decremented as each
+    /// latches (`bind.rs`), and the zero — with no params of any shape —
+    /// is the fully-latched fast path: `resolve_predicates` is skipped
+    /// entirely, the resolved tables having been written once and final.
+    unresolved_literals: u32,
     /// Per param: whether this execution's value missed the dictionary
     /// (String/Bytes only; for a set, whether NO element survived — the
     /// empty set rides the same short-circuit machinery). A missed value
@@ -274,6 +280,11 @@ struct PreparedRule {
     /// one word for a scalar constant, the encoded pair for an interval
     /// constant, k sorted deduplicated words for a set. Reused in place.
     resolved_selections: Vec<Vec<Vec<u64>>>,
+    /// This rule's resolved tables were fully written by a completed
+    /// `resolve_predicates` pass (a short-circuited pass leaves later
+    /// slots unwritten and does not set it) — one leg of the
+    /// fully-latched fast path.
+    resolved_complete: bool,
     /// The view memo (docs/architecture/40-execution.md): per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
