@@ -245,6 +245,7 @@ fn normalized(
         })
         .collect();
     NormalizedQuery {
+        dead: None,
         occurrences,
         residuals,
         word_residuals: vec![],

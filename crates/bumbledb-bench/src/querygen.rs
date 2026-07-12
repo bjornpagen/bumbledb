@@ -22,6 +22,7 @@ use bumbledb::{
 
 mod builder;
 mod construct;
+mod contradict;
 mod coverage;
 mod dress;
 mod dress_posting;
@@ -40,6 +41,7 @@ mod tests;
 pub mod writes;
 
 pub use construct::random_query;
+pub use contradict::contradiction_query;
 pub use coverage::{cmp_cell_legal, coverage};
 pub use oracle::{params_for, ParamDraw};
 

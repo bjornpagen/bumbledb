@@ -79,6 +79,16 @@ impl<S> PreparedQuery<'_, S> {
         cache: &ImageCache,
         out: &mut ResultBuffer,
     ) -> Result<()> {
+        // The statically-empty program (ir/normalize/fold.rs): params
+        // were bound above — bind errors surfaced, a vacuous mask param
+        // included — and nothing else exists to run: no sink reset, no
+        // rule loop, no image, no view bind, no finalize; the cleared
+        // buffer IS the empty result (docs/architecture/40-execution.md
+        // § access paths). Always the whole program: the empty plan is
+        // built only when every rule died.
+        if matches!(self.rules[0].plan, ExecPlan::Empty) {
+            return Ok(());
+        }
         // The point fast lane, single-rule programs only: one probe, one
         // fetch, cells decoded straight into the buffer — no sink, no
         // bindings, no finalize pass. Aggregate-find guards (rare) and
@@ -181,6 +191,12 @@ impl<S> PreparedQuery<'_, S> {
         let mut latched = 0u32;
         let rule = &mut self.rules[rule_idx];
         let ran = match &mut rule.plan {
+            // The empty plan is always a whole (single-rule) program and
+            // short-circuits before the rule loop (`run_bound`,
+            // `profile`) — no rule span, no sink touch.
+            ExecPlan::Empty => {
+                unreachable!("the empty plan short-circuits before the rule loop")
+            }
             ExecPlan::GuardProbe(guard) => {
                 execute_guard(
                     guard,

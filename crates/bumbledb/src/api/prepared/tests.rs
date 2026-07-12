@@ -29,6 +29,7 @@ mod rules;
 mod selection;
 mod sets;
 mod snapshot;
+mod statically_empty;
 mod view_memo;
 
 /// The unit-typestate prepare: these tests drive the environment

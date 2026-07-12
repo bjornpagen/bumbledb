@@ -71,4 +71,8 @@ pub enum RulePlan<'p> {
     GuardProbe(&'p GuardPlan),
     /// The Free Join engine.
     FreeJoin(&'p ValidatedPlan),
+    /// The statically-empty program (`ir/normalize/fold.rs`): every
+    /// rule refuted on constants at prepare — nothing runs, and the
+    /// per-rule killing predicates print from `stats.dead`.
+    Empty,
 }

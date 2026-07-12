@@ -491,6 +491,31 @@ three; **normalization lowers IR form to paper form**:
    point-containment words, and `Allen` residuals carried whole as four
    endpoint slots + mask — and anti-probe filters; nothing single-atom
    survives to the residual list).
+6. **The statically-empty fold** (last, per rule — the comptime-unreachable
+   analog): per (participating occurrence, slot), a conjunction of constant
+   order filters on one u64/i64 slot folds into a single `[lo, hi]` summary
+   over **encoded words** (the sign-flip I64 encoding gives both integer
+   types one unsigned comparison domain), and the summary replaces its
+   constituents — emitted back as at most two order filters + one Eq per
+   slot, existing filter shapes, no new kind, no new kernel. Contradictions
+   among constants — an empty summary; `Eq` to two distinct constants on
+   one slot; an `Eq` constant outside the summary; a membership set empty
+   after sentinel-trim, or refuting an `Eq` constant; an `Allen`
+   literal-vs-literal predicate `classify` refutes; a failed
+   constant-point-in-constant-interval membership — are a **statically
+   empty verdict for the rule**: the rule is marked dead carrying the
+   rendered killing predicate (EXPLAIN prints it), a dead rule inside a
+   live program is deleted at prepare and never runs, and a program of
+   only dead rules prepares to the `Empty` plan (`40-execution.md`,
+   § access paths). `Ne` and param-bearing predicates never fold (params
+   are stage-3; `Ne` prunes nothing statically); interval variables fold
+   via their two slot summaries independently — no cross-slot reasoning in
+   v0 (the constructor invariant `start < end` is data, not plan
+   knowledge); a negated occurrence's contradiction is no verdict (its
+   anti-probe just never rejects). Estimator note: a folded summary is ONE
+   range predicate — its keep fraction applies once per slot, never per
+   constituent (`plan/selectivity.rs`; the fold is also the
+   double-counted-range selectivity fix).
 
 **Deviation (paper §2):** the paper assumes selections pre-pushed and per-atom variables
 distinct; we accept the richer surface and own the lowering, because there is no

@@ -135,6 +135,15 @@ fn occurrence_estimate(
         estimate =
             (estimate.saturating_mul(selection_matches(&selection.value)) / distinct.max(1)).max(1);
     }
+    // Fields already charged for a folded constant range: the fold
+    // (`ir/normalize/fold.rs`) collapsed each slot's constant order
+    // filters into ONE `[lo, hi]` summary, emitted back as at most two
+    // bounds — one summary is one range predicate, so its keep fraction
+    // applies once per field, never per constituent. This is the
+    // double-counted-range selectivity fix (PRD 10): pre-fold, `x > a ∧
+    // x < b` priced as 1/16 instead of 1/4. Param bounds never fold
+    // (params are stage-3) and keep the per-filter fraction below.
+    let mut folded_range_fields: Vec<FieldId> = Vec::new();
     for residual in &residuals {
         // The Allen kinds carry their own honest fraction ([`allen_keep`]:
         // popcount/13); everything else takes a constant denominator.
@@ -142,6 +151,19 @@ fn occurrence_estimate(
         | FilterPredicate::FieldAllen { mask, .. } = residual
         {
             estimate = allen_keep(estimate, *mask);
+            continue;
+        }
+        if let FilterPredicate::Compare {
+            field,
+            op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge,
+            value: Const::Word(_),
+        } = residual
+        {
+            if folded_range_fields.contains(field) {
+                continue;
+            }
+            folded_range_fields.push(*field);
+            estimate = (estimate / RANGE_KEEP_DEN).max(1);
             continue;
         }
         let keep_den = match residual {
@@ -486,6 +508,52 @@ mod tests {
             .expect("estimate")
             .rows;
         assert_eq!(est, 1);
+    }
+
+    /// A folded constant range counts ONCE: the fold
+    /// (`ir/normalize/fold.rs`) collapsed the slot's constant bounds
+    /// into one `[lo, hi]` summary, so the two emitted bounds are one
+    /// range predicate — 1/4, never 1/16 (the double-counted-range fix,
+    /// PRD 10). Constant ranges on distinct fields still compose, and
+    /// param bounds (which never fold) keep the per-filter fraction —
+    /// `residual_fractions_compose_and_clamp` above pins that side.
+    #[test]
+    fn a_folded_constant_range_takes_the_keep_fraction_once() {
+        let dir = TempDir::new("selectivity-folded-range");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        populate(&env, &schema);
+        let txn = env.read_txn().expect("txn");
+        let cache = ImageCache::new(&schema);
+
+        let mut occ = eq_on(0, R);
+        occ.filters = vec![
+            FilterPredicate::Compare {
+                field: FieldId(0),
+                op: CmpOp::Ge,
+                value: Const::Word(8),
+            },
+            FilterPredicate::Compare {
+                field: FieldId(0),
+                op: CmpOp::Le,
+                value: Const::Word(19),
+            },
+        ];
+        let est = occurrence_stats(&txn, &cache, &schema, &occ, 1600)
+            .expect("estimate")
+            .rows;
+        assert_eq!(est, 400, "one summary, one 1/4 — not 1/16");
+
+        // Distinct fields are distinct summaries and still compose.
+        occ.filters.push(FilterPredicate::Compare {
+            field: FieldId(2),
+            op: CmpOp::Lt,
+            value: Const::Word(3),
+        });
+        let est = occurrence_stats(&txn, &cache, &schema, &occ, 1600)
+            .expect("estimate")
+            .rows;
+        assert_eq!(est, 100, "two fields, two fractions");
     }
 
     /// A field under TWO unconditional containments takes the tightest

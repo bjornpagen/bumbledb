@@ -85,6 +85,13 @@ fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
                 })
         }));
 
+    // The statically-empty fold (fold.rs), last: with every comparison
+    // placed, each participating occurrence's constant filters fold per
+    // slot and the contradiction rules judge the rule on constants —
+    // stage-2-known emptiness becomes the rule's verdict
+    // (docs/architecture/20-query-ir.md, § normalization).
+    let dead = super::fold::fold(schema, &mut occurrences);
+
     NormalizedQuery {
         occurrences,
         residuals,
@@ -93,6 +100,7 @@ fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
         duration_residuals,
         anti_probes,
         slot_widths,
+        dead,
     }
 }
 

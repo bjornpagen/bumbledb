@@ -36,6 +36,7 @@ impl<S> PreparedQuery<'_, S> {
                 .map(|rule| match &rule.plan {
                     ExecPlan::GuardProbe(guard) => RulePlan::GuardProbe(guard),
                     ExecPlan::FreeJoin(plan) => RulePlan::FreeJoin(plan),
+                    ExecPlan::Empty => RulePlan::Empty,
                 })
                 .collect(),
             stats,
@@ -76,6 +77,13 @@ impl<S> PreparedQuery<'_, S> {
         self.check_snapshot(txn)?;
         let mut out = ResultBuffer::new();
         out.arity = self.column_types.len();
+        // The statically-empty program mirrors `run_bound`'s
+        // short-circuit: bind (errors surface), then nothing runs and
+        // nothing is counted — the death record is the whole story.
+        if matches!(self.rules[0].plan, ExecPlan::Empty) {
+            self.bind_params(txn, params)?;
+            return Ok((out, self.empty_stats()));
+        }
         // The single-rule guard program keeps its fast lane: `execute`
         // dispatches it whole, and the stats are the probe's outcome.
         if self.rules.len() == 1 && matches!(self.rules[0].plan, ExecPlan::GuardProbe(_)) {
@@ -99,9 +107,11 @@ impl<S> PreparedQuery<'_, S> {
                 emits: emitted,
                 // A single-rule program has no pair to prove.
                 disjoint_rules: None,
-                // ... but may still be subsumption's residue: a program
-                // deleted down to one guard rule keeps the record.
+                // ... but may still be a deletion pass's residue: a
+                // program deleted down to one guard rule keeps both
+                // records.
                 subsumed: self.subsumed.clone(),
+                dead: self.dead.clone(),
             };
             return Ok((out, stats));
         }
@@ -119,6 +129,9 @@ impl<S> PreparedQuery<'_, S> {
             let mut counters = match &self.rules[rule_idx].plan {
                 ExecPlan::FreeJoin(plan) => CountingCounters::new(plan),
                 ExecPlan::GuardProbe(_) => CountingCounters::for_guard(),
+                ExecPlan::Empty => {
+                    unreachable!("the empty plan short-circuited above")
+                }
             };
             ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
             // The union accounting (docs/architecture/40-execution.md
@@ -145,6 +158,9 @@ impl<S> PreparedQuery<'_, S> {
                     absorbed,
                     guard: Some(GuardStats { hit: emitted > 0 }),
                 },
+                ExecPlan::Empty => {
+                    unreachable!("the empty plan short-circuited above")
+                }
             });
         }
         if ran {
@@ -166,8 +182,30 @@ impl<S> PreparedQuery<'_, S> {
                 emits,
                 disjoint_rules: self.disjoint_rules_stat(),
                 subsumed: self.subsumed.clone(),
+                dead: self.dead.clone(),
             },
         ))
+    }
+
+    /// The statically-empty program's counted execution: every count is
+    /// honestly zero — nothing ran, nothing was read — and the death
+    /// record (`stats.dead`) carries the per-rule killing predicates.
+    fn empty_stats(&self) -> ExecutionStats {
+        ExecutionStats {
+            rules: vec![RuleStats {
+                nodes: Vec::new(),
+                eliminated: Vec::new(),
+                pinned: Vec::new(),
+                emitted: 0,
+                absorbed: 0,
+                guard: None,
+            }],
+            emits: 0,
+            // One empty plan, no pair to prove.
+            disjoint_rules: None,
+            subsumed: self.subsumed.clone(),
+            dead: self.dead.clone(),
+        }
     }
 
     /// Whether every join rule's plan nodes all bind sink-relevant
@@ -178,7 +216,7 @@ impl<S> PreparedQuery<'_, S> {
     pub fn skip_free(&self) -> Option<bool> {
         let mut joins = self.rules.iter().filter_map(|rule| match &rule.plan {
             ExecPlan::FreeJoin(plan) => Some(plan.skip_free()),
-            ExecPlan::GuardProbe(_) => None,
+            ExecPlan::GuardProbe(_) | ExecPlan::Empty => None,
         });
         let first = joins.next()?;
         Some(joins.fold(first, |all, one| all && one))

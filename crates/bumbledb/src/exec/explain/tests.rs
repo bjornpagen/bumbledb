@@ -149,6 +149,7 @@ fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
         .flat_map(|o| o.vars.iter().map(|(_, v)| (*v, SlotWidth::ONE)))
         .collect();
     NormalizedQuery {
+        dead: None,
         occurrences,
         residuals: vec![],
         word_residuals: vec![],
@@ -210,6 +211,7 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
             rules: vec![rule],
             disjoint_rules: None,
             subsumed: Vec::new(),
+            dead: Vec::new(),
         },
     };
     let text = format!("{report}");
@@ -284,6 +286,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
             rules: vec![rule],
             disjoint_rules: None,
             subsumed: Vec::new(),
+            dead: Vec::new(),
         },
     };
     assert!(format!("{report}").contains("exact=1"));
@@ -318,6 +321,7 @@ fn guard_probe_queries_report_their_classification() {
             emits: 0,
             disjoint_rules: None,
             subsumed: Vec::new(),
+            dead: Vec::new(),
         },
     };
     let text = format!("{report}");
@@ -438,6 +442,7 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
             rules: vec![rule],
             disjoint_rules: None,
             subsumed: Vec::new(),
+            dead: Vec::new(),
         },
     };
     let text = format!("{report}");

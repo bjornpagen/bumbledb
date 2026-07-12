@@ -54,29 +54,44 @@ pub(crate) fn prepare<'s, S>(
     let disjoint_rules = disjointness(&witness, &normalized, schema);
 
     let (survivors, subsumed) = chase_program(normalized, &witness, schema);
-    // A program subsumption shrank to one rule has no pair left to
-    // prove (the stats surface's single-rule contract).
-    let disjoint_rules = (survivors.len() > 1).then_some(disjoint_rules).flatten();
 
+    // The head's result-type row, derived from the witness alone —
+    // validation pinned the positional alignment, so rule 0 speaks for
+    // every rule, it exists even when every rule below dies, and every
+    // prepared rule re-derives exactly it (the debug assert).
+    let column_types: Vec<ValueType> = result_types(&witness.rule(0));
     let mut rules = Vec::with_capacity(survivors.len());
-    let mut column_types = Vec::new();
-    for (position, (rule_idx, normalized_rule)) in survivors.into_iter().enumerate() {
+    let mut dead = Vec::new();
+    for (rule_idx, normalized_rule) in survivors {
+        // Rule death (ir/normalize/fold.rs): a statically-empty rule is
+        // deleted here — no statistics read, no DP, no plan; the union
+        // loses nothing because the rule denotes the empty set. The
+        // record keeps the killing predicate for EXPLAIN.
+        if let Some(reason) = &normalized_rule.dead {
+            dead.push(crate::api::stats::DeadRule {
+                rule: u16::try_from(rule_idx).expect("rule count fits u16"),
+                rendered: reason.clone(),
+            });
+            continue;
+        }
         let rule = witness.rule(rule_idx);
         let (prepared, types) = prepare_rule(txn, cache, schema, &rule, &normalized_rule)?;
-        if position == 0 {
-            // The head's result-type row — validation pinned the
-            // positional alignment, so every rule computes this same row.
-            column_types = types;
-        } else {
-            // The head-alignment re-check after subsumption deletion:
-            // deleting a rule never changes the head, and every survivor
-            // still computes the pinned row.
-            debug_assert_eq!(
-                types, column_types,
-                "survivors compute the head's pinned type row"
-            );
-        }
+        debug_assert_eq!(
+            types, column_types,
+            "live rules compute the head's pinned type row"
+        );
         rules.push(prepared);
+    }
+    // A program deletion (subsumption or rule death) shrank to at most
+    // one live rule has no pair left to prove (the stats surface's
+    // single-rule contract; pairwise over a superset held regardless).
+    let disjoint_rules = (rules.len() > 1).then_some(disjoint_rules).flatten();
+    if rules.is_empty() {
+        // Every rule died: the program is stage-2-known empty and
+        // prepares to the one `ExecPlan::Empty` artifact — execution
+        // binds params (errors surface), then touches nothing
+        // (docs/architecture/40-execution.md, § access paths).
+        rules.push(empty_rule());
     }
 
     let (param_types, param_is_set, param_is_point) = param_tables(&witness);
@@ -99,6 +114,8 @@ pub(crate) fn prepare<'s, S>(
                     .expect("clamped")
             }
             ExecPlan::GuardProbe(_) => 1,
+            // Nothing ever emits under the empty plan.
+            ExecPlan::Empty => 0,
         })
         .max()
         .expect("at least one rule");
@@ -140,6 +157,7 @@ pub(crate) fn prepare<'s, S>(
         disjoint_rules,
         union_elided,
         subsumed,
+        dead,
         rules,
         column_types,
         param_types,
@@ -157,6 +175,51 @@ pub(crate) fn prepare<'s, S>(
         rendered: crate::ir::render::render(schema, query),
         marker: std::marker::PhantomData,
     })
+}
+
+/// The head's result-type row from one rule's find terms alone — the
+/// types half of [`find_specs`], computable without a plan (the
+/// all-dead program must still type its empty result columns), and
+/// identical across rules by validation's positional alignment.
+fn result_types(rule: &RuleWitness<'_>) -> Vec<ValueType> {
+    rule.rule()
+        .finds
+        .iter()
+        .map(|term| match term {
+            FindTerm::Var(var) => rule.var_type(*var).clone(),
+            // The measure positions are u64 by definition (|[s, e)| =
+            // e − s — 20-query-ir § the measure).
+            FindTerm::Duration(_) | FindTerm::AggregateDuration { .. } => ValueType::U64,
+            FindTerm::Aggregate { op, over } => match op {
+                AggOp::ArgMax { .. } | AggOp::ArgMin { .. } | AggOp::Pack => rule
+                    .var_type(over.expect("validated: Arg and Pack carry a variable"))
+                    .clone(),
+                AggOp::Sum | AggOp::Min | AggOp::Max => rule
+                    .var_type(over.expect("validated: folds carry a variable"))
+                    .clone(),
+                AggOp::Count | AggOp::CountDistinct => ValueType::U64,
+            },
+        })
+        .collect()
+}
+
+/// The all-dead program's one prepared artifact: the `ExecPlan::Empty`
+/// plan with nothing attached — no executor, no finds (the sink is
+/// never fed and finalize never runs: the rule loop reports nothing
+/// ran, exactly the Eq-miss short-circuit's empty-result path), no
+/// view memo entries, no pins (nothing was read, so nothing drifts).
+fn empty_rule() -> PreparedRule {
+    PreparedRule {
+        plan: ExecPlan::Empty,
+        executor: None,
+        finds: Vec::new(),
+        resolved_filters: Vec::new(),
+        resolved_selections: Vec::new(),
+        resolved_complete: false,
+        memo: build_view_memo(&ExecPlan::Empty),
+        guard_finds: None,
+        pinned: Box::new([]),
+    }
 }
 
 /// The rule's `str` literals awaiting dictionary words — the latch
@@ -245,6 +308,12 @@ fn chase_program(
     Vec<crate::api::stats::SubsumedRule>,
 ) {
     for (rule_idx, normalized_rule) in normalized.iter_mut().enumerate() {
+        // A statically-empty rule (ir/normalize/fold.rs) is deleted at
+        // prepare — nothing to rewrite; the subsumption pass skips it
+        // symmetrically (`plan/chase.rs`).
+        if normalized_rule.dead.is_some() {
+            continue;
+        }
         crate::plan::chase::chase(
             normalized_rule,
             schema,
@@ -345,6 +414,7 @@ fn prepare_rule(
     let (executor, occurrence_count) = match &exec_plan {
         ExecPlan::FreeJoin(plan) => (Some(Executor::new(plan)), plan.occurrences().len()),
         ExecPlan::GuardProbe(_) => (None, 1),
+        ExecPlan::Empty => unreachable!("dead rules never reach the per-rule pipeline"),
     };
 
     // BUILD_COLTS is pure column-schema construction since the unbound-
@@ -573,7 +643,7 @@ fn guard_find_table(
                 | FindSpec::AggDuration { .. } => None,
             })
             .collect::<Option<Vec<_>>>(),
-        ExecPlan::FreeJoin(_) => None,
+        ExecPlan::FreeJoin(_) | ExecPlan::Empty => None,
     }
 }
 

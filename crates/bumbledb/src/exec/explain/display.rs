@@ -14,6 +14,9 @@ impl fmt::Display for Report<'_> {
             match rule {
                 RulePlan::GuardProbe(plan) => fmt_guard_probe(f, plan)?,
                 RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, stats)?,
+                // The reasons — one per dead rule — print below with
+                // the death record (`stats.dead`).
+                RulePlan::Empty => writeln!(f, "access path: statically empty")?,
             }
             // The union accounting, per rule (docs/architecture/
             // 40-execution.md § the rule loop): what this rule handed the
@@ -55,6 +58,12 @@ impl fmt::Display for Report<'_> {
                 "subsumed: rule {} by rule {}",
                 subsumed.rule, subsumed.by
             )?;
+        }
+        // The death record (`ir/normalize/fold.rs`): each statically-
+        // empty rule with its killing predicate — lowered-rule indices,
+        // exactly as the subsumption lines.
+        for dead in &self.stats.dead {
+            writeln!(f, "statically empty: rule {}: {}", dead.rule, dead.rendered)?;
         }
         Ok(())
     }

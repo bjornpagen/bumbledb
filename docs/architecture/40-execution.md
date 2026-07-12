@@ -19,6 +19,17 @@ and loses the benchmark family outright; the paper itself lists index-blindness 
 open limitation (§6). **Reverses if:** never — the guards exist anyway (rule: every
 mechanism names its reader; this is `U`/`M`'s read-side reader).
 
+**Statically empty programs.** A program whose every rule the normalization
+fold refuted on constants (`20-query-ir.md`, § normalization — mutually
+unsatisfiable constant predicates) prepares to the `Empty` plan: the third
+plan kind beside the guard probe and Free Join, classified once at prepare
+like both. Execution binds params first — bind errors still surface, a
+vacuous Allen mask param is rejected exactly as on a live plan — then
+touches no images, binds no views, runs no join, and the result is the
+empty buffer. EXPLAIN prints `access path: statically empty` plus each dead
+rule's killing predicate; a dead rule inside a live program was deleted at
+prepare and its record prints the same way.
+
 **Time-range scans, point-membership scans, and interval-overlap joins are O(n)**
 (image scan + filter) in v0 — decided; acceptability is policed by the latency budget
 (`00-product.md`), and the range-accelerator OPEN item (which now covers interval

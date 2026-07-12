@@ -80,6 +80,7 @@ fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<PlacedComparison>) ->
         .flat_map(|o| o.vars.iter().map(|(_, v)| (*v, SlotWidth::ONE)))
         .collect();
     NormalizedQuery {
+        dead: None,
         occurrences,
         residuals,
         word_residuals: vec![],

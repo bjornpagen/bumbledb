@@ -184,6 +184,12 @@ pub struct PreparedQuery<'s, S> {
     /// `rules` below holds only the survivors, in order. Readers:
     /// EXPLAIN and the structured stats.
     subsumed: Vec<crate::api::stats::SubsumedRule>,
+    /// The statically-empty record (`ir/normalize/fold.rs`): rules whose
+    /// constant predicates refuted themselves at normalize, deleted at
+    /// prepare with the killing predicate — `rules` below holds only the
+    /// live ones (or the one `ExecPlan::Empty` artifact when every rule
+    /// died). Readers: EXPLAIN and the structured stats.
+    dead: Vec<crate::api::stats::DeadRule>,
     /// Per rule, in rule order: the rule's validated plan plus its
     /// plan-shaped execution scratch — the whole plan pipeline ran per
     /// rule at prepare. Execution runs the rules **sequentially** into

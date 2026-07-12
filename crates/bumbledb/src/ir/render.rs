@@ -294,7 +294,10 @@ fn mask_term(out: &mut String, mask: MaskTerm) {
 /// composite by its name, else the singleton basics joined by `|` (the
 /// mask-level bar is set union over the 13). The vacuous masks — typed
 /// rejections, but diagnostics picture them — render as `EMPTY`/`FULL`.
-fn mask_names(out: &mut String, mask: AllenMask) {
+/// Crate-visible for the statically-empty verdict pictures
+/// (`ir/normalize/fold.rs`) — one mask notation on every diagnostic
+/// surface.
+pub(crate) fn mask_names(out: &mut String, mask: AllenMask) {
     const COMPOSITES: [(&str, AllenMask); 4] = [
         ("INTERSECTS", AllenMask::INTERSECTS),
         ("DISJOINT", AllenMask::DISJOINT),
@@ -343,8 +346,10 @@ fn mask_names(out: &mut String, mask: AllenMask) {
 /// One literal, in the statement renderer's value formats (one notation,
 /// schema to query): intervals as `start..end`, strings and byte strings
 /// escaped, closed-reference words bare v0 (handles land in the surface
-/// pass).
-fn literal(out: &mut String, value: &Value) {
+/// pass). Crate-visible for the statically-empty verdict pictures
+/// (`ir/normalize/fold.rs`) — one value notation on every diagnostic
+/// surface.
+pub(crate) fn literal(out: &mut String, value: &Value) {
     match value {
         Value::Bool(v) => {
             let _ = write!(out, "{v}");

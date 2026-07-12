@@ -107,6 +107,7 @@ fn interval_pair_query(
     .into_iter()
     .collect();
     NormalizedQuery {
+        dead: None,
         occurrences,
         residuals: vec![],
         word_residuals,
@@ -413,6 +414,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         .into_iter()
         .collect();
     let query = NormalizedQuery {
+        dead: None,
         occurrences,
         residuals: vec![],
         word_residuals: vec![],
@@ -587,6 +589,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     .into_iter()
     .collect();
     let query = NormalizedQuery {
+        dead: None,
         occurrences,
         residuals: vec![],
         word_residuals: vec![],
@@ -680,6 +683,7 @@ fn negated_membership_rejects_only_covered_events() {
         },
     ];
     let query = NormalizedQuery {
+        dead: None,
         anti_probes: vec![AntiProbe {
             occurrence: OccId(1),
             probe_bindings: vec![(FieldId(0), x)],
@@ -836,6 +840,7 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
         .collect();
     for mask in mask_suite(&mut state).into_iter().step_by(4) {
         let query = NormalizedQuery {
+            dead: None,
             occurrences: occurrences.clone(),
             residuals: vec![],
             word_residuals: vec![],

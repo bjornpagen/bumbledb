@@ -19,6 +19,7 @@ impl ExecPlan {
                     .slot
             }
             Self::FreeJoin(plan) => plan.slot_of(var),
+            Self::Empty => unreachable!("an empty plan binds no variables"),
         }
     }
 
@@ -41,6 +42,7 @@ impl ExecPlan {
                     .width
             }
             Self::FreeJoin(plan) => plan.width_of(var),
+            Self::Empty => unreachable!("an empty plan binds no variables"),
         }
     }
 
@@ -51,15 +53,19 @@ impl ExecPlan {
         match self {
             Self::GuardProbe(guard) => guard.slot_count(),
             Self::FreeJoin(plan) => plan.slot_count(),
+            // No variables, no slots — the shared binding scratch
+            // resizes to nothing.
+            Self::Empty => 0,
         }
     }
 
     /// The distinct-bindings elision flag (trivially true for a guard
-    /// probe: at most one binding exists).
+    /// probe: at most one binding exists — and vacuously true for the
+    /// empty plan: no binding exists).
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
         match self {
-            Self::GuardProbe(_) => true,
+            Self::GuardProbe(_) | Self::Empty => true,
             Self::FreeJoin(plan) => plan.distinct_bindings(),
         }
     }

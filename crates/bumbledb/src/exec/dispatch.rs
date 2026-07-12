@@ -4,7 +4,7 @@
 //! read-side readers).
 //!
 //! The dispatch is a **representation**, not a runtime mode: classification
-//! happens once at prepare time into the two-variant [`ExecPlan`]; the
+//! happens once at prepare time into the three-variant [`ExecPlan`]; the
 //! branch exists exactly once. No images are touched on the guard path —
 //! it works identically on a cold, just-committed database (the latency
 //! property the decision exists for).
@@ -27,12 +27,21 @@ pub use execute_guard::execute_guard;
 pub(crate) use fact_word::{fact_operand, fact_word, FactOperand};
 pub(crate) use guard_probe_fact::guard_probe_fact;
 
-/// The prepared execution plan: either the guard-probe fast path or the
-/// Free Join engine.
+/// The prepared execution plan: the guard-probe fast path, the Free
+/// Join engine, or the statically-empty plan.
 #[derive(Debug)]
 pub enum ExecPlan {
     GuardProbe(GuardPlan),
     FreeJoin(ValidatedPlan),
+    /// The statically-empty program (docs/architecture/20-query-ir.md,
+    /// § normalization — the fold's verdict): every rule was refuted on
+    /// constants at prepare, so the denotation is stage-2-known to be
+    /// the empty set. Execution binds params first — bind errors still
+    /// surface — then touches no images, binds no views, runs no join
+    /// (docs/architecture/40-execution.md, § access paths). The per-rule
+    /// killing predicates ride the prepared query's death record, the
+    /// EXPLAIN/stats surface.
+    Empty,
 }
 
 /// One variable a guard plan decodes from the fetched fact: the field it

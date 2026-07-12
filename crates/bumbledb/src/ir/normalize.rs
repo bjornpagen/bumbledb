@@ -21,12 +21,15 @@ use crate::ir::{CmpOp, VarId};
 use crate::schema::{FieldId, RelationId, StatementId, ValueType};
 
 mod dnf;
+mod fold;
 mod lower_literal;
 #[allow(clippy::module_inception)]
 mod normalize;
 mod place_comparisons;
 
 pub use dnf::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
+#[cfg(any(test, feature = "fold-off"))]
+pub use fold::with_fold_disabled;
 pub(crate) use lower_literal::{fixed_bytes_const, lower_literal};
 pub use normalize::normalize;
 
@@ -269,6 +272,13 @@ pub struct NormalizedQuery {
     /// Every variable's binding-slot width — the [`SlotWidth`] layout,
     /// exported to the plan witness.
     pub slot_widths: BTreeMap<VarId, SlotWidth>,
+    /// The statically-empty verdict (`fold.rs`): `Some` iff the rule's
+    /// constant predicates are mutually unsatisfiable — the rendered
+    /// killing predicate (e.g. `R: a ∈ [8, 19] ∧ a == 3`), because
+    /// EXPLAIN must print what refuted the rule. A dead rule is deleted
+    /// at prepare (`api/prepared/build.rs`); a program of only dead
+    /// rules prepares to `ExecPlan::Empty`.
+    pub dead: Option<String>,
 }
 
 #[cfg(test)]

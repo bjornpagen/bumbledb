@@ -13,6 +13,11 @@ alloc-counter = []
 # (`plan/chase.rs`) from the bench crate's dual-run differential unit
 # tests. Enabled only as a bench dev-dependency; no runtime mode ships.
 chase-off = []
+# Test-support: reaches the statically-empty fold's thread-local off
+# switch (`ir/normalize/fold.rs`) from the bench crate's
+# fold-preservation differential. Enabled only as a bench
+# dev-dependency; no runtime mode ships.
+fold-off = []
 
 [dependencies]
 blake3 = "1"

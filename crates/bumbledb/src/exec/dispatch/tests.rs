@@ -174,6 +174,7 @@ fn single_with_widths(occurrence: Occurrence, wide_vars: &[u16]) -> NormalizedQu
         })
         .collect();
     NormalizedQuery {
+        dead: None,
         occurrences: vec![occurrence],
         residuals: vec![],
         word_residuals: vec![],
@@ -248,6 +249,7 @@ fn a_second_atom_or_a_residual_stays_free_join() {
     let schema = account_schema();
     let occ = occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(5))]);
     let two_atoms = NormalizedQuery {
+        dead: None,
         occurrences: vec![occ.clone(), occ],
         residuals: vec![],
         word_residuals: vec![],

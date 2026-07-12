@@ -102,11 +102,17 @@ pub use api::prepared::{
     BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
 };
 pub use api::stats::{
-    CoverStats, DisjointRules, EliminatedOccurrence, ExecutionStats, GuardStats, NodeStats,
-    PinnedRows, RuleStats,
+    CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, GuardStats,
+    NodeStats, PinnedRows, RuleStats,
 };
 pub use error::{Direction, Error, OverflowKind, Result};
 pub use interval::Interval;
+/// The statically-empty fold's test-support off switch
+/// (`ir/normalize/fold.rs`): reachable only under the `fold-off`
+/// feature, which only the bench crate's fold-preservation differential
+/// enables (as a dev-dependency).
+#[cfg(feature = "fold-off")]
+pub use ir::normalize::with_fold_disabled;
 /// The chase's test-support off switch (`plan/chase.rs`): reachable only
 /// under the `chase-off` feature, which only the bench crate's dual-run
 /// differential unit tests enable (as a dev-dependency).

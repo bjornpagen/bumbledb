@@ -399,6 +399,15 @@ pub(crate) fn subsume(rules: &[NormalizedQuery], finds: &[&[FindTerm]]) -> Vec<S
             if deleted[earlier] || deleted[later] {
                 continue;
             }
+            // A statically-empty rule (ir/normalize/fold.rs) neither
+            // subsumes nor is subsumed: its own verdict already deletes
+            // it at prepare, and a ∅-denoting keeper's syntactic
+            // containment would only ever pair with a candidate the
+            // fold killed too — recording it here would double-mark one
+            // deletion (dead ∧ subsumed).
+            if rules[earlier].dead.is_some() || rules[later].dead.is_some() {
+                continue;
+            }
             if subsumes(&rules[earlier], finds[earlier], &rules[later], finds[later]) {
                 deleted[later] = true;
                 record.push(Subsumption {
