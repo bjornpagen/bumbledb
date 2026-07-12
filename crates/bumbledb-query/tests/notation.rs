@@ -218,7 +218,7 @@ mod tax {
 // bare `Usd`) resolves through the host enum in scope at the query site.
 use calendar::{ClaimKind, Scheduling};
 use ledger::{Currency, Ledger};
-use tax::Tax;
+use tax::{Status, Tax};
 
 /// Renders after proving the query real: prepared against a `Db` of the
 /// theory (prepare runs the validation roster).
@@ -233,8 +233,12 @@ fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
 /// The PRD's first example adapted to the landed calendar: Busy ∪ Ooo is
 /// the Claim relation's two arms — two clauses, one head, a window param.
 /// The qualified handle spelling (`ClaimKind::Busy`) resolves through the
-/// host enum's welded row id; the renderer prints the row id as a bare
-/// number (a rendered query is renderable without the host enums).
+/// host enum's welded row id; the renderer prints the row id back as its
+/// BARE handle, resolved through the theory's sealed extension (a
+/// rendered query is renderable without the host enums). `ClaimKind` is
+/// not named `UpperCamel` of `arm`, so the rendered bare spelling
+/// reparses only through the qualified form — the bare fixed point is
+/// the naming convention's dividend, pinned on the Tax golden below.
 #[test]
 fn calendar_union_golden() {
     let unavailable = query!(Scheduling {
@@ -245,8 +249,8 @@ fn calendar_union_golden() {
     });
     assert_eq!(
         pin("calendar-union", Scheduling, &unavailable),
-        "(v0, v1) | Claim(person: v0, span: v1, arm == 0), Allen(v1, INTERSECTS, ?0);\n\
-         (v0, v1) | Claim(person: v0, span: v1, arm == 1), Allen(v1, INTERSECTS, ?0);"
+        "(v0, v1) | Claim(person: v0, span: v1, arm == Busy), Allen(v1, INTERSECTS, ?0);\n\
+         (v0, v1) | Claim(person: v0, span: v1, arm == Ooo), Allen(v1, INTERSECTS, ?0);"
     );
 }
 
@@ -359,19 +363,50 @@ fn conflicts_normalized_text_is_a_fixed_point() {
 /// Negation plus the bare-handle selection spelling (`currency`'s closed
 /// relation is named `UpperCamel` of the field, so `Usd` resolves through
 /// the `Currency` host enum): holders of USD accounts with no postings.
-/// The renderer prints the row id as a bare number, and that numeric
-/// spelling reparses — the round-trip law holds through the numbers.
+/// The renderer prints the row id back as the same bare handle, and that
+/// handle spelling reparses — the round-trip law holds through the
+/// vocabulary's names, end to end.
 #[test]
 fn negation_and_bare_handle_round_trip() {
     let dormant = query!(Ledger {
         (holder) | Account(id: a, holder, currency == Usd), !Posting(account: a);
     });
-    let normalized = "(v1) | Account(id: v0, holder: v1, currency == 0), !Posting(account: v0);";
+    let normalized = "(v1) | Account(id: v0, holder: v1, currency == Usd), !Posting(account: v0);";
     assert_eq!(pin("dormant", Ledger, &dormant), normalized);
     let reparsed = query!(Ledger {
-        (v1) | Account(id: v0, holder: v1, currency == 0), !Posting(account: v0);
+        (v1) | Account(id: v0, holder: v1, currency == Usd), !Posting(account: v0);
     });
     assert_eq!(pin("dormant-fixed-point", Ledger, &reparsed), normalized);
+}
+
+/// The comprehensive closed-reference golden (the surface pass's own):
+/// on a theory whose closed relation is named `UpperCamel` of its
+/// referencing field (`status` → `Status`), the rendered BARE handle is
+/// a fixed point — `render(lower(text)) == normalize(text)` byte-exactly
+/// through the handle spelling — and the qualified spelling
+/// (`Status::Active`) lowers to the identical IR, so both reparse paths
+/// land on one normalized text.
+#[test]
+fn closed_reference_handles_are_a_fixed_point() {
+    let normalized = "(v0) | Regime(id: v0, status == Active);";
+    let active = query!(Tax {
+        (r) | Regime(id: r, status == Active);
+    });
+    assert_eq!(pin("active-regimes", Tax, &active), normalized);
+    // The renderer's own output reparses through the bare-handle rule
+    // (UpperCamel(field) = the host enum in scope) to the fixed point.
+    let reparsed = query!(Tax {
+        (v0) | Regime(id: v0, status == Active);
+    });
+    assert_eq!(
+        pin("active-regimes-fixed-point", Tax, &reparsed),
+        normalized
+    );
+    // The qualified spelling is the same query, value for value.
+    let qualified = query!(Tax {
+        (v0) | Regime(id: v0, status == Status::Active);
+    });
+    assert_eq!(qualified, reparsed);
 }
 
 /// Every named-aggregate head form in one clause; the names stay at the

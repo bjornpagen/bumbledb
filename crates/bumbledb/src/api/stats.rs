@@ -122,9 +122,10 @@ pub struct EliminatedOccurrence {
 /// atom evaluated against its sealed extension at prepare — never
 /// joined, its view never bound, its image never built; the surviving
 /// id-set rides the siblings' selection machinery as a plan constant.
-/// EXPLAIN's line: `folded: Kind{mastered == true} → 3 ids` (negated:
-/// `folded: !Kind{…} → 3 ids rejected` — the attached set is then the
-/// complement).
+/// EXPLAIN's line: `folded: Kind{mastered == true} → {DirectPass,
+/// JudgedPass}` (negated: `folded: !Kind{…} → {…} rejected` — the
+/// attached set is then the complement). The handle set IS the payload:
+/// handles are the vocabulary's names, and `|S|` is its length.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FoldedOccurrence {
     /// The occurrence index (`OccId`) in the normalized occurrence table.
@@ -133,13 +134,15 @@ pub struct FoldedOccurrence {
     pub relation: String,
     /// The evaluated atom's picture — relation and filters in the rule
     /// notation's value formats (e.g. `Currency{minor_units == 0}`;
-    /// handles print as plain row ids v0).
+    /// a word at the id position prints its handle).
     pub rendered: String,
-    /// `|S|` — how many sealed extension rows satisfied the filters.
-    pub ids: u64,
+    /// `S` as handles — the sealed extension rows that satisfied the
+    /// filters, in declaration (row-id) order.
+    pub handles: Vec<String>,
     /// Whether the folded occurrence was negated: the attached
     /// membership is then the complement (extension minus `S`), and the
-    /// `ids` rows are what the deleted anti-probe would have rejected.
+    /// `handles` rows are what the deleted anti-probe would have
+    /// rejected.
     pub negated: bool,
 }
 

@@ -434,7 +434,9 @@ fn containment_into_id(
 /// comparison paths — encoded-word compares, the scalar `Allen`
 /// classify, never a batch kernel. Callers hold
 /// [`filters_prepare_resolvable`]; unresolvable shapes are unreachable.
-pub(super) fn surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Vec<u64> {
+/// Crate-visible for the EXPLAIN surface (`exec/explain/into_stats.rs`),
+/// which re-runs the σ to name the surviving handles.
+pub(crate) fn surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Vec<u64> {
     let layout = relation.layout();
     relation
         .extension()
@@ -617,8 +619,9 @@ fn remove_anti_probe(normalized: &mut NormalizedQuery, c_idx: usize) {
 /// diagnostic surface). Two readers: the rule-death verdict
 /// (`folded to ∅: …`) and EXPLAIN's fold line
 /// (`exec/explain/into_stats.rs`), off the folded occurrence's retained
-/// filter list. Handles print as plain row ids v0 (PRD 11 makes them
-/// pretty).
+/// filter list. A word at the relation's own id position prints its
+/// handle (a handle set for an attached membership) — the vocabulary's
+/// names on every surface a row id reaches.
 pub(crate) fn folded_picture(
     schema: &Schema,
     relation: RelationId,
@@ -650,7 +653,24 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             } else {
                 op_symbol(*op)
             });
-            render_const(out, &relation.field(*field).value_type, value);
+            // The relation's own id position holds row ids — print the
+            // handles (a membership set as a handle set), never numbers.
+            match value {
+                Const::Word(word) if *field == FieldId(0) && relation.is_closed() => {
+                    push_handle(out, relation, *word);
+                }
+                Const::WordSet(words) if *field == FieldId(0) && relation.is_closed() => {
+                    out.push('{');
+                    for (index, word) in words.iter().enumerate() {
+                        if index > 0 {
+                            out.push_str(", ");
+                        }
+                        push_handle(out, relation, *word);
+                    }
+                    out.push('}');
+                }
+                _ => render_const(out, &relation.field(*field).value_type, value),
+            }
         }
         FilterPredicate::FieldsCompare { left, right, op } => {
             out.push_str(name(left));
@@ -719,6 +739,22 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
         | FilterPredicate::DurationFieldsCompare { .. } => {
             unreachable!("folded filters are prepare-resolved")
         }
+    }
+}
+
+/// One row id at a closed relation's own id position, as its handle —
+/// `DirectPass`; an out-of-range id prints visibly wrong as `Kind(7?)`
+/// (the `ir/render` fallback convention: the relation's name, since the
+/// engine never learns host newtype names).
+pub(crate) fn push_handle(out: &mut String, relation: &Relation, id: u64) {
+    let row = relation
+        .extension()
+        .and_then(|rows| usize::try_from(id).ok().and_then(|index| rows.get(index)));
+    if let Some(row) = row {
+        out.push_str(&row.handle);
+    } else {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{}({id}?)", relation.name());
     }
 }
 

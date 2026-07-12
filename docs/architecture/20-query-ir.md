@@ -625,8 +625,22 @@ notation's normative grammar block is § the query notation, below; the renderer
 emits it.) When the write-side surface is data, the renderer **is** the pretty
 syntax — ergonomics on the side that costs nothing and crosses every boundary.
 
-Deterministic, golden-pinned (the calendar union query and the Pack/Duration heads,
-byte-exact), and **total on plain data**: variables render as `v{id}` and params as
+**Handles print as handles.** A literal word at a closed-reference position — a
+binding on a field whose declared containment targets a closed relation's id, or
+the closed relation's own id field (the table is one schema walk at renderer
+construction, the manifest's own inference) — renders as its **handle** (`kind ==
+DirectPass`), the vocabulary's name resolved through the sealed extension; an
+out-of-range word renders visibly wrong as `Kind(7?)` (the relation's name — the
+engine never learns host newtype names), because rendering hides nothing. The
+statement renderer (`schema/render.rs`) prints selection literals through the same
+convention, and EXPLAIN's fold lines print surviving sets as handle sets
+(`{DirectPass, JudgedPass}`) — one vocabulary of names on every surface a row id
+reaches. Comparison terms carry no field position, so a literal there renders by
+value; the selection form is the handle's home.
+
+Deterministic, golden-pinned (the calendar union query, the Pack/Duration heads,
+and the closed-reference handles, byte-exact), and **total on plain data**:
+variables render as `v{id}` and params as
 `?{id}` (ids are all the IR carries), unresolvable ids as `relation#N`/`field#N`
 placeholders, and a nested predicate tree functionally (`and(..)`/`or(..)`, depth-
 budgeted at `MAX_PREDICATE_DEPTH`) — malformed queries must render, because the
@@ -673,7 +687,13 @@ Every token is either the schema grammar's own or Rust's: atoms are `Relation(..
 as statements write them; in-atom selections are the schema's selections with
 params admitted (and a set-bound param is the binding's membership spelling, `field
 in ?N`); membership is the Rust keyword `in` (∈ is not a lexable token); negation
-is `!`; params keep `?`; `;` terminates clauses as it terminates statements. The
+is `!`; params keep `?`; `;` terminates clauses as it terminates statements.
+Selection values admit closed-relation **handles** exactly as statement selections
+do — bare (`kind == DirectPass`, resolving through the field-named host enum) or
+qualified (`arm == ClaimKind::Busy`); the renderer prints handles bare, so the
+rendered text is its own fixed point wherever the closed relation is named
+`UpperCamel` of its referencing field (the naming convention's dividend — a theory
+named otherwise reparses through the qualified spelling). The
 two bars are the two the audit already upheld: clause-level `|` is *such that*;
 mask-level `|` is set union over the 13 basics — set-builder and set-union,
 context-separated exactly as the two levels of `==` are.

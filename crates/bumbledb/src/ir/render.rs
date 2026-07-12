@@ -26,8 +26,15 @@
 //! - unresolvable ids render as `relation#N` / `field#N` placeholders
 //!   (the statement renderer's convention — the bad id can be the very
 //!   thing validation rejected);
-//! - closed-reference words render as bare numbers v0 (handles reach the
-//!   renderer in the surface pass, `docs/prd-comptime/11`);
+//! - a literal word bound at a **closed-reference position** (a field
+//!   whose declared containment targets a closed relation's id, or the
+//!   closed relation's own id field) prints its **handle** (`kind ==
+//!   DirectPass`) — the vocabulary's name, resolved through the sealed
+//!   extension; an out-of-range word prints visibly wrong as
+//!   `Kind(7?)` (the relation's name — the engine never learns host
+//!   newtype names), because rendering hides nothing. Comparison terms
+//!   carry no field position, so a literal there renders by value;
+//!   the notation's selection form is the handle's home;
 //! - the Arg terms, absent from the notation grammar (Arg is single-rule
 //!   only and its key is rule-internal), render as `ArgMax(carried,
 //!   key)` — an honest extension, not grammar;
@@ -39,6 +46,7 @@
 //! Rendering allocates; it runs only in diagnostic contexts (roster
 //! errors, EXPLAIN, arbitration bundles), never on a warm path.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use crate::allen::AllenMask;
@@ -46,7 +54,71 @@ use crate::ir::{
     AggOp, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query, Rule, Term,
     Value, VarId,
 };
-use crate::schema::{FieldDescriptor, FieldId, RelationId, Schema};
+use crate::schema::{FieldDescriptor, FieldId, Relation, RelationId, Schema};
+
+/// The closed-reference position table, built once at renderer
+/// construction: `(relation, field)` → the closed relation whose row ids
+/// the field's words are. A schema walk over declared containments whose
+/// target is a closed relation's id and whose source projection is that
+/// single field — the same inference the chase's complement fold runs
+/// (`plan/chase/evaluate.rs::containment_into_id`) — plus each closed
+/// relation's own id field, which maps to itself.
+struct ClosedRefs(BTreeMap<(RelationId, FieldId), RelationId>);
+
+impl ClosedRefs {
+    fn build(schema: &Schema) -> Self {
+        let mut map = BTreeMap::new();
+        for statement in schema.statements() {
+            let crate::schema::StatementDescriptor::Containment { source, target } =
+                &statement.descriptor
+            else {
+                continue;
+            };
+            let target_closed = schema
+                .relation_checked(target.relation)
+                .is_some_and(Relation::is_closed);
+            if target_closed && target.projection.as_ref() == [FieldId(0)] {
+                if let [field] = source.projection.as_ref() {
+                    map.insert((source.relation, *field), target.relation);
+                }
+            }
+        }
+        for (index, relation) in schema.relations().iter().enumerate() {
+            if relation.is_closed() {
+                let id = RelationId(u32::try_from(index).expect("relation count fits u32"));
+                map.insert((id, FieldId(0)), id);
+            }
+        }
+        Self(map)
+    }
+
+    /// The handle spelling for a literal at `(relation, field)`: `Some`
+    /// iff the position is a closed reference and the value is a word —
+    /// the handle for an in-range row id, the visibly-wrong `Kind(7?)`
+    /// for an out-of-range one (rendering hides nothing). `None` means
+    /// the position is no closed reference (or the value no word) and the
+    /// literal renders plainly.
+    fn handle(
+        &self,
+        schema: &Schema,
+        relation: RelationId,
+        field: FieldId,
+        value: &Value,
+    ) -> Option<String> {
+        let closed = *self.0.get(&(relation, field))?;
+        let Value::U64(word) = value else {
+            return None;
+        };
+        let rows = schema.relation_checked(closed)?.extension()?;
+        match usize::try_from(*word).ok().and_then(|row| rows.get(row)) {
+            Some(row) => Some(row.handle.to_string()),
+            None => Some(format!(
+                "{}({word}?)",
+                schema.relation_checked(closed).map_or("?", Relation::name)
+            )),
+        }
+    }
+}
 
 /// Renders a query in the rule notation, one clause per rule, newline-
 /// separated, each clause `;`-terminated. Deterministic (two calls yield
@@ -54,18 +126,19 @@ use crate::schema::{FieldDescriptor, FieldId, RelationId, Schema};
 /// names — this is the diagnostic surface for the roster's rejections.
 #[must_use]
 pub fn render(schema: &Schema, query: &Query) -> String {
+    let refs = ClosedRefs::build(schema);
     let mut out = String::new();
     for (index, rule) in query.rules.iter().enumerate() {
         if index > 0 {
             out.push('\n');
         }
-        clause(&mut out, schema, rule);
+        clause(&mut out, schema, &refs, rule);
     }
     out
 }
 
 /// One rule as one clause: `(head) | body;`.
-fn clause(out: &mut String, schema: &Schema, rule: &Rule) {
+fn clause(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
     out.push('(');
     for (index, term) in rule.finds.iter().enumerate() {
         if index > 0 {
@@ -76,10 +149,10 @@ fn clause(out: &mut String, schema: &Schema, rule: &Rule) {
     out.push_str(") |");
     let mut items: Vec<String> = Vec::new();
     for atom in &rule.atoms {
-        items.push(atom_item(schema, atom, false));
+        items.push(atom_item(schema, refs, atom, false));
     }
     for atom in &rule.negated {
-        items.push(atom_item(schema, atom, true));
+        items.push(atom_item(schema, refs, atom, true));
     }
     for tree in &rule.predicates {
         items.push(tree_item(tree));
@@ -154,8 +227,9 @@ fn aggregate(out: &mut String, op: AggOp, over: Option<VarId>, measure: bool) {
 /// in-atom selection `field == term` (the schema grammar's selections
 /// with params admitted — on an interval field an element-typed term
 /// reads as membership under the same bivalent typing rule the IR
-/// binding carries); a param set is membership, `field in ?N`.
-fn atom_item(schema: &Schema, atom: &Atom, negated: bool) -> String {
+/// binding carries); a param set is membership, `field in ?N`. A literal
+/// word at a closed-reference position prints its handle (module doc).
+fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> String {
     let mut out = String::new();
     if negated {
         out.push('!');
@@ -182,7 +256,10 @@ fn atom_item(schema: &Schema, atom: &Atom, negated: bool) -> String {
             }
             Term::Literal(value) => {
                 out.push_str(" == ");
-                literal(&mut out, value);
+                match refs.handle(schema, atom.relation, *field, value) {
+                    Some(handle) => out.push_str(&handle),
+                    None => literal(&mut out, value),
+                }
             }
             // Rejected by validation (`DurationInBinding`); rendered
             // anyway — the diagnostic pictures the mistake.
@@ -267,8 +344,9 @@ fn comparison(cmp: &Comparison) -> String {
     out
 }
 
-/// One comparison term. Literals render without field context (module
-/// doc: closed-reference words stay bare here v0).
+/// One comparison term. Literals render by value — a comparison carries
+/// no field position, so no closed-reference resolution applies here
+/// (module doc: the selection form is the handle's home).
 fn term(out: &mut String, term: &Term) {
     match term {
         Term::Var(var) => var_name(out, *var),
@@ -345,8 +423,9 @@ pub(crate) fn mask_names(out: &mut String, mask: AllenMask) {
 
 /// One literal, in the statement renderer's value formats (one notation,
 /// schema to query): intervals as `start..end`, strings and byte strings
-/// escaped, closed-reference words bare v0 (handles land in the surface
-/// pass). Crate-visible for the statically-empty verdict pictures
+/// escaped. Field-blind by design — closed-reference resolution happens
+/// at the positions that carry a field ([`ClosedRefs::handle`]).
+/// Crate-visible for the statically-empty verdict pictures
 /// (`ir/normalize/fold.rs`) — one value notation on every diagnostic
 /// surface.
 pub(crate) fn literal(out: &mut String, value: &Value) {

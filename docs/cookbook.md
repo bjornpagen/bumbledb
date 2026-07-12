@@ -4,8 +4,9 @@ Worked schemas for the owner and any agent writing a theory. **This document is
 illustrative, never normative**: where a recipe and an architecture chapter
 disagree, the chapter wins and the recipe is amended in the same change
 (`docs/architecture/README.md` rule 5). The chapters it defers to:
-`docs/architecture/10-data-model.md` (the seven types, the interval denotation,
-the modeling discipline, derived relations), `30-dependencies.md` (the two
+`docs/architecture/10-data-model.md` (the six value types and the closed-relation
+form, the interval denotation, the modeling discipline, derived relations),
+`30-dependencies.md` (the two
 judgments and their theorems), `20-query-ir.md` (query semantics; § the query
 notation is the grammar the recipes' query comments are written in), `70-api.md`
 (the `schema!` grammar, conditional writes). Refusals cited below live in
@@ -73,8 +74,8 @@ bumbledb::schema! {
     Task(id | kind == Deterministic)  == DeterministicGrading(task);
     Task(id | kind == CustomOperator) == CustomOperatorGrading(task);
     // Exclusivity is a theorem, not a statement: one id in two arms would
-    // force `kind` to equal two variants against the fresh key on id.
-    // The executor spends the same theorem again — recipe 19's free lunch.
+    // force `kind` to equal two handles against the fresh key on id.
+    // The executor spends the same theorem again — recipe 22's free lunch.
 }
 ```
 
@@ -164,9 +165,139 @@ bumbledb::schema! {
 }
 ```
 
+## Vocabularies
+
+## 6. The vocabulary
+
+The enum idiom's replacement, first-class: a vocabulary is a **closed
+relation** — its rows are ground axioms declared in the schema, sealed at
+validate, frozen by the fingerprint, virtual in storage
+(`10-data-model.md` § closed relations). The store holds zero vocabulary
+bytes, and handles are the literals on every surface: statements, queries,
+EXPLAIN, errors.
+
+```rust
+bumbledb::schema! {
+    pub Tickets;
+
+    // Tier 1: handles only. The macro emits the host enum `Priority`,
+    // welded to the declaration-order row ids — an emission, not a type:
+    // the engine's vocabulary stays relational; rustc's pattern matching
+    // keeps working on the projection.
+    closed relation Priority as PriorityId = { Low, Normal, Urgent };
+
+    relation Ticket {
+        id: u64 as TicketId, fresh,
+        priority: u64 as PriorityId,
+        opened_at: i64,
+    }
+
+    // A closed reference is an ordinary u64 under the handle newtype plus
+    // one containment; the judgment compiles at validate to a member-set
+    // test — one AND, one bit test, no probe (30-dependencies.md).
+    Ticket(priority) <= Priority(id);
+
+    // Handles are literals in queries exactly as in statements, and the
+    // renderer prints them back — the round trip runs on names:
+    //   (t) | Ticket(id: t, priority == Urgent);
+    // A query atom over the vocabulary itself folds at prepare; the join
+    // has zero runtime existence (40-execution.md § the chase).
+    // The boundary law: intrinsic meaning goes here (changing it is a new
+    // theory); policy that drifts without a rebuild is an ordinary
+    // relation — a vocabulary is never written, only declared.
+}
+```
+
+## 7. The classification
+
+The fused form: the vocabulary carries its intrinsic facts as **payload
+columns** — one row per handle, values sealed with the schema, read by
+ψ-selections. The old shape — an ordinary relation the application wrote at
+startup and every deployment re-verified — is deleted outright: axioms are
+declared, never written.
+
+```rust
+bumbledb::schema! {
+    pub Review;
+
+    // Tier 2: payload columns state what each word MEANS, next to the
+    // word. A rubric change is a new theory — exactly right for meaning.
+    closed relation Kind as KindId {
+        mastered: bool,
+        rank: u64,
+    } = {
+        DirectPass { mastered: true,  rank: 30 },
+        JudgedPass { mastered: true,  rank: 20 },
+        Failed     { mastered: false, rank: 10 },
+    };
+
+    relation Attempt { id: u64 as AttemptId, fresh, kind: u64 as KindId }
+    relation Certificate { attempt: u64 as AttemptId, kind: u64 as KindId }
+
+    Attempt(kind) <= Kind(id);
+    Certificate(attempt) -> Certificate;
+    Certificate(attempt) <= Attempt(id);
+    // ψ reads the payload: certificates carry mastered kinds only — the
+    // member set {DirectPass, JudgedPass} compiles at validate and the
+    // judgment is O(1) at commit (recipe 8 is this statement's own recipe).
+    Certificate(kind) <= Kind(id | mastered == true);
+
+    // The classification read duplicates no flag onto Attempt — ψ walks
+    // the vocabulary's payload in the query too:
+    //   (a) | Attempt(id: a, kind: k), Kind(id: k, mastered == true);
+    // The Kind atom folds at prepare into a plan-constant handle set on
+    // its sibling; EXPLAIN prints the set, not a count:
+    //   folded: Kind{mastered == true} → {DirectPass, JudgedPass}
+}
+```
+
+## 8. The sub-vocabulary
+
+The ψ-selected containment: a reference constrained to the rows of a
+vocabulary that satisfy a payload selection. Because the target is closed,
+the enforcement plan is not a probe strategy — it is **the answer set
+itself**, compiled at validate (`30-dependencies.md` § enforcement, whose
+worked example this recipe rot-proofs).
+
+```rust
+bumbledb::schema! {
+    pub Oncall;
+
+    closed relation Severity as SeverityId {
+        pages: bool,
+    } = {
+        Info     { pages: false },
+        Warning  { pages: false },
+        Critical { pages: true },
+        Fatal    { pages: true },
+    };
+
+    relation Incident {
+        id: u64 as IncidentId, fresh,
+        severity: u64 as SeverityId,
+    }
+    relation Escalation {
+        incident: u64 as IncidentId,
+        severity: u64 as SeverityId,
+        at: i64,
+    }
+
+    Incident(severity) <= Severity(id);
+    Escalation(incident) <= Incident(id);
+    // The sub-vocabulary: an escalation carries a PAGING severity, by
+    // statement. ψ over the sealed extension compiles to the member set
+    // {Critical, Fatal}; the judgment is one bit test per touched fact,
+    // and an escalation at severity == Info aborts the commit.
+    Escalation(severity) <= Severity(id | pages == true);
+
+    //   who is being paged (the same ψ, on the read side):
+    //     (i) | Escalation(incident: i, severity: s), Severity(id: s, pages == true);
+}
+```
+
 ## Structure
 
-## 6. Ordered collections
+## 9. Ordered collections
 
 The linked-list verdict: successor pointers are control flow smuggled into
 data — every reorder becomes a dependent chain of writes. Order is a value.
@@ -189,7 +320,7 @@ bumbledb::schema! {
 }
 ```
 
-## 7. Trees and ASTs
+## 10. Trees and ASTs
 
 Node header + per-kind arms (recipe 2's pattern); every edge resolves; the
 shape theorems come from FDs on the edge relations.
@@ -226,7 +357,7 @@ bumbledb::schema! {
 }
 ```
 
-## 8. Typed graphs
+## 11. Typed graphs
 
 One relation per edge kind: the edge vocabulary is closed and checked —
 endpoint containments pin which node kinds each edge may touch.
@@ -254,7 +385,7 @@ bumbledb::schema! {
 }
 ```
 
-## 9. Entity-component
+## 12. Entity-component
 
 The 0..1 idiom (recipe 3) at scale: components are sidecar relations; an
 entity has a component iff the fact exists; a new component kind is a new
@@ -283,7 +414,7 @@ bumbledb::schema! {
 }
 ```
 
-## 10. State machines
+## 13. State machines
 
 States are a discriminated union; per-state data lives in arms; and the
 conditional reference target — a reference to "an order *that is shipped*" —
@@ -310,7 +441,7 @@ bumbledb::schema! {
     // (totality) — the transition and its evidence commit together.
     Shipment(order) == Order(id | state == Shipped);
     // Transition guards ("only Placed may ship") are host code under the
-    // generation witness — recipe 17; the schema pins the states, not the paths.
+    // generation witness — recipe 20; the schema pins the states, not the paths.
 
     //   (id, carrier) | Order(id, state == Shipped), Shipment(order: id, carrier);
 }
@@ -318,7 +449,7 @@ bumbledb::schema! {
 
 ## Time and tilings
 
-## 11. The calendar core
+## 14. The calendar core
 
 Policy as schema: hard rules are pointwise keys, soft rules are the statements
 you decline to write.
@@ -373,7 +504,7 @@ bumbledb::schema! {
 }
 ```
 
-## 12. Effective-dated configuration
+## 15. Effective-dated configuration
 
 Versioned rules: no overlaps (pointwise key), no gaps (coverage), and "in
 force on date t" is one membership probe.
@@ -389,7 +520,7 @@ bumbledb::schema! {
     // No overlapping versions: at any instant, at most one rate is the law.
     Version(policy, valid) -> Version;
     // No gaps: every point of the policy's lifetime is covered by versions —
-    // together with the key above, versions TILE the lifetime (recipe 13).
+    // together with the key above, versions TILE the lifetime (recipe 16).
     Policy(id, live) <= Version(policy, valid);
 
     //   in force on date t — one membership probe:
@@ -400,7 +531,7 @@ bumbledb::schema! {
 }
 ```
 
-## 13. Tilings
+## 16. Tilings
 
 Pay periods, shifts, estimated-tax quarters: **disjoint + covering = a
 tiling** — no overlaps, no holes, two statements.
@@ -422,7 +553,7 @@ bumbledb::schema! {
 }
 ```
 
-## 14. Federal income tax
+## 17. Federal income tax
 
 Brackets are intervals over money; the top bracket is a ray; regimes key on
 (year, status); and proration happens at write time, never at query time.
@@ -442,7 +573,7 @@ bumbledb::schema! {
     relation Residency { person: u64, span: interval<i64> }
     // Tile at write: an Earned fact never spans a year boundary — writers
     // split (prorate) at the boundary, so no reader ever clips. The
-    // representation move that deletes clip-at-query (gravestone, recipe 20).
+    // representation move that deletes clip-at-query (gravestone, recipe 23).
     relation Earned { person: u64, regime: u64 as RegimeId, span: interval<i64>, minor: i64 }
 
     Regime(status) <= Status(id);
@@ -455,7 +586,7 @@ bumbledb::schema! {
     Earned(regime) <= Regime(id);
     Residency(person, span) -> Residency;
     // Residency exclusion: income counts only where earned inside a residency
-    // period — pointwise coverage, the same judgment as recipe 12's.
+    // period — pointwise coverage, the same judgment as recipe 15's.
     Earned(person, span) <= Residency(person, span);
 
     //   the marginal bracket (membership walks the tiling):
@@ -466,7 +597,7 @@ bumbledb::schema! {
 }
 ```
 
-## 15. Free time and coalescing
+## 18. Free time and coalescing
 
 `Pack` is Snodgrass's coalesce as an aggregate — maximal disjoint segments per
 group, one row per (group, segment). Coalescing is never a write rule: the
@@ -495,7 +626,7 @@ bumbledb::schema! {
 
 ## The write side
 
-## 16. The ledger
+## 19. The ledger
 
 The census workload. Balance is a query, never a column.
 
@@ -517,7 +648,7 @@ bumbledb::schema! {
     // A stored balance column equaling Sum(postings) is the arithmetic-
     // agreement statement — refused (the ledger): statements prove presence
     // and topology, never that a value equals a computation. Balance is host
-    // arithmetic over Sum; a materialized rollup is recipe 18's shape.
+    // arithmetic over Sum; a materialized rollup is recipe 21's shape.
 
     //   balances (bind the fresh id — set semantics collapses duplicates):
     //     (account, total: Sum(minor)) | Posting(id, account, minor);
@@ -526,7 +657,7 @@ bumbledb::schema! {
 }
 ```
 
-## 17. Conditional writes
+## 20. Conditional writes
 
 The generation witness (`70-api.md` § conditional writes): read the model,
 propose a delta, commit iff the model you read is still the model.
@@ -546,7 +677,7 @@ bumbledb::schema! {
 
     Job(state) <= State(id);
     Lease(job) -> Lease;
-    // A lease exists iff its job is Running (recipe 10's conditional target):
+    // A lease exists iff its job is Running (recipe 13's conditional target):
     // claiming a job and leasing it commit together or not at all.
     Lease(job) == Job(id | state == Running);
 
@@ -562,7 +693,7 @@ bumbledb::schema! {
 }
 ```
 
-## 18. Derived relations
+## 21. Derived relations
 
 The materialized view as a relation under statements — staleness the schema
 can name is uncommittable (`10-data-model.md` § derived relations owns this).
@@ -590,7 +721,7 @@ bumbledb::schema! {
     // its sources' deletion) cannot commit, judged on every touching commit.
     BusySpan(person, span) <= Claim(person, span | arm == Busy);
 
-    // Maintenance is the third witness idiom (recipe 17): re-run the deriving
+    // Maintenance is the third witness idiom (recipe 20): re-run the deriving
     // query on a snapshot, diff, write_from(&snap) — the rollup cannot commit
     // against sources it didn't actually read.
     //   the deriving query (Pack IS the coalesce):
@@ -598,7 +729,7 @@ bumbledb::schema! {
 }
 ```
 
-## 19. Union reads
+## 22. Union reads
 
 The whole-DU read is a set of rules: one head, one rule per arm — disjunction
 is data at the top, never an execution node.
@@ -628,7 +759,7 @@ bumbledb::schema! {
 }
 ```
 
-## 20. The anti-recipes: five gravestones
+## 23. The anti-recipes: five gravestones
 
 What not to model. Each gravestone cites its replacement; the block's
 relations are the replacements, compiled.
@@ -639,17 +770,17 @@ bumbledb::schema! {
 
     // GRAVESTONE: successor pointers (a `next` column). A linked list inside
     // a relation is control flow smuggled into data; every reorder is a
-    // dependent chain of writes. REPLACEMENT: position columns (recipe 6).
+    // dependent chain of writes. REPLACEMENT: position columns (recipe 9).
     relation Step { flow: u64, pos: u64, action: str }
     // GRAVESTONE: floats for scores, rates, money. Permanently refused (the
     // ledger). REPLACEMENT: fixed-point i64 — basis points (recipe 4).
     relation Score { subject: u64, bps: i64 }
     // GRAVESTONE: conditional keys ("at most one active run per student") —
     // rejected as FDs. REPLACEMENT: the relation split, whose ordinary key IS
-    // the invariant (30-dependencies.md; recipe 10's arm shape).
+    // the invariant (30-dependencies.md; recipe 13's arm shape).
     relation ActiveRun { student: u64, run: u64 }
     // GRAVESTONE: clip-at-query intervals (facts spanning period boundaries,
-    // every reader clipping). REPLACEMENT: tile at write (recipe 14) — split
+    // every reader clipping). REPLACEMENT: tile at write (recipe 17) — split
     // the fact at the boundary; readers stop clipping because nothing spans.
     relation Usage { meter: u64, period: u64, used: interval<i64> }
     // GRAVESTONE: uuid keys. uuidv7 is identity + clash-avoidance + clock in

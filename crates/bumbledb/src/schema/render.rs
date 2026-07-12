@@ -71,6 +71,41 @@ pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String
 trait Names {
     fn relation_name(&self, relation: RelationId) -> Option<&str>;
     fn field(&self, relation: RelationId, field: FieldId) -> Option<&FieldDescriptor>;
+    /// `(relation, field)` as a closed-reference position: the closed
+    /// relation whose row ids the field's words are — a walk over the
+    /// declared containments whose target is a closed relation's id and
+    /// whose source projection is that single field (`ir/render`'s own
+    /// inference), plus each closed relation's id field mapping to
+    /// itself. The macro admits bare handles by the field's *newtype*,
+    /// which the engine never learns; the declared containment is the
+    /// engine-visible fact this walk reads.
+    fn closed_target(&self, relation: RelationId, field: FieldId) -> Option<RelationId>;
+    /// Row `id` of closed relation `closed`, as its handle; `None` = out
+    /// of range (the caller prints the visibly-wrong fallback).
+    fn handle(&self, closed: RelationId, id: u64) -> Option<String>;
+}
+
+/// The shared containment walk behind both [`Names::closed_target`]
+/// impls, over whichever statement list the schema form carries.
+fn closed_target_of<'a>(
+    statements: impl Iterator<Item = &'a StatementDescriptor>,
+    is_closed: impl Fn(RelationId) -> bool,
+    relation: RelationId,
+    field: FieldId,
+) -> Option<RelationId> {
+    if field == FieldId(0) && is_closed(relation) {
+        return Some(relation);
+    }
+    statements.into_iter().find_map(|statement| {
+        let StatementDescriptor::Containment { source, target } = statement else {
+            return None;
+        };
+        (source.relation == relation
+            && source.projection.as_ref() == [field]
+            && target.projection.as_ref() == [FieldId(0)]
+            && is_closed(target.relation))
+        .then_some(target.relation)
+    })
 }
 
 struct SealedNames<'a>(&'a Schema);
@@ -85,6 +120,27 @@ impl Names for SealedNames<'_> {
             .relation_checked(relation)?
             .fields()
             .get(usize::from(field.0))
+    }
+
+    fn closed_target(&self, relation: RelationId, field: FieldId) -> Option<RelationId> {
+        closed_target_of(
+            self.0.statements().iter().map(|s| &s.descriptor),
+            |id| {
+                self.0
+                    .relation_checked(id)
+                    .is_some_and(super::Relation::is_closed)
+            },
+            relation,
+            field,
+        )
+    }
+
+    fn handle(&self, closed: RelationId, id: u64) -> Option<String> {
+        let rows = self.0.relation_checked(closed)?.extension()?;
+        usize::try_from(id)
+            .ok()
+            .and_then(|row| rows.get(row))
+            .map(|row| row.handle.to_string())
     }
 }
 
@@ -116,6 +172,33 @@ impl Names for DeclaredNames<'_> {
             };
         }
         relation.fields.get(usize::from(field.0))
+    }
+
+    fn closed_target(&self, relation: RelationId, field: FieldId) -> Option<RelationId> {
+        closed_target_of(
+            self.0.statements.iter(),
+            |id| {
+                self.0
+                    .relations
+                    .get(id.0 as usize)
+                    .is_some_and(|r| r.extension.is_some())
+            },
+            relation,
+            field,
+        )
+    }
+
+    fn handle(&self, closed: RelationId, id: u64) -> Option<String> {
+        let rows = self
+            .0
+            .relations
+            .get(closed.0 as usize)?
+            .extension
+            .as_ref()?;
+        usize::try_from(id)
+            .ok()
+            .and_then(|row| rows.get(row))
+            .map(|row| row.handle.to_string())
     }
 }
 
@@ -216,15 +299,30 @@ fn side_parts(
             }
             field_name(f, names, relation, *field)?;
             write!(f, " == ")?;
-            literal(f, value)?;
+            // A word at a closed-reference position prints its handle
+            // (the macro's own bare-handle spelling back out); an
+            // out-of-range word prints visibly wrong as `Kind(7?)` —
+            // the `ir/render` convention, one fallback everywhere.
+            match (value, names.closed_target(relation, *field)) {
+                (Value::U64(word), Some(closed)) => {
+                    if let Some(handle) = names.handle(closed, *word) {
+                        write!(f, "{handle}")?;
+                    } else {
+                        relation_name(f, names, closed)?;
+                        write!(f, "({word}?)")?;
+                    }
+                }
+                _ => literal(f, value)?,
+            }
         }
     }
     write!(f, ")")
 }
 
 /// The one selection-literal formatter: intervals render as their macro
-/// form `start..end`, strings and bytes as escaped literals,
-/// closed-reference words bare v0 (handles land in the surface pass).
+/// form `start..end`, strings and bytes as escaped literals. Field-blind
+/// — closed-reference words resolve to handles at the selection loop,
+/// where the position is known.
 fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
     match value {
         Value::Bool(v) => write!(f, "{v}"),

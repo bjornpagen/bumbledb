@@ -223,6 +223,81 @@ fn schema_error_diagnostics_render_the_offending_statement() {
     );
 }
 
+/// A selection word at a closed-reference position renders its handle —
+/// the macro's own bare-handle spelling back out — on the source's
+/// referencing field and the closed relation's id alike; an out-of-range
+/// word renders visibly wrong as `Status(9?)` (the `ir/render` fallback).
+#[test]
+fn closed_reference_selections_render_handles() {
+    let declaration = |status_word: u64| SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: Some(Box::new([
+                    crate::schema::Row {
+                        handle: "Open".into(),
+                        values: Box::new([]),
+                    },
+                    crate::schema::Row {
+                        handle: "Frozen".into(),
+                        values: Box::new([]),
+                    },
+                ])),
+                name: "Status".into(),
+                fields: vec![],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Submission".into(),
+                fields: vec![fresh_field("id"), field("status", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "FrozenNote".into(),
+                fields: vec![field("submission", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            // Submission(status) <= Status(id) — the closed reference.
+            containment(
+                side(RelationId(1), &[FieldId(1)]),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+            // FrozenNote(submission) <= Submission(id | status == <word>).
+            containment(
+                side(RelationId(2), &[FieldId(0)]),
+                side_where(
+                    RelationId(1),
+                    &[FieldId(0)],
+                    vec![(FieldId(1), Value::U64(status_word))],
+                ),
+            ),
+        ],
+    };
+    // Materialized ids: 0 the fresh auto-FD, 1 the closed auto-key,
+    // 2..3 the declared containments above.
+    let schema = declaration(1).validate().expect("valid");
+    assert_eq!(
+        render(&schema, StatementId(2)),
+        "Submission(status) <= Status(id)"
+    );
+    assert_eq!(
+        render(&schema, StatementId(3)),
+        "FrozenNote(submission) <= Submission(id | status == Frozen)"
+    );
+    // The declared (diagnostic) path agrees, and an out-of-range word —
+    // no tenth row exists — keeps the number with the `?` that marks it
+    // wrong, under the relation's name (the engine never learns host
+    // newtype names).
+    assert_eq!(
+        render_declared(&declaration(1), StatementId(3)),
+        "FrozenNote(submission) <= Submission(id | status == Frozen)"
+    );
+    assert_eq!(
+        render_declared(&declaration(9), StatementId(3)),
+        "FrozenNote(submission) <= Submission(id | status == Status(9?))"
+    );
+}
+
 #[test]
 fn unresolvable_names_fall_back_to_id_placeholders() {
     // A statement naming a relation outside the declaration renders with

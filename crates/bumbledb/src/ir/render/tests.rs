@@ -2,7 +2,9 @@
 //! documented rule notation, byte-exact — the calendar union query and
 //! the Pack/Duration heads pin the grammar (PRD 20's passing criteria);
 //! the malformed shapes pin totality (render is the roster's diagnostic
-//! surface, so rejected queries must render, never panic).
+//! surface, so rejected queries must render, never panic); the handle
+//! goldens pin closed-reference printing (the vocabulary's names on the
+//! read side, with the out-of-range fallback visibly wrong).
 
 use super::render;
 use crate::allen::AllenMask;
@@ -12,11 +14,13 @@ use crate::ir::{
     Value, VarId,
 };
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Row,
+    Schema, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 
-/// The calendar fixture: Busy(person, during, kind), Ooo(person, during).
+/// The calendar fixture: Busy(person, during, kind), Ooo(person, during),
+/// with `kind` a closed reference into Kind = { Focus, Break } — the
+/// handle goldens' vocabulary.
 fn calendar() -> Schema {
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),
@@ -42,8 +46,33 @@ fn calendar() -> Schema {
                 name: "Ooo".into(),
                 fields: vec![field("person", ValueType::U64), field("during", during)],
             },
+            RelationDescriptor {
+                extension: Some(Box::new([
+                    Row {
+                        handle: "Focus".into(),
+                        values: Box::new([]),
+                    },
+                    Row {
+                        handle: "Break".into(),
+                        values: Box::new([]),
+                    },
+                ])),
+                name: "Kind".into(),
+                fields: vec![],
+            },
         ],
-        statements: vec![],
+        statements: vec![StatementDescriptor::Containment {
+            source: Side {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(2)]),
+                selection: Box::new([]),
+            },
+            target: Side {
+                relation: RelationId(2),
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+        }],
     }
     .validate()
     .expect("valid fixture")
@@ -51,6 +80,7 @@ fn calendar() -> Schema {
 
 const BUSY: RelationId = RelationId(0);
 const OOO: RelationId = RelationId(1);
+const KIND_RELATION: RelationId = RelationId(2);
 const PERSON: FieldId = FieldId(0);
 const DURING: FieldId = FieldId(1);
 const KIND: FieldId = FieldId(2);
@@ -94,7 +124,8 @@ fn calendar_union_golden() {
 }
 
 /// The literal-mask spelling: a workload composite renders by name; the
-/// selection binding renders schema-grammar-verbatim; negation is `!`.
+/// selection binding renders schema-grammar-verbatim — a closed-reference
+/// word as its handle; negation is `!`.
 #[test]
 fn selection_negation_and_literal_mask_golden() {
     let query = Query::single(Rule {
@@ -123,8 +154,63 @@ fn selection_negation_and_literal_mask_golden() {
     validate(&schema, &query).expect("the golden query is a real query");
     assert_eq!(
         render(&schema, &query),
-        "(v0, v1) | Busy(person: v0, during: v1, kind == 1), !Ooo(person: v0), \
+        "(v0, v1) | Busy(person: v0, during: v1, kind == Break), !Ooo(person: v0), \
          Allen(v1, INTERSECTS, 100..200);"
+    );
+}
+
+/// The handle goldens: a literal word at a closed-reference position
+/// prints its handle — on the referencing field and on the closed
+/// relation's own id field alike — and an out-of-range word prints
+/// visibly wrong as `Kind(7?)` (rendering hides nothing).
+#[test]
+fn closed_reference_handles_golden() {
+    let selection = |word: u64| {
+        Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                relation: BUSY,
+                bindings: vec![
+                    (PERSON, Term::Var(VarId(0))),
+                    (KIND, Term::Literal(Value::U64(word))),
+                ],
+            }],
+            negated: vec![],
+            predicates: vec![],
+        })
+    };
+    let schema = calendar();
+    validate(&schema, &selection(0)).expect("the golden query is a real query");
+    assert_eq!(
+        render(&schema, &selection(0)),
+        "(v0) | Busy(person: v0, kind == Focus);"
+    );
+    // Out of range: no seventh row exists — the fallback names the
+    // relation (the engine never learns host newtype names) and keeps
+    // the number with the `?` that marks it wrong.
+    assert_eq!(
+        render(&schema, &selection(7)),
+        "(v0) | Busy(person: v0, kind == Kind(7?));"
+    );
+    // The closed relation's own id field maps to itself.
+    let own_id = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            Atom {
+                relation: BUSY,
+                bindings: vec![(PERSON, Term::Var(VarId(0))), (KIND, Term::Var(VarId(1)))],
+            },
+            Atom {
+                relation: KIND_RELATION,
+                bindings: vec![(FieldId(0), Term::Literal(Value::U64(1)))],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    });
+    assert_eq!(
+        render(&schema, &own_id),
+        "(v0) | Busy(person: v0, kind: v1), Kind(id == Break);"
     );
 }
 

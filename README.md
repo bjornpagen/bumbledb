@@ -146,6 +146,15 @@ does the rest.
    obligations, idempotent writes — the algebra removes work before the
    machine ever sees it.
 
+Beneath all three sits the **staging law**: every computation runs at the
+earliest stage where its inputs are fixed, across the seven-stage ladder —
+expansion, open, prepare, bind, generation, execute, commit. Vocabularies
+seal at schema validation, statements into closed relations compile to
+in-register word-sets, closed-atom joins fold at prepare into plan-constant
+handle sets — and folding produces **data, never code** (no JIT, ever). The
+ladder is written down in [40 — Execution](docs/architecture/40-execution.md)
+§ the staging law.
+
 On top of that sit six microarchitectural mechanisms, each earning its
 complexity with a measured, cited win at its site: bucket-of-8 tag-byte maps
 at occupancy-invariant load factors, SWAR window probes, const-generic key
@@ -181,7 +190,25 @@ code still speaks a pre-algebra name, that set is the gap ledger.)
 live in the schema (frozen by the fingerprint, never written), the macro
 emits a **host enum** welded to the row ids — an emission, not a type —
 and a reference to it is an ordinary `u64` field under the handle newtype
-plus a containment statement.
+plus a containment statement. Two tiers, one production — handles only,
+or handles with **payload columns** stating what each word means, read by
+ψ-selections in statements and queries alike:
+
+```rust
+closed relation Status as StatusId = { Open, Frozen, Closed };
+
+closed relation Kind as KindId {
+    mastered: bool,
+    rank: u64,
+} = {
+    DirectPass { mastered: true,  rank: 30 },
+    JudgedPass { mastered: true,  rank: 20 },
+    Failed     { mastered: false, rank: 10 },
+};
+
+Attempt(kind) <= Kind(id);                        // membership: one compiled bit test
+Certificate(kind) <= Kind(id | mastered == true); // sub-vocabulary: the answer set itself
+```
 
 The two byte-shaped types split by one law — **intern what repeats; inline
 what identifies** — and share no other axis. The interval's preconditions
@@ -266,9 +293,9 @@ broken until they agree.
 | [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, witnessed writes, prepared queries |
 
 The intuition-transfer companion is [`docs/cookbook.md`](docs/cookbook.md) —
-twenty worked schemas (unions, trees, calendars, tax brackets, ledgers), each
-rot-proofed by a compile test, each comment naming the theorem its statement
-buys.
+twenty-three worked schemas (unions, vocabularies, trees, calendars, tax
+brackets, ledgers), each rot-proofed by a compile test, each comment naming
+the theorem its statement buys.
 
 The algorithmic reference is Wang, Willsey & Suciu, *Free Join: Unifying
 Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in

@@ -5,6 +5,48 @@ SIGMOD 2023 — `docs/free-join-paper/`), run over snapshot-local columnar data,
 documented deviations. When this doc and the paper disagree and no `Deviation:` block
 explains why, this doc is wrong.
 
+## The staging law
+
+**Every computation runs at the earliest stage where its inputs are fixed.** The
+engine is a seven-stage evaluator, and each stage owns exactly the work whose
+inputs fixed there — the ladder the comptime pass implemented end to end:
+
+1. **Expansion** (the macros): names resolve to declaration-order ids, handles to
+   row ids, the theory to descriptors — everything the source text fixes.
+2. **Open** (`Db::create`/`open`): the schema validates and seals — closed
+   extensions encode once into sealed rows, σ-literal checks compile
+   (`CompiledCheck`), statements into closed relations compile to their member
+   word-sets (`Resolved::ClosedContainment` — the enforcement plan IS the answer
+   set), the fingerprint pins it all.
+3. **Prepare**: normalization, the chase (elimination and evaluation — closed
+   atoms fold against their sealed extensions into plan-constant handle sets),
+   subsumption, the DP, and the statistics pin. A prepared plan is the theory's
+   judgment of the query, not the data's.
+4. **Bind**: params resolve to encoded words; `str` literals latch monotonically
+   (the literal latch — resolution is a stage-4 event that never re-runs once
+   fixed).
+5. **Generation**: images build once per `(relation, storage_tx_id)` and are
+   shared; a closed relation's image is synthesized once per process at the
+   sentinel generation — the theory is its own generation.
+6. **Execute**: the join, over data every earlier stage already fixed — no
+   interpretation, no name resolution, no encoding work per row.
+7. **Commit**: the judgments, against the final state, reading flags and sealed
+   bytes computed at their own stages — never re-deriving them.
+
+**The boundary clause, constitutional: folding produces data, never code.** Plans,
+id-sets, masks, word-sets, latched words — consumed by fixed, asm-gated, measured
+kernels. No JIT, ever: runtime-generated code cannot be audited by the disassembly
+gates or pinned by the fact ledger (`docs/prd-comptime/README.md` records the
+refusal with its derivation).
+
+**Pins acknowledge; they never re-fix inputs.** A later stage may *record* that an
+earlier stage's output has drifted (a plan's pinned statistics against moved data —
+`PreparedQuery::staleness`, the pull-based signal), but no stage reaches back and
+re-runs an earlier one implicitly: plans are never invalidated by writes, re-prepare
+is the caller's explicit act, and the fresh→FD materialization order stays where the
+fingerprint fixed it. Staleness is acknowledged honestly, inputs are fixed exactly
+once.
+
 ## Access paths (before any join machinery)
 
 **Guard-probe point lookups.** A single-atom query whose bindings cover a key of the
@@ -334,7 +376,7 @@ to join against its virtual image, which is L1-resident and always correct):
    occurrence must bind `k` (the membership set needs a home).
 2. `C` carries only Eq/range/Allen/membership filters over its own columns
    with prepare-resolvable constants. A param-bearing filter REFUSES the fold
-   in v0 (the bind-time fold variant is recorded; trigger: a measured win in
+   in v0 (the bind-time fold alternative is recorded; trigger: a measured win in
    the calendar-family profile); measure filters refuse too — their ray error
    is a per-execution error, and evaluation would move it to prepare.
 3. `C` is not negated (negated atoms fold to the complement — below).
@@ -381,9 +423,10 @@ whose field carries an accepted containment into the closed relation's id
 (with the statement's φ carried literally by that occurrence). No witness →
 the fold refuses and the anti-probe stays.
 
-EXPLAIN reports folds beside eliminations, off the `Role::Folded` marks:
-`folded: Kind{mastered == true} → 3 ids` (negated:
-`folded: !Kind{…} → 3 ids rejected`); the differential off-switch
+EXPLAIN reports folds beside eliminations, off the `Role::Folded` marks — the
+surviving set as **handles**, the vocabulary's names (the handle set IS the
+payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated:
+`folded: !Kind{…} → {…} rejected`); the differential off-switch
 (`with_chase_disabled`) covers the evaluator inside the same fixpoint, and the
 dual-run corpus pins byte-identical results — the fold is never semantic.
 
@@ -616,7 +659,7 @@ consumes it exactly like any image; only its source and lifetime differ.
 representation, not a mode: the executor is generic over a `Counters` trait;
 the normal path instantiates `NoopCounters` (zero-sized, compiled to nothing — no
 runtime branch, no hot-loop cost), and the EXPLAIN entry point instantiates the
-counting variant and **executes the query** (ANALYZE semantics), reporting **per
+counting implementation and **executes the query** (ANALYZE semantics), reporting **per
 rule** the plan, per-node estimated vs actual cardinalities, residual and anti-probe
 selectivity, cover-choice histograms (choices aggregated per node, not per entry),
 and the chase's eliminated occurrences — read straight off the plan's

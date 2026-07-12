@@ -82,7 +82,10 @@ impl CountingCounters {
         // The folded occurrences, read straight off the plan's
         // `Role::Folded` marks (`plan/chase/evaluate.rs` — the
         // Eliminated precedent: no separate list exists); the picture
-        // renders from the occurrence's retained filter list.
+        // renders from the occurrence's retained filter list, and the
+        // surviving id-set re-evaluates from the sealed extension (the
+        // same σ the fold ran — n ≤ 256, diagnostic-path only) so the
+        // line can name the handles, not count the numbers.
         let folded = plan
             .occurrences()
             .iter()
@@ -90,15 +93,25 @@ impl CountingCounters {
                 let Role::Folded(mark) = occurrence.role else {
                     return None;
                 };
+                let relation = schema.relation(occurrence.relation);
+                let handles =
+                    crate::plan::chase::evaluate::surviving_ids(relation, &occurrence.filters)
+                        .into_iter()
+                        .map(|id| {
+                            let mut handle = String::new();
+                            crate::plan::chase::evaluate::push_handle(&mut handle, relation, id);
+                            handle
+                        })
+                        .collect();
                 Some(FoldedOccurrence {
                     occurrence: occurrence.occ_id.0,
-                    relation: schema.relation(occurrence.relation).name().to_owned(),
+                    relation: relation.name().to_owned(),
                     rendered: crate::plan::chase::evaluate::folded_picture(
                         schema,
                         occurrence.relation,
                         &occurrence.filters,
                     ),
-                    ids: u64::from(mark.ids),
+                    handles,
                     negated: mark.negated,
                 })
             })

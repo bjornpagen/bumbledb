@@ -181,7 +181,7 @@ host deleting the cluster in one transaction (2 uses in 99 surveyed — the mode
 earned its semantics).
 
 **Discriminated union** (sum-typed entity, the class-table-inheritance pattern) =
-one bidirectional conditional containment per variant arm, plus the parent's key:
+one bidirectional conditional containment per arm, plus the parent's key:
 
 ```rust
 closed relation GraderKind as GraderKindId = { Deterministic, CustomOperator };
@@ -206,13 +206,13 @@ triggers:
    kind* — this is the composite-FK-plus-CHECK-pin encoding, one statement instead
    of two mechanisms.
 3. **Exclusivity** (derived): an id in two child relations would force the parent's
-   `kind` to equal two variants; the parent's key on `id` makes that a contradiction,
+   `kind` to equal two handles; the parent's key on `id` makes that a contradiction,
    not a rule. The theorem's third consumer: the checker enforces it, the chase
    spends it, and the executor spends it again — rules selecting different `kind`
    values are provably disjoint, so the union's cross-rule dedup is elided at plan
    time (`40-execution.md` § set semantics, the rule-disjointness elision).
 
-A **parent-only variant** needs no statement (a variant with no child relation
+A **parent-only handle** needs no statement (a kind with no child relation
 simply has no arm). A **0..1 optional attribute** — the no-nulls idiom
 (`10-data-model.md`) — is the one-way form: `MailingAddress(business) <=
 Business(id)` plus `MailingAddress(business) -> MailingAddress`; presence of the

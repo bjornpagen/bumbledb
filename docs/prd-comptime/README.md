@@ -1,33 +1,35 @@
 # PRD set — the comptime pass: ground axioms and the staging law
 
-This directory is the complete, ordered work plan for the next phase after the
-algebra pass. **Baseline assumption: `docs/prd-algebra/` is fully executed** —
-rules-shaped IR, DNF lowering, `Allen(mask)` + the configuration kernel,
-`Duration`, `Pack`, the chase (`plan/chase.rs`), `bytes<N>` (variable bytes
-deleted), the generation witness, the data surface (`ir::render`, emitted id
-constants, the theory manifest), the query notation, and the cookbook. Where a
-file path below has moved during that execution, the *mechanism name* is
-authoritative and the executor re-locates it.
+This directory was the complete, ordered work plan for the phase after the
+algebra pass: closed relations as ground axioms, the emission, virtual
+storage, compiled subsets, the enum funeral, the folds, and the surface pass.
+It **followed** `docs/prd-algebra/` (fully executed before this set began).
+**The set is closed** — every content PRD landed and retired; this file
+remains as the record (the organizing principle, the vocabulary discipline,
+the policy, the phase ledger, the refusals). When this record and an
+architecture chapter disagree, **the chapter wins**.
 
 ## The organizing principle: the staging law
 
 **Every computation runs at the earliest stage where its inputs are fixed.**
 The engine is a seven-stage evaluator — expansion, open, prepare, bind,
-generation, execute, commit — and this set does three things to it:
+generation, execute, commit (the ladder is written down where the executor's
+doctrine lives: `docs/architecture/40-execution.md` § the staging law) — and
+this set did three things to it:
 
-1. **Gives the theory constants.** A `closed relation` declares its extension
+1. **Gave the theory constants.** A `closed relation` declares its extension
    in the schema: rows are **ground axioms**, identified by declaration-order
    handles, virtual in storage, frozen by the fingerprint. The `enum` type —
-   a vocabulary pretending to be an encoding — dies, and the roster drops to
+   a vocabulary pretending to be an encoding — died, and the roster dropped to
    six pure value types.
-2. **Teaches the evaluator to eat them.** Statements into closed relations
+2. **Taught the evaluator to eat them.** Statements into closed relations
    compile to in-register word-sets at open; queries against closed relations
-   fold at prepare (the chase generalizes from eliminator to evaluator); a
+   fold at prepare (the chase generalized from eliminator to evaluator); a
    vocabulary join has zero runtime existence.
-3. **Fixes the known late-stagers.** The staging audit (2026-07-10) found six
-   computations running one stage after their inputs fixed; this set stages
+3. **Fixed the known late-stagers.** The staging audit (2026-07-10) found six
+   computations running one stage after their inputs fixed; this set staged
    them correctly (σ-literal encodings, judgment flags, the literal latch,
-   predicate folding) or records why they stay (fresh→FD order is a
+   predicate folding) or recorded why they stay (fresh→FD order is a
    fingerprint input).
 
 **The boundary clause, constitutional: folding produces data, never code.**
@@ -68,21 +70,80 @@ relation), *JIT/codegen* (refused).
    There are no doc-only PRDs in this set; every chapter change rides the
    code PRD that makes it true.
 
-## The PRDs
+## The phases — the ledger
 
-Phase C — the folds: complete.
+Phase A — the ground — landed whole and retired (01 — closed relations:
+the theory acquired ground axioms — the `closed relation` production,
+declaration-order handles, the sealed extension encoded ONCE at validate,
+the closed auto-key `R(id) -> R`, the roster's typed rejections (closed
+`fresh`, rays as intrinsic values, nested closed refs, the 256-row cap),
+and the intrinsic-vs-policy law; 02 — the emission: the host enum welded
+to the row ids (`id`/`from_id` with the per-relation emitted weld test),
+the handle newtype, bare handles in statement selections, and the
+manifest's extension tables — the vocabulary as data for foreign hosts;
+03 — virtual images: the theory as storage — the store holds zero
+vocabulary bytes, the closed image synthesized once per process at the
+sentinel generation, writes refused as a typed error); the rulings live
+in `10-data-model.md` § closed relations and § fingerprint inputs,
+`70-api.md` § the `schema!` grammar and § id constants and the manifest,
+`50-storage.md` § virtual relations, and `40-execution.md` (D1's closed
+carve-out, the view-memo sentinel generation).
 
-Phase D — the surface:
-- [11 — Handles everywhere: render, notation, cookbook](11-handles-everywhere.md)
+Phase B — the cutover — landed whole and retired (04 — compiled subsets:
+a containment into a closed target carries no probe strategy — its
+enforcement plan IS the answer set, ψ applied to the sealed extension at
+validate into a 4×u64 member word-set, judged in one AND and one test;
+05 — the enum funeral: the `enum` type deleted whole, the value roster
+down to six, the mechanical rewrite `k: enum K { A, B }` → closed
+relation + reference + containment run across every theory, doc, and
+cookbook recipe, the obituary written); the rulings live in
+`30-dependencies.md` § enforcement (the compiled-subset worked example,
+`Escalation(severity) <= Severity(id | pages == true)` — rot-proofed as
+cookbook recipe 8), `10-data-model.md` (the enum's obituary), and
+`00-product.md`'s deleted-vocabulary rows.
 
-Dependency spine: 01→02→03 strictly (each consumes the previous's types);
-04 requires 01 (and 03 for its virtual-image reads); 05 requires 02 (hosts
-need the replacement before the type dies) and touches everything; 06
-requires 05's final shapes; 07 requires 03+04+05 (folds virtual images,
-consumes word-sets, operates on the post-enum IR); 08–10 are independent of
-Phase A/B and of each other (they may run any time after baseline, in any
-order); 11 lands last. Phases: A strictly ordered; B strictly ordered; C
-freely interleaved; D closes.
+Phase C — the folds — landed whole and retired (06 — oracles over
+axioms: the differential harness learned the closed shapes — the tax the
+axioms charge, paid in the naive model and the translator before any
+timing is believed; 07 — the chase-evaluator: folding stage-zero atoms —
+a closed atom with prepare-resolvable filters evaluates at prepare into
+the surviving id-set riding the siblings as a plan-constant membership,
+the complement fold for negated atoms under the domain guarantee, the
+rule-death channel, and EXPLAIN's fold lines; 08 — the late-stager
+sweep: the checker consumes constants — σ-literal encodings sealed at
+validate (`CompiledCheck`), stage-1-fixed judgment flags carried, never
+re-derived; 09 — the literal latch: monotone resolution — a resolved
+`str` literal rewrites its plan slot once, permanently, and a
+zero-pending zero-param query skips predicate resolution entirely; 10 —
+statically empty: the comptime-unreachable of queries — constant-refuted
+rules die at prepare with their killing predicate as the record, and an
+all-dead program plans to the `Empty` plan); the rulings live in
+`40-execution.md` § the chase, § access paths (statically empty), and
+§ measured mechanisms (the latch), `20-query-ir.md` § normalization, and
+`60-validation.md`.
+
+Phase D — the surface — landed whole and retired (11 — handles
+everywhere: the renderer prints closed-reference words as handles with
+the visibly-wrong `Kind(7?)` out-of-range fallback, the statement
+renderer and EXPLAIN's fold lines print through the same convention (the
+fold's surviving set as a handle set — the set IS the payload), the
+round-trip goldens pin the handle spellings (`render(lower(text)) ==
+normalize(text)` byte-exact, the bare fixed point where the closed
+relation is named `UpperCamel` of its field), the cookbook gained the
+vocabulary tier — recipes 6–8: the vocabulary, the classification, the
+sub-vocabulary — the repo README gained the tier-2 example and the
+staging-law summary, `40-execution.md` gained the staging-law ladder as
+a named section, and the architecture chapters were swept for enum
+residue); the rulings live in `20-query-ir.md` § the renderer and § the
+query notation, `40-execution.md` § the staging law, and
+`docs/cookbook.md`.
+
+Dependency spine, discharged: 01→02→03 landed strictly ordered; 04 after
+01/03, 05 after 02, both landed; 06–10 landed freely interleaved after
+Phase B; 11 landed last and closed the set. **No content PRDs remain in
+this directory** — what stays is the record: the organizing principle,
+the vocabulary discipline, the policy, the phase ledger above, and the
+refusals below.
 
 ## Refusals (recorded with derivations — do not re-litigate)
 

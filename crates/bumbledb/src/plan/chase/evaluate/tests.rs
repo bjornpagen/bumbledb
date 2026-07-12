@@ -647,3 +647,43 @@ fn a_second_closed_atom_folds_over_the_first_folds_set() {
         "rank == 20 → {{1, 2}}: {sets:?}"
     );
 }
+
+/// The fold's picture prints the vocabulary's names: a word at the
+/// relation's own id position renders as its handle, a membership set as
+/// a handle set, and an out-of-range word visibly wrong as `Kind(9?)` —
+/// the `ir/render` fallback convention, byte-exact.
+#[test]
+fn the_folded_picture_prints_handles_at_the_id_position() {
+    let schema = theory();
+    let relation = RelationId(KIND);
+    let eq_id = |value: Const| FilterPredicate::Compare {
+        field: FieldId(0),
+        op: CmpOp::Eq,
+        value,
+    };
+    assert_eq!(
+        folded_picture(&schema, relation, &[eq_id(Const::Word(1))]),
+        "Kind{id == B}"
+    );
+    assert_eq!(
+        folded_picture(&schema, relation, &[eq_id(Const::Word(9))]),
+        "Kind{id == Kind(9?)}"
+    );
+    assert_eq!(
+        folded_picture(&schema, relation, &[eq_id(Const::WordSet(vec![0, 2]))]),
+        "Kind{id ∈ {A, C}}"
+    );
+    // A payload column stays a plain value — handles live at the id.
+    assert_eq!(
+        folded_picture(
+            &schema,
+            relation,
+            &[FilterPredicate::Compare {
+                field: FieldId(1),
+                op: CmpOp::Eq,
+                value: Const::Word(20),
+            }]
+        ),
+        "Kind{rank == 20}"
+    );
+}

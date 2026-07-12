@@ -135,18 +135,16 @@ fn fmt_free_join(
         )?;
     }
     // The evaluator's marks (`plan/chase/evaluate.rs`): closed atoms
-    // evaluated at prepare — the filters and the surviving id count;
-    // a negated fold's attached set is the complement, and its `ids`
-    // are what the deleted anti-probe would have rejected.
+    // evaluated at prepare — the filters and the surviving handle set
+    // (the vocabulary's names, the set IS the payload); a negated
+    // fold's attached set is the complement, and the named handles are
+    // what the deleted anti-probe would have rejected.
     for folded in &stats.folded {
+        let set = folded.handles.join(", ");
         if folded.negated {
-            writeln!(
-                f,
-                "  folded: !{} → {} ids rejected",
-                folded.rendered, folded.ids,
-            )?;
+            writeln!(f, "  folded: !{} → {{{set}}} rejected", folded.rendered)?;
         } else {
-            writeln!(f, "  folded: {} → {} ids", folded.rendered, folded.ids)?;
+            writeln!(f, "  folded: {} → {{{set}}}", folded.rendered)?;
         }
     }
     for (node_idx, node) in plan.nodes().iter().enumerate() {

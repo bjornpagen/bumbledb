@@ -35,17 +35,22 @@ echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"
 cargo clippy -p bumbledb-bench --features obs --all-targets -- -D warnings
 cargo test -p bumbledb-bench --features obs -- harness trace_out tripwires
 
-# The x86-64 scalar-fallback check (docs/architecture/00-product.md): needs
-# a cross std for the pinned toolchain; report skip-vs-pass honestly. The
-# sysroot probe (not `rustup target list`) is the truth about whether the
-# cross std actually exists for a source-built toolchain.
+# The x86-64 scalar-fallback check (docs/architecture/00-product.md):
+# report skip-vs-pass honestly. It needs the WHOLE cross toolchain, not
+# just the Rust std: the engine links LMDB's C sources at build-script
+# time, so `cargo check` cross-compiles C — a cross std without a cross
+# C compiler can only fail environmentally, which is a skip, not a
+# verdict. Engine crates only: the portable-fallback promise is the
+# engine's — the bench harness is host tooling (SQLite, host-timed).
 SYSROOT="$(rustc --print sysroot)"
+CROSS_CC="${CC_x86_64_unknown_linux_gnu:-x86_64-linux-gnu-gcc}"
 if [ -d "$SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib" ] \
-    && ls "$SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib"/libstd-*.rlib >/dev/null 2>&1; then
-    echo "==> cargo check --workspace --target x86_64-unknown-linux-gnu"
-    cargo check --workspace --target x86_64-unknown-linux-gnu
+    && ls "$SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib"/libstd-*.rlib >/dev/null 2>&1 \
+    && command -v "$CROSS_CC" >/dev/null 2>&1; then
+    echo "==> cargo check -p bumbledb -p bumbledb-macros -p bumbledb-query --target x86_64-unknown-linux-gnu"
+    cargo check -p bumbledb -p bumbledb-macros -p bumbledb-query --target x86_64-unknown-linux-gnu
 else
-    echo "==> SKIPPED: x86_64-unknown-linux-gnu cross check (no cross std for this toolchain)"
+    echo "==> SKIPPED: x86_64-unknown-linux-gnu cross check (cross std or cross C compiler missing)"
 fi
 
 echo "==> all gates green"

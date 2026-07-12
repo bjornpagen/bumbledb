@@ -223,7 +223,7 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
   `schema.fresh_field(relation, field)` — `70-api.md` § ETL.)
 
   `alloc` is the only generator; `insert` is always full-fact and stays idempotent —
-  one insert semantics, no generative variant.
+  one insert semantics, no generative form.
 - Explicit values are legal on the normal write path (not just ETL): inserting with a
   chosen value ≤ or > the high-water mark succeeds and advances the mark past it. This
   is load-bearing: correcting a fresh-keyed fact is `delete(old); insert(new with the
@@ -496,7 +496,7 @@ mutable lookup tables;
 **intervals for validity, sessions, periods, and lifetimes** instead of
 start/end column pairs or status-plus-nullable-timestamp machines; optional
 attributes as 0..1 child relations (the no-nulls idiom above); sum-typed domain
-entities as a closed-reference discriminator plus per-variant child relations glued by
+entities as a closed-reference discriminator plus per-arm child relations glued by
 bidirectional conditional inclusions (`30-dependencies.md` derives the pattern and
 its theorems). Forbidden by construction: nullable columns, JSON blobs; forbidden by
 discipline: EAV, denormalized redundancy. History is immutable event facts or

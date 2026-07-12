@@ -220,9 +220,10 @@ fn a_folded_occurrence_builds_no_image_and_binds_no_view() {
 }
 
 /// EXPLAIN carries the fold line (the Eliminated-reporting precedent),
-/// and the structured stats mirror it.
+/// and the structured stats mirror it — the surviving set as handles,
+/// the vocabulary's names (the handle set IS the payload).
 #[test]
-fn explain_reports_the_fold_with_its_filters_and_id_count() {
+fn explain_reports_the_fold_with_its_filters_and_handles() {
     let dir = TempDir::new("folded-explain");
     let schema = closed_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -237,11 +238,11 @@ fn explain_reports_the_fold_with_its_filters_and_id_count() {
     assert_eq!(folded.len(), 1);
     assert_eq!(folded[0].relation, "Kind");
     assert_eq!(folded[0].rendered, "Kind{rank == 20}");
-    assert_eq!(folded[0].ids, 2);
+    assert_eq!(folded[0].handles, vec!["B".to_owned(), "C".to_owned()]);
     assert!(!folded[0].negated);
     let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
     assert!(
-        report.contains("folded: Kind{rank == 20} → 2 ids"),
+        report.contains("folded: Kind{rank == 20} → {B, C}"),
         "{report}"
     );
 }

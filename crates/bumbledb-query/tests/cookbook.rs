@@ -125,7 +125,69 @@ recipe!(r05, Content, {
     Replica(region)  <= Region(id);
 });
 
-recipe!(r06, Playlists, {
+recipe!(r06, Tickets, {
+    pub Tickets;
+
+    closed relation Priority as PriorityId = { Low, Normal, Urgent };
+
+    relation Ticket {
+        id: u64 as TicketId, fresh,
+        priority: u64 as PriorityId,
+        opened_at: i64,
+    }
+
+    Ticket(priority) <= Priority(id);
+});
+
+recipe!(r07, Review, {
+    pub Review;
+
+    closed relation Kind as KindId {
+        mastered: bool,
+        rank: u64,
+    } = {
+        DirectPass { mastered: true,  rank: 30 },
+        JudgedPass { mastered: true,  rank: 20 },
+        Failed     { mastered: false, rank: 10 },
+    };
+
+    relation Attempt { id: u64 as AttemptId, fresh, kind: u64 as KindId }
+    relation Certificate { attempt: u64 as AttemptId, kind: u64 as KindId }
+
+    Attempt(kind) <= Kind(id);
+    Certificate(attempt) -> Certificate;
+    Certificate(attempt) <= Attempt(id);
+    Certificate(kind) <= Kind(id | mastered == true);
+});
+
+recipe!(r08, Oncall, {
+    pub Oncall;
+
+    closed relation Severity as SeverityId {
+        pages: bool,
+    } = {
+        Info     { pages: false },
+        Warning  { pages: false },
+        Critical { pages: true },
+        Fatal    { pages: true },
+    };
+
+    relation Incident {
+        id: u64 as IncidentId, fresh,
+        severity: u64 as SeverityId,
+    }
+    relation Escalation {
+        incident: u64 as IncidentId,
+        severity: u64 as SeverityId,
+        at: i64,
+    }
+
+    Incident(severity) <= Severity(id);
+    Escalation(incident) <= Incident(id);
+    Escalation(severity) <= Severity(id | pages == true);
+});
+
+recipe!(r09, Playlists, {
     pub Playlists;
 
     relation Playlist { id: u64 as PlaylistId, fresh, name: str }
@@ -135,7 +197,7 @@ recipe!(r06, Playlists, {
     Entry(playlist, pos) -> Entry;
 });
 
-recipe!(r07, Ast, {
+recipe!(r10, Ast, {
     pub Ast;
 
     closed relation Kind as KindId = { Lit, Add };
@@ -157,7 +219,7 @@ recipe!(r07, Ast, {
     Parent(parent) <= Node(id);
 });
 
-recipe!(r08, Graph, {
+recipe!(r11, Graph, {
     pub Graph;
 
     relation Person { id: u64 as PersonId, fresh, name: str }
@@ -173,7 +235,7 @@ recipe!(r08, Graph, {
     Maintains(person, repo) -> Maintains;
 });
 
-recipe!(r09, Ecs, {
+recipe!(r12, Ecs, {
     pub Ecs;
 
     relation Entity { id: u64 as EntityId, fresh, name: str }
@@ -189,7 +251,7 @@ recipe!(r09, Ecs, {
     Renderable(entity) <= Transform(entity);
 });
 
-recipe!(r10, Orders, {
+recipe!(r13, Orders, {
     pub Orders;
 
     closed relation State as StateId = { Cart, Placed, Shipped };
@@ -205,7 +267,7 @@ recipe!(r10, Orders, {
     Shipment(order) == Order(id | state == Shipped);
 });
 
-recipe!(r11, Calendar, {
+recipe!(r14, Calendar, {
     pub Calendar;
 
     closed relation Rsvp as RsvpId = { Accepted, Tentative, Declined };
@@ -244,7 +306,7 @@ recipe!(r11, Calendar, {
     Booking(event) <= Event(id);
 });
 
-recipe!(r12, Pricing, {
+recipe!(r15, Pricing, {
     pub Pricing;
 
     relation Policy  { id: u64 as PolicyId, fresh, live: interval<i64> }
@@ -255,7 +317,7 @@ recipe!(r12, Pricing, {
     Policy(id, live) <= Version(policy, valid);
 });
 
-recipe!(r13, Payroll, {
+recipe!(r16, Payroll, {
     pub Payroll;
 
     relation FiscalYear { id: u64 as FiscalYearId, fresh, span: interval<i64> }
@@ -267,7 +329,7 @@ recipe!(r13, Payroll, {
     FiscalYear(id, span) <= PayPeriod(year, span);
 });
 
-recipe!(r14, Tax, {
+recipe!(r17, Tax, {
     pub Tax;
 
     closed relation Status as StatusId = { Single, MarriedJoint, HeadOfHousehold };
@@ -290,7 +352,7 @@ recipe!(r14, Tax, {
     Earned(person, span) <= Residency(person, span);
 });
 
-recipe!(r15, FreeTime, {
+recipe!(r18, FreeTime, {
     pub FreeTime;
 
     relation Person { id: u64 as PersonId, fresh, name: str }
@@ -299,7 +361,7 @@ recipe!(r15, FreeTime, {
     Claim(person) <= Person(id);
 });
 
-recipe!(r16, Ledger, {
+recipe!(r19, Ledger, {
     pub Ledger;
 
     relation Account      { id: u64 as AccountId, fresh, name: str }
@@ -315,7 +377,7 @@ recipe!(r16, Ledger, {
     Posting(account) <= Account(id);
 });
 
-recipe!(r17, Jobs, {
+recipe!(r20, Jobs, {
     pub Jobs;
 
     closed relation State as StateId = { Queued, Running, Done };
@@ -332,7 +394,7 @@ recipe!(r17, Jobs, {
     Lease(job) == Job(id | state == Running);
 });
 
-recipe!(r18, Rollup, {
+recipe!(r21, Rollup, {
     pub Rollup;
 
     closed relation Arm as ArmId = { Busy, Ooo };
@@ -352,7 +414,7 @@ recipe!(r18, Rollup, {
     BusySpan(person, span) <= Claim(person, span | arm == Busy);
 });
 
-recipe!(r19, Payments, {
+recipe!(r22, Payments, {
     pub Payments;
 
     closed relation Kind as KindId = { Card, Ach };
@@ -368,7 +430,7 @@ recipe!(r19, Payments, {
     Payment(id | kind == Ach)  == Ach(payment);
 });
 
-recipe!(r20, Gravestones, {
+recipe!(r23, Gravestones, {
     pub Gravestones;
 
     relation Step { flow: u64, pos: u64, action: str }
@@ -390,7 +452,7 @@ struct Recipe {
     validate: fn() -> Result<Schema, bumbledb::error::SchemaError>,
 }
 
-const ROSTER: [Recipe; 20] = [
+const ROSTER: [Recipe; 23] = [
     Recipe {
         title: "The minimal interval schema",
         source: r01::SOURCE,
@@ -417,79 +479,94 @@ const ROSTER: [Recipe; 20] = [
         validate: r05::validate,
     },
     Recipe {
-        title: "Ordered collections",
+        title: "The vocabulary",
         source: r06::SOURCE,
         validate: r06::validate,
     },
     Recipe {
-        title: "Trees and ASTs",
+        title: "The classification",
         source: r07::SOURCE,
         validate: r07::validate,
     },
     Recipe {
-        title: "Typed graphs",
+        title: "The sub-vocabulary",
         source: r08::SOURCE,
         validate: r08::validate,
     },
     Recipe {
-        title: "Entity-component",
+        title: "Ordered collections",
         source: r09::SOURCE,
         validate: r09::validate,
     },
     Recipe {
-        title: "State machines",
+        title: "Trees and ASTs",
         source: r10::SOURCE,
         validate: r10::validate,
     },
     Recipe {
-        title: "The calendar core",
+        title: "Typed graphs",
         source: r11::SOURCE,
         validate: r11::validate,
     },
     Recipe {
-        title: "Effective-dated configuration",
+        title: "Entity-component",
         source: r12::SOURCE,
         validate: r12::validate,
     },
     Recipe {
-        title: "Tilings",
+        title: "State machines",
         source: r13::SOURCE,
         validate: r13::validate,
     },
     Recipe {
-        title: "Federal income tax",
+        title: "The calendar core",
         source: r14::SOURCE,
         validate: r14::validate,
     },
     Recipe {
-        title: "Free time and coalescing",
+        title: "Effective-dated configuration",
         source: r15::SOURCE,
         validate: r15::validate,
     },
     Recipe {
-        title: "The ledger",
+        title: "Tilings",
         source: r16::SOURCE,
         validate: r16::validate,
     },
     Recipe {
-        title: "Conditional writes",
+        title: "Federal income tax",
         source: r17::SOURCE,
         validate: r17::validate,
     },
     Recipe {
-        title: "Derived relations",
+        title: "Free time and coalescing",
         source: r18::SOURCE,
         validate: r18::validate,
     },
     Recipe {
-        title: "Union reads",
+        title: "The ledger",
         source: r19::SOURCE,
         validate: r19::validate,
     },
     Recipe {
-        title: "The anti-recipes: five gravestones",
+        title: "Conditional writes",
         source: r20::SOURCE,
         validate: r20::validate,
+    },
+    Recipe {
+        title: "Derived relations",
+        source: r21::SOURCE,
+        validate: r21::validate,
+    },
+    Recipe {
+        title: "Union reads",
+        source: r22::SOURCE,
+        validate: r22::validate,
+    },
+    Recipe {
+        title: "The anti-recipes: five gravestones",
+        source: r23::SOURCE,
+        validate: r23::validate,
     },
 ];
 
@@ -548,7 +625,7 @@ fn the_doc_roster_is_exactly_this_roster() {
         "doc recipes and test entries must correspond one-to-one"
     );
     for (i, ((n, title), recipe)) in headings.iter().zip(ROSTER.iter()).enumerate() {
-        assert_eq!(*n, i + 1, "recipe numbering is 1..=20 in order");
+        assert_eq!(*n, i + 1, "recipe numbering is 1..=23 in order");
         assert_eq!(title, recipe.title, "recipe {} title", i + 1);
     }
 }
@@ -623,83 +700,154 @@ fn r03_negation_round_trips() {
     );
 }
 
-/// Recipe 11: the room-conflict probe — one Allen mask against a param.
+/// Recipe 14: the room-conflict probe — one Allen mask against a param.
 #[test]
-fn r11_booking_probe_round_trips() {
-    let conflicts = query!(r11::Calendar {
+fn r14_booking_probe_round_trips() {
+    let conflicts = query!(r14::Calendar {
         (room, s) | Booking(room, span: s), Allen(s, INTERSECTS, ?want);
     });
     assert_eq!(
-        pin("r11-conflicts", r11::Calendar, &conflicts),
+        pin("r14-conflicts", r14::Calendar, &conflicts),
         "(v0, v1) | Booking(room: v0, span: v1), Allen(v1, INTERSECTS, ?0);"
     );
 }
 
-/// Recipe 12: "in force on date t" is one membership probe.
+/// Recipe 15: "in force on date t" is one membership probe.
 #[test]
-fn r12_in_force_round_trips() {
-    let in_force = query!(r12::Pricing {
+fn r15_in_force_round_trips() {
+    let in_force = query!(r15::Pricing {
         (rate_bps) | Version(policy == ?p, rate_bps, valid: v), ?t in v;
     });
     assert_eq!(
-        pin("r12-in-force", r12::Pricing, &in_force),
+        pin("r15-in-force", r15::Pricing, &in_force),
         "(v0) | Version(policy == ?0, rate_bps: v0, valid: v1), ?1 in v1;"
     );
 }
 
-/// Recipe 14: the marginal bracket — membership walks the tiling.
+/// Recipe 17: the marginal bracket — membership walks the tiling.
 #[test]
-fn r14_marginal_bracket_round_trips() {
-    let marginal = query!(r14::Tax {
+fn r17_marginal_bracket_round_trips() {
+    let marginal = query!(r17::Tax {
         (rate_bps) | Regime(id: r, year == ?y, status == ?s),
                      Bracket(regime: r, income: b, rate_bps), ?taxable in b;
     });
     assert_eq!(
-        pin("r14-marginal", r14::Tax, &marginal),
+        pin("r17-marginal", r17::Tax, &marginal),
         "(v2) | Regime(id: v0, year == ?0, status == ?1), \
          Bracket(regime: v0, income: v1, rate_bps: v2), ?2 in v1;"
     );
 }
 
-/// Recipe 15: `Pack` is the coalescing fold — busy time per person.
+/// Recipe 18: `Pack` is the coalescing fold — busy time per person.
 #[test]
-fn r15_pack_round_trips() {
-    let busy = query!(r15::FreeTime {
+fn r18_pack_round_trips() {
+    let busy = query!(r18::FreeTime {
         (person, busy: Pack(span)) | Claim(person, span);
     });
     assert_eq!(
-        pin("r15-busy", r15::FreeTime, &busy),
+        pin("r18-busy", r18::FreeTime, &busy),
         "(v0, Pack(v1)) | Claim(person: v0, span: v1);"
     );
 }
 
-/// Recipe 16: balances — bind the fresh id or set semantics collapses
+/// Recipe 19: balances — bind the fresh id or set semantics collapses
 /// equal (account, minor) pairs.
 #[test]
-fn r16_balances_round_trips() {
-    let balances = query!(r16::Ledger {
+fn r19_balances_round_trips() {
+    let balances = query!(r19::Ledger {
         (account, total: Sum(minor)) | Posting(id, account, minor);
     });
     assert_eq!(
-        pin("r16-balances", r16::Ledger, &balances),
+        pin("r19-balances", r19::Ledger, &balances),
         "(v1, Sum(v2)) | Posting(id: v0, account: v1, minor: v2);"
     );
 }
 
-/// Recipe 19: the whole-DU read — one head, one rule per arm; the
+/// Recipe 22: the whole-DU read — one head, one rule per arm; the
 /// exclusivity theorem elides cross-rule dedup. The bare handles resolve
-/// through the `Kind` host enum in scope; the renderer prints the row
-/// ids as bare numbers.
+/// through the `Kind` host enum in scope, and the renderer prints them
+/// back as the same bare handles — the round trip runs on names.
 #[test]
-fn r19_union_read_round_trips() {
-    use r19::Kind;
-    let methods = query!(r19::Payments {
+fn r22_union_read_round_trips() {
+    use r22::Kind;
+    let methods = query!(r22::Payments {
         (id, n) | Payment(id, kind == Card), Card(payment: id, last4: n);
         (id, n) | Payment(id, kind == Ach), Ach(payment: id, routing: n);
     });
     assert_eq!(
-        pin("r19-methods", r19::Payments, &methods),
-        "(v0, v1) | Payment(id: v0, kind == 0), Card(payment: v0, last4: v1);\n\
-         (v0, v1) | Payment(id: v0, kind == 1), Ach(payment: v0, routing: v1);"
+        pin("r22-methods", r22::Payments, &methods),
+        "(v0, v1) | Payment(id: v0, kind == Card), Card(payment: v0, last4: v1);\n\
+         (v0, v1) | Payment(id: v0, kind == Ach), Ach(payment: v0, routing: v1);"
+    );
+}
+
+/// Recipe 6: the vocabulary — the bare handle is a fixed point of the
+/// round trip (`Priority` is `UpperCamel` of `priority`, so the
+/// renderer's own output reparses through the host enum in scope).
+#[test]
+fn r06_vocabulary_handle_round_trips() {
+    use r06::Priority;
+    let urgent = query!(r06::Tickets {
+        (t) | Ticket(id: t, priority == Urgent);
+    });
+    assert_eq!(
+        pin("r06-urgent", r06::Tickets, &urgent),
+        "(v0) | Ticket(id: v0, priority == Urgent);"
+    );
+}
+
+/// Recipe 7: the classification read — ψ over the vocabulary's payload,
+/// no flag duplicated onto Attempt.
+#[test]
+fn r07_classification_round_trips() {
+    let mastered = query!(r07::Review {
+        (a) | Attempt(id: a, kind: k), Kind(id: k, mastered == true);
+    });
+    assert_eq!(
+        pin("r07-mastered", r07::Review, &mastered),
+        "(v0) | Attempt(id: v0, kind: v1), Kind(id: v1, mastered == true);"
+    );
+}
+
+/// Recipe 8: the sub-vocabulary's judgment is the compiled member set —
+/// a paging escalation commits; a non-paging one aborts at commit with
+/// the containment violation (the PRD-04 worked example, rot-proofed).
+#[test]
+fn r08_sub_vocabulary_violating_insert_aborts() {
+    use r08::{Escalation, Incident, IncidentId, Oncall, Severity};
+    let dir = TempDir::new("r08-subvocab");
+    let db = Db::create(dir.path(), Oncall).expect("create the Oncall store");
+    db.write(|tx| {
+        let id: IncidentId = tx.alloc()?;
+        tx.insert(&Incident {
+            id,
+            severity: Severity::Critical.id(),
+        })?;
+        tx.insert(&Escalation {
+            incident: id,
+            severity: Severity::Critical.id(),
+            at: 1,
+        })?;
+        Ok(())
+    })
+    .expect("a paging escalation commits");
+    let err = db
+        .write(|tx| {
+            let id: IncidentId = tx.alloc()?;
+            tx.insert(&Incident {
+                id,
+                severity: Severity::Info.id(),
+            })?;
+            tx.insert(&Escalation {
+                incident: id,
+                severity: Severity::Info.id(),
+                at: 2,
+            })?;
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, bumbledb::Error::ContainmentViolation { .. }),
+        "a non-paging escalation violates the ψ-selected containment: {err:?}"
     );
 }
