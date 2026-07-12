@@ -52,13 +52,17 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     // Decision: a `ParamSet`-bound field disqualifies the fast path in v0
     // — k guard gets would be correct, but the selection-level path
     // already serves sets (revisit trigger: a measured k-get win). A
-    // var-sourced point falls through with it (its evaluation home is the
-    // executor's membership probes).
+    // plan-constant `WordSet` (the chase-evaluator's attachment) refuses
+    // identically — one set rule, both producers; unreachable from the
+    // real pipeline (attachments imply a sibling occurrence, so the
+    // table is never single-atom), guarded for hand-built queries. A
+    // var-sourced point falls through with them (its evaluation home is
+    // the executor's membership probes).
     if occurrence.filters.iter().any(|filter| {
         matches!(
             filter,
             FilterPredicate::Compare {
-                value: Const::ParamSet(_),
+                value: Const::ParamSet(_) | Const::WordSet(_),
                 ..
             } | FilterPredicate::AnyPointIn { .. }
                 | FilterPredicate::PointIn {

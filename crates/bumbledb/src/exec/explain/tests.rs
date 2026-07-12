@@ -313,6 +313,7 @@ fn guard_probe_queries_report_their_classification() {
             rules: vec![crate::api::stats::RuleStats {
                 nodes: Vec::new(),
                 eliminated: Vec::new(),
+                folded: Vec::new(),
                 pinned: Vec::new(),
                 emitted: 0,
                 absorbed: 0,

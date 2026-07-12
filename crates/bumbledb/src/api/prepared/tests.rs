@@ -20,6 +20,7 @@ mod chase;
 mod correctness;
 mod disjoint;
 mod explain;
+mod folded;
 mod guard;
 mod latch;
 mod measure;

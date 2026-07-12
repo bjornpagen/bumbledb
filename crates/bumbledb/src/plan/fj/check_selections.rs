@@ -2,15 +2,22 @@ use super::{PlanError, PlanOccurrence};
 use crate::image::view::FilterPredicate;
 use crate::ir::CmpOp;
 
-/// The selection invariant for **positive** occurrences, asserted at the
-/// boundary because [`PlanOccurrence`] is plain data anyone can
+/// The selection invariant for **participating** occurrences, asserted
+/// at the boundary because [`PlanOccurrence`] is plain data anyone can
 /// construct: `filters` may never carry an Eq-constant compare —
-/// [`split_filters`] routes every one into `selections`. Negated
-/// occurrences are exempt (never passed here): their Eq-constants stay
-/// in the filter list — the ordinary filtered view the anti-probe runs
-/// against (docs/architecture/40-execution.md, § anti-probe filters).
+/// [`split_filters`] routes every one into `selections`.
+/// Non-participating occurrences are exempt and skipped here: a negated
+/// occurrence's Eq-constants stay in its filter list — the ordinary
+/// filtered view the anti-probe runs against
+/// (docs/architecture/40-execution.md, § anti-probe filters) — and a
+/// chase-folded occurrence retains its pre-split list purely as
+/// EXPLAIN's fold picture (`plan/chase/evaluate.rs`), never resolved or
+/// scanned.
 pub(crate) fn check_selections(occurrences: &[PlanOccurrence]) -> Result<(), PlanError> {
     for occurrence in occurrences {
+        if !occurrence.role.participates() {
+            continue;
+        }
         let leaked = occurrence
             .filters
             .iter()

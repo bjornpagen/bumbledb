@@ -29,8 +29,9 @@ const CFG: GenConfig = GenConfig {
 /// currency (the domain quantification holds from the first delta
 /// onward), the ψ-member cash rounding, and two non-import entries
 /// (sources 0/2 keep the DU pair silent). One delta — the final state
-/// is judged whole on both sides.
-fn seed() -> Delta {
+/// is judged whole on both sides. `pub(super)`: the fold differential
+/// (`fold.rs`) seeds its randomized-query slice with the same world.
+pub(super) fn seed() -> Delta {
     Delta {
         deletes: vec![],
         inserts: vec![

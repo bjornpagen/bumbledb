@@ -478,7 +478,7 @@ fn emit(
 
 /// One encoded word decoded through its field's value type (the biased
 /// I64 word un-flips; everything else renders raw).
-fn decoded_scalar(value_type: &ValueType, word: u64) -> Value {
+pub(crate) fn decoded_scalar(value_type: &ValueType, word: u64) -> Value {
     match value_type {
         ValueType::I64 => Value::I64(decode_i64(word.to_be_bytes())),
         ValueType::Bool => Value::Bool(word != 0),
@@ -487,7 +487,7 @@ fn decoded_scalar(value_type: &ValueType, word: u64) -> Value {
 }
 
 /// An encoded interval pair decoded through its element type.
-fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Value {
+pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Value {
     match value_type {
         ValueType::Interval {
             element: IntervalElement::I64,
@@ -500,7 +500,7 @@ fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Value {
 }
 
 /// One Eq constant's picture, by shape (shapes never mix on one field).
-fn render_const(out: &mut String, value_type: &ValueType, value: &Const) {
+pub(crate) fn render_const(out: &mut String, value_type: &ValueType, value: &Const) {
     match value {
         Const::Word(word) => literal(out, &decoded_scalar(value_type, *word)),
         Const::Byte(byte) => literal(out, &Value::Bool(*byte != 0)),

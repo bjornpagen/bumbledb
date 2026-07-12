@@ -134,6 +134,21 @@ fn fmt_free_join(
             eliminated.relation, eliminated.rendered,
         )?;
     }
+    // The evaluator's marks (`plan/chase/evaluate.rs`): closed atoms
+    // evaluated at prepare — the filters and the surviving id count;
+    // a negated fold's attached set is the complement, and its `ids`
+    // are what the deleted anti-probe would have rejected.
+    for folded in &stats.folded {
+        if folded.negated {
+            writeln!(
+                f,
+                "  folded: !{} → {} ids rejected",
+                folded.rendered, folded.ids,
+            )?;
+        } else {
+            writeln!(f, "  folded: {} → {} ids", folded.rendered, folded.ids)?;
+        }
+    }
     for (node_idx, node) in plan.nodes().iter().enumerate() {
         let node_stats = &stats.nodes[node_idx];
         writeln!(f, "  node {node_idx}:")?;

@@ -54,11 +54,13 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
         "Eq-constant predicates never reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-        // A chase-eliminated occurrence is unreachable at execution — no
-        // subatom, no anti-probe — so it earns no view and, above all,
-        // no image build (`plan/chase.rs`: skipping this build is the
-        // rewrite's payoff).
-        if matches!(occurrence.role, crate::ir::normalize::Role::Eliminated(_)) {
+        // A discharged occurrence (chase-eliminated or chase-folded) is
+        // unreachable at execution — no subatom, no anti-probe — so it
+        // earns no view and, above all, no image build
+        // (`plan/chase.rs`: skipping this build is the rewrite's
+        // payoff; for a fold, the sealed extension was already read at
+        // prepare and nothing remains to bind).
+        if occurrence.role.discharged() {
             continue;
         }
         // A closed relation's view binds at the sentinel generation: its
@@ -107,13 +109,10 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
     // empty and the join never runs (the sink stays reset: a zero-emit
     // execution).
     for (occ_idx, keys) in resolved_selections.iter().enumerate() {
-        if matches!(
-            plan.occurrences()[occ_idx].role,
-            crate::ir::normalize::Role::Eliminated(_)
-        ) {
+        if plan.occurrences()[occ_idx].role.discharged() {
             debug_assert!(
                 keys.is_empty(),
-                "eliminated occurrences carry no selections"
+                "discharged occurrences carry no selections"
             );
             continue;
         }

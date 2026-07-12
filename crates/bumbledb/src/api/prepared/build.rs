@@ -226,7 +226,11 @@ fn empty_rule() -> PreparedRule {
 /// counter's initial value ([`PreparedQuery::unresolved_literals`]).
 /// Guard plans resolve their key constants per probe and stay outside
 /// the latch (the templates the latch rewrites are Free Join plan
-/// arrays).
+/// arrays). Discharged occurrences count nothing: an eliminated one
+/// carries no predicates, and a folded one's retained filters are
+/// plan-constant by the fold's own conditions (`plan/chase/evaluate.rs`)
+/// and never resolved — a fold must not block the fully-latched fast
+/// path.
 fn pending_literals(rule: &PreparedRule) -> u32 {
     let ExecPlan::FreeJoin(plan) = &rule.plan else {
         return 0;
@@ -236,6 +240,7 @@ fn pending_literals(rule: &PreparedRule) -> u32 {
     };
     plan.occurrences()
         .iter()
+        .filter(|occurrence| !occurrence.role.discharged())
         .map(|occurrence| {
             let filters = occurrence
                 .filters
@@ -287,18 +292,22 @@ fn param_tables(
     (param_types, param_is_set, param_is_point)
 }
 
-/// The theory's program rewrite (`plan/chase.rs`): the elimination
-/// fixpoint per rule, independently — after normalization and before
-/// statistics and the DP (docs/architecture/40-execution.md planner
-/// placement), with no cross-rule state; a rule shrinking below its
-/// cover requirements re-validates like any rule (the per-rule pipeline
-/// re-runs plan validation regardless). Eliminated occurrences keep
+/// The theory's program rewrite (`plan/chase.rs`): the
+/// elimination-and-evaluation fixpoint per rule, independently — after
+/// normalization and before statistics and the DP
+/// (docs/architecture/40-execution.md planner placement), with no
+/// cross-rule state; a rule shrinking below its cover requirements
+/// re-validates like any rule (the per-rule pipeline re-runs plan
+/// validation regardless). Eliminated and folded occurrences keep
 /// their ids and are skipped by every downstream path through the one
-/// participates-in-planning predicate. Then rule subsumption: a rule
-/// whose post-elimination body a sibling contains modulo eliminated
-/// filters is deleted — the union loses nothing. Returns the surviving
-/// rules with their lowered-rule indices plus the deletion record (the
-/// EXPLAIN surface).
+/// participates-in-planning predicate (and its execution-side sibling
+/// `Role::discharged`). The evaluator may also kill a rule outright
+/// (`folded to ∅` — the fold's `dead` channel, read by the survivors
+/// loop below exactly like a normalize-time death). Then rule
+/// subsumption: a rule whose post-elimination body a sibling contains
+/// modulo eliminated filters is deleted — the union loses nothing.
+/// Returns the surviving rules with their lowered-rule indices plus
+/// the deletion record (the EXPLAIN surface).
 fn chase_program(
     mut normalized: Vec<NormalizedQuery>,
     witness: &crate::ir::validate::ValidatedQuery,
@@ -490,13 +499,19 @@ fn build_view_memo(exec_plan: &ExecPlan) -> ViewMemo {
         // Selection levels: columns plus set-ness — a `ParamSet` value
         // marks a set-bound level, probed once per element with the
         // survivor union (docs/architecture/40-execution.md, § selection
-        // levels; set-ness is a plan fact, never per-execution data).
+        // levels; set-ness is a plan fact, never per-execution data). A
+        // plan-constant `WordSet` (the chase-evaluator's fold,
+        // `plan/chase/evaluate.rs`) is the same level shape with the
+        // elements already resolved — one machinery, two producers.
         let selections: Vec<crate::exec::colt::SelectionLevel> = occurrence
             .selections
             .iter()
             .map(|s| crate::exec::colt::SelectionLevel {
                 columns: columns_of(s.field),
-                set: matches!(s.value, crate::image::view::Const::ParamSet(_)),
+                set: matches!(
+                    s.value,
+                    crate::image::view::Const::ParamSet(_) | crate::image::view::Const::WordSet(_)
+                ),
             })
             .collect();
         memo.colts

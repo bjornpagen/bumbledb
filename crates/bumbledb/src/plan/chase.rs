@@ -1,5 +1,15 @@
-//! The chase: containment-implied occurrence elimination
+//! The chase: containment-implied occurrence **elimination** and
+//! closed-relation **evaluation**
 //! (docs/architecture/30-dependencies.md, docs/architecture/40-execution.md).
+//!
+//! Two rewrites share one fixpoint. Elimination (below) removes atoms
+//! that statements prove redundant; evaluation ([`evaluate`]) removes
+//! closed-relation atoms whose extension is stage-0-known by *running
+//! them at prepare* — `Kind(id: k, mastered == true)` is not a join to
+//! plan but a three-element id-set computed before the DP ever sees the
+//! query. They interleave in the one loop because each can expose the
+//! other: folding an atom kills the last reader of a variable an
+//! elimination needed dead, and vice versa.
 //!
 //! An accepted containment `A(X | φ) <= B(Y | ψ)` makes a query's inner
 //! join of `A` to `B` on X→Y redundant when `B` contributes nothing else
@@ -76,6 +86,8 @@ use crate::ir::normalize::{lower_literal, NormalizedQuery, Occurrence, Role};
 use crate::ir::{AggOp, CmpOp, FindTerm, VarId};
 use crate::schema::{FieldId, Resolved, Schema, Side, StatementDescriptor, StatementId};
 
+pub(crate) mod evaluate;
+
 #[cfg(any(test, feature = "chase-off"))]
 thread_local! {
     /// The test-only off switch: differential tests run the same query
@@ -103,11 +115,17 @@ pub fn with_chase_disabled<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
-/// Marks every provably redundant positive occurrence
-/// [`Role::Eliminated`], to a fixpoint. `finds` is the query's find
-/// list — the source of the output-variable set condition 2 checks
-/// projection against (an aggregate's `over` variable and an Arg key
-/// are outputs exactly like a projected variable).
+/// The chase fixpoint: marks every provably redundant positive
+/// occurrence [`Role::Eliminated`], and every prepare-evaluable closed
+/// occurrence [`Role::Folded`] (`evaluate` — the second rewrite in the
+/// same loop, because each can expose the other). `finds` is the
+/// query's find list — the source of the output-variable set condition
+/// 2 checks projection against (an aggregate's `over` variable and an
+/// Arg key are outputs exactly like a projected variable). An
+/// evaluation may instead prove the whole rule statically empty —
+/// `normalized.dead` is set (the fold's rule-death channel,
+/// `ir/normalize/fold.rs`) and the chase stops: a dead rule is deleted
+/// at prepare and plans nothing.
 pub(crate) fn chase(normalized: &mut NormalizedQuery, schema: &Schema, finds: &[FindTerm]) {
     #[cfg(any(test, feature = "chase-off"))]
     if DISABLED.with(std::cell::Cell::get) {
@@ -119,11 +137,21 @@ pub(crate) fn chase(normalized: &mut NormalizedQuery, schema: &Schema, finds: &[
     // chain avoids the candidate, so the relation stays a forest rooted
     // in participating occurrences (module doc, chains and support).
     let mut support: Vec<Option<usize>> = vec![None; normalized.occurrences.len()];
-    while let Some((b_idx, a_idx, statement)) =
-        removable(normalized, schema, &output_vars, &support)
-    {
-        normalized.occurrences[b_idx].role = Role::Eliminated(statement);
-        support[b_idx] = Some(a_idx);
+    loop {
+        if let Some((b_idx, a_idx, statement)) =
+            removable(normalized, schema, &output_vars, &support)
+        {
+            normalized.occurrences[b_idx].role = Role::Eliminated(statement);
+            support[b_idx] = Some(a_idx);
+            continue;
+        }
+        if evaluate::fold_step(normalized, schema, &output_vars) {
+            if normalized.dead.is_some() {
+                return; // statically empty: nothing left to rewrite
+            }
+            continue;
+        }
+        break;
     }
 }
 
@@ -295,10 +323,11 @@ fn scalar_positions_only(resolved: &Resolved) -> bool {
 /// Whether `var` is dead outside occurrence `b_idx`: not an output
 /// variable, not compared in any residual (whole-value or word), not in
 /// any anti-probe's bindings, and neither bound nor read as a
-/// membership point by any other non-eliminated occurrence. Eliminated
-/// occurrences don't count as references — their reads are already
-/// discharged by their own containment proofs, which is what lets
-/// chains close in the fixpoint.
+/// membership point by any other non-discharged occurrence. Eliminated
+/// and folded occurrences don't count as references — their reads are
+/// already discharged (by a containment proof, or by the prepare-time
+/// evaluation whose whole effect now rides sibling filter lists) —
+/// which is what lets chains close in the fixpoint.
 fn var_is_dead(
     normalized: &NormalizedQuery,
     b_idx: usize,
@@ -345,7 +374,7 @@ fn var_is_dead(
     }
     normalized.occurrences.iter().enumerate().all(|(idx, occ)| {
         idx == b_idx
-            || matches!(occ.role, Role::Eliminated(_))
+            || occ.role.discharged()
             || (!occ.vars.iter().any(|(_, v)| *v == var)
                 && !occ.filters.iter().any(|filter| {
                     matches!(

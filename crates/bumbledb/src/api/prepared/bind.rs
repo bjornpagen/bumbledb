@@ -295,6 +295,16 @@ pub(super) fn resolve_predicates(
     latched: &mut u32,
 ) -> Result<bool> {
     for (occ_idx, occurrence) in plan.occurrences_mut().iter_mut().enumerate() {
+        // A discharged occurrence (chase-eliminated or chase-folded)
+        // resolves nothing: an eliminated occurrence's lists are empty,
+        // and a folded occurrence's retained filter list is EXPLAIN's
+        // picture only — plan-constant by the fold's own conditions,
+        // never evaluated, so its slots stay empty and never count
+        // toward the latch (`plan/chase/evaluate.rs`).
+        if occurrence.role.discharged() {
+            debug_assert!(occurrence.selections.is_empty());
+            continue;
+        }
         // Templates are mutable for exactly one write: the literal latch
         // — a resolved `PendingIntern` becomes its `Const::Word` in
         // place, once, permanently (the dictionary is append-only, the
@@ -385,7 +395,12 @@ fn resolve_selection_into(
             };
             out.extend_from_slice(words);
         }
-        Const::WordSet(_) => unreachable!("lowering emits ParamSet markers, never resolved sets"),
+        // A plan-constant set (the chase-evaluator's fold —
+        // `plan/chase/evaluate.rs`): pre-resolved at prepare, copied
+        // through verbatim; nothing to look up, nothing pending, and it
+        // never counts as an unresolved literal (the latch's fast path
+        // stays reachable). Never empty: |S| == 0 killed the rule.
+        Const::WordSet(words) => out.extend_from_slice(words),
         Const::PendingIntern { .. } => unreachable!("latched or short-circuited above"),
     }
     Ok(true)
@@ -455,7 +470,20 @@ fn resolve_filter_into(
                     write_word_set_value(dst, words);
                     return Ok(true);
                 }
-                Const::WordSet(_) => unreachable!("templates carry ParamSet markers"),
+                // A plan-constant set (the chase-evaluator's fold):
+                // pre-resolved at prepare — copy through into the
+                // slot's pooled `WordSet` exactly like a bound param
+                // set, with no per-execution work and no latch traffic.
+                // (Attached sets land on participating occurrences,
+                // whose Eq compares `split_filters` routes into
+                // selections — this arm exists for the shape's
+                // completeness, not a live path.)
+                Const::WordSet(words) => {
+                    debug_assert_eq!(*op, CmpOp::Eq, "plan-constant sets ride Eq");
+                    write_compare(dst, *field, *op, None);
+                    write_word_set_value(dst, words);
+                    return Ok(true);
+                }
                 Const::PendingIntern { .. } => unreachable!("latched or short-circuited above"),
             };
             write_compare(dst, *field, *op, Some(resolved));

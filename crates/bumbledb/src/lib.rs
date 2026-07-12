@@ -102,8 +102,8 @@ pub use api::prepared::{
     BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
 };
 pub use api::stats::{
-    CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, GuardStats,
-    NodeStats, PinnedRows, RuleStats,
+    CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
+    GuardStats, NodeStats, PinnedRows, RuleStats,
 };
 pub use error::{Direction, Error, OverflowKind, Result};
 pub use interval::Interval;

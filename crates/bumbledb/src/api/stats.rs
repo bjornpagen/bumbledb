@@ -80,6 +80,10 @@ pub struct RuleStats {
     /// exists in the plan; this surface renders the marks. Empty for
     /// guard probes (single-atom queries have nothing to pair).
     pub eliminated: Vec<EliminatedOccurrence>,
+    /// Occurrences the chase-evaluator folded (`plan/chase/evaluate.rs`),
+    /// read straight off the rule plan's `Role::Folded` marks exactly as
+    /// `eliminated` reads its own. Empty for guard probes.
+    pub folded: Vec<FoldedOccurrence>,
     /// Per participating occurrence, in occurrence-id order: the
     /// statistics the rule's plan was costed with — every node `estimate`
     /// is estimated from (pinned rows at prepare), so a drifted plan is
@@ -112,6 +116,31 @@ pub struct EliminatedOccurrence {
     /// The statement rendered in the `schema!` algebra notation
     /// (`schema/render.rs`), e.g. `Posting(account) <= Account(id)`.
     pub rendered: String,
+}
+
+/// One chase-folded occurrence (`plan/chase/evaluate.rs`): a closed
+/// atom evaluated against its sealed extension at prepare — never
+/// joined, its view never bound, its image never built; the surviving
+/// id-set rides the siblings' selection machinery as a plan constant.
+/// EXPLAIN's line: `folded: Kind{mastered == true} → 3 ids` (negated:
+/// `folded: !Kind{…} → 3 ids rejected` — the attached set is then the
+/// complement).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldedOccurrence {
+    /// The occurrence index (`OccId`) in the normalized occurrence table.
+    pub occurrence: u16,
+    /// The folded occurrence's relation name.
+    pub relation: String,
+    /// The evaluated atom's picture — relation and filters in the rule
+    /// notation's value formats (e.g. `Currency{minor_units == 0}`;
+    /// handles print as plain row ids v0).
+    pub rendered: String,
+    /// `|S|` — how many sealed extension rows satisfied the filters.
+    pub ids: u64,
+    /// Whether the folded occurrence was negated: the attached
+    /// membership is then the complement (extension minus `S`), and the
+    /// `ids` rows are what the deleted anti-probe would have rejected.
+    pub negated: bool,
 }
 
 /// One occurrence's pinned prepare-time statistics: what the plan was

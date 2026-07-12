@@ -93,8 +93,10 @@ impl<S> PreparedQuery<'_, S> {
                 rules: vec![RuleStats {
                     nodes: Vec::new(),
                     // A guard probe is a single-atom query: the chase has
-                    // nothing to pair, so no marks can exist.
+                    // nothing to pair and nothing to fold, so no marks
+                    // can exist.
                     eliminated: Vec::new(),
+                    folded: Vec::new(),
                     // Classification precedes statistics: a guard probe
                     // reads none, so nothing is pinned.
                     pinned: Vec::new(),
@@ -153,6 +155,7 @@ impl<S> PreparedQuery<'_, S> {
                 ExecPlan::GuardProbe(_) => RuleStats {
                     nodes: Vec::new(),
                     eliminated: Vec::new(),
+                    folded: Vec::new(),
                     pinned: Vec::new(),
                     emitted,
                     absorbed,
@@ -195,6 +198,7 @@ impl<S> PreparedQuery<'_, S> {
             rules: vec![RuleStats {
                 nodes: Vec::new(),
                 eliminated: Vec::new(),
+                folded: Vec::new(),
                 pinned: Vec::new(),
                 emitted: 0,
                 absorbed: 0,

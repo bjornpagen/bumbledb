@@ -70,8 +70,7 @@ relation), *JIT/codegen* (refused).
 
 ## The PRDs
 
-Phase C — the folds:
-- [07 — The chase-evaluator: folding stage-zero atoms](07-chase-evaluator.md)
+Phase C — the folds: complete.
 
 Phase D — the surface:
 - [11 — Handles everywhere: render, notation, cookbook](11-handles-everywhere.md)

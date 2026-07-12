@@ -7,6 +7,7 @@
 mod chase;
 mod closed;
 mod contradiction;
+mod fold;
 mod identity_bytes;
 mod measure;
 mod pack;

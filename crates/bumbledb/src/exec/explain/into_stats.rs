@@ -21,7 +21,9 @@ impl CountingCounters {
         pinned: Vec<crate::api::stats::PinnedRows>,
         absorbed: u64,
     ) -> crate::api::stats::RuleStats {
-        use crate::api::stats::{CoverStats, EliminatedOccurrence, NodeStats, RuleStats};
+        use crate::api::stats::{
+            CoverStats, EliminatedOccurrence, FoldedOccurrence, NodeStats, RuleStats,
+        };
         let nodes = plan
             .nodes()
             .iter()
@@ -77,9 +79,34 @@ impl CountingCounters {
                 })
             })
             .collect();
+        // The folded occurrences, read straight off the plan's
+        // `Role::Folded` marks (`plan/chase/evaluate.rs` — the
+        // Eliminated precedent: no separate list exists); the picture
+        // renders from the occurrence's retained filter list.
+        let folded = plan
+            .occurrences()
+            .iter()
+            .filter_map(|occurrence| {
+                let Role::Folded(mark) = occurrence.role else {
+                    return None;
+                };
+                Some(FoldedOccurrence {
+                    occurrence: occurrence.occ_id.0,
+                    relation: schema.relation(occurrence.relation).name().to_owned(),
+                    rendered: crate::plan::chase::evaluate::folded_picture(
+                        schema,
+                        occurrence.relation,
+                        &occurrence.filters,
+                    ),
+                    ids: u64::from(mark.ids),
+                    negated: mark.negated,
+                })
+            })
+            .collect();
         RuleStats {
             nodes,
             eliminated,
+            folded,
             pinned,
             emitted: self.emits,
             absorbed,

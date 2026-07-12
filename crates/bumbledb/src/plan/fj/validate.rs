@@ -78,7 +78,7 @@ fn build_occurrences(
                         .filter(|v| occ_vars.contains(v))
                         .collect()]
                 }
-                Role::Eliminated(_) => Vec::new(),
+                Role::Eliminated(_) | Role::Folded(_) => Vec::new(),
             };
             let key_widths: Vec<u16> = trie_schema
                 .iter()
@@ -109,10 +109,12 @@ fn build_occurrences(
             // negated view just means the anti-probe never rejects. A
             // chase-eliminated occurrence carries nothing: its filters
             // are implied by the containment and the key, so nothing is
-            // resolved, probed, or scanned for it (`plan/chase.rs`).
-            // Var-sourced membership filters leave the view filter list
-            // entirely (positive and negated): they execute inside the
-            // join.
+            // resolved, probed, or scanned for it (`plan/chase.rs`). A
+            // chase-FOLDED occurrence keeps its filter list but empties
+            // its selections: the filters are EXPLAIN's fold picture
+            // (`plan/chase/evaluate.rs::folded_picture`) — never
+            // resolved, probed, or scanned (`Role::discharged`, read by
+            // every execution-side loop).
             let view_filters: Vec<FilterPredicate> = occurrence
                 .filters
                 .iter()
@@ -121,7 +123,7 @@ fn build_occurrences(
                 .collect();
             let (selections, filters) = match occurrence.role {
                 Role::Positive => split_filters(&view_filters),
-                Role::Negated => (Vec::new(), view_filters),
+                Role::Negated | Role::Folded(_) => (Vec::new(), view_filters),
                 Role::Eliminated(_) => (Vec::new(), Vec::new()),
             };
             PlanOccurrence {
@@ -343,19 +345,12 @@ pub fn validate(
     // these occurrences, so no Eq-constant can sit in `filters`. The real
     // producers `check_selections` guards against are hand-built
     // `PlanOccurrence`s (tests, future callers); the executor-side twin
-    // is a debug_assert too. The leading non-negated region only
-    // (normalization numbers positives first, and elimination never
-    // reorders): a negated occurrence's Eq-constants legitimately live
-    // in its filter list, and an eliminated occurrence's lists are empty
-    // (see `build_occurrences`).
-    debug_assert!({
-        let leading = normalized
-            .occurrences
-            .iter()
-            .take_while(|o| o.role != Role::Negated)
-            .count();
-        check_selections(&occurrences[..leading]).is_ok()
-    });
+    // is a debug_assert too. `check_selections` judges participating
+    // occurrences only: a negated occurrence's Eq-constants legitimately
+    // live in its filter list, a folded occurrence retains its
+    // pre-split list for EXPLAIN, and an eliminated occurrence's lists
+    // are empty (see `build_occurrences`).
+    debug_assert!(check_selections(&occurrences).is_ok());
 
     let distinct_bindings = provably_distinct(normalized, schema);
     let skip_free = nodes.iter().all(|n| n.sink_relevant);

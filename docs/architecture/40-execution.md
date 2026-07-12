@@ -271,14 +271,22 @@ and stays a non-goal.
 
 ## Planner
 
-**The chase: containment-implied occurrence elimination under accepted
-statements.** Placement: after normalization, before statistics and the DP,
-**per rule and independently** — a union's rules are independent conjunctive
-bodies, so the chase distributes over them with no cross-rule state and no new
-theory, and a rule shrinking below its cover requirements re-validates like any
-rule — a fixpoint over the occurrence table's `Role` sum (`plan/chase.rs`) that
-marks provably redundant positive occurrences `Role::Eliminated(statement)`; a
-mark, never a removal, so occurrence ids never move. An accepted containment
+**The chase: elimination and evaluation.** Placement: after normalization,
+before statistics and the DP, **per rule and independently** — a union's rules
+are independent conjunctive bodies, so the chase distributes over them with no
+cross-rule state and no new theory, and a rule shrinking below its cover
+requirements re-validates like any rule — one fixpoint over the occurrence
+table's `Role` sum (`plan/chase.rs`) running two rewrites that expose each
+other: **elimination** marks provably redundant positive occurrences
+`Role::Eliminated(statement)`, and **evaluation** (`plan/chase/evaluate.rs`)
+marks prepare-evaluable closed-relation occurrences `Role::Folded` — marks,
+never removals, so occurrence ids never move. Elimination removes atoms that
+statements prove redundant; evaluation removes atoms whose extension is
+stage-0-known by *running them at prepare*: `Kind(id: k, mastered == true)` is
+not a join to plan — it is a three-element id-set computed before the DP ever
+sees the query, residual cost zero.
+
+*Elimination.* An accepted containment
 `A(X | φ) <= B(Y | ψ)` makes the query's join of `A` to `B` on X→Y redundant
 when four conditions hold:
 
@@ -314,6 +322,70 @@ and a larger DP, and is illegal under an aggregate sink (D2's own rule), while
 elimination is sink-independent and pays once at plan time. **Reverses if:**
 measured plan-time cost of the fixpoint exceeds its execution savings on the
 ledger suite — implausible at the 20-occurrence cap.
+
+*Evaluation — the fold.* A positive occurrence `C` of a closed relation is
+**foldable** when every one of these holds (strict; any failure leaves the atom
+to join against its virtual image, which is L1-resident and always correct):
+
+1. Every variable bound by `C` except at most one is *dead outside `C`* (no
+   head use, no other occurrence, no residual/anti-probe/point-probe use). The
+   at-most-one live variable must be bound at `C`'s **id position**
+   `FieldId(0)` — the join variable `k` — and some other participating
+   occurrence must bind `k` (the membership set needs a home).
+2. `C` carries only Eq/range/Allen/membership filters over its own columns
+   with prepare-resolvable constants. A param-bearing filter REFUSES the fold
+   in v0 (the bind-time fold variant is recorded; trigger: a measured win in
+   the calendar-family profile); measure filters refuse too — their ray error
+   is a per-execution error, and evaluation would move it to prepare.
+3. `C` is not negated (negated atoms fold to the complement — below).
+
+The fold evaluates `C`'s filters against the sealed extension rows at prepare
+(n ≤ 256, encoded-word compares and the scalar Allen classify — never a batch
+kernel), producing the surviving id-set `S`. `|S| ≥ 1` with a live `k`: `C` is
+marked `Role::Folded` and `S` attaches to every other occurrence binding `k`
+as a **plan-constant membership** (`Eq` against `Const::WordSet`) — exactly
+the param-set selection machinery, except the set is pre-resolved: a
+set-bound selection level probed once per element with the survivor union,
+the machinery making exactly the choices it makes for a bound param set
+today. **Nothing new executes**, and a plan-constant set never counts as an
+unresolved literal (the literal latch's fully-resolved fast path stays open).
+`|S| == 0`: the rule is **statically empty** — the fold's rule-death channel
+(`NormalizedQuery::dead`, rendered `folded to ∅: Kind{mastered == true}`),
+deleted at prepare exactly like a normalize-time death. No live `k` (a pure
+constant gate): `|S| ≥ 1` deletes the atom outright and `|S| == 0` kills the
+rule — but only a **var-less** gate may delete: a dead-but-bound variable
+still multiplies an aggregate's fold domain (the binding set is over all query
+variables — D2), so a var-binding guard refuses.
+
+**The payload refusal, recorded:** a closed atom with a live non-id variable —
+payload escaping to the head ("return each event's severity rank") — keeps its
+join against the virtual image: the join is L1-resident, generation-immortal,
+and the DP prices it honestly. Folding payload projection would require value
+substitution into the head, a rewrite class with real complexity and no
+measured need. Refused; trigger: the calendar family showing vocabulary-join
+cost above noise.
+
+**The complement rule (negated closed atoms).** `!Kind(id: k, mastered ==
+true)` with `k` bound positively rejects a binding iff `k ∈ S` (the id is the
+whole key), so it folds to membership in the **COMPLEMENT** (extension ids
+minus `S`) — same machinery, complement computed at prepare. The directions,
+pinned: `|S| == 0` means the anti-probe **rejects nothing** — the atom deletes
+outright and the rule is NOT empty (no domain reasoning needed: `k ∉ ∅` holds
+for every `k`); an **empty complement** (`S` = the whole extension) means
+every binding is rejected — the rule is dead. The complement rewrite itself is
+sound only under a **domain guarantee** — `k ∉ S ⟺ k ∈ complement` requires
+`k` inside the extension ids, and an out-of-extension `k` would survive the
+probe yet fail the membership. Two witnesses: `k` bound at the id position of
+another participating occurrence of the same closed relation, or a binder
+whose field carries an accepted containment into the closed relation's id
+(with the statement's φ carried literally by that occurrence). No witness →
+the fold refuses and the anti-probe stays.
+
+EXPLAIN reports folds beside eliminations, off the `Role::Folded` marks:
+`folded: Kind{mastered == true} → 3 ids` (negated:
+`folded: !Kind{…} → 3 ids rejected`); the differential off-switch
+(`with_chase_disabled`) covers the evaluator inside the same fixpoint, and the
+dual-run corpus pins byte-identical results — the fold is never semantic.
 
 **Rule subsumption, the restricted witness.** After elimination, if one rule's
 normalized body equals a sibling's *modulo the filters elimination removed* —

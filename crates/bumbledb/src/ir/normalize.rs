@@ -30,6 +30,7 @@ mod place_comparisons;
 pub use dnf::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
 #[cfg(any(test, feature = "fold-off"))]
 pub use fold::with_fold_disabled;
+pub(crate) use fold::{decoded_interval, decoded_scalar, render_const};
 pub(crate) use lower_literal::{fixed_bytes_const, lower_literal};
 pub use normalize::normalize;
 
@@ -44,7 +45,7 @@ pub struct OccId(pub u16);
 /// flag plus an `eliminated: Option<StatementId>` would admit
 /// negated ∧ eliminated, a state the chase's conditions forbid
 /// (`plan/chase.rs`), and index-shifting removal would move every
-/// [`OccId`] downstream. One occurrence table holds all three states;
+/// [`OccId`] downstream. One occurrence table holds all four states;
 /// occurrence ids never move.
 ///
 /// - `Positive`: joins the plan — the only role
@@ -55,23 +56,61 @@ pub struct OccId(pub u16);
 /// - `Eliminated`: a positive occurrence the chase removed — the mark
 ///   carries the containment statement that justified it and doubles
 ///   as the EXPLAIN record; no separate eliminated-list exists.
+/// - `Folded`: a closed-relation occurrence the chase **evaluated at
+///   prepare** (`plan/chase/evaluate.rs`): its filters ran against the
+///   sealed extension and the atom's whole contribution became a
+///   plan-constant membership set on its siblings (or nothing at all,
+///   for a satisfied guard). Unlike `Eliminated`, a folded occurrence
+///   may have been negated — the mark records the polarity because the
+///   occurrence's own role no longer does. The filters stay on the
+///   occurrence (EXPLAIN renders them); nothing downstream resolves,
+///   probes, or scans them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Positive,
     Negated,
     Eliminated(StatementId),
+    Folded(FoldedMark),
+}
+
+/// The evaluator's mark (`plan/chase/evaluate.rs`): the EXPLAIN record
+/// of a fold, kept `Copy`-small — the id set itself was attached to the
+/// sibling occurrences' filter lists at fold time and needs no second
+/// home here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FoldedMark {
+    /// `|S|` — how many sealed extension rows satisfied the occurrence's
+    /// filters (≤ the 256-row extension cap, hence `u16`).
+    pub ids: u16,
+    /// Whether the folded occurrence was negated: the attached set is
+    /// then the COMPLEMENT (extension minus `S`) and EXPLAIN prints the
+    /// `!` polarity the role no longer carries.
+    pub negated: bool,
 }
 
 impl Role {
     /// **The** participates-in-planning predicate: whether the
     /// occurrence joins the plan — enters the DP, appears in subatoms,
     /// binds variables, and counts toward plan validity. Negated
-    /// occurrences only reject bindings; eliminated occurrences are
-    /// proven redundant (`plan/chase.rs`). Every planner, stats, and
-    /// witness iteration routes through this one match.
+    /// occurrences only reject bindings; eliminated and folded
+    /// occurrences are proven redundant (`plan/chase.rs`). Every
+    /// planner, stats, and witness iteration routes through this one
+    /// match.
     #[must_use]
     pub fn participates(self) -> bool {
         matches!(self, Self::Positive)
+    }
+
+    /// Whether the chase discharged this occurrence from execution
+    /// entirely (eliminated or folded): no statistics read, no view, no
+    /// image, no predicate resolution, no selection probe — the negative
+    /// space of [`Role::participates`] that negated occurrences (which
+    /// still probe through their anti-probes) do **not** share. Every
+    /// execution-side skip routes through this one predicate
+    /// (`api/prepared/{bind,build,run_join}.rs`).
+    #[must_use]
+    pub fn discharged(self) -> bool {
+        matches!(self, Self::Eliminated(_) | Self::Folded(_))
     }
 }
 
@@ -267,17 +306,23 @@ pub struct NormalizedQuery {
     /// ([`PlacedDuration`]).
     pub duration_residuals: Vec<PlacedDuration>,
     /// Anti-probe descriptors, one per negated occurrence, in occurrence
-    /// order.
+    /// order — minus the ones the chase-evaluator folded away
+    /// (`plan/chase/evaluate.rs` deletes a folded negated occurrence's
+    /// descriptor: the rejection it encoded became a plan-constant
+    /// complement membership on the siblings, or provably never fired).
     pub anti_probes: Vec<AntiProbe>,
     /// Every variable's binding-slot width — the [`SlotWidth`] layout,
     /// exported to the plan witness.
     pub slot_widths: BTreeMap<VarId, SlotWidth>,
-    /// The statically-empty verdict (`fold.rs`): `Some` iff the rule's
-    /// constant predicates are mutually unsatisfiable — the rendered
-    /// killing predicate (e.g. `R: a ∈ [8, 19] ∧ a == 3`), because
-    /// EXPLAIN must print what refuted the rule. A dead rule is deleted
-    /// at prepare (`api/prepared/build.rs`); a program of only dead
-    /// rules prepares to `ExecPlan::Empty`.
+    /// The statically-empty verdict: `Some` iff the rule provably
+    /// denotes ∅ on constants alone — the rendered killing predicate
+    /// (e.g. `R: a ∈ [8, 19] ∧ a == 3`), because EXPLAIN must print what
+    /// refuted the rule. Two writers, one channel: the normalization
+    /// fold (`fold.rs`, mutually unsatisfiable constant predicates) and
+    /// the chase-evaluator (`plan/chase/evaluate.rs`, a closed atom
+    /// whose prepare-time evaluation empties — `folded to ∅: …`). A dead
+    /// rule is deleted at prepare (`api/prepared/build.rs`); a program
+    /// of only dead rules prepares to `ExecPlan::Empty`.
     pub dead: Option<String>,
 }
 
