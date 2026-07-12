@@ -592,7 +592,7 @@ fn a_stored_row_for_a_closed_relation_is_the_finding() {
     );
 }
 
-// --- Compiled subsets (docs/prd-comptime/04-compiled-subsets.md): the
+// --- Compiled subsets (docs/architecture/30-dependencies.md): the
 // closed-target and constant-source arms of the sweep.
 
 /// Severity closed {pages: bool} = Low(false) | Med(true) | High(true),

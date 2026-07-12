@@ -219,7 +219,7 @@ pub enum StatementDescriptor {
 
 /// The extension-row cap: a vocabulary larger than 256 is policy data
 /// wearing a vocabulary costume, and the cap keeps every compiled word-set
-/// a fixed 4×u64 bitset (`docs/prd-comptime/README.md`, the refusal —
+/// a fixed 4×u64 bitset (`docs/architecture/10-data-model.md`, the refusal —
 /// *trigger* for lifting it: a census sighting).
 pub const MAX_EXTENSION_ROWS: usize = 256;
 
@@ -475,7 +475,7 @@ impl Statement {
 /// — the synthetic id field (the declaration index) followed by each
 /// intrinsic value's canonical encoding. Values encode ONCE, at validate,
 /// and never again — the staging law applied to the feature itself
-/// (`docs/prd-comptime/README.md`).
+/// (`docs/architecture/10-data-model.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealedRow {
     pub handle: Box<str>,

@@ -171,8 +171,7 @@ The *signature* is the relation blocks — names and typed fields; the
 Rust: the macro is a compiler front-end that assigns these tokens the
 calculus's semantics, and its grammar is open-ended and gate-governed — a
 statement form enters when it carries an enforcement plan, never before.
-(Surface shown as ruled by the algebra pass, `docs/prd-algebra/`; where the
-code still speaks a pre-algebra name, that set is the gap ledger.)
+
 
 ### The signature — six types and the vocabulary form
 

@@ -164,7 +164,7 @@ pub enum SchemaError {
     /// policy, not an intrinsic property (the intrinsic-vs-policy law) —
     /// rays live in ordinary relations, where the witnessed write that
     /// eventually closes them is expressible
-    /// (`docs/prd-comptime/README.md`, the refusal).
+    /// (`docs/architecture/10-data-model.md`, the refusal).
     ExtensionIntervalRay {
         relation: RelationId,
         row: usize,
@@ -304,7 +304,7 @@ pub enum SchemaError {
     /// v0: a pointwise judgment against a closed relation would mix the
     /// coverage walk with virtual storage, and a constant source's
     /// coverage demand has no delete to re-judge it under
-    /// (`docs/prd-comptime/04-compiled-subsets.md`, the refusal —
+    /// (`docs/architecture/30-dependencies.md`, the refusal —
     /// *trigger* for lifting it: a census sighting). Carries the closed
     /// relation.
     ClosedContainmentInterval {

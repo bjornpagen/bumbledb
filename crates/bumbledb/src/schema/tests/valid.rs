@@ -367,7 +367,7 @@ fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
     let schema = decl.validate().expect("valid");
     // The containment compiles to the answer set itself — no key search,
     // no permutation: Currency's two rows, both unselected survivors
-    // (`docs/prd-comptime/04-compiled-subsets.md`).
+    // (`docs/architecture/30-dependencies.md`).
     assert_eq!(
         schema.statement(StatementId(2)).resolved,
         Resolved::ClosedContainment {

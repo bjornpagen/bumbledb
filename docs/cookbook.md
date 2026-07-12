@@ -10,7 +10,7 @@ form, the interval denotation, the modeling discipline, derived relations),
 judgments and their theorems), `20-query-ir.md` (query semantics; § the query
 notation is the grammar the recipes' query comments are written in), `70-api.md`
 (the `schema!` grammar, conditional writes). Refusals cited below live in
-`docs/prd-algebra/README.md`'s ledger.
+the architecture chapters they cite.
 
 Every schema below compiles and validates verbatim against the current engine —
 `crates/bumbledb-query/tests/cookbook.rs` duplicates each block token-for-token

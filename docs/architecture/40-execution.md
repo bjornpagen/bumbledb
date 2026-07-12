@@ -36,7 +36,7 @@ inputs fixed there — the ladder the comptime pass implemented end to end:
 **The boundary clause, constitutional: folding produces data, never code.** Plans,
 id-sets, masks, word-sets, latched words — consumed by fixed, asm-gated, measured
 kernels. No JIT, ever: runtime-generated code cannot be audited by the disassembly
-gates or pinned by the fact ledger (`docs/prd-comptime/README.md` records the
+gates or pinned by the fact ledger (§ the staging law records the
 refusal with its derivation).
 
 **Pins acknowledge; they never re-fix inputs.** A later stage may *record* that an

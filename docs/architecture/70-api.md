@@ -288,7 +288,7 @@ proposition the commit checks in one integer compare.
   guard runs first, exactly as prepared queries run it at every execution entry —
   a witness snapshot of another database is the typed `ForeignSnapshot`.
 - **The witness is the snapshot, never an integer** (recorded refusal,
-  `docs/prd-algebra/README.md`): a snapshot is evidence — its generation was read
+  recorded): a snapshot is evidence — its generation was read
   inside its own transaction — where an integer parameter would be a claim a
   caller could fabricate or stale-cache (parse, don't validate). `Snapshot`
   exposes no `generation()` accessor (decided: the witness consumes the

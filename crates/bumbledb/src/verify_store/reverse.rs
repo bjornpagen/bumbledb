@@ -54,7 +54,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             // A closed-target statement never emits `R` traffic — its
             // target side is vacuous by construction (axioms don't
             // delete), so a stored edge's very existence is the finding
-            // (`docs/prd-comptime/04-compiled-subsets.md`, the shape
+            // (`docs/architecture/30-dependencies.md`, the shape
             // criterion).
             s.push(StoreFinding::ClosedRelationEntry {
                 relation: target.relation,

@@ -230,7 +230,7 @@ fn check_outgoing(
 /// no `F` rows to ride the fact scan, so its outgoing statements
 /// re-verify here — each sealed φ-row probes its target exactly as a
 /// committed source fact would (domain quantification,
-/// `docs/prd-comptime/04-compiled-subsets.md`). Closed→closed statements
+/// `docs/architecture/30-dependencies.md`). Closed→closed statements
 /// re-run the compiled membership; validate refuted them at declaration,
 /// so a finding here means the schema witness and the store disagree
 /// about the theory itself.

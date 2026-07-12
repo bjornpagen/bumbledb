@@ -707,7 +707,7 @@ fn rejects_an_empty_interval_axiom() {
 
 #[test]
 fn rejects_a_ray_axiom() {
-    // The ray refusal (`docs/prd-comptime/README.md`): `[s, ∞)` says the
+    // The ray refusal (`docs/architecture/10-data-model.md`): `[s, ∞)` says the
     // theory's constant is still running, and a still-running span is
     // policy, not an intrinsic property — the write that eventually
     // closes it needs an ordinary relation. Both element domains.
@@ -801,7 +801,7 @@ fn rejects_a_user_declared_id_on_a_closed_relation() {
     );
 }
 
-// --- Compiled subsets (docs/prd-comptime/04-compiled-subsets.md): the
+// --- Compiled subsets (docs/architecture/30-dependencies.md): the
 // closed-containment roster.
 
 /// An interval-typed field on a closed relation, for the refusal tests.

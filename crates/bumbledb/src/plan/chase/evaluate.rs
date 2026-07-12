@@ -3,7 +3,7 @@
 //! evaluation).
 //!
 //! A closed relation's extension is sealed at validate — stage-0 data
-//! (`docs/prd-comptime/README.md`, the staging law). A query atom over
+//! (`docs/architecture/40-execution.md` § the staging law). A query atom over
 //! it whose filters are prepare-resolvable constants is therefore not a
 //! join to plan: the evaluator runs the filters against the sealed rows
 //! **at prepare**, producing the surviving id-set `S`, and the atom's

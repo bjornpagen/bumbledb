@@ -293,7 +293,7 @@ fixed extension.
   (materialized order below) — ordinary in every way and targetable: a reference
   to a closed relation is a plain u64 column plus a declared containment, like any
   reference. Nested closed-to-closed references are the same shape — no narrow
-  encoding arm, ever (`docs/prd-comptime/README.md`, the refusal).
+  encoding arm, ever (the recorded refusal).
 - **Intrinsic columns are value types only**: U64, I64, Bool, `bytes<N>`,
   Interval. `str` is refused — the handle IS the label and the renderer prints
   handles from the theory; interned columns on a virtual relation would force
@@ -302,7 +302,7 @@ fixed extension.
   type exists to nest; the historical note: an enum was a vocabulary, so the
   column would have nested
   one closed reference inside another as a type: the nested-closed-refs refusal
-  (`docs/prd-comptime/README.md`); declare the plain u64 + containment instead.
+  (the recorded refusal); declare the plain u64 + containment instead.
   `fresh` is refused — identity is the handle; axioms are never minted.
 - **The extension is validated at declaration and frozen by the fingerprint**:
   distinct handles; per-column typing through the one shared value check; interval
@@ -310,7 +310,7 @@ fixed extension.
   malformed ground axiom is a schema error, not corruption) and are bounded — a
   ray `[s, ∞)` says the theory's constant is still running, and a still-running
   span is policy, not an intrinsic property (the ray refusal,
-  `docs/prd-comptime/README.md`; rays stay honest values in ordinary relations);
+  recorded here; rays stay honest values in ordinary relations);
   1..=256 rows (an empty extension is a vocabulary of nothing — write no
   relation; a larger one is policy data wearing a vocabulary costume). Values are
   canonically encoded ONCE, at validate — the sealed rows carry fact bytes and
@@ -328,7 +328,7 @@ fingerprint says so. Policy *over* a vocabulary — what the application current
 decides about it (which currencies are enabled, which quarter is open) — lives in
 ordinary relations referencing the handle's id and changes by witnessed write. A
 vocabulary that must drift without a rebuild was never a vocabulary: declare an
-ordinary relation (the open-extension refusal, `docs/prd-comptime/README.md`).
+ordinary relation (the open-extension refusal, recorded here).
 
 ## Relations are sets of facts; the fact is its own identity
 
@@ -549,7 +549,7 @@ pushes the *same* fragment into `negated` with a point-membership binding
 (negation is a position in the query, not a kind of atom — `20-query-ir.md`);
 `free_busy` folds its span variable under `Pack`. Change what "busy" means —
 an added arm, an added guard — and every consumer follows at the next compile.
-**Refusal, permanent (`docs/prd-algebra/README.md`): no named-view registry in
+**Refusal, permanent: no named-view registry in
 the engine, ever.** A registry would be a second schema with none of the
 theory's guarantees — names resolved at run time, fragments outside the
 fingerprint, no typing fixpoint until use — while rustc already polices the
@@ -594,7 +594,7 @@ its busy claim and cannot add "…and the claim's span equals the attended
 event's span" — copied intervals and summed balances are computations, outside
 the ∀∃ vocabulary by the acceptance gate (`30-dependencies.md`: statements are
 projections and literal selections; expression agreement has no O(log n)
-enforcement plan). **Refusal, recorded (`docs/prd-algebra/README.md`): no
+enforcement plan). **Refusal, recorded: no
 arithmetic-agreement statements.** The answer is host discipline — one function
 owns each derivation, which the composition idiom above makes natural — plus,
 where wanted, an offline `verify_store`-grade re-derivation: re-run the

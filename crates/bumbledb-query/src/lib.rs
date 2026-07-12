@@ -30,7 +30,7 @@
 //! ```
 //!
 //! **Punning law (B, decided; the alternative is ledgered in
-//! docs/prd-algebra):** a bare field name binds a **clause-local variable
+//! docs/architecture/70-api.md):** a bare field name binds a **clause-local variable
 //! named after the field** — projection shorthand, Rust's struct-shorthand
 //! instinct. The same punned name in two atoms of one clause is a compile
 //! error, spanned at the second occurrence ("ambiguous punning — rename

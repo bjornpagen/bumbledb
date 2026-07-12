@@ -171,7 +171,7 @@ pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes:
 /// only the probe *results* are read here. Closed-target containments
 /// probe nothing: the compiled member set answers in one AND and one
 /// test, and an out-of-range word is simply a miss
-/// (`docs/prd-comptime/04-compiled-subsets.md`).
+/// (`docs/architecture/30-dependencies.md`).
 pub(super) fn check_source(
     txn: &WriteTxn<'_>,
     schema: &Schema,
@@ -339,7 +339,7 @@ pub(super) fn check_target(
                 // extension's φ-rows, scanned directly (≤256 rows, the
                 // delete path). Any axiom projecting to the
                 // disestablished tuple is a stranded source outright
-                // (`docs/prd-comptime/04-compiled-subsets.md`).
+                // (`docs/architecture/30-dependencies.md`).
                 if let Some(row) = closed_source_survivor(schema, plan, sid, guard) {
                     return Err(Error::ContainmentViolation {
                         statement: sid,

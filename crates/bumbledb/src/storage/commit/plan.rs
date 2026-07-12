@@ -55,7 +55,7 @@ pub(crate) struct FactOp<'d> {
     /// selection the fact satisfies: no guard bytes, no `R` traffic —
     /// the compiled member set is the whole plan, and the judgment is
     /// one AND and one test on the insert side
-    /// (`docs/prd-comptime/04-compiled-subsets.md`). Dead weight on a
+    /// (`docs/architecture/30-dependencies.md`). Dead weight on a
     /// delete op (removing a reference cannot violate an inclusion);
     /// only the insert-side judgment consumes it.
     pub(crate) memberships: Box<[MembershipOp]>,

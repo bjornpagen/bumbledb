@@ -403,7 +403,7 @@ fn validate_containment(
     // judgment against a closed target would mix the coverage walk with
     // virtual storage, and a constant source's coverage demand has no
     // delete-time re-judgment path — either closed side refuses
-    // (`docs/prd-comptime/04-compiled-subsets.md`; trigger: a census
+    // (`docs/architecture/30-dependencies.md`; trigger: a census
     // sighting). One check covers both sides: the positional type match
     // above makes the sides' interval positions identical.
     let source_closed = relations[source.relation.0 as usize].extension.is_some();
@@ -654,7 +654,7 @@ fn resolve_target_key(
 ) -> Result<Resolved, SchemaError> {
     let target_relation = &relations[target.relation.0 as usize];
 
-    // The compiled-subset branch (`docs/prd-comptime/04-compiled-subsets.md`):
+    // The compiled-subset branch (`docs/architecture/30-dependencies.md`):
     // a closed target is stage-1-known, so there is no key search, no
     // permutation, and no guard-width concern — the enforcement plan is
     // the answer set itself. The handle id is the one probe-able identity
@@ -919,7 +919,7 @@ fn validate_extension(
                     }
                 }
             })?;
-            // The ray refusal (`docs/prd-comptime/README.md`): `[s, ∞)`
+            // The ray refusal (`docs/architecture/10-data-model.md`): `[s, ∞)`
             // says the theory's constant is still running, and a
             // still-running span is policy, not an intrinsic property —
             // the witnessed write that eventually closes it needs an
