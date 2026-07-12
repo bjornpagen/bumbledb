@@ -21,7 +21,7 @@ use super::{apply, Const, FilterPredicate, View};
 /// The filter pass runs over the freshly decoded columns rather than being
 /// interleaved into the decode loop — the one storage scan is the expensive
 /// part, and sharing `apply`'s evaluator beats duplicating it inside the
-/// builder (deliberate simplification of the 30-execution doc's parenthetical).
+/// builder (deliberate simplification of the 40-execution doc's parenthetical).
 ///
 /// # Errors
 ///

@@ -73,8 +73,9 @@ language. **Reverses if:** never — owner axiom.
   burst; the design assumes **≥100 query executions per committed write generation**.
   Continuous high-frequency commits are out of the envelope (they would defeat the
   image cache by design).
-- **Latency budget:** p99 ≤ **10 ms** per warm prepared-query execution at the top scale
-  point, on the canonical machine. The first execution after a commit may additionally
+- **Latency budget:** p99 ≤ **10 ms** per warm prepared-query execution at scale L,
+  on the canonical machine. No scale-L corpus has been generated yet, so the budget
+  is informational at S and binds only when L exists. The first execution after a commit may additionally
   pay an image rebuild; rebuild spikes are exempt from the gate but reported by the
   benchmark. O(n) time-range, membership, and overlap scans must fit this budget or
   the range/stabbing-accelerator OPEN item triggers.
@@ -105,8 +106,8 @@ language. **Reverses if:** never — owner axiom.
   contract, bought for latency we don't need. A prepared query is `!Sync`.
   **Decision.** **Alternative:** partition the root cover across cores (per-core
   bindings/sinks, merge at the end). **Why it lost:** above. **Reverses if:** the
-  latency budget is violated on real workloads after single-core optimization is
-  exhausted.
+  latency budget is violated at scale L on real workloads after single-core
+  optimization is exhausted. An S-scale budget miss does not arm this trigger.
 - **The single writer is also the invariant story:** commit-time final-state judgment
   plus WriteTx point reads over the same view (`50-storage.md`, `70-api.md`) means
   check-then-act inside one write transaction cannot race — the class of TOCTOU bug
@@ -249,9 +250,9 @@ idiom; *SELECT FOR UPDATE / row locks / SERIALIZABLE retry* → the generation w
 (snapshot-witnessed `write_from`) plus WriteTx point reads under final-state
 judgment — locks protect what you remembered to lock; the witness protects
 everything the snapshot saw; *enum* → closed relation (a vocabulary is a relation
-whose rows are ground axioms, `10-data-model.md` § closed relations; the type is
-mid-funeral — it dies when the schema macro emits closed relations, and the
-value-type roster drops to six).
+whose rows are ground axioms; the type died when the schema macro began emitting
+closed-relation handles, as recorded by `10-data-model.md`'s obituary, and the
+value-type roster is six).
 
 ## Success criteria
 
@@ -278,9 +279,7 @@ value-type roster drops to six).
    it becomes a CI gate verbatim when CI exists.
 4. **Docs stay true** (stated intent, mechanized as rules 3/5 in
    `docs/architecture/README.md`: mechanisms name readers; code that contradicts a doc
-   amends the doc in the same change). Where the docs lead the code, the repo is in
-   its documented-broken state until the implementation catches up (`docs/prd/`) —
-   the process working, not failing.
+   amends the doc in the same change).
 
 **Decision: the primary benchmark is ledger-shaped.** **Alternative:** JOB.
 **Why it lost:** chasing a benchmark that is not the workload drags the

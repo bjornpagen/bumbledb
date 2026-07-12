@@ -37,9 +37,9 @@ impl Executor {
         }
         counters.node_entry(node_idx);
 
-        // Dynamic cover choice (§4.4): prefer the smallest Exact, else the
-        // smallest Estimate — the labels are load-bearing and never
-        // compared as the same quantity (post-mortem §40).
+        // Dynamic cover choice (§4.4): compare magnitudes first across
+        // Exact and Estimate alike; Exact wins only a magnitude tie.
+        // A full tie keeps the lowest subatom index (40-execution).
         let cover_sub = self.choose_cover(plan, node_idx, colts);
         let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
@@ -506,8 +506,9 @@ impl Executor {
         flow
     }
 
-    /// Chooses the cover with the fewest keys: smallest `Exact` wins;
-    /// otherwise the smallest `Estimate` (v0 rule, 30-execution).
+    /// Chooses the cover with the smallest magnitude; `Exact` wins only
+    /// a magnitude tie, and a full tie keeps the lowest subatom index
+    /// (v0 rule, 40-execution).
     fn choose_cover(&self, plan: &ValidatedPlan, node_idx: usize, colts: &[Colt]) -> usize {
         let node = &plan.nodes()[node_idx];
         let mut best: Option<(usize, KeyCount)> = None;

@@ -170,7 +170,7 @@ pub enum JoinPhase {
     Force,
 }
 
-/// Execution observability seam (30-execution): the normal path
+/// Execution observability seam (40-execution): the normal path
 /// instantiates [`NoopCounters`] — zero-sized, compiled to nothing; the
 /// EXPLAIN entry point (docs/architecture/40-execution.md) instantiates the counting variant.
 pub trait Counters {
@@ -425,7 +425,7 @@ struct NodeScratch {
 /// The executor scratch for one plan shape: per-execution cursor state and
 /// per-node buffers, sized once at construction. It does not borrow the
 /// plan — the same `&ValidatedPlan` is passed to [`Executor::execute`]
-/// (the prepared query owns both, the 30-execution doc).
+/// (the prepared query owns both, the 40-execution doc).
 pub struct Executor {
     batch: usize,
     /// Per occurrence: (current cursor, current trie level).

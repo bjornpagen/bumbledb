@@ -12,7 +12,7 @@ impl Sink for ProjectionSink {
             self.scratch[i] = bindings.get(source.plain_slot());
         }
         self.seen.insert(&self.scratch);
-        // The doc's first-emit signal (30-execution D2): once a projected
+        // The doc's first-emit signal (40-execution D2): once a projected
         // tuple lands — new or duplicate — the current suffix can only
         // multiply witnesses. The executor's sink_relevant gating
         // (run.rs's skip-absorption arm) decides how far the skip

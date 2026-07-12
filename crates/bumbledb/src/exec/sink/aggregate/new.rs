@@ -56,7 +56,7 @@ fn pack_slot(finds: &[FindSpec]) -> Option<usize> {
 impl AggregateSink {
     /// Builds the sink. `slot_count` is the plan's binding-slot count in
     /// **words** (an interval variable holds two — the `SlotWidth` layout);
-    /// `distinct_bindings` is the plan's elision flag (30-execution): when
+    /// `distinct_bindings` is the plan's elision flag (40-execution): when
     /// set, the seen-set is skipped entirely; `union` is the multi-rule
     /// regime (the seen-set keys head projections and spans rules).
     /// Unhinted construction (tests; production sinks are hint-sized).

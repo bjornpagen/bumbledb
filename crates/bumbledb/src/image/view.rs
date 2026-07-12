@@ -26,7 +26,7 @@ pub use build_with_filters::build_with_filters;
 /// the byte-order-normalized word for 8-byte columns, the raw byte for
 /// 1-byte columns. `Param` resolves at bind time through the evaluator's
 /// param slice; `PendingIntern` is a raw String/Bytes literal resolved to
-/// an intern-id word per execution (the 30-execution doc). Miss semantics
+/// an intern-id word per execution (the 40-execution doc). Miss semantics
 /// are per-operator: an `Eq` miss empties the whole query on this
 /// snapshot (the evaluator never sees it); any other operator resolves
 /// to the never-minted sentinel id, which `Ne` matches everywhere —
@@ -270,7 +270,7 @@ impl View {
     }
 
     /// The image position at view index `idx` (reader: COLT root
-    /// iteration, the 30-execution doc).
+    /// iteration, the 40-execution doc).
     ///
     /// # Panics
     ///
@@ -285,7 +285,7 @@ impl View {
     }
 
     /// Reclaims the survivor buffer for reuse (the caller-owned storage
-    /// discipline: buffers belong to the prepared query, the 30-execution doc).
+    /// discipline: buffers belong to the prepared query, the 40-execution doc).
     #[must_use]
     pub fn recycle(self) -> Vec<u32> {
         match self {

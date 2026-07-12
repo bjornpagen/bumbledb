@@ -310,7 +310,7 @@ impl FirstCol for ProjectionSinkForTest {
     }
 }
 
-// ---------- the 30-execution doc: vectorized execution ----------
+// ---------- the 40-execution doc: vectorized execution ----------
 
 /// Runs a plan at a given batch size.
 fn run_batched(

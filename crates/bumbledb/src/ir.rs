@@ -245,7 +245,7 @@ pub enum MaskTerm {
     Param(ParamId),
 }
 
-/// Comparison operators. `Eq`/`Ne` are legal for all seven types; order
+/// Comparison operators. `Eq`/`Ne` are legal for all six types; order
 /// operators only for U64/U64 and I64/I64 (no cross-type comparison, ever
 /// — and never intervals). `Allen { mask }` is **the** interval-pair
 /// comparison — two interval terms of one element type; satisfied iff

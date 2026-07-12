@@ -114,7 +114,8 @@ filters** (lowered negated atoms).
   two-word range filters.
 - **Residual comparisons** attach to the earliest plan node at which both sides are
   bound (computed at plan time, stored in the plan). The executor's node loop gains one
-  step: iterate cover → probe siblings → **evaluate the node's residuals** → recurse.
+  step: iterate cover → probe siblings → **evaluate the node's residuals** → enqueue
+  survivors for the next node.
   In vectorized execution, residuals run as batch survivor compaction after the probes.
 - **Anti-probe filters** attach exactly as residuals do — to the earliest node at
   which every variable of the negated atom is bound — and evaluate as: probe the
@@ -148,9 +149,20 @@ no residual concept; we own filter placement because there is no external optimi
   subatom qualifies (its variables are exactly the remainder), and GJ-style
   single-variable covers all qualify. The alternative — equality-checking a mixed
   cover's old variables per iterated entry — buys generality no plan shape here needs.
-- **Execution** (§3.3): recurse node by node — choose a cover, iterate it, extend the
-  binding, probe siblings, replace each occurrence's current trie, recurse; backtrack
-  restores.
+- **Execution** (§3.3 vocabulary, pipelined implementation): the root or an absorb
+  node supplies pending binding rows plus carried cursor sets. Each middle node
+  `pump`s those rows, chooses a cover per parent entry, and `probe_pass` batches
+  sibling probes across parents: hash, prefetch, load, then branchlessly compact
+  survivors. Survivors become the next node's pending rows; the leaf runs its batch
+  paths and emits complete bindings to the sink. D2 suffix skips cancel the origin
+  below the absorb node instead of unwinding a call stack.
+
+  **Deviation (paper §3.3):** the paper presents per-tuple recursive descent with
+  backtracking. BumbleDB accumulates work across node entries in the pipeline above
+  so deep nodes receive full batches. Origin cancellation is sound because a late
+  cancellation can only re-emit a row already held by the spanning seen-set:
+  cancellation skips work but cannot change the result under set semantics. The
+  paper's cross-node-entry-accumulation caveat is therefore retired, not pending.
 - **COLT** (§4.2): lazy tries — a node is offsets into the base columns or a forced
   map; roots iterate the base image (or filtered view) directly; forcing happens only
   on `get` or non-suffix `iter`. Under laziness the paper's build-phase "drop the
@@ -165,8 +177,11 @@ no residual concept; we own filter placement because there is no external optimi
   lowest subatom index (deterministic). A label-first rule ("an Exact
   always displaces an Estimate") iterated a 500-key forced map while a 7-row
   param-filtered view sat unforced beside it — the measured balance wrong-cover.
-- **`binary2fj` + conservative `factor()`** (§4.1): exactly per paper, over the DP
-  planner's left-deep output.
+- **`binary2fj` + conservative `factor()`** (§4.1): the paper's construction over the
+  DP planner's left-deep output, with one correction required by its own worked
+  example. Figure 8's literal pseudocode would visit the cover first, fail
+  `α.vars ⊆ avs(φ)`, and abandon the node; the engine starts candidates at index 1,
+  matching the prose intent that factors are drawn from the cover's siblings.
 
 **`ValidatedPlan` contents** (the witness type execution trusts): atom occurrences with
 field→column maps; the node list with subatom partitions; per-node cover sets; per-
@@ -177,8 +192,10 @@ downstream re-checks.
 
 ## Set semantics in the executor
 
-Bindings are **VarId-indexed slot arrays**, written in place by the recursion and read
-in place by sinks; plan variable order is therefore irrelevant to sinks. Slots are
+Bindings are **VarId-indexed slot arrays**. Each pipeline row carries the ancestor
+slot values needed below it; leaf batches provide varying cover words beside those
+outer slots, and sinks read both through one slot layout. Plan variable order is
+therefore irrelevant to sinks. Slots are
 words: an interval variable occupies two consecutive slots (start, end) and a
 `bytes<N>` variable its ⌈N/8⌉ padded words — multi-word values enter seen-sets,
 group keys, and probe keys as word tuples, the wordmap's native shape, and every
@@ -243,7 +260,8 @@ Two facts identical on all *bound* variables produce the same binding; the solut
 are membership; binding dedup as above; and the executor may **skip a plan suffix after
 the first witness** when (a) the active sink is the projection sink and (b) the suffix
 binds only variables outside the projection set — the emitted fact cannot change, so
-the recursion unwinds on the sink's first-emit signal. The skip is **never legal under
+the pipeline cancels that row's origin below its absorb node on the sink's first-emit
+signal. The skip is **never legal under
 an aggregate sink** (any new bound variable multiplies the binding set the fold is
 defined over). **The skip is per-rule**: each rule of a program executes its own plan,
 so a skip unwinds inside that rule only and never crosses rules — a later rule
@@ -553,10 +571,9 @@ with pitch-padded bases (`50-storage.md`). Scalar fallback everywhere, equal res
 test across batch sizes. **Vectorized execution is the default and only path** — a
 scalar "mode" exists solely as the degenerate batch size where useful for testing; a
 "vectorized mode" that wraps scalar loops without batching is the failure shape this
-sentence forbids. Honest caveat, stated:
-deep in the plan the batch source is the current subtrie, whose fanout on reference
-walks is often 1–10 — large batches are reliably available only at the root;
-cross-node-entry batch accumulation is future work, not assumed. **Reverses if:**
+sentence forbids. The former D4 caveat that only roots reliably see large batches is
+retired: middle-node pumps accumulate rows across parent entries, so deep probes see
+full batches even when each current subtrie has fanout 1–10. **Reverses if:**
 measured equal-or-worse than scalar on the ledger suite after honest tuning.
 
 **The scan-fold pushdown is column-hoisted.** When the last plan node is a single

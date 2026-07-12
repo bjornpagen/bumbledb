@@ -166,14 +166,18 @@ Mandate(account)     <= Account(id);   Mandate(org) <= Org(id);
 Mandate(account, active) -> Mandate;                    // pointwise key: one mandate per account per instant
 ```
 
-Families: key point lookups; postings for a holder/account over a time range;
-entries touching an account set (**param-set family** — the host-side union
-convention is retired with `ParamSet`); multi-hop joins across
-holders/accounts/postings/instruments/entries; balance-style aggregates by account
-and instrument; **latest-posting-per-account (Arg-restriction family)**;
+The 15 gated ledger families are: `point`, `containment_walk`, `chain`, `range`,
+`balance`, `stats`, `string`, `skew`, `spread`, `triangle`,
+`entries_for_account_set`, `postings_without_tag`,
+`latest_posting_per_account`, `mandate_at_instant`, and `mandate_overlap`. They
+cover key point lookups; postings for a holder/account over a time range; entries
+touching an account set (**param-set family** — the host-side union convention is
+retired with `ParamSet`); multi-hop joins across holders/accounts/postings/
+instruments/entries; balance-style aggregates; interned strings; skew; summary
+statistics; **latest-posting-per-account (Arg-restriction family)**;
 **postings-with-no-tag (negation family)**; **mandate-at-instant and
 mandate-overlap (interval families — membership probe and Allen-mask join)**; a
-cyclic-ish join for WCOJ honesty; a duplicate-witness projection. Data: seeded,
+cyclic join for WCOJ honesty; and a duplicate-witness projection. Data: seeded,
 reproducible, generated at 10⁵–10⁷ facts; the mandate generator emits both disjoint
 and adjacent intervals (the neighbor-probe boundary is a data case, not just a unit
 test).
@@ -187,7 +191,8 @@ execution + result materialization on both sides, decode excluded per the mappin
 table; warmup then repeats; statistic = per-family **median**; **every family must
 win**; warm timing gates, cold-after-commit reported alongside; canonical machine =
 the owner's. The suite is an explicit versioned query list in-repo; **the claim is
-void until re-earned on the new format**. The "ratchet" is a manually re-run report
+void until re-earned on the new format**. The 10 ms warm-p99 budget binds only at
+scale L; because no L corpus exists, S reports it as informational. The "ratchet" is a manually re-run report
 per meaningful change — not a CI gate. JOB and friends may be run for curiosity; they
 gate nothing.
 

@@ -227,7 +227,7 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// Whether the aggregate sink's binding seen-set is elided
-    /// (30-execution) — the regime observable for the batch-fold fast
+    /// (40-execution) — the regime observable for the batch-fold fast
     /// path. Per-query-shape: a single-rule program elides under its
     /// plan's distinct-bindings proof; a multi-rule program elides under
     /// the rule-disjointness composition (docs/architecture/

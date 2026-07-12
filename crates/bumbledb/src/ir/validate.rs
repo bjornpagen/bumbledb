@@ -182,7 +182,7 @@ impl ValidatedQuery {
     }
 
     /// Every param with its resolved type, in id order (bind-time checking,
-    /// The 30-execution doc). A set param's type is its *element* type.
+    /// The 40-execution doc). A set param's type is its *element* type.
     pub fn param_types(&self) -> impl Iterator<Item = (ParamId, &ValueType)> {
         self.param_types.iter().map(|(p, t)| (*p, t))
     }

@@ -99,7 +99,7 @@ impl<S> Snapshot<'_, S> {
         prepared.profile(&self.txn, self.cache, params)
     }
 
-    /// The export surface (`60-api.md` ETL story): a full-relation scan
+    /// The export surface (`70-api.md` ETL story): a full-relation scan
     /// yielding decoded dynamic facts (strings resolved; bytes<N> values
     /// are inline) in `row_id` order — a storage stream, not a query
     /// result set.

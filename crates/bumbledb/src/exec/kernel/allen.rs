@@ -35,10 +35,10 @@
 //! load per pair) trades `tbl` arithmetic for load-port pressure —
 //! prefer `tbl` in filter position (load ports busy streaming columns),
 //! the table load in residual position (gather context, load ports
-//! idle). Shipped: `tbl` in both positions; the sweep waits for PRD
-//! 16's family numbers.
+//! idle). Shipped: `tbl` in both positions; the sweep waits for the
+//! calendar family's numbers.
 //!
-//! NOTE (falsifier-shaped performance pins — recorded until PRD 16
+//! NOTE (falsifier-shaped performance pins — recorded until the calendar family
 //! earns numbers; no benchmark has run):
 //! - *dense-uniform-within-2×-of-hand-`INTERSECTS` at L1*: the uniform
 //!   kernel stays within 2× of a hand-written two-compare `INTERSECTS`
@@ -87,7 +87,7 @@ fn classify_code(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> u8 {
 /// (`m2max.mem.l2-resident-retire-bound`) a two-compare kernel beats
 /// the uniform one on µop count alone. The structure, if earned, is
 /// bind-time monomorphized selection (the sink-dispatch precedent — no
-/// hot-loop indirection). *Trigger:* PRD 16's calendar family showing
+/// hot-loop indirection). *Trigger:* the calendar family showing
 /// the filter phase owning enough of a family budget to buy it — pin
 /// the fraction before building the lever
 /// (`m2max.probe.pass-overhead`'s lesson).

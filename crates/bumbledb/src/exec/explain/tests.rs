@@ -332,7 +332,7 @@ fn guard_probe_queries_report_their_classification() {
 
 #[test]
 fn noop_counters_are_zero_sized_and_the_normal_path_carries_no_state() {
-    // The type-system proof (30-execution): the release path's counter
+    // The type-system proof (40-execution): the release path's counter
     // type occupies no memory and the executor stores no counter field
     // (counters are a call-site parameter, monomorphized away).
     assert_eq!(std::mem::size_of::<NoopCounters>(), 0);

@@ -14,7 +14,7 @@
 //! against, bit for bit (an aarch64 release build omits them: dead code
 //! is disallowed).
 //!
-//! Fold doctrine (30-execution, rewritten from measurement): **port
+//! Fold doctrine (40-execution, rewritten from measurement): **port
 //! topology decides, not lane count.**
 //! Every flag-writing scalar op (`adds/adcs/cmp/csel`) is confined to 3
 //! of the M2's 6 integer ALUs, so exact scalar summation caps at ~2.8
@@ -35,7 +35,7 @@
 //!
 //! Survivor compaction is the scalar cursor-write on every target: NEON has
 //! no compress instruction (that is SVE, which Apple Silicon lacks), and
-//! 30-execution names "NEON compress **or scalar cursor-write**" as the
+//! 40-execution names "NEON compress **or scalar cursor-write**" as the
 //! sanctioned shapes. No x86 intrinsics exist anywhere (doctrine).
 //!
 //! Fallback verification command (run where a cross std is installed):
@@ -59,7 +59,7 @@ pub mod reference;
 
 /// The NEON kernels (128-bit: 2 x u64 or 16 x u8 lanes).
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_code)] // the 30-execution doc: the one sanctioned unsafe module
+#[allow(unsafe_code)] // the 40-execution doc: the one sanctioned unsafe module
 mod neon;
 
 pub use allen::{

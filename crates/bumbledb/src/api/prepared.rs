@@ -1,6 +1,6 @@
 //! Prepared queries, parameters, and results (docs/architecture/40-execution.md) — the reusable
 //! execution object the allocation contract is written against
-//! (`docs/architecture/20-query-ir.md`, `30-execution.md`, `60-api.md`).
+//! (`docs/architecture/20-query-ir.md`, `40-execution.md`, `70-api.md`).
 //!
 //! `prepare` runs the whole pipeline once: validate → normalize →
 //! filtered-view statistics → plan → classify. **Plans pin the statistics

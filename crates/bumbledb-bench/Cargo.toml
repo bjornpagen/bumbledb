@@ -17,7 +17,7 @@ obs = ["bumbledb/trace", "bumbledb/alloc-counter"]
 bumbledb = { path = "../bumbledb" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# The dual-run chase differential (naive/tests/chase.rs) prepares each
+# The dual-run chase differential (src/differential/tests/chase.rs) prepares each
 # eliminable fixture with the rewrite on and off; the off switch is the
 # engine's test-support `chase-off` feature — a dev-dependency feature,
 # so the harness binaries build without it.

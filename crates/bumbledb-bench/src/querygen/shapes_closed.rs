@@ -112,8 +112,8 @@ pub(super) fn closed_join(b: &mut Builder, rng: &mut Rng) {
     }
 }
 
-/// The fold shape (PRD 07's target, adversarially covered before the
-/// fold lands): referencing rows counted per handle through an
+/// The fold shape, adversarially covering the shipped fold: referencing
+/// rows counted per handle through an
 /// id-position variable join, the closed atom contributing nothing but
 /// the join id — its payload, when bound, is a dead variable.
 pub(super) fn closed_fold(b: &mut Builder, rng: &mut Rng) {

@@ -249,7 +249,8 @@ fn populate_du(env: &Environment, schema: &Schema) {
     commit(delta, env).expect("commit");
 }
 
-/// The EXPLAIN golden on the DU fixture (docs/prd — the chase surface):
+/// The EXPLAIN golden on the DU fixture
+/// (`docs/architecture/40-execution.md` § the chase):
 /// the one-sided walk `Q(rate) :- Det(grading = g, rate),
 /// Grading(id = g, kind == 0)` reports the header's elimination with
 /// the licensing statement rendered in the `schema!` notation — the
