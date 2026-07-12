@@ -53,7 +53,6 @@ pub fn bind_value(value: &Value) -> BindValue<'_> {
         Value::Bool(v) => BindValue::Bool(*v),
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
-        Value::Enum(ordinal) => BindValue::Enum(*ordinal),
         Value::String(raw) => {
             BindValue::Str(std::str::from_utf8(raw).expect("corpus strings are UTF-8"))
         }

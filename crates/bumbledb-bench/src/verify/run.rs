@@ -192,6 +192,10 @@ pub(super) fn load_target_stores(
         conn.execute(&statement, []).expect("target ddl");
     }
     for relation in target::schema().relations() {
+        // Closed relations have no mirror table to index.
+        if relation.is_closed() {
+            continue;
+        }
         for field in relation.fields() {
             let columns = if matches!(
                 field.value_type,
@@ -327,7 +331,7 @@ pub fn run_prepared(
 
     // The randomized lane: seeded random queries over the generator's
     // target schema and its own corpus (the target module carries the
-    // coverage extensions the seven-type matrix needs), plus the Allen
+    // coverage extensions the six-type matrix needs), plus the Allen
     // converse-property lane over the same store.
     if run.bundles.len() < MAX_BUNDLES && cfg.random_cases > 0 {
         eprintln!("verify: loading the randomized lane's target corpus");

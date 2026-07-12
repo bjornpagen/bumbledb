@@ -10,8 +10,8 @@
 use super::*;
 use crate::ir::{AggOp, HeadOp, HeadTerm};
 
-/// Item(id fresh u64, kind enum{note, event, task}, payload u64) — the
-/// discriminated-union parent shape; the fresh id materializes the
+/// Item(id fresh u64, kind u64 — 0 note, 1 event, 2 task, payload u64) —
+/// the discriminated-union parent shape; the fresh id materializes the
 /// auto-key whose columns the arms' heads carry.
 fn du_schema() -> Schema {
     SchemaDescriptor {
@@ -26,10 +26,7 @@ fn du_schema() -> Schema {
                 },
                 FieldDescriptor {
                     name: "kind".into(),
-                    value_type: ValueType::Enum {
-                        variants: vec!["note".into(), "event".into(), "task".into()]
-                            .into_boxed_slice(),
-                    },
+                    value_type: ValueType::U64,
                     generation: Generation::None,
                 },
                 FieldDescriptor {
@@ -55,7 +52,7 @@ fn insert_items(env: &Environment, schema: &Schema, rows: &[(u64, u8, u64)]) {
         encode_fact(
             &[
                 ValueRef::U64(*id),
-                ValueRef::Enum(*kind),
+                ValueRef::U64(u64::from(*kind)),
                 ValueRef::U64(*payload),
             ],
             schema.relation(ITEM).layout(),
@@ -81,7 +78,7 @@ fn arm_rule(kind: u8) -> Rule {
             relation: ITEM,
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
-                (FieldId(1), Term::Literal(Value::Enum(kind))),
+                (FieldId(1), Term::Literal(Value::U64(u64::from(kind)))),
                 (FieldId(2), Term::Var(VarId(1))),
             ],
         }],
@@ -239,7 +236,7 @@ fn count_over_a_proven_disjoint_union_elides_the_fold_seen_set() {
             relation: ITEM,
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
-                (FieldId(1), Term::Literal(Value::Enum(kind))),
+                (FieldId(1), Term::Literal(Value::U64(u64::from(kind)))),
             ],
         }],
         negated: vec![],
@@ -344,7 +341,7 @@ fn the_randomized_corpus_is_byte_identical_elided_vs_forced_off() {
             bindings.push((FieldId(0), Term::Var(VarId(vars[0]))));
         }
         if kind < 3 {
-            bindings.push((FieldId(1), Term::Literal(Value::Enum(kind))));
+            bindings.push((FieldId(1), Term::Literal(Value::U64(u64::from(kind)))));
         }
         bindings.push((FieldId(2), Term::Var(VarId(vars[1]))));
         Atom {

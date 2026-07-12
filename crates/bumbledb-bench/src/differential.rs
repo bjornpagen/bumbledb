@@ -255,7 +255,6 @@ fn owned_value(value: ResultValue<'_>) -> Value {
         ResultValue::Bool(v) => Value::Bool(v),
         ResultValue::U64(v) => Value::U64(v),
         ResultValue::I64(v) => Value::I64(v),
-        ResultValue::Enum(v) => Value::Enum(v),
         ResultValue::String(v) => Value::String(Box::from(v.as_bytes())),
         ResultValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
         ResultValue::IntervalU64(iv) => Value::IntervalU64(iv.start(), iv.end()),

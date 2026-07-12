@@ -48,17 +48,23 @@ bumbledb::schema! {
 
 ## 2. Discriminated unions
 
-Sum-typed entities: a discriminator enum plus per-arm child relations, glued by
-bidirectional conditional containments (`30-dependencies.md` § the derivations).
+Sum-typed entities: a closed-relation discriminator plus per-arm child
+relations, glued by bidirectional conditional containments
+(`30-dependencies.md` § the derivations).
 
 ```rust
 bumbledb::schema! {
     pub Grading;
 
-    relation Task { id: u64 as TaskId, fresh, kind: enum Kind { Deterministic, CustomOperator } }
+    // The discriminator vocabulary is a closed relation: rows are ground
+    // axioms, and the host enum `Kind` is emitted for rustc's matching.
+    closed relation Kind as KindId = { Deterministic, CustomOperator };
+
+    relation Task { id: u64 as TaskId, fresh, kind: u64 as KindId }
     relation DeterministicGrading  { task: u64 as TaskId, tolerance: i64 }
     relation CustomOperatorGrading { task: u64 as TaskId, operator: str }
 
+    Task(kind) <= Kind(id);                                // the discriminator resolves
     DeterministicGrading(task)  -> DeterministicGrading;   // one arm row per parent
     CustomOperatorGrading(task) -> CustomOperatorGrading;
     // Totality (==, left to right): a Deterministic task HAS its arm row —
@@ -104,6 +110,8 @@ are permanently refused (the ledger); proration and FX are host arithmetic.
 bumbledb::schema! {
     pub Money;
 
+    closed relation Currency as CurrencyId = { Usd, Eur, Gbp };
+
     relation Account { id: u64 as AccountId, fresh, name: str }
     // Minor units in i64 (±92 quadrillion cents); `as Minor` is the host
     // newtype — rustc polices cross-domain confusion, not the engine
@@ -111,11 +119,12 @@ bumbledb::schema! {
     relation Posting {
         id: u64 as PostingId, fresh,
         account: u64 as AccountId,
-        currency: enum Currency { Usd, Eur, Gbp },
+        currency: u64 as CurrencyId,
         minor: i64 as Minor,
     }
 
-    Posting(account) <= Account(id);
+    Posting(account)  <= Account(id);
+    Posting(currency) <= Currency(id);
 
     // Multi-currency totals: currency is a group key, never summed across —
     // Sum folds in i128 with one final range check, so totals cannot wrap
@@ -134,15 +143,18 @@ what identifies (`bytes<N>`)** — `10-data-model.md` § the type layer.
 bumbledb::schema! {
     pub Content;
 
+    closed relation Region as RegionId = { Us, Eu };
+
     relation Document {
         id: u64 as DocumentId, fresh,
         name: str,                          // repeats: interned, id-equality
         payload: bytes<32> as PayloadHash,  // identifies: the blake3 of the
     }                                       // external blob — inline, never interned
-    relation Replica { payload: bytes<32> as PayloadHash, region: enum Region { Us, Eu } }
+    relation Replica { payload: bytes<32> as PayloadHash, region: u64 as RegionId }
 
     Document(payload) -> Document;          // content-addressed: one doc per digest
     Replica(payload) <= Document(payload);
+    Replica(region)  <= Region(id);
     // bytes<N> is identity-only (Eq/Ne, membership): a digest's lexicographic
     // order is an encoding artifact, refused as semantics (10-data-model.md).
     // Large objects: facts stay fixed-width; the payload lives in external
@@ -186,11 +198,14 @@ shape theorems come from FDs on the edge relations.
 bumbledb::schema! {
     pub Ast;
 
-    relation Node { id: u64 as NodeId, fresh, kind: enum Kind { Lit, Add } }
+    closed relation Kind as KindId = { Lit, Add };
+
+    relation Node { id: u64 as NodeId, fresh, kind: u64 as KindId }
     relation Lit  { node: u64 as NodeId, value: i64 }
     relation Add  { node: u64 as NodeId, lhs: u64 as NodeId, rhs: u64 as NodeId }
     relation Parent { child: u64 as NodeId, parent: u64 as NodeId }
 
+    Node(kind) <= Kind(id);
     Lit(node) -> Lit;
     Add(node) -> Add;
     // Every node's arm is total, valid, and exclusive (recipe 2's theorems):
@@ -278,10 +293,13 @@ is one selected containment, the statement SQL cannot write.
 bumbledb::schema! {
     pub Orders;
 
-    relation Order { id: u64 as OrderId, fresh, state: enum State { Cart, Placed, Shipped } }
+    closed relation State as StateId = { Cart, Placed, Shipped };
+
+    relation Order { id: u64 as OrderId, fresh, state: u64 as StateId }
     relation Placement { order: u64 as OrderId, at: i64 }
     relation Shipment  { order: u64 as OrderId, carrier: str, at: i64 }
 
+    Order(state) <= State(id);
     Placement(order) -> Placement;
     Shipment(order)  -> Shipment;
     // History accretes: a Shipped order keeps its Placement — one-way <=
@@ -309,6 +327,9 @@ you decline to write.
 bumbledb::schema! {
     pub Calendar;
 
+    closed relation Rsvp as RsvpId = { Accepted, Tentative, Declined };
+    closed relation Arm as ArmId = { Busy, Ooo };
+
     relation Person { id: u64 as PersonId, fresh, name: str }
     relation Room   { id: u64 as RoomId, fresh, name: str }
     relation Event  { id: u64 as EventId, fresh, span: interval<i64> }
@@ -316,12 +337,12 @@ bumbledb::schema! {
         id: u64 as AttendanceId, fresh,
         event: u64 as EventId,
         person: u64 as PersonId,
-        rsvp: enum Rsvp { Accepted, Tentative, Declined },
+        rsvp: u64 as RsvpId,
     }
     relation Claim {
         source: u64,
         person: u64 as PersonId,
-        arm: enum Arm { Busy, Ooo },
+        arm: u64 as ArmId,
         span: interval<i64>,
     }
     relation Booking   { room: u64 as RoomId, event: u64 as EventId, span: interval<i64> }
@@ -329,9 +350,11 @@ bumbledb::schema! {
 
     Attendance(event)  <= Event(id);
     Attendance(person) <= Person(id);
+    Attendance(rsvp)   <= Rsvp(id);
     Attendance(event, person) -> Attendance;    // one RSVP per (event, person)
     Claim(source) -> Claim;
     Claim(person) <= Person(id);
+    Claim(arm)    <= Arm(id);
     // HARD: rooms cannot double-book — the pointwise key (recipe 1's theorem).
     Booking(room, span) -> Booking;
     // SOFT: people CAN double-book — `Claim(person, span) -> Claim` is simply
@@ -408,10 +431,12 @@ Brackets are intervals over money; the top bracket is a ray; regimes key on
 bumbledb::schema! {
     pub Tax;
 
+    closed relation Status as StatusId = { Single, MarriedJoint, HeadOfHousehold };
+
     relation Regime {
         id: u64 as RegimeId, fresh,
         year: i64,
-        status: enum Status { Single, MarriedJoint, HeadOfHousehold },
+        status: u64 as StatusId,
     }
     relation Bracket { regime: u64 as RegimeId, income: interval<i64>, rate_bps: i64 }
     relation Residency { person: u64, span: interval<i64> }
@@ -420,6 +445,7 @@ bumbledb::schema! {
     // representation move that deletes clip-at-query (gravestone, recipe 20).
     relation Earned { person: u64, regime: u64 as RegimeId, span: interval<i64>, minor: i64 }
 
+    Regime(status) <= Status(id);
     Regime(year, status) -> Regime;         // one regime per (year, filing status)
     Bracket(regime) <= Regime(id);
     // Brackets tile [0, ∞): disjoint per regime, and the TOP BRACKET IS A RAY —
@@ -509,13 +535,16 @@ propose a delta, commit iff the model you read is still the model.
 bumbledb::schema! {
     pub Jobs;
 
+    closed relation State as StateId = { Queued, Running, Done };
+
     relation Job {
         id: u64 as JobId, fresh,
-        state: enum State { Queued, Running, Done },
+        state: u64 as StateId,
         payload: str,
     }
     relation Lease { job: u64 as JobId, worker: u64, until: i64 }
 
+    Job(state) <= State(id);
     Lease(job) -> Lease;
     // A lease exists iff its job is Running (recipe 10's conditional target):
     // claiming a job and leasing it commit together or not at all.
@@ -542,14 +571,17 @@ can name is uncommittable (`10-data-model.md` § derived relations owns this).
 bumbledb::schema! {
     pub Rollup;
 
+    closed relation Arm as ArmId = { Busy, Ooo };
+
     relation Claim {
         source: u64,
         person: u64,
-        arm: enum Arm { Busy, Ooo },
+        arm: u64 as ArmId,
         span: interval<i64>,
     }
     relation BusySpan { person: u64, span: interval<i64> }
 
+    Claim(arm) <= Arm(id);
     Claim(source) -> Claim;
     Claim(person, span) -> Claim;
     BusySpan(person, span) -> BusySpan;     // packed ⇒ disjoint: statable
@@ -575,10 +607,13 @@ is data at the top, never an execution node.
 bumbledb::schema! {
     pub Payments;
 
-    relation Payment { id: u64 as PaymentId, fresh, kind: enum Kind { Card, Ach } }
+    closed relation Kind as KindId = { Card, Ach };
+
+    relation Payment { id: u64 as PaymentId, fresh, kind: u64 as KindId }
     relation Card { payment: u64 as PaymentId, last4: u64 }
     relation Ach  { payment: u64 as PaymentId, routing: u64 }
 
+    Payment(kind) <= Kind(id);
     Card(payment) -> Card;
     Ach(payment)  -> Ach;
     Payment(id | kind == Card) == Card(payment);

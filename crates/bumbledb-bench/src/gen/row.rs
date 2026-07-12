@@ -18,7 +18,7 @@ fn checked_id(id: u64) -> u64 {
 /// family's untagged half exists by construction). The first tag is
 /// skewed: [`HOT_TAG_PCT`]% draw `Fee` (ordinal 0) — the skew family's
 /// hot parameter.
-fn tag_pair(seed: u64, pair: u64) -> (u8, u8) {
+fn tag_pair(seed: u64, pair: u64) -> (u64, u64) {
     let mut rng = Rng::new(mix(seed, ids::POSTING_TAG, pair));
     let first = if rng.chance(HOT_TAG_PCT, 100) {
         0
@@ -26,10 +26,7 @@ fn tag_pair(seed: u64, pair: u64) -> (u8, u8) {
         1 + rng.range(TAG_VARIANTS - 1)
     };
     let second = (first + 1 + rng.range(TAG_VARIANTS - 1)) % TAG_VARIANTS;
-    (
-        u8::try_from(first).expect("three variants"),
-        u8::try_from(second).expect("three variants"),
-    )
+    (first, second)
 }
 
 /// One relation's row, by index — the pure function everything streams
@@ -51,7 +48,7 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
         ids::ACCOUNT => vec![
             Value::U64(checked_id(i)),
             Value::U64(rng.range(sizes.holders)),
-            Value::Enum(u8::try_from(rng.range(3)).expect("3 currencies")),
+            Value::U64(rng.range(3)),
         ],
         ids::INSTRUMENT => vec![
             Value::U64(checked_id(i)),
@@ -59,7 +56,7 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
         ],
         ids::JOURNAL_ENTRY => vec![
             Value::U64(checked_id(i)),
-            Value::Enum(u8::try_from(rng.range(3)).expect("3 sources")),
+            Value::U64(rng.range(3)),
             Value::I64(AT_BASE + i64::try_from(i).expect("fits") * AT_STEP * 2),
         ],
         ids::POSTING => {
@@ -95,7 +92,7 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
             let (first, second) = tag_pair(cfg.seed, i / 2);
             vec![
                 Value::U64(posting),
-                Value::Enum(if i.is_multiple_of(2) { first } else { second }),
+                Value::U64(if i.is_multiple_of(2) { first } else { second }),
             ]
         }
         ids::ORG => vec![

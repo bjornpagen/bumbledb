@@ -1,17 +1,16 @@
 //! Render goldens: the exact macro notation back out — an FD, a one-way
 //! containment with selection, a bidirectional pair rendering `==` once
-//! from either id, an interval selection literal, and enum ordinals
-//! resolved to variant names.
+//! from either id, and an interval selection literal.
 
 use super::*;
-use crate::schema::tests::{containment, enum_type, fd, field, fresh_field, side, side_where};
+use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
 use crate::schema::{IntervalElement, RelationDescriptor};
 
 /// The `docs/architecture/30-dependencies.md` example schema plus an
 /// interval-selected containment (Shift/Roster). Materialized ids: 0/1
 /// the fresh auto-FDs, 2.. the declared statements below in order.
 fn example() -> SchemaDescriptor {
-    let savings = Value::Enum(1); // ["Checking", "Savings"]
+    let savings = Value::U64(1); // kind 1 = Savings
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -25,7 +24,7 @@ fn example() -> SchemaDescriptor {
                 fields: vec![
                     fresh_field("id"),
                     field("holder", ValueType::U64),
-                    field("kind", enum_type(&["Checking", "Savings"])),
+                    field("kind", ValueType::U64),
                     field(
                         "active",
                         ValueType::Interval {
@@ -67,7 +66,7 @@ fn example() -> SchemaDescriptor {
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
             ),
-            // ids 3 and 4: Account(id | kind == Savings) == SavingsTerms(account)
+            // ids 3 and 4: Account(id | kind == 1) == SavingsTerms(account)
             containment(
                 side_where(
                     RelationId(1),
@@ -124,8 +123,8 @@ fn goldens_render_the_exact_macro_notation() {
 fn a_bidirectional_pair_renders_as_double_equals_once_from_either_id() {
     let schema = example().validate().expect("valid");
     // Both lowered ids render the pair's one written form — `==` exactly
-    // once, the enum ordinal resolved to its variant name.
-    let expected = "Account(id | kind == Savings) == SavingsTerms(account)";
+    // once, the selection literal in its macro spelling.
+    let expected = "Account(id | kind == 1) == SavingsTerms(account)";
     assert_eq!(render(&schema, StatementId(3)), expected);
     assert_eq!(render(&schema, StatementId(4)), expected);
     assert_eq!(expected.matches("==").count(), 2, "one selection, one pair");

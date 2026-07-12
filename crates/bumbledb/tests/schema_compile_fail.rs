@@ -125,9 +125,10 @@ fn schema_compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's six cases (docs/prd-comptime — the emission's roster):
-    // duplicate handle; missing column; extra column; type-mismatched
-    // literal; `closed relation` without `as`; handle literal on a
-    // non-closed field.
-    assert_eq!(seen, 6, "the schema compile-fail roster has six fixtures");
+    // The suite's seven cases (docs/prd-comptime — the emission's roster,
+    // plus the enum funeral): duplicate handle; missing column; extra
+    // column; type-mismatched literal; `closed relation` without `as`;
+    // handle literal on a non-closed field; the deleted inline `enum`
+    // type diagnosing its replacement.
+    assert_eq!(seen, 7, "the schema compile-fail roster has seven fixtures");
 }

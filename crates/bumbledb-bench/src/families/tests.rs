@@ -205,16 +205,16 @@ fn equal_amount_slice() -> Vec<(bumbledb::RelationId, Vec<Value>)> {
         (ids::HOLDER, vec![Value::U64(0), s("h")]),
         (
             ids::ACCOUNT,
-            vec![Value::U64(0), Value::U64(0), Value::Enum(0)],
+            vec![Value::U64(0), Value::U64(0), Value::U64(0)],
         ),
         (ids::INSTRUMENT, vec![Value::U64(0), s("SYM")]),
         (
             ids::JOURNAL_ENTRY,
-            vec![Value::U64(0), Value::Enum(0), Value::I64(0)],
+            vec![Value::U64(0), Value::U64(0), Value::I64(0)],
         ),
         (
             ids::JOURNAL_ENTRY,
-            vec![Value::U64(1), Value::Enum(1), Value::I64(1)],
+            vec![Value::U64(1), Value::U64(1), Value::I64(1)],
         ),
         (
             ids::POSTING,

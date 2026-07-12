@@ -26,9 +26,8 @@
 //! - unresolvable ids render as `relation#N` / `field#N` placeholders
 //!   (the statement renderer's convention — the bad id can be the very
 //!   thing validation rejected);
-//! - enum literals resolve to variant names where a field's declaration
-//!   is in view (bindings); in comparisons they render as bare ordinals
-//!   (no field context exists pre-validation);
+//! - closed-reference words render as bare numbers v0 (handles reach the
+//!   renderer in the surface pass, `docs/prd-comptime/11`);
 //! - the Arg terms, absent from the notation grammar (Arg is single-rule
 //!   only and its key is rule-internal), render as `ArgMax(carried,
 //!   key)` — an honest extension, not grammar;
@@ -47,7 +46,7 @@ use crate::ir::{
     AggOp, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query, Rule, Term,
     Value, VarId,
 };
-use crate::schema::{FieldDescriptor, FieldId, RelationId, Schema, ValueType};
+use crate::schema::{FieldDescriptor, FieldId, RelationId, Schema};
 
 /// Renders a query in the rule notation, one clause per rule, newline-
 /// separated, each clause `;`-terminated. Deterministic (two calls yield
@@ -183,11 +182,7 @@ fn atom_item(schema: &Schema, atom: &Atom, negated: bool) -> String {
             }
             Term::Literal(value) => {
                 out.push_str(" == ");
-                literal(
-                    &mut out,
-                    field_descriptor(schema, atom.relation, *field),
-                    value,
-                );
+                literal(&mut out, value);
             }
             // Rejected by validation (`DurationInBinding`); rendered
             // anyway — the diagnostic pictures the mistake.
@@ -273,12 +268,12 @@ fn comparison(cmp: &Comparison) -> String {
 }
 
 /// One comparison term. Literals render without field context (module
-/// doc: enum ordinals stay bare here).
+/// doc: closed-reference words stay bare here v0).
 fn term(out: &mut String, term: &Term) {
     match term {
         Term::Var(var) => var_name(out, *var),
         Term::Param(param) | Term::ParamSet(param) => param_name(out, *param),
-        Term::Literal(value) => literal(out, None, value),
+        Term::Literal(value) => literal(out, value),
         Term::Duration(var) => {
             out.push_str("Duration(");
             var_name(out, *var);
@@ -347,9 +342,9 @@ fn mask_names(out: &mut String, mask: AllenMask) {
 
 /// One literal, in the statement renderer's value formats (one notation,
 /// schema to query): intervals as `start..end`, strings and byte strings
-/// escaped, enum ordinals resolved to variant names where a field
-/// declaration is in view (else bare).
-fn literal(out: &mut String, field: Option<&FieldDescriptor>, value: &Value) {
+/// escaped, closed-reference words bare v0 (handles land in the surface
+/// pass).
+fn literal(out: &mut String, value: &Value) {
     match value {
         Value::Bool(v) => {
             let _ = write!(out, "{v}");
@@ -359,18 +354,6 @@ fn literal(out: &mut String, field: Option<&FieldDescriptor>, value: &Value) {
         }
         Value::I64(v) => {
             let _ = write!(out, "{v}");
-        }
-        Value::Enum(ordinal) => {
-            let variant = field.and_then(|descriptor| match &descriptor.value_type {
-                ValueType::Enum { variants } => variants.get(usize::from(*ordinal)),
-                _ => None,
-            });
-            match variant {
-                Some(name) => out.push_str(name),
-                None => {
-                    let _ = write!(out, "{ordinal}");
-                }
-            }
         }
         Value::IntervalU64(start, end) => {
             let _ = write!(out, "{start}..{end}");

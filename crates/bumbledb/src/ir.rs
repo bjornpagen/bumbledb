@@ -547,7 +547,6 @@ mod tests {
             Value::Bool(true),
             Value::U64(u64::MAX),
             Value::I64(i64::MIN),
-            Value::Enum(3),
             Value::String(Box::from(&b"text"[..])),
             Value::FixedBytes(Box::from(&[0xDEu8, 0xAD][..])),
             Value::IntervalU64(0, u64::MAX),
@@ -556,7 +555,7 @@ mod tests {
             // param's bind-time payload, never a stored type).
             Value::AllenMask(crate::allen::AllenMask::DISJOINT),
         ];
-        assert_eq!(values.len(), 9);
+        assert_eq!(values.len(), 8);
     }
 
     #[test]

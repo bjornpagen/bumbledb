@@ -82,9 +82,6 @@ pub fn encode_fixed_bytes(raw: &[u8], out: &mut Vec<u8>) {
 pub fn encode_literal(value: &Value, out: &mut Vec<u8>) {
     match value {
         Value::Bool(v) => out.push(encode_bool(*v)),
-        // The canonical Enum encoding: the one-byte declaration-order
-        // ordinal (`TypeDesc::Enum`).
-        Value::Enum(ordinal) => out.push(*ordinal),
         Value::U64(v) => out.extend_from_slice(&encode_u64(*v)),
         Value::I64(v) => out.extend_from_slice(&encode_i64(*v)),
         Value::FixedBytes(raw) => encode_fixed_bytes(raw, out),
@@ -115,13 +112,6 @@ pub fn encode_fact(values: &[ValueRef], layout: &FactLayout, out: &mut Vec<u8>) 
             ValueRef::Bool(v) => {
                 debug_assert_eq!(desc, TypeDesc::Bool);
                 out.push(encode_bool(v));
-            }
-            ValueRef::Enum(ordinal) => {
-                debug_assert!(matches!(
-                    desc,
-                    TypeDesc::Enum { variant_count } if u16::from(ordinal) < variant_count
-                ));
-                out.push(ordinal);
             }
             ValueRef::U64(v) => {
                 debug_assert_eq!(desc, TypeDesc::U64);

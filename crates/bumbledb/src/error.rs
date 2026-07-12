@@ -19,8 +19,6 @@ use crate::schema::{FieldId, RelationId, StatementId, ValueType};
 pub enum CorruptionError {
     /// A Bool byte other than `0x00`/`0x01` — there is no distinct "true".
     InvalidBool(u8),
-    /// An Enum ordinal at or beyond the declared variant count.
-    EnumOrdinalOutOfRange { ordinal: u8, variant_count: u16 },
     /// Interval bytes whose `start >= end` — the empty interval is
     /// unrepresentable (a fact never denotes nothing), so a stored one is
     /// corruption, not a value. Carries the raw 16 bytes.
@@ -104,20 +102,6 @@ pub enum SchemaError {
         relation: RelationId,
         name: Box<str>,
     },
-    EnumWithoutVariants {
-        relation: RelationId,
-        field: FieldId,
-    },
-    EnumTooManyVariants {
-        relation: RelationId,
-        field: FieldId,
-        count: usize,
-    },
-    DuplicateEnumVariant {
-        relation: RelationId,
-        field: FieldId,
-        variant: Box<str>,
-    },
     FreshOnNonU64 {
         relation: RelationId,
         field: FieldId,
@@ -190,17 +174,6 @@ pub enum SchemaError {
     /// columns on a virtual relation would force dictionary writes at open
     /// — the store contains zero vocabulary bytes.
     StrOnClosedRelation {
-        relation: RelationId,
-        field: FieldId,
-    },
-    /// An enum column on a closed relation: an enum is a vocabulary — the
-    /// very thing a closed relation is — so the column nests one closed
-    /// reference inside another as a type. Refused: a reference to a
-    /// closed relation is a plain u64 column plus a declared containment,
-    /// like any reference (`docs/prd-comptime/README.md`, the
-    /// nested-closed-refs refusal — intrinsic columns are value types
-    /// only).
-    EnumOnClosedRelation {
         relation: RelationId,
         field: FieldId,
     },
@@ -300,14 +273,6 @@ pub enum SchemaError {
         relation: RelationId,
         field: FieldId,
     },
-    /// Roster "selection literal type mismatch (including out-of-range
-    /// enum ordinals …)".
-    SelectionEnumOrdinalOutOfRange {
-        statement: StatementId,
-        relation: RelationId,
-        field: FieldId,
-        ordinal: u8,
-    },
     /// Roster "selection literal type mismatch (… non-UTF-8 string
     /// literals)".
     SelectionLiteralNotUtf8 {
@@ -398,11 +363,6 @@ pub enum FactShapeError {
     TypeMismatch {
         relation: RelationId,
         field: FieldId,
-    },
-    EnumOrdinalOutOfRange {
-        relation: RelationId,
-        field: FieldId,
-        ordinal: u8,
     },
     /// `Value::String` bytes are not UTF-8.
     InvalidUtf8 {
@@ -517,11 +477,6 @@ pub enum ValidationError {
         atom: usize,
         field: FieldId,
     },
-    EnumOrdinalOutOfRange {
-        atom: usize,
-        field: FieldId,
-        ordinal: u8,
-    },
     /// An interval literal with `start >= end` in a binding position — it
     /// denotes no points, and no field value equals or contains nothing
     /// (comparison sites report
@@ -592,12 +547,6 @@ pub enum ValidationError {
     /// query you mean.
     SelfComparison {
         index: usize,
-    },
-    /// An enum literal in a comparison carries an ordinal beyond the
-    /// variable's variant list.
-    ComparisonEnumOrdinalOutOfRange {
-        index: usize,
-        ordinal: u8,
     },
     /// An interval literal with `start >= end` in a comparison position
     /// (the binding-site sibling of

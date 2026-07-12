@@ -16,7 +16,6 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
             digest.update(&[2]);
             digest.update(&v.to_le_bytes());
         }
-        Value::Enum(v) => digest.update(&[3, *v]),
         Value::String(raw) => {
             digest.update(&[4]);
             digest.update(&(raw.len() as u64).to_le_bytes());

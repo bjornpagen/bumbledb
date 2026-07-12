@@ -245,7 +245,7 @@ stays deliberately unbuilt.
 
 **Corrupt data is a hard error, never a skip:** an `F` value whose length differs from
 the schema's fact width, a dangling intern id, an `M`/`F` disagreement, an
-out-of-range enum ordinal, an interval with `start ≥ end` — any of these aborts the
+nonzero `bytes<N>` pad byte, an interval with `start ≥ end` — any of these aborts the
 scan/query with a corruption error; an engine that silently skips undecodable rows
 silently shrinks query results, which is the worse bug. Reopen-trusted counters are
 additionally **bounded before they size anything**: the image build caps the claimed

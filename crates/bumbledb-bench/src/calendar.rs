@@ -64,12 +64,12 @@ bumbledb::schema! {
         id: u64 as AttendanceId, fresh,
         event: u64 as CalEventId,
         person: u64 as CalPersonId,
-        rsvp: enum Rsvp { Accepted, Tentative, Declined },
+        rsvp: u64 as RsvpId,
     }
     relation Claim {
         source: u64,
         person: u64 as CalPersonId,
-        arm: enum ClaimArm { Busy, Ooo },
+        arm: u64 as ClaimArmId,
         span: interval<i64>,
     }
     relation Room {
@@ -86,13 +86,18 @@ bumbledb::schema! {
         hours: interval<i64>,
     }
 
+    closed relation Rsvp as RsvpId = { Accepted, Tentative, Declined };
+    closed relation Arm as ClaimArmId = { Busy, Ooo };
+
     Person(account)     <= Account(id);
     Calendar(owner)     <= Person(id);
     Event(calendar)     <= Calendar(id);
     Attendance(event)   <= Event(id);
     Attendance(person)  <= Person(id);
+    Attendance(rsvp)    <= Rsvp(id);
     Attendance(event, person) -> Attendance;
     Claim(person)       <= Person(id);
+    Claim(arm)          <= Arm(id);
     Claim(source)       -> Claim;
     Claim(person, span) -> Claim;
     Attendance(id | rsvp == Accepted) == Claim(source | arm == Busy);
@@ -137,8 +142,13 @@ pub mod ids {
     pub const ROOM: RelationId = RelationId(6);
     pub const BOOKING: RelationId = RelationId(7);
     pub const WORK_HOURS: RelationId = RelationId(8);
+    pub const RSVP: RelationId = RelationId(9);
+    pub const CLAIM_ARM: RelationId = RelationId(10);
 
-    /// The number of relations — loaders iterate `0..RELATIONS`.
+    /// The number of **writable** relations — loaders iterate
+    /// `0..RELATIONS`. The closed relations (`Rsvp`/`ClaimArm`, ids
+    /// 9..11) sit after every ordinary relation by declaration: they
+    /// are unwritable ground axioms, so no loader touches them.
     pub const RELATIONS: u32 = 9;
 
     pub mod account {
@@ -197,11 +207,12 @@ pub mod ids {
     }
 }
 
-/// `Rsvp` ordinals (declaration order is the encoding).
-pub const RSVP_ACCEPTED: u8 = 0;
-pub const RSVP_TENTATIVE: u8 = 1;
-pub const RSVP_DECLINED: u8 = 2;
+/// `Rsvp` row ids (declaration order is the encoding — closed-relation
+/// handles are ground row ids, plain `u64` values in facts and queries).
+pub const RSVP_ACCEPTED: u64 = 0;
+pub const RSVP_TENTATIVE: u64 = 1;
+pub const RSVP_DECLINED: u64 = 2;
 
-/// `ClaimArm` ordinals.
-pub const ARM_BUSY: u8 = 0;
-pub const ARM_OOO: u8 = 1;
+/// `ClaimArm` row ids.
+pub const ARM_BUSY: u64 = 0;
+pub const ARM_OOO: u64 = 1;

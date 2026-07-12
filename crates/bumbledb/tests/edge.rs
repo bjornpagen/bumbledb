@@ -1,15 +1,15 @@
 //! Edge-case pins from the design audits: cyclic containments, nullary
-//! relations, fresh exhaustion, wide enums, 1-byte compound guards, and
-//! empty interned values — each a doc claim that previously rested on a
-//! code-reading argument instead of a test. Plus the PRD 20 bind matrix:
+//! relations, fresh exhaustion, cap-wide closed vocabularies, 1-byte
+//! compound guards, and empty interned values — each a doc claim that
+//! previously rested on a code-reading argument instead of a test. Plus the PRD 20 bind matrix:
 //! precise per-position errors for every scalar/set misuse, and a valid
 //! mixed bind through the public [`bumbledb::ParamArg`] surface.
 
 use bumbledb::error::ValidationError;
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, VarId};
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
-    StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Row, SchemaDescriptor,
+    Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{BindValue, Db, Error, Fact, ParamArg, ResultBuffer, ResultValue, Value};
 
@@ -133,100 +133,84 @@ fn explicit_max_fresh_exhausts_the_generator() {
     assert!(matches!(err, Error::FreshExhausted { .. }));
 }
 
-/// A 256-variant enum (every u8 ordinal valid) commits and scans back.
+/// A cap-wide closed vocabulary (256 rows — `MAX_EXTENSION_ROWS`)
+/// validates; references to its first and last rows commit and scan
+/// back; and a reference one past the roster is an ordinary containment
+/// violation — no range-check error class exists for row ids. (Bind-time
+/// enum range checking died with the inline enum type: a reference field
+/// is structurally a u64, and an out-of-roster bind is simply absent.)
 #[test]
-fn wide_enum_through_commit_and_scan() {
+fn cap_wide_closed_vocabulary_through_commit_and_scan() {
     let schema = SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: None,
-            name: "Wide".into(),
-            fields: vec![FieldDescriptor {
-                name: "v".into(),
-                value_type: ValueType::Enum {
-                    variants: (0..256).map(|i| format!("V{i}").into()).collect(),
-                },
-                generation: Generation::None,
-            }],
+        relations: vec![
+            RelationDescriptor {
+                extension: Some(
+                    (0..256)
+                        .map(|i| Row {
+                            handle: format!("V{i}").into(),
+                            values: Box::new([]),
+                        })
+                        .collect(),
+                ),
+                name: "Wide".into(),
+                fields: vec![],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Ref".into(),
+                fields: vec![FieldDescriptor {
+                    name: "v".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                }],
+            },
+        ],
+        statements: vec![StatementDescriptor::Containment {
+            source: Side {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+            target: Side {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
         }],
-        statements: vec![],
     };
-    let dir = common::TempDir::new("edge-wide-enum");
+    let dir = common::TempDir::new("edge-wide-vocabulary");
     let db = Db::create(dir.path(), schema).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(RelationId(0), &[Value::Enum(0)])?;
-        tx.insert_dyn(RelationId(0), &[Value::Enum(255)])?;
+        tx.insert_dyn(RelationId(1), &[Value::U64(0)])?;
+        tx.insert_dyn(RelationId(1), &[Value::U64(255)])?;
         Ok(())
     })
     .expect("write");
     let mut facts = db
-        .read(|snap| snap.scan(RelationId(0))?.collect::<Result<Vec<_>, _>>())
+        .read(|snap| snap.scan(RelationId(1))?.collect::<Result<Vec<_>, _>>())
         .expect("scan");
     facts.sort_by_key(|f| match f[0] {
-        Value::Enum(o) => o,
-        _ => unreachable!("one enum column"),
+        Value::U64(id) => id,
+        _ => unreachable!("one reference column"),
     });
-    assert_eq!(facts, vec![vec![Value::Enum(0)], vec![Value::Enum(255)]]);
+    assert_eq!(facts, vec![vec![Value::U64(0)], vec![Value::U64(255)]]);
 
-    // Bind-time enum range checking: a 256-variant enum accepts every u8,
-    // so pin the rejection on a narrow one (2 variants): supplied ordinal
-    // 5 is a typed ParamTypeMismatch, not a silent empty result.
-    let narrow = SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: None,
-            name: "N".into(),
-            fields: vec![
-                FieldDescriptor {
-                    name: "v".into(),
-                    value_type: ValueType::Enum {
-                        variants: ["A", "B"].iter().map(|v| Box::from(*v)).collect(),
-                    },
-                    generation: Generation::None,
-                },
-                FieldDescriptor {
-                    name: "n".into(),
-                    value_type: ValueType::U64,
-                    generation: Generation::None,
-                },
-            ],
-        }],
-        statements: vec![],
-    };
-    let dir2 = common::TempDir::new("edge-enum-bind");
-    let db2 = Db::create(dir2.path(), narrow).expect("create");
-    db2.write(|tx| {
-        tx.insert_dyn(RelationId(0), &[Value::Enum(1), Value::U64(3)])
-            .map(|_| ())
-    })
-    .expect("seed");
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            relation: RelationId(0),
-            bindings: vec![
-                (FieldId(0), Term::Param(bumbledb::ParamId(0))),
-                (FieldId(1), Term::Var(VarId(0))),
-            ],
-        }],
-        negated: vec![],
-        predicates: vec![],
-    });
-    let mut prepared = db2.prepare(&query).expect("prepare");
-    let err = db2
-        .read(|snap| {
-            snap.execute_collect(&mut prepared, &[BindValue::Enum(5)])
-                .map(|_| ())
+    // Row 256 does not exist: past the roster is the same containment
+    // violation as any dangling reference.
+    let err = db
+        .write(|tx| {
+            tx.insert_dyn(RelationId(1), &[Value::U64(256)])?;
+            Ok(())
         })
         .unwrap_err();
-    assert!(matches!(err, Error::ParamTypeMismatch { .. }));
+    assert!(matches!(err, Error::ContainmentViolation { .. }));
 }
 
-/// A compound key plus a containment over 1-byte fields (enum, bool): the
-/// dense 2-byte guard shape in `U`/`R` keys, commit-judged.
+/// A compound key plus a containment over 1-byte fields (bool, bool):
+/// the dense 2-byte guard shape in `U`/`R` keys, commit-judged.
 #[test]
 fn one_byte_compound_guards() {
-    let status = ValueType::Enum {
-        variants: ["On", "Off"].iter().map(|v| Box::from(*v)).collect(),
-    };
+    let status = ValueType::Bool;
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -293,8 +277,11 @@ fn one_byte_compound_guards() {
     let dir = common::TempDir::new("edge-byte-guards");
     let db = Db::create(dir.path(), schema).expect("create");
     db.write(|tx| {
-        tx.insert_dyn(switch, &[Value::Enum(1), Value::Bool(true)])?;
-        tx.insert_dyn(watcher, &[Value::Enum(1), Value::Bool(true), Value::U64(7)])?;
+        tx.insert_dyn(switch, &[Value::Bool(true), Value::Bool(true)])?;
+        tx.insert_dyn(
+            watcher,
+            &[Value::Bool(true), Value::Bool(true), Value::U64(7)],
+        )?;
         Ok(())
     })
     .expect("guarded insert commits");
@@ -305,7 +292,7 @@ fn one_byte_compound_guards() {
         .write(|tx| {
             tx.insert_dyn(
                 watcher,
-                &[Value::Enum(0), Value::Bool(false), Value::U64(1)],
+                &[Value::Bool(false), Value::Bool(false), Value::U64(1)],
             )?;
             Ok(())
         })
@@ -315,7 +302,7 @@ fn one_byte_compound_guards() {
     // The target side holds too: deleting the required pair aborts.
     let err = db
         .write(|tx| {
-            tx.delete_dyn(switch, &[Value::Enum(1), Value::Bool(true)])?;
+            tx.delete_dyn(switch, &[Value::Bool(true), Value::Bool(true)])?;
             Ok(())
         })
         .unwrap_err();

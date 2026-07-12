@@ -204,7 +204,6 @@ Term       = Var(VarId) | Param(ParamId) | ParamSet(ParamId) | Literal(Value)
                                       //   (§ the measure; a binding position
                                       //   is a typed rejection)
 Value      = Bool(bool) | U64(u64) | I64(i64)
-           | Enum(u8)                 // declaration-order ordinal, range-checked
            | IntervalU64(u64, u64)    // start < end enforced at the boundary
            | IntervalI64(i64, i64)
            | String(Box<[u8]>)        // raw UTF-8 bytes; interning is the engine's job
@@ -262,7 +261,7 @@ non-membership occurrence (a scalar field binding). Interval-vs-interval
 comparison needs no shared point variable: that is the `Allen` predicate.
 
 **Comparison rules, complete:** both sides must have the same structural type except
-where stated (no U64-vs-I64, no silent coercion). `Eq`/`Ne` are legal for all seven
+where stated (no U64-vs-I64, no silent coercion). `Eq`/`Ne` are legal for all six
 types; `Lt/Le/Gt/Ge` only for U64/U64 and I64/I64 — **never intervals, never
 `bytes<N>`** (`10-data-model.md` orderability; each refusal named in its own
 diagnostic). `Allen { mask }` requires two interval terms of
@@ -559,8 +558,7 @@ relation/field ids; duplicate FieldId in one atom's bindings; variable type conf
 param-anchor type mismatches (non-UTF-8 String literals and `start ≥ end` interval
 literals included); element-typed point literals at the domain ceiling in
 membership bindings and `Contains` operands (the point-domain law — point params
-get the same rejection at bind, where the value exists); enum ordinal out of range for the field's variant list (in
-bindings and in comparisons, each precisely diagnosed); comparisons violating the
+get the same rejection at bind, where the value exists); comparisons violating the
 type rules above (order operators on intervals and on `bytes<N>` each named in
 their own diagnostic — the predictable mistake gets the good error); the Allen vacuity rules (the ∅
 and full literal masks, distinct typed errors; mask params get the same two at

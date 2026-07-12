@@ -127,7 +127,7 @@ pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
 /// occurrence without `source == Import` — its facts are not all in
 /// σφ, so the chase must refuse).
 pub(super) fn du_walk(b: &mut Builder, rng: &mut Rng) {
-    let import = Term::Literal(Value::Enum(SOURCE_IMPORT));
+    let import = Term::Literal(Value::U64(SOURCE_IMPORT));
     match rng.range(3) {
         0 => {
             let child = b.atom(ids::IMPORT_BATCH);

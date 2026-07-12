@@ -50,8 +50,6 @@ pub enum BindValue<'a> {
     Bool(bool),
     U64(u64),
     I64(i64),
-    /// Declaration-order ordinal.
-    Enum(u8),
     Str(&'a str),
     /// A `bytes<N>` value: exactly the anchored field's N bytes (any
     /// other length is a bind-time type mismatch — the length is the
@@ -88,8 +86,6 @@ pub enum ResultValue<'a> {
     Bool(bool),
     U64(u64),
     I64(i64),
-    /// Declaration-order ordinal.
-    Enum(u8),
     String(&'a str),
     /// A `bytes<N>` find: the value's N raw bytes.
     FixedBytes(&'a [u8]),
@@ -109,7 +105,6 @@ enum Cell {
     Bool(bool),
     U64(u64),
     I64(i64),
-    Enum(u8),
     String { start: usize, len: usize },
     FixedBytes { start: usize, len: usize },
     IntervalU64(crate::interval::Interval<u64>),

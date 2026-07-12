@@ -43,15 +43,6 @@ impl fmt::Display for FactShapeError {
                     relation.0, field.0
                 )
             }
-            Self::EnumOrdinalOutOfRange {
-                relation,
-                field,
-                ordinal,
-            } => write!(
-                f,
-                "relation {}, field {}: enum ordinal {ordinal} out of range",
-                relation.0, field.0
-            ),
             Self::InvalidUtf8 { relation, field } => write!(
                 f,
                 "relation {}, field {}: string bytes are not UTF-8",
@@ -78,10 +69,6 @@ impl fmt::Display for CorruptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBool(byte) => write!(f, "invalid Bool byte {byte:#04x}"),
-            Self::EnumOrdinalOutOfRange {
-                ordinal,
-                variant_count,
-            } => write!(f, "enum ordinal {ordinal} beyond {variant_count} variants"),
             Self::InvalidInterval(bytes) => {
                 write!(f, "interval bytes {bytes:02x?}: start >= end")
             }
@@ -143,30 +130,6 @@ impl fmt::Display for SchemaError {
             Self::DuplicateFieldName { relation: r, name } => {
                 write!(f, "relation {}: duplicate field name `{name}`", r.0)
             }
-            Self::EnumWithoutVariants {
-                relation: r,
-                field: fd,
-            } => {
-                write!(f, "relation {}, field {}: enum with no variants", r.0, fd.0)
-            }
-            Self::EnumTooManyVariants {
-                relation: r,
-                field: fd,
-                count,
-            } => write!(
-                f,
-                "relation {}, field {}: {count} enum variants exceed the u8 ordinal",
-                r.0, fd.0
-            ),
-            Self::DuplicateEnumVariant {
-                relation: r,
-                field: fd,
-                variant,
-            } => write!(
-                f,
-                "relation {}, field {}: duplicate enum variant `{variant}`",
-                r.0, fd.0
-            ),
             Self::FreshOnNonU64 {
                 relation: r,
                 field: fd,
@@ -239,14 +202,6 @@ impl fmt::Display for SchemaError {
             } => write!(
                 f,
                 "relation {}, field {}: str on a closed relation — the handle is the label",
-                r.0, fd.0
-            ),
-            Self::EnumOnClosedRelation {
-                relation: r,
-                field: fd,
-            } => write!(
-                f,
-                "relation {}, field {}: enum on a closed relation — a nested closed reference is a plain u64 column plus a containment",
                 r.0, fd.0
             ),
             Self::FreshOnClosedRelation {
@@ -356,16 +311,6 @@ impl fmt::Display for SchemaError {
             } => write!(
                 f,
                 "statement {}: selection literal type mismatch at relation {}, field {}",
-                s.0, r.0, fd.0
-            ),
-            Self::SelectionEnumOrdinalOutOfRange {
-                statement: s,
-                relation: r,
-                field: fd,
-                ordinal,
-            } => write!(
-                f,
-                "statement {}: enum ordinal {ordinal} out of range at relation {}, field {}",
                 s.0, r.0, fd.0
             ),
             Self::SelectionLiteralNotUtf8 {
@@ -486,15 +431,6 @@ impl fmt::Display for ValidationError {
             Self::LiteralTypeMismatch { atom, field } => {
                 write!(f, "atom {atom}: literal type mismatch at field {}", field.0)
             }
-            Self::EnumOrdinalOutOfRange {
-                atom,
-                field,
-                ordinal,
-            } => write!(
-                f,
-                "atom {atom}: enum ordinal {ordinal} out of range at field {}",
-                field.0
-            ),
             Self::EmptyIntervalLiteral { atom, field } => write!(
                 f,
                 "atom {atom}: interval literal start >= end at field {}",
@@ -544,9 +480,6 @@ impl fmt::Display for ValidationError {
             }
             Self::SelfComparison { index } => {
                 write!(f, "comparison {index}: a variable compared with itself")
-            }
-            Self::ComparisonEnumOrdinalOutOfRange { index, ordinal } => {
-                write!(f, "comparison {index}: enum ordinal {ordinal} out of range")
             }
             Self::ComparisonEmptyIntervalLiteral { index } => {
                 write!(f, "comparison {index}: interval literal start >= end")
@@ -877,9 +810,6 @@ impl SchemaError {
         match self {
             Self::DuplicateRelationName { .. }
             | Self::DuplicateFieldName { .. }
-            | Self::EnumWithoutVariants { .. }
-            | Self::EnumTooManyVariants { .. }
-            | Self::DuplicateEnumVariant { .. }
             | Self::FixedBytesWidthOutOfRange { .. }
             | Self::FreshOnNonU64 { .. }
             | Self::EmptyExtension { .. }
@@ -890,7 +820,6 @@ impl SchemaError {
             | Self::ExtensionIntervalEmpty { .. }
             | Self::ExtensionIntervalRay { .. }
             | Self::StrOnClosedRelation { .. }
-            | Self::EnumOnClosedRelation { .. }
             | Self::FreshOnClosedRelation { .. } => None,
             Self::StatementUnknownRelation { statement, .. }
             | Self::StatementUnknownField { statement, .. }
@@ -905,7 +834,6 @@ impl SchemaError {
             | Self::ContainmentTypeMismatch { statement, .. }
             | Self::SelectedFieldProjected { statement, .. }
             | Self::SelectionLiteralTypeMismatch { statement, .. }
-            | Self::SelectionEnumOrdinalOutOfRange { statement, .. }
             | Self::SelectionLiteralNotUtf8 { statement, .. }
             | Self::SelectionIntervalEmpty { statement, .. }
             | Self::NoMatchingTargetKey { statement, .. }

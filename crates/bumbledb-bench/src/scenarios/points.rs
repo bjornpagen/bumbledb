@@ -18,7 +18,7 @@ bumbledb::schema! {
 
     relation Bucket {
         id: u64 as PBucketId, fresh,
-        class: enum Class { Hot, Warm, Cold, Frozen },
+        class: u64 as PClassId,
     }
     relation Doc {
         id: u64 as PDocId, fresh,
@@ -28,6 +28,9 @@ bumbledb::schema! {
         payload: bytes<32>,
     }
 
+    closed relation Class as PClassId = { Hot, Warm, Cold, Frozen };
+
+    Bucket(class) <= Class(id);
     Doc(key) -> Doc;
     Doc(bucket) <= Bucket(id);
 }
@@ -55,16 +58,14 @@ pub mod ids {
     use bumbledb::RelationId;
     pub const BUCKET: RelationId = RelationId(0);
     pub const DOC: RelationId = RelationId(1);
+    pub const CLASS: RelationId = RelationId(2);
 }
 
 pub const BUCKETS: u64 = 4_096;
 pub const DOCS: u64 = 300_000;
 
 fn bucket_row(i: u64) -> Vec<Value> {
-    vec![
-        Value::U64(i),
-        Value::Enum(u8::try_from(i % 4).expect("small")),
-    ]
+    vec![Value::U64(i), Value::U64(i % 4)]
 }
 
 fn doc_row(seed: u64, i: u64) -> Vec<Value> {
@@ -172,10 +173,10 @@ fn bucket_fetch() -> Query {
 fn bucket_params(_: u64) -> Vec<Vec<Value>> {
     // Class enum + a bucket-id ceiling: small slices of the dimension.
     vec![
-        vec![Value::Enum(0), Value::U64(64)],
-        vec![Value::Enum(1), Value::U64(64)],
-        vec![Value::Enum(2), Value::U64(256)],
-        vec![Value::Enum(3), Value::U64(0)],
+        vec![Value::U64(0), Value::U64(64)],
+        vec![Value::U64(1), Value::U64(64)],
+        vec![Value::U64(2), Value::U64(256)],
+        vec![Value::U64(3), Value::U64(0)],
     ]
 }
 

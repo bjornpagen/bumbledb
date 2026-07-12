@@ -80,9 +80,10 @@ pub(super) fn u64_dress(b: &mut Builder, rng: &mut Rng, atom: usize, field: Fiel
     });
 }
 
-/// An `Eq`/`Ne` predicate against an enum ordinal: literal, param, or —
+/// An `Eq`/`Ne` predicate against a closed-vocabulary row id (a plain
+/// u64 field contained in a closed relation): literal, param, or —
 /// under `Eq` — a param set.
-fn enum_cmp(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, variants: u64) {
+fn vocab_cmp(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, rows: u64) {
     let Some(var) = b.var_at(atom, field) else {
         return;
     };
@@ -92,9 +93,7 @@ fn enum_cmp(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, variant
     } else if rng.chance(1, 4) {
         Term::Param(b.fresh_param())
     } else {
-        Term::Literal(Value::Enum(
-            u8::try_from(rng.range(variants)).expect("small"),
-        ))
+        Term::Literal(Value::U64(rng.range(rows)))
     };
     b.predicates.push(Comparison {
         op,
@@ -164,7 +163,7 @@ fn active_literal_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
 
 /// Filter dressing ([`DRESS_PCT`]% of queries, 1–3 predicates), per the
 /// dressed atom's relation: integer range ops, string/bytes hits and
-/// misses, enum and bool equalities, interval-value `Eq`/`Ne` against
+/// misses, vocabulary and bool equalities, interval-value `Eq`/`Ne` against
 /// in-data literals, and same-typed var-vs-var.
 #[allow(clippy::too_many_lines)] // one arm per dressed relation, in id order
 pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
@@ -185,14 +184,14 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
             ids::POSTING => dress_posting(b, rng, atom, domains),
             ids::ACCOUNT => {
                 if rng.chance(1, 2) {
-                    enum_cmp(b, rng, atom, ids::account::CURRENCY, 3);
+                    vocab_cmp(b, rng, atom, ids::account::CURRENCY, 3);
                 } else {
                     u64_dress(b, rng, atom, ids::account::HOLDER, domains.holders);
                 }
             }
             ids::JOURNAL_ENTRY => {
                 if rng.chance(1, 2) {
-                    enum_cmp(b, rng, atom, ids::journal_entry::SOURCE, 3);
+                    vocab_cmp(b, rng, atom, ids::journal_entry::SOURCE, 3);
                 } else {
                     let (lo, hi) = at_window(domains);
                     i64_dress(b, rng, atom, ids::journal_entry::CREATED_AT, lo, hi);

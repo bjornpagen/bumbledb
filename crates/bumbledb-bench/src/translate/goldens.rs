@@ -98,7 +98,7 @@ pub const ARG_MAX: &str = "WITH d AS (SELECT DISTINCT t0.\"account\" AS v0, t0.\
 /// chain — `Q(src, amount, at) :- Posting(entry = e, account = a,
 /// amount, at), JournalEntry(id = e, source = src),
 /// Account(id = a, currency = Usd)` with `at >= ?0`: the multi-hop walk
-/// across postings/entries/accounts, an enum literal pinning the
+/// across postings/entries/accounts, a closed-vocabulary literal pinning the
 /// account side.
 pub const CHAIN: &str = "SELECT DISTINCT t1.\"source\", t0.\"amount\", t0.\"at\" FROM \"Posting\" AS t0, \"JournalEntry\" AS t1, \"Account\" AS t2 WHERE t0.\"entry\" = t1.\"id\" AND t0.\"account\" = t2.\"id\" AND t2.\"currency\" = 0 AND t0.\"at\" >= ?1";
 

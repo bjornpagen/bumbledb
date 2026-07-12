@@ -42,7 +42,7 @@ enum Column {
     /// under u64 compare), for String/Bytes the intern id. An interval
     /// field's start and end halves are each one such column.
     Words { start: usize },
-    /// 1-byte column: the validated Bool/Enum byte.
+    /// 1-byte column: the validated Bool byte.
     Bytes { start: usize },
 }
 
@@ -56,7 +56,7 @@ enum Column {
 /// field is ONE word column, exactly like every other 8-byte scalar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnWidth {
-    /// One 1-byte column (Bool/Enum).
+    /// One 1-byte column (Bool).
     Byte,
     /// One 8-byte column (U64/I64/String/bytes<N ≤ 8>).
     Word,
@@ -105,7 +105,7 @@ pub fn column_spans(field_types: &[crate::encoding::TypeDesc]) -> Box<[ColumnSpa
         .iter()
         .map(|desc| {
             let width = match desc {
-                TypeDesc::Bool | TypeDesc::Enum { .. } => ColumnWidth::Byte,
+                TypeDesc::Bool => ColumnWidth::Byte,
                 TypeDesc::U64 | TypeDesc::I64 | TypeDesc::String => ColumnWidth::Word,
                 TypeDesc::FixedBytes { len } => {
                     match u16::try_from(crate::encoding::fixed_bytes_words(*len))

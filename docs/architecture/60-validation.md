@@ -64,7 +64,6 @@ silently coerces everything and is the oracle-corrupting bug class:
 | Bool | INTEGER 0/1 | |
 | U64 | INTEGER | generator constrains oracle-checked data to `< 2^63`; full-range U64 is covered by non-oracle property tests (encode/decode, guards) |
 | I64 | INTEGER | |
-| Enum | INTEGER (ordinal) | Min/Max never apply (equality-only type) |
 | Interval | two INTEGER columns (start, end) | value equality = pairwise; an `Allen` mask translates to its basics' endpoint formulas OR'd (under the query's SELECT DISTINCT); membership is the endpoint pair — fully expressible in SQL; the *judgments* over intervals are the naive model's lane |
 | String | TEXT | intern ids decoded to bytes **before** comparison, outside any timed region |
 | Bytes(N) | BLOB (fixed-length content) | never TEXT — DISTINCT distinguishes `X'41'` from `'A'`; the N raw bytes, unpadded (the word pad is bumbledb encoding, not data) |
@@ -130,18 +129,25 @@ Owned here (00-product describes shape; this doc owns the schema — restated in
 statement notation, with the redesign's temporal surface added):
 
 ```
+closed relation Currency = { Usd, Eur, Gbp }
+closed relation Source   = { Manual, Import, System }
+closed relation Tag      = { Fee, Rebate, Adjustment }
+
 relation Holder       { id: u64, fresh, name: str }
-relation Account      { id: u64, fresh, holder: u64, currency: enum }
+relation Account      { id: u64, fresh, holder: u64, currency: u64 }
 relation Instrument   { id: u64, fresh, symbol: str }
-relation JournalEntry { id: u64, fresh, source: enum, created_at: i64 }
+relation JournalEntry { id: u64, fresh, source: u64, created_at: i64 }
 relation Posting      { id: u64, fresh, entry: u64, account: u64,
                         instrument: u64, amount: i64, at: i64 }
-relation PostingTag   { posting: u64, tag: enum }
+relation PostingTag   { posting: u64, tag: u64 }
 relation Org          { id: u64, fresh, name: str }
 relation OrgParent    { child: u64, parent: u64 }
 relation Mandate      { account: u64, org: u64, active: interval<i64> }
 
 Account(holder)      <= Holder(id);
+Account(currency)    <= Currency(id);
+JournalEntry(source) <= Source(id);
+PostingTag(tag)      <= Tag(id);
 Posting(entry)       <= JournalEntry(id);
 Posting(account)     <= Account(id);
 Posting(instrument)  <= Instrument(id);
@@ -192,10 +198,11 @@ relation Person     { id: u64, fresh, account: u64, name: str }
 relation Calendar   { id: u64, fresh, owner: u64 }
 relation Event      { id: u64, fresh, calendar: u64, span: interval<i64>,
                       created_at: i64, hash: bytes<32> }
-relation Attendance { id: u64, fresh, event: u64, person: u64,
-                      rsvp: enum { Accepted, Tentative, Declined } }
-relation Claim      { source: u64, person: u64,
-                      arm: enum { Busy, Ooo }, span: interval<i64> }
+relation Attendance { id: u64, fresh, event: u64, person: u64, rsvp: u64 }
+relation Claim      { source: u64, person: u64, arm: u64, span: interval<i64> }
+
+closed relation Rsvp = { Accepted, Tentative, Declined }
+closed relation Arm  = { Busy, Ooo }
 relation Room       { id: u64, fresh, name: str }
 relation Booking    { room: u64, event: u64, span: interval<i64> }
 relation WorkHours  { person: u64, hours: interval<i64> }
@@ -203,6 +210,7 @@ relation WorkHours  { person: u64, hours: interval<i64> }
 Person(account)     <= Account(id);     Calendar(owner)   <= Person(id);
 Event(calendar)     <= Calendar(id);    Attendance(event) <= Event(id);
 Attendance(person)  <= Person(id);      Claim(person)     <= Person(id);
+Attendance(rsvp)    <= Rsvp(id);        Claim(arm)        <= Arm(id);
 Attendance(event, person) -> Attendance;
 Claim(source)       -> Claim;           Claim(person, span) -> Claim;
 Attendance(id | rsvp == Accepted) == Claim(source | arm == Busy);  // the DU
@@ -280,7 +288,7 @@ time the emulation, not the engine.
 - **The generator has a feature-coverage contract, itself asserted** (the exact
   form the coverage test pins at n = 1000): every shape within ±30% of its weight;
   every *legal* cell of the per-(operator, type) comparison matrix nonzero (`Eq`/`Ne`
-  over all seven types; order operators over the two integer types;
+  over all six types; order operators over the two integer types;
   `Allen` masks (composites and singleton basics) over both interval element types, including the
   adjacent-touching boundary `[a,b) [b,c)` in both polarities) and every illegal
   cell zero (order-on-interval prominently); repeated in-atom variables; self-joins
@@ -302,7 +310,7 @@ time the emulation, not the engine.
   lists; and **duplicate-witness data that exercises the D2 subtree skip and the
   aggregate-sink binding dedup** (the two places a set-semantics bug would hide).
   The algebra families extend the same contract: **multi-rule programs** at arm
-  counts 2–4 — provably-disjoint arms (distinct enum selections on one
+  counts 2–4 — provably-disjoint arms (distinct closed-reference selections on one
   discriminant, the DU-arm shape whose disjointness feeds the executor's
   cross-rule-dedup elision, exercised adversarially against the oracles' plain
   union), overlapping arms with duplicate head rows across rules (the union's

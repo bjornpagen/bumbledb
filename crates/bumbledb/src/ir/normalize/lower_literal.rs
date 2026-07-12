@@ -14,7 +14,6 @@ use crate::ir::Value;
 pub(crate) fn lower_literal(value: &Value) -> Const {
     match value {
         Value::Bool(b) => Const::Byte(encode_bool(*b)),
-        Value::Enum(ordinal) => Const::Byte(*ordinal),
         Value::U64(v) => Const::Word(*v),
         Value::I64(v) => Const::Word(i64_word(*v)),
         Value::String(bytes) => Const::PendingIntern {

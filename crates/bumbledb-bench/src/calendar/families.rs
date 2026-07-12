@@ -95,7 +95,7 @@ fn busy_scan_query() -> Query {
             relation: ids::CLAIM,
             bindings: vec![
                 (ids::claim::PERSON, var(0)),
-                (ids::claim::ARM, Term::Literal(Value::Enum(ARM_BUSY))),
+                (ids::claim::ARM, Term::Literal(Value::U64(ARM_BUSY))),
                 (ids::claim::SPAN, var(1)),
             ],
         }],
@@ -175,14 +175,14 @@ fn meets_chain_params(cfg: &GenConfig) -> Vec<Draw> {
 /// twice — proof ON and forced OFF — and reports the delta as the
 /// elision's number.
 fn rsvp_union_query() -> Query {
-    let arm = |ordinal: u8| Rule {
+    let arm = |ordinal: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: ids::ATTENDANCE,
             bindings: vec![
                 (ids::attendance::EVENT, var(0)),
                 (ids::attendance::PERSON, var(1)),
-                (ids::attendance::RSVP, Term::Literal(Value::Enum(ordinal))),
+                (ids::attendance::RSVP, Term::Literal(Value::U64(ordinal))),
             ],
         }],
         negated: vec![],

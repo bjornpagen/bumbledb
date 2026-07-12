@@ -10,7 +10,7 @@
 //! above does not depend on them.
 //!
 //! The declared ledger is `60-validation.md`'s, with the coverage
-//! extensions the seven-type matrix needs: `Posting.{memo, reconciled}`
+//! extensions the six-type matrix needs: `Posting.{memo, reconciled}`
 //! (interned-string vocabulary and the Bool column) and
 //! `Transfer { extref: bytes<32>, window: interval<u64>, tag7..tag64 }`
 //! (the bytes<N> exerciser — extref is a keyed adversarial digest and
@@ -26,7 +26,8 @@
 use std::sync::OnceLock;
 
 use bumbledb::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
+    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, Row, SchemaDescriptor,
+    ValueType,
 };
 use bumbledb::{Schema, Value};
 
@@ -49,6 +50,9 @@ pub mod ids {
     pub const MANDATE: RelationId = RelationId(8);
     pub const TRANSFER: RelationId = RelationId(9);
     pub const IMPORT_BATCH: RelationId = RelationId(10);
+    pub const CURRENCY: RelationId = RelationId(11);
+    pub const SOURCE: RelationId = RelationId(12);
+    pub const TAG: RelationId = RelationId(13);
 
     pub mod holder {
         use super::FieldId;
@@ -142,9 +146,21 @@ fn fresh(name: &str) -> FieldDescriptor {
     }
 }
 
-fn enum_type(variants: &[&str]) -> ValueType {
-    ValueType::Enum {
-        variants: variants.iter().map(|v| Box::from(*v)).collect(),
+/// A closed relation: no payload columns, the extension rows are the
+/// handles alone (the engine prepends the synthetic `(id, U64)` field).
+fn closed(name: &str, handles: &[&str]) -> RelationDescriptor {
+    RelationDescriptor {
+        extension: Some(
+            handles
+                .iter()
+                .map(|handle| Row {
+                    handle: (*handle).into(),
+                    values: Box::new([]),
+                })
+                .collect(),
+        ),
+        name: name.into(),
+        fields: vec![],
     }
 }
 
@@ -199,7 +215,7 @@ fn descriptor() -> SchemaDescriptor {
                     fields: vec![
                         fresh("id"),
                         field("holder", ValueType::U64),
-                        field("currency", enum_type(&["Usd", "Eur", "Gbp"])),
+                        field("currency", ValueType::U64),
                     ],
                 },
                 RelationDescriptor {
@@ -212,7 +228,7 @@ fn descriptor() -> SchemaDescriptor {
                     name: "JournalEntry".into(),
                     fields: vec![
                         fresh("id"),
-                        field("source", enum_type(&["Manual", "Import", "System"])),
+                        field("source", ValueType::U64),
                         field("created_at", ValueType::I64),
                     ],
                 },
@@ -235,7 +251,7 @@ fn descriptor() -> SchemaDescriptor {
                     name: "PostingTag".into(),
                     fields: vec![
                         field("posting", ValueType::U64),
-                        field("tag", enum_type(&["Fee", "Rebate", "Adjustment"])),
+                        field("tag", ValueType::U64),
                     ],
                 },
                 RelationDescriptor {
@@ -300,6 +316,9 @@ fn descriptor() -> SchemaDescriptor {
                         field("batch", ValueType::U64),
                     ],
                 },
+                closed("Currency", &["Usd", "Eur", "Gbp"]),
+                closed("Source", &["Manual", "Import", "System"]),
+                closed("Tag", &["Fee", "Rebate", "Adjustment"]),
             ],
             statements: statements(),
         }
@@ -324,7 +343,7 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
     };
     let containment =
         |source: Side, target: Side| StatementDescriptor::Containment { source, target };
-    let import = [(ids::journal_entry::SOURCE, Value::Enum(SOURCE_IMPORT))];
+    let import = [(ids::journal_entry::SOURCE, Value::U64(SOURCE_IMPORT))];
     vec![
         StatementDescriptor::Functionality {
             relation: ids::IMPORT_BATCH,
@@ -378,6 +397,20 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
             relation: ids::TRANSFER,
             projection: Box::new([ids::transfer::EXTREF]),
         },
+        // The vocabulary containments (the enum funeral) — appended
+        // after everything else so no earlier statement id shifts.
+        containment(
+            side(ids::ACCOUNT, ids::account::CURRENCY, &[]),
+            side(ids::CURRENCY, bumbledb::FieldId(0), &[]),
+        ),
+        containment(
+            side(ids::JOURNAL_ENTRY, ids::journal_entry::SOURCE, &[]),
+            side(ids::SOURCE, bumbledb::FieldId(0), &[]),
+        ),
+        containment(
+            side(ids::POSTING_TAG, ids::posting_tag::TAG, &[]),
+            side(ids::TAG, bumbledb::FieldId(0), &[]),
+        ),
     ]
 }
 
@@ -431,11 +464,11 @@ impl Domains {
 /// The memo vocabulary size (interning realism).
 pub const MEMO_VOCAB: u64 = 4096;
 
-/// `JournalEntry.source`'s `Import` ordinal — the DU pair's
+/// `JournalEntry.source`'s `Import` row id — the DU pair's
 /// discriminator. Sources are deterministic (`row % 3`), so entry `i`
 /// is an import iff `i % 3 == 1`, and `ImportBatch` row `k` names entry
 /// `3k + 1`: both `==` directions hold by construction.
-pub const SOURCE_IMPORT: u8 = 1;
+pub const SOURCE_IMPORT: u64 = 1;
 
 /// The entry an `ImportBatch` row names (see [`SOURCE_IMPORT`]).
 #[must_use]
@@ -538,14 +571,10 @@ pub fn posting_at(row: u64) -> i64 {
 /// exactly as it rejects a singly-witnessed one, and must pass the
 /// tagless half.
 ///
-/// # Panics
-///
-/// Never: `row % 3` fits the three-variant ordinal by construction.
 #[must_use]
-pub fn posting_tag(row: u64) -> (u64, u8) {
+pub fn posting_tag(row: u64) -> (u64, u64) {
     let posting = (row / 2) * 2;
-    let tag = u8::try_from(row % 3).expect("three variants");
-    (posting, tag)
+    (posting, row % 3)
 }
 
 /// One Mandate row: `(account, org, active)`. Mandate row `r` is
@@ -585,7 +614,10 @@ pub fn string_hit(rel: bumbledb::RelationId, field: bumbledb::FieldId, rng: &mut
     }
 }
 
-/// The number of target relations — loaders iterate `0..TARGET_RELATIONS`.
+/// The number of **writable** target relations — loaders iterate
+/// `0..TARGET_RELATIONS`. The closed relations (`Currency`/`Source`/
+/// `Tag`, ids 11..14) sit after every ordinary relation by declaration:
+/// they are unwritable ground axioms, so no loader touches them.
 pub const TARGET_RELATIONS: u32 = 11;
 
 /// Row count of one target relation (the randomized lane's corpus).
@@ -635,7 +667,7 @@ pub fn corpus_row(
         ids::ACCOUNT => vec![
             Value::U64(i),
             Value::U64(rng.range(domains.holders)),
-            Value::Enum(u8::try_from(rng.range(3)).expect("3 currencies")),
+            Value::U64(rng.range(3)),
         ],
         ids::INSTRUMENT => vec![
             Value::U64(i),
@@ -645,7 +677,7 @@ pub fn corpus_row(
             Value::U64(i),
             // Deterministic (never drawn): the DU pair requires import
             // entries to be exactly the ImportBatch rows' entries.
-            Value::Enum(u8::try_from(i % 3).expect("3 sources")),
+            Value::U64(i % 3),
             Value::I64(posting_at(i * 2)),
         ],
         ids::POSTING => vec![
@@ -661,7 +693,7 @@ pub fn corpus_row(
         ],
         ids::POSTING_TAG => {
             let (posting, tag) = posting_tag(i);
-            vec![Value::U64(posting), Value::Enum(tag)]
+            vec![Value::U64(posting), Value::U64(tag)]
         }
         ids::ORG => vec![
             Value::U64(i),
@@ -767,7 +799,7 @@ mod tests {
             assert_eq!(import_batch_entry(k as u64), *entry);
         }
         let entry = corpus_row(CFG, &domains, ids::JOURNAL_ENTRY, 4);
-        assert_eq!(entry[1], Value::Enum(SOURCE_IMPORT));
+        assert_eq!(entry[1], Value::U64(SOURCE_IMPORT));
         assert_ne!(
             corpus_row(CFG, &domains, ids::JOURNAL_ENTRY, 3)[1],
             entry[1]

@@ -16,7 +16,7 @@ use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use crate::storage::read;
 use crate::testutil::TempDir;
 
-/// T(id u64, during interval<i64>, kind enum[3]).
+/// T(id u64, during interval<i64>, kind bool).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -37,9 +37,7 @@ fn schema() -> Schema {
                 },
                 FieldDescriptor {
                     name: "kind".into(),
-                    value_type: ValueType::Enum {
-                        variants: ["A", "B", "C"].iter().map(|v| Box::from(*v)).collect(),
-                    },
+                    value_type: ValueType::Bool,
                     generation: Generation::None,
                 },
             ],
@@ -55,15 +53,15 @@ const T: RelationId = RelationId(0);
 /// The rows, in insert (= scan) order: a fully negative interval, one
 /// crossing zero, one fully positive — starts ascending, so the golden
 /// word-order assertion pins the sign-flip.
-const ROWS: [(u64, i64, i64, u8); 3] = [(0, -100, -7, 0), (1, -5, 9, 1), (2, 3, 7, 2)];
+const ROWS: [(u64, i64, i64, bool); 3] = [(0, -100, -7, false), (1, -5, 9, true), (2, 3, 7, false)];
 
-fn fact(schema: &Schema, id: u64, start: i64, end: i64, kind: u8) -> Vec<u8> {
+fn fact(schema: &Schema, id: u64, start: i64, end: i64, kind: bool) -> Vec<u8> {
     let mut b = Vec::new();
     encode_fact(
         &[
             ValueRef::U64(id),
             ValueRef::IntervalI64(start, end),
-            ValueRef::Enum(kind),
+            ValueRef::Bool(kind),
         ],
         schema.relation(T).layout(),
         &mut b,
@@ -100,7 +98,7 @@ fn interval_field_decodes_into_two_word_columns_with_golden_words() {
     assert_eq!(image.row_count(), 3);
 
     // The field→column map: three fields, four columns — the interval
-    // spans columns 1 and 2 (start, end), the enum lands at 3.
+    // spans columns 1 and 2 (start, end), the bool lands at 3.
     assert_eq!(
         image.span(FieldId(0)),
         ColumnSpan {
@@ -138,7 +136,7 @@ fn interval_field_decodes_into_two_word_columns_with_golden_words() {
         assert_eq!(ids[position], id);
         assert_eq!(starts[position], w(start), "start word of row {id}");
         assert_eq!(ends[position], w(end), "end word of row {id}");
-        assert_eq!(kinds[position], kind, "enum byte of row {id}");
+        assert_eq!(kinds[position], u8::from(kind), "bool byte of row {id}");
         assert!(
             starts[position] < ends[position],
             "row {id}: start < end as bare u64 words"
@@ -168,7 +166,7 @@ fn inverted_interval_halves_abort_the_build() {
     // an interval whose encoded start ≥ end.
     let layout = schema.relation(T).layout();
     let offset = layout.field_offset(1);
-    let mut corrupt = fact(&schema, 2, 3, 7, 2);
+    let mut corrupt = fact(&schema, 2, 3, 7, false);
     for i in 0..8 {
         corrupt.swap(offset + i, offset + 8 + i);
     }

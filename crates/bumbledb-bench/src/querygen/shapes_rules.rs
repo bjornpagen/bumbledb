@@ -3,7 +3,7 @@
 //! data at the top). Three variants, each holding one obligation:
 //!
 //! - **Disjoint arms**: one relation, every arm selecting a distinct
-//!   enum constant on the discriminant field — provably disjoint, so
+//!   vocabulary row id on the discriminant field — provably disjoint, so
 //!   the executor's rule-disjointness elision path
 //!   (`docs/architecture/40-execution.md` § set semantics) runs
 //!   adversarially against the oracles' plain set union.
@@ -58,11 +58,11 @@ fn assemble(rules: Vec<Rule>) -> Query {
 }
 
 /// `JournalEntry` arms with distinct `source` selections — disjoint by
-/// the enum constant, 2–3 arms (three variants exist), head
+/// the vocabulary row id, 2–3 arms (three rows exist), head
 /// `[id, created_at]`.
 fn disjoint_arms(rng: &mut Rng) -> Query {
     let arms = 2 + rng.range(2);
-    let mut ordinals = [0u8, 1, 2];
+    let mut ordinals = [0u64, 1, 2];
     // A seeded shuffle: which sources the arms take is drawn, their
     // distinctness is constructed.
     ordinals.swap(0, usize::try_from(rng.range(3)).expect("small"));
@@ -77,7 +77,7 @@ fn disjoint_arms(rng: &mut Rng) -> Query {
                     (ids::journal_entry::ID, Term::Var(VarId(0))),
                     (
                         ids::journal_entry::SOURCE,
-                        Term::Literal(Value::Enum(*ordinal)),
+                        Term::Literal(Value::U64(*ordinal)),
                     ),
                     (ids::journal_entry::CREATED_AT, Term::Var(VarId(1))),
                 ],
@@ -102,7 +102,7 @@ fn du_twin() -> Query {
                     (ids::journal_entry::ID, Term::Var(VarId(0))),
                     (
                         ids::journal_entry::SOURCE,
-                        Term::Literal(Value::Enum(target::SOURCE_IMPORT)),
+                        Term::Literal(Value::U64(target::SOURCE_IMPORT)),
                     ),
                 ],
             }],

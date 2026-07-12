@@ -28,7 +28,7 @@ const CLAIM_BOOKING: StatementId = StatementId(3);
 
 /// Holder(id fresh, name str) — scalar key, string field for the
 /// dictionary statistic; Booking(room, during) with a pointwise key;
-/// Account(holder, kind) ⊆ Holder under the σ `kind == checking`;
+/// Account(holder, kind) ⊆ Holder under the σ `kind == 0` (checking);
 /// Claim(room, span) ⊆ Booking(room, during) — the coverage-form
 /// containment (the target's pointwise key carries the interval).
 #[allow(clippy::too_many_lines)] // one descriptor literal, four relations
@@ -80,9 +80,7 @@ fn schema() -> SchemaDescriptor {
                     },
                     FieldDescriptor {
                         name: "kind".into(),
-                        value_type: ValueType::Enum {
-                            variants: Box::new(["checking".into(), "savings".into()]),
-                        },
+                        value_type: ValueType::U64,
                         generation: Generation::None,
                     },
                 ],
@@ -115,7 +113,7 @@ fn schema() -> SchemaDescriptor {
                 source: Side {
                     relation: ACCOUNT,
                     projection: Box::new([FieldId(0)]),
-                    selection: Box::new([(FieldId(1), Value::Enum(0))]),
+                    selection: Box::new([(FieldId(1), Value::U64(0))]),
                 },
                 target: Side {
                     relation: HOLDER,
@@ -159,8 +157,8 @@ fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
         ),
         (BOOKING, vec![Value::U64(7), Value::IntervalU64(0, 10)]),
         (BOOKING, vec![Value::U64(7), Value::IntervalU64(20, 30)]),
-        (ACCOUNT, vec![Value::U64(1), Value::Enum(0)]),
-        (ACCOUNT, vec![Value::U64(2), Value::Enum(1)]),
+        (ACCOUNT, vec![Value::U64(1), Value::U64(0)]),
+        (ACCOUNT, vec![Value::U64(2), Value::U64(1)]),
         (CLAIM, vec![Value::U64(7), Value::IntervalU64(2, 8)]),
     ];
     for (rel, values) in facts {
@@ -205,10 +203,10 @@ fn booking_guard(room: u64, start: u64, end: u64) -> Vec<u8> {
     guard
 }
 
-fn account_bytes(db: &Db<SchemaDescriptor>, holder: u64, kind: u8) -> Vec<u8> {
+fn account_bytes(db: &Db<SchemaDescriptor>, holder: u64, kind: u64) -> Vec<u8> {
     let mut out = Vec::new();
     encode_fact(
-        &[ValueRef::U64(holder), ValueRef::Enum(kind)],
+        &[ValueRef::U64(holder), ValueRef::U64(kind)],
         db.schema().relation(ACCOUNT).layout(),
         &mut out,
     );

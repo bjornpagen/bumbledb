@@ -16,8 +16,8 @@ fn valid_schema_constructs_with_statement_indices() {
     assert_eq!(account.keys(), &[StatementId(1)]);
     assert_eq!(account.outgoing(), &[StatementId(2)]);
     assert_eq!(schema.dependents(StatementId(1)), &[]);
-    // Layout: id 8 + holder 8 + status 1, dense.
-    assert_eq!(account.layout().fact_width(), 17);
+    // Layout: id 8 + holder 8 + status 8, dense.
+    assert_eq!(account.layout().fact_width(), 24);
 }
 
 /// The materialization-order pin: two relations with one fresh
@@ -69,14 +69,6 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
 }
 
 #[test]
-fn structural_enum_equality_is_the_identity() {
-    // Same ordered variant list, different declaring contexts: equal type.
-    assert_eq!(enum_type(&["A", "B"]), enum_type(&["A", "B"]));
-    // Different order: different type (ordinal encoding differs).
-    assert_ne!(enum_type(&["A", "B"]), enum_type(&["B", "A"]));
-}
-
-#[test]
 fn nullary_relation_constructs() {
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -99,7 +91,7 @@ fn nullary_relation_constructs() {
 /// declared *after* it (forward reference).
 #[test]
 fn example_schema_resolves_exactly() {
-    let savings = Value::Enum(1); // ["Checking", "Savings"]
+    let savings = Value::U64(1); // kind 1 = Savings
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -113,7 +105,7 @@ fn example_schema_resolves_exactly() {
                 fields: vec![
                     fresh_field("id"),
                     field("holder", ValueType::U64),
-                    field("kind", enum_type(&["Checking", "Savings"])),
+                    field("kind", ValueType::U64),
                     field(
                         "active",
                         ValueType::Interval {
@@ -288,16 +280,6 @@ fn permuted_target_projection_resolves_with_permutation() {
             interval_position: None
         }
     );
-}
-
-#[test]
-fn accepts_enum_with_exactly_256_variants() {
-    let names: Vec<String> = (0..256).map(|i| format!("V{i}")).collect();
-    let decl = one_relation(vec![field(
-        "e",
-        enum_type(&names.iter().map(String::as_str).collect::<Vec<_>>()),
-    )]);
-    decl.validate().expect("256 variants fit one byte");
 }
 
 /// Currency { `minor_units`: u64 } = { Usd(2), Eur(2) } — the closed

@@ -19,12 +19,12 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
     });
     assert_ne!(a, other, "seeds diverge");
     // The golden: changing the generator — or the storage format, now a
-    // live ingredient — re-baselines every corpus. Re-baselined when
-    // the calendar theory's rows joined the digest (ALG 16 — one
-    // corpus identity, both theories inside).
+    // live ingredient — re-baselines every corpus. Re-baselined by the
+    // enum funeral (vocabulary ordinals became plain u64 row ids, so
+    // every enum-carrying row's bytes changed).
     assert_eq!(
         digest_hex(&a),
-        "96b067335ede49bd5d8a6db0989e14a6d4a81336f523ac2696a66db1bb8160fd",
+        "2ef4b3c64a82712c69d6f2782b2b091ee81e717402600a8c85e9a69e20ad4cd4",
         "generator output changed — re-baseline deliberately"
     );
 }

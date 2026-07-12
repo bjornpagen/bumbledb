@@ -17,12 +17,12 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
         ids::COMPANY => vec![
             Value::U64(i),
             s(format!("company-{i:05}")),
-            Value::Enum((i % 8) as u8),
+            Value::U64(i % 8),
         ],
         ids::PERSON => vec![
             Value::U64(i),
             s(format!("person-{i:06}")),
-            Value::Enum((rng.range(3)) as u8),
+            Value::U64(rng.range(3)),
         ],
         ids::KEYWORD => vec![Value::U64(i), s(format!("kw-{i:05}"))],
         ids::MOVIE => {
@@ -59,7 +59,7 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
             vec![
                 Value::U64(movie),
                 Value::U64(person),
-                Value::Enum((rng.range(8)) as u8),
+                Value::U64(rng.range(8)),
             ]
         }
         ids::MOVIE_COMPANY => {

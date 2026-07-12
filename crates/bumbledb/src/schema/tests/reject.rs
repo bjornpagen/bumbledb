@@ -43,48 +43,6 @@ fn rejects_duplicate_field_name() {
 }
 
 #[test]
-fn rejects_enum_without_variants() {
-    let decl = one_relation(vec![field("e", enum_type(&[]))]);
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::EnumWithoutVariants {
-            relation: RelationId(0),
-            field: FieldId(0)
-        }
-    );
-}
-
-#[test]
-fn rejects_enum_with_more_than_256_variants() {
-    let names: Vec<String> = (0..257).map(|i| format!("V{i}")).collect();
-    let decl = one_relation(vec![field(
-        "e",
-        enum_type(&names.iter().map(String::as_str).collect::<Vec<_>>()),
-    )]);
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::EnumTooManyVariants {
-            relation: RelationId(0),
-            field: FieldId(0),
-            count: 257
-        }
-    );
-}
-
-#[test]
-fn rejects_duplicate_enum_variant() {
-    let decl = one_relation(vec![field("e", enum_type(&["A", "A"]))]);
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::DuplicateEnumVariant {
-            relation: RelationId(0),
-            field: FieldId(0),
-            variant: "A".into()
-        }
-    );
-}
-
-#[test]
 fn rejects_fresh_on_non_u64() {
     let decl = one_relation(vec![FieldDescriptor {
         name: "id".into(),
@@ -455,35 +413,6 @@ fn rejects_selection_literal_type_mismatch() {
     );
 }
 
-/// Roster "… out-of-range enum ordinals".
-#[test]
-fn rejects_out_of_range_enum_selection_literal() {
-    let decl = two_relations(
-        vec![
-            field("a", ValueType::U64),
-            field("kind", enum_type(&["A", "B"])),
-        ],
-        vec![field("x", ValueType::U64)],
-        vec![containment(
-            side_where(
-                RelationId(0),
-                &[FieldId(0)],
-                vec![(FieldId(1), Value::Enum(2))],
-            ),
-            side(RelationId(1), &[FieldId(0)]),
-        )],
-    );
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::SelectionEnumOrdinalOutOfRange {
-            statement: StatementId(0),
-            relation: RelationId(0),
-            field: FieldId(1),
-            ordinal: 2
-        }
-    );
-}
-
 /// Roster "… non-UTF-8 string literals".
 #[test]
 fn rejects_non_utf8_string_selection_literal() {
@@ -806,30 +735,6 @@ fn rejects_a_ray_axiom() {
             .validate()
             .unwrap_err(),
         expected
-    );
-}
-
-#[test]
-fn rejects_an_enum_column_on_a_closed_relation() {
-    // The nested-closed-refs refusal (`docs/prd-comptime/README.md`): an
-    // enum is a vocabulary — the very thing a closed relation is — so an
-    // enum column nests one closed reference inside another as a type. A
-    // reference to a closed relation is a plain u64 column plus a
-    // declared containment, like any reference.
-    let decl = SchemaDescriptor {
-        relations: vec![closed(
-            "Currency",
-            vec![field("kind", enum_type(&["Fiat", "Metal"]))],
-            vec![row("Usd", vec![Value::Enum(0)])],
-        )],
-        statements: vec![],
-    };
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::EnumOnClosedRelation {
-            relation: RelationId(0),
-            field: FieldId(1)
-        }
     );
 }
 

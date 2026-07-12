@@ -184,10 +184,12 @@ pub use verify_store::{StoreFinding, StoreReport};
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
+///     closed relation Kind as KindId = { Checking, Savings };
 ///     relation Account {
 ///         id: u64 as AccountId, fresh,
-///         kind: enum Kind { Checking, Savings },
+///         kind: u64 as KindId,
 ///     }
+///     Account(kind) <= Kind(id);
 ///     Account(id | kind == Savings) -> Account;
 /// }
 /// ```

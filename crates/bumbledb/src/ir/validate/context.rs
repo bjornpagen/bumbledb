@@ -25,9 +25,8 @@ fn bivalent_admits(element: IntervalElement, candidate: &ValueType) -> bool {
 }
 
 /// The structural type a literal contributes as a comparison anchor.
-/// `None` for Enum: an enum literal names an ordinal, not a variant list,
-/// so it anchors nothing — it is *checked* against the other side's type
-/// instead.
+/// `None` for a mask literal: it names no data-model type, so it anchors
+/// nothing — it is *checked* against the other side's type instead.
 fn literal_anchor_type(value: &Value) -> Option<ValueType> {
     Some(match value {
         Value::Bool(_) => ValueType::Bool,
@@ -44,11 +43,10 @@ fn literal_anchor_type(value: &Value) -> Option<ValueType> {
         Value::IntervalI64(..) => ValueType::Interval {
             element: IntervalElement::I64,
         },
-        // An enum literal names an ordinal, not a variant list; a mask
-        // literal is no data-model type at all (it is only ever legal
-        // inside `CmpOp::Allen`'s mask position, never as a term) — both
-        // anchor nothing and are checked against the other side instead.
-        Value::Enum(_) | Value::AllenMask(_) => return None,
+        // A mask literal is no data-model type at all (it is only ever
+        // legal inside `CmpOp::Allen`'s mask position, never as a term) —
+        // it anchors nothing and is checked against the other side.
+        Value::AllenMask(_) => return None,
     })
 }
 
@@ -372,13 +370,6 @@ impl Context {
                     return Err(ValidationError::LiteralTypeMismatch {
                         atom: occ_idx,
                         field,
-                    });
-                }
-                Err(LiteralMismatch::EnumOrdinal(ordinal)) => {
-                    return Err(ValidationError::EnumOrdinalOutOfRange {
-                        atom: occ_idx,
-                        field,
-                        ordinal,
                     });
                 }
                 // Unreachable for a scalar field (kind is checked
@@ -848,9 +839,6 @@ impl Context {
     ) -> Result<(), ValidationError> {
         match literal_matches(value, expected) {
             Ok(()) => Ok(()),
-            Err(LiteralMismatch::EnumOrdinal(ordinal)) => {
-                Err(ValidationError::ComparisonEnumOrdinalOutOfRange { index, ordinal })
-            }
             Err(LiteralMismatch::IntervalEmpty) => {
                 Err(ValidationError::ComparisonEmptyIntervalLiteral { index })
             }

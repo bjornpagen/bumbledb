@@ -77,25 +77,6 @@ fn rejects_literal_type_mismatch() {
 }
 
 #[test]
-fn rejects_enum_ordinal_out_of_range() {
-    let query = simple(
-        vec![FindTerm::Var(VarId(0))],
-        vec![atom(
-            ACCOUNT,
-            vec![(0, var(0)), (2, Term::Literal(Value::Enum(2)))], // 2 variants
-        )],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::EnumOrdinalOutOfRange {
-            atom: 0,
-            field: FieldId(2),
-            ordinal: 2
-        }
-    ));
-}
-
-#[test]
 fn rejects_conflicting_param_anchors() {
     // Param 0 anchored at U64 (Posting.account) and I64 (Posting.amount).
     let query = simple(
@@ -154,50 +135,26 @@ fn rejects_self_comparison() {
 }
 
 #[test]
-fn rejects_order_operators_on_bool_and_enum() {
-    // Posting.flag is Bool (field 5); Account.status is Enum (field 2).
-    for (rel, field) in [(POSTING, 5u16), (ACCOUNT, 2u16)] {
-        let query = Query::single(Rule {
-            finds: vec![FindTerm::Var(VarId(0))],
-            atoms: vec![
-                atom(rel, vec![(field, var(0)), (0, var(1))]),
-                atom(rel, vec![(field, var(2)), (0, var(3))]),
-            ],
-            negated: vec![],
-            predicates: vec![PredicateTree::Leaf(Comparison {
-                op: CmpOp::Lt,
-                lhs: var(0),
-                rhs: var(2),
-            })],
-        });
-        let err = expect_err(&query);
-        assert!(
-            matches!(err, ValidationError::IllegalComparison { index: 0 }),
-            "order ops are integer-only; got {err:?}"
-        );
-    }
-}
-
-#[test]
-fn enum_ordinal_in_a_comparison_reports_the_precise_variant() {
-    // Account.status has 2 variants; ordinal 9 is out of range.
+fn rejects_order_operators_on_bool() {
+    // Posting.flag is Bool (field 5): Lt is illegal (equality-only type).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![atom(ACCOUNT, vec![(2, var(0))])],
+        atoms: vec![
+            atom(POSTING, vec![(5, var(0)), (0, var(1))]),
+            atom(POSTING, vec![(5, var(2)), (0, var(3))]),
+        ],
         negated: vec![],
         predicates: vec![PredicateTree::Leaf(Comparison {
-            op: CmpOp::Eq,
+            op: CmpOp::Lt,
             lhs: var(0),
-            rhs: Term::Literal(Value::Enum(9)),
+            rhs: var(2),
         })],
     });
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::ComparisonEnumOrdinalOutOfRange {
-            index: 0,
-            ordinal: 9
-        }
-    ));
+    let err = expect_err(&query);
+    assert!(
+        matches!(err, ValidationError::IllegalComparison { index: 0 }),
+        "order ops are integer-only; got {err:?}"
+    );
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! Per-fact decode: the hoisted per-column decode plan
 //! and the scan loop that fills the structure-of-arrays slabs through it.
 
-use crate::encoding::{decode_bool, decode_enum, TypeDesc};
+use crate::encoding::{decode_bool, TypeDesc};
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::{RelationId, Schema};
 use crate::storage::env::ReadTxn;
@@ -36,11 +36,6 @@ pub(super) enum Decode {
     Bool {
         offset: usize,
         start: usize,
-    },
-    Enum {
-        offset: usize,
-        start: usize,
-        variants: u16,
     },
 }
 
@@ -128,12 +123,7 @@ pub(super) fn decode_plan(
                     offset,
                     start: bytes_start(columns[first]),
                 },
-                (ColumnWidth::Byte, TypeDesc::Enum { variant_count }) => Decode::Enum {
-                    offset,
-                    start: bytes_start(columns[first]),
-                    variants: *variant_count,
-                },
-                _ => unreachable!("1-byte columns are Bool or Enum"),
+                (ColumnWidth::Byte, _) => unreachable!("1-byte columns are Bool"),
             }
         })
         .collect()
@@ -270,18 +260,6 @@ pub(super) fn decode_fact(
                 // SAFETY: as above.
                 let byte = unsafe { *fact_bytes.get_unchecked(*offset) };
                 decode_bool(byte)?;
-                unsafe {
-                    *bytes.get_unchecked_mut(start + position) = byte;
-                }
-            }
-            Decode::Enum {
-                offset,
-                start,
-                variants,
-            } => {
-                // SAFETY: as above.
-                let byte = unsafe { *fact_bytes.get_unchecked(*offset) };
-                decode_enum(byte, *variants)?;
                 unsafe {
                     *bytes.get_unchecked_mut(start + position) = byte;
                 }

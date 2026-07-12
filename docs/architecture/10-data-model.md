@@ -8,7 +8,6 @@ and carries no names, no identity metaphysics:
 
 ```
 Bool                     1 byte, strictly 0x00 or 0x01
-Enum(variants)           1 byte, ordinal into an ordered variant-name list
 U64                      8 bytes, big-endian (order-preserving)
 I64                      8 bytes, sign-flipped big-endian (order-preserving)
 String                   8 bytes in facts: interned dictionary id
@@ -19,12 +18,13 @@ Interval(element)        16 bytes: start ‖ end, each the element encoding;
                          element ∈ {U64, I64}; strictly start < end
 ```
 
-Seven types (`bytes<N>` replaced variable `bytes` — the roster stays at seven; the
-width is part of the type, so `bytes<16>` and `bytes<32>` are different types and a
-width change is a new theory, fed to the fingerprint). Type equality is **structural
-equality of the description**; unification, comparison legality, and dependency
-compatibility are all just that equality. There is no `name` field anywhere in the type
-layer.
+Six pure value types (`bytes<N>` replaced variable `bytes`; the enum died —
+its obituary below; a vocabulary is a **closed relation**, § closed relations,
+not a type). The width is part of `bytes<N>`'s type, so `bytes<16>` and
+`bytes<32>` are different types and a width change is a new theory, fed to the
+fingerprint. Type equality is **structural equality of the description**;
+unification, comparison legality, and dependency compatibility are all just
+that equality. There is no `name` field anywhere in the type layer.
 
 **The decision rule for byte-shaped data: intern what repeats; inline what
 identifies.** `str` is the reuse-shaped population (names, labels: low cardinality,
@@ -40,16 +40,19 @@ machinery it would need survives intact under `str`). N ≤ 64: 64 bytes = 8 wor
 cache lines of key material; digests in the wild are 16/20/32/64. Not `fresh`-eligible,
 not an interval element; the host type is `[u8; N]` — owned, `Copy`, borrow-free.
 
-**Enum identity is its ordered variant-name list.** Two fields declaring
-`[Active, Closed, Frozen]` are the same type and unify, whatever the schema calls them.
-Rationale (the owner's, verbatim in spirit): *an enum is a schema-level relation whose
-extension is closed and known at compile time* — three states don't deserve a table; the
-byte is the table, inlined. The ordinal encoding is declaration order; >256 variants is
-a schema-declaration error; an out-of-range ordinal anywhere is corruption.
-**Decision:** structural enums. **Alternative:** nominal `Enum{name}`.
-**Why it lost:** hard-structural ruling — the variant list is what determines the
-encoding, so it *is* the identity; the wrapper name types nothing. **Reverses if:**
-never — philosophy.
+**The enum's obituary.** The enum was a vocabulary wearing an encoding: the
+owner's own rationale for it — *an enum is a schema-level relation whose
+extension is closed and known at compile time* — was the closed relation's
+definition, stated before the feature existed. Once closed relations landed
+(§ closed relations), every enum special case was dead weight, and the type
+was deleted whole. **The rewrite rule, mechanical:** `k: enum K { A, B }` →
+`k: u64 as KId` + `closed relation K as KId = { A, B };` +
+`Rel(k) <= K(id);`. What the enum encoded in one byte, the reference states
+in one word plus one compiled-subset containment (an O(1) member-set test at
+commit, `30-dependencies.md`); what the enum could never do — carry payload
+columns, be queried as a relation, select sub-vocabularies (ψ) — the closed
+relation does natively. The rewritten theory is a **different theory** (the
+fingerprint moves); no store compatibility, no migration, per policy.
 
 **Orderability, complete:** U64 and I64 support ordering (`Lt/Le/Gt/Ge`, `Min`, `Max`,
 range predicates). Interval supports **equality, the `Allen` mask (the whole
@@ -57,8 +60,9 @@ interval-pair algebra as one comparison — `20-query-ir.md` § the Allen
 operator), and point membership** (below) — never `Lt`-family order or
 `Min`/`Max`: the value order that
 exists (lexicographic by start) is an encoding accident, and offering it would invite
-queries that mean intersection and say "less than". Everything else is equality-only. Enum
-ordinal order is a declaration-order accident, not semantics; String intern ids
+queries that mean intersection and say "less than". Everything else is equality-only:
+a closed reference's row-id order is a declaration-order accident, not semantics
+(order on it is refused exactly as the enum's ordinal order was); String intern ids
 are meaningless to order; Bool ordering is noise. **`bytes<N>` is identity-only by
 refusal** (`Eq`/`Ne` and membership; order comparisons and `Min`/`Max` are typed
 validation errors): a digest's lexicographic order is an encoding artifact, and
@@ -71,7 +75,7 @@ semantics (the padded bytes memcmp in value-byte order, which is all the guard a
 (before, meets, overlaps, starts, during, finishes, equals, finished-by,
 contains, started-by, overlapped-by, met-by, after), so the algebra's converse
 involution is the 13-bit reversal. It is **not a field type** — nothing stores
-a mask; the roster stays at seven — it exists so the temporal relation can be
+a mask; the roster stays at six — it exists so the temporal relation can be
 a bind-time argument (`Value::AllenMask` / `BindValue::AllenMask`,
 `20-query-ir.md`).
 
@@ -294,7 +298,9 @@ fixed extension.
   Interval. `str` is refused — the handle IS the label and the renderer prints
   handles from the theory; interned columns on a virtual relation would force
   dictionary writes at open, breaking "the store contains zero vocabulary bytes".
-  An enum column is refused — an enum is a vocabulary, so the column would nest
+  (The enum column refusal died with the enum type itself — no other vocabulary
+  type exists to nest; the historical note: an enum was a vocabulary, so the
+  column would have nested
   one closed reference inside another as a type: the nested-closed-refs refusal
   (`docs/prd-comptime/README.md`); declare the plain u64 + containment instead.
   `fresh` is refused — identity is the handle; axioms are never minted.
@@ -365,11 +371,11 @@ branch.
 
 This document owns fact equality. **Value equality ≡ `fact_bytes` equality**, where
 `fact_bytes` is the concatenation of each field's canonical encoding **in declaration
-order**, with **no padding between fields** — facts are dense (1-byte enums/bools sit
+order**, with **no padding between fields** — facts are dense (1-byte bools sit
 flush against 8- and 16-byte fields; Apple Silicon's near-free unaligned loads make
 intra-row alignment a pure waste, `00-product.md`). Canonical means injective and
 unique: Bool is strictly 0/1 (any other byte is corruption, never a distinct "true");
-Enum is the declaration-order ordinal; integers are their order-preserving encodings;
+integers are their order-preserving encodings;
 Interval is `start ‖ end` with `start < end` (violation is corruption);
 String is its intern id (one byte sequence ⇒ exactly one id, ever); `bytes<N>` is its
 N raw bytes zero-padded to the word boundary (nonzero pad is corruption).
@@ -461,8 +467,8 @@ database (export surface: `70-api.md`).
 
 **Fingerprint inputs, exhaustively:** an encoding-format version label; relations in
 declaration order — for each: name and fields in declaration order (name, structural
-type description — including the full ordered variant list for enums and the element
-type for intervals — and generation flag), then the closedness tag (ordinary = 0;
+type description — including the element type for intervals — and generation
+flag; the enum's retired type tag is never reissued), then the closedness tag (ordinary = 0;
 closed = 1 followed by the ground axioms in declaration order — handle, then the
 row's canonical fact bytes); then the **dependency statements in
 materialized order** — for each: the judgment form (functionality or containment,
@@ -474,8 +480,8 @@ relation, in declaration order), then the declared statements in declaration
 order — a deterministic function of the declaration, so statement ids remain pinned
 by the fingerprint without being hashed separately. Relation and field ids are plain
 declaration order; statement ids are materialized order, schema-global.
-Stated consequence, accepted: **adding an enum variant changes the fingerprint — a
-full ETL rebuild.** Closed domains are closed.
+Stated consequence, accepted: **adding a ground axiom to a closed relation changes
+the fingerprint — a full ETL rebuild.** Closed domains are closed.
 
 **Decision: schema lives in Rust.** **Alternative:** external schema declaration
 format. **Why it lost:** the schema must generate typed Rust API anyway and there is one
@@ -485,11 +491,12 @@ never, absent a second consumer.
 ## The modeling discipline (BCNF by discipline, temporality by type)
 
 Natural n-ary relations for domain facts; natural edge relations (`OrgParent(child,
-parent)`) welcome; enums for closed domains instead of two-row lookup tables;
+parent)`) welcome; closed relations for closed domains instead of two-row
+mutable lookup tables;
 **intervals for validity, sessions, periods, and lifetimes** instead of
 start/end column pairs or status-plus-nullable-timestamp machines; optional
 attributes as 0..1 child relations (the no-nulls idiom above); sum-typed domain
-entities as a discriminator enum plus per-variant child relations glued by
+entities as a closed-reference discriminator plus per-variant child relations glued by
 bidirectional conditional inclusions (`30-dependencies.md` derives the pattern and
 its theorems). Forbidden by construction: nullable columns, JSON blobs; forbidden by
 discipline: EAV, denormalized redundancy. History is immutable event facts or
@@ -530,7 +537,7 @@ from the calendar theory (`60-validation.md`):
 fn busy_claims(person: VarId, span: VarId) -> Atom {
     Atom { relation: CLAIM, bindings: vec![
         (CLAIM_PERSON, Term::Var(person)),
-        (CLAIM_ARM,    Term::Literal(Value::Enum(ARM_BUSY))),
+        (CLAIM_ARM,    Term::Literal(Value::U64(Arm::Busy.id()))),
         (CLAIM_SPAN,   Term::Var(span)),
     ] }
 }

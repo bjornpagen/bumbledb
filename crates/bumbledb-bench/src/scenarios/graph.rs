@@ -18,7 +18,7 @@ bumbledb::schema! {
 
     relation Node {
         id: u64 as GNodeId, fresh,
-        kind: enum NodeKind { User, Bot, Org, Page, Group },
+        kind: u64 as GNodeKindId,
         score: i64,
     }
     relation Edge {
@@ -27,6 +27,9 @@ bumbledb::schema! {
         weight: i64,
     }
 
+    closed relation Kind as GNodeKindId = { User, Bot, Org, Page, Group };
+
+    Node(kind) <= Kind(id);
     Edge(src) <= Node(id);
     Edge(dst) <= Node(id);
     Edge(src, dst) -> Edge;
@@ -55,6 +58,7 @@ pub mod ids {
     use bumbledb::RelationId;
     pub const NODE: RelationId = RelationId(0);
     pub const EDGE: RelationId = RelationId(1);
+    pub const NODE_KIND: RelationId = RelationId(2);
 }
 
 pub const NODES: u64 = 100_000;
@@ -66,7 +70,7 @@ fn node_row(seed: u64, i: u64) -> Vec<Value> {
     let mut rng = Rng::new(mix(seed, ids::NODE.0, i));
     vec![
         Value::U64(i),
-        Value::Enum(u8::try_from(rng.range(5)).expect("small")),
+        Value::U64(rng.range(5)),
         Value::I64(i64::try_from(rng.range(1000)).expect("small")),
     ]
 }
@@ -335,10 +339,10 @@ pub fn scenario() -> Scenario {
                     query: mutual,
                     params: |_| {
                         vec![
-                            vec![Value::Enum(0)],
-                            vec![Value::Enum(1)],
-                            vec![Value::Enum(2)],
-                            vec![Value::Enum(4)],
+                            vec![Value::U64(0)],
+                            vec![Value::U64(1)],
+                            vec![Value::U64(2)],
+                            vec![Value::U64(4)],
                         ]
                     },
                     about: "reciprocal-edge 2-cycle over the full graph",

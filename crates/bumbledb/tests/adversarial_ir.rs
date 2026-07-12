@@ -30,11 +30,13 @@ mod common;
 bumbledb::schema! {
     pub Gauntlet;
 
+    closed relation Kind as KindId = { Meeting, Focus, Travel };
+
     relation Busy {
         id: u64 as ClaimId, fresh,
         person: u64,
         during: interval<u64>,
-        kind: enum Kind { Meeting, Focus, Travel },
+        kind: u64 as KindId,
         note: str,
         digest: bytes<16>,
         billable: bool,
@@ -42,6 +44,8 @@ bumbledb::schema! {
         window: interval<i64>,
     }
     relation Ooo { person: u64, during: interval<u64> }
+
+    Busy(kind) <= Kind(id);
 }
 
 /// The sweep budget: at least 10⁴ malformed queries (PRD 20's passing
@@ -81,11 +85,12 @@ impl Rng {
 
 // --- the fully random lane -------------------------------------------
 
-/// A hostile relation id: usually a real one, sometimes just past the
-/// roster, sometimes the far end of the id space.
+/// A hostile relation id: usually a real one (the closed vocabulary
+/// included), sometimes just past the roster, sometimes the far end of
+/// the id space.
 fn relation_id(rng: &mut Rng) -> RelationId {
     match rng.below(8) {
-        0 => RelationId(2),
+        0 => RelationId(3),
         1 => RelationId(u32::MAX),
         n => RelationId(u32::from(n % 2 == 0)),
     }
@@ -102,8 +107,8 @@ fn field_id(rng: &mut Rng) -> FieldId {
 
 /// A literal over every `Value` variant, boundary shapes included:
 /// domain ceilings, empty and ray intervals, non-UTF-8 strings,
-/// wrong-width digests, out-of-range enum ordinals, and the mask value
-/// that is never a term.
+/// wrong-width digests, row-id-shaped smalls straddling the closed
+/// roster, and the mask value that is never a term.
 fn value(rng: &mut Rng) -> Value {
     match rng.below(14) {
         0 => Value::Bool(rng.chance(2)),
@@ -112,7 +117,7 @@ fn value(rng: &mut Rng) -> Value {
         3 => Value::U64(u64::MAX - 1),
         4 => Value::I64(i64::MAX),
         5 => Value::I64(-1),
-        6 => Value::Enum(u8::try_from(rng.below(6)).expect("small")),
+        6 => Value::U64(rng.below(6)),
         7 => Value::String(Box::from(&b"note"[..])),
         8 => Value::String(Box::from(&[0xFF, 0xFE, 0x00][..])),
         9 => {
@@ -352,12 +357,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
             atoms: vec![busy_atom(vec![
                 (Gauntlet::BUSY_PERSON, Term::Var(VarId(0))),
                 (Gauntlet::BUSY_DURING, Term::Var(VarId(1))),
-                (
-                    Gauntlet::BUSY_KIND,
-                    Term::Literal(Value::Enum(
-                        u8::try_from(rng.below(3)).expect("three variants"),
-                    )),
-                ),
+                (Gauntlet::BUSY_KIND, Term::Literal(Value::U64(rng.below(3)))),
             ])],
             negated: vec![Atom {
                 relation: OOO,
@@ -380,7 +380,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         // Unknown relation id.
         0 => {
             if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
-                atom.relation = RelationId(if rng.chance(2) { 2 } else { u32::MAX });
+                atom.relation = RelationId(if rng.chance(2) { 3 } else { u32::MAX });
             }
         }
         // Unknown field id.

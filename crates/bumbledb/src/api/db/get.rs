@@ -187,7 +187,6 @@ impl<S> WriteTx<'_, S> {
                     unreachable!("value_matches rejected mask values above: not a field type")
                 }
                 Value::Bool(v) => out.push(encode_bool(*v)),
-                Value::Enum(ordinal) => out.push(*ordinal),
                 Value::U64(v) => out.extend_from_slice(&encode_u64(*v)),
                 Value::I64(v) => out.extend_from_slice(&encode_i64(*v)),
                 Value::IntervalU64(start, end) => {

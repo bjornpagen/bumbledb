@@ -40,7 +40,7 @@ fn drain(
         let mut column = 0usize;
         for ty in &family.result_types {
             match ty {
-                ValueType::Bool | ValueType::Enum { .. } | ValueType::U64 | ValueType::I64 => {
+                ValueType::Bool | ValueType::U64 | ValueType::I64 => {
                     let value = row.get_ref(column).map_err(|e| format!("read: {e}"))?;
                     std::hint::black_box(value.as_i64().map_err(|e| format!("i64: {e}"))?);
                     column += 1;

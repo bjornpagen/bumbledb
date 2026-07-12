@@ -3,7 +3,7 @@
 //! typed value mapping. One mapping, used by the loader, the translator,
 //! and the runner — it cannot drift apart.
 //!
-//! Value mapping: Bool→INTEGER 0/1, Enum→INTEGER ordinal, U64→INTEGER
+//! Value mapping: Bool→INTEGER 0/1, U64→INTEGER
 //! (asserted < 2⁶³ — the generator's axiom), I64→INTEGER, String→TEXT,
 //! Bytes→BLOB, and `Interval(E)` → **two INTEGER columns**
 //! `<name>_start` / `<name>_end`. The halves cross the boundary as the
@@ -21,11 +21,7 @@ use bumbledb::{Schema, Value};
 /// they split into two INTEGER columns first ([`field_columns`]).
 fn sql_type(ty: &ValueType) -> &'static str {
     match ty {
-        ValueType::Bool
-        | ValueType::Enum { .. }
-        | ValueType::U64
-        | ValueType::I64
-        | ValueType::Interval { .. } => "INTEGER",
+        ValueType::Bool | ValueType::U64 | ValueType::I64 | ValueType::Interval { .. } => "INTEGER",
         ValueType::String => "TEXT",
         ValueType::FixedBytes { .. } => "BLOB",
     }
@@ -82,6 +78,11 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                 projection,
             } => {
                 let rel = schema.relation(*relation);
+                // A closed relation is not mirrored: its auto-key has no
+                // table to index (the extension is the engine's axiom).
+                if rel.is_closed() {
+                    continue;
+                }
                 let covered_by_rowid = projection.len() == 1
                     && fresh_column(rel) == Some(&*rel.fields()[usize::from(projection[0].0)].name);
                 if covered_by_rowid {
@@ -109,6 +110,9 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
             }
             StatementDescriptor::Containment { source, .. } => {
                 let rel = schema.relation(source.relation);
+                if rel.is_closed() {
+                    continue;
+                }
                 plan.push(IndexSpec {
                     table: rel.name().to_owned(),
                     name: format!("ix_{}_s{sid}", rel.name()),
@@ -152,15 +156,21 @@ pub fn ddl(schema: &Schema) -> Vec<String> {
     statements
 }
 
-/// The schema-derived DDL: one STRICT table per relation (NOT NULL
-/// everywhere — no nulls exist; interval fields split into their half
-/// columns), a PRIMARY KEY on the lone fresh auto-key, then the
-/// statement-derived indexes ([`index_plan`]). The scenario loaders
-/// enter here (each scenario carries its own predicate-column indexes).
+/// The schema-derived DDL: one STRICT table per **ordinary** relation
+/// (NOT NULL everywhere — no nulls exist; interval fields split into
+/// their half columns), a PRIMARY KEY on the lone fresh auto-key, then
+/// the statement-derived indexes ([`index_plan`]). Closed relations are
+/// never mirrored: their extension is the engine's ground axiom, no
+/// table exists on the `SQLite` side and no query names one (the
+/// closed-atom pool is PRD 06's). The scenario loaders enter here (each
+/// scenario carries its own predicate-column indexes).
 #[must_use]
 pub fn schema_ddl(schema: &Schema) -> Vec<String> {
     let mut statements = Vec::new();
     for relation in schema.relations() {
+        if relation.is_closed() {
+            continue;
+        }
         let mut columns: Vec<String> = Vec::new();
         for field in relation.fields() {
             for (name, sql_ty) in field_columns(field) {
@@ -235,7 +245,6 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
     use rusqlite::types::Value as Sql;
     match value {
         Value::Bool(v) => Sql::Integer(i64::from(*v)),
-        Value::Enum(ordinal) => Sql::Integer(i64::from(*ordinal)),
         Value::U64(v) => {
             Sql::Integer(i64::try_from(*v).expect("the SQLite mapping axiom: u64 < 2^63"))
         }
@@ -295,7 +304,7 @@ pub fn to_sql_row(fact: &[Value]) -> Vec<rusqlite::types::Value> {
 /// # Errors
 ///
 /// A message naming the mismatch (wrong storage class, negative INTEGER
-/// for a `u64` column, out-of-range enum ordinal, non-UTF-8 TEXT, an
+/// for a `u64` column, non-UTF-8 TEXT, an
 /// interval type — which spans two columns and decodes through
 /// [`interval_from_sql`]).
 pub fn from_sql_value(
@@ -309,14 +318,6 @@ pub fn from_sql_value(
             1 => Ok(Value::Bool(true)),
             other => Err(format!("bool column holds {other}")),
         },
-        (Sql::Integer(v), ValueType::Enum { variants }) => {
-            let ordinal = u8::try_from(*v).map_err(|_| format!("enum ordinal {v}"))?;
-            if usize::from(ordinal) < variants.len() {
-                Ok(Value::Enum(ordinal))
-            } else {
-                Err(format!("enum ordinal {ordinal} out of range"))
-            }
-        }
         (Sql::Integer(v), ValueType::U64) => u64::try_from(*v)
             .map(Value::U64)
             .map_err(|_| format!("u64 column holds negative {v}")),
@@ -504,12 +505,8 @@ mod tests {
 
     #[test]
     fn values_round_trip_through_the_mapping() {
-        let variants = ValueType::Enum {
-            variants: ["A", "B", "C"].iter().map(|v| Box::from(*v)).collect(),
-        };
         let cases: Vec<(Value, ValueType)> = vec![
             (Value::Bool(true), ValueType::Bool),
-            (Value::Enum(2), variants),
             (Value::U64((1 << 63) - 1), ValueType::U64),
             (Value::I64(i64::MIN), ValueType::I64),
             (

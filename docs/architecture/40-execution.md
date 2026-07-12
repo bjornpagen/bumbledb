@@ -31,7 +31,7 @@ structure could do better. Real interval workloads carry their group key
 (`60-validation.md`). Candidate mechanism recorded for trigger day: **guard skip
 scan** — `U` guards are already ordered composite keys of fixed per-statement
 width, so a non-prefix guard lookup or a range scan under a low-cardinality
-leading field (enums, discriminators) is servable with zero new structures by
+leading field (closed-reference discriminators) is servable with zero new structures by
 cursor `set_range` prefix-hopping (O(distinct-leading-prefixes × log n)); not
 applicable to interval stabbing, whose pointwise layout needs the coverage-walk
 shape. Interval membership predicates lower to word comparisons over the
@@ -331,7 +331,7 @@ filter constants are all concrete, so the planner uses the view's actual length.
 **Carve-out:** an atom whose filters involve params, param sets, or not-yet-interned
 literals cannot be measured at prepare time — it plans on the selectivity ladder
 (`plan/selectivity.rs`): key-exact counts, resident-image distinct counts (peeked,
-never built), schema bounds (containment domains, enum variant counts, bool), then
+never built), schema bounds (containment domains, bool), then
 the documented keep-fraction floors per predicate class. A param-set position plans
 as a selective equality under the documented small-set assumption
 (`20-query-ir.md`). No NDV fields, no histograms; the floors are the only constants

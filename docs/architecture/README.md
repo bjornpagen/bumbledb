@@ -34,7 +34,7 @@ documents themselves describe **only the current reality**.
 | Doc | Contents |
 |---|---|
 | `00-product.md` | Thesis, workload census, hardware, durability, deleted vocabulary, success criteria |
-| `10-data-model.md` | Set semantics, the seven structural types, the interval denotation, identity, schema |
+| `10-data-model.md` | Set semantics, the six structural types, the interval denotation, identity, schema |
 | `20-query-ir.md` | The pure-data IR: atoms, negation, membership, param sets, aggregates, validation |
 | `30-dependencies.md` | The two judgments (functionality, containment), statements, pointwise lifting, the acceptance gate |
 | `40-execution.md` | Access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation |
@@ -104,10 +104,11 @@ re-litigated by accident:
 - **No sugar** — the schema surface is raw statements (`->`, `<=`, `==`); no
   field-level constraint modifiers, no `union` keyword (the pattern is derived, its
   theorems proved, in `30-dependencies.md`).
-- **Interval is the seventh type**, with the point-set denotation; pointwise keys and
+- **Interval is the last type**, with the point-set denotation; pointwise keys and
   coverage containments as theorems; order operators and Min/Max refused on it; uuid
   rejected with the fresh rationale (`10-data-model.md`).
-- **`bytes<N>` replaced variable `bytes`** — the roster stays at seven: intern what
+- **`bytes<N>` replaced variable `bytes`** — and the enum died into the closed
+  relation, leaving six pure value types: intern what
   repeats (`str`), inline what identifies (`bytes<N>`); order operators and Min/Max
   refused on it (a digest's lexicographic order is an encoding artifact); the
   dictionary is str-only and its key hash carries no tag (`10-data-model.md`,

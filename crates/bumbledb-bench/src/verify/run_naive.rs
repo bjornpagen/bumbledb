@@ -168,7 +168,7 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
     let span = i64::try_from(sizes.postings).expect("fits") * gen::AT_STEP;
     match name {
         "point" => scalar_draw(vec![Value::U64(3)]),
-        "containment_walk" | "postings_without_tag" => scalar_draw(vec![Value::U64(0)]),
+        "containment_walk" | "postings_without_tag" | "skew" => scalar_draw(vec![Value::U64(0)]),
         "chain" => scalar_draw(vec![Value::I64(gen::AT_BASE)]),
         "range" => scalar_draw(vec![
             Value::I64(gen::AT_BASE + span / 4),
@@ -178,7 +178,6 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
         "balance" | "mandate_overlap" => scalar_draw(vec![Value::U64(1)]),
         "stats" | "spread" | "latest_posting_per_account" => scalar_draw(vec![]),
         "string" => scalar_draw(vec![Value::String(b"SYM0003".to_vec().into())]),
-        "skew" => scalar_draw(vec![Value::Enum(0)]),
         "triangle" => scalar_draw(vec![Value::U64(0), Value::U64(sizes.accounts)]),
         "entries_for_account_set" => vec![ParamValue::Set(vec![
             Value::U64(0),

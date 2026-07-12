@@ -30,21 +30,6 @@ fn bool_round_trip_and_strictness() {
 }
 
 #[test]
-fn enum_ordinal_range_check() {
-    assert_eq!(decode_enum(0, 3), Ok(0));
-    assert_eq!(decode_enum(2, 3), Ok(2));
-    assert_eq!(
-        decode_enum(3, 3),
-        Err(CorruptionError::EnumOrdinalOutOfRange {
-            ordinal: 3,
-            variant_count: 3
-        })
-    );
-    // 256 variants: every u8 ordinal is valid.
-    assert_eq!(decode_enum(255, 256), Ok(255));
-}
-
-#[test]
 fn u64_round_trip_extremes() {
     for v in [0, 1, u64::MAX, u64::MAX - 1, 1 << 63, (1 << 63) - 1] {
         assert_eq!(decode_u64(encode_u64(v)), v);
@@ -111,12 +96,12 @@ fn i64_order_preservation_across_sign_boundary() {
     }
 }
 
-/// A mixed 1/8/16-byte layout: Bool, Enum, U64, I64, String, Bytes, and
-/// both Interval elements.
+/// A mixed 1/8/16-byte layout: two Bools (adjacent 1-byte fields), U64,
+/// I64, String, Bytes, and both Interval elements.
 fn mixed_layout() -> FactLayout {
     FactLayout::new(&[
         TypeDesc::Bool,
-        TypeDesc::Enum { variant_count: 3 },
+        TypeDesc::Bool,
         TypeDesc::U64,
         TypeDesc::I64,
         TypeDesc::String,
@@ -150,7 +135,7 @@ fn layout_offsets_are_cumulative_widths_with_no_padding() {
 fn mixed_values() -> Vec<ValueRef> {
     vec![
         ValueRef::Bool(true),
-        ValueRef::Enum(2),
+        ValueRef::Bool(false),
         ValueRef::U64(u64::MAX),
         ValueRef::I64(i64::MIN),
         ValueRef::String(7),
@@ -167,7 +152,7 @@ fn encode_fact_matches_independent_field_encodings() {
     encode_fact(&mixed_values(), &layout, &mut fact);
     assert_eq!(fact.len(), layout.fact_width());
 
-    let mut expected = vec![0x01, 0x02];
+    let mut expected = vec![0x01, 0x00];
     expected.extend_from_slice(&encode_u64(u64::MAX));
     expected.extend_from_slice(&encode_i64(i64::MIN));
     expected.extend_from_slice(&encode_u64(7));
@@ -186,7 +171,7 @@ fn field_bytes_slices_equal_independent_encodings() {
     encode_fact(&mixed_values(), &layout, &mut fact);
 
     assert_eq!(field_bytes(&fact, &layout, 0), &[0x01]);
-    assert_eq!(field_bytes(&fact, &layout, 1), &[0x02]);
+    assert_eq!(field_bytes(&fact, &layout, 1), &[0x00]);
     assert_eq!(field_bytes(&fact, &layout, 2), encode_u64(u64::MAX));
     assert_eq!(field_bytes(&fact, &layout, 3), encode_i64(i64::MIN));
     assert_eq!(field_bytes(&fact, &layout, 4), encode_u64(7));
@@ -225,15 +210,12 @@ fn decode_field_surfaces_corruption() {
         Err(CorruptionError::InvalidBool(0x02))
     );
     fact[0] = 0x01;
-    fact[1] = 0x03; // corrupt the Enum ordinal (variant_count = 3)
+    fact[1] = 0x03; // corrupt the second Bool
     assert_eq!(
         decode_field(&fact, &layout, 1),
-        Err(CorruptionError::EnumOrdinalOutOfRange {
-            ordinal: 3,
-            variant_count: 3
-        })
+        Err(CorruptionError::InvalidBool(0x03))
     );
-    fact[1] = 0x02;
+    fact[1] = 0x00;
     // Invert the IntervalU64 field (offset 42): end half below its start.
     fact[50..58].copy_from_slice(&encode_u64(0));
     let corrupt: [u8; 16] = fact[42..58].try_into().expect("16-byte field");

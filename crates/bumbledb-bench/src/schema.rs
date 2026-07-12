@@ -1,11 +1,11 @@
 //! The benchmark's ledger schema — a statement-for-statement
 //! transcription of the primary-benchmark block in
-//! `docs/architecture/60-validation.md`: nine relations, the nine
-//! containments, and the pointwise key
-//! `Mandate(account, active) -> Mandate` (one mandate per account per
-//! instant). The doc's notation leaves enum variant lists open; this
-//! transcription pins the ones the query generator's target module
-//! already uses (`Currency`, `Source`, `Tag` — three variants each).
+//! `docs/architecture/60-validation.md`, post-funeral: nine ordinary
+//! relations, three closed relations (the vocabularies `Currency`,
+//! `Source`, `Tag` — ground axioms, not a type), the nine doc
+//! containments plus the three vocabulary containments, and the
+//! pointwise key `Mandate(account, active) -> Mandate` (one mandate per
+//! account per instant).
 //!
 //! Changing this schema is a deliberate act: it re-baselines every stored
 //! corpus digest and every published report (the golden fingerprint test
@@ -21,7 +21,7 @@ bumbledb::schema! {
     relation Account {
         id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
-        currency: enum Currency { Usd, Eur, Gbp },
+        currency: u64 as CurrencyId,
     }
     relation Instrument {
         id: u64 as InstrumentId, fresh,
@@ -29,7 +29,7 @@ bumbledb::schema! {
     }
     relation JournalEntry {
         id: u64 as JournalEntryId, fresh,
-        source: enum Source { Manual, Import, System },
+        source: u64 as SourceId,
         created_at: i64,
     }
     relation Posting {
@@ -42,7 +42,7 @@ bumbledb::schema! {
     }
     relation PostingTag {
         posting: u64 as PostingId,
-        tag: enum Tag { Fee, Rebate, Adjustment },
+        tag: u64 as TagId,
     }
     relation Org {
         id: u64 as OrgId, fresh,
@@ -58,11 +58,18 @@ bumbledb::schema! {
         active: interval<i64>,
     }
 
+    closed relation Currency as CurrencyId = { Usd, Eur, Gbp };
+    closed relation Source as SourceId = { Manual, Import, System };
+    closed relation Tag as TagId = { Fee, Rebate, Adjustment };
+
     Account(holder)      <= Holder(id);
+    Account(currency)    <= Currency(id);
+    JournalEntry(source) <= Source(id);
     Posting(entry)       <= JournalEntry(id);
     Posting(account)     <= Account(id);
     Posting(instrument)  <= Instrument(id);
     PostingTag(posting)  <= Posting(id);
+    PostingTag(tag)      <= Tag(id);
     OrgParent(child)     <= Org(id);
     OrgParent(parent)    <= Org(id);
     Mandate(account)     <= Account(id);
@@ -103,8 +110,14 @@ pub mod ids {
     pub const ORG: RelationId = RelationId(6);
     pub const ORG_PARENT: RelationId = RelationId(7);
     pub const MANDATE: RelationId = RelationId(8);
+    pub const CURRENCY: RelationId = RelationId(9);
+    pub const SOURCE: RelationId = RelationId(10);
+    pub const TAG: RelationId = RelationId(11);
 
-    /// The number of relations — loaders iterate `0..RELATIONS`.
+    /// The number of **writable** relations — loaders iterate
+    /// `0..RELATIONS`. The closed relations (`Currency`/`Source`/`Tag`,
+    /// ids 9..12) sit after every ordinary relation by declaration:
+    /// they are unwritable ground axioms, so no loader touches them.
     pub const RELATIONS: u32 = 9;
 
     pub mod holder {
@@ -166,33 +179,56 @@ mod tests {
     use super::*;
     use bumbledb::schema::{Resolved, StatementDescriptor, ValueType};
 
-    /// The golden fingerprint: changing the schema re-baselines every
-    /// corpus digest and report — this test makes that a deliberate act,
-    /// never an accident. Update the constant ONLY alongside a conscious
-    /// schema change. Last moved by the canonical-format `v2` bump
-    /// (closed relations: the per-relation closedness tag) — the ledger
-    /// declaration itself is unchanged.
-    #[test]
-    fn the_fingerprint_is_pinned() {
+    /// The pre-funeral enum theory's fingerprint — the enum→closed
+    /// rewrite of the same vocabulary is a DIFFERENT theory, no store
+    /// compatibility, no migration.
+    const PRE_FUNERAL_FINGERPRINT: &str =
+        "c64e3142a655bc9c60d0f0488540aa559210c650dd5ceb3e06761c7f3088cee8";
+
+    fn fingerprint_hex() -> String {
         let fp = bumbledb::schema::fingerprint::fingerprint(schema());
-        let hex = fp.0.iter().fold(String::new(), |mut acc, b| {
+        fp.0.iter().fold(String::new(), |mut acc, b| {
             use std::fmt::Write as _;
             let _ = write!(acc, "{b:02x}");
             acc
-        });
+        })
+    }
+
+    /// The golden fingerprint: changing the schema re-baselines every
+    /// corpus digest and report — this test makes that a deliberate act,
+    /// never an accident. Update the constant ONLY alongside a conscious
+    /// schema change. Last moved by the enum funeral: the vocabularies
+    /// became the closed relations `Currency`/`Source`/`Tag` and their
+    /// containments.
+    #[test]
+    fn the_fingerprint_is_pinned() {
         assert_eq!(
-            hex, "c64e3142a655bc9c60d0f0488540aa559210c650dd5ceb3e06761c7f3088cee8",
+            fingerprint_hex(),
+            "63e3b48035488c5e9ed82ea3458f99db28edecdb2ed203b1344a555709a9bcd6",
             "the ledger schema changed — re-baseline corpora and reports deliberately"
         );
     }
 
-    /// The doc's statement roster, verbatim: six fresh auto-keys first
-    /// (declaration order), then the eight containments in source order,
-    /// then the pointwise key.
+    /// The funeral MOVED the fingerprint: an enum→closed rewrite of the
+    /// same vocabulary is a different theory — a store written under the
+    /// enum ledger does not open under this one, and nothing migrates.
+    #[test]
+    fn the_funeral_moved_the_fingerprint() {
+        assert_ne!(
+            fingerprint_hex(),
+            PRE_FUNERAL_FINGERPRINT,
+            "the closed-relation ledger must not fingerprint like the enum ledger"
+        );
+    }
+
+    /// The statement roster: six fresh auto-keys first (declaration
+    /// order), then the three closed auto-keys (Currency/Source/Tag),
+    /// then the twelve containments in source order, then the pointwise
+    /// key.
     #[test]
     fn the_statement_roster_matches_the_doc() {
         let statements = schema().statements();
-        assert_eq!(statements.len(), 6 + 9 + 1);
+        assert_eq!(statements.len(), 6 + 3 + 12 + 1);
         let mut autos = 0;
         let mut containments = Vec::new();
         let mut pointwise = 0;
@@ -213,24 +249,28 @@ mod tests {
             }
         }
         assert_eq!(
-            autos, 6,
-            "Holder/Account/Instrument/JournalEntry/Posting/Org fresh ids"
+            autos, 9,
+            "Holder/Account/Instrument/JournalEntry/Posting/Org fresh ids \
+             plus the Currency/Source/Tag closed auto-keys"
         );
         assert_eq!(pointwise, 1, "the pointwise Mandate key");
         assert_eq!(
             containments,
             vec![
                 (ids::ACCOUNT, ids::HOLDER),
+                (ids::ACCOUNT, ids::CURRENCY),
+                (ids::JOURNAL_ENTRY, ids::SOURCE),
                 (ids::POSTING, ids::JOURNAL_ENTRY),
                 (ids::POSTING, ids::ACCOUNT),
                 (ids::POSTING, ids::INSTRUMENT),
                 (ids::POSTING_TAG, ids::POSTING),
+                (ids::POSTING_TAG, ids::TAG),
                 (ids::ORG_PARENT, ids::ORG),
                 (ids::ORG_PARENT, ids::ORG),
                 (ids::MANDATE, ids::ACCOUNT),
                 (ids::MANDATE, ids::ORG),
             ],
-            "the doc block's nine containment statements, in source order"
+            "the nine doc containments plus the three vocabulary containments, in source order"
         );
     }
 
@@ -247,6 +287,9 @@ mod tests {
             "Org",
             "OrgParent",
             "Mandate",
+            "Currency",
+            "Source",
+            "Tag",
         ]
         .iter()
         .enumerate()
@@ -254,10 +297,16 @@ mod tests {
             let rel = bumbledb::RelationId(u32::try_from(idx).expect("small"));
             assert_eq!(s.relation(rel).name(), *name);
         }
-        assert_eq!(
-            u32::try_from(s.relations().len()).expect("small"),
-            ids::RELATIONS
-        );
+        assert_eq!(s.relations().len(), 12);
+        for rel in 0..ids::RELATIONS {
+            assert!(
+                !s.relation(bumbledb::RelationId(rel)).is_closed(),
+                "every writable relation precedes the closed vocabulary"
+            );
+        }
+        for rel in [ids::CURRENCY, ids::SOURCE, ids::TAG] {
+            assert!(s.relation(rel).is_closed());
+        }
         assert_eq!(
             s.relation(ids::POSTING).field(ids::posting::AT).name,
             "at".into()

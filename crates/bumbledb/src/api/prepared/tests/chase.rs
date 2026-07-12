@@ -154,15 +154,12 @@ fn rows(buffer: &ResultBuffer) -> Vec<Vec<ResultValue<'_>>> {
     rows
 }
 
-/// Grading(id fresh, kind enum{Det, Custom}); Det(grading u64, rate
+/// Grading(id fresh, kind u64 — 0 = Det); Det(grading u64, rate
 /// i64) with the declared key Det(grading) -> Det (statement 1 after
 /// Grading's auto-key 0) and the discriminated-union pair
-/// `Grading(id | kind == Det) == Det(grading)` written as its two
+/// `Grading(id | kind == 0) == Det(grading)` written as its two
 /// containments (statements 2 and 3).
 fn du_schema() -> Schema {
-    let kind = ValueType::Enum {
-        variants: ["Det", "Custom"].iter().map(|v| Box::from(*v)).collect(),
-    };
     let side = |relation: u32, field: u16, selection: &[(u16, crate::ir::Value)]| Side {
         relation: RelationId(relation),
         projection: Box::new([FieldId(field)]),
@@ -184,7 +181,7 @@ fn du_schema() -> Schema {
                     },
                     FieldDescriptor {
                         name: "kind".into(),
-                        value_type: kind,
+                        value_type: ValueType::U64,
                         generation: Generation::None,
                     },
                 ],
@@ -212,12 +209,12 @@ fn du_schema() -> Schema {
                 projection: Box::new([FieldId(0)]),
             },
             StatementDescriptor::Containment {
-                source: side(0, 0, &[(1, Value::Enum(0))]),
+                source: side(0, 0, &[(1, Value::U64(0))]),
                 target: side(1, 0, &[]),
             },
             StatementDescriptor::Containment {
                 source: side(1, 0, &[]),
-                target: side(0, 0, &[(1, Value::Enum(0))]),
+                target: side(0, 0, &[(1, Value::U64(0))]),
             },
         ],
     }
@@ -230,10 +227,10 @@ fn du_schema() -> Schema {
 fn populate_du(env: &Environment, schema: &Schema) {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(schema);
-    for (id, kind) in [(1u64, 0u8), (2, 0), (3, 1)] {
+    for (id, kind) in [(1u64, 0u64), (2, 0), (3, 1)] {
         let mut bytes = Vec::new();
         encode_fact(
-            &[ValueRef::U64(id), ValueRef::Enum(kind)],
+            &[ValueRef::U64(id), ValueRef::U64(kind)],
             schema.relation(RelationId(0)).layout(),
             &mut bytes,
         );
@@ -254,7 +251,7 @@ fn populate_du(env: &Environment, schema: &Schema) {
 
 /// The EXPLAIN golden on the DU fixture (docs/prd — the chase surface):
 /// the one-sided walk `Q(rate) :- Det(grading = g, rate),
-/// Grading(id = g, kind == Det)` reports the header's elimination with
+/// Grading(id = g, kind == 0)` reports the header's elimination with
 /// the licensing statement rendered in the `schema!` notation — the
 /// mirrored pair renders `==` once — and the structured stats carry the
 /// same mark as data.
@@ -280,7 +277,7 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
                 relation: RelationId(0),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
-                    (FieldId(1), Term::Literal(Value::Enum(0))),
+                    (FieldId(1), Term::Literal(Value::U64(0))),
                 ],
             },
         ],
@@ -292,7 +289,7 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
     let (rows, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
     assert_eq!(rows.len(), 2, "the two Det rates");
     assert!(
-        report.contains("eliminated: Grading via Grading(id | kind == Det) == Det(grading)\n"),
+        report.contains("eliminated: Grading via Grading(id | kind == 0) == Det(grading)\n"),
         "the golden eliminated line is missing:\n{report}"
     );
 
@@ -303,7 +300,7 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
             occurrence: 1,
             relation: "Grading".into(),
             statement: crate::schema::StatementId(3),
-            rendered: "Grading(id | kind == Det) == Det(grading)".into(),
+            rendered: "Grading(id | kind == 0) == Det(grading)".into(),
         }],
         "the structured stats carry the mark as data"
     );
@@ -490,7 +487,7 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
             PredicateTree::Leaf(Comparison {
                 op: CmpOp::Eq,
                 lhs: Term::Var(VarId(2)),
-                rhs: Term::Literal(Value::Enum(0)),
+                rhs: Term::Literal(Value::U64(0)),
             }),
         ])],
     });

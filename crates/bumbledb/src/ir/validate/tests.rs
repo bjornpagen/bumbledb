@@ -11,7 +11,7 @@ mod rules;
 
 /// The fixture schema:
 /// Holder(id fresh, name string);
-/// Account(id fresh, holder u64, status enum, validity interval<u64>);
+/// Account(id fresh, holder u64, status u64, validity interval<u64>);
 /// Posting(id fresh, account u64, amount i64, at i64, memo bytes,
 ///         flag bool, span interval<u64>).
 fn schema() -> Schema {
@@ -41,12 +41,7 @@ fn schema() -> Schema {
                 fields: vec![
                     fresh("id"),
                     field("holder", ValueType::U64),
-                    field(
-                        "status",
-                        ValueType::Enum {
-                            variants: ["Active", "Closed"].iter().map(|v| Box::from(*v)).collect(),
-                        },
-                    ),
+                    field("status", ValueType::U64),
                     field("validity", interval_u64.clone()),
                 ],
             },

@@ -68,10 +68,13 @@ recipe!(r01, Uptime, {
 recipe!(r02, Grading, {
     pub Grading;
 
-    relation Task { id: u64 as TaskId, fresh, kind: enum Kind { Deterministic, CustomOperator } }
+    closed relation Kind as KindId = { Deterministic, CustomOperator };
+
+    relation Task { id: u64 as TaskId, fresh, kind: u64 as KindId }
     relation DeterministicGrading  { task: u64 as TaskId, tolerance: i64 }
     relation CustomOperatorGrading { task: u64 as TaskId, operator: str }
 
+    Task(kind) <= Kind(id);
     DeterministicGrading(task)  -> DeterministicGrading;
     CustomOperatorGrading(task) -> CustomOperatorGrading;
     Task(id | kind == Deterministic)  == DeterministicGrading(task);
@@ -91,29 +94,35 @@ recipe!(r03, Optionality, {
 recipe!(r04, Money, {
     pub Money;
 
+    closed relation Currency as CurrencyId = { Usd, Eur, Gbp };
+
     relation Account { id: u64 as AccountId, fresh, name: str }
     relation Posting {
         id: u64 as PostingId, fresh,
         account: u64 as AccountId,
-        currency: enum Currency { Usd, Eur, Gbp },
+        currency: u64 as CurrencyId,
         minor: i64 as Minor,
     }
 
-    Posting(account) <= Account(id);
+    Posting(account)  <= Account(id);
+    Posting(currency) <= Currency(id);
 });
 
 recipe!(r05, Content, {
     pub Content;
+
+    closed relation Region as RegionId = { Us, Eu };
 
     relation Document {
         id: u64 as DocumentId, fresh,
         name: str,
         payload: bytes<32> as PayloadHash,
     }
-    relation Replica { payload: bytes<32> as PayloadHash, region: enum Region { Us, Eu } }
+    relation Replica { payload: bytes<32> as PayloadHash, region: u64 as RegionId }
 
     Document(payload) -> Document;
     Replica(payload) <= Document(payload);
+    Replica(region)  <= Region(id);
 });
 
 recipe!(r06, Playlists, {
@@ -129,11 +138,14 @@ recipe!(r06, Playlists, {
 recipe!(r07, Ast, {
     pub Ast;
 
-    relation Node { id: u64 as NodeId, fresh, kind: enum Kind { Lit, Add } }
+    closed relation Kind as KindId = { Lit, Add };
+
+    relation Node { id: u64 as NodeId, fresh, kind: u64 as KindId }
     relation Lit  { node: u64 as NodeId, value: i64 }
     relation Add  { node: u64 as NodeId, lhs: u64 as NodeId, rhs: u64 as NodeId }
     relation Parent { child: u64 as NodeId, parent: u64 as NodeId }
 
+    Node(kind) <= Kind(id);
     Lit(node) -> Lit;
     Add(node) -> Add;
     Node(id | kind == Lit) == Lit(node);
@@ -180,10 +192,13 @@ recipe!(r09, Ecs, {
 recipe!(r10, Orders, {
     pub Orders;
 
-    relation Order { id: u64 as OrderId, fresh, state: enum State { Cart, Placed, Shipped } }
+    closed relation State as StateId = { Cart, Placed, Shipped };
+
+    relation Order { id: u64 as OrderId, fresh, state: u64 as StateId }
     relation Placement { order: u64 as OrderId, at: i64 }
     relation Shipment  { order: u64 as OrderId, carrier: str, at: i64 }
 
+    Order(state) <= State(id);
     Placement(order) -> Placement;
     Shipment(order)  -> Shipment;
     Placement(order) <= Order(id);
@@ -193,6 +208,9 @@ recipe!(r10, Orders, {
 recipe!(r11, Calendar, {
     pub Calendar;
 
+    closed relation Rsvp as RsvpId = { Accepted, Tentative, Declined };
+    closed relation Arm as ArmId = { Busy, Ooo };
+
     relation Person { id: u64 as PersonId, fresh, name: str }
     relation Room   { id: u64 as RoomId, fresh, name: str }
     relation Event  { id: u64 as EventId, fresh, span: interval<i64> }
@@ -200,12 +218,12 @@ recipe!(r11, Calendar, {
         id: u64 as AttendanceId, fresh,
         event: u64 as EventId,
         person: u64 as PersonId,
-        rsvp: enum Rsvp { Accepted, Tentative, Declined },
+        rsvp: u64 as RsvpId,
     }
     relation Claim {
         source: u64,
         person: u64 as PersonId,
-        arm: enum Arm { Busy, Ooo },
+        arm: u64 as ArmId,
         span: interval<i64>,
     }
     relation Booking   { room: u64 as RoomId, event: u64 as EventId, span: interval<i64> }
@@ -213,9 +231,11 @@ recipe!(r11, Calendar, {
 
     Attendance(event)  <= Event(id);
     Attendance(person) <= Person(id);
+    Attendance(rsvp)   <= Rsvp(id);
     Attendance(event, person) -> Attendance;
     Claim(source) -> Claim;
     Claim(person) <= Person(id);
+    Claim(arm)    <= Arm(id);
     Booking(room, span) -> Booking;
     Attendance(id | rsvp == Accepted) == Claim(source | arm == Busy);
     WorkHours(person, hours) -> WorkHours;
@@ -250,15 +270,18 @@ recipe!(r13, Payroll, {
 recipe!(r14, Tax, {
     pub Tax;
 
+    closed relation Status as StatusId = { Single, MarriedJoint, HeadOfHousehold };
+
     relation Regime {
         id: u64 as RegimeId, fresh,
         year: i64,
-        status: enum Status { Single, MarriedJoint, HeadOfHousehold },
+        status: u64 as StatusId,
     }
     relation Bracket { regime: u64 as RegimeId, income: interval<i64>, rate_bps: i64 }
     relation Residency { person: u64, span: interval<i64> }
     relation Earned { person: u64, regime: u64 as RegimeId, span: interval<i64>, minor: i64 }
 
+    Regime(status) <= Status(id);
     Regime(year, status) -> Regime;
     Bracket(regime) <= Regime(id);
     Bracket(regime, income) -> Bracket;
@@ -295,13 +318,16 @@ recipe!(r16, Ledger, {
 recipe!(r17, Jobs, {
     pub Jobs;
 
+    closed relation State as StateId = { Queued, Running, Done };
+
     relation Job {
         id: u64 as JobId, fresh,
-        state: enum State { Queued, Running, Done },
+        state: u64 as StateId,
         payload: str,
     }
     relation Lease { job: u64 as JobId, worker: u64, until: i64 }
 
+    Job(state) <= State(id);
     Lease(job) -> Lease;
     Lease(job) == Job(id | state == Running);
 });
@@ -309,14 +335,17 @@ recipe!(r17, Jobs, {
 recipe!(r18, Rollup, {
     pub Rollup;
 
+    closed relation Arm as ArmId = { Busy, Ooo };
+
     relation Claim {
         source: u64,
         person: u64,
-        arm: enum Arm { Busy, Ooo },
+        arm: u64 as ArmId,
         span: interval<i64>,
     }
     relation BusySpan { person: u64, span: interval<i64> }
 
+    Claim(arm) <= Arm(id);
     Claim(source) -> Claim;
     Claim(person, span) -> Claim;
     BusySpan(person, span) -> BusySpan;
@@ -326,10 +355,13 @@ recipe!(r18, Rollup, {
 recipe!(r19, Payments, {
     pub Payments;
 
-    relation Payment { id: u64 as PaymentId, fresh, kind: enum Kind { Card, Ach } }
+    closed relation Kind as KindId = { Card, Ach };
+
+    relation Payment { id: u64 as PaymentId, fresh, kind: u64 as KindId }
     relation Card { payment: u64 as PaymentId, last4: u64 }
     relation Ach  { payment: u64 as PaymentId, routing: u64 }
 
+    Payment(kind) <= Kind(id);
     Card(payment) -> Card;
     Ach(payment)  -> Ach;
     Payment(id | kind == Card) == Card(payment);
@@ -655,16 +687,19 @@ fn r16_balances_round_trips() {
 }
 
 /// Recipe 19: the whole-DU read — one head, one rule per arm; the
-/// exclusivity theorem elides cross-rule dedup.
+/// exclusivity theorem elides cross-rule dedup. The bare handles resolve
+/// through the `Kind` host enum in scope; the renderer prints the row
+/// ids as bare numbers.
 #[test]
 fn r19_union_read_round_trips() {
+    use r19::Kind;
     let methods = query!(r19::Payments {
         (id, n) | Payment(id, kind == Card), Card(payment: id, last4: n);
         (id, n) | Payment(id, kind == Ach), Ach(payment: id, routing: n);
     });
     assert_eq!(
         pin("r19-methods", r19::Payments, &methods),
-        "(v0, v1) | Payment(id: v0, kind == Card), Card(payment: v0, last4: v1);\n\
-         (v0, v1) | Payment(id: v0, kind == Ach), Ach(payment: v0, routing: v1);"
+        "(v0, v1) | Payment(id: v0, kind == 0), Card(payment: v0, last4: v1);\n\
+         (v0, v1) | Payment(id: v0, kind == 1), Ach(payment: v0, routing: v1);"
     );
 }

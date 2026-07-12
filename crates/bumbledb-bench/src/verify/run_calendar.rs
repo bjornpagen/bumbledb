@@ -187,7 +187,7 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                     Value::U64(sizes.attendances + 5),
                     Value::U64(0),
                     Value::U64(3),
-                    Value::Enum(RSVP_ACCEPTED),
+                    Value::U64(RSVP_ACCEPTED),
                 ],
             )],
         }),
@@ -202,7 +202,7 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                 vec![
                     Value::U64(sizes.ooo_source_base() + sizes.claims + 7),
                     Value::U64(0),
-                    Value::Enum(ARM_BUSY),
+                    Value::U64(ARM_BUSY),
                     Value::IntervalI64(gap, gap + 1),
                 ],
             )],
@@ -234,7 +234,7 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                             Value::U64(source),
                             Value::U64(sizes.events),
                             Value::U64(0),
-                            Value::Enum(RSVP_ACCEPTED),
+                            Value::U64(RSVP_ACCEPTED),
                         ],
                     ),
                     (
@@ -242,7 +242,7 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                         vec![
                             Value::U64(source),
                             Value::U64(0),
-                            Value::Enum(ARM_BUSY),
+                            Value::U64(ARM_BUSY),
                             Value::IntervalI64(CAL_BASE - 2 * HOUR, CAL_BASE - HOUR),
                         ],
                     ),

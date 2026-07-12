@@ -55,7 +55,6 @@ impl ResultBuffer {
             Cell::Bool(v) => ResultValue::Bool(v),
             Cell::U64(v) => ResultValue::U64(v),
             Cell::I64(v) => ResultValue::I64(v),
-            Cell::Enum(v) => ResultValue::Enum(v),
             Cell::String { start, len } => ResultValue::String(
                 std::str::from_utf8(&self.bytes[start..start + len])
                     .expect("validated at materialization"),
@@ -81,11 +80,6 @@ impl ResultBuffer {
     pub(super) fn word_cell(ty: &ValueType, word: u64) -> Cell {
         match ty {
             ValueType::Bool => Cell::Bool(word != 0),
-            ValueType::Enum { .. } => Cell::Enum(
-                // Programmer invariant, not corruption: image build
-                // range-checked every stored ordinal against the schema.
-                u8::try_from(word).expect("enum words fit u8"),
-            ),
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::String => {
@@ -149,11 +143,6 @@ impl ResultBuffer {
     ) -> Result<()> {
         let cell = match ty {
             ValueType::Bool => Cell::Bool(word != 0),
-            ValueType::Enum { .. } => Cell::Enum(
-                // Programmer invariant, not corruption: image build
-                // range-checked every stored ordinal against the schema.
-                u8::try_from(word).expect("enum words fit u8"),
-            ),
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::String => {

@@ -23,12 +23,6 @@ pub(crate) fn fresh_field(name: &str) -> FieldDescriptor {
     }
 }
 
-pub(crate) fn enum_type(variants: &[&str]) -> ValueType {
-    ValueType::Enum {
-        variants: variants.iter().map(|v| Box::from(*v)).collect(),
-    }
-}
-
 /// One ground axiom: `handle(values...)`.
 pub(crate) fn row(handle: &str, values: Vec<Value>) -> Row {
     Row {
@@ -85,7 +79,7 @@ pub(crate) fn containment(source: Side, target: Side) -> StatementDescriptor {
     StatementDescriptor::Containment { source, target }
 }
 
-/// Holder(id fresh, name string) + Account(id fresh, holder u64, status enum),
+/// Holder(id fresh, name string) + Account(id fresh, holder u64, status u64),
 /// with the statement `Account(holder) <= Holder(id)`.
 fn ledger_slice() -> SchemaDescriptor {
     SchemaDescriptor {
@@ -101,7 +95,7 @@ fn ledger_slice() -> SchemaDescriptor {
                 fields: vec![
                     fresh_field("id"),
                     field("holder", ValueType::U64),
-                    field("status", enum_type(&["Active", "Closed"])),
+                    field("status", ValueType::U64),
                 ],
             },
         ],

@@ -12,7 +12,7 @@
 //!     relation Account {
 //!         id:     u64 as AccountId, fresh,
 //!         holder: u64 as HolderId,
-//!         kind:   enum Kind { Checking, Savings },
+//!         kind:   u64 as KindId,
 //!         active: interval<i64> as ActiveDuring,
 //!     }
 //!     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
@@ -30,18 +30,17 @@
 //! module — their headers disambiguate.
 //!
 //! Types: `bool`, `u64`, `i64`, `str`, `bytes<N>` (N ∈ 1..=64 — the
-//! width is mandatory; bare `bytes` does not exist), inline
-//! `enum Name { .. }` (the name names the generated Rust enum only —
-//! engine identity is the structural variant list), `interval<i64>`,
-//! `interval<u64>`. `as NewType` generates the host-side nominal newtype
+//! width is mandatory; bare `bytes` does not exist), `interval<i64>`,
+//! `interval<u64>` — the six-type roster; a vocabulary is a closed
+//! relation, never a type. `as NewType` generates the host-side nominal newtype
 //! (legal on u64, i64, `bytes<N>`, and both intervals). `fresh`
 //! auto-materializes `R(field) -> R` at schema resolution. **There are no field-level constraint modifiers** — everything
 //! relational is a dependency statement between the relation blocks
 //! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality),
 //! `A(X | σ) <= B(Y | ψ)` (containment), `==` lowered here to the two
 //! adjacent containments, `A <= B` first. Selection literals are typed
-//! against the selected field in the macro (every enum's variant list is in
-//! the same invocation, so variant names resolve to ordinals here); interval
+//! against the selected field in the macro (a bare handle resolves through
+//! the selected field's newtype to its closed relation's row id); interval
 //! literals are written `start..end`, half-open.
 //!
 //! **Closed relations** declare their extension in the schema — rows are
@@ -70,8 +69,7 @@
 //! ordinary newtype machinery, and the descriptor's extension. **No fact
 //! struct and no `Fact` impl** — closed relations are unwritable. A bare
 //! handle in a statement selection (`| status == Frozen`) resolves through
-//! the selected field's newtype to its owning closed relation's row id,
-//! exactly as enum variants resolve to ordinals.
+//! the selected field's newtype to its owning closed relation's row id.
 //!
 //! Generated fact structs borrow their one variable-width field kind
 //! (`str` → `&'a str`): a struct with any `str` field gains one lifetime.
@@ -125,10 +123,6 @@ enum FieldTy {
     /// `bytes<N>` — the width is part of the type (mandatory in the
     /// grammar; range-validated at `Db::create`/`open`).
     FixedBytes(u64),
-    Enum {
-        name: String,
-        variants: Vec<String>,
-    },
     Interval(IntervalElement),
 }
 
@@ -182,7 +176,8 @@ enum Literal {
         negative: bool,
         text: String,
     },
-    /// A bare ident: an enum variant name, resolved to its ordinal here.
+    /// A bare ident: a closed relation's handle, resolved to its
+    /// declaration-order row id through the selected field's newtype.
     Variant(String),
     /// A string literal's raw token text, quotes included.
     Str(String),
@@ -269,21 +264,15 @@ fn reject_deleted_word(word: &str) {
         "schema!: field-level constraints do not exist; write a statement — \
          see docs/architecture/30-dependencies.md"
     );
+    assert!(
+        word != "enum",
+        "schema!: the enum type is deleted — a vocabulary is a closed relation \
+         (`closed relation K as KId = {{ A, B }};` plus `Rel(k) <= K(id);` — \
+         see docs/architecture/10-data-model.md)"
+    );
 }
 
 /// Parses a comma-separated identifier list.
-fn ident_list(stream: TokenStream) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut tokens = stream.into_iter().peekable();
-    while tokens.peek().is_some() {
-        names.push(expect_ident(&mut tokens, "a name"));
-        if peek_punct(&mut tokens, ',') {
-            tokens.next();
-        }
-    }
-    names
-}
-
 /// Parses one relation body: fields only — everything relational is a
 /// statement outside the block.
 fn parse_relation(name: String, body: TokenStream) -> Relation {
@@ -307,7 +296,7 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
 
 /// Parses a field's type, optional `as NewType`, and optional `, fresh`.
 fn parse_field(name: String, tokens: &mut Tokens) -> Field {
-    let ty_name = expect_ident(tokens, "a type (bool/u64/i64/str/bytes<N>/enum/interval)");
+    let ty_name = expect_ident(tokens, "a type (bool/u64/i64/str/bytes<N>/interval)");
     reject_deleted_word(&ty_name);
     let ty = match ty_name.as_str() {
         "bool" => FieldTy::Bool,
@@ -331,14 +320,6 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                 .parse()
                 .unwrap_or_else(|_| panic!("schema!: malformed bytes<N> width `{text}`"));
             FieldTy::FixedBytes(width)
-        }
-        "enum" => {
-            let enum_name = expect_ident(tokens, "an enum type name");
-            let body = take_group(tokens, Delimiter::Brace, "an enum variant list");
-            FieldTy::Enum {
-                name: enum_name,
-                variants: ident_list(body),
-            }
         }
         "interval" => {
             expect_punct(tokens, '<');
@@ -573,7 +554,7 @@ fn finish_int(tokens: &mut Tokens, negative: bool, text: String) -> Literal {
 }
 
 /// Parses one selection literal: `int`, `-int`, `true`/`false`, a bare
-/// enum-variant ident, a string/byte-string literal, or `start..end`.
+/// handle ident, a string/byte-string literal, or `start..end`.
 fn parse_literal(tokens: &mut Tokens) -> Literal {
     match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
@@ -737,7 +718,7 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
 }
 
 /// The declarative schema surface: expands to the header's `Theory`
-/// unit struct, host-side newtypes and enums, and one typed fact struct
+/// unit struct, host-side newtypes and host enums, and one typed fact struct
 /// per relation with `encode_write`/`encode_delete`/`encode_read`/`decode`
 /// boundaries. The expansion constructs `SchemaDescriptor` directly — ids
 /// resolved here from declaration order — and semantic validation runs
@@ -746,7 +727,7 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
 ///
 /// # Panics
 ///
-/// On malformed `schema!` grammar or an unresolvable relation/field/variant
+/// On malformed `schema!` grammar or an unresolvable relation/field/handle
 /// name — a compile error at the macro call site, reported with the
 /// offending token or name.
 #[proc_macro]
@@ -757,7 +738,6 @@ pub fn schema(input: TokenStream) -> TokenStream {
     emit_schema_def(&mut out, &schema, &closed);
     emit_id_constants(&mut out, &schema);
     emit_newtypes(&mut out, &schema.relations);
-    emit_enums(&mut out, &schema.relations);
     emit_closed(&mut out, &schema.relations);
     for (index, relation) in schema.relations.iter().enumerate() {
         // No fact struct and no `Fact`/`Fresh` impls for a closed relation:
@@ -831,14 +811,6 @@ fn value_type_expr(ty: &FieldTy) -> String {
         FieldTy::I64 => format!("{value_type}::I64"),
         FieldTy::Str => format!("{value_type}::String"),
         FieldTy::FixedBytes(len) => format!("{value_type}::FixedBytes {{ len: {len} }}"),
-        FieldTy::Enum { variants, .. } => {
-            let list = variants
-                .iter()
-                .map(|v| format!("::std::boxed::Box::from(\"{v}\")"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{value_type}::Enum {{ variants: ::std::boxed::Box::new([{list}]) }}")
-        }
         FieldTy::Interval(element) => format!(
             "{value_type}::Interval {{ element: ::bumbledb::schema::IntervalElement::{} }}",
             element.suffix()
@@ -858,10 +830,9 @@ fn signed(bound: &(bool, String)) -> String {
 
 /// Renders one literal — a statement selection's or a closed row's — as a
 /// shared `Value` expression, typed against the field's declaration: one
-/// machine, same errors, both call sites. Enum variants resolve to
-/// ordinals here (every variant list is in the same invocation); a bare
-/// handle resolves through the field's newtype to its owning closed
-/// relation's declaration-order row id. Integer and string/byte-string
+/// machine, same errors, both call sites. A bare handle resolves through
+/// the field's newtype to its owning closed relation's declaration-order
+/// row id. Integer and string/byte-string
 /// token text is spliced verbatim, so rustc polices the value itself.
 fn value_expr(
     closed: &BTreeMap<&str, &Relation>,
@@ -885,18 +856,10 @@ fn value_expr(
         (FieldTy::I64, Literal::Int { negative, text }) => {
             format!("{value}::I64({})", signed(&(*negative, text.clone())))
         }
-        (FieldTy::Enum { variants, .. }, Literal::Variant(name)) => {
-            let ordinal = variants.iter().position(|v| v == name).unwrap_or_else(|| {
-                panic!("schema!: enum field `{relation}.{field}` has no variant `{name}`")
-            });
-            let ordinal = u8::try_from(ordinal).expect("variant count fits u8");
-            format!("{value}::Enum({ordinal})")
-        }
         // A bare handle: legal on a field whose newtype is a closed
         // relation's handle newtype — the handle namespace is
         // per-closed-relation, resolved through the reference. It compiles
-        // to the row's declaration-order id, exactly as enum variants
-        // compile to ordinals.
+        // to the row's declaration-order id.
         (_, Literal::Variant(name)) => {
             let owner = field_decl
                 .newtype
@@ -1108,8 +1071,7 @@ fn screaming_snake(name: &str) -> String {
 /// The declaration-order id constants on the theory
 /// (docs/architecture/70-api.md § id constants — named data, not
 /// ergonomics): per relation `Theory::BUSY: RelationId`, per field
-/// `Theory::BUSY_PERSON: FieldId`, per enum variant
-/// `Theory::KIND_CHECKING: u8` (the ordinal), so the Rust host never
+/// `Theory::BUSY_PERSON: FieldId`), so the Rust host never
 /// writes a magic number into an `ir::Query` — and the downstream
 /// `query!` macro resolves names through ordinary rustc name resolution
 /// (proc macros cannot see each other's output; paths to these constants
@@ -1130,7 +1092,6 @@ fn emit_id_constants(out: &mut String, schema: &SchemaAst) {
         name
     };
     let mut body = String::new();
-    let mut enums_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for (rel_idx, relation) in schema.relations.iter().enumerate() {
         let rel_const = claim(
             screaming_snake(&relation.name),
@@ -1159,25 +1120,6 @@ fn emit_id_constants(out: &mut String, schema: &SchemaAst) {
                  ::bumbledb::schema::FieldId({field_idx});\n",
                 relation.name, field.name,
             );
-            let FieldTy::Enum { name, variants } = &field.ty else {
-                continue;
-            };
-            // One constant set per enum name (enums deduplicate by name;
-            // `emit_enums` rejects conflicting redeclarations).
-            if !enums_seen.insert(name.clone()) {
-                continue;
-            }
-            for (ordinal, variant) in variants.iter().enumerate() {
-                let variant_const = claim(
-                    format!("{}_{}", screaming_snake(name), screaming_snake(variant)),
-                    format!("enum variant `{name}::{variant}`"),
-                );
-                let _ = write!(
-                    body,
-                    "/// `{name}::{variant}` — the declaration-order enum ordinal.\n\
-                     pub const {variant_const}: u8 = {ordinal};\n",
-                );
-            }
         }
     }
     let _ = write!(out, "impl {} {{\n{body}}}\n", schema.name);
@@ -1222,42 +1164,6 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
             out,
             "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash{order})]\n\
              pub struct {name}(pub {inner});\n",
-        );
-    }
-}
-
-fn emit_enums(out: &mut String, relations: &[Relation]) {
-    let mut seen: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for relation in relations {
-        for field in &relation.fields {
-            if let FieldTy::Enum { name, variants } = &field.ty {
-                if let Some(existing) = seen.get(name) {
-                    assert_eq!(
-                        existing, variants,
-                        "schema!: enum `{name}` declared twice with different variants"
-                    );
-                    continue;
-                }
-                seen.insert(name.clone(), variants.clone());
-            }
-        }
-    }
-    for (name, variants) in seen {
-        let list = variants.join(", ");
-        let mut from_arms = String::new();
-        for (ordinal, variant) in variants.iter().enumerate() {
-            let _ = write!(from_arms, "{ordinal} => Some(Self::{variant}),");
-        }
-        let _ = write!(
-            out,
-            "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n\
-             pub enum {name} {{ {list} }}\n\
-             impl {name} {{\n\
-                 #[must_use] pub fn ordinal(self) -> u8 {{ self as u8 }}\n\
-                 #[must_use] pub fn from_ordinal(ordinal: u8) -> Option<Self> {{\n\
-                     match ordinal {{ {from_arms} _ => None }}\n\
-                 }}\n\
-             }}\n",
         );
     }
 }
@@ -1361,7 +1267,6 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::I64 => "i64".to_owned(),
         FieldTy::Str => "&'a str".to_owned(),
         FieldTy::FixedBytes(len) => format!("[u8; {len}]"),
-        FieldTy::Enum { name, .. } => name.clone(),
         FieldTy::Interval(element) => format!("::bumbledb::Interval<{}>", element.rust()),
     }
 }
@@ -1382,10 +1287,6 @@ fn encode_exprs(field: &Field) -> (String, String, String) {
         FieldTy::Bool => same(format!("::bumbledb::__private::ValueRef::Bool({access})")),
         FieldTy::U64 => same(format!("::bumbledb::__private::ValueRef::U64({access})")),
         FieldTy::I64 => same(format!("::bumbledb::__private::ValueRef::I64({access})")),
-        FieldTy::Enum { .. } => same(format!(
-            "::bumbledb::__private::ValueRef::Enum(self.{}.ordinal())",
-            field.name
-        )),
         FieldTy::Interval(element) => same(format!(
             "::bumbledb::__private::ValueRef::Interval{}({access}.start(), {access}.end())",
             element.suffix()
@@ -1446,14 +1347,6 @@ fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
         FieldTy::Bool => arm("Bool(v)".to_owned(), "v".to_owned()),
         FieldTy::U64 => arm("U64(v)".to_owned(), wrap("v")),
         FieldTy::I64 => arm("I64(v)".to_owned(), wrap("v")),
-        FieldTy::Enum {
-            name: enum_name, ..
-        } => arm(
-            "Enum(o)".to_owned(),
-            format!(
-                "{enum_name}::from_ordinal(o).expect(\"decode_field range-checked the ordinal\")"
-            ),
-        ),
         FieldTy::Interval(element) => {
             let el = element.rust();
             arm(

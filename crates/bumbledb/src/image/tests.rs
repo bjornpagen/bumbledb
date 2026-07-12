@@ -16,7 +16,7 @@ mod interval;
 mod pitch;
 mod timing;
 
-/// R(id u64 fresh, flag bool, kind enum[3], amount i64).
+/// R(id u64 fresh, flag bool, kind bool, amount i64).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -35,9 +35,7 @@ fn schema() -> Schema {
                 },
                 FieldDescriptor {
                     name: "kind".into(),
-                    value_type: ValueType::Enum {
-                        variants: ["A", "B", "C"].iter().map(|v| Box::from(*v)).collect(),
-                    },
+                    value_type: ValueType::Bool,
                     generation: Generation::None,
                 },
                 FieldDescriptor {
@@ -55,13 +53,13 @@ fn schema() -> Schema {
 
 const R: RelationId = RelationId(0);
 
-fn fact(schema: &Schema, id: u64, flag: bool, kind: u8, amount: i64) -> Vec<u8> {
+fn fact(schema: &Schema, id: u64, flag: bool, kind: bool, amount: i64) -> Vec<u8> {
     let mut b = Vec::new();
     encode_fact(
         &[
             ValueRef::U64(id),
             ValueRef::Bool(flag),
-            ValueRef::Enum(kind),
+            ValueRef::Bool(kind),
             ValueRef::I64(amount),
         ],
         schema.relation(R).layout(),
@@ -77,11 +75,7 @@ fn populated(dir: &TempDir, schema: &Schema) -> Environment {
     for i in 0..10u64 {
         let amount = i64::try_from(i).expect("small") * 7 - 30;
         delta
-            .insert(
-                &view,
-                R,
-                &fact(schema, i, i % 2 == 0, (i % 3) as u8, amount),
-            )
+            .insert(&view, R, &fact(schema, i, i % 2 == 0, i % 3 == 0, amount))
             .expect("insert");
     }
     drop(view);

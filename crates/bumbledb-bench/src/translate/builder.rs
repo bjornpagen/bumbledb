@@ -33,7 +33,6 @@ fn sql_u64(value: u64) -> Result<String, String> {
 fn sql_literal(value: &Value) -> Result<String, String> {
     Ok(match value {
         Value::Bool(v) => u8::from(*v).to_string(),
-        Value::Enum(ordinal) => ordinal.to_string(),
         Value::U64(v) => sql_u64(*v)?,
         Value::I64(v) => v.to_string(),
         Value::String(raw) => sql_string_literal(raw)?,

@@ -13,7 +13,8 @@ temporal keys *statable* — and makes the SQL constraint zoo (unique, foreign k
 primary key, check, exclusion, cascade, restrict, deferrable) **deleted
 vocabulary**, each word replaced by a derivation. BCNF is a modeling discipline the
 owner enforces; temporality is not a discipline but a type (`Interval`,
-`10-data-model.md` — the seventh and last).
+`10-data-model.md` — the sixth and last; a vocabulary is a closed relation,
+never a type).
 
 The bet: take one good algorithm (Free Join), one elegant relational core (typed
 sets + dependency judgments), one storage engine (LMDB), and push those decisions to
@@ -60,7 +61,8 @@ language. **Reverses if:** never — owner axiom.
   measured form is the calendar benchmark family, `60-validation.md`).
   Read-heavy. The shape is measured, not assumed:
   two of the owner's production schemas were censused (a 74-table Postgres app and a
-  payroll SQLite app); their entire type usage collapses onto the seven types, their
+  payroll SQLite app); their entire type usage collapses onto the six types plus
+  the closed-relation vocabulary form, their
   query operators onto this IR, and their app-enforced invariants onto the two
   judgments. The census drove the feature set; nothing shipped without a sighting
   in it — and it cuts as well as it admits: every byte-shaped sighting split into

@@ -12,7 +12,7 @@ mod layout;
 #[cfg(test)]
 mod tests;
 
-pub use decode::{decode_bool, decode_enum, decode_field, decode_u64, field_bytes};
+pub use decode::{decode_bool, decode_field, decode_u64, field_bytes};
 pub use encode::{
     encode_bool, encode_fact, encode_fixed_bytes, encode_i64, encode_interval_i64,
     encode_interval_u64, encode_literal, encode_u64,
@@ -34,11 +34,6 @@ pub const MAX_FIXED_BYTES: usize = 64;
 pub enum TypeDesc {
     /// 1 byte, strictly `0x00` or `0x01`.
     Bool,
-    /// 1 byte, declaration-order ordinal into a closed variant list.
-    Enum {
-        /// Number of declared variants; valid ordinals are `0..variant_count`.
-        variant_count: u16,
-    },
     /// 8 bytes, big-endian (order-preserving).
     U64,
     /// 8 bytes, sign-flipped big-endian (order-preserving).
@@ -62,13 +57,12 @@ pub enum TypeDesc {
 }
 
 impl TypeDesc {
-    /// Encoded width in bytes: 1 for `Bool`/`Enum`, 16 for `Interval`,
-    /// the word-padded `⌈len/8⌉ × 8` for `FixedBytes`, 8 for everything
-    /// else.
+    /// Encoded width in bytes: 1 for `Bool`, 16 for `Interval`, the
+    /// word-padded `⌈len/8⌉ × 8` for `FixedBytes`, 8 for everything else.
     #[must_use]
     pub const fn width(self) -> usize {
         match self {
-            Self::Bool | Self::Enum { .. } => 1,
+            Self::Bool => 1,
             Self::U64 | Self::I64 | Self::String => 8,
             Self::FixedBytes { len } => (len as usize).div_ceil(8) * 8,
             Self::Interval { .. } => 16,
@@ -144,7 +138,6 @@ impl FixedBytesValue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValueRef {
     Bool(bool),
-    Enum(u8),
     U64(u64),
     I64(i64),
     /// Intern id of a UTF-8 string.

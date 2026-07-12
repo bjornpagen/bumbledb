@@ -85,12 +85,6 @@ fn fresh(name: &str) -> FieldDescriptor {
     }
 }
 
-fn enum_type(variants: &[&str]) -> ValueType {
-    ValueType::Enum {
-        variants: variants.iter().map(|v| Box::from(*v)).collect(),
-    }
-}
-
 /// The test ledger: the benchmark schema of
 /// `docs/architecture/60-validation.md`,
 /// plus `Transfer` for a Bytes field — built locally so the translator's
@@ -111,7 +105,7 @@ fn schema() -> &'static Schema {
                     fields: vec![
                         fresh("id"),
                         field("holder", ValueType::U64),
-                        field("currency", enum_type(&["Usd", "Eur", "Gbp"])),
+                        field("currency", ValueType::U64),
                     ],
                 },
                 RelationDescriptor {
@@ -124,7 +118,7 @@ fn schema() -> &'static Schema {
                     name: "JournalEntry".into(),
                     fields: vec![
                         fresh("id"),
-                        field("source", enum_type(&["Manual", "Import", "System"])),
+                        field("source", ValueType::U64),
                         field("created_at", ValueType::I64),
                     ],
                 },
@@ -145,7 +139,7 @@ fn schema() -> &'static Schema {
                     name: "PostingTag".into(),
                     fields: vec![
                         field("posting", ValueType::U64),
-                        field("tag", enum_type(&["Fee", "Rebate", "Adjustment"])),
+                        field("tag", ValueType::U64),
                     ],
                 },
                 RelationDescriptor {
@@ -306,7 +300,7 @@ fn negated_atoms_match_their_goldens() {
             relation: ids::POSTING_TAG,
             bindings: vec![
                 (ids::posting_tag::POSTING, var(0)),
-                (ids::posting_tag::TAG, Term::Literal(Value::Enum(0))),
+                (ids::posting_tag::TAG, Term::Literal(Value::U64(0))),
             ],
         }],
         predicates: vec![],

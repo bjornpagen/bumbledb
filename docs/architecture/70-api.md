@@ -28,10 +28,12 @@ owns the surface).
 bumbledb::schema! {
     pub Ledger;
 
+    closed relation Kind as KindId = { Checking, Savings };
+
     relation Account {
         id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
-        kind: enum Kind { Checking, Savings },
+        kind: u64 as KindId,
         active: interval<i64> as ActiveDuring,
     }
 
@@ -43,8 +45,10 @@ bumbledb::schema! {
 
 - **Field syntax:** `name: type` with optional `as NewType` and optional `fresh`.
   Types: `bool`, `u64`, `i64`, `str`, `bytes<N>` (N ∈ 1..=64 — the width is
-  mandatory and part of the type; bare `bytes` does not parse), `enum Name {
-  Variants }`, `interval<i64>`, `interval<u64>`. `as` is legal on u64, i64,
+  mandatory and part of the type; bare `bytes` does not parse),
+  `interval<i64>`, `interval<u64>` — the six-type roster; the inline `enum`
+  production is deleted vocabulary (a vocabulary is a closed relation, and
+  the word diagnoses its own replacement at expansion). `as` is legal on u64, i64,
   `bytes<N>`, and intervals (the newtype wraps the engine value; rustc polices
   domains — `10-data-model.md`; bytes and interval newtypes derive no order —
   both refusals are semantics, `10-data-model.md`).
@@ -74,7 +78,7 @@ bumbledb::schema! {
   literals ride the selection-literal machine (same typing, same errors). In
   statement selections a bare handle is legal on any field whose newtype is a
   closed relation's handle newtype (`| status == Frozen`), resolving to the
-  handle's declaration-order row id at expansion exactly as enum variants
+  handle's declaration-order row id at expansion exactly as field names
   resolve to ordinals; a handle on any other field is an expansion error.
 
   **The emission per closed relation:** the **host enum** (`pub enum Status {
@@ -97,7 +101,7 @@ bumbledb::schema! {
   `A(fields... | field == Literal, ...) <= B(fields...);` (containment),
   `==` for bidirectional. Projection lists are positional between the two sides;
   selections follow `|` as comma-separated `field == literal` pairs; literals are
-  enum variant names, integer literals, `true`/`false`, string/byte literals, and
+  closed-relation handles, integer literals, `true`/`false`, string/byte literals, and
   `start..end` interval literals (half-open). The macro emits descriptors directly —
   relation/field names resolve to declaration-order ids at expansion time, so an
   unresolvable name is a compile error naming the relation and field — and
@@ -141,8 +145,9 @@ future binding that needs runtime schemas — existing, not blessed.
 ## Id constants and the manifest — named data, not ergonomics
 
 The macro emits **declaration-order id constants on the theory**: per relation
-(`Ledger::ACCOUNT: RelationId`), per field (`Ledger::ACCOUNT_KIND: FieldId`), per
-enum variant (`Ledger::KIND_SAVINGS: u8` — the ordinal), names converted to
+(`Ledger::ACCOUNT: RelationId`), per field (`Ledger::ACCOUNT_KIND: FieldId`) —
+handles need no constants (the host enum is their namespace,
+`Kind::Savings.id()`), names converted to
 `SCREAMING_SNAKE` with a collision diagnosed at expansion naming both claimants. The
 Rust host never writes a magic number into an `ir::Query` — and a downstream
 `query!` macro checks its names through ordinary rustc resolution by emitting paths
@@ -151,8 +156,8 @@ how a typo'd relation becomes a compile error).
 
 The theory renders a **manifest** (`Theory::manifest()` → `schema::Manifest`): every
 name → id pairing as a plain Rust value straight off the descriptor — relations and
-fields with their ids stated explicitly, each field's structural type, enum variant
-lists whose ordinal is the index, and each closed relation's **extension table**
+fields with their ids stated explicitly, each field's structural type, and each
+closed relation's **extension table**
 (relation → handle → declaration-order row id → (column, value) pairs), so foreign
 surfaces see the vocabulary without touching Rust. A foreign host gets the same
 numbers as data. No serde anywhere (the dependency law): a downstream binding

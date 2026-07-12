@@ -31,7 +31,7 @@ pub(crate) fn fact_operand(
     let word_at =
         |i: usize| u64::from_be_bytes(bytes[8 * i..8 * i + 8].try_into().expect("8-byte word"));
     match layout.field_type(usize::from(field.0)) {
-        TypeDesc::Bool | TypeDesc::Enum { .. } => FactOperand::Word(u64::from(bytes[0])),
+        TypeDesc::Bool => FactOperand::Word(u64::from(bytes[0])),
         TypeDesc::U64 | TypeDesc::I64 | TypeDesc::String => FactOperand::Word(word_at(0)),
         TypeDesc::FixedBytes { len } => {
             let count = crate::encoding::fixed_bytes_words(len);

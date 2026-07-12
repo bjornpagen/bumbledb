@@ -15,7 +15,6 @@ pub enum Owned {
     Bool(bool),
     U64(u64),
     I64(i64),
-    Enum(u8),
     Str(String),
     Bytes(Vec<u8>),
     IntervalU64(u64, u64),
@@ -37,7 +36,6 @@ pub fn from_buffer(buffer: &ResultBuffer, types: &[ValueType]) -> Vec<Row> {
                     ResultValue::Bool(v) => Owned::Bool(v),
                     ResultValue::U64(v) => Owned::U64(v),
                     ResultValue::I64(v) => Owned::I64(v),
-                    ResultValue::Enum(v) => Owned::Enum(v),
                     ResultValue::String(v) => Owned::Str(v.to_owned()),
                     ResultValue::FixedBytes(v) => Owned::Bytes(v.to_vec()),
                     ResultValue::IntervalU64(iv) => Owned::IntervalU64(iv.start(), iv.end()),
@@ -93,7 +91,6 @@ pub fn from_sqlite(
                 Value::Bool(v) => Owned::Bool(v),
                 Value::U64(v) => Owned::U64(v),
                 Value::I64(v) => Owned::I64(v),
-                Value::Enum(v) => Owned::Enum(v),
                 Value::String(raw) => Owned::Str(
                     String::from_utf8(raw.to_vec())
                         .map_err(|_| format!("column {}: non-UTF-8 text", column - 1))?,
@@ -244,9 +241,7 @@ mod tests {
             .expect("insert");
         let types = vec![
             ValueType::Bool,
-            ValueType::Enum {
-                variants: ["A", "B", "C"].iter().map(|v| Box::from(*v)).collect(),
-            },
+            ValueType::U64,
             ValueType::U64,
             ValueType::I64,
             ValueType::String,
@@ -258,7 +253,7 @@ mod tests {
             rows,
             vec![vec![
                 Owned::Bool(true),
-                Owned::Enum(2),
+                Owned::U64(2),
                 Owned::U64(42),
                 Owned::I64(-7),
                 Owned::Str("héllo".to_owned()),
@@ -270,9 +265,7 @@ mod tests {
         // INTEGER read as u64 must refuse.
         let wrong = vec![
             ValueType::Bool,
-            ValueType::Enum {
-                variants: ["A", "B", "C"].iter().map(|v| Box::from(*v)).collect(),
-            },
+            ValueType::U64,
             ValueType::U64,
             ValueType::U64, // the -7 column misdeclared
             ValueType::String,

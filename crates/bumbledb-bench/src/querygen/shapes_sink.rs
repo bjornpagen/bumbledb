@@ -1,4 +1,4 @@
-//! The sink shapes: `CountDistinct` steered across **all seven types**,
+//! The sink shapes: `CountDistinct` steered across **all six types**,
 //! and Arg-restriction (`ArgMax`/`ArgMin`) with constructed ties, both
 //! directions, key-projected and multi-carry variants
 //! (`docs/architecture/20-query-ir.md` § aggregation).
@@ -10,7 +10,7 @@ use crate::querygen::target::ids;
 use crate::querygen::Builder;
 
 /// One `CountDistinct` per query, its input variable drawn to cover
-/// every structural type across a batch: u64, i64, enum, bool, string,
+/// every structural type across a batch: u64, i64, bool, string,
 /// bytes, and interval. Half the typed variants carry a group key; the
 /// rest are global (one group, empty key).
 pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
@@ -35,7 +35,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
             }
             over
         }
-        // Enum: distinct currencies, optionally per holder.
+        // Vocabulary: distinct currencies, optionally per holder.
         2 => {
             let account = b.atom(ids::ACCOUNT);
             let over = b.bind_var(account, ids::account::CURRENCY);

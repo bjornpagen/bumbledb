@@ -584,7 +584,6 @@ fn element_view(value: &Value) -> Option<BindValue<'_>> {
         Value::Bool(v) => BindValue::Bool(*v),
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
-        Value::Enum(ordinal) => BindValue::Enum(*ordinal),
         Value::String(raw) => BindValue::Str(std::str::from_utf8(raw).ok()?),
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
         Value::IntervalU64(start, end) => BindValue::IntervalU64(*start, *end),
@@ -610,11 +609,6 @@ fn convert_scalar(
 ) -> Result<Option<(Const, bool)>> {
     let resolved = match (value, expected) {
         (BindValue::Bool(v), ValueType::Bool) => Const::Byte(u8::from(v)),
-        (BindValue::Enum(ordinal), ValueType::Enum { variants })
-            if usize::from(ordinal) < variants.len() =>
-        {
-            Const::Byte(ordinal)
-        }
         (BindValue::U64(v), ValueType::U64) => Const::Word(v),
         (BindValue::I64(v), ValueType::I64) => Const::Word(i64_word(v)),
         (

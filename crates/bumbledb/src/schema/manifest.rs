@@ -11,8 +11,8 @@ use super::{FieldId, RelationId, SchemaDescriptor, ValueType};
 use crate::value::Value;
 
 /// Every name → id pairing of one theory, in declaration order — named
-/// data, not ergonomics. Enum variants ride inside each field's
-/// [`ValueType::Enum`] variant list: the ordinal is the index, by the
+/// data, not ergonomics. A closed relation's handles ride as its
+/// [`RowManifest`] list: the row id is the index, by the
 /// declaration-order law. Closed relations carry their extension — the
 /// vocabulary as data, so a foreign surface (render, future bindings)
 /// sees every ground axiom without touching Rust.
@@ -46,8 +46,7 @@ pub struct RowManifest {
     pub values: Vec<(Box<str>, Value)>,
 }
 
-/// One field's name, id, and structural type (an enum field's variant
-/// list carries the variant-name → ordinal mapping as its indices).
+/// One field's name, id, and structural type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldManifest {
     pub name: Box<str>,

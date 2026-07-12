@@ -133,6 +133,11 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
 /// The dense-id domain of a u64 field (every corpus id is `0..n`).
 pub(super) fn u64_domain(rel: RelationId, field: FieldId, domains: &Domains) -> u64 {
     match (rel, field) {
+        // Closed-vocabulary reference fields: the domain is the closed
+        // relation's extension (three rows each).
+        (ids::ACCOUNT, ids::account::CURRENCY)
+        | (ids::JOURNAL_ENTRY, ids::journal_entry::SOURCE)
+        | (ids::POSTING_TAG, ids::posting_tag::TAG) => 3,
         (ids::POSTING, ids::posting::ENTRY) | (ids::JOURNAL_ENTRY, ids::journal_entry::ID) => {
             domains.entries
         }
@@ -212,19 +217,6 @@ fn param_value(
             .into_bytes()
             .into(),
         ),
-        ValueType::Enum { variants } => {
-            let count = variants.len() as u64;
-            Value::Enum(match kind {
-                DrawKind::Hit | DrawKind::Miss => u8::try_from(rng.range(count)).expect("small"),
-                DrawKind::Boundary => {
-                    if rng.chance(1, 2) {
-                        0
-                    } else {
-                        u8::try_from(count - 1).expect("small")
-                    }
-                }
-            })
-        }
         // Both bool values are boundary values; every draw kind draws
         // uniformly.
         ValueType::Bool => Value::Bool(rng.chance(1, 2)),

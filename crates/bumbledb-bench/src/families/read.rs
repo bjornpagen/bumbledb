@@ -120,7 +120,7 @@ fn chain_query() -> Query {
                 relation: ids::ACCOUNT,
                 bindings: vec![
                     (ids::account::ID, var(4)),
-                    (ids::account::CURRENCY, Term::Literal(Value::Enum(0))),
+                    (ids::account::CURRENCY, Term::Literal(Value::U64(0))),
                 ],
             },
         ],
@@ -349,9 +349,9 @@ fn skew_params(_: &GenConfig) -> Vec<Draw> {
     // The hot tag, then the two uniform tags (all three ordinals — an
     // out-of-range ordinal is unrepresentable, so no miss draw exists).
     vec![
-        scalar_draw(vec![Value::Enum(0)]),
-        scalar_draw(vec![Value::Enum(1)]),
-        scalar_draw(vec![Value::Enum(2)]),
+        scalar_draw(vec![Value::U64(0)]),
+        scalar_draw(vec![Value::U64(1)]),
+        scalar_draw(vec![Value::U64(2)]),
     ]
 }
 

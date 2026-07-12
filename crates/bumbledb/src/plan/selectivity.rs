@@ -255,9 +255,6 @@ fn distinct_of(
     }
     Ok(match &descriptor.field(field).value_type {
         crate::schema::ValueType::Bool => 2,
-        crate::schema::ValueType::Enum { variants } => {
-            u64::try_from(variants.len()).expect("small").max(1)
-        }
         _ => DEFAULT_EQ_DISTINCT,
     })
 }
@@ -277,7 +274,7 @@ mod tests {
     use crate::storage::env::Environment;
     use crate::testutil::TempDir;
 
-    /// R(id u64 fresh — auto-key, memo str, kind enum[4]);
+    /// R(id u64 fresh — auto-key, memo str, kind u64 over 4 values);
     /// S(id u64 fresh, r u64) with the containment S(r) <= R(id).
     fn schema() -> Schema {
         SchemaDescriptor {
@@ -298,12 +295,7 @@ mod tests {
                         },
                         FieldDescriptor {
                             name: "kind".into(),
-                            value_type: ValueType::Enum {
-                                variants: ["A", "B", "C", "D"]
-                                    .iter()
-                                    .map(|v| Box::from(*v))
-                                    .collect(),
-                            },
+                            value_type: ValueType::U64,
                             generation: Generation::None,
                         },
                     ],
@@ -357,7 +349,7 @@ mod tests {
                 &[
                     ValueRef::U64(i),
                     ValueRef::String(memo),
-                    ValueRef::Enum(u8::try_from(i % 4).expect("small")),
+                    ValueRef::U64(i % 4),
                 ],
                 schema.relation(R).layout(),
                 &mut bytes,
@@ -392,8 +384,8 @@ mod tests {
     }
 
     /// The ladder, rung by rung: key ⇒ rows; resident image ⇒ exact;
-    /// containment/enum schema bounds when cold; the floor for plain
-    /// strings.
+    /// containment schema bounds when cold; the floor for plain
+    /// strings and u64s.
     #[test]
     fn the_distinct_ladder_resolves_strongest_first() {
         let dir = TempDir::new("selectivity-ladder");
@@ -420,11 +412,11 @@ mod tests {
             "cold string hits the floor"
         );
 
-        // Enum, cold: the variant bound (4).
+        // Plain u64, cold: the same floor — no schema bound applies.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(2, R), 6400)
             .expect("estimate")
             .rows;
-        assert_eq!(est, 1600, "cold enum uses the variant bound");
+        assert_eq!(est, 6400 / DEFAULT_EQ_DISTINCT, "cold u64 hits the floor");
 
         // Containment source field, cold: bounded by the target's row
         // count (R has 64).
@@ -442,7 +434,7 @@ mod tests {
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(2, R), 6400)
             .expect("estimate")
             .rows;
-        assert_eq!(est, 1600, "resident enum count matches the bound here");
+        assert_eq!(est, 1600, "resident image: 4 distinct kinds, exact");
     }
 
     /// Residual fractions and clamping: ranges keep 1/4 each, Ne keeps

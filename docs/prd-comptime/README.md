@@ -71,7 +71,6 @@ relation), *JIT/codegen* (refused).
 ## The PRDs
 
 Phase B — the funeral:
-- [05 — The enum funeral](05-enum-funeral.md)
 - [06 — Oracles over axioms](06-oracles-over-axioms.md)
 
 Phase C — the folds:

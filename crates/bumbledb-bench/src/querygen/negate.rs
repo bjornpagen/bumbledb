@@ -81,14 +81,12 @@ pub(super) fn negate(b: &mut Builder, rng: &mut Rng) {
     }
 }
 
-/// An enum-field binding term: literal ordinal, param, or param set —
-/// the "occasional literal/param/set bindings inside" mix.
-fn enum_term(b: &mut Builder, rng: &mut Rng, variants: u64) -> Option<Term> {
+/// A closed-vocabulary binding term (a u64 row id): literal, param, or
+/// param set — the "occasional literal/param/set bindings inside" mix.
+fn vocab_term(b: &mut Builder, rng: &mut Rng, rows: u64) -> Option<Term> {
     match rng.range(4) {
         0 => None,
-        1 => Some(Term::Literal(Value::Enum(
-            u8::try_from(rng.range(variants)).expect("small"),
-        ))),
+        1 => Some(Term::Literal(Value::U64(rng.range(rows)))),
         2 => Some(Term::Param(b.fresh_param())),
         _ => Some(Term::ParamSet(b.fresh_param())),
     }
@@ -102,7 +100,7 @@ fn apply(b: &mut Builder, rng: &mut Rng, template: Template) {
                 .expect("template gated on anchor");
             let atom = b.negated_atom(ids::POSTING_TAG);
             b.bind_negated(atom, ids::posting_tag::POSTING, Term::Var(v));
-            if let Some(term) = enum_term(b, rng, 3) {
+            if let Some(term) = vocab_term(b, rng, 3) {
                 b.bind_negated(atom, ids::posting_tag::TAG, term);
             }
         }
@@ -156,7 +154,7 @@ fn apply(b: &mut Builder, rng: &mut Rng, template: Template) {
                 .expect("template gated on anchor");
             let atom = b.negated_atom(ids::JOURNAL_ENTRY);
             b.bind_negated(atom, ids::journal_entry::ID, Term::Var(v));
-            if let Some(term) = enum_term(b, rng, 3) {
+            if let Some(term) = vocab_term(b, rng, 3) {
                 b.bind_negated(atom, ids::journal_entry::SOURCE, term);
             }
         }

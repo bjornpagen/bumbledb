@@ -151,21 +151,18 @@ fn the_off_switch_bypasses_the_rewrite() {
     );
 }
 
-/// Grading(id fresh, kind enum{Det, Custom}); Det(grading u64, rate
+/// Grading(id fresh, kind u64 — 0 = Det); Det(grading u64, rate
 /// i64) with Det(grading) -> Det; the discriminated-union pair
-/// `Grading(id | kind == Det) == Det(grading)` written as its two
+/// `Grading(id | kind == 0) == Det(grading)` written as its two
 /// containments — statements 2 and 3 after Grading's auto-key (0) and
 /// the declared key (1).
 fn du_schema() -> Schema {
-    let kind = ValueType::Enum {
-        variants: ["Det", "Custom"].iter().map(|v| Box::from(*v)).collect(),
-    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
                 name: "Grading".into(),
-                fields: vec![fresh("id"), field("kind", kind)],
+                fields: vec![fresh("id"), field("kind", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
@@ -181,8 +178,8 @@ fn du_schema() -> Schema {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),
             },
-            containment((0, &[0], &[(1, Value::Enum(0))]), (1, &[0], &[])),
-            containment((1, &[0], &[]), (0, &[0], &[(1, Value::Enum(0))])),
+            containment((0, &[0], &[(1, Value::U64(0))]), (1, &[0], &[])),
+            containment((1, &[0], &[]), (0, &[0], &[(1, Value::U64(0))])),
         ],
     }
     .validate()
@@ -211,7 +208,7 @@ fn du_one_sided_walk_eliminates_the_header() {
                 relation: RelationId(0),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
-                    (FieldId(1), Term::Literal(Value::Enum(0))),
+                    (FieldId(1), Term::Literal(Value::U64(0))),
                 ],
             },
         ],
@@ -525,15 +522,12 @@ fn a_membership_point_sourced_from_the_target_refuses() {
 /// the literal present is the positive control.
 #[test]
 fn a_missing_source_selection_refuses() {
-    let kind = ValueType::Enum {
-        variants: ["Det", "Custom"].iter().map(|v| Box::from(*v)).collect(),
-    };
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
                 name: "Grading".into(),
-                fields: vec![fresh("id"), field("kind", kind)],
+                fields: vec![fresh("id"), field("kind", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
@@ -546,7 +540,7 @@ fn a_missing_source_selection_refuses() {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),
             },
-            containment((0, &[0], &[(1, Value::Enum(0))]), (1, &[0], &[])),
+            containment((0, &[0], &[(1, Value::U64(0))]), (1, &[0], &[])),
         ],
     }
     .validate()
@@ -560,7 +554,7 @@ fn a_missing_source_selection_refuses() {
                     bindings: if kind_filter {
                         vec![
                             (FieldId(0), Term::Var(VarId(0))),
-                            (FieldId(1), Term::Literal(Value::Enum(0))),
+                            (FieldId(1), Term::Literal(Value::U64(0))),
                         ]
                     } else {
                         vec![(FieldId(0), Term::Var(VarId(0)))]
@@ -732,7 +726,7 @@ fn residue_query() -> Query {
             PredicateTree::Leaf(Comparison {
                 op: CmpOp::Eq,
                 lhs: Term::Var(VarId(2)),
-                rhs: Term::Literal(Value::Enum(0)),
+                rhs: Term::Literal(Value::U64(0)),
             }),
         ])],
     })
@@ -787,15 +781,12 @@ fn the_off_switch_covers_subsumption() {
 /// both rules stay.
 #[test]
 fn distinct_bodies_refuse_subsumption() {
-    let kind = ValueType::Enum {
-        variants: ["Det", "Custom"].iter().map(|v| Box::from(*v)).collect(),
-    };
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
                 name: "Grading".into(),
-                fields: vec![fresh("id"), field("kind", kind)],
+                fields: vec![fresh("id"), field("kind", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
@@ -844,7 +835,7 @@ fn mutual_containments_never_eliminate_both() {
                 relation: RelationId(0),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
-                    (FieldId(1), Term::Literal(Value::Enum(0))),
+                    (FieldId(1), Term::Literal(Value::U64(0))),
                 ],
             },
         ],

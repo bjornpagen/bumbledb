@@ -376,7 +376,7 @@ fn attendance_rows(sizes: &CalSizes, row: &SegmentRow) -> Vec<Vec<Value>> {
         Value::U64(3 * event),
         Value::U64(event),
         Value::U64(row.person),
-        Value::Enum(crate::calendar::RSVP_ACCEPTED),
+        Value::U64(crate::calendar::RSVP_ACCEPTED),
     ]];
     for j in 1..ATTENDANCE_PER_EVENT {
         let invitee = (row.person + j) % sizes.persons;
@@ -389,7 +389,7 @@ fn attendance_rows(sizes: &CalSizes, row: &SegmentRow) -> Vec<Vec<Value>> {
             Value::U64(3 * event + j),
             Value::U64(event),
             Value::U64(invitee),
-            Value::Enum(rsvp),
+            Value::U64(rsvp),
         ]);
     }
     rows
@@ -404,7 +404,7 @@ fn claim_row(sizes: &CalSizes, row: &SegmentRow) -> Vec<Value> {
     vec![
         Value::U64(source),
         Value::U64(row.person),
-        Value::Enum(arm),
+        Value::U64(arm),
         Value::IntervalI64(row.segment.start, row.segment.end),
     ]
 }

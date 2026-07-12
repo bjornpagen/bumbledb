@@ -20,21 +20,29 @@ measurement with two differential oracles standing behind it.
 bumbledb::schema! {
     pub Ledger;
 
+    // A vocabulary is a closed relation: rows are ground axioms, frozen
+    // by the fingerprint, virtual in storage — the store holds zero
+    // vocabulary bytes. The macro emits a host enum welded to the row ids.
+    closed relation Region as RegionId = { Na, Eu, Apac, Latam };
+    closed relation Status as StatusId = { Open, Frozen, Closed };
+
     relation Holder {
         id: u64 as HolderId, fresh,
         name: str,
-        region: enum Region { Na, Eu, Apac, Latam },
+        region: u64 as RegionId,
     }
     relation Account {
         id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
-        status: enum Status { Open, Frozen, Closed },
+        status: u64 as StatusId,
         opened_at: i64,
     }
 
     // Everything relational is a statement between the blocks — there are
     // no field-level modifiers. `fresh` auto-materializes R(id) -> R.
     Account(holder) <= Holder(id);   // containment: every account's holder exists
+    Holder(region)  <= Region(id);   // a closed reference: an O(1) member-set test
+    Account(status) <= Status(id);
 }
 
 let db = bumbledb::Db::create(path, Ledger)?;
@@ -43,9 +51,9 @@ let db = bumbledb::Db::create(path, Ledger)?;
 // judged at commit against the final state — an abort never touched disk.
 db.write(|tx| {
     let holder: HolderId = tx.alloc()?;
-    tx.insert(&Holder { id: holder, name: "alice", region: Region::Eu })?;
+    tx.insert(&Holder { id: holder, name: "alice", region: Region::Eu.id() })?;
     let account: AccountId = tx.alloc()?;
-    tx.insert(&Account { id: account, holder, status: Status::Open, opened_at: 17_000_000 })?;
+    tx.insert(&Account { id: account, holder, status: Status::Open.id(), opened_at: 17_000_000 })?;
     Ok(())
 })?;
 
@@ -157,20 +165,19 @@ statement form enters when it carries an enforcement plan, never before.
 (Surface shown as ruled by the algebra pass, `docs/prd-algebra/`; where the
 code still speaks a pre-algebra name, that set is the gap ledger.)
 
-### The signature — the seven types
+### The signature — six types and the vocabulary form
 
 | type | syntax | encoding (canonical; identity = bytes) | denotes | query operators |
 |---|---|---|---|---|
 | `u64` | `n: u64` | big-endian word, order-preserving | a natural | `==` `!=` `<` `<=` `>` `>=`, ∈-sets, `Sum/Min/Max/Count` |
 | `i64` | `t: i64` | sign-flipped big-endian (memcmp order = numeric order) | an integer | same as `u64` |
 | `bool` | `b: bool` | one byte, strictly 0/1 (anything else is corruption) | a truth value | `==` `!=`; Any/All are `Max`/`Min` |
-| `enum` | `k: enum K { A, B }` | declaration-order ordinal; the name is host-only | a finite sum | `==` `!=`, ∈-sets; **order refused** (the ordinal is encoding, not semantics) |
 | `str` | `s: str` | intern id — the dictionary maps repeated text to words; UTF-8 parsed at intern | text under reuse | `==` `!=`, ∈-sets; **order/prefix refused** |
 | `bytes<N>` | `h: bytes<32>` | N raw bytes inline, word-padded; never interned | an identity (digest) | `==` `!=`, ∈-sets; **order refused** (a hash's order is an encoding artifact) |
 | `interval<E>` | `d: interval<i64>` | two order-preserving words `(start, end)`, half-open `[s, e)`, `s < e`; `end = MAX` denotes the ray `[s, ∞)` | **the set of points** `{p : s ≤ p < e}` | `p ∈ d` (membership), `Allen(mask)` (all 8,192 pair relations), `Duration` (the measure), `Pack` (coalesce) |
 | `closed relation` | `closed relation Status as StatusId = { Open, Frozen }` | virtual — rows are **ground axioms** sealed at validate, handle id = declaration order; the store holds zero vocabulary bytes | a vocabulary: the theory's named constants | referenced as a `u64` + containment to its key; handles resolve at expansion; `==` `!=`, ∈-sets; **order refused** |
 
-`closed relation` is a relation form, not an eighth value type: its rows
+`closed relation` is a relation form, not a seventh value type: its rows
 live in the schema (frozen by the fingerprint, never written), the macro
 emits a **host enum** welded to the row ids — an emission, not a type —
 and a reference to it is an ordinary `u64` field under the handle newtype
@@ -250,7 +257,7 @@ broken until they agree.
 | doc | what it owns |
 |---|---|
 | [00 — Product](docs/architecture/00-product.md) | what bumbledb is and refuses to be; the deleted vocabulary; the unsafe policy |
-| [10 — Data Model](docs/architecture/10-data-model.md) | the seven structural types, the interval denotation, set semantics, identity |
+| [10 — Data Model](docs/architecture/10-data-model.md) | the six structural types, the interval denotation, set semantics, identity |
 | [20 — Query IR](docs/architecture/20-query-ir.md) | queries as data: atoms, negation, membership, param sets, aggregates |
 | [30 — Dependencies](docs/architecture/30-dependencies.md) | the two judgments, statements, pointwise lifting, the acceptance gate |
 | [40 — Execution](docs/architecture/40-execution.md) | Free Join, COLT, anti-probes, batching, the Apple Silicon model |

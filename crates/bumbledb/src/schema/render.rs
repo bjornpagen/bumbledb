@@ -20,8 +20,8 @@ use super::{
 /// (`Account(id | kind == Savings)`), and a bidirectional pair — read off
 /// the sealed [`Statement::mirror`](super::Statement::mirror) link — as
 /// `==` once, in the pair's written orientation (both ids render the same
-/// string). Selection literals render through one value formatter: enum
-/// ordinals resolve to variant names, intervals as `start..end`.
+/// string). Selection literals render through one value formatter;
+/// intervals render as `start..end`.
 ///
 /// # Panics
 ///
@@ -216,23 +216,16 @@ fn side_parts(
             }
             field_name(f, names, relation, *field)?;
             write!(f, " == ")?;
-            literal(f, names, relation, *field, value)?;
+            literal(f, value)?;
         }
     }
     write!(f, ")")
 }
 
-/// The one selection-literal formatter: enum ordinals resolve to variant
-/// names through the schema (out-of-range — a diagnosable rejection —
-/// falls back to the bare ordinal), intervals render as their macro form
-/// `start..end`, strings and bytes as escaped literals.
-fn literal(
-    f: &mut fmt::Formatter<'_>,
-    names: &dyn Names,
-    relation: RelationId,
-    field: FieldId,
-    value: &Value,
-) -> fmt::Result {
+/// The one selection-literal formatter: intervals render as their macro
+/// form `start..end`, strings and bytes as escaped literals,
+/// closed-reference words bare v0 (handles land in the surface pass).
+fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
     match value {
         Value::Bool(v) => write!(f, "{v}"),
         Value::U64(v) => write!(f, "{v}"),
@@ -241,19 +234,6 @@ fn literal(
         // type, so no selection holds one); rendered anyway — Display
         // stays total on plain data.
         Value::AllenMask(mask) => write!(f, "allen({:#015b})", mask.bits()),
-        Value::Enum(ordinal) => {
-            let variant =
-                names
-                    .field(relation, field)
-                    .and_then(|descriptor| match &descriptor.value_type {
-                        ValueType::Enum { variants } => variants.get(usize::from(*ordinal)),
-                        _ => None,
-                    });
-            match variant {
-                Some(name) => write!(f, "{name}"),
-                None => write!(f, "{ordinal}"),
-            }
-        }
         Value::IntervalU64(start, end) => write!(f, "{start}..{end}"),
         Value::IntervalI64(start, end) => write!(f, "{start}..{end}"),
         Value::String(bytes) => {

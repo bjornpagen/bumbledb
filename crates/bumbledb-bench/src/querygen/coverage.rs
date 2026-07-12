@@ -15,7 +15,7 @@ use crate::querygen::target::{self, ids};
 use crate::querygen::{ChaseVariant, Coverage, GenTags, RulesVariant, Shape};
 
 /// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
-/// all seven types, order operators over the two integer types only,
+/// all six types, order operators over the two integer types only,
 /// `Allen` (any mask) and `Contains` only at their interval-anchored
 /// shapes.
 #[must_use]
@@ -23,7 +23,7 @@ pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
     match op_idx {
         0 | 1 => true,
         2..=5 => type_idx < 2,
-        _ => type_idx == 6,
+        _ => type_idx == 5,
     }
 }
 
@@ -46,11 +46,10 @@ fn type_index(ty: &ValueType) -> usize {
     match ty {
         ValueType::U64 => 0,
         ValueType::I64 => 1,
-        ValueType::Enum { .. } => 2,
-        ValueType::Bool => 3,
-        ValueType::String => 4,
-        ValueType::FixedBytes { .. } => 5,
-        ValueType::Interval { .. } => 6,
+        ValueType::Bool => 2,
+        ValueType::String => 3,
+        ValueType::FixedBytes { .. } => 4,
+        ValueType::Interval { .. } => 5,
     }
 }
 

@@ -65,11 +65,13 @@ macro surface is the algebra with ASCII operator images (`⊆` is not a Rust tok
 
 ```rust
 bumbledb::schema! {
+    closed relation Kind as KindId = { Checking, Savings };
+
     relation Holder  { id: u64 as HolderId, fresh, name: str }
     relation Account {
         id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
-        kind: enum Kind { Checking, Savings },
+        kind: u64 as KindId,
         active: interval<i64>,
     }
     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
@@ -182,10 +184,13 @@ earned its semantics).
 one bidirectional conditional containment per variant arm, plus the parent's key:
 
 ```rust
+closed relation GraderKind as GraderKindId = { Deterministic, CustomOperator };
+
 relation Grading {
     id: u64 as GradingId, fresh,
-    kind: enum GraderKind { Deterministic, CustomOperator },
+    kind: u64 as GraderKindId,
 }
+Grading(kind) <= GraderKind(id);
 Grading(id | kind == Deterministic)  == DeterministicGrading(grading);
 Grading(id | kind == CustomOperator) == CustomOperatorGrading(grading);
 ```
@@ -287,7 +292,7 @@ already certifies.
 Rejected at schema validation, each with a distinct error: unknown relation/field
 ids; empty or duplicate-carrying projections; arity mismatch between sides;
 positional structural-type mismatch; selection literal type mismatch (including
-out-of-range enum ordinals and non-UTF-8 string literals); a selected field also
+non-UTF-8 string literals); a selected field also
 projected; FD with >1 interval position, interval not in
 final position, or guard width overflow; IND whose target projection matches no key
 of the target (or, with an interval position, no pointwise key carrying it);

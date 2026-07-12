@@ -18,20 +18,18 @@ bumbledb::schema! {
 
     relation Store {
         id: u64 as OStoreId, fresh,
-        region: enum Region { Na, Eu, Apac, Latam, Mea, Anz },
-        tier: enum Tier { Flagship, Standard, Outlet },
+        region: u64 as ORegionId,
+        tier: u64 as OTierId,
     }
     relation Product {
         id: u64 as OProductId, fresh,
-        category: enum Category {
-            C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15,
-        },
+        category: u64 as OCategoryId,
         brand: u64,
         price: i64,
     }
     relation Customer {
         id: u64 as OCustomerId, fresh,
-        segment: enum Segment { Consumer, Smb, Enterprise, Public },
+        segment: u64 as OSegmentId,
     }
     relation Sale {
         id: u64 as OSaleId, fresh,
@@ -44,6 +42,17 @@ bumbledb::schema! {
         promo: bool,
     }
 
+    closed relation Region as ORegionId = { Na, Eu, Apac, Latam, Mea, Anz };
+    closed relation Tier as OTierId = { Flagship, Standard, Outlet };
+    closed relation Category as OCategoryId = {
+        C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15,
+    };
+    closed relation Segment as OSegmentId = { Consumer, Smb, Enterprise, Public };
+
+    Store(region) <= Region(id);
+    Store(tier) <= Tier(id);
+    Product(category) <= Category(id);
+    Customer(segment) <= Segment(id);
     Sale(store) <= Store(id);
     Sale(product) <= Product(id);
     Sale(customer) <= Customer(id);
@@ -73,6 +82,10 @@ pub mod ids {
     pub const PRODUCT: RelationId = RelationId(1);
     pub const CUSTOMER: RelationId = RelationId(2);
     pub const SALE: RelationId = RelationId(3);
+    pub const REGION: RelationId = RelationId(4);
+    pub const TIER: RelationId = RelationId(5);
+    pub const CATEGORY: RelationId = RelationId(6);
+    pub const SEGMENT: RelationId = RelationId(7);
 }
 
 pub const STORES: u64 = 200;
@@ -88,19 +101,16 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
     match rel {
         ids::STORE => vec![
             Value::U64(i),
-            Value::Enum(u8::try_from(rng.range(6)).expect("small")),
-            Value::Enum(u8::try_from(rng.range(3)).expect("small")),
+            Value::U64(rng.range(6)),
+            Value::U64(rng.range(3)),
         ],
         ids::PRODUCT => vec![
             Value::U64(i),
-            Value::Enum(u8::try_from(rng.range(16)).expect("small")),
+            Value::U64(rng.range(16)),
             Value::U64(rng.range(BRANDS)),
             Value::I64(100 + i64::try_from(rng.range(99_900)).expect("small")),
         ],
-        ids::CUSTOMER => vec![
-            Value::U64(i),
-            Value::Enum(u8::try_from(rng.range(4)).expect("small")),
-        ],
+        ids::CUSTOMER => vec![Value::U64(i), Value::U64(rng.range(4))],
         ids::SALE => {
             // Seasonality: sales cluster toward the recent third of the
             // day span (range predicates over `day` select real slices).

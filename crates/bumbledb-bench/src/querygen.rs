@@ -86,7 +86,7 @@ enum Shape {
     /// The adjacent-touching boundary: query literals recomputed to touch
     /// a corpus interval exactly at its endpoint, both polarities.
     Boundary,
-    /// `CountDistinct` steered across all seven types.
+    /// `CountDistinct` steered across all six types.
     CountDistinct,
     /// Arg-restriction: `ArgMax`/`ArgMin` over tie-rich and tie-free
     /// keys, key-projected and multi-carry variants.
@@ -213,7 +213,7 @@ struct GenTags {
 /// coverage contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RulesVariant {
-    /// Provably-disjoint arms: one relation, distinct enum selections on
+    /// Provably-disjoint arms: one relation, distinct vocabulary selections on
     /// the discriminant field (the elision path).
     Disjoint,
     /// Overlapping arms with duplicate head rows across rules (the
@@ -224,8 +224,8 @@ enum RulesVariant {
     Aggregate,
 }
 
-/// The comparison-type axis of the coverage matrix — all seven types.
-pub const CMP_TYPES: [&str; 7] = ["u64", "i64", "enum", "bool", "string", "bytes", "interval"];
+/// The comparison-type axis of the coverage matrix — all six types.
+pub const CMP_TYPES: [&str; 6] = ["u64", "i64", "bool", "string", "bytes", "interval"];
 /// The operator axis, in `CmpOp` order — all eight operators (the Allen
 /// row counts every mask; the representative here is only a row label).
 pub const CMP_OPS: [CmpOp; 8] = [
@@ -286,7 +286,7 @@ pub struct Coverage {
     /// Aggregate-bearing find lists with more than one aggregate.
     pub multi_aggregate: u64,
     /// `CountDistinct` inputs per `CMP_TYPES` index — every type.
-    pub count_distinct_types: [u64; 7],
+    pub count_distinct_types: [u64; 6],
     pub arg_max: u64,
     pub arg_min: u64,
     /// Arg terms carrying the key variable itself.
@@ -373,7 +373,7 @@ pub struct Coverage {
     /// degenerate (`40-execution.md`) must be unemittable.
     pub spine_violations: u64,
     /// Comparison counts per `(CMP_OPS index, CMP_TYPES index)`.
-    pub matrix: [[u64; 7]; 8],
+    pub matrix: [[u64; 6]; 8],
 }
 
 /// Which set each of the four generated param draws is.

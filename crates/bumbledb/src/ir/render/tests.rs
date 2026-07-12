@@ -34,12 +34,7 @@ fn calendar() -> Schema {
                 fields: vec![
                     field("person", ValueType::U64),
                     field("during", during.clone()),
-                    field(
-                        "kind",
-                        ValueType::Enum {
-                            variants: ["Meeting", "Focus"].iter().map(|v| Box::from(*v)).collect(),
-                        },
-                    ),
+                    field("kind", ValueType::U64),
                 ],
             },
             RelationDescriptor {
@@ -99,8 +94,7 @@ fn calendar_union_golden() {
 }
 
 /// The literal-mask spelling: a workload composite renders by name; the
-/// selection binding renders schema-grammar-verbatim with the variant
-/// name resolved; negation is `!`.
+/// selection binding renders schema-grammar-verbatim; negation is `!`.
 #[test]
 fn selection_negation_and_literal_mask_golden() {
     let query = Query::single(Rule {
@@ -110,7 +104,7 @@ fn selection_negation_and_literal_mask_golden() {
             bindings: vec![
                 (PERSON, Term::Var(VarId(0))),
                 (DURING, Term::Var(VarId(1))),
-                (KIND, Term::Literal(Value::Enum(1))),
+                (KIND, Term::Literal(Value::U64(1))),
             ],
         }],
         negated: vec![Atom {
@@ -129,7 +123,7 @@ fn selection_negation_and_literal_mask_golden() {
     validate(&schema, &query).expect("the golden query is a real query");
     assert_eq!(
         render(&schema, &query),
-        "(v0, v1) | Busy(person: v0, during: v1, kind == Focus), !Ooo(person: v0), \
+        "(v0, v1) | Busy(person: v0, during: v1, kind == 1), !Ooo(person: v0), \
          Allen(v1, INTERSECTS, 100..200);"
     );
 }

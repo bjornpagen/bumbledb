@@ -3,8 +3,8 @@
 //! Order Benchmark's thesis is that realistic, correlated, skewed data
 //! punishes bad join orders by orders of magnitude — this is that
 //! pressure, expressed in the engine's conjunctive subset (no LIKE, no
-//! OR, no outer joins; selectivity comes from enums, ranges, and
-//! interned-string points instead).
+//! OR, no outer joins; selectivity comes from closed vocabularies,
+//! ranges, and interned-string points instead).
 
 use super::{mix, Scenario, ScenarioQuery};
 
@@ -31,12 +31,12 @@ bumbledb::schema! {
     relation Company {
         id: u64 as JCompanyId, fresh,
         name: str,
-        country: enum Country { Us, Uk, De, Fr, Jp, In, Br, Kr },
+        country: u64 as JCountryId,
     }
     relation Person {
         id: u64 as JPersonId, fresh,
         name: str,
-        gender: enum Gender { F, M, X },
+        gender: u64 as JGenderId,
     }
     relation Keyword {
         id: u64 as JKeywordId, fresh,
@@ -51,7 +51,7 @@ bumbledb::schema! {
     relation CastInfo {
         movie: u64 as JMovieId,
         person: u64 as JPersonId,
-        role: enum Role { Actor, Actress, Director, Producer, Writer, Composer, Editor, Extra },
+        role: u64 as JRoleId,
     }
     relation MovieCompany {
         movie: u64 as JMovieId,
@@ -62,11 +62,20 @@ bumbledb::schema! {
         keyword: u64 as JKeywordId,
     }
 
+    closed relation Country as JCountryId = { Us, Uk, De, Fr, Jp, In, Br, Kr };
+    closed relation Gender as JGenderId = { F, M, X };
+    closed relation Role as JRoleId = {
+        Actor, Actress, Director, Producer, Writer, Composer, Editor, Extra,
+    };
+
     Kind(name) -> Kind;
     Keyword(word) -> Keyword;
     Movie(kind) <= Kind(id);
+    Company(country) <= Country(id);
+    Person(gender) <= Gender(id);
     CastInfo(movie) <= Movie(id);
     CastInfo(person) <= Person(id);
+    CastInfo(role) <= Role(id);
     CastInfo(movie, person) -> CastInfo;
     MovieCompany(movie) <= Movie(id);
     MovieCompany(company) <= Company(id);
@@ -105,6 +114,9 @@ pub mod ids {
     pub const CAST_INFO: RelationId = RelationId(5);
     pub const MOVIE_COMPANY: RelationId = RelationId(6);
     pub const MOVIE_KEYWORD: RelationId = RelationId(7);
+    pub const COUNTRY: RelationId = RelationId(8);
+    pub const GENDER: RelationId = RelationId(9);
+    pub const ROLE: RelationId = RelationId(10);
 }
 
 /// Sizes (fixed — the scenario is one world, not a scale axis).

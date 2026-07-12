@@ -2,15 +2,15 @@
 //! `schema!` macro is exactly sugar — its expansion resolves to the same
 //! validated schema a hand-built [`SchemaDescriptor`] does, statements in
 //! source order with `==` lowered to two adjacent containments (`A <= B`
-//! first) and selection literals typed in the macro (enum variants as
-//! ordinals).
+//! first) and selection literals typed in the macro (closed-relation
+//! handles as declaration-order row ids).
 //!
 //! The example schema is `docs/architecture/30-dependencies.md`'s, minus
 //! its illustrative `Employment` line (that relation is not declared).
 
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Row,
     SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
 };
 use bumbledb::{Db, Fact, Interval, Value};
@@ -31,16 +31,19 @@ fn declared() -> bumbledb::Schema {
 bumbledb::schema! {
     pub Ledger;
 
+    closed relation Kind as KindId = { Checking, Savings };
+
     relation Holder  { id: u64 as HolderId, fresh, name: str }
     relation Account {
         id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
-        kind: enum Kind { Checking, Savings },
+        kind: u64 as KindId,
         active: interval<i64>,
     }
     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
 
     Account(holder) <= Holder(id);
+    Account(kind) <= Kind(id);
     Account(id | kind == Savings) == SavingsTerms(account);
     SavingsTerms(account) -> SavingsTerms;
 }
@@ -62,19 +65,19 @@ fn fresh_field(name: &str) -> FieldDescriptor {
 }
 
 /// `Account(id | kind == Savings)` — the selected side of the `==`, its
-/// variant literal resolved to the ordinal.
+/// handle literal resolved to the declaration-order row id.
 fn savings_accounts() -> Side {
     Side {
-        relation: RelationId(1),
+        relation: RelationId(2),
         projection: Box::new([FieldId(0)]),
-        selection: Box::new([(FieldId(2), Value::Enum(1))]),
+        selection: Box::new([(FieldId(2), Value::U64(1))]),
     }
 }
 
 /// `SavingsTerms(account)`.
 fn savings_terms_side() -> Side {
     Side {
-        relation: RelationId(2),
+        relation: RelationId(3),
         projection: Box::new([FieldId(0)]),
         selection: Box::new([]),
     }
@@ -84,6 +87,20 @@ fn savings_terms_side() -> Side {
 fn hand_built() -> bumbledb::schema::Schema {
     SchemaDescriptor {
         relations: vec![
+            RelationDescriptor {
+                extension: Some(Box::new([
+                    Row {
+                        handle: "Checking".into(),
+                        values: Box::new([]),
+                    },
+                    Row {
+                        handle: "Savings".into(),
+                        values: Box::new([]),
+                    },
+                ])),
+                name: "Kind".into(),
+                fields: vec![],
+            },
             RelationDescriptor {
                 extension: None,
                 name: "Holder".into(),
@@ -95,15 +112,7 @@ fn hand_built() -> bumbledb::schema::Schema {
                 fields: vec![
                     fresh_field("id"),
                     field("holder", ValueType::U64),
-                    field(
-                        "kind",
-                        ValueType::Enum {
-                            variants: ["Checking", "Savings"]
-                                .iter()
-                                .map(|v| Box::from(*v))
-                                .collect(),
-                        },
-                    ),
+                    field("kind", ValueType::U64),
                     field(
                         "active",
                         ValueType::Interval {
@@ -124,8 +133,20 @@ fn hand_built() -> bumbledb::schema::Schema {
         statements: vec![
             StatementDescriptor::Containment {
                 source: Side {
-                    relation: RelationId(1),
+                    relation: RelationId(2),
                     projection: Box::new([FieldId(1)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: RelationId(1),
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+            },
+            StatementDescriptor::Containment {
+                source: Side {
+                    relation: RelationId(2),
+                    projection: Box::new([FieldId(2)]),
                     selection: Box::new([]),
                 },
                 target: Side {
@@ -143,7 +164,7 @@ fn hand_built() -> bumbledb::schema::Schema {
                 target: savings_accounts(),
             },
             StatementDescriptor::Functionality {
-                relation: RelationId(2),
+                relation: RelationId(3),
                 projection: Box::new([FieldId(0)]),
             },
         ],
@@ -163,29 +184,52 @@ fn statements_land_in_source_order_with_equality_lowered() {
     let descriptors: Vec<&StatementDescriptor> =
         schema.statements().iter().map(|s| &s.descriptor).collect();
     // Materialized order: the two fresh auto-FDs first (Holder.id,
-    // Account.id), then the declared statements in source order — the `==`
-    // contributing its two containments adjacently, `A <= B` first.
-    assert_eq!(descriptors.len(), 6);
+    // Account.id), then Kind's closed auto-key, then the declared
+    // statements in source order — the `==` contributing its two
+    // containments adjacently, `A <= B` first.
+    assert_eq!(descriptors.len(), 8);
     assert_eq!(
         descriptors[0],
-        &StatementDescriptor::Functionality {
-            relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
-        }
-    );
-    assert_eq!(
-        descriptors[1],
         &StatementDescriptor::Functionality {
             relation: RelationId(1),
             projection: Box::new([FieldId(0)]),
         }
     );
     assert_eq!(
+        descriptors[1],
+        &StatementDescriptor::Functionality {
+            relation: RelationId(2),
+            projection: Box::new([FieldId(0)]),
+        }
+    );
+    assert_eq!(
         descriptors[2],
+        &StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+        }
+    );
+    assert_eq!(
+        descriptors[3],
         &StatementDescriptor::Containment {
             source: Side {
-                relation: RelationId(1),
+                relation: RelationId(2),
                 projection: Box::new([FieldId(1)]),
+                selection: Box::new([]),
+            },
+            target: Side {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+        }
+    );
+    assert_eq!(
+        descriptors[4],
+        &StatementDescriptor::Containment {
+            source: Side {
+                relation: RelationId(2),
+                projection: Box::new([FieldId(2)]),
                 selection: Box::new([]),
             },
             target: Side {
@@ -196,23 +240,23 @@ fn statements_land_in_source_order_with_equality_lowered() {
         }
     );
     assert_eq!(
-        descriptors[3],
+        descriptors[5],
         &StatementDescriptor::Containment {
             source: savings_accounts(),
             target: savings_terms_side(),
         }
     );
     assert_eq!(
-        descriptors[4],
+        descriptors[6],
         &StatementDescriptor::Containment {
             source: savings_terms_side(),
             target: savings_accounts(),
         }
     );
     assert_eq!(
-        descriptors[5],
+        descriptors[7],
         &StatementDescriptor::Functionality {
-            relation: RelationId(2),
+            relation: RelationId(3),
             projection: Box::new([FieldId(0)]),
         }
     );
@@ -220,8 +264,8 @@ fn statements_land_in_source_order_with_equality_lowered() {
 
 #[test]
 fn the_equality_pair_seals_mirror_links() {
-    // The macro's `==` lowers to ids 3 and 4, which seal pointing at each
-    // other; every FD and the one-way containment carry `None`.
+    // The macro's `==` lowers to ids 5 and 6, which seal pointing at each
+    // other; every FD and the one-way containments carry `None`.
     let schema = declared();
     let mirrors: Vec<Option<StatementId>> = schema.statements().iter().map(|s| s.mirror).collect();
     assert_eq!(
@@ -230,8 +274,10 @@ fn the_equality_pair_seals_mirror_links() {
             None,
             None,
             None,
-            Some(StatementId(4)),
-            Some(StatementId(3)),
+            None,
+            None,
+            Some(StatementId(6)),
+            Some(StatementId(5)),
             None
         ]
     );
@@ -243,12 +289,12 @@ fn fact_structs_carry_host_types() {
     let account = Account {
         id: AccountId(1),
         holder: HolderId(2),
-        kind: Kind::Savings,
+        kind: Kind::Savings.id(),
         active: Interval::<i64>::new(-5, 5).expect("nonempty"),
     };
     assert_eq!(account.active.start(), -5);
     assert_eq!(account.active.end(), 5);
-    assert_eq!(Account::RELATION, RelationId(1));
+    assert_eq!(Account::RELATION, RelationId(2));
     let holder = Holder {
         id: HolderId(2),
         name: "alice",
@@ -269,7 +315,7 @@ fn typed_round_trip_through_fact_bytes() {
     let original = Account {
         id: AccountId(7),
         holder: HolderId(3),
-        kind: Kind::Checking,
+        kind: Kind::Checking.id(),
         active: Interval::<i64>::new(-100, 100).expect("nonempty"),
     };
     // Write the holder + account (interning the string through the delta),
@@ -307,20 +353,22 @@ fn typed_round_trip_through_fact_bytes() {
 fn id_constants_are_declaration_order_named_data() {
     // The macro emits declaration-order id constants on the theory
     // (docs/architecture/70-api.md § id constants): per relation, per
-    // field, per enum variant — the Rust host never writes a magic
-    // number into an `ir::Query`.
-    assert_eq!(Ledger::HOLDER, RelationId(0));
-    assert_eq!(Ledger::ACCOUNT, RelationId(1));
-    assert_eq!(Ledger::SAVINGS_TERMS, RelationId(2));
+    // field — the Rust host never writes a magic number into an
+    // `ir::Query`.
+    assert_eq!(Ledger::KIND, RelationId(0));
+    assert_eq!(Ledger::HOLDER, RelationId(1));
+    assert_eq!(Ledger::ACCOUNT, RelationId(2));
+    assert_eq!(Ledger::SAVINGS_TERMS, RelationId(3));
+    assert_eq!(Ledger::KIND_ID, FieldId(0));
     assert_eq!(Ledger::HOLDER_ID, FieldId(0));
     assert_eq!(Ledger::HOLDER_NAME, FieldId(1));
     assert_eq!(Ledger::ACCOUNT_KIND, FieldId(2));
     assert_eq!(Ledger::ACCOUNT_ACTIVE, FieldId(3));
     assert_eq!(Ledger::SAVINGS_TERMS_RATE_BPS, FieldId(1));
-    // Enum-variant ordinals, matching the generated host enum.
-    assert_eq!(Ledger::KIND_CHECKING, 0);
-    assert_eq!(Ledger::KIND_SAVINGS, 1);
-    assert_eq!(Ledger::KIND_SAVINGS, Kind::Savings.ordinal());
+    // The vocabulary's numbers live on the host enum (no per-handle
+    // constants exist): the weld is `id`/`from_id`.
+    assert_eq!(Kind::Checking.id(), KindId(0));
+    assert_eq!(Kind::Savings.id(), KindId(1));
 }
 
 #[test]
@@ -331,24 +379,21 @@ fn the_manifest_is_the_constants_runtime_twin() {
     // the surface.
     use bumbledb::Theory as _;
     let manifest = Ledger.manifest();
-    assert_eq!(manifest.relations.len(), 3);
-    let account = &manifest.relations[1];
+    assert_eq!(manifest.relations.len(), 4);
+    let account = &manifest.relations[2];
     assert_eq!(&*account.name, "Account");
     assert_eq!(account.id, Ledger::ACCOUNT);
     let kind = &account.fields[2];
     assert_eq!(&*kind.name, "kind");
     assert_eq!(kind.id, Ledger::ACCOUNT_KIND);
-    // Enum variants ride in the field's structural type; the ordinal is
-    // the index, by the declaration-order law.
-    let ValueType::Enum { variants } = &kind.value_type else {
-        panic!("kind is an enum field");
-    };
-    assert_eq!(
-        variants
-            .get(usize::from(Ledger::KIND_SAVINGS))
-            .map(|v| &**v),
-        Some("Savings")
-    );
+    // The reference field is structurally a u64; the vocabulary rides
+    // the closed relation's extension table, row id = declaration index.
+    assert_eq!(kind.value_type, ValueType::U64);
+    let vocabulary = &manifest.relations[0];
+    assert_eq!(&*vocabulary.name, "Kind");
+    let rows = vocabulary.extension.as_ref().expect("Kind is closed");
+    assert_eq!(&*rows[1].handle, "Savings");
+    assert_eq!(rows[1].id, 1);
 }
 
 mod interval_newtype {
@@ -739,6 +784,76 @@ mod closed_relations {
         let rows = kind.extension.as_ref().expect("Kind is closed");
         assert_eq!(rows[0].values[..], [("mastered".into(), Value::Bool(true))]);
         assert_eq!(manifest.relations[2].extension, None);
+    }
+}
+
+mod discriminated_union {
+    //! PRD 05's survival criterion: the discriminated-union pattern
+    //! (docs/cookbook.md recipe 2) with its arms discriminated by a
+    //! closed reference — the discriminator's type change (inline enum →
+    //! closed relation) left the DU theorems intact: totality and arm
+    //! validity are the same `==` statement over `kind == Det`, now a
+    //! row-id selection.
+
+    use bumbledb::Db;
+
+    bumbledb::schema! {
+        pub Graph;
+
+        closed relation GK as GKId = { Det, Custom };
+
+        relation Parent { id: u64 as ParentId, fresh, kind: u64 as GKId }
+        relation DetArm { parent: u64 as ParentId }
+
+        DetArm(parent) -> DetArm;
+        Parent(kind) <= GK(id);
+        Parent(id | kind == Det) == DetArm(parent);
+    }
+
+    #[test]
+    fn the_du_pattern_survives_the_closed_discriminator() {
+        // The theory validates through the real boundary.
+        let dir = crate::common::TempDir::new("macro-du-closed");
+        let db = Db::create(dir.path(), Graph).expect("the DU theory validates");
+
+        // Arm-consistent: the Det parent and its arm row in one commit.
+        db.write(|tx| {
+            let id: ParentId = tx.alloc()?;
+            tx.insert(&Parent {
+                id,
+                kind: GK::Det.id(),
+            })?;
+            tx.insert(&DetArm { parent: id })?;
+            Ok(())
+        })
+        .expect("a Det parent with its arm commits");
+
+        // Arm-violating: a Det parent with no arm row — totality aborts.
+        let err = db
+            .write(|tx| {
+                let id: ParentId = tx.alloc()?;
+                tx.insert(&Parent {
+                    id,
+                    kind: GK::Det.id(),
+                })?;
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, bumbledb::Error::ContainmentViolation { .. }),
+            "{err:?}"
+        );
+
+        // The other arm's parent is unconstrained by the Det statement.
+        db.write(|tx| {
+            let id: ParentId = tx.alloc()?;
+            tx.insert(&Parent {
+                id,
+                kind: GK::Custom.id(),
+            })?;
+            Ok(())
+        })
+        .expect("a Custom parent needs no Det arm");
     }
 }
 

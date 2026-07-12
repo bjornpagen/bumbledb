@@ -593,12 +593,6 @@ fn validate_selection_literal(
             relation,
             field,
         },
-        ValueMismatch::EnumOrdinal(ordinal) => SchemaError::SelectionEnumOrdinalOutOfRange {
-            statement: id,
-            relation,
-            field,
-            ordinal,
-        },
         ValueMismatch::Utf8 => SchemaError::SelectionLiteralNotUtf8 {
             statement: id,
             relation,
@@ -761,30 +755,6 @@ fn validate_relation(
                 name: field.name.clone(),
             });
         }
-        if let ValueType::Enum { variants } = &field.value_type {
-            if variants.is_empty() {
-                return Err(SchemaError::EnumWithoutVariants {
-                    relation: rel_id,
-                    field: field_id,
-                });
-            }
-            if variants.len() > 256 {
-                return Err(SchemaError::EnumTooManyVariants {
-                    relation: rel_id,
-                    field: field_id,
-                    count: variants.len(),
-                });
-            }
-            for (v_idx, variant) in variants.iter().enumerate() {
-                if variants[..v_idx].contains(variant) {
-                    return Err(SchemaError::DuplicateEnumVariant {
-                        relation: rel_id,
-                        field: field_id,
-                        variant: variant.clone(),
-                    });
-                }
-            }
-        }
         if let ValueType::FixedBytes { len } = field.value_type {
             // The bytes<N> width gate: N ∈ 1..=64 — 64 bytes = 8 words =
             // two cache lines of key material; 0 denotes nothing
@@ -807,21 +777,14 @@ fn validate_relation(
         // types only (`docs/architecture/10-data-model.md`, the
         // intrinsic-vs-policy law). `str` is refused — the handle IS the
         // label, and interned columns on a virtual relation would force
-        // dictionary writes at open; an enum is refused — a vocabulary
-        // column on a vocabulary nests a closed reference as a type, and
-        // a reference to a closed relation is a plain u64 column plus a
-        // declared containment (the nested-closed-refs refusal,
-        // `docs/prd-comptime/README.md`); `fresh` is refused — identity
-        // is the handle, and axioms are never minted.
+        // dictionary writes at open; `fresh` is refused — identity is the
+        // handle, and axioms are never minted. (A vocabulary column needs
+        // no refusal anymore: a reference to a closed relation is a plain
+        // u64 column plus a declared containment, and no other vocabulary
+        // type exists.)
         if extension.is_some() {
             if field.value_type == ValueType::String {
                 return Err(SchemaError::StrOnClosedRelation {
-                    relation: rel_id,
-                    field: field_id,
-                });
-            }
-            if matches!(field.value_type, ValueType::Enum { .. }) {
-                return Err(SchemaError::EnumOnClosedRelation {
                     relation: rel_id,
                     field: field_id,
                 });
@@ -912,9 +875,9 @@ fn validate_extension(
                     row: row_idx,
                     field: field_id,
                 },
-                // `str` and enum columns are refused above, so Utf8 and
-                // EnumOrdinal are unreachable — kept total, not clever.
-                ValueMismatch::Type | ValueMismatch::EnumOrdinal(_) | ValueMismatch::Utf8 => {
+                // `str` columns are refused above, so Utf8 is
+                // unreachable — kept total, not clever.
+                ValueMismatch::Type | ValueMismatch::Utf8 => {
                     SchemaError::ExtensionValueTypeMismatch {
                         relation: rel_id,
                         row: row_idx,

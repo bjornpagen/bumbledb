@@ -21,9 +21,6 @@ pub enum Value {
     Bool(bool),
     U64(u64),
     I64(i64),
-    /// Declaration-order ordinal; range-checked against the bound field's
-    /// variant list at validation.
-    Enum(u8),
     /// Raw UTF-8 bytes; interning is the engine's job (resolved to an
     /// intern id per execution — a dictionary miss means empty result).
     String(Box<[u8]>),

@@ -19,8 +19,10 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 }
 
 /// The id registry matches declaration order, and the statement roster
-/// is complete: nine relations, six fresh auto-keys, the ten declared
-/// containments (working-hours coverage among them), the declared keys
+/// is complete: nine ordinary relations plus the two closed
+/// vocabularies (`Rsvp`/`Arm`), six fresh auto-keys, the two closed
+/// auto-keys, the twelve declared containments (working-hours coverage
+/// and the two vocabulary containments among them), the declared keys
 /// (`Attendance(event, person)`, `Claim(source)`, and the three
 /// pointwise keys), and the `==` pair lowered to its two directions.
 #[test]
@@ -37,6 +39,8 @@ fn the_schema_is_statement_complete() {
         "Room",
         "Booking",
         "WorkHours",
+        "Rsvp",
+        "Arm",
     ]
     .iter()
     .enumerate()
@@ -44,12 +48,19 @@ fn the_schema_is_statement_complete() {
         let rel = bumbledb::RelationId(u32::try_from(idx).expect("small"));
         assert_eq!(s.relation(rel).name(), *name);
     }
-    assert_eq!(
-        u32::try_from(s.relations().len()).expect("small"),
-        ids::RELATIONS
-    );
+    assert_eq!(s.relations().len(), 11);
+    for rel in 0..ids::RELATIONS {
+        assert!(
+            !s.relation(bumbledb::RelationId(rel)).is_closed(),
+            "every writable relation precedes the closed vocabulary"
+        );
+    }
+    for rel in [ids::RSVP, ids::CLAIM_ARM] {
+        assert!(s.relation(rel).is_closed());
+    }
 
     let mut autos = 0;
+    let mut closed_keys = 0;
     let mut scalar_keys = 0;
     let mut pointwise = Vec::new();
     let mut containments = Vec::new();
@@ -59,6 +70,7 @@ fn the_schema_is_statement_complete() {
                 Resolved::Functionality {
                     interval_position: Some(_),
                 } => pointwise.push(*relation),
+                _ if s.relation(*relation).is_closed() => closed_keys += 1,
                 _ => {
                     // The fresh auto-keys lead; the declared scalar keys
                     // are Attendance(event, person) and Claim(source).
@@ -75,6 +87,7 @@ fn the_schema_is_statement_complete() {
         }
     }
     assert_eq!(autos, 6, "Account/Person/Calendar/Event/Attendance/Room");
+    assert_eq!(closed_keys, 2, "the Rsvp and Arm closed auto-keys");
     assert_eq!(
         scalar_keys, 2,
         "Attendance(event, person) and Claim(source)"
@@ -84,9 +97,15 @@ fn the_schema_is_statement_complete() {
         vec![ids::CLAIM, ids::BOOKING, ids::WORK_HOURS],
         "the pointwise keys: per-person claims, room exclusion, per-person hours"
     );
-    // The `==` lowers to two containments; with the ten declared ones
-    // (incl. the working-hours coverage) that is twelve total.
-    assert_eq!(containments.len(), 12, "ten declared + the == pair");
+    // The `==` lowers to two containments; with the twelve declared
+    // ones (incl. the working-hours coverage and the two vocabulary
+    // containments) that is fourteen total.
+    assert_eq!(containments.len(), 14, "twelve declared + the == pair");
+    assert!(
+        containments.contains(&(ids::ATTENDANCE, ids::RSVP))
+            && containments.contains(&(ids::CLAIM, ids::CLAIM_ARM)),
+        "the vocabulary containments: rsvp and arm are closed row ids"
+    );
     assert!(
         containments.contains(&(ids::CLAIM, ids::WORK_HOURS)),
         "working-hours coverage: every busy claim under the person's hours"

@@ -17,13 +17,6 @@ pub(super) fn shape_mismatch(
             relation: rel,
             field,
         },
-        crate::schema::ValueMismatch::EnumOrdinal(ordinal) => {
-            FactShapeError::EnumOrdinalOutOfRange {
-                relation: rel,
-                field,
-                ordinal,
-            }
-        }
         crate::schema::ValueMismatch::Utf8 => FactShapeError::InvalidUtf8 {
             relation: rel,
             field,
@@ -97,7 +90,6 @@ impl<S> WriteTx<'_, S> {
                 Value::Bool(v) => ValueRef::Bool(*v),
                 Value::U64(v) => ValueRef::U64(*v),
                 Value::I64(v) => ValueRef::I64(*v),
-                Value::Enum(ordinal) => ValueRef::Enum(*ordinal),
                 Value::IntervalU64(start, end) => ValueRef::IntervalU64(*start, *end),
                 Value::IntervalI64(start, end) => ValueRef::IntervalI64(*start, *end),
                 Value::String(raw) => {
@@ -137,7 +129,6 @@ pub(super) fn decode_values(
                 ValueRef::Bool(v) => Value::Bool(v),
                 ValueRef::U64(v) => Value::U64(v),
                 ValueRef::I64(v) => Value::I64(v),
-                ValueRef::Enum(ordinal) => Value::Enum(ordinal),
                 ValueRef::String(id) => Value::String(resolve_str(id)?),
                 ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
                 ValueRef::IntervalU64(start, end) => Value::IntervalU64(start, end),

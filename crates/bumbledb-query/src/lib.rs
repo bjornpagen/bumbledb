@@ -60,11 +60,13 @@
 //!   integer is `u64`, a negative one `i64`, and Rust's `u64`/`i64`
 //!   suffixes force the choice (`5i64` against an `i64` field). Interval
 //!   literals `start..end` follow the same rule over both bounds.
-//! - **Enum selection values**: a bare variant name (`kind == Focus`)
-//!   resolves through the field-named ordinal constant
-//!   (`Theory::KIND_FOCUS`) — exact when the enum is named after its
-//!   field; an enum named otherwise is written qualified
-//!   (`arm == ClaimArm::Busy` → `Theory::CLAIM_ARM_BUSY`).
+//! - **Handle selection values**: a bare handle name (`kind == Focus`)
+//!   resolves through the field-named host enum's welded row id
+//!   (`Kind::Focus.id()`) — exact when the closed relation is named
+//!   after its referencing field; one named otherwise is written
+//!   qualified (`arm == ClaimKind::Busy` → `ClaimKind::Busy.id()`). The
+//!   emitted `const fn id` yields the handle newtype, whose `.0` is a
+//!   plain `u64` constant, and rustc polices the path.
 //! - **Params** are one style per query: named (`?window`, dense ids by
 //!   first occurrence, query-global) or positional (`?0`, the id
 //!   verbatim — the renderer's own spelling, so rendered output reparses).
@@ -176,8 +178,8 @@ enum Lit {
 enum SelValue {
     Lit(Lit),
     Param(Param),
-    /// An enum variant: bare (`Focus`) or qualified (`Kind::Focus`) —
-    /// either way an ordinal id constant on the theory.
+    /// A closed relation's handle: bare (`Focus`) or qualified
+    /// (`Kind::Focus`) — either way the host enum's welded row id.
     Variant {
         qualifier: Option<Name>,
         variant: Name,
@@ -900,6 +902,20 @@ fn parse_clause(tokens: &mut Tokens) -> Parse<Clause> {
 /// `bumbledb-macros`' rule (`SavingsTerms` → `SAVINGS_TERMS`, `rate_bps`
 /// → `RATE_BPS`), so the paths this macro emits land on the constants
 /// that macro emits.
+/// `claim_arm` → `ClaimArm`: the field-to-host-enum name convention for
+/// bare handle selection values.
+fn upper_camel(name: &str) -> String {
+    let mut out = String::new();
+    for word in name.split('_') {
+        let mut chars = word.chars();
+        if let Some(first) = chars.next() {
+            out.push(first.to_ascii_uppercase());
+            out.extend(chars);
+        }
+    }
+    out
+}
+
 fn screaming_snake(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let mut out = String::new();
@@ -1083,24 +1099,23 @@ impl Emitter<'_> {
         })
     }
 
-    /// One selection value as the binding's term expression. An enum
-    /// variant resolves through the theory's ordinal constants: bare
-    /// through the field-named set, qualified through the enum-named set
-    /// (module doc — the macro cannot see the theory; rustc checks the
-    /// path).
+    /// One selection value as the binding's term expression. A handle
+    /// resolves through the host enum's welded row id: bare through the
+    /// field-named host enum, qualified through the named one (module
+    /// doc — the macro cannot see the theory; rustc checks the path and
+    /// the emitted `const fn id` supplies the newtype, whose `.0` is the
+    /// plain u64 row id).
     fn sel_value(&mut self, field: &Name, value: &SelValue) -> Parse<String> {
         Ok(match value {
             SelValue::Lit(lit) => format!("::bumbledb::Term::Literal({})", Self::lit(lit)),
             SelValue::Param(param) => self.param(param)?,
             SelValue::Variant { qualifier, variant } => {
-                let prefix = qualifier.as_ref().map_or_else(
-                    || screaming_snake(&field.text),
-                    |name| screaming_snake(&name.text),
-                );
+                let host = qualifier
+                    .as_ref()
+                    .map_or_else(|| upper_camel(&field.text), |name| name.text.clone());
                 format!(
-                    "::bumbledb::Term::Literal(::bumbledb::Value::Enum({}::{prefix}_{}))",
-                    self.theory,
-                    screaming_snake(&variant.text)
+                    "::bumbledb::Term::Literal(::bumbledb::Value::U64({host}::{}.id().0))",
+                    variant.text
                 )
             }
         })

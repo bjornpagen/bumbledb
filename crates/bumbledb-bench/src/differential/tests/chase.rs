@@ -225,20 +225,17 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
     three_way(&db, &naive, &aggregate, "Account");
 }
 
-/// Grading(id fresh, kind enum{Det, Custom}); Det(grading u64, rate
-/// i64) with the declared key Det(grading) -> Det and the pair
+/// Grading(id fresh, kind u64 — 0 = Det, 1 = Custom); Det(grading u64,
+/// rate i64) with the declared key Det(grading) -> Det and the pair
 /// `Grading(id | kind == Det) == Det(grading)` as its two containments
 /// — statements 1, 2, 3 after Grading's auto-key.
 fn du_descriptor() -> SchemaDescriptor {
-    let kind = ValueType::Enum {
-        variants: ["Det", "Custom"].iter().map(|v| Box::from(*v)).collect(),
-    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
                 name: "Grading".into(),
-                fields: vec![fresh("id"), field("kind", kind)],
+                fields: vec![fresh("id"), field("kind", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
@@ -255,12 +252,12 @@ fn du_descriptor() -> SchemaDescriptor {
                 projection: Box::new([FieldId(0)]),
             },
             StatementDescriptor::Containment {
-                source: side(0, 0, &[(1, Value::Enum(0))]),
+                source: side(0, 0, &[(1, Value::U64(0))]),
                 target: side(1, 0, &[]),
             },
             StatementDescriptor::Containment {
                 source: side(1, 0, &[]),
-                target: side(0, 0, &[(1, Value::Enum(0))]),
+                target: side(0, 0, &[(1, Value::U64(0))]),
             },
         ],
     }
@@ -269,9 +266,9 @@ fn du_descriptor() -> SchemaDescriptor {
 /// Two Det gradings (with their arm rows) and one Custom.
 fn du_inserts() -> Vec<(RelationId, Vec<Value>)> {
     vec![
-        (RelationId(0), vec![Value::U64(1), Value::Enum(0)]),
-        (RelationId(0), vec![Value::U64(2), Value::Enum(0)]),
-        (RelationId(0), vec![Value::U64(3), Value::Enum(1)]),
+        (RelationId(0), vec![Value::U64(1), Value::U64(0)]),
+        (RelationId(0), vec![Value::U64(2), Value::U64(0)]),
+        (RelationId(0), vec![Value::U64(3), Value::U64(1)]),
         (RelationId(1), vec![Value::U64(1), Value::I64(25)]),
         (RelationId(1), vec![Value::U64(2), Value::I64(40)]),
     ]
@@ -279,7 +276,7 @@ fn du_inserts() -> Vec<(RelationId, Vec<Value>)> {
 
 fn du_atoms() -> (Atom, Atom) {
     (
-        atom(0, &[(0, var(0)), (1, Term::Literal(Value::Enum(0)))]),
+        atom(0, &[(0, var(0)), (1, Term::Literal(Value::U64(0)))]),
         atom(1, &[(0, var(0)), (1, var(1))]),
     )
 }

@@ -8,7 +8,7 @@ use crate::storage::read;
 use crate::testutil::TempDir;
 
 /// Build-time distinct counts are exact per column type
-/// (docs/architecture/40-execution.md): fresh ids all-distinct, bools 2, enums 3, and a
+/// (docs/architecture/40-execution.md): fresh ids all-distinct, bools 2, and a
 /// skewed i64 column counted through the word set.
 #[test]
 fn distinct_counts_are_exact() {
@@ -17,10 +17,10 @@ fn distinct_counts_are_exact() {
     let env = populated(&dir, &schema);
     let txn = env.read_txn().expect("txn");
     let image = build(&txn, &schema, R).expect("build");
-    // populated(): ids 0..10, flag i % 2, kind i % 3, amount i*7-30.
+    // populated(): ids 0..10, flag i % 2 == 0, kind i % 3 == 0, amount i*7-30.
     assert_eq!(image.distinct(0), 10, "fresh ids all distinct");
     assert_eq!(image.distinct(1), 2, "bools");
-    assert_eq!(image.distinct(2), 3, "enum ordinals");
+    assert_eq!(image.distinct(2), 2, "kind bools");
     assert_eq!(image.distinct(3), 10, "amounts all distinct");
 
     // A skewed refresh: 100 more rows sharing 5 amounts.
@@ -29,7 +29,7 @@ fn distinct_counts_are_exact() {
     for i in 10..110u64 {
         let amount = i64::try_from(i % 5).expect("small");
         delta
-            .insert(&view, R, &fact(&schema, i, true, 0, amount))
+            .insert(&view, R, &fact(&schema, i, true, false, amount))
             .expect("insert");
     }
     drop(view);
@@ -84,11 +84,7 @@ fn positions_stay_dense_under_row_id_holes() {
     for i in [2u64, 5, 7] {
         let amount = i64::try_from(i).expect("small") * 7 - 30;
         delta
-            .delete(
-                &view,
-                R,
-                &fact(&schema, i, i % 2 == 0, (i % 3) as u8, amount),
-            )
+            .delete(&view, R, &fact(&schema, i, i % 2 == 0, i % 3 == 0, amount))
             .expect("delete");
     }
     drop(view);

@@ -41,8 +41,8 @@ pub struct SchemaFingerprint(pub [u8; 32]);
 /// - an encoding-format version label;
 /// - relations in declaration order — for each: name and fields in
 ///   declaration order (name, structural type description — including the
-///   full ordered variant list for enums and the element type for intervals
-///   — and generation flag), then the closedness tag (ordinary = 0;
+///   width for fixed bytes and the element type for intervals — and
+///   generation flag), then the closedness tag (ordinary = 0;
 ///   closed = 1 followed by the ground axioms in declaration order — for
 ///   each: handle bytes, then the row's canonical fact bytes, each
 ///   length-prefixed like everything else);
@@ -143,15 +143,10 @@ fn put_side(out: &mut Vec<u8>, side: &Side) {
 }
 
 fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
+    // Tag 1 died with the enum type (the funeral, PRD 05); it is never
+    // reused — a reissued tag would collide theories across the funeral.
     match value_type {
         ValueType::Bool => out.push(0),
-        ValueType::Enum { variants } => {
-            out.push(1);
-            put_len(out, variants.len());
-            for variant in variants {
-                put_bytes(out, variant.as_bytes());
-            }
-        }
         ValueType::U64 => out.push(2),
         ValueType::I64 => out.push(3),
         ValueType::String => out.push(4),
@@ -192,13 +187,13 @@ fn put_literal(out: &mut Vec<u8>, literal: &Value) {
 mod tests {
     use super::super::{RelationDescriptor, SchemaDescriptor, StatementId};
     use super::*;
-    use crate::schema::tests::{containment, enum_type, fd, field, fresh_field, side, side_where};
+    use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
 
     fn schema_of(descriptor: SchemaDescriptor) -> Schema {
         descriptor.validate().expect("valid fixture")
     }
 
-    /// The mutation fixture: two relations, an enum, two fresh ids (each
+    /// The mutation fixture: two relations, two fresh ids (each
     /// materializing an auto-Functionality), a declared key, and a
     /// containment with a selection.
     fn base() -> SchemaDescriptor {
@@ -215,7 +210,7 @@ mod tests {
                     fields: vec![
                         fresh_field("id"),
                         field("holder", ValueType::U64),
-                        field("status", enum_type(&["Active", "Closed"])),
+                        field("status", ValueType::U64),
                     ],
                 },
             ],
@@ -225,7 +220,7 @@ mod tests {
                     side_where(
                         RelationId(1),
                         &[FieldId(1)],
-                        vec![(FieldId(2), Value::Enum(0))],
+                        vec![(FieldId(2), Value::U64(0))],
                     ),
                     side(RelationId(0), &[FieldId(0)]),
                 ),
@@ -250,11 +245,11 @@ mod tests {
     fn golden_fingerprint_pins_the_hash() {
         // Pinned: the canonical encoding (and therefore blake3 of it)
         // must not drift while the format label stays `v2`. `base()` covers
-        // every literal-adjacent input: enums, fresh auto-keys, a declared
-        // key, and a containment with a selection literal.
+        // every literal-adjacent input: fresh auto-keys, a declared key,
+        // and a containment with a selection literal.
         assert_eq!(
             hex_of(&base_fingerprint()),
-            "74509905fe7bda0f0328e15c0f9c01de8a607f39388b1920200dea9e0429fa4c"
+            "06681953fa8e913841b80ab76ab4be3093e8b4f5df242a2fbe83e8a884958079"
         );
     }
 
@@ -270,7 +265,7 @@ mod tests {
             side_where(
                 RelationId(1),
                 &[FieldId(1)],
-                vec![(FieldId(2), Value::Enum(0))],
+                vec![(FieldId(2), Value::U64(0))],
             ),
         ));
         let schema = schema_of(decl);
@@ -282,7 +277,7 @@ mod tests {
         );
         assert_eq!(
             hex_of(&fingerprint(&schema)),
-            "20f2a9c48eb55461e57662b3c6dbdbc5d1a8e18780c286e2e95b4d5d80dd0594"
+            "d3e7542befb8a131f37a0272726faba24ebb0a31d077abc4a22b21e65aad3a73"
         );
     }
 
@@ -322,17 +317,11 @@ mod tests {
     }
 
     #[test]
-    fn adding_an_enum_variant_changes_the_fingerprint() {
+    fn changing_a_field_type_changes_the_fingerprint() {
+        // `Holder.name`: no statement binds it, so the mutated
+        // declaration stays valid and only the type description moves.
         let mut decl = base();
-        decl.relations[1].fields[2].value_type = enum_type(&["Active", "Closed", "Frozen"]);
-        // Closed domains are closed: adding a variant is a full ETL rebuild.
-        assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
-    }
-
-    #[test]
-    fn reordering_enum_variants_changes_the_fingerprint() {
-        let mut decl = base();
-        decl.relations[1].fields[2].value_type = enum_type(&["Closed", "Active"]);
+        decl.relations[0].fields[1].value_type = ValueType::I64;
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
     }
 
@@ -365,7 +354,7 @@ mod tests {
             side_where(
                 RelationId(1),
                 &[FieldId(1)],
-                vec![(FieldId(2), Value::Enum(0))],
+                vec![(FieldId(2), Value::U64(0))],
             ),
         );
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
@@ -378,7 +367,7 @@ mod tests {
             side_where(
                 RelationId(1),
                 &[FieldId(1)],
-                vec![(FieldId(2), Value::Enum(1))],
+                vec![(FieldId(2), Value::U64(1))],
             ),
             side(RelationId(0), &[FieldId(0)]),
         );
@@ -459,9 +448,9 @@ mod tests {
 
     #[test]
     fn golden_bytes_pin_the_statement_encoding() {
-        // `Account(holder | status = Closed) <= Holder(id)` over a declared
+        // `Account(holder | status = 1) <= Holder(id)` over a declared
         // key: pins the Containment form — side layout, selection pairs,
-        // and the canonical enum-ordinal literal encoding.
+        // and the canonical selection-literal encoding.
         let schema = schema_of(SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -474,7 +463,7 @@ mod tests {
                     name: "Account".into(),
                     fields: vec![
                         field("holder", ValueType::U64),
-                        field("status", enum_type(&["Active", "Closed"])),
+                        field("status", ValueType::U64),
                     ],
                 },
             ],
@@ -484,7 +473,7 @@ mod tests {
                     side_where(
                         RelationId(1),
                         &[FieldId(0)],
-                        vec![(FieldId(1), Value::Enum(1))],
+                        vec![(FieldId(1), Value::U64(1))],
                     ),
                     side(RelationId(0), &[FieldId(0)]),
                 ),
@@ -514,12 +503,7 @@ mod tests {
         expected.push(0); // Generation::None tag
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"status");
-        expected.push(1); // ValueType::Enum tag
-        expected.extend_from_slice(&2u32.to_le_bytes()); // variant count
-        expected.extend_from_slice(&6u32.to_le_bytes());
-        expected.extend_from_slice(b"Active");
-        expected.extend_from_slice(&6u32.to_le_bytes());
-        expected.extend_from_slice(b"Closed");
+        expected.push(2); // ValueType::U64 tag
         expected.push(0); // Generation::None tag
         expected.push(0); // ordinary: no extension
         expected.extend_from_slice(&2u32.to_le_bytes()); // statement count
@@ -533,7 +517,7 @@ mod tests {
         expected.extend_from_slice(&0u16.to_le_bytes()); // field id
         expected.extend_from_slice(&1u32.to_le_bytes()); // selection len
         expected.extend_from_slice(&1u16.to_le_bytes()); // selected field id
-        expected.push(1); // enum ordinal literal
+        expected.extend_from_slice(&1u64.to_be_bytes()); // u64 literal, canonical encoding
         expected.extend_from_slice(&0u32.to_le_bytes()); // target relation id
         expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
         expected.extend_from_slice(&0u16.to_le_bytes()); // field id

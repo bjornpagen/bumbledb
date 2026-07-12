@@ -45,6 +45,10 @@ mod ledger {
     bumbledb::schema! {
         pub Ledger;
 
+        closed relation Currency as CurrencyId = { Usd, Eur, Gbp };
+        closed relation Source as SourceId = { Manual, Import, System };
+        closed relation Tag as TagId = { Fee, Rebate, Adjustment };
+
         relation Holder {
             id: u64 as HolderId, fresh,
             name: str,
@@ -52,7 +56,7 @@ mod ledger {
         relation Account {
             id: u64 as AccountId, fresh,
             holder: u64 as HolderId,
-            currency: enum Currency { Usd, Eur, Gbp },
+            currency: u64 as CurrencyId,
         }
         relation Instrument {
             id: u64 as InstrumentId, fresh,
@@ -60,7 +64,7 @@ mod ledger {
         }
         relation JournalEntry {
             id: u64 as JournalEntryId, fresh,
-            source: enum Source { Manual, Import, System },
+            source: u64 as SourceId,
             created_at: i64,
         }
         relation Posting {
@@ -73,7 +77,7 @@ mod ledger {
         }
         relation PostingTag {
             posting: u64 as PostingId,
-            tag: enum Tag { Fee, Rebate, Adjustment },
+            tag: u64 as TagId,
         }
         relation Org {
             id: u64 as OrgId, fresh,
@@ -90,10 +94,13 @@ mod ledger {
         }
 
         Account(holder)      <= Holder(id);
+        Account(currency)    <= Currency(id);
         Posting(entry)       <= JournalEntry(id);
         Posting(account)     <= Account(id);
         Posting(instrument)  <= Instrument(id);
         PostingTag(posting)  <= Posting(id);
+        PostingTag(tag)      <= Tag(id);
+        JournalEntry(source) <= Source(id);
         OrgParent(child)     <= Org(id);
         OrgParent(parent)    <= Org(id);
         Mandate(account)     <= Account(id);
@@ -106,6 +113,9 @@ mod ledger {
 mod calendar {
     bumbledb::schema! {
         pub Scheduling;
+
+        closed relation Rsvp as RsvpId = { Accepted, Tentative, Declined };
+        closed relation ClaimKind as ClaimKindId = { Busy, Ooo };
 
         relation Account {
             id: u64 as CalAccountId, fresh,
@@ -131,12 +141,12 @@ mod calendar {
             id: u64 as AttendanceId, fresh,
             event: u64 as CalEventId,
             person: u64 as CalPersonId,
-            rsvp: enum Rsvp { Accepted, Tentative, Declined },
+            rsvp: u64 as RsvpId,
         }
         relation Claim {
             source: u64,
             person: u64 as CalPersonId,
-            arm: enum ClaimArm { Busy, Ooo },
+            arm: u64 as ClaimKindId,
             span: interval<i64>,
         }
         relation Room {
@@ -158,8 +168,10 @@ mod calendar {
         Event(calendar)     <= Calendar(id);
         Attendance(event)   <= Event(id);
         Attendance(person)  <= Person(id);
+        Attendance(rsvp)    <= Rsvp(id);
         Attendance(event, person) -> Attendance;
         Claim(person)       <= Person(id);
+        Claim(arm)          <= ClaimKind(id);
         Claim(source)       -> Claim;
         Claim(person, span) -> Claim;
         Attendance(id | rsvp == Accepted) == Claim(source | arm == Busy);
@@ -173,11 +185,13 @@ mod calendar {
 }
 
 /// The PRD's Tax-shaped fixture (the notation unit's second example
-/// wants a year/regime/bracket walk; `status`'s enum is named after its
-/// field so the bare-variant spelling round-trips).
+/// wants a year/regime/bracket walk; `status`'s closed relation is named
+/// `UpperCamel` of its field so the bare-handle spelling stays available).
 mod tax {
     bumbledb::schema! {
         pub Tax;
+
+        closed relation Status as StatusId = { Draft, Active, Repealed };
 
         relation Year {
             id: u64 as YearId, fresh,
@@ -186,7 +200,7 @@ mod tax {
         relation Regime {
             id: u64 as RegimeId, fresh,
             year: u64 as YearId,
-            status: enum Status { Draft, Active, Repealed },
+            status: u64 as StatusId,
         }
         relation Bracket {
             regime: u64 as RegimeId,
@@ -195,12 +209,15 @@ mod tax {
         }
 
         Regime(year)    <= Year(id);
+        Regime(status)  <= Status(id);
         Bracket(regime) <= Regime(id);
     }
 }
 
-use calendar::Scheduling;
-use ledger::Ledger;
+// The host enums ride along: a query-text handle (`ClaimKind::Busy`,
+// bare `Usd`) resolves through the host enum in scope at the query site.
+use calendar::{ClaimKind, Scheduling};
+use ledger::{Currency, Ledger};
 use tax::Tax;
 
 /// Renders after proving the query real: prepared against a `Db` of the
@@ -215,20 +232,21 @@ fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
 
 /// The PRD's first example adapted to the landed calendar: Busy ∪ Ooo is
 /// the Claim relation's two arms — two clauses, one head, a window param.
-/// The qualified variant spelling (`ClaimArm::Busy`) resolves through
-/// `Scheduling::CLAIM_ARM_BUSY`; the renderer prints the bare variant.
+/// The qualified handle spelling (`ClaimKind::Busy`) resolves through the
+/// host enum's welded row id; the renderer prints the row id as a bare
+/// number (a rendered query is renderable without the host enums).
 #[test]
 fn calendar_union_golden() {
     let unavailable = query!(Scheduling {
-        (person, span) | Claim(person, span, arm == ClaimArm::Busy),
+        (person, span) | Claim(person, span, arm == ClaimKind::Busy),
                          Allen(span, INTERSECTS, ?window);
-        (person, span) | Claim(person, span, arm == ClaimArm::Ooo),
+        (person, span) | Claim(person, span, arm == ClaimKind::Ooo),
                          Allen(span, INTERSECTS, ?window);
     });
     assert_eq!(
         pin("calendar-union", Scheduling, &unavailable),
-        "(v0, v1) | Claim(person: v0, span: v1, arm == Busy), Allen(v1, INTERSECTS, ?0);\n\
-         (v0, v1) | Claim(person: v0, span: v1, arm == Ooo), Allen(v1, INTERSECTS, ?0);"
+        "(v0, v1) | Claim(person: v0, span: v1, arm == 0), Allen(v1, INTERSECTS, ?0);\n\
+         (v0, v1) | Claim(person: v0, span: v1, arm == 1), Allen(v1, INTERSECTS, ?0);"
     );
 }
 
@@ -242,17 +260,17 @@ fn calendar_union_lowers_to_the_exact_ir() {
         Value, VarId,
     };
     let lowered = query!(Scheduling {
-        (person, span) | Claim(person, span, arm == ClaimArm::Busy),
+        (person, span) | Claim(person, span, arm == ClaimKind::Busy),
                          Allen(span, INTERSECTS, ?window);
     });
-    let arm_rule = |arm: u8| Rule {
+    let arm_rule = |arm: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: Scheduling::CLAIM,
             bindings: vec![
                 (Scheduling::CLAIM_PERSON, Term::Var(VarId(0))),
                 (Scheduling::CLAIM_SPAN, Term::Var(VarId(1))),
-                (Scheduling::CLAIM_ARM, Term::Literal(Value::Enum(arm))),
+                (Scheduling::CLAIM_ARM, Term::Literal(Value::U64(arm))),
             ],
         }],
         negated: vec![],
@@ -266,7 +284,7 @@ fn calendar_union_lowers_to_the_exact_ir() {
     };
     assert_eq!(
         lowered,
-        bumbledb::Query::single(arm_rule(Scheduling::CLAIM_ARM_BUSY))
+        bumbledb::Query::single(arm_rule(ClaimKind::Busy.id().0))
     );
 }
 
@@ -338,18 +356,20 @@ fn conflicts_normalized_text_is_a_fixed_point() {
     );
 }
 
-/// Negation plus the bare-variant selection spelling (`currency`'s enum
-/// is named after its field, so `Usd` resolves and the rendered form
-/// reparses): holders of USD accounts with no postings.
+/// Negation plus the bare-handle selection spelling (`currency`'s closed
+/// relation is named `UpperCamel` of the field, so `Usd` resolves through
+/// the `Currency` host enum): holders of USD accounts with no postings.
+/// The renderer prints the row id as a bare number, and that numeric
+/// spelling reparses — the round-trip law holds through the numbers.
 #[test]
-fn negation_and_bare_variant_round_trip() {
+fn negation_and_bare_handle_round_trip() {
     let dormant = query!(Ledger {
         (holder) | Account(id: a, holder, currency == Usd), !Posting(account: a);
     });
-    let normalized = "(v1) | Account(id: v0, holder: v1, currency == Usd), !Posting(account: v0);";
+    let normalized = "(v1) | Account(id: v0, holder: v1, currency == 0), !Posting(account: v0);";
     assert_eq!(pin("dormant", Ledger, &dormant), normalized);
     let reparsed = query!(Ledger {
-        (v1) | Account(id: v0, holder: v1, currency == Usd), !Posting(account: v0);
+        (v1) | Account(id: v0, holder: v1, currency == 0), !Posting(account: v0);
     });
     assert_eq!(pin("dormant-fixed-point", Ledger, &reparsed), normalized);
 }

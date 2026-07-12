@@ -3,7 +3,7 @@
 //!
 //! - **Rules**: multi-rule programs replayed engine-vs-naive — the
 //!   naive model evaluates the rules *directly* (union of per-rule
-//!   binding sets, no engine sink mechanics) — disjoint enum-selected
+//!   binding sets, no engine sink mechanics) — disjoint vocabulary-selected
 //!   arms (the elision path), overlapping arms with duplicate head rows,
 //!   and the multi-rule aggregate union fold.
 //! - **DNF**: seeded random predicate trees to depth 3 — the naive
@@ -72,7 +72,7 @@ fn query(query: Query) -> Op {
 /// The multi-rule rows: the naive model's rule-union evaluation against
 /// the engine's one-sink union.
 fn rules_ops(sizes: &Sizes) -> Vec<Op> {
-    let entry_arm = |ordinal: u8| Rule {
+    let entry_arm = |ordinal: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: ids::JOURNAL_ENTRY,
@@ -80,7 +80,7 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
                 (ids::journal_entry::ID, var(0)),
                 (
                     ids::journal_entry::SOURCE,
-                    Term::Literal(Value::Enum(ordinal)),
+                    Term::Literal(Value::U64(ordinal)),
                 ),
                 (ids::journal_entry::CREATED_AT, var(1)),
             ],
@@ -100,7 +100,7 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
         rules,
     };
     vec![
-        // Disjoint arms (distinct enum selections — the elision path),
+        // Disjoint arms (distinct vocabulary selections — the elision path),
         // two and three wide.
         query(assemble(vec![entry_arm(0), entry_arm(2)])),
         query(assemble(vec![entry_arm(0), entry_arm(1), entry_arm(2)])),
