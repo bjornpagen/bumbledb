@@ -79,7 +79,7 @@ type discipline is enforced by rustc, not by runtime checks.
 
 Same corpus, same queries, results verified identical against SQLite — and
 every write judged identically by an independent naive model — across a
-2,822-case differential oracle before any timing is believed:
+2,827-case differential oracle before any timing is believed:
 
 ![read families vs SQLite](assets/bench-vs-sqlite.svg)
 
@@ -114,7 +114,7 @@ through multi-way joins, interval algebra, and aggregates — exactly what a
 set-semantic Free Join engine is built for). SQLite is measured warm,
 prepared, and well-indexed on the identical data. One internal sub-
 measurement is currently a recorded loss: the rule-disjointness elision
-(`rsvp_union` vs `rsvp_union_off`) measures ~14% slower than the seen-set
+(`rsvp_union` vs `rsvp_union_off`) measures ~32% slower than the seen-set
 it removes, pending the owner's ratchet ruling. This is a research engine
 validated at this scale, not a production database. Regenerate everything
 yourself:
@@ -305,7 +305,7 @@ Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in
 The part of this repo most worth stealing. Performance claims here are gated
 by machinery, not judgment:
 
-- **Two differential oracles before every timing run**: 2,822 cases —
+- **Two differential oracles before every timing run**: 2,827 cases —
   family queries and randomized queries against SQLite, plus a randomized
   write stream whose every commit verdict (accept or abort, and the
   violated statement) must match an independent brute-force naive model;
