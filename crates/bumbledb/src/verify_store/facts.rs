@@ -119,7 +119,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
 
         check_outgoing(s, &mut checker, rel, row_id, fact, &mut scratch, &mut guard)?;
     }
-    Ok(())
+    check_extension_sources(s, &mut checker)
 }
 
 /// F→R plus the global containment judgment, per outgoing containment
@@ -149,18 +149,35 @@ fn check_outgoing(
         let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
             unreachable!("validated schema: outgoing ids name Containment statements")
         };
-        let Resolved::Containment {
-            target_key,
-            key_permutation,
-            interval_position,
-        } = &statement.resolved
-        else {
-            unreachable!("validated schema: Containment resolves as Containment")
-        };
         let checks = s.selections.containment(sid);
         if !judgment::satisfies(&checks.source, layout, fact) {
             continue;
         }
+        let (target_key, key_permutation, interval_position) = match &statement.resolved {
+            Resolved::Containment {
+                target_key,
+                key_permutation,
+                interval_position,
+            } => (target_key, key_permutation, interval_position),
+            // A closed-target containment has no `R` edge and no guard to
+            // probe — the F↔R walk skips it, and the global judgment is
+            // the membership test itself.
+            Resolved::ClosedContainment { members } => {
+                let word = field_bytes(fact, layout, usize::from(source.projection[0].0));
+                let id = u64::from_be_bytes(word.try_into().expect("u64 field is 8 bytes"));
+                if !crate::schema::closed_member(members, id) {
+                    s.push(StoreFinding::JudgmentViolation {
+                        statement: sid,
+                        direction: Direction::TargetRequired,
+                        fact: fact.into(),
+                    });
+                }
+                continue;
+            }
+            Resolved::Functionality { .. } => {
+                unreachable!("validated schema: outgoing ids resolve as containments")
+            }
+        };
         keys::permuted_guard_bytes(layout, &source.projection, key_permutation, fact, guard);
         let r_len = keys::reverse_key(scratch, sid, guard, rel, row_id);
         let missing_edge = s.data.get(txn.raw(), &scratch[..r_len])?.is_none();
@@ -204,6 +221,101 @@ fn check_outgoing(
             // double-reports it nor decides through it.
             Ok(()) | Err(Error::Corruption(_)) => {}
             Err(other) => return Err(other),
+        }
+    }
+    Ok(())
+}
+
+/// The global judgment over **constant sources**: a closed relation has
+/// no `F` rows to ride the fact scan, so its outgoing statements
+/// re-verify here — each sealed φ-row probes its target exactly as a
+/// committed source fact would (domain quantification,
+/// `docs/prd-comptime/04-compiled-subsets.md`). Closed→closed statements
+/// re-run the compiled membership; validate refuted them at declaration,
+/// so a finding here means the schema witness and the store disagree
+/// about the theory itself.
+fn check_extension_sources(
+    s: &mut Sweep<'_, '_>,
+    checker: &mut judgment::Checker<'_>,
+) -> Result<()> {
+    let schema = s.schema;
+    let mut guard = Vec::new();
+    for relation in schema.relations() {
+        let Some(rows) = relation.extension() else {
+            continue;
+        };
+        let layout = relation.layout();
+        for &sid in relation.outgoing() {
+            let statement = schema.statement(sid);
+            let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
+                unreachable!("validated schema: outgoing ids name Containment statements")
+            };
+            for row in rows {
+                // Fetched per row so the borrow of `s.selections` ends
+                // before the finding push.
+                let checks = s.selections.containment(sid);
+                if !judgment::satisfies(&checks.source, layout, &row.fact) {
+                    continue;
+                }
+                let judged = match &statement.resolved {
+                    Resolved::Containment {
+                        target_key,
+                        key_permutation,
+                        interval_position,
+                    } => {
+                        // Interval positions on closed containments are
+                        // refused at validate — the coverage walk never
+                        // runs from a constant source.
+                        debug_assert!(interval_position.is_none());
+                        keys::permuted_guard_bytes(
+                            layout,
+                            &source.projection,
+                            key_permutation,
+                            &row.fact,
+                            &mut guard,
+                        );
+                        checker.check_scalar(&judgment::Probe {
+                            statement: sid,
+                            target_relation: target.relation,
+                            target_key: *target_key,
+                            target_check: &checks.target,
+                            key_bytes: &guard,
+                            fact_bytes: &row.fact,
+                            direction: Direction::TargetRequired,
+                        })
+                    }
+                    Resolved::ClosedContainment { members } => {
+                        let word =
+                            field_bytes(&row.fact, layout, usize::from(source.projection[0].0));
+                        let id = u64::from_be_bytes(word.try_into().expect("u64 field is 8 bytes"));
+                        if crate::schema::closed_member(members, id) {
+                            Ok(())
+                        } else {
+                            Err(Error::ContainmentViolation {
+                                statement: sid,
+                                direction: Direction::TargetRequired,
+                                fact: row.fact.clone(),
+                            })
+                        }
+                    }
+                    Resolved::Functionality { .. } => {
+                        unreachable!("validated schema: outgoing ids resolve as containments")
+                    }
+                };
+                match judged {
+                    Err(Error::ContainmentViolation {
+                        statement,
+                        direction,
+                        fact,
+                    }) => s.push(StoreFinding::JudgmentViolation {
+                        statement,
+                        direction,
+                        fact,
+                    }),
+                    Ok(()) | Err(Error::Corruption(_)) => {}
+                    Err(other) => return Err(other),
+                }
+            }
         }
     }
     Ok(())

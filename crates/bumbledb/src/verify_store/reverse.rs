@@ -30,7 +30,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             s.malformed(key, "R key statement");
             continue;
         };
-        let StatementDescriptor::Containment { source, .. } = &statement.descriptor else {
+        let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
             s.malformed(key, "R key statement");
             continue;
         };
@@ -51,7 +51,16 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             key_permutation, ..
         } = &statement.resolved
         else {
-            unreachable!("validated schema: Containment resolves as Containment")
+            // A closed-target statement never emits `R` traffic — its
+            // target side is vacuous by construction (axioms don't
+            // delete), so a stored edge's very existence is the finding
+            // (`docs/prd-comptime/04-compiled-subsets.md`, the shape
+            // criterion).
+            s.push(StoreFinding::ClosedRelationEntry {
+                relation: target.relation,
+                key: key.into(),
+            });
+            continue;
         };
         let layout = schema.relation(source_rel).layout();
 

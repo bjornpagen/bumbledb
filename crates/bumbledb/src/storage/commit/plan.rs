@@ -51,6 +51,14 @@ pub(crate) struct FactOp<'d> {
     /// One per outgoing containment whose source selection the fact
     /// satisfies — a fact outside σ has no edge, by design.
     pub(crate) edges: Box<[EdgeOp]>,
+    /// One per outgoing **closed-target** containment whose source
+    /// selection the fact satisfies: no guard bytes, no `R` traffic —
+    /// the compiled member set is the whole plan, and the judgment is
+    /// one AND and one test on the insert side
+    /// (`docs/prd-comptime/04-compiled-subsets.md`). Dead weight on a
+    /// delete op (removing a reference cannot violate an inclusion);
+    /// only the insert-side judgment consumes it.
+    pub(crate) memberships: Box<[MembershipOp]>,
 }
 
 /// One key statement's guard material for one fact.
@@ -63,6 +71,17 @@ pub(crate) struct GuardOp {
     /// Interval-carrying key: the exact `U` put cannot detect overlap, so
     /// the insert additionally runs the ordered-neighbor probe.
     pub(crate) pointwise: bool,
+}
+
+/// One closed-target containment of one fact: the membership judgment's
+/// whole input. The id is the referencing field's decoded word — already
+/// in hand during the derivation, never re-sliced at judgment.
+pub(crate) struct MembershipOp {
+    /// The `Containment` statement (resolved [`Resolved::ClosedContainment`]).
+    pub(crate) statement: StatementId,
+    /// The referencing field's word — a row id into the target's sealed
+    /// extension when the fact is legal; out of range is simply a miss.
+    pub(crate) id: u64,
 }
 
 /// One containment edge of one fact: the `R` key material and, on the
@@ -204,41 +223,60 @@ fn fact_op<'d>(
     // the fact satisfies — conditional containments get reverse edges
     // only for facts inside their σ (docs/architecture/50-storage.md
     // § key layout). The same derivation serves the insert-phase put, the
-    // delete-phase removal (byte-symmetric), and the source probe.
-    let edges = relation
-        .outgoing()
-        .iter()
-        .filter_map(|&sid| {
-            let statement = schema.statement(sid);
-            let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
-                unreachable!("validated schema: outgoing ids name Containment statements")
-            };
-            let Resolved::Containment {
+    // delete-phase removal (byte-symmetric), and the source probe. A
+    // closed-target containment derives no key material at all: the
+    // referencing word is already in hand, and the compiled member set is
+    // its entire enforcement plan.
+    let mut edges = Vec::new();
+    let mut memberships = Vec::new();
+    for &sid in relation.outgoing() {
+        let statement = schema.statement(sid);
+        let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
+            unreachable!("validated schema: outgoing ids name Containment statements")
+        };
+        if !satisfies(&selections.containment(sid).source, layout, fact) {
+            continue;
+        }
+        match &statement.resolved {
+            Resolved::Containment {
                 target_key,
                 key_permutation,
                 interval_position,
-            } = &statement.resolved
-            else {
-                unreachable!("validated schema: Containment resolves as Containment")
-            };
-            if !satisfies(&selections.containment(sid).source, layout, fact) {
-                return None;
+            } => {
+                keys::permuted_guard_bytes(
+                    layout,
+                    &source.projection,
+                    key_permutation,
+                    fact,
+                    scratch,
+                );
+                edges.push(EdgeOp {
+                    statement: sid,
+                    key_bytes: scratch.as_slice().into(),
+                    target_relation: target.relation,
+                    target_key: *target_key,
+                    coverage: interval_position.is_some(),
+                });
             }
-            keys::permuted_guard_bytes(layout, &source.projection, key_permutation, fact, scratch);
-            Some(EdgeOp {
-                statement: sid,
-                key_bytes: scratch.as_slice().into(),
-                target_relation: target.relation,
-                target_key: *target_key,
-                coverage: interval_position.is_some(),
-            })
-        })
-        .collect();
+            Resolved::ClosedContainment { .. } => {
+                let word =
+                    crate::encoding::field_bytes(fact, layout, usize::from(source.projection[0].0));
+                memberships.push(MembershipOp {
+                    statement: sid,
+                    id: u64::from_be_bytes(word.try_into().expect("u64 field is 8 bytes")),
+                });
+            }
+            Resolved::Functionality { .. } => {
+                unreachable!("validated schema: outgoing ids resolve as containments")
+            }
+        }
+    }
     FactOp {
         relation: rel,
         fact,
         guards,
-        edges,
+        edges: edges.into_boxed_slice(),
+        memberships: memberships.into_boxed_slice(),
     }
 }
 

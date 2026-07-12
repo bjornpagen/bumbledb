@@ -895,3 +895,209 @@ fn rejects_a_user_declared_id_on_a_closed_relation() {
         }
     );
 }
+
+// --- Compiled subsets (docs/prd-comptime/04-compiled-subsets.md): the
+// closed-containment roster.
+
+/// An interval-typed field on a closed relation, for the refusal tests.
+fn closed_window() -> RelationDescriptor {
+    closed(
+        "Window",
+        vec![field(
+            "during",
+            ValueType::Interval {
+                element: IntervalElement::U64,
+            },
+        )],
+        vec![row("Morning", vec![Value::IntervalU64(6, 12)])],
+    )
+}
+
+#[test]
+fn rejects_an_interval_position_into_a_closed_target() {
+    // A pointwise containment INTO a closed target would mix the coverage
+    // walk with virtual storage — refused v0, trigger recorded.
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed_window(),
+            RelationDescriptor {
+                extension: None,
+                name: "Meeting".into(),
+                fields: vec![field(
+                    "span",
+                    ValueType::Interval {
+                        element: IntervalElement::U64,
+                    },
+                )],
+            },
+        ],
+        statements: vec![containment(
+            side(RelationId(1), &[FieldId(0)]),
+            side(RelationId(0), &[FieldId(1)]),
+        )],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ClosedContainmentInterval {
+            statement: StatementId(1),
+            relation: RelationId(0)
+        }
+    );
+}
+
+#[test]
+fn rejects_an_interval_position_from_a_closed_source() {
+    // Coverage FROM a constant source has no delete-time re-judgment path
+    // — the same v0 refusal, source arm.
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed_window(),
+            RelationDescriptor {
+                extension: None,
+                name: "Shift".into(),
+                fields: vec![field(
+                    "span",
+                    ValueType::Interval {
+                        element: IntervalElement::U64,
+                    },
+                )],
+            },
+        ],
+        statements: vec![
+            fd(RelationId(1), &[FieldId(0)]),
+            containment(
+                side(RelationId(0), &[FieldId(1)]),
+                side(RelationId(1), &[FieldId(0)]),
+            ),
+        ],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ClosedContainmentInterval {
+            statement: StatementId(2),
+            relation: RelationId(0)
+        }
+    );
+}
+
+#[test]
+fn rejects_a_closed_target_projection_that_is_not_the_id() {
+    // The handle id is the one probe-able identity of a closed relation:
+    // a payload-column target matches no key.
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Currency",
+                vec![field("minor_units", ValueType::U64)],
+                vec![row("Usd", vec![Value::U64(2)])],
+            ),
+            RelationDescriptor {
+                extension: None,
+                name: "Price".into(),
+                fields: vec![field("units", ValueType::U64)],
+            },
+        ],
+        statements: vec![containment(
+            side(RelationId(1), &[FieldId(0)]),
+            side(RelationId(0), &[FieldId(1)]),
+        )],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::NoMatchingTargetKey {
+            statement: StatementId(1),
+            relation: RelationId(0)
+        }
+    );
+}
+
+#[test]
+fn rejects_a_closed_to_closed_containment_the_axioms_refute() {
+    // Both sides constant: the judgment is decidable at declaration, and
+    // Kind's row 1 (severity 7) escapes Severity's two axioms — a theory
+    // whose axioms refute its own statement has no model to commit.
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Kind",
+                vec![field("severity", ValueType::U64)],
+                vec![
+                    row("Soft", vec![Value::U64(0)]),
+                    row("Hard", vec![Value::U64(7)]),
+                ],
+            ),
+            closed(
+                "Severity",
+                vec![],
+                vec![row("Low", vec![]), row("High", vec![])],
+            ),
+        ],
+        statements: vec![containment(
+            side(RelationId(0), &[FieldId(1)]),
+            side(RelationId(1), &[FieldId(0)]),
+        )],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ClosedStatementRefuted {
+            statement: StatementId(2),
+            relation: RelationId(0),
+            row: 1
+        }
+    );
+}
+
+#[test]
+fn rejects_a_declared_key_the_axioms_refute() {
+    // A key on a closed relation is judged at validate — the axioms ARE
+    // the final state. Usd and Eur agree on minor_units = 2.
+    let decl = SchemaDescriptor {
+        relations: vec![closed(
+            "Currency",
+            vec![field("minor_units", ValueType::U64)],
+            vec![
+                row("Usd", vec![Value::U64(2)]),
+                row("Eur", vec![Value::U64(2)]),
+            ],
+        )],
+        statements: vec![fd(RelationId(0), &[FieldId(1)])],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ClosedStatementRefuted {
+            statement: StatementId(1),
+            relation: RelationId(0),
+            row: 1
+        }
+    );
+}
+
+#[test]
+fn rejects_a_declared_pointwise_key_the_axioms_refute() {
+    // The pointwise arm: two axioms sharing a point collide exactly as
+    // the ordered-neighbor probe would judge them at a commit.
+    let decl = SchemaDescriptor {
+        relations: vec![closed(
+            "Window",
+            vec![field(
+                "during",
+                ValueType::Interval {
+                    element: IntervalElement::U64,
+                },
+            )],
+            vec![
+                row("Morning", vec![Value::IntervalU64(6, 12)]),
+                row("Brunch", vec![Value::IntervalU64(10, 14)]),
+            ],
+        )],
+        statements: vec![fd(RelationId(0), &[FieldId(1)])],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ClosedStatementRefuted {
+            statement: StatementId(1),
+            relation: RelationId(0),
+            row: 1
+        }
+    );
+}

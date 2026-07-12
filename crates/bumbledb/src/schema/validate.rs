@@ -13,10 +13,11 @@
 //! rejected.
 
 use super::{
-    value_matches, FactLayout, FieldDescriptor, FieldId, Generation, Relation, RelationDescriptor,
-    RelationId, Resolved, Schema, SchemaDescriptor, Side, Statement, StatementDescriptor,
-    StatementId, ValueMismatch, ValueType,
+    closed_member, value_matches, FactLayout, FieldDescriptor, FieldId, Generation, Relation,
+    RelationDescriptor, RelationId, Resolved, Schema, SchemaDescriptor, Side, Statement,
+    StatementDescriptor, StatementId, ValueMismatch, ValueType,
 };
+use crate::encoding::field_bytes;
 use crate::error::SchemaError;
 use crate::storage::keys::MAX_GUARD_WIDTH;
 use crate::value::Value;
@@ -296,6 +297,46 @@ fn validate_functionality(
         });
     }
 
+    // A key on a closed relation is judged here, once: the axioms ARE the
+    // final state (no commit ever touches the relation), so a colliding
+    // pair refutes the statement now or never. Scalar keys collide on
+    // equal projected bytes; a pointwise key collides when the scalar
+    // prefix agrees and the intervals share a point — the ordered-neighbor
+    // probe's judgment, run over ≤256 sealed rows instead of a guard.
+    if let Some(rows) = relation.extension.as_deref() {
+        let layout = &relation.layout;
+        let scalar_len = projection.len() - usize::from(interval_position.is_some());
+        for (row_idx, row) in rows.iter().enumerate() {
+            for earlier in &rows[..row_idx] {
+                let scalars_agree = projection[..scalar_len].iter().all(|field| {
+                    let idx = usize::from(field.0);
+                    field_bytes(&row.fact, layout, idx) == field_bytes(&earlier.fact, layout, idx)
+                });
+                if !scalars_agree {
+                    continue;
+                }
+                let collide = match interval_position {
+                    None => true,
+                    Some(pos) => {
+                        let idx = usize::from(projection[pos].0);
+                        let a = field_bytes(&row.fact, layout, idx);
+                        let b = field_bytes(&earlier.fact, layout, idx);
+                        // Half-open `[s, e)` intersection on the 8-byte
+                        // order-preserving halves.
+                        a[..8] < b[8..] && b[..8] < a[8..]
+                    }
+                };
+                if collide {
+                    return Err(SchemaError::ClosedStatementRefuted {
+                        statement: id,
+                        relation: relation_id,
+                        row: row_idx,
+                    });
+                }
+            }
+        }
+    }
+
     Ok(Resolved::Functionality { interval_position })
 }
 
@@ -344,7 +385,89 @@ fn validate_containment(
     validate_side_selection(id, source, relations)?;
     validate_side_selection(id, target, relations)?;
 
-    resolve_target_key(id, target, relations, descriptors)
+    // Interval positions on closed containments: refused v0. A pointwise
+    // judgment against a closed target would mix the coverage walk with
+    // virtual storage, and a constant source's coverage demand has no
+    // delete-time re-judgment path — either closed side refuses
+    // (`docs/prd-comptime/04-compiled-subsets.md`; trigger: a census
+    // sighting). One check covers both sides: the positional type match
+    // above makes the sides' interval positions identical.
+    let source_closed = relations[source.relation.0 as usize].extension.is_some();
+    let target_closed = relations[target.relation.0 as usize].extension.is_some();
+    if (source_closed || target_closed)
+        && !interval_positions(target_fields, &target.projection).is_empty()
+    {
+        return Err(SchemaError::ClosedContainmentInterval {
+            statement: id,
+            relation: if target_closed {
+                target.relation
+            } else {
+                source.relation
+            },
+        });
+    }
+
+    let resolved = resolve_target_key(id, target, relations, descriptors)?;
+
+    // Both sides constant: the judgment is decidable here, and a theory
+    // whose axioms refute its own statement has no model to commit — the
+    // source extension's φ-rows must all sit inside the compiled member
+    // set (a closed source under an *ordinary* target stays commit-judged:
+    // the target can shrink).
+    if let (Resolved::ClosedContainment { members }, Some(rows)) = (
+        &resolved,
+        relations[source.relation.0 as usize].extension.as_deref(),
+    ) {
+        let layout = &relations[source.relation.0 as usize].layout;
+        let phi = encoded_selection(&source.selection);
+        for (row_idx, row) in rows.iter().enumerate() {
+            if !sealed_satisfies(&phi, layout, &row.fact) {
+                continue;
+            }
+            let word = decoded_word(layout, source.projection[0], &row.fact);
+            if !closed_member(members, word) {
+                return Err(SchemaError::ClosedStatementRefuted {
+                    statement: id,
+                    relation: source.relation,
+                    row: row_idx,
+                });
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+/// A selection's literals canonically pre-encoded for byte comparison
+/// against sealed extension rows — the validate-time sibling of the commit
+/// path's `Selections` (`str` and enum columns are refused on closed
+/// relations, so every literal here has a canonical encoding).
+fn encoded_selection(selection: &[(FieldId, Value)]) -> Vec<(usize, Vec<u8>)> {
+    selection
+        .iter()
+        .map(|(field, literal)| {
+            let mut bytes = Vec::with_capacity(16);
+            crate::encoding::encode_literal(literal, &mut bytes);
+            (usize::from(field.0), bytes)
+        })
+        .collect()
+}
+
+/// σ over one sealed row: one byte compare per selected field.
+fn sealed_satisfies(encoded: &[(usize, Vec<u8>)], layout: &FactLayout, fact: &[u8]) -> bool {
+    encoded
+        .iter()
+        .all(|(field, literal)| field_bytes(fact, layout, *field) == &literal[..])
+}
+
+/// One u64 field decoded off a sealed row's canonical bytes (big-endian,
+/// order-preserving — `docs/architecture/10-data-model.md`).
+fn decoded_word(layout: &FactLayout, field: FieldId, fact: &[u8]) -> u64 {
+    u64::from_be_bytes(
+        field_bytes(fact, layout, usize::from(field.0))
+            .try_into()
+            .expect("u64 field is 8 bytes"),
+    )
 }
 
 /// Roster "unknown relation … ids": the relation for a statement-named id.
@@ -501,7 +624,33 @@ fn resolve_target_key(
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<Resolved, SchemaError> {
-    let target_fields = &relations[target.relation.0 as usize].fields;
+    let target_relation = &relations[target.relation.0 as usize];
+
+    // The compiled-subset branch (`docs/prd-comptime/04-compiled-subsets.md`):
+    // a closed target is stage-1-known, so there is no key search, no
+    // permutation, and no guard-width concern — the enforcement plan is
+    // the answer set itself. The handle id is the one probe-able identity
+    // of a closed relation (the auto-key `R(id) -> R`), so the target
+    // projection must be exactly the synthetic id; ψ folds against the
+    // sealed extension here and never exists at commit.
+    if let Some(rows) = target_relation.extension.as_deref() {
+        if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
+            return Err(SchemaError::NoMatchingTargetKey {
+                statement: id,
+                relation: target.relation,
+            });
+        }
+        let psi = encoded_selection(&target.selection);
+        let mut members = [0u64; 4];
+        for (idx, row) in rows.iter().enumerate() {
+            if sealed_satisfies(&psi, &target_relation.layout, &row.fact) {
+                members[idx / 64] |= 1 << (idx % 64);
+            }
+        }
+        return Ok(Resolved::ClosedContainment { members });
+    }
+
+    let target_fields = &target_relation.fields;
     let positions = interval_positions(target_fields, &target.projection);
 
     // Pointwise gate, "exactly one interval position": no key can carry

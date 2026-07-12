@@ -14,6 +14,7 @@ use crate::value::Value;
 use std::collections::BTreeSet;
 
 mod apply;
+mod closed;
 mod commit;
 mod functionality;
 mod judgment;

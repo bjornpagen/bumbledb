@@ -119,6 +119,22 @@ Concretely, validation demands:
   not a requirement on the user). Each direction of `==` passes the gate
   independently. Selections may appear on either side; a selected field may not also
   be projected (a constant column — write the statement you mean).
+- **IND into a closed target:** the target side is stage-1-known, so there is no
+  key search and no probe strategy — the enforcement plan is **the answer set
+  itself**. Y must be exactly the synthetic id (the handle is the one probe-able
+  identity of a closed relation); ψ is applied to the sealed extension at validate
+  and the surviving row ids compile to a 256-bit member set (the ≤256 roster cap
+  exists exactly to fix this width). The ψ-selected form gives sub-vocabularies —
+  `Escalation(severity) <= Severity(id | pages == true)` — the same O(1) plan.
+  Interval positions on a containment with a closed side (either side) are
+  **refused v0**: a pointwise judgment against a virtual extension would mix the
+  coverage walk with virtual storage, and a constant source's coverage demand has
+  no delete-time re-judgment path (*trigger* for lifting: a census sighting).
+- **Statements between constants** (both sides closed) are decided at validate
+  outright: a declaration the ground axioms refute — a source axiom outside the
+  member set, or a declared key two axioms collide under — is a schema error, not
+  a latent judgment, because a theory whose axioms refute its own statement has no
+  model to commit.
 
 A statement failing the gate is a schema-declaration error naming the missing plan.
 This is the simplicity doctrine applied to invariants: generality of representation,
@@ -228,7 +244,30 @@ untouched by it. The phases:
   (re-establishment ψ-qualified per statement — `50-storage.md`), probe the
   statement's reverse-edge namespace for surviving A-facts that still require it
   (interval positions: the touched window).
+- IND into a closed target: **O(1)** per inserted A-fact inside φ — one AND and
+  one test against the compiled member set; an out-of-range word is simply a miss
+  (the same violation as any dangling reference). No `R` reverse edges are ever
+  written for the class (the target side is vacuous by construction — axioms don't
+  delete), so the target-side phase emits nothing and the offline sweeper convicts
+  any stored `R` entry naming one.
+- IND from a closed source (**domain quantification** — the worked example below):
+  the source side never fires (no closed inserts exist); the target side fires
+  only on a B-key disestablishment, where the surviving sources ARE the sealed
+  extension's φ-rows — an honest ≤256-row scan on the delete path replaces the
+  `R`-prefix probe, since a constant source stored no edges.
 - `==`: both directions, symmetric machinery.
+
+**Domain quantification, worked.** `Severity(id) <= Handler(severity)` with
+`Severity` closed and `Handler(severity) -> Handler` declared says *every severity
+has a handler*. Inserting handlers never fires it (the source is constant);
+deleting the last `Handler` row for severity 2 disestablishes the `(2)` key tuple,
+the dependent statement scans the extension, finds the severity-2 axiom projecting
+to the lost tuple, and aborts — while a delete whose tuple re-lands in the same
+commit (a handler *replacement*) is dropped by the plain set difference before any
+scan runs. The empty store violates the statement until the handlers land; commits
+that never touch `Handler` cannot observe that, and the offline sweeper
+(`60-validation.md`) re-verifies the class globally by walking the extension —
+exactly the division of authority the delta-restricted judgment implies.
 
 Guard namespaces (`U`, `R`) are **derived accelerators for these judgments, not
 definitions** — the reframe is normative in `50-storage.md`. The checker shares its
@@ -256,7 +295,11 @@ duplicate statements (identical normalized sides and form — write it once), wh
 two FDs over one field *set* are duplicates regardless of projection order (the
 order shapes only the guard, and key resolution is by set);
 a statement referencing an interval position against a scalar position (that is the
-type-mismatch case, called out because it is the one migration authors will hit).
+type-mismatch case, called out because it is the one migration authors will hit);
+an interval position on a containment with a closed side (the v0 refusal above);
+a closed-target projection that is not the synthetic id (no key matches — the
+handle is the one probe-able identity); a statement between constants that the
+ground axioms refute.
 FD-with-selection and non-key FD forms are not rejected here — they are
 **unrepresentable**: the descriptor cannot carry them, and the macro grammar
 rejects the utterance (`70-api.md`).

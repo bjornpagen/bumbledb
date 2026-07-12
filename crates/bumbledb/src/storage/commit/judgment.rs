@@ -172,7 +172,10 @@ pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes:
 /// or out-of-σ insert is never judged here — prove the target tuple
 /// present (scalar) or covered (interval) in the final state. The probe
 /// list and its pre-permuted target key bytes come whole from the plan;
-/// only the probe *results* are read here.
+/// only the probe *results* are read here. Closed-target containments
+/// probe nothing: the compiled member set answers in one AND and one
+/// test, and an out-of-range word is simply a miss
+/// (`docs/prd-comptime/04-compiled-subsets.md`).
 pub(super) fn check_source(
     txn: &WriteTxn<'_>,
     schema: &Schema,
@@ -197,6 +200,20 @@ pub(super) fn check_source(
                 checker.check_coverage(&probe)?;
             } else {
                 checker.check_scalar(&probe)?;
+            }
+        }
+        for membership in &op.memberships {
+            let Resolved::ClosedContainment { members } =
+                &schema.statement(membership.statement).resolved
+            else {
+                unreachable!("plan memberships name ClosedContainment statements")
+            };
+            if !crate::schema::closed_member(members, membership.id) {
+                return Err(Error::ContainmentViolation {
+                    statement: membership.statement,
+                    direction: Direction::SourceUnsatisfied,
+                    fact: op.fact.into(),
+                });
             }
         }
     }
@@ -251,6 +268,17 @@ pub(super) fn check_target(
         let mut counted = false;
         for dependent in &check.dependents {
             let sid = dependent.statement;
+            // Closed-target statements have no dependents: their target
+            // never shrinks (axioms don't delete), so no key statement
+            // ever lists them — the dependents map is built from
+            // `Resolved::Containment` alone.
+            debug_assert!(
+                matches!(
+                    &schema.statement(sid).resolved,
+                    Resolved::Containment { .. }
+                ),
+                "no dependent entry names a closed-target statement"
+            );
             if dependent.psi_qualified {
                 let fact = if let Some(fact) = establisher {
                     fact
@@ -305,6 +333,23 @@ pub(super) fn check_target(
                     if ss < te && ts < se {
                         affected.insert(k.to_vec());
                     }
+                }
+            } else if schema
+                .relation(containment_source(schema, sid).relation)
+                .is_closed()
+            {
+                // Domain quantification: a constant source writes no `R`
+                // edges — the surviving sources ARE the sealed
+                // extension's φ-rows, scanned directly (≤256 rows, the
+                // delete path). Any axiom projecting to the
+                // disestablished tuple is a stranded source outright
+                // (`docs/prd-comptime/04-compiled-subsets.md`).
+                if let Some(row) = closed_source_survivor(schema, plan, sid, guard) {
+                    return Err(Error::ContainmentViolation {
+                        statement: sid,
+                        direction: Direction::TargetRequired,
+                        fact: row,
+                    });
                 }
             } else {
                 // Scalar form: any surviving entry under the exact key
@@ -375,6 +420,61 @@ fn establishing_fact<'t>(
             "re-established U guard",
         )))?;
     fact_by_row(data, txn.raw(), relation, decode_row_id(value)?)
+}
+
+/// The source side of a containment statement — the target-side
+/// judgment's survivor-authority switch (a constant source has no `R`
+/// edges to probe).
+///
+/// # Panics
+///
+/// On a non-containment id — callers hand ids from a key's `dependents`
+/// set, which the validated schema fills with `Containment` statements.
+fn containment_source(schema: &Schema, sid: StatementId) -> &crate::schema::Side {
+    let StatementDescriptor::Containment { source, .. } = &schema.statement(sid).descriptor else {
+        unreachable!("validated schema: dependents name Containment statements")
+    };
+    source
+}
+
+/// The first sealed source axiom inside φ projecting to the
+/// disestablished guard tuple — the domain-quantification survivor scan
+/// (its `R`-probe sibling above walks stored edges; the constant source's
+/// edges were never stored). Returns the axiom's canonical fact bytes —
+/// the violation payload.
+fn closed_source_survivor(
+    schema: &Schema,
+    plan: &CommitPlan<'_>,
+    sid: StatementId,
+    guard: &[u8],
+) -> Option<Box<[u8]>> {
+    let source = containment_source(schema, sid);
+    let Resolved::Containment {
+        key_permutation, ..
+    } = &schema.statement(sid).resolved
+    else {
+        unreachable!("validated schema: dependents name Containment statements")
+    };
+    let relation = schema.relation(source.relation);
+    let layout = relation.layout();
+    let phi = &plan.selections.containment(sid).source;
+    let mut derived = Vec::with_capacity(guard.len());
+    for row in relation.extension().expect("caller checked closedness") {
+        if !satisfies(phi, layout, &row.fact) {
+            continue;
+        }
+        keys::permuted_guard_bytes(
+            layout,
+            &source.projection,
+            key_permutation,
+            &row.fact,
+            &mut derived,
+        );
+        if derived == guard {
+            return Some(row.fact.clone());
+        }
+    }
+    None
 }
 
 /// One (source fact, containment statement) judgment pair: everything a

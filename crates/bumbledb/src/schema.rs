@@ -383,6 +383,35 @@ pub enum Resolved {
         /// Positional index shared by both sides; `None` = scalar.
         interval_position: Option<usize>,
     },
+    /// A containment whose target relation is **closed**: the target side
+    /// is stage-1-known, so the enforcement plan is not a probe strategy —
+    /// it is **the answer set itself**, compiled at validate
+    /// (`docs/architecture/30-dependencies.md` § enforcement). No target
+    /// key, no permutation, no guard: the target projection is the
+    /// synthetic id, and ψ has already been applied to the sealed
+    /// extension.
+    ClosedContainment {
+        /// The surviving row ids as a 256-bit set — the
+        /// [`MAX_EXTENSION_ROWS`] cap exists exactly to fix this width.
+        /// Source-side judgment is one AND and one test
+        /// ([`closed_member`]); the target side is vacuous by
+        /// construction (axioms never delete), so no `R` reverse edges
+        /// exist for this statement class.
+        members: [u64; 4],
+    },
+}
+
+/// Whether `id` is inside a compiled member set — the whole judgment of a
+/// closed-target containment. An out-of-range id (≥ the 256-row roster
+/// cap, or ≥ the extension length: those bits are never set) is simply
+/// absent — the same containment violation as any dangling reference, no
+/// special error.
+#[must_use]
+pub(crate) fn closed_member(members: &[u64; 4], id: u64) -> bool {
+    usize::try_from(id / 64)
+        .ok()
+        .and_then(|word| members.get(word))
+        .is_some_and(|word| word & (1 << (id % 64)) != 0)
 }
 
 /// One sealed statement: the descriptor plus its resolved enforcement data

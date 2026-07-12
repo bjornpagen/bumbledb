@@ -387,13 +387,89 @@ fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
         ]
     );
     let schema = decl.validate().expect("valid");
-    // The containment resolves to the closed auto-key.
+    // The containment compiles to the answer set itself — no key search,
+    // no permutation: Currency's two rows, both unselected survivors
+    // (`docs/prd-comptime/04-compiled-subsets.md`).
     assert_eq!(
         schema.statement(StatementId(2)).resolved,
-        Resolved::Containment {
-            target_key: StatementId(1),
-            key_permutation: Box::new([0]),
-            interval_position: None
+        Resolved::ClosedContainment {
+            members: [0b11, 0, 0, 0]
         }
     );
+    // No dependents ride the closed auto-key: the target side is vacuous
+    // by construction (axioms never delete), so no R traffic exists for
+    // the statement class.
+    assert_eq!(schema.dependents(StatementId(1)), &[]);
+}
+
+/// PRD 04's validate-time criterion: the member set is computed at
+/// validate — construct the schema, read `Resolved` directly, assert
+/// bits, no Db anywhere. ψ (`pages == true`) selects the sub-vocabulary
+/// {Med, High} = rows 1 and 2 = 0b110.
+#[test]
+fn a_psi_selected_closed_containment_compiles_its_member_set() {
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Severity",
+                vec![field("pages", ValueType::Bool)],
+                vec![
+                    row("Low", vec![Value::Bool(false)]),
+                    row("Med", vec![Value::Bool(true)]),
+                    row("High", vec![Value::Bool(true)]),
+                ],
+            ),
+            RelationDescriptor {
+                extension: None,
+                name: "Escalation".into(),
+                fields: vec![field("severity", ValueType::U64)],
+            },
+        ],
+        statements: vec![containment(
+            side(RelationId(1), &[FieldId(0)]),
+            side_where(
+                RelationId(0),
+                &[FieldId(0)],
+                vec![(FieldId(1), Value::Bool(true))],
+            ),
+        )],
+    };
+    let schema = decl.validate().expect("valid");
+    // Statement 0 is Severity's closed auto-key; 1 the declared statement.
+    assert_eq!(
+        schema.statement(StatementId(1)).resolved,
+        Resolved::ClosedContainment {
+            members: [0b110, 0, 0, 0]
+        }
+    );
+}
+
+/// A closed→closed containment the axioms satisfy validates: both sides
+/// constant, the judgment decided at declaration, nothing left for any
+/// commit to do.
+#[test]
+fn a_satisfied_closed_to_closed_containment_validates() {
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Kind",
+                vec![field("severity", ValueType::U64)],
+                vec![
+                    row("Soft", vec![Value::U64(0)]),
+                    row("Hard", vec![Value::U64(1)]),
+                ],
+            ),
+            closed(
+                "Severity",
+                vec![],
+                vec![row("Low", vec![]), row("High", vec![])],
+            ),
+        ],
+        statements: vec![containment(
+            side(RelationId(0), &[FieldId(1)]),
+            side(RelationId(1), &[FieldId(0)]),
+        )],
+    };
+    decl.validate()
+        .expect("every Kind severity is an axiom of Severity");
 }

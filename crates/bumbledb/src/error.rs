@@ -335,6 +335,29 @@ pub enum SchemaError {
         statement: StatementId,
         relation: RelationId,
     },
+    /// An interval position on a containment with a closed side — refused
+    /// v0: a pointwise judgment against a closed relation would mix the
+    /// coverage walk with virtual storage, and a constant source's
+    /// coverage demand has no delete to re-judge it under
+    /// (`docs/prd-comptime/04-compiled-subsets.md`, the refusal —
+    /// *trigger* for lifting it: a census sighting). Carries the closed
+    /// relation.
+    ClosedContainmentInterval {
+        statement: StatementId,
+        relation: RelationId,
+    },
+    /// A statement between constants that the ground axioms refute: both
+    /// sides of the judgment are sealed at validate, so its truth is
+    /// decidable here — and a theory whose axioms refute its own statement
+    /// has no model to commit (`docs/architecture/30-dependencies.md`,
+    /// "a committed database is a model of its theory, always"). For a
+    /// containment, `row` is the source axiom outside the compiled member
+    /// set; for a functionality, the second axiom of the colliding pair.
+    ClosedStatementRefuted {
+        statement: StatementId,
+        relation: RelationId,
+        row: usize,
+    },
     /// Roster "duplicate statements (identical normalized sides and form —
     /// write it once)": selections compare sorted by field id.
     DuplicateStatement {

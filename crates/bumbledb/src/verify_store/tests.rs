@@ -593,3 +593,192 @@ fn a_stored_row_for_a_closed_relation_is_the_finding() {
         }]
     );
 }
+
+// --- Compiled subsets (docs/prd-comptime/04-compiled-subsets.md): the
+// closed-target and constant-source arms of the sweep.
+
+/// Severity closed {pages: bool} = Low(false) | Med(true) | High(true),
+/// Alert(severity) <= Severity(id) — the closed-target statement.
+fn closed_subset_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: Some(Box::new([
+                    crate::schema::Row {
+                        handle: "Low".into(),
+                        values: Box::new([Value::Bool(false)]),
+                    },
+                    crate::schema::Row {
+                        handle: "Med".into(),
+                        values: Box::new([Value::Bool(true)]),
+                    },
+                    crate::schema::Row {
+                        handle: "High".into(),
+                        values: Box::new([Value::Bool(true)]),
+                    },
+                ])),
+                name: "Severity".into(),
+                fields: vec![FieldDescriptor {
+                    name: "pages".into(),
+                    value_type: ValueType::Bool,
+                    generation: Generation::None,
+                }],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Alert".into(),
+                fields: vec![FieldDescriptor {
+                    name: "severity".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                }],
+            },
+        ],
+        // Materialized: Severity's closed auto-key (0), the containment (1).
+        statements: vec![StatementDescriptor::Containment {
+            source: Side {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+            target: Side {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+        }],
+    }
+}
+
+#[test]
+fn an_r_entry_naming_a_closed_target_statement_is_the_finding() {
+    // Closed-target statements never emit R traffic: a stored edge's very
+    // existence is the finding, attributed to the closed target.
+    let dir = TempDir::new("verify-closed-r");
+    let db = Db::create(dir.path(), closed_subset_schema()).expect("create");
+    db.write(|tx| tx.insert_dyn(RelationId(1), &[Value::U64(1)]).map(|_| ()))
+        .expect("a legal closed reference commits");
+    let r = key(|b| keys::reverse_key(b, StatementId(1), &encode_u64(1), RelationId(1), 0));
+    raw_write(&db, |txn| {
+        let data = txn.env().data();
+        data.put(txn.raw_mut(), &r, &[]).expect("raw put");
+    });
+    let report = db.verify_store().expect("verify");
+    assert_eq!(
+        report.findings,
+        vec![StoreFinding::ClosedRelationEntry {
+            relation: RelationId(0),
+            key: r.into(),
+        }]
+    );
+}
+
+#[test]
+fn a_planted_source_outside_the_member_set_is_a_judgment_violation() {
+    // The corruption class only the global judgment sees: a coherent
+    // F/M/S triple whose closed reference no commit could have admitted.
+    let dir = TempDir::new("verify-closed-member");
+    let db = Db::create(dir.path(), closed_subset_schema()).expect("create");
+    let alert = RelationId(1);
+    let mut fact = Vec::new();
+    encode_fact(
+        &[ValueRef::U64(9)],
+        db.schema().relation(alert).layout(),
+        &mut fact,
+    );
+    let f = key(|b| keys::fact_key(b, alert, 0));
+    let m = key(|b| keys::membership_key(b, alert, &fact_hash(&fact)));
+    let count = key(|b| keys::stat_key(b, alert, StatKind::RowCount));
+    let water = key(|b| keys::stat_key(b, alert, StatKind::RowIdHighWater));
+    raw_write(&db, |txn| {
+        let data = txn.env().data();
+        data.put(txn.raw_mut(), &f, &fact).expect("raw put");
+        data.put(txn.raw_mut(), &m, 0u64.to_le_bytes().as_slice())
+            .expect("raw put");
+        data.put(txn.raw_mut(), &count, 1u64.to_le_bytes().as_slice())
+            .expect("raw put");
+        data.put(txn.raw_mut(), &water, 1u64.to_le_bytes().as_slice())
+            .expect("raw put");
+    });
+    let report = db.verify_store().expect("verify");
+    assert_eq!(
+        report.findings,
+        vec![StoreFinding::JudgmentViolation {
+            statement: StatementId(1),
+            direction: Direction::TargetRequired,
+            fact: fact.into(),
+        }]
+    );
+}
+
+#[test]
+fn an_uncovered_domain_quantification_is_a_judgment_violation() {
+    // Severity(id) <= Handler(severity): the constant source has no F
+    // rows, so only the extension-source walk can re-verify it globally —
+    // an empty store violates it three times over, and covering all three
+    // severities clears the report. Commit-time judgment never sees the
+    // empty store (no delta touches Handler), which is exactly why the
+    // sweeper owns this class.
+    let dir = TempDir::new("verify-closed-domain");
+    let mut decl = closed_subset_schema();
+    decl.relations.push(RelationDescriptor {
+        extension: None,
+        name: "Handler".into(),
+        fields: vec![
+            FieldDescriptor {
+                name: "severity".into(),
+                value_type: ValueType::U64,
+                generation: Generation::None,
+            },
+            FieldDescriptor {
+                name: "priority".into(),
+                value_type: ValueType::U64,
+                generation: Generation::None,
+            },
+        ],
+    });
+    decl.statements.insert(
+        0,
+        StatementDescriptor::Functionality {
+            relation: RelationId(2),
+            projection: Box::new([FieldId(0)]),
+        },
+    );
+    decl.statements.push(StatementDescriptor::Containment {
+        source: Side {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+            selection: Box::new([]),
+        },
+        target: Side {
+            relation: RelationId(2),
+            projection: Box::new([FieldId(0)]),
+            selection: Box::new([]),
+        },
+    });
+    // Materialized: closed auto-key (0), Handler key (1), Alert
+    // containment (2), the domain statement (3).
+    let db = Db::create(dir.path(), decl).expect("create");
+    let severities = db
+        .schema()
+        .relation(RelationId(0))
+        .extension()
+        .expect("closed");
+    let expected: Vec<StoreFinding> = severities
+        .iter()
+        .map(|row| StoreFinding::JudgmentViolation {
+            statement: StatementId(3),
+            direction: Direction::TargetRequired,
+            fact: row.fact.clone(),
+        })
+        .collect();
+    assert_eq!(db.verify_store().expect("verify").findings, expected);
+    for severity in 0..3u64 {
+        db.write(|tx| {
+            tx.insert_dyn(RelationId(2), &[Value::U64(severity), Value::U64(10)])
+                .map(|_| ())
+        })
+        .expect("handlers commit");
+    }
+    assert_eq!(db.verify_store().expect("verify").findings, vec![]);
+}

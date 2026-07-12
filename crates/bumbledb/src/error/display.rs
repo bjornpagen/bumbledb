@@ -402,6 +402,25 @@ impl fmt::Display for SchemaError {
                 "statement {}: no pointwise key of relation {} carries the interval position",
                 s.0, r.0
             ),
+            Self::ClosedContainmentInterval {
+                statement: s,
+                relation: r,
+            } => write!(
+                f,
+                "statement {}: interval position on a containment with closed relation {} — \
+                 pointwise judgments against a virtual extension are refused",
+                s.0, r.0
+            ),
+            Self::ClosedStatementRefuted {
+                statement: s,
+                relation: r,
+                row,
+            } => write!(
+                f,
+                "statement {}: refuted by ground axiom {} of closed relation {} — \
+                 a theory whose axioms refute its own statement has no model",
+                s.0, row, r.0
+            ),
             Self::DuplicateStatement {
                 statement: s,
                 earlier,
@@ -891,6 +910,8 @@ impl SchemaError {
             | Self::SelectionIntervalEmpty { statement, .. }
             | Self::NoMatchingTargetKey { statement, .. }
             | Self::NoPointwiseTargetKey { statement, .. }
+            | Self::ClosedContainmentInterval { statement, .. }
+            | Self::ClosedStatementRefuted { statement, .. }
             | Self::DuplicateStatement { statement, .. } => Some(*statement),
         }
     }
