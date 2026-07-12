@@ -143,8 +143,10 @@ pub fn load_sqlite_relation(
 }
 
 /// Creates, configures, and loads the `SQLite` mirror: DDL from the schema
-/// descriptors, every relation via [`load_sqlite_relation`], then
-/// `ANALYZE` and a truncating WAL checkpoint.
+/// descriptors (the closed vocabularies' extension INSERTs included —
+/// schema surface, not corpus), every relation via
+/// [`load_sqlite_relation`], then `ANALYZE` and a truncating WAL
+/// checkpoint.
 ///
 /// # Errors
 ///
@@ -158,6 +160,9 @@ pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection,
     let conn = Connection::open(path)?;
     configure_sqlite(&conn)?;
     for statement in sqlmap::ddl(schema()) {
+        conn.execute(&statement, [])?;
+    }
+    for statement in sqlmap::extension_ddl(&bumbledb::Theory::descriptor(Ledger)) {
         conn.execute(&statement, [])?;
     }
 
@@ -194,6 +199,23 @@ pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
             .expect("count");
         assert_eq!(ours as u64, theirs, "row counts diverge for {name}");
         assert_eq!(ours as u64, sizes.rows(rel), "generator count for {name}");
+    }
+    // The closed vocabularies: the engine answers the sealed extension
+    // virtually; the mirror holds the same rows from its extension
+    // INSERTs — a count divergence here is a mirror-build bug.
+    for rel in ids::RELATIONS..u32::try_from(schema.relations().len()).expect("small") {
+        let rel = RelationId(rel);
+        let name = schema.relation(rel).name();
+        let ours = db
+            .read(|snap| Ok(snap.scan(rel)?.count()))
+            .expect("scan counts");
+        let theirs: u64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM \"{name}\""), [], |row| {
+                row.get(0)
+            })
+            .expect("count");
+        assert_eq!(ours as u64, theirs, "extension counts diverge for {name}");
+        assert!(theirs > 0, "a closed relation is never empty: {name}");
     }
 
     // 100 seeded sample postings, fetched from SQLite by id, compared to

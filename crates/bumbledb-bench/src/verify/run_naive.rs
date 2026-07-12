@@ -1,13 +1,12 @@
 use super::{Db, Run, VerifyConfig};
 
-use bumbledb::schema::{Generation, RelationDescriptor, SchemaDescriptor};
-use bumbledb::{Interval, RelationId, Value};
+use bumbledb::{Atom, FieldId, FindTerm, Interval, Query, RelationId, Rule, Term, Value, VarId};
 
 use crate::differential::{self, Op};
 use crate::families::{self, scalar_draw, Draw};
 use crate::gen::{self, mandate_segments, Sizes, MANDATE_SEGMENTS};
 use crate::naive::{Delta, NaiveDb, ParamValue};
-use crate::schema::{ids, schema, Ledger};
+use crate::schema::{ids, Ledger};
 
 /// The unit-scale corpus of the naive lane: small enough for the
 /// brute-force model's nested loops, large enough that every family's
@@ -26,33 +25,29 @@ fn unit_sizes() -> Sizes {
     }
 }
 
-/// The bench schema as the raw descriptor the naive model consumes —
-/// reconstructed from the sealed schema: the declared statements are the
-/// materialized list minus the leading fresh auto-keys (the model
-/// re-materializes them itself).
-fn bench_descriptor() -> SchemaDescriptor {
-    let sealed = schema();
-    let autos = sealed
-        .relations()
-        .iter()
-        .flat_map(|relation| relation.fields().iter())
-        .filter(|field| field.generation == Generation::Fresh)
-        .count();
-    SchemaDescriptor {
-        relations: sealed
-            .relations()
-            .iter()
-            .map(|relation| RelationDescriptor {
-                extension: None,
-                name: relation.name().into(),
-                fields: relation.fields().to_vec(),
-            })
-            .collect(),
-        statements: sealed.statements()[autos..]
-            .iter()
-            .map(|statement| statement.descriptor.clone())
-            .collect(),
-    }
+/// The closed-vocabulary read: accounts joined to `Currency` on the
+/// handle — the closed atom is an ordinary atom on the naive side too
+/// (the model reads its seeded extension), so engine and model compare
+/// closed-relation reads exactly like any other join.
+fn closed_join_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: ids::ACCOUNT,
+                bindings: vec![
+                    (ids::account::ID, Term::Var(VarId(0))),
+                    (ids::account::CURRENCY, Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                relation: ids::CURRENCY,
+                bindings: vec![(FieldId(0), Term::Var(VarId(1)))],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    })
 }
 
 /// The insert stream as write deltas, chunked — every chunk judged over
@@ -81,9 +76,13 @@ fn load_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
 
 /// Deltas that must ABORT, verdict and violating statement agreeing on
 /// both sides: a dangling containment source, a pointwise-key overlap,
-/// a scalar-key duplicate, a target-required delete, and the
+/// a scalar-key duplicate, a target-required delete, the
 /// net-disposition pattern class (a redundant insert alongside a delete
-/// of its containment target — the Direction-divergence shape).
+/// of its containment target — the Direction-divergence shape), a write
+/// naming a closed relation (`ClosedRelationWrite`, typed on both
+/// oracles), and an out-of-range closed-vocabulary reference (the
+/// compiled-subset miss — the same containment violation as any
+/// dangling reference).
 fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     let cfg = gen::GenConfig {
         seed,
@@ -155,6 +154,27 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 inserts: vec![(ids::POSTING, posting)],
             }
         }),
+        // A write naming the closed vocabulary: refused before the
+        // delta on the engine, before applying on the model — the same
+        // typed `ClosedRelationWrite` verdict on both.
+        Op::Write(Delta {
+            deletes: vec![],
+            inserts: vec![(ids::CURRENCY, vec![Value::U64(5)])],
+        }),
+        // An out-of-range vocabulary reference: currency 9 is beyond the
+        // three-row extension, so `Account(currency) <= Currency(id)`
+        // misses — source-unsatisfied, exactly like any dangling id.
+        Op::Write(Delta {
+            deletes: vec![],
+            inserts: vec![(
+                ids::ACCOUNT,
+                vec![
+                    Value::U64(sizes.accounts + 11),
+                    Value::U64(0),
+                    Value::U64(9),
+                ],
+            )],
+        }),
     ]
 }
 
@@ -197,8 +217,10 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
 
 /// The naive-model differential slice (docs/architecture/60-validation.md
 /// § the two oracles): a fresh
-/// unit-scale store replays the corpus stream, five judgment-violating
-/// deltas, every family query (its unit draw plus its seeded S
+/// unit-scale store replays the corpus stream, seven judgment-violating
+/// deltas (the closed-relation write refusal and the out-of-range
+/// vocabulary reference included), the closed-vocabulary join read,
+/// every family query (its unit draw plus its seeded S
 /// rotation), and the algebra oracle rows (`run_algebra`: rules, DNF
 /// trees, `Pack` — naive-only by decision, counted and reported — and
 /// the measure's ray verdicts) against [`NaiveDb`]; any verdict,
@@ -213,6 +235,10 @@ pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let sizes = unit_sizes();
     let mut ops = load_ops(cfg.gen.seed, &sizes);
     ops.extend(violating_ops(cfg.gen.seed, &sizes));
+    ops.push(Op::Query {
+        query: closed_join_query(),
+        params: vec![],
+    });
     for family in families::all() {
         let query = (family.query)();
         ops.push(Op::Query {
@@ -236,12 +262,14 @@ pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let naive_dir = cfg.out_dir.join("naive-db");
     let _ = std::fs::remove_dir_all(&naive_dir);
     let db = Db::create(&naive_dir, Ledger).expect("create naive-slice store");
-    let mut naive = NaiveDb::new(&bench_descriptor());
+    // The declared descriptor, extensions included — the model seeds the
+    // closed vocabularies from the ground axioms at construction.
+    let mut naive = NaiveDb::new(&bumbledb::Theory::descriptor(Ledger));
     eprintln!("verify: naive differential slice ({} ops)", ops.len());
     match differential::run(&db, &mut naive, &ops) {
         Ok(summary) => {
             assert!(
-                summary.aborts >= 5,
+                summary.aborts >= 7,
                 "the violating deltas must abort (got {})",
                 summary.aborts
             );

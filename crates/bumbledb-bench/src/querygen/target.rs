@@ -21,7 +21,13 @@
 //! `JournalEntry(id | source == Import) == ImportBatch(entry)`, so the
 //! randomized lane exercises the occurrence elimination and its
 //! refusals against corpora that satisfy the statements by
-//! construction (`docs/architecture/40-execution.md` § the chase).
+//! construction (`docs/architecture/40-execution.md` § the chase) —
+//! plus the closed-relation write surface (PRD 06): `Currency` carries
+//! a payload column (`minor_units`), `CurrencyBacking` is the small
+//! keyed relation the domain quantification `Currency(id) <=
+//! CurrencyBacking(currency)` targets, and `CashRounding` rides the
+//! ψ-sub-vocabulary `Currency(id | minor_units == 0)` — the three
+//! write-scenario classes and the closed query shapes draw from here.
 
 use std::sync::OnceLock;
 
@@ -50,9 +56,11 @@ pub mod ids {
     pub const MANDATE: RelationId = RelationId(8);
     pub const TRANSFER: RelationId = RelationId(9);
     pub const IMPORT_BATCH: RelationId = RelationId(10);
-    pub const CURRENCY: RelationId = RelationId(11);
-    pub const SOURCE: RelationId = RelationId(12);
-    pub const TAG: RelationId = RelationId(13);
+    pub const CURRENCY_BACKING: RelationId = RelationId(11);
+    pub const CASH_ROUNDING: RelationId = RelationId(12);
+    pub const CURRENCY: RelationId = RelationId(13);
+    pub const SOURCE: RelationId = RelationId(14);
+    pub const TAG: RelationId = RelationId(15);
 
     pub mod holder {
         use super::FieldId;
@@ -128,6 +136,22 @@ pub mod ids {
         pub const ENTRY: FieldId = FieldId(0);
         pub const BATCH: FieldId = FieldId(1);
     }
+    pub mod currency_backing {
+        use super::FieldId;
+        pub const CURRENCY: FieldId = FieldId(0);
+        pub const RESERVE: FieldId = FieldId(1);
+    }
+    pub mod cash_rounding {
+        use super::FieldId;
+        pub const CURRENCY: FieldId = FieldId(0);
+    }
+    /// A closed relation's fields sit in the **sealed** space: the
+    /// synthetic id at 0, then the declared payload columns.
+    pub mod currency {
+        use super::FieldId;
+        pub const ID: FieldId = FieldId(0);
+        pub const MINOR_UNITS: FieldId = FieldId(1);
+    }
 }
 
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
@@ -198,9 +222,12 @@ pub fn schema() -> &'static Schema {
     })
 }
 
-/// The declared target ledger, as the raw descriptor.
+/// The declared target ledger, as the raw descriptor — the value the
+/// naive model and the mirror's extension INSERTs consume beside the
+/// sealed schema (`pub(crate)` for the closed-relation differential,
+/// which drives all three write-scenario classes over this theory).
 #[allow(clippy::too_many_lines)] // the declared ledger, one relation per block
-fn descriptor() -> SchemaDescriptor {
+pub(crate) fn descriptor() -> SchemaDescriptor {
     {
         SchemaDescriptor {
             relations: vec![
@@ -316,7 +343,43 @@ fn descriptor() -> SchemaDescriptor {
                         field("batch", ValueType::U64),
                     ],
                 },
-                closed("Currency", &["Usd", "Eur", "Gbp"]),
+                RelationDescriptor {
+                    extension: None,
+                    name: "CurrencyBacking".into(),
+                    fields: vec![
+                        field("currency", ValueType::U64),
+                        field("reserve", ValueType::U64),
+                    ],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "CashRounding".into(),
+                    fields: vec![field("currency", ValueType::U64)],
+                },
+                // Currency carries a payload column so payload-column
+                // selections and ψ-sub-vocabularies exist to draw:
+                // minor_units 2/2/0 — the 0 row is the ψ-member of
+                // `CashRounding(currency) <= Currency(id | minor_units
+                // == 0)`, giving the subset both members and
+                // non-members.
+                RelationDescriptor {
+                    extension: Some(Box::new([
+                        Row {
+                            handle: "Usd".into(),
+                            values: Box::new([Value::U64(2)]),
+                        },
+                        Row {
+                            handle: "Eur".into(),
+                            values: Box::new([Value::U64(2)]),
+                        },
+                        Row {
+                            handle: "Gbp".into(),
+                            values: Box::new([Value::U64(0)]),
+                        },
+                    ])),
+                    name: "Currency".into(),
+                    fields: vec![field("minor_units", ValueType::U64)],
+                },
                 closed("Source", &["Manual", "Import", "System"]),
                 closed("Tag", &["Fee", "Rebate", "Adjustment"]),
             ],
@@ -401,7 +464,7 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
         // after everything else so no earlier statement id shifts.
         containment(
             side(ids::ACCOUNT, ids::account::CURRENCY, &[]),
-            side(ids::CURRENCY, bumbledb::FieldId(0), &[]),
+            side(ids::CURRENCY, ids::currency::ID, &[]),
         ),
         containment(
             side(ids::JOURNAL_ENTRY, ids::journal_entry::SOURCE, &[]),
@@ -411,8 +474,55 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
             side(ids::POSTING_TAG, ids::posting_tag::TAG, &[]),
             side(ids::TAG, bumbledb::FieldId(0), &[]),
         ),
+        // The PRD 06 closed-relation write surface — appended last, so
+        // no earlier statement id shifts:
+        // the key the domain quantification probes,
+        StatementDescriptor::Functionality {
+            relation: ids::CURRENCY_BACKING,
+            projection: Box::new([ids::currency_backing::CURRENCY]),
+        },
+        // backings reference real currencies (a plain closed target),
+        containment(
+            side(ids::CURRENCY_BACKING, ids::currency_backing::CURRENCY, &[]),
+            side(ids::CURRENCY, ids::currency::ID, &[]),
+        ),
+        // domain quantification: every currency has a backing — judged
+        // at backing-delete time via the extension scan,
+        containment(
+            side(ids::CURRENCY, ids::currency::ID, &[]),
+            side(ids::CURRENCY_BACKING, ids::currency_backing::CURRENCY, &[]),
+        ),
+        // and the ψ-sub-vocabulary: only zero-decimal currencies round.
+        containment(
+            side(ids::CASH_ROUNDING, ids::cash_rounding::CURRENCY, &[]),
+            side(
+                ids::CURRENCY,
+                ids::currency::ID,
+                &[(ids::currency::MINOR_UNITS, Value::U64(0))],
+            ),
+        ),
     ]
 }
+
+/// The closed-relation statement ids, pinned (materialized order: seven
+/// fresh auto-keys, three closed auto-keys, then the declared list —
+/// asserted by `the_closed_statement_pins_hold`).
+pub const VOCAB_CURRENCY: bumbledb::StatementId = bumbledb::StatementId(23);
+/// `JournalEntry(source) <= Source(id)`.
+pub const VOCAB_SOURCE: bumbledb::StatementId = bumbledb::StatementId(24);
+/// `CurrencyBacking(currency) -> CurrencyBacking` — the declared key.
+pub const BACKING_KEY: bumbledb::StatementId = bumbledb::StatementId(26);
+/// `CurrencyBacking(currency) <= Currency(id)`.
+pub const BACKING_VALID: bumbledb::StatementId = bumbledb::StatementId(27);
+/// `Currency(id) <= CurrencyBacking(currency)` — domain quantification.
+pub const CURRENCY_BACKED: bumbledb::StatementId = bumbledb::StatementId(28);
+/// `CashRounding(currency) <= Currency(id | minor_units == 0)` — the
+/// ψ-sub-vocabulary.
+pub const CASH_ROUNDING_SUBSET: bumbledb::StatementId = bumbledb::StatementId(29);
+
+/// The one ψ-member of the cash-rounding sub-vocabulary (`Gbp`, the
+/// zero-decimal row).
+pub const ZERO_DECIMAL_CURRENCY: u64 = 2;
 
 /// The pad-boundary digest widths the tag fields cover, one field per
 /// width: astride the first word boundary (7/8/9), one exact word pair
@@ -616,9 +726,10 @@ pub fn string_hit(rel: bumbledb::RelationId, field: bumbledb::FieldId, rng: &mut
 
 /// The number of **writable** target relations — loaders iterate
 /// `0..TARGET_RELATIONS`. The closed relations (`Currency`/`Source`/
-/// `Tag`, ids 11..14) sit after every ordinary relation by declaration:
-/// they are unwritable ground axioms, so no loader touches them.
-pub const TARGET_RELATIONS: u32 = 11;
+/// `Tag`, ids 13..16) sit after every ordinary relation by declaration:
+/// they are unwritable ground axioms, so no loader touches them (their
+/// mirror rows are extension INSERTs — schema surface, not corpus).
+pub const TARGET_RELATIONS: u32 = 13;
 
 /// Row count of one target relation (the randomized lane's corpus).
 #[must_use]
@@ -636,7 +747,12 @@ pub fn corpus_rows(domains: &Domains, rel: bumbledb::RelationId) -> u64 {
         ids::TRANSFER => domains.transfers,
         // Import entries are `i % 3 == 1` in `0..entries`: count them.
         ids::IMPORT_BATCH => (domains.entries + 1) / 3,
-        _ => unreachable!("eleven target relations"),
+        // One backing per currency: the domain quantification holds by
+        // construction from the first load onward.
+        ids::CURRENCY_BACKING => 3,
+        // The one ψ-member row (`Gbp`, minor_units == 0).
+        ids::CASH_ROUNDING => 1,
+        _ => unreachable!("thirteen target relations"),
     }
 }
 
@@ -722,7 +838,9 @@ pub fn corpus_row(
             row
         }
         ids::IMPORT_BATCH => vec![Value::U64(import_batch_entry(i)), Value::U64(i)],
-        _ => unreachable!("eleven target relations"),
+        ids::CURRENCY_BACKING => vec![Value::U64(i), Value::U64(1_000 + i)],
+        ids::CASH_ROUNDING => vec![Value::U64(ZERO_DECIMAL_CURRENCY)],
+        _ => unreachable!("thirteen target relations"),
     }
 }
 
@@ -738,11 +856,62 @@ pub fn corpus_relation_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bumbledb::schema::StatementDescriptor;
 
     const CFG: GenConfig = GenConfig {
         seed: 7,
         scale: Scale::S,
     };
+
+    /// The closed-relation statement pins: materialized order is seven
+    /// fresh auto-keys, the three closed auto-keys, then the declared
+    /// list — re-derived here so the differential's typed verdicts name
+    /// real statements, never guessed ids.
+    #[test]
+    fn the_closed_statement_pins_hold() {
+        let statements = schema().statements();
+        let containment =
+            |id: bumbledb::StatementId| match &statements[usize::from(id.0)].descriptor {
+                StatementDescriptor::Containment { source, target } => {
+                    (source.relation, target.relation)
+                }
+                other @ StatementDescriptor::Functionality { .. } => {
+                    panic!("statement {} is not a containment: {other:?}", id.0)
+                }
+            };
+        assert_eq!(containment(VOCAB_CURRENCY), (ids::ACCOUNT, ids::CURRENCY));
+        assert_eq!(containment(VOCAB_SOURCE), (ids::JOURNAL_ENTRY, ids::SOURCE));
+        assert!(matches!(
+            &statements[usize::from(BACKING_KEY.0)].descriptor,
+            StatementDescriptor::Functionality { relation, .. }
+                if *relation == ids::CURRENCY_BACKING
+        ));
+        assert_eq!(
+            containment(BACKING_VALID),
+            (ids::CURRENCY_BACKING, ids::CURRENCY)
+        );
+        assert_eq!(
+            containment(CURRENCY_BACKED),
+            (ids::CURRENCY, ids::CURRENCY_BACKING)
+        );
+        assert_eq!(
+            containment(CASH_ROUNDING_SUBSET),
+            (ids::CASH_ROUNDING, ids::CURRENCY)
+        );
+        // The ψ-member is the zero-decimal row, by the extension itself.
+        let descriptor = descriptor();
+        let extension = descriptor.relations[ids::CURRENCY.0 as usize]
+            .extension
+            .as_ref()
+            .expect("Currency is closed");
+        for (row, axiom) in extension.iter().enumerate() {
+            assert_eq!(
+                axiom.values[0] == Value::U64(0),
+                row as u64 == ZERO_DECIMAL_CURRENCY,
+                "the ψ-subset has exactly one member"
+            );
+        }
+    }
 
     /// Ties are constructed: within one account's posting rows the
     /// maximum amount is attained more than once (postings are dealt to

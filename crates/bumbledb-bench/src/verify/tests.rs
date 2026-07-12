@@ -137,15 +137,10 @@ fn a_wrong_oracle_fails_with_a_bundle() {
 }
 
 /// The full oracle at S: families + 25 randomized cases agree, and the
-/// stamp lands.
-///
-/// Ignored since the enum funeral: the naive differential slice aborts
-/// writes on the vocabulary containments (`Account(currency) <=
-/// Currency(id)` et al.) because the naive model does not yet seed
-/// closed-relation extensions — the engine, holding the ground axioms,
-/// commits them.
+/// stamp lands. (Re-armed by PRD 06: the naive model seeds
+/// closed-relation extensions, so the vocabulary containments commit on
+/// both oracles.)
 #[test]
-#[ignore = "PRD 06: oracles over axioms"]
 fn a_full_verify_at_s_succeeds() {
     let config = cfg("full");
     let report = run(&config).expect("verify succeeds");

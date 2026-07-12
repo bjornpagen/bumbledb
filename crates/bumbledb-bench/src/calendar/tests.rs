@@ -67,9 +67,7 @@ fn the_schema_is_statement_complete() {
     for statement in s.statements() {
         match &statement.descriptor {
             StatementDescriptor::Functionality { relation, .. } => match statement.resolved {
-                Resolved::Functionality {
-                    interval_position: Some(_),
-                } => pointwise.push(*relation),
+                Resolved::Functionality { pointwise: true } => pointwise.push(*relation),
                 _ if s.relation(*relation).is_closed() => closed_keys += 1,
                 _ => {
                     // The fresh auto-keys lead; the declared scalar keys

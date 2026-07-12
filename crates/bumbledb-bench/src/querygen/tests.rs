@@ -75,6 +75,8 @@ fn the_coverage_contract_holds_at_a_thousand() {
     band("du_walk", cov.du_walk, 6);
     band("rules", cov.rules, 10);
     band("measure", cov.measure, 8);
+    band("closed_join", cov.closed_join, 8);
+    band("closed_fold", cov.closed_fold, 7);
     for (name, count) in [
         ("gates", cov.gates),
         ("misses", cov.misses),
@@ -150,6 +152,12 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("chase_missing_phi", cov.chase_missing_phi),
         ("du_header_falls", cov.du_header_falls),
         ("du_child_falls", cov.du_child_falls),
+        // The closed-relation classes (shapes_closed.rs) — restated in
+        // full by `the_closed_relation_classes_are_emitted`.
+        ("closed_join_plain", cov.closed_join_plain),
+        ("closed_join_selected", cov.closed_join_selected),
+        ("closed_handle_literal", cov.closed_handle_literal),
+        ("closed_handle_set", cov.closed_handle_set),
     ] {
         assert!(count > 0, "{name} never generated");
     }
@@ -259,6 +267,66 @@ fn chase_shapes_eliminate_and_near_misses_refuse() {
     );
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The four closed-relation pattern classes are all emitted (the
+/// counting pattern): (a) joins against closed relations with and
+/// without payload-column selections, (b) handle literals and handle
+/// param sets on referencing fields, (c) the fold-shaped pattern under
+/// its own family knob (PRD 07 points here), and (d) the judgment
+/// write scenarios — closed writes, dangling handles below and beyond
+/// the roster cap, and the ψ-subset exclusions, each carrying its
+/// hand-derived typed violation.
+#[test]
+fn the_closed_relation_classes_are_emitted() {
+    use crate::querygen::writes::{closed_write_cases, ClosedWriteKind};
+
+    let cov = coverage(N, SEED, CFG);
+    // (a) joins, with and without the payload-column selection.
+    assert!(cov.closed_join_plain > 0, "plain closed joins");
+    assert!(cov.closed_join_selected > 0, "payload-column selections");
+    // (b) handle bindings on referencing fields.
+    assert!(cov.closed_handle_literal > 0, "handle literals");
+    assert!(cov.closed_handle_set > 0, "handle param sets");
+    // (c) the fold-shaped pattern — its own family knob.
+    assert!(cov.closed_fold > 0, "the PRD 07 fold shape");
+
+    // (d) the judgment write scenarios, all six kinds per batch.
+    let mut rng = Rng::new(SEED);
+    let cases = closed_write_cases(&mut rng, 24);
+    for kind in [
+        ClosedWriteKind::ClosedInsert,
+        ClosedWriteKind::ClosedDelete,
+        ClosedWriteKind::DanglingHandle,
+        ClosedWriteKind::BeyondRosterCap,
+        ClosedWriteKind::PsiExcluded,
+        ClosedWriteKind::PsiOutOfRange,
+    ] {
+        assert!(
+            cases.iter().any(|case| case.kind == kind),
+            "write kind {kind:?} never generated"
+        );
+    }
+    // The out-of-range ids genuinely straddle the roster cap.
+    for case in &cases {
+        let id = |fact: &[Value], index: usize| match fact[index] {
+            Value::U64(v) => v,
+            ref other => panic!("a handle is u64, got {other:?}"),
+        };
+        match case.kind {
+            ClosedWriteKind::DanglingHandle => {
+                let v = id(&case.fact, 1);
+                assert!((3..256).contains(&v), "in the word, off the extension");
+            }
+            ClosedWriteKind::BeyondRosterCap => {
+                assert!(id(&case.fact, 1) >= 256, "beyond the member-set width");
+            }
+            ClosedWriteKind::PsiExcluded => {
+                assert!(id(&case.fact, 0) < 2, "a real row outside psi");
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The grammar never emits a NUL — the translator rejects NUL string

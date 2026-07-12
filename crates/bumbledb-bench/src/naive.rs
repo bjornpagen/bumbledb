@@ -33,14 +33,28 @@ use tuple::{endpoints, overlaps};
 
 /// The in-memory reference database: one set of decoded value vectors per
 /// relation. Facts are `Vec<Value>` in field declaration order — the one
-/// blessed shared representation (`bumbledb::ir::Value`).
+/// blessed shared representation (`bumbledb::ir::Value`). A **closed**
+/// relation's facts sit in the sealed field space (the synthetic id at
+/// position 0, then the declared columns), seeded from the descriptor
+/// extension at construction — the model may materialize the axioms (it
+/// is a model, not the engine), but it never compiles them: closed
+/// judgments are σ over the extension rows by value comparison, and the
+/// independence law keeps the engine's compiled member sets out of here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NaiveDb {
-    schema: SchemaDescriptor,
     /// The materialized statement list; [`StatementId`] indexes it
-    /// (fresh auto-keys first, then declared statements — the same rule
-    /// the engine pins in its fingerprint).
+    /// (fresh auto-keys first, then the closed auto-keys, then declared
+    /// statements — the same rule the engine pins in its fingerprint).
     statements: Vec<StatementDescriptor>,
+    /// Per relation, per **sealed** field position, the value type (a
+    /// closed relation's list opens with the synthetic `U64` id).
+    field_types: Vec<Vec<ValueType>>,
+    /// A closed relation's extension as decoded tuples in the sealed
+    /// field space (`[U64(row id), declared values...]`), in declaration
+    /// order; `None` = ordinary. The closed-target membership judgment
+    /// reads THIS list — the σ-over-extension definition, never the
+    /// engine's compiled word set.
+    extensions: Vec<Option<Vec<Tuple>>>,
     relations: Vec<BTreeSet<Tuple>>,
     /// The state-changing generation: bumped iff an applied delta
     /// changed committed state — never by a no-op — mirroring the
@@ -57,9 +71,12 @@ pub struct Delta {
     pub inserts: Vec<(RelationId, Vec<Value>)>,
 }
 
-/// A statement the final state fails, identified exactly as the engine's
-/// commit errors identify it: the statement id, plus the direction for a
-/// containment.
+/// A refused write, identified exactly as the engine's commit errors
+/// identify it: a statement the final state fails (the statement id,
+/// plus the direction for a containment), or a delta operation naming a
+/// closed relation — ground axioms are not data, and the refusal is
+/// typed identically on both oracles (verdict parity including the
+/// typed identity, the direction-divergence lesson applied at birth).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Violation {
     Functionality {
@@ -68,6 +85,11 @@ pub enum Violation {
     Containment {
         statement: StatementId,
         direction: Direction,
+    },
+    /// A delete or insert named a closed relation — refused before the
+    /// delta, exactly the engine's `Error::ClosedRelationWrite`.
+    ClosedRelationWrite {
+        relation: RelationId,
     },
 }
 
@@ -86,13 +108,55 @@ pub enum ConditionalAbort {
 impl NaiveDb {
     /// An empty model over a declared schema. The model consumes the raw
     /// descriptor — public data, no sealed accessors — and re-derives
-    /// everything it needs from it.
+    /// everything it needs from it: the sealed field space (a closed
+    /// relation's fields open with the synthetic `U64` id) and the
+    /// extension tuples the closed relations are seeded with — row id =
+    /// declaration index, then the declared values, plain [`Value`]s.
     #[must_use]
     pub fn new(schema: &SchemaDescriptor) -> Self {
+        let field_types: Vec<Vec<ValueType>> = schema
+            .relations
+            .iter()
+            .map(|relation| {
+                let declared = relation.fields.iter().map(|field| field.value_type.clone());
+                if relation.extension.is_some() {
+                    std::iter::once(ValueType::U64).chain(declared).collect()
+                } else {
+                    declared.collect()
+                }
+            })
+            .collect();
+        let extensions: Vec<Option<Vec<Tuple>>> = schema
+            .relations
+            .iter()
+            .map(|relation| {
+                relation.extension.as_ref().map(|rows| {
+                    rows.iter()
+                        .enumerate()
+                        .map(|(row, axiom)| {
+                            let mut fact = vec![Value::U64(row as u64)];
+                            fact.extend(axiom.values.iter().cloned());
+                            Tuple(fact)
+                        })
+                        .collect()
+                })
+            })
+            .collect();
+        // The committed view of a closed relation IS its extension —
+        // seeded once, write-refused forever, so queries and judgments
+        // read one consistent state.
+        let relations = extensions
+            .iter()
+            .map(|extension| match extension {
+                Some(rows) => rows.iter().cloned().collect(),
+                None => BTreeSet::new(),
+            })
+            .collect();
         Self {
             statements: schema.materialized_statements(),
-            relations: vec![BTreeSet::new(); schema.relations.len()],
-            schema: schema.clone(),
+            field_types,
+            extensions,
+            relations,
             generation: 0,
         }
     }
@@ -138,10 +202,20 @@ impl NaiveDb {
     ///
     /// # Errors
     ///
-    /// The first violated statement, in the engine's phase order
-    /// (functionality during inserts, then containment source side, then
-    /// containment target side).
+    /// [`Violation::ClosedRelationWrite`] for the first delta operation
+    /// (deletes, then inserts — the replay order) naming a closed
+    /// relation, refused before anything applies; otherwise the first
+    /// violated statement, in the engine's phase order (functionality
+    /// during inserts, then containment source side, then containment
+    /// target side).
     pub fn apply(&mut self, delta: &Delta) -> Result<(), Violation> {
+        for (relation, _) in delta.deletes.iter().chain(&delta.inserts) {
+            if self.extensions[relation.0 as usize].is_some() {
+                return Err(Violation::ClosedRelationWrite {
+                    relation: *relation,
+                });
+            }
+        }
         let mut next = self.relations.clone();
         for (rel, fact) in &delta.deletes {
             next[rel.0 as usize].remove(&Tuple(fact.clone()));
@@ -175,6 +249,11 @@ impl NaiveDb {
     /// differential runner can compare violators, not just verdicts):
     /// functionality per inserted fact, then containment source-side per
     /// inserted fact, then containment target-side over surviving facts.
+    /// A **closed source** (domain quantification) needs no case of its
+    /// own: its "surviving facts" are the seeded extension tuples, φ is
+    /// the same [`satisfies_selection`] value comparison, and the
+    /// ordinary set-containment judgment runs unchanged against the
+    /// mutable target — the A-side tuples ARE φ over the extension.
     fn judge(&self, state: &[BTreeSet<Tuple>], inserted: &[BTreeSet<Tuple>]) -> Option<Violation> {
         for (rel, facts) in inserted.iter().enumerate() {
             for fact in facts {
@@ -222,7 +301,20 @@ impl NaiveDb {
                 if inserted[source.relation.0 as usize].contains(fact) {
                     continue; // an inserted source was pass-two work
                 }
+                // The target side judges what the delta BROKE: an
+                // instance that held before and fails after. This is the
+                // model twin of the delta-restricted judgment
+                // (`30-dependencies.md` § enforcement: per
+                // deleted-and-not-reestablished target tuple) — for
+                // ordinary theories it equals the plain full-state check
+                // by the clean-prestate induction, and for a closed
+                // SOURCE (domain quantification) it is the recorded
+                // semantics: the empty store violates the statement
+                // until the targets land, and commits that never touch
+                // the target cannot observe that (the offline sweeper's
+                // division of authority).
                 if satisfies_selection(fact, &source.selection)
+                    && self.contained(&self.relations, source, target, fact)
                     && !self.contained(state, source, target, fact)
                 {
                     return Some(Violation::Containment {
@@ -272,12 +364,32 @@ impl NaiveDb {
         false
     }
 
+    /// The target-side candidate facts of a containment: the committed
+    /// state for an ordinary target — or, for a **closed** target, the
+    /// extension rows themselves, from the σ-over-extension *definition*
+    /// (`docs/architecture/30-dependencies.md` § IND into a closed
+    /// target): ψ is applied to the ground axioms by plain value
+    /// comparison on the shared [`Value`] sum. Deliberately NOT the
+    /// engine's compiled member set — the model must not share the
+    /// engine's representation (the independence law).
+    fn target_facts<'a>(
+        &'a self,
+        state: &'a [BTreeSet<Tuple>],
+        target: &Side,
+    ) -> Box<dyn Iterator<Item = &'a Tuple> + 'a> {
+        match &self.extensions[target.relation.0 as usize] {
+            Some(rows) => Box::new(rows.iter()),
+            None => Box::new(state[target.relation.0 as usize].iter()),
+        }
+    }
+
     /// Is one source fact's projected tuple contained in the target side?
     /// Scalar positions scan for an equal projected tuple among ψ-passing
-    /// target facts; an interval position collects ALL matching target
-    /// segments, sorts and merges them, and tests the source interval's
-    /// containment in the merged union — never assuming the target keeps
-    /// its own segments disjoint.
+    /// target facts (the extension rows when the target is closed —
+    /// [`NaiveDb::target_facts`]); an interval position collects ALL
+    /// matching target segments, sorts and merges them, and tests the
+    /// source interval's containment in the merged union — never assuming
+    /// the target keeps its own segments disjoint.
     fn contained(
         &self,
         state: &[BTreeSet<Tuple>],
@@ -295,7 +407,7 @@ impl NaiveDb {
             .map(|field| &fact.0[field.0 as usize])
             .collect();
         match interval {
-            None => state[target.relation.0 as usize].iter().any(|candidate| {
+            None => self.target_facts(state, target).any(|candidate| {
                 satisfies_selection(candidate, &target.selection)
                     && target
                         .projection
@@ -305,7 +417,7 @@ impl NaiveDb {
             }),
             Some(index) => {
                 let mut segments: Vec<(i128, i128)> = Vec::new();
-                for candidate in &state[target.relation.0 as usize] {
+                for candidate in self.target_facts(state, target) {
                     if !satisfies_selection(candidate, &target.selection) {
                         continue;
                     }
@@ -338,11 +450,19 @@ impl NaiveDb {
         }
     }
 
+    /// Whether a **sealed** field position is interval-typed (a closed
+    /// relation's position 0 is the synthetic `U64` id).
     fn is_interval(&self, relation: RelationId, field: bumbledb::FieldId) -> bool {
         matches!(
-            self.schema.relations[relation.0 as usize].fields[field.0 as usize].value_type,
+            self.field_types[relation.0 as usize][field.0 as usize],
             ValueType::Interval { .. }
         )
+    }
+
+    /// The sealed field-type table, for the query evaluator's membership
+    /// typing rule ([`query`]).
+    pub(crate) fn field_type(&self, relation: usize, field: usize) -> &ValueType {
+        &self.field_types[relation][field]
     }
 }
 

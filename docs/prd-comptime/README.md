@@ -70,9 +70,6 @@ relation), *JIT/codegen* (refused).
 
 ## The PRDs
 
-Phase B — the funeral:
-- [06 — Oracles over axioms](06-oracles-over-axioms.md)
-
 Phase C — the folds:
 - [07 — The chase-evaluator: folding stage-zero atoms](07-chase-evaluator.md)
 - [10 — Statically empty: predicate folding at normalize](10-statically-empty.md)

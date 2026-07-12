@@ -67,6 +67,7 @@ silently coerces everything and is the oracle-corrupting bug class:
 | Interval | two INTEGER columns (start, end) | value equality = pairwise; an `Allen` mask translates to its basics' endpoint formulas OR'd (under the query's SELECT DISTINCT); membership is the endpoint pair — fully expressible in SQL; the *judgments* over intervals are the naive model's lane |
 | String | TEXT | intern ids decoded to bytes **before** comparison, outside any timed region |
 | Bytes(N) | BLOB (fixed-length content) | never TEXT — DISTINCT distinguishes `X'41'` from `'A'`; the N raw bytes, unpadded (the word pad is bumbledb encoding, not data) |
+| closed relation (references and payload) | an ordinary mirrored table: INTEGER `id` (PRIMARY KEY — the row's declaration index) plus payload columns per this table, INSERTed from the sealed extension at mirror-build time | the extension rides with the schema DDL, never the corpus — a closed relation is never empty, so empty-store pairs carry the axioms too; closed atoms are then ordinary tables on the `SQLite` side (what makes the differential meaningful for the folds), while the ψ-subset WRITE judgments stay naive-only (the division of labor below) |
 
 **Projection queries:** `SELECT DISTINCT` over the join with all find variables.
 **Rules:** one `SELECT DISTINCT` per rule joined by `UNION` — SQLite's `UNION` is
@@ -100,7 +101,15 @@ sqlite_expressible`): `Pack` heads plus the two dependency judgments, consumed b
 the harness so nothing is ever *silently* skipped — the verify run counts and
 reports its naive-only cases. The naive model packs **from the point-set
 definition** (union of point sets → maximal segments, sort-and-merge over logical
-endpoints), independent of the engine's word sweep.
+endpoints), independent of the engine's word sweep. **The compiled subsets share
+the division of labor**: ψ-subset write judgments (containments into a closed
+target, `Escalation(severity) <= Severity(id | pages == true)`-shaped) are the
+naive model's alone — `SQLite` does not express commit-time CINDs, and the
+judgment kinds are already inside the enumerated set — while the naive check is
+**definitional**: σψ applied to the extension rows by value comparison on the
+shared `Value` sum, never the engine's compiled member set (the independence
+law). Closed *reads* are fully three-way: mirrored extension tables on the
+`SQLite` side, the seeded extension on the naive side.
 
 **Error parity is typed identity, not agreement-in-kind** (the PRD-02
 direction-divergence lesson, generalized): wherever both oracles reject, the

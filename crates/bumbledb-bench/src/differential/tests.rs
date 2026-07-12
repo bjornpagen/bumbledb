@@ -5,6 +5,7 @@
 //! chase differential ([`chase`]).
 
 mod chase;
+mod closed;
 mod identity_bytes;
 mod measure;
 mod pack;

@@ -39,10 +39,15 @@ fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static str)> {
     }
 }
 
-/// The rowid-alias column: the relation's first `Fresh` field. Its
+/// The rowid-alias column: the relation's first `Fresh` field — or, for
+/// a **closed** relation, the synthetic id (the sealed field list opens
+/// with it, and the closed auto-key `R(id) -> R` is its statement). The
 /// auto-key statement becomes the table's PRIMARY KEY — no separate
 /// index exists or is expected.
-fn fresh_column(relation: &Relation) -> Option<&str> {
+fn rowid_alias(relation: &Relation) -> Option<&str> {
+    if relation.is_closed() {
+        return relation.fields().first().map(|field| &*field.name);
+    }
     relation
         .fields()
         .iter()
@@ -78,21 +83,17 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                 projection,
             } => {
                 let rel = schema.relation(*relation);
-                // A closed relation is not mirrored: its auto-key has no
-                // table to index (the extension is the engine's axiom).
-                if rel.is_closed() {
-                    continue;
-                }
+                // A closed auto-key (`R(id) -> R`) is the mirrored
+                // table's PRIMARY KEY, exactly like a fresh auto-key —
+                // both fall to the rowid-coverage skip below.
                 let covered_by_rowid = projection.len() == 1
-                    && fresh_column(rel) == Some(&*rel.fields()[usize::from(projection[0].0)].name);
+                    && rowid_alias(rel) == Some(&*rel.fields()[usize::from(projection[0].0)].name);
                 if covered_by_rowid {
                     continue;
                 }
                 let key = matches!(
                     statement.resolved,
-                    Resolved::Functionality {
-                        interval_position: None
-                    }
+                    Resolved::Functionality { pointwise: false }
                 );
                 plan.push(IndexSpec {
                     table: rel.name().to_owned(),
@@ -110,6 +111,9 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
             }
             StatementDescriptor::Containment { source, .. } => {
                 let rel = schema.relation(source.relation);
+                // A closed source (domain quantification) draws no probe
+                // index: the mirrored extension table is ≤256 rows and
+                // its id is already the PRIMARY KEY.
                 if rel.is_closed() {
                     continue;
                 }
@@ -156,28 +160,30 @@ pub fn ddl(schema: &Schema) -> Vec<String> {
     statements
 }
 
-/// The schema-derived DDL: one STRICT table per **ordinary** relation
-/// (NOT NULL everywhere — no nulls exist; interval fields split into
-/// their half columns), a PRIMARY KEY on the lone fresh auto-key, then
-/// the statement-derived indexes ([`index_plan`]). Closed relations are
-/// never mirrored: their extension is the engine's ground axiom, no
-/// table exists on the `SQLite` side and no query names one (the
-/// closed-atom pool is PRD 06's). The scenario loaders enter here (each
-/// scenario carries its own predicate-column indexes).
+/// The schema-derived DDL: one STRICT table per relation (NOT NULL
+/// everywhere — no nulls exist; interval fields split into their half
+/// columns), a PRIMARY KEY on the lone fresh auto-key, then the
+/// statement-derived indexes ([`index_plan`]). A **closed** relation is
+/// an ordinary mirrored table — INTEGER id (the synthetic handle,
+/// PRIMARY KEY) plus its payload columns — whose rows come from the
+/// sealed extension at mirror-build time ([`extension_ddl`], part of
+/// the schema surface, never the corpus: a closed relation is never
+/// empty). Closed atoms are ordinary tables on the `SQLite` side; the
+/// ψ-subset WRITE judgments stay naive-only (the recorded division of
+/// labor — `SQLite` does not express commit-time CINDs,
+/// [`crate::translate::Inexpressible`]). The scenario loaders enter
+/// here (each scenario carries its own predicate-column indexes).
 #[must_use]
 pub fn schema_ddl(schema: &Schema) -> Vec<String> {
     let mut statements = Vec::new();
     for relation in schema.relations() {
-        if relation.is_closed() {
-            continue;
-        }
         let mut columns: Vec<String> = Vec::new();
         for field in relation.fields() {
             for (name, sql_ty) in field_columns(field) {
                 columns.push(format!("\"{name}\" {sql_ty} NOT NULL"));
             }
         }
-        if let Some(alias) = fresh_column(relation) {
+        if let Some(alias) = rowid_alias(relation) {
             statements.push(format!(
                 "CREATE TABLE \"{}\" ({}, PRIMARY KEY (\"{alias}\")) STRICT",
                 relation.name(),
@@ -204,6 +210,100 @@ pub fn schema_ddl(schema: &Schema) -> Vec<String> {
             spec.name,
             spec.table,
         ));
+    }
+    statements
+}
+
+/// One extension value as a SQL literal (the normative mapping's
+/// literal form — extension rows are schema data, so they ride with the
+/// DDL as literal INSERTs, no placeholders anywhere).
+///
+/// # Panics
+///
+/// On a `u64` at or above 2⁶³ (the mapping axiom) or a mask value —
+/// neither exists in a validated extension.
+fn sql_literal(value: &Value) -> String {
+    match value {
+        Value::Bool(v) => format!("{}", i64::from(*v)),
+        Value::U64(v) => {
+            format!(
+                "{}",
+                i64::try_from(*v).expect("the SQLite mapping axiom: u64 < 2^63")
+            )
+        }
+        Value::I64(v) => format!("{v}"),
+        Value::String(raw) => {
+            let text = std::str::from_utf8(raw).expect("Value::String carries UTF-8");
+            format!("'{}'", text.replace('\'', "''"))
+        }
+        Value::FixedBytes(raw) => {
+            let hex = raw.iter().fold(String::new(), |mut acc, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(acc, "{byte:02X}");
+                acc
+            });
+            format!("X'{hex}'")
+        }
+        Value::IntervalU64(..) | Value::IntervalI64(..) => {
+            panic!("an interval maps to two columns — rows split before rendering")
+        }
+        Value::AllenMask(_) => panic!("mask values are comparison arguments, never columns"),
+    }
+}
+
+/// The mirrored rows of one closed relation's extension, in the sealed
+/// field space: the synthetic id (the row's declaration index) followed
+/// by the declared payload values.
+#[must_use]
+pub fn extension_rows(relation: &bumbledb::schema::RelationDescriptor) -> Vec<Vec<Value>> {
+    let Some(extension) = &relation.extension else {
+        return Vec::new();
+    };
+    extension
+        .iter()
+        .enumerate()
+        .map(|(row, axiom)| {
+            let mut fact = vec![Value::U64(row as u64)];
+            fact.extend(axiom.values.iter().cloned());
+            fact
+        })
+        .collect()
+}
+
+/// The extension INSERTs of every closed relation, as literal SQL — the
+/// second half of the mirror's schema surface ([`schema_ddl`] creates
+/// the tables; this fills the ground axioms). Rendered off the declared
+/// descriptor: the sealed schema holds the rows pre-encoded, and the
+/// mirror must never consume engine encodings (the value mapping is
+/// normative, `docs/architecture/60-validation.md`). Every mirror-build
+/// site appends these to its DDL — empty-store pairs included, because
+/// a closed relation is never empty.
+#[must_use]
+pub fn extension_ddl(descriptor: &bumbledb::schema::SchemaDescriptor) -> Vec<String> {
+    let mut statements = Vec::new();
+    for relation in &descriptor.relations {
+        for fact in extension_rows(relation) {
+            let mut values = Vec::new();
+            for value in &fact {
+                match value {
+                    Value::IntervalU64(..) | Value::IntervalI64(..) => {
+                        let (start, end) = interval_halves(value);
+                        let render = |half: rusqlite::types::Value| match half {
+                            rusqlite::types::Value::Integer(v) => format!("{v}"),
+                            other => unreachable!("interval halves are INTEGER, got {other:?}"),
+                        };
+                        values.push(render(start));
+                        values.push(render(end));
+                    }
+                    scalar => values.push(sql_literal(scalar)),
+                }
+            }
+            statements.push(format!(
+                "INSERT INTO \"{}\" VALUES ({})",
+                relation.name,
+                values.join(", ")
+            ));
+        }
     }
     statements
 }
@@ -384,9 +484,18 @@ mod tests {
 
     /// A miniature of the ledger's statement shapes: fresh auto-keys
     /// (the PRIMARY KEYs), a declared scalar key, two containments, a
-    /// pointwise key over an i64 interval, and a keyless relation with a
-    /// u64 interval for the round trip.
+    /// pointwise key over an i64 interval, a keyless relation with a
+    /// u64 interval for the round trip, and a closed vocabulary with a
+    /// payload column plus a containment into it (the mirrored-table
+    /// shape: INTEGER id PRIMARY KEY + payload, extension INSERTs).
     fn mini_schema() -> Schema {
+        mini_descriptor()
+            .validate()
+            .expect("the mini schema validates")
+    }
+
+    #[allow(clippy::too_many_lines)] // the fixture roster, one relation per block
+    fn mini_descriptor() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
                 RelationDescriptor {
@@ -426,6 +535,20 @@ mod tests {
                         ),
                     ],
                 },
+                RelationDescriptor {
+                    extension: Some(Box::new([
+                        bumbledb::schema::Row {
+                            handle: "On".into(),
+                            values: Box::new([Value::Bool(true)]),
+                        },
+                        bumbledb::schema::Row {
+                            handle: "Off".into(),
+                            values: Box::new([Value::Bool(false)]),
+                        },
+                    ])),
+                    name: "Kind".into(),
+                    fields: vec![field("flag", ValueType::Bool)],
+                },
             ],
             statements: vec![
                 StatementDescriptor::Functionality {
@@ -460,16 +583,32 @@ mod tests {
                     relation: RelationId(2),
                     projection: Box::new([FieldId(0), FieldId(2)]),
                 },
+                // The closed reference: Span(id) <= Kind(id) — the
+                // compiled subset on the engine, an ordinary containment
+                // source index on the mirror.
+                StatementDescriptor::Containment {
+                    source: Side {
+                        relation: RelationId(3),
+                        projection: Box::new([FieldId(0)]),
+                        selection: Box::new([]),
+                    },
+                    target: Side {
+                        relation: RelationId(4),
+                        projection: Box::new([FieldId(0)]),
+                        selection: Box::new([]),
+                    },
+                },
             ],
         }
-        .validate()
-        .expect("the mini schema validates")
     }
 
     /// The DDL golden, byte-pinned: split interval columns, the PRIMARY
-    /// KEY on the fresh auto-key (s0/s1 emit no index), a UNIQUE index
+    /// KEY on the fresh auto-key (s0/s1 emit no index) and on the closed
+    /// synthetic id (s2, the closed auto-key — same rowid coverage), the
+    /// closed vocabulary as an ordinary mirrored table, a UNIQUE index
     /// for the declared scalar key, plain indexes for the containment
-    /// sources, and the pointwise key's composite `(scalar, start, end)`.
+    /// sources (the closed reference included), and the pointwise key's
+    /// composite `(scalar, start, end)`.
     #[test]
     fn ddl_is_golden() {
         let schema = mini_schema();
@@ -480,20 +619,33 @@ mod tests {
                 "CREATE TABLE \"Org\" (\"id\" INTEGER NOT NULL, PRIMARY KEY (\"id\")) STRICT",
                 "CREATE TABLE \"Mandate\" (\"account\" INTEGER NOT NULL, \"org\" INTEGER NOT NULL, \"active_start\" INTEGER NOT NULL, \"active_end\" INTEGER NOT NULL) STRICT",
                 "CREATE TABLE \"Span\" (\"id\" INTEGER NOT NULL, \"u_start\" INTEGER NOT NULL, \"u_end\" INTEGER NOT NULL) STRICT",
-                "CREATE UNIQUE INDEX \"uq_Account_s2\" ON \"Account\" (\"code\")",
-                "CREATE INDEX \"ix_Mandate_s3\" ON \"Mandate\" (\"account\")",
-                "CREATE INDEX \"ix_Mandate_s4\" ON \"Mandate\" (\"org\")",
-                "CREATE INDEX \"ix_Mandate_s5\" ON \"Mandate\" (\"account\", \"active_start\", \"active_end\")",
+                "CREATE TABLE \"Kind\" (\"id\" INTEGER NOT NULL, \"flag\" INTEGER NOT NULL, PRIMARY KEY (\"id\")) STRICT",
+                "CREATE UNIQUE INDEX \"uq_Account_s3\" ON \"Account\" (\"code\")",
+                "CREATE INDEX \"ix_Mandate_s4\" ON \"Mandate\" (\"account\")",
+                "CREATE INDEX \"ix_Mandate_s5\" ON \"Mandate\" (\"org\")",
+                "CREATE INDEX \"ix_Mandate_s6\" ON \"Mandate\" (\"account\", \"active_start\", \"active_end\")",
+                "CREATE INDEX \"ix_Span_s7\" ON \"Span\" (\"id\")",
+            ]
+        );
+        // The extension INSERTs, byte-pinned: the second half of the
+        // mirror's schema surface — row id = declaration index, then
+        // the payload values as literals.
+        assert_eq!(
+            extension_ddl(&mini_descriptor()),
+            vec![
+                "INSERT INTO \"Kind\" VALUES (0, 1)",
+                "INSERT INTO \"Kind\" VALUES (1, 0)",
             ]
         );
         // The contract walk agrees with the DDL walk by construction.
         assert_eq!(
-            expected_indexes(&schema)[..4],
+            expected_indexes(&schema)[..5],
             [
-                ("Account".to_owned(), "uq_Account_s2".to_owned()),
-                ("Mandate".to_owned(), "ix_Mandate_s3".to_owned()),
+                ("Account".to_owned(), "uq_Account_s3".to_owned()),
                 ("Mandate".to_owned(), "ix_Mandate_s4".to_owned()),
                 ("Mandate".to_owned(), "ix_Mandate_s5".to_owned()),
+                ("Mandate".to_owned(), "ix_Mandate_s6".to_owned()),
+                ("Span".to_owned(), "ix_Span_s7".to_owned()),
             ]
         );
         assert_eq!(

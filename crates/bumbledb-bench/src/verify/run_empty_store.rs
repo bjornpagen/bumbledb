@@ -28,6 +28,12 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     for statement in sqlmap::ddl(schema()) {
         empty_conn.execute(&statement, []).expect("empty ddl");
     }
+    // "Empty" spares no axiom: a closed relation is never empty — the
+    // engine answers its extension virtually over a rowless store, so
+    // the mirror carries the same ground rows.
+    for statement in sqlmap::extension_ddl(&bumbledb::Theory::descriptor(Ledger)) {
+        empty_conn.execute(&statement, []).expect("empty extension");
+    }
     run.lane(&empty_db, &empty_conn, |lane| {
         family_lane(lane, cfg, "empty family", &|_| None);
     });
@@ -59,6 +65,11 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
         target_conn
             .execute(&statement, [])
             .expect("empty target ddl");
+    }
+    for statement in sqlmap::extension_ddl(&target::descriptor()) {
+        target_conn
+            .execute(&statement, [])
+            .expect("empty target extension");
     }
     let mut gate_bearing = 0u32;
     run.lane(&empty_target, &target_conn, |lane| {

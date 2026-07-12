@@ -5,6 +5,7 @@ use crate::querygen::dress::dress;
 use crate::querygen::negate::negate;
 use crate::querygen::shapes::{aggregate, chain, guard, self_join, star};
 use crate::querygen::shapes_chase::{du_walk, existence_walk};
+use crate::querygen::shapes_closed::{closed_fold, closed_join};
 use crate::querygen::shapes_interval::{boundary, interval_join, measure, membership};
 use crate::querygen::shapes_rules::rules;
 use crate::querygen::shapes_sink::{arg, count_distinct};
@@ -57,13 +58,19 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::ExistenceWalk => existence_walk(&mut b, rng),
         Shape::DuWalk => du_walk(&mut b, rng),
         Shape::Measure => measure(&mut b, rng, cfg, domains),
+        Shape::ClosedJoin => closed_join(&mut b, rng),
+        Shape::ClosedFold => closed_fold(&mut b, rng),
         Shape::Rules => unreachable!("multi-rule programs assemble their own query"),
     }
-    // The chase shapes are their own deliberate dressing: a random
-    // predicate or negated probe landing on the target atom would flip
-    // an eliminable shape to a refusal nondeterministically, and the
-    // coverage contract asserts each variant per run (shapes_chase.rs).
-    if !matches!(shape, Shape::ExistenceWalk | Shape::DuWalk) {
+    // The chase and closed shapes are their own deliberate dressing: a
+    // random predicate or negated probe landing on the target atom
+    // would flip an eliminable shape to a refusal (or blur the counted
+    // closed class) nondeterministically, and the coverage contract
+    // asserts each variant per run (shapes_chase.rs, shapes_closed.rs).
+    if !matches!(
+        shape,
+        Shape::ExistenceWalk | Shape::DuWalk | Shape::ClosedJoin | Shape::ClosedFold
+    ) {
         dress(&mut b, rng, cfg, domains);
         // Negation last: its templates draw on every anchor the shape
         // and the dressing established.
@@ -99,6 +106,7 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
         random_mask: b.random_mask,
         chase: b.chase,
         rules: None,
+        closed: b.closed,
     };
     (b.into_query(), shape, tags)
 }

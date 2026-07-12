@@ -133,11 +133,15 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
 /// The dense-id domain of a u64 field (every corpus id is `0..n`).
 pub(super) fn u64_domain(rel: RelationId, field: FieldId, domains: &Domains) -> u64 {
     match (rel, field) {
-        // Closed-vocabulary reference fields: the domain is the closed
-        // relation's extension (three rows each).
+        // Closed-vocabulary reference fields (and the vocabularies'
+        // own ids): the domain is the closed relation's extension
+        // (three rows each).
         (ids::ACCOUNT, ids::account::CURRENCY)
         | (ids::JOURNAL_ENTRY, ids::journal_entry::SOURCE)
-        | (ids::POSTING_TAG, ids::posting_tag::TAG) => 3,
+        | (ids::POSTING_TAG, ids::posting_tag::TAG)
+        | (ids::CURRENCY_BACKING, ids::currency_backing::CURRENCY)
+        | (ids::CASH_ROUNDING, ids::cash_rounding::CURRENCY)
+        | (ids::CURRENCY | ids::SOURCE | ids::TAG, _) => 3,
         (ids::POSTING, ids::posting::ENTRY) | (ids::JOURNAL_ENTRY, ids::journal_entry::ID) => {
             domains.entries
         }

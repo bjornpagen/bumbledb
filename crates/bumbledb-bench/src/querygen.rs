@@ -30,12 +30,14 @@ mod negate;
 mod oracle;
 mod shapes;
 mod shapes_chase;
+mod shapes_closed;
 mod shapes_interval;
 mod shapes_rules;
 mod shapes_sink;
 pub mod target;
 #[cfg(test)]
 mod tests;
+pub mod writes;
 
 pub use construct::random_query;
 pub use coverage::{cmp_cell_legal, coverage};
@@ -62,6 +64,8 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::DuWalk, 6),
     (Shape::Rules, 10),
     (Shape::Measure, 8),
+    (Shape::ClosedJoin, 8),
+    (Shape::ClosedFold, 7),
 ];
 
 /// Filter dressing applies to every shape with this percent chance…
@@ -108,6 +112,31 @@ enum Shape {
     /// sentinel end sits below the ray); ray-bearing measure parity is
     /// the verify naive lane's.
     Measure,
+    /// Closed relations in the drawable atom pool (`shapes_closed.rs`):
+    /// joins against the vocabularies with/without payload projections
+    /// and payload-column selections, plus handle literals and handle
+    /// param sets on referencing fields.
+    ClosedJoin,
+    /// The fold-shaped pattern PRD 07 targets, under its own family
+    /// knob: a closed atom whose only escaping variable is the join id.
+    ClosedFold,
+}
+
+/// Which closed-relation class a query is ([`Shape::ClosedJoin`] /
+/// [`Shape::ClosedFold`]) — the generator's intent, counted by the
+/// closed-class self-test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClosedVariant {
+    /// A join through the closed atom's id (payload projected or not).
+    Join,
+    /// The join under a payload-column selection (the ψ shape).
+    JoinSelected,
+    /// A handle literal on a referencing field.
+    HandleLiteral,
+    /// A handle param set on a referencing field.
+    HandleSet,
+    /// The fold shape (dead payload variable included half the time).
+    Fold,
 }
 
 /// Which chase-shape variant a query is ([`Shape::ExistenceWalk`] /
@@ -177,6 +206,8 @@ struct Builder {
     random_mask: bool,
     /// Which chase-shape variant this query is, when the shape is one.
     chase: Option<ChaseVariant>,
+    /// Which closed-relation class this query is, when the shape is one.
+    closed: Option<ClosedVariant>,
 }
 
 impl Builder {
@@ -206,6 +237,7 @@ struct GenTags {
     random_mask: bool,
     chase: Option<ChaseVariant>,
     rules: Option<RulesVariant>,
+    closed: Option<ClosedVariant>,
 }
 
 /// Which multi-rule variant a [`Shape::Rules`] query is
@@ -262,6 +294,16 @@ pub struct Coverage {
     pub du_walk: u64,
     pub rules: u64,
     pub measure: u64,
+    pub closed_join: u64,
+    pub closed_fold: u64,
+    /// The closed-relation pattern classes (`shapes_closed.rs`): the
+    /// plain join, the payload-column selection, the handle literal,
+    /// and the handle param set — all four counted by the closed-class
+    /// self-test (the fourth write-side class lives in [`writes`]).
+    pub closed_join_plain: u64,
+    pub closed_join_selected: u64,
+    pub closed_handle_literal: u64,
+    pub closed_handle_set: u64,
     /// The chase variants (`shapes_chase.rs`): eliminable shapes
     /// (existence walks and both DU `==` directions) vs the near-miss
     /// refusals — the coverage contract asserts both appear per run,

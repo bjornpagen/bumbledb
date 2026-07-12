@@ -134,12 +134,9 @@ fn verify_store_refusal_names_gen() {
 /// The suite's own integration point (unit-scale by S's size):
 /// gen → verify → bench --families point --samples 8, three
 /// artifacts, PARTIAL verdict, and the UNVERIFIED override branding.
-///
-/// Ignored since the enum funeral: the embedded verify's naive
-/// differential slice aborts writes on the vocabulary containments —
-/// the naive model does not yet seed closed-relation extensions.
+/// (Re-armed by PRD 06: the naive model seeds closed-relation
+/// extensions, so the vocabulary containments commit on both oracles.)
 #[test]
-#[ignore = "PRD 06: oracles over axioms"]
 fn the_full_sequence_runs_at_s() {
     let dir = scratch("e2e");
     let corpus = CorpusArgs {

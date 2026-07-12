@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use crate::gen::{GenConfig, Rng};
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
-use crate::querygen::{ChaseVariant, Coverage, GenTags, RulesVariant, Shape};
+use crate::querygen::{ChaseVariant, ClosedVariant, Coverage, GenTags, RulesVariant, Shape};
 
 /// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
 /// all six types, order operators over the two integer types only,
@@ -253,6 +253,21 @@ impl Coverage {
             Shape::DuWalk => self.du_walk += 1,
             Shape::Rules => self.rules += 1,
             Shape::Measure => self.measure += 1,
+            Shape::ClosedJoin => self.closed_join += 1,
+            Shape::ClosedFold => self.closed_fold += 1,
+        }
+    }
+
+    /// The closed-relation class tallies (`shapes_closed.rs`): the four
+    /// query pattern classes the self-test counts (the fold rides the
+    /// shape count itself — it IS the family knob).
+    fn record_closed(&mut self, closed: Option<ClosedVariant>) {
+        match closed {
+            Some(ClosedVariant::Join) => self.closed_join_plain += 1,
+            Some(ClosedVariant::JoinSelected) => self.closed_join_selected += 1,
+            Some(ClosedVariant::HandleLiteral) => self.closed_handle_literal += 1,
+            Some(ClosedVariant::HandleSet) => self.closed_handle_set += 1,
+            Some(ClosedVariant::Fold) | None => {}
         }
     }
 
@@ -541,6 +556,7 @@ impl Coverage {
     fn record(&mut self, query: &Query, shape: Shape, tags: GenTags) {
         self.record_shape(shape);
         self.record_chase(tags.chase);
+        self.record_closed(tags.closed);
         self.record_rules(query, tags.rules);
         self.misses += u64::from(tags.miss);
         self.bytes_hits += u64::from(tags.bytes_hit);

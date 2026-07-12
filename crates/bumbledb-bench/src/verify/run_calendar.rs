@@ -5,17 +5,17 @@
 //! slice against the `SQLite` mirror (the `free_busy` hand coalesce
 //! included — the translator-unpaired case is checked, never skipped),
 //! and a unit-scale naive differential slice replaying the corpus
-//! stream, four judgment-violating deltas (one per statement family:
+//! stream, six judgment-violating deltas (one per statement family:
 //! room exclusion, `==` totality, `==` arm validity, working-hours
-//! coverage), and every family query against the brute-force model.
+//! coverage, the closed-relation write refusal, and the out-of-range
+//! RSVP handle), and every family query against the brute-force model.
 
 use super::{Case, Db, Run, VerifyConfig};
 
-use bumbledb::schema::{Generation, RelationDescriptor, SchemaDescriptor};
 use bumbledb::{RelationId, Value};
 
 use crate::calendar::gen::{chain, du_cluster_rows, relation_rows_sized, CalSizes, CAL_BASE, HOUR};
-use crate::calendar::{families, ids, schema, Scheduling, ARM_BUSY, RSVP_ACCEPTED};
+use crate::calendar::{families, ids, Scheduling, ARM_BUSY, RSVP_ACCEPTED};
 use crate::differential::{self, Op};
 use crate::gen::Rng;
 use crate::naive::{Delta, NaiveDb};
@@ -82,34 +82,6 @@ pub(super) fn calendar_fixed_count(cfg: &VerifyConfig) -> u64 {
         .iter()
         .map(|family| (family.params)(&cfg.gen).len() as u64)
         .sum()
-}
-
-/// The calendar schema as the raw descriptor the naive model consumes —
-/// the declared statements are the materialized list minus the leading
-/// fresh auto-keys (the model re-materializes them itself).
-fn calendar_descriptor() -> SchemaDescriptor {
-    let sealed = schema();
-    let autos = sealed
-        .relations()
-        .iter()
-        .flat_map(|relation| relation.fields().iter())
-        .filter(|field| field.generation == Generation::Fresh)
-        .count();
-    SchemaDescriptor {
-        relations: sealed
-            .relations()
-            .iter()
-            .map(|relation| RelationDescriptor {
-                extension: None,
-                name: relation.name().into(),
-                fields: relation.fields().to_vec(),
-            })
-            .collect(),
-        statements: sealed.statements()[autos..]
-            .iter()
-            .map(|statement| statement.descriptor.clone())
-            .collect(),
-    }
 }
 
 /// The engine loader's order and joint `==` cluster, as differential
@@ -249,11 +221,34 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                 ],
             })
         },
+        // A write naming the closed `Rsvp` vocabulary: refused before
+        // the delta on both oracles (`ClosedRelationWrite`, typed).
+        Op::Write(Delta {
+            deletes: vec![],
+            inserts: vec![(ids::RSVP, vec![Value::U64(7)])],
+        }),
+        // An out-of-range RSVP handle: row 9 is beyond the three-row
+        // extension, so `Attendance(rsvp) <= Rsvp(id)` misses —
+        // source-unsatisfied, exactly like any dangling reference
+        // (person 3 keeps the (event, person) key and the `==` arms
+        // clean, so the vocabulary miss is the one violated statement).
+        Op::Write(Delta {
+            deletes: vec![],
+            inserts: vec![(
+                ids::ATTENDANCE,
+                vec![
+                    Value::U64(sizes.attendances + 9),
+                    Value::U64(0),
+                    Value::U64(3),
+                    Value::U64(9),
+                ],
+            )],
+        }),
     ]
 }
 
 /// The calendar naive differential slice: a fresh unit-scale store
-/// replays the corpus stream (joint `==` cluster included), the four
+/// replays the corpus stream (joint `==` cluster included), the six
 /// judgment-violating deltas, and every family query (its unit draw
 /// plus its seeded S rotation) against [`NaiveDb`] — `free_busy`'s
 /// `Pack` is `SQLite`-inexpressible and runs here and against the hand
@@ -288,7 +283,9 @@ pub(super) fn run_calendar_naive<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let naive_dir = cfg.out_dir.join("cal-naive-db");
     let _ = std::fs::remove_dir_all(&naive_dir);
     let db = Db::create(&naive_dir, Scheduling).expect("create calendar naive-slice store");
-    let mut naive = NaiveDb::new(&calendar_descriptor());
+    // The declared descriptor, extensions included — the model seeds
+    // `Rsvp` and `Arm` from the ground axioms at construction.
+    let mut naive = NaiveDb::new(&bumbledb::Theory::descriptor(Scheduling));
     eprintln!(
         "verify: calendar naive differential slice ({} ops)",
         ops.len()
@@ -296,7 +293,7 @@ pub(super) fn run_calendar_naive<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     match differential::run(&db, &mut naive, &ops) {
         Ok(summary) => {
             assert!(
-                summary.aborts >= 4,
+                summary.aborts >= 6,
                 "the violating calendar deltas must abort (got {})",
                 summary.aborts
             );

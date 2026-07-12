@@ -148,12 +148,17 @@ pub fn load_sqlite_into(
     Ok(LoadStats::of(facts, start.elapsed()))
 }
 
-/// The calendar mirror's DDL: the statement-derived plan plus the
-/// family-owned indexes (the honest opponent gets every index its
-/// queries reward — `crate::calendar::families::index_ddl`).
+/// The calendar mirror's DDL: the statement-derived plan, the closed
+/// vocabularies' extension INSERTs (`Rsvp`/`Arm` — schema surface, not
+/// corpus: a closed relation is never empty), plus the family-owned
+/// indexes (the honest opponent gets every index its queries reward —
+/// `crate::calendar::families::index_ddl`).
 #[must_use]
 pub fn ddl() -> Vec<String> {
     let mut statements = sqlmap::schema_ddl(schema());
+    statements.extend(sqlmap::extension_ddl(&bumbledb::Theory::descriptor(
+        crate::calendar::Scheduling,
+    )));
     statements.extend(crate::calendar::families::index_ddl());
     statements
 }

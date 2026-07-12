@@ -235,9 +235,7 @@ mod tests {
         for statement in statements {
             match &statement.descriptor {
                 StatementDescriptor::Functionality { relation, .. } => match statement.resolved {
-                    Resolved::Functionality {
-                        interval_position: Some(_),
-                    } => {
+                    Resolved::Functionality { pointwise: true } => {
                         pointwise += 1;
                         assert_eq!(*relation, ids::MANDATE);
                     }

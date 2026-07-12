@@ -410,7 +410,7 @@ impl NaiveDb {
 
     fn atom_field_is_interval(&self, atom: &Atom, field: bumbledb::FieldId) -> bool {
         matches!(
-            self.schema.relations[atom.relation.0 as usize].fields[usize::from(field.0)].value_type,
+            self.field_type(atom.relation.0 as usize, usize::from(field.0)),
             ValueType::Interval { .. }
         )
     }

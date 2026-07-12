@@ -191,12 +191,18 @@ pub(super) fn load_target_stores(
     for statement in sqlmap::schema_ddl(target::schema()) {
         conn.execute(&statement, []).expect("target ddl");
     }
+    // The closed vocabularies' rows are schema surface, not corpus:
+    // extension INSERTs ride with the DDL (a closed relation is never
+    // empty).
+    for statement in sqlmap::extension_ddl(&target::descriptor()) {
+        conn.execute(&statement, []).expect("target extension");
+    }
     for relation in target::schema().relations() {
-        // Closed relations have no mirror table to index.
-        if relation.is_closed() {
-            continue;
-        }
-        for field in relation.fields() {
+        // A closed table's synthetic id is already the PRIMARY KEY;
+        // its payload columns get the same per-column indexes as any
+        // ordinary table (≤256 rows — pure win, never timed).
+        let skip_id = usize::from(relation.is_closed());
+        for field in relation.fields().iter().skip(skip_id) {
             let columns = if matches!(
                 field.value_type,
                 bumbledb::schema::ValueType::Interval { .. }

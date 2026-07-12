@@ -163,6 +163,9 @@ fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
             statement,
             direction,
         }),
+        Err(Error::ClosedRelationWrite { relation }) => {
+            Verdict::Aborted(Violation::ClosedRelationWrite { relation })
+        }
         Err(other) => panic!("engine refused a differential write: {other:?}"),
     }
 }
@@ -203,6 +206,9 @@ pub(crate) fn engine_write_from<S>(
             statement,
             direction,
         }),
+        Err(Error::ClosedRelationWrite { relation }) => {
+            ConditionalVerdict::Aborted(Violation::ClosedRelationWrite { relation })
+        }
         Err(other) => panic!("engine refused a differential conditional write: {other:?}"),
     }
 }
