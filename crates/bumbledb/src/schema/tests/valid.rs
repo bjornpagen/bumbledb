@@ -150,13 +150,11 @@ fn example_schema_resolves_exactly() {
     .expect("the 30-dependencies example schema is valid");
 
     let resolved: Vec<&Resolved> = schema.statements().iter().map(|s| &s.resolved).collect();
-    let scalar_key = Resolved::Functionality {
-        interval_position: None,
-    };
+    let scalar_key = Resolved::Functionality { pointwise: false };
     let probe = |target_key: u16| Resolved::Containment {
         target_key: StatementId(target_key),
         key_permutation: Box::new([0]),
-        interval_position: None,
+        coverage: false,
     };
     assert_eq!(
         resolved,
@@ -228,16 +226,14 @@ fn pointwise_key_and_containment_resolve() {
 
     assert_eq!(
         schema.statement(StatementId(0)).resolved,
-        Resolved::Functionality {
-            interval_position: Some(1)
-        }
+        Resolved::Functionality { pointwise: true }
     );
     assert_eq!(
         schema.statement(StatementId(1)).resolved,
         Resolved::Containment {
             target_key: StatementId(0),
             key_permutation: Box::new([0, 1]),
-            interval_position: Some(1)
+            coverage: true
         }
     );
     assert_eq!(schema.dependents(StatementId(0)), &[StatementId(1)]);
@@ -277,7 +273,7 @@ fn permuted_target_projection_resolves_with_permutation() {
         Resolved::Containment {
             target_key: StatementId(0),
             key_permutation: Box::new([1, 0]),
-            interval_position: None
+            coverage: false
         }
     );
 }

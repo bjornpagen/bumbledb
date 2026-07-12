@@ -19,6 +19,7 @@ mod commit;
 mod functionality;
 mod judgment;
 mod plan;
+mod sealed_checks;
 mod target;
 
 // ---------- shared fixture vocabulary ----------

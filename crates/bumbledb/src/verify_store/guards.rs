@@ -92,10 +92,10 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // numeric compare. Half-open `[ps, pe)` and `[ns, ne)` with
         // `ps <= ns` by cursor order overlap iff `pe > ns`; equality is
         // adjacency, legal by construction.
-        let Resolved::Functionality { interval_position } = &schema.statement(sid).resolved else {
+        let Resolved::Functionality { pointwise } = &schema.statement(sid).resolved else {
             unreachable!("validated schema: relation keys resolve as Functionality")
         };
-        if interval_position.is_none() || guard.len() < 16 {
+        if !*pointwise || guard.len() < 16 {
             // A pointwise guard shorter than its interval is a width
             // desync the re-derivation above already convicted.
             prev_pointwise = None;

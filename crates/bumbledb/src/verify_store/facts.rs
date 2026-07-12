@@ -153,12 +153,12 @@ fn check_outgoing(
         if !judgment::satisfies(&checks.source, layout, fact) {
             continue;
         }
-        let (target_key, key_permutation, interval_position) = match &statement.resolved {
+        let (target_key, key_permutation, coverage) = match &statement.resolved {
             Resolved::Containment {
                 target_key,
                 key_permutation,
-                interval_position,
-            } => (target_key, key_permutation, interval_position),
+                coverage,
+            } => (target_key, key_permutation, *coverage),
             // A closed-target containment has no `R` edge and no guard to
             // probe — the F↔R walk skips it, and the global judgment is
             // the membership test itself.
@@ -190,7 +190,7 @@ fn check_outgoing(
             fact_bytes: fact,
             direction: Direction::TargetRequired,
         };
-        let judged = if interval_position.is_some() {
+        let judged = if coverage {
             checker.check_coverage(&probe)
         } else {
             checker.check_scalar(&probe)
@@ -261,12 +261,12 @@ fn check_extension_sources(
                     Resolved::Containment {
                         target_key,
                         key_permutation,
-                        interval_position,
+                        coverage,
                     } => {
                         // Interval positions on closed containments are
                         // refused at validate — the coverage walk never
                         // runs from a constant source.
-                        debug_assert!(interval_position.is_none());
+                        debug_assert!(!coverage);
                         keys::permuted_guard_bytes(
                             layout,
                             &source.projection,

@@ -201,7 +201,7 @@ fn fact_op<'d>(
         .iter()
         .map(|&sid| {
             let statement = schema.statement(sid);
-            let Resolved::Functionality { interval_position } = &statement.resolved else {
+            let Resolved::Functionality { pointwise } = &statement.resolved else {
                 unreachable!("validated schema: relation keys resolve as Functionality")
             };
             // Guard keys derived by slicing projected fields out of
@@ -215,7 +215,7 @@ fn fact_op<'d>(
             GuardOp {
                 statement: sid,
                 guard,
-                pointwise: interval_position.is_some(),
+                pointwise: *pointwise,
             }
         })
         .collect();
@@ -241,7 +241,7 @@ fn fact_op<'d>(
             Resolved::Containment {
                 target_key,
                 key_permutation,
-                interval_position,
+                coverage,
             } => {
                 keys::permuted_guard_bytes(
                     layout,
@@ -255,7 +255,7 @@ fn fact_op<'d>(
                     key_bytes: scratch.as_slice().into(),
                     target_relation: target.relation,
                     target_key: *target_key,
-                    coverage: interval_position.is_some(),
+                    coverage: *coverage,
                 });
             }
             Resolved::ClosedContainment { .. } => {
@@ -303,9 +303,7 @@ fn target_checks(
                 .dependents(key)
                 .iter()
                 .filter_map(|&sid| {
-                    let Resolved::Containment {
-                        interval_position, ..
-                    } = &schema.statement(sid).resolved
+                    let Resolved::Containment { coverage, .. } = &schema.statement(sid).resolved
                     else {
                         unreachable!("validated schema: dependents name Containment statements")
                     };
@@ -320,7 +318,7 @@ fn target_checks(
                     };
                     Some(DependentCheck {
                         statement: sid,
-                        coverage: interval_position.is_some(),
+                        coverage: *coverage,
                         psi_qualified,
                     })
                 })

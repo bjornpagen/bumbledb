@@ -13,9 +13,9 @@
 //! rejected.
 
 use super::{
-    closed_member, value_matches, FactLayout, FieldDescriptor, FieldId, Generation, Relation,
-    RelationDescriptor, RelationId, Resolved, Schema, SchemaDescriptor, Side, Statement,
-    StatementDescriptor, StatementId, ValueMismatch, ValueType,
+    closed_member, value_matches, CompiledCheck, CompiledSides, FactLayout, FieldDescriptor,
+    FieldId, Generation, Relation, RelationDescriptor, RelationId, Resolved, Schema,
+    SchemaDescriptor, Side, Statement, StatementDescriptor, StatementId, ValueMismatch, ValueType,
 };
 use crate::encoding::field_bytes;
 use crate::error::SchemaError;
@@ -121,14 +121,26 @@ impl SchemaDescriptor {
             .map(|idx| mirror_of(&descriptors, idx))
             .collect();
 
+        // σ literals compile once, here — the commit path consumes sealed
+        // bytes and resolves only interned text (the staging law).
         let statements = descriptors
             .into_iter()
             .zip(resolutions)
             .zip(mirrors)
-            .map(|((descriptor, resolved), mirror)| Statement {
-                descriptor,
-                resolved,
-                mirror,
+            .map(|((descriptor, resolved), mirror)| {
+                let checks = match &descriptor {
+                    StatementDescriptor::Containment { source, target } => Some(CompiledSides {
+                        source: compiled_checks(&source.selection),
+                        target: compiled_checks(&target.selection),
+                    }),
+                    StatementDescriptor::Functionality { .. } => None,
+                };
+                Statement {
+                    descriptor,
+                    resolved,
+                    checks,
+                    mirror,
+                }
             })
             .collect();
 
@@ -337,7 +349,9 @@ fn validate_functionality(
         }
     }
 
-    Ok(Resolved::Functionality { interval_position })
+    Ok(Resolved::Functionality {
+        pointwise: interval_position.is_some(),
+    })
 }
 
 /// Roster "IND …" lines: `A(X | φ) <= B(Y | ψ)` under the acceptance gate.
@@ -419,7 +433,7 @@ fn validate_containment(
         relations[source.relation.0 as usize].extension.as_deref(),
     ) {
         let layout = &relations[source.relation.0 as usize].layout;
-        let phi = encoded_selection(&source.selection);
+        let phi = compiled_checks(&source.selection);
         for (row_idx, row) in rows.iter().enumerate() {
             if !sealed_satisfies(&phi, layout, &row.fact) {
                 continue;
@@ -438,26 +452,46 @@ fn validate_containment(
     Ok(resolved)
 }
 
-/// A selection's literals canonically pre-encoded for byte comparison
-/// against sealed extension rows — the validate-time sibling of the commit
-/// path's `Selections` (`str` and enum columns are refused on closed
-/// relations, so every literal here has a canonical encoding).
-fn encoded_selection(selection: &[(FieldId, Value)]) -> Vec<(usize, Vec<u8>)> {
+/// One side's σ compiled at validate: canonical bytes sealed for every
+/// literal whose encoding is a pure function of the value; `str` literals
+/// stay [`CompiledCheck::Interned`] (their word is per-database dictionary
+/// state, resolved at commit). The one compile walk — the sealed
+/// [`Statement::checks`] and the closed-extension evaluations below both
+/// consume it.
+fn compiled_checks(selection: &[(FieldId, Value)]) -> Box<[CompiledCheck]> {
     selection
         .iter()
-        .map(|(field, literal)| {
-            let mut bytes = Vec::with_capacity(16);
-            crate::encoding::encode_literal(literal, &mut bytes);
-            (usize::from(field.0), bytes)
+        .map(|(field, literal)| match literal {
+            Value::String(raw) => CompiledCheck::Interned {
+                field: *field,
+                text: std::str::from_utf8(raw)
+                    .expect("selection literals validated UTF-8")
+                    .into(),
+            },
+            literal => {
+                let mut bytes = Vec::with_capacity(16);
+                crate::encoding::encode_literal(literal, &mut bytes);
+                CompiledCheck::Encoded {
+                    field: *field,
+                    bytes: bytes.into(),
+                }
+            }
         })
         .collect()
 }
 
-/// σ over one sealed row: one byte compare per selected field.
-fn sealed_satisfies(encoded: &[(usize, Vec<u8>)], layout: &FactLayout, fact: &[u8]) -> bool {
-    encoded
-        .iter()
-        .all(|(field, literal)| field_bytes(fact, layout, *field) == &literal[..])
+/// σ over one sealed row: one byte compare per selected field. Total over
+/// `Encoded` only — closed relations refuse `str` columns, so a closed
+/// side's compiled checks never carry `Interned`.
+fn sealed_satisfies(checks: &[CompiledCheck], layout: &FactLayout, fact: &[u8]) -> bool {
+    checks.iter().all(|check| match check {
+        CompiledCheck::Encoded { field, bytes } => {
+            field_bytes(fact, layout, usize::from(field.0)) == &bytes[..]
+        }
+        CompiledCheck::Interned { .. } => {
+            unreachable!("closed relations refuse str columns")
+        }
+    })
 }
 
 /// One u64 field decoded off a sealed row's canonical bytes (big-endian,
@@ -634,7 +668,7 @@ fn resolve_target_key(
                 relation: target.relation,
             });
         }
-        let psi = encoded_selection(&target.selection);
+        let psi = compiled_checks(&target.selection);
         let mut members = [0u64; 4];
         for (idx, row) in rows.iter().enumerate() {
             if sealed_satisfies(&psi, &target_relation.layout, &row.fact) {
@@ -713,7 +747,7 @@ fn resolve_target_key(
     Ok(Resolved::Containment {
         target_key: statement_id(key_idx),
         key_permutation,
-        interval_position,
+        coverage: interval_position.is_some(),
     })
 }
 

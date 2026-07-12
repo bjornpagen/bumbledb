@@ -354,20 +354,26 @@ impl SchemaDescriptor {
 
 /// The enforcement-plan data validation attaches to an accepted statement
 /// (computed by the acceptance gate, `docs/architecture/30-dependencies.md`).
+/// Stage-1-fixed judgments live here as constants — the commit path reads
+/// flags and sealed bytes, never re-derives them (the staging law; the
+/// interval *position* itself is a validate-time concern and is not
+/// carried).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolved {
     Functionality {
-        /// Index into the projection of its one interval field;
-        /// `None` = scalar key.
-        interval_position: Option<usize>,
+        /// The key carries an interval (necessarily final position): the
+        /// exact `U` put cannot detect overlap, so inserts additionally
+        /// run the ordered-neighbor probe.
+        pointwise: bool,
     },
     Containment {
         /// The `Functionality` statement probed on the target.
         target_key: StatementId,
         /// Statement projection order -> target key order.
         key_permutation: Box<[u16]>,
-        /// Positional index shared by both sides; `None` = scalar.
-        interval_position: Option<usize>,
+        /// An interval position is shared by both sides: the source probe
+        /// is the coverage walk, not the scalar get.
+        coverage: bool,
     },
     /// A containment whose target relation is **closed**: the target side
     /// is stage-1-known, so the enforcement plan is not a probe strategy —
@@ -400,12 +406,39 @@ pub(crate) fn closed_member(members: &[u64; 4], id: u64) -> bool {
         .is_some_and(|word| word & (1 << (id % 64)) != 0)
 }
 
+/// One σ-literal check compiled at validate (the staging law applied to
+/// the checker, `docs/architecture/30-dependencies.md` § enforcement):
+/// everything whose canonical bytes are a pure function of the value seals
+/// here, once; only interned text — whose word is per-database dictionary
+/// state — remains commit-resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CompiledCheck {
+    /// The literal's canonical encoding, sealed — one byte compare at
+    /// judgment, zero encoding work per commit.
+    Encoded { field: FieldId, bytes: Box<[u8]> },
+    /// A `str` literal: resolves through the delta's pending map then the
+    /// committed dictionary at commit; a double miss proves no fact can
+    /// satisfy the selection.
+    Interned { field: FieldId, text: Box<str> },
+}
+
+/// Both sides' compiled σ checks of one containment statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompiledSides {
+    pub(crate) source: Box<[CompiledCheck]>,
+    pub(crate) target: Box<[CompiledCheck]>,
+}
+
 /// One sealed statement: the descriptor plus its resolved enforcement data
 /// and its `==` pairing.
 #[derive(Debug)]
 pub struct Statement {
     pub descriptor: StatementDescriptor,
     pub resolved: Resolved,
+    /// Both sides' σ literals, compiled once at validate ([`CompiledCheck`]);
+    /// `None` for `Functionality` (FDs carry no selection — the shape is
+    /// unrepresentable).
+    pub(crate) checks: Option<CompiledSides>,
     /// The `==` partner: the containment whose sides are exactly this
     /// statement's sides swapped, anywhere in the materialized list —
     /// `==` lowers to two containments and the pairing is a fact of the

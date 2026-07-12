@@ -274,6 +274,17 @@ that never touch `Handler` cannot observe that, and the offline sweeper
 (`60-validation.md`) re-verifies the class globally by walking the extension —
 exactly the division of authority the delta-restricted judgment implies.
 
+**The checker consumes constants** (the staging law): every σ literal whose
+canonical bytes are a pure function of the value is sealed into the statement at
+validate — the commit path byte-compares against sealed encodings and resolves
+only interned text (dictionary state is per-database; a never-interned literal
+still proves its side unsatisfiable). The pointwise/coverage judgments likewise
+read flags sealed at validate, never re-derive them from interval positions.
+Two audited stays, recorded so the staging audit's lines are discharged rather
+than forgotten: the `FactLayout` rebuild stays at open (open is rare, the
+rebuild pure and cheap), and the fresh→FD materialization stays at validate
+(the materialized ORDER is a fingerprint input, pinned there by contract).
+
 Guard namespaces (`U`, `R`) are **derived accelerators for these judgments, not
 definitions** — the reframe is normative in `50-storage.md`. The checker shares its
 anti-probe primitive with query-surface negation (`40-execution.md`): "no fact

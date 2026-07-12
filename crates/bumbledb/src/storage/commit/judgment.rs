@@ -28,18 +28,18 @@ use std::ops::Bound;
 
 use heed::{AnyTls, RoTxn};
 
-use crate::encoding::{encode_literal, encode_u64, field_bytes, FactLayout};
+use super::plan::CommitPlan;
+use super::{decode_row_id, fact_by_row};
+use crate::encoding::{encode_u64, field_bytes, FactLayout};
 use crate::error::{CorruptionError, Direction, Error, Result};
 use crate::interval::sweep::{sweep, Continuation};
 use crate::obs;
-use crate::schema::{FieldId, RelationId, Resolved, Schema, StatementDescriptor, StatementId};
+use crate::schema::{
+    CompiledCheck, FieldId, RelationId, Resolved, Schema, StatementDescriptor, StatementId,
+};
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
-use crate::value::Value;
-
-use super::plan::CommitPlan;
-use super::{decode_row_id, fact_by_row};
 
 /// One side's selection σ, its literals pre-encoded for byte comparison.
 pub(crate) enum SelectionCheck {
@@ -74,10 +74,12 @@ pub(crate) struct Selections {
 }
 
 impl Selections {
-    /// Encodes every containment statement's selection literals. String
-    /// literals resolve to intern ids through the delta's pending map,
-    /// then the committed dictionary — a double miss proves no fact can
-    /// satisfy the selection ([`SelectionCheck::Never`]).
+    /// Materializes every containment statement's selection checks from
+    /// the sealed compile ([`CompiledCheck`], the staging law): canonical
+    /// bytes copy as-is; only `str` literals resolve — through the
+    /// delta's pending map, then the committed dictionary — and a double
+    /// miss proves no fact can satisfy the selection
+    /// ([`SelectionCheck::Never`]).
     pub(crate) fn encode(delta: &WriteDelta<'_>, view: &ReadTxn<'_>) -> Result<Self> {
         Self::encode_with(delta.schema(), &mut |raw| delta.resolve(view, raw))
     }
@@ -97,13 +99,12 @@ impl Selections {
             .statements()
             .iter()
             .map(|statement| {
-                let StatementDescriptor::Containment { source, target } = &statement.descriptor
-                else {
+                let Some(sides) = &statement.checks else {
                     return Ok(None);
                 };
                 Ok(Some(SideChecks {
-                    source: encode_selection(&source.selection, resolve)?,
-                    target: encode_selection(&target.selection, resolve)?,
+                    source: resolve_checks(&sides.source, resolve)?,
+                    target: resolve_checks(&sides.target, resolve)?,
                 }))
             })
             .collect::<Result<Box<[_]>>>()?;
@@ -124,31 +125,26 @@ impl Selections {
     }
 }
 
-fn encode_selection(
-    selection: &[(FieldId, Value)],
+/// One side's sealed checks into the commit-local form: `Encoded` bytes
+/// copy verbatim (encoded once, at validate — never here); `Interned`
+/// text resolves through the boundary's dictionary view.
+fn resolve_checks(
+    compiled: &[CompiledCheck],
     resolve: &mut InternResolver<'_>,
 ) -> Result<SelectionCheck> {
-    if selection.is_empty() {
+    if compiled.is_empty() {
         return Ok(SelectionCheck::Empty);
     }
-    let mut fields = Vec::with_capacity(selection.len());
-    for (field, literal) in selection {
-        // The interned type resolves at this boundary (dictionary state
-        // is per-database); everything else — bytes<N> included, whose
-        // canonical bytes ARE the value — takes the one canonical
-        // encoding shared with the fingerprint ([`encode_literal`]).
-        let encoded: Box<[u8]> = match literal {
-            Value::String(raw) => match resolve(raw)? {
-                Some(id) => Box::new(encode_u64(id)),
+    let mut fields = Vec::with_capacity(compiled.len());
+    for check in compiled {
+        let (field, encoded): (FieldId, Box<[u8]>) = match check {
+            CompiledCheck::Encoded { field, bytes } => (*field, bytes.clone()),
+            CompiledCheck::Interned { field, text } => match resolve(text.as_bytes())? {
+                Some(id) => (*field, Box::new(encode_u64(id))),
                 None => return Ok(SelectionCheck::Never),
             },
-            literal => {
-                let mut bytes = Vec::with_capacity(16);
-                encode_literal(literal, &mut bytes);
-                bytes.into_boxed_slice()
-            }
         };
-        fields.push((*field, encoded));
+        fields.push((field, encoded));
     }
     Ok(SelectionCheck::Compare(fields.into()))
 }

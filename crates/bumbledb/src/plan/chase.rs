@@ -276,18 +276,17 @@ fn variables_join_or_dead(
 }
 
 /// **Condition 4** — interval refusal (v0): no paired position is
-/// interval-typed. The gate's resolution carries the shared positional
-/// index when one exists (`Resolved::Containment::interval_position` —
-/// an accepted containment with an interval position always resolves
-/// it, 30-dependencies acceptance gate), so `None` *is* the condition.
-/// Pointwise coverage is not 1:1 fact-to-fact; the OPEN sub-question
-/// rides the doc amendment (trigger: a census query that would
-/// benefit).
+/// interval-typed. The gate's resolution seals the coverage flag
+/// (`Resolved::Containment::coverage` — an accepted containment with an
+/// interval position always resolves it, 30-dependencies acceptance
+/// gate), so `coverage: false` *is* the condition. Pointwise coverage is
+/// not 1:1 fact-to-fact; the OPEN sub-question rides the doc amendment
+/// (trigger: a census query that would benefit).
 fn scalar_positions_only(resolved: &Resolved) -> bool {
     matches!(
         resolved,
         Resolved::Containment {
-            interval_position: None,
+            coverage: false,
             ..
         }
     )
