@@ -332,7 +332,7 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
     let dir = TempDir::new("fold-generator");
     let db = Db::create(dir.path(), target::Target).expect("create target store");
     let mut naive = NaiveDb::new(&target::descriptor());
-    let delta = super::closed::seed();
+    let delta = super::closed::base_delta();
     naive.apply(&delta).expect("the seed commits");
     db.write(|tx| {
         for (rel, fact) in &delta.inserts {

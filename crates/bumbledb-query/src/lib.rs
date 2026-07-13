@@ -180,9 +180,9 @@ enum SelValue {
     Param(Param),
     /// A closed relation's handle: bare (`Focus`) or qualified
     /// (`Kind::Focus`) — either way the host enum's welded row id.
-    Variant {
+    Handle {
         qualifier: Option<Name>,
-        variant: Name,
+        handle: Name,
     },
 }
 
@@ -600,18 +600,18 @@ fn parse_sel_value(tokens: &mut Tokens) -> Parse<SelValue> {
             "false" => SelValue::Lit(Lit::Bool(false)),
             _ => {
                 if peek_punct(tokens, ':') {
-                    // Qualified variant: `Enum::Variant`.
-                    expect_colon(tokens, "the variant path's `::`")?;
-                    expect_punct(tokens, ':', "the variant path's `::`")?;
-                    let variant = expect_ident(tokens, "a variant name")?;
-                    SelValue::Variant {
+                    // Qualified handle: `Enum::Handle`.
+                    expect_colon(tokens, "the handle path's `::`")?;
+                    expect_punct(tokens, ':', "the handle path's `::`")?;
+                    let handle = expect_ident(tokens, "a handle name")?;
+                    SelValue::Handle {
                         qualifier: Some(name),
-                        variant,
+                        handle,
                     }
                 } else {
-                    SelValue::Variant {
+                    SelValue::Handle {
                         qualifier: None,
-                        variant: name,
+                        handle: name,
                     }
                 }
             }
@@ -1109,13 +1109,13 @@ impl Emitter<'_> {
         Ok(match value {
             SelValue::Lit(lit) => format!("::bumbledb::Term::Literal({})", Self::lit(lit)),
             SelValue::Param(param) => self.param(param)?,
-            SelValue::Variant { qualifier, variant } => {
+            SelValue::Handle { qualifier, handle } => {
                 let host = qualifier
                     .as_ref()
                     .map_or_else(|| upper_camel(&field.text), |name| name.text.clone());
                 format!(
                     "::bumbledb::Term::Literal(::bumbledb::Value::U64({host}::{}.id().0))",
-                    variant.text
+                    handle.text
                 )
             }
         })

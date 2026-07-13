@@ -633,7 +633,7 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
 }
 
 #[test]
-fn seeded_200_op_stream_agrees_with_the_engine() {
+fn fixed_200_op_stream_agrees_with_the_engine() {
     let descriptor = schema();
     let dir = TempDir::new("differential-200");
     let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");

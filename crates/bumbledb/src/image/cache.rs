@@ -47,10 +47,10 @@ struct CacheInner {
 /// anything else that can panic stay outside the lock.
 pub struct ImageCache {
     inner: Mutex<CacheInner>,
-    /// Relation ordinal → closed-relation ordinal (`None` = ordinary),
+    /// Relation slot → closed-relation slot (`None` = ordinary),
     /// fixed at construction from the schema — the index into `closed`.
-    closed_ordinals: Box<[Option<u32>]>,
-    /// Synthesized closed-relation images, indexed by closed ordinal —
+    closed_slots: Box<[Option<u32>]>,
+    /// Synthesized closed-relation images, indexed by closed slot —
     /// keyed OUTSIDE the generation map (`docs/architecture/50-storage.md`
     /// § virtual relations): a closed relation's storage is the theory
     /// and its "generation" is the fingerprint, so each slot builds on
@@ -66,10 +66,10 @@ impl ImageCache {
     /// The synthesized-image slot of `rel`: `None` = ordinary (a foreign
     /// id also answers `None` — the ordinary path types that error).
     fn closed_slot(&self, rel: RelationId) -> Option<&OnceLock<Arc<RelationImage>>> {
-        let ordinal = (*self
-            .closed_ordinals
+        let slot = (*self
+            .closed_slots
             .get(usize::try_from(rel.0).expect("64-bit usize"))?)?;
-        Some(&self.closed[usize::try_from(ordinal).expect("64-bit usize")])
+        Some(&self.closed[usize::try_from(slot).expect("64-bit usize")])
     }
 }
 

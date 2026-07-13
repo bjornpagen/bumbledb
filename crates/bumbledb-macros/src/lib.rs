@@ -178,7 +178,7 @@ enum Literal {
     },
     /// A bare ident: a closed relation's handle, resolved to its
     /// declaration-order row id through the selected field's newtype.
-    Variant(String),
+    Handle(String),
     /// A string literal's raw token text, quotes included.
     Str(String),
     /// A byte-string literal's raw token text.
@@ -562,7 +562,7 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
             match word.as_str() {
                 "true" => Literal::Bool(true),
                 "false" => Literal::Bool(false),
-                _ => Literal::Variant(word),
+                _ => Literal::Handle(word),
             }
         }
         Some(TokenTree::Punct(p)) if p.as_char() == '-' => {
@@ -860,7 +860,7 @@ fn value_expr(
         // relation's handle newtype — the handle namespace is
         // per-closed-relation, resolved through the reference. It compiles
         // to the row's declaration-order id.
-        (_, Literal::Variant(name)) => {
+        (_, Literal::Handle(name)) => {
             let owner = field_decl
                 .newtype
                 .as_deref()

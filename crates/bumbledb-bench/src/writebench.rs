@@ -36,7 +36,7 @@ pub(crate) fn write_protocol(name: &str) -> Protocol {
 
 /// One seeded posting body (everything but the id), referencing existing
 /// corpus rows.
-pub(crate) fn seeded_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> Posting {
+pub(crate) fn prepared_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> Posting {
     Posting {
         id,
         entry: JournalEntryId(rng.range(sizes.entries)),
@@ -59,7 +59,7 @@ pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measure
     harness::measure(write_protocol("commit_single"), || {
         db.write(|tx| {
             let id: PostingId = tx.alloc()?;
-            tx.insert(&seeded_posting(&mut rng, &sizes, id))
+            tx.insert(&prepared_posting(&mut rng, &sizes, id))
         })
         .map(|_| 1)
         .map_err(|e| format!("commit_single: {e:?}"))
@@ -84,7 +84,7 @@ pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Meas
         db.read(|snap| {
             db.write_from(snap, |tx| {
                 let id: PostingId = tx.alloc()?;
-                tx.insert(&seeded_posting(&mut rng, &sizes, id))
+                tx.insert(&prepared_posting(&mut rng, &sizes, id))
             })
         })
         .map(|_| 1)
@@ -105,7 +105,7 @@ pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
         db.write(|tx| {
             for _ in 0..512 {
                 let id: PostingId = tx.alloc()?;
-                tx.insert(&seeded_posting(&mut rng, &sizes, id))?;
+                tx.insert(&prepared_posting(&mut rng, &sizes, id))?;
             }
             Ok(())
         })

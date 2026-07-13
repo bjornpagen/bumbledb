@@ -39,7 +39,7 @@ fn pair(room: u64, span: (u64, u64), reference: u64) -> Delta {
 }
 
 /// Seeds one committed pair through both oracles so both clocks read 1.
-fn seeded(tag: &str) -> (TempDir, Db<SchemaDescriptor>, NaiveDb) {
+fn prepared_world(tag: &str) -> (TempDir, Db<SchemaDescriptor>, NaiveDb) {
     let descriptor = schema();
     let dir = TempDir::new(tag);
     let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
@@ -57,7 +57,7 @@ fn seeded(tag: &str) -> (TempDir, Db<SchemaDescriptor>, NaiveDb) {
 /// naming both generations — on both oracles, identically.
 #[test]
 fn the_interleaved_second_sequence_aborts_with_the_payload() {
-    let (_dir, db, mut naive) = seeded("witness-interleave");
+    let (_dir, db, mut naive) = prepared_world("witness-interleave");
     let first = pair(1, (6, 9), 4);
     let second = pair(2, (10, 12), 5);
 
@@ -106,7 +106,7 @@ fn the_interleaved_second_sequence_aborts_with_the_payload() {
 /// nets to nothing) advances no generation and trips no witness.
 #[test]
 fn a_noop_commit_between_read_and_write_does_not_abort() {
-    let (_dir, db, mut naive) = seeded("witness-noop");
+    let (_dir, db, mut naive) = prepared_world("witness-noop");
     let follow = pair(1, (6, 9), 4);
 
     db.read(|witness| {

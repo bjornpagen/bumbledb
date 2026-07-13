@@ -30,7 +30,7 @@ const CFG: GenConfig = GenConfig {
 /// (sources 0/2 keep the DU pair silent). One delta — the final state
 /// is judged whole on both sides. `pub(super)`: the fold differential
 /// (`fold.rs`) seeds its randomized-query slice with the same world.
-pub(super) fn seed() -> Delta {
+pub(super) fn base_delta() -> Delta {
     Delta {
         deletes: vec![],
         inserts: vec![
@@ -143,7 +143,7 @@ fn the_closed_write_classes_agree_with_the_engine() {
         )],
     };
 
-    let mut ops = vec![Op::Write(seed())];
+    let mut ops = vec![Op::Write(base_delta())];
     ops.extend(cases.iter().map(|case| Op::Write(case_delta(case))));
     // Domain quantification: stranding a currency aborts; a same-delta
     // replacement re-establishes the key tuple and commits; dropping a

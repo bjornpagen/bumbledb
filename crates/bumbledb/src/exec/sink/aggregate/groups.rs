@@ -80,10 +80,10 @@ impl AggregateSink {
                 }
             }
             if self.arg.is_some() {
-                self.seed_arg_group(group_idx);
+                self.init_arg_group(group_idx);
             }
             if self.pack.is_some() {
-                self.seed_pack_group(group_idx);
+                self.init_pack_group(group_idx);
             }
         }
         group_idx
@@ -119,7 +119,7 @@ impl AggregateSink {
     /// Seeds a fresh group's Pack state: an empty claim list, pooled by
     /// group index (capacity retained across executions — the Arg row-set
     /// precedent).
-    fn seed_pack_group(&mut self, group_idx: usize) {
+    fn init_pack_group(&mut self, group_idx: usize) {
         if group_idx < self.pack_claims.len() {
             self.pack_claims[group_idx].clear();
         } else {
@@ -130,7 +130,7 @@ impl AggregateSink {
     /// Seeds a fresh group's Arg state: the identity extreme (any first
     /// key compares equal-or-better against it, so the first binding
     /// always lands) and an empty row set — pooled by group index.
-    fn seed_arg_group(&mut self, group_idx: usize) {
+    fn init_arg_group(&mut self, group_idx: usize) {
         debug_assert_eq!(group_idx, self.arg_best.len(), "groups are dense");
         let arg = self.arg.expect("callers check");
         self.arg_best

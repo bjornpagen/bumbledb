@@ -130,7 +130,6 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
 /// path consumes, over this sweep's read snapshot. A judgment miss is
 /// [`StoreFinding::JudgmentViolation`], directed `TargetRequired`: every
 /// committed source is a standing one.
-#[allow(clippy::too_many_arguments)] // the F pass's per-fact scratch, threaded not owned
 fn check_outgoing(
     s: &mut Sweep<'_, '_>,
     checker: &mut judgment::Checker<'_>,

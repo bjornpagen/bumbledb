@@ -21,7 +21,7 @@ pub fn filter_range_u64(col: &[u64], lo: u64, hi: u64, out: &mut Vec<u32>) {
     reference::filter_range_u64(col, lo, hi, out);
 }
 
-/// Positions in `col` equal to `value` (the enum/bool column variant,
+/// Positions in `col` equal to `value` (the bool byte-column arm,
 /// 16 lanes), appended to `out` in ascending order.
 pub fn filter_eq_u8(col: &[u8], value: u8, out: &mut Vec<u32>) {
     #[cfg(target_arch = "aarch64")]

@@ -23,7 +23,7 @@ const CFG: GenConfig = GenConfig {
 /// currencies backed, references in range), enough rows that an
 /// unpoisoned draw sees data: the emptiness below is the fold's, never
 /// the corpus's accident alone.
-fn seed() -> Delta {
+fn base_delta() -> Delta {
     let mut inserts = vec![
         (ids::HOLDER, vec![Value::U64(0), string("h0")]),
         (ids::HOLDER, vec![Value::U64(1), string("h1")]),
@@ -102,7 +102,7 @@ fn contradiction_draws_are_empty_on_both_sides() {
     let mut naive = NaiveDb::new(&target::descriptor());
 
     let mut rng = Rng::new(CFG.seed);
-    let mut ops = vec![Op::Write(seed())];
+    let mut ops = vec![Op::Write(base_delta())];
     let mut draws = Vec::new();
     for _ in 0..20 {
         let query = contradiction_query(&mut rng, CFG);

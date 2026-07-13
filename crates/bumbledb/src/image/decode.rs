@@ -164,7 +164,6 @@ pub(super) fn fill_columns(
 /// so a sealed extension decodes through exactly the machinery a stored
 /// fact does.
 #[allow(unsafe_code)] // 00-product policy: image decode kernels
-#[allow(clippy::too_many_arguments)]
 pub(super) fn decode_fact(
     rel: RelationId,
     plan: &[Decode],
