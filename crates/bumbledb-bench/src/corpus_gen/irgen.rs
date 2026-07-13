@@ -263,7 +263,7 @@ fn random_comparison(rng: &mut Rng) -> Comparison {
         6 => CmpOp::Allen {
             mask: random_mask(rng),
         },
-        _ => CmpOp::Contains,
+        _ => CmpOp::PointIn,
     };
     Comparison {
         op,

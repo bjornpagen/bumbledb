@@ -14,7 +14,7 @@
 //!   single-rule fold domain stays the distinct full binding set.
 //! - An `Interval(E)` field is two INTEGER columns (`crate::sqlmap`):
 //!   a membership binding becomes `f_start <= t AND t < f_end`, interval
-//!   value equality compares the halves pairwise, `Contains`' point
+//!   value equality compares the halves pairwise, `PointIn`'s point
 //!   form is the membership formula, an `Allen` mask is its basics'
 //!   endpoint formulas OR'd under the query's `SELECT DISTINCT`, and
 //!   `Duration` is `(end - start)` on the two stored columns.

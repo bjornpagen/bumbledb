@@ -38,7 +38,7 @@ bumbledb::schema! {
     Outage(service, window) -> Outage;
 
     // Queries (the notation — 20-query-ir.md § the query notation):
-    //   down at instant t (membership is a typing rule, not syntax):
+    //   down at instant t (point membership (`in`) is a typing rule):
     //     (service) | Outage(service, window: w), ?t in w;
     //   overlapping an incident window (one Allen mask, no operator zoo):
     //     (service, w) | Outage(service, window: w), Allen(w, INTERSECTS, ?incident);

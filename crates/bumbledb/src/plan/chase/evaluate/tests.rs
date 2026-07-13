@@ -405,11 +405,11 @@ fn assert_structured_filters_parse() {
         Some(ResolvableFilter::PointIn { field: f, point: 4 }),
     );
     assert_parse(
-        FilterPredicate::FieldsContainPoint {
+        FilterPredicate::FieldsPointIn {
             interval: f,
             point: FieldId(2),
         },
-        Some(ResolvableFilter::FieldsContainPoint {
+        Some(ResolvableFilter::FieldsPointIn {
             interval: f,
             point: FieldId(2),
         }),
@@ -501,7 +501,7 @@ fn assert_compare_refusals() {
         },
         FilterPredicate::Compare {
             field: f,
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             value: Const::Word(1),
         },
         FilterPredicate::FieldsCompare {

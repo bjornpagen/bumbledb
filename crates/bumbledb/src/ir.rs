@@ -72,7 +72,7 @@ pub enum Term {
     /// position: one side of an order comparison (`Lt`/`Le`/`Gt`/`Ge`)
     /// against a u64-typed term or literal — never in an atom binding
     /// (the measure is a computation, not a bindable value; typed
-    /// rejection), never under `Eq`/`Ne`/`Allen`/`Contains`, never on
+    /// rejection), never under `Eq`/`Ne`/`Allen`/`PointIn`, never on
     /// both sides. A ray (`end == MAX`) has no finite measure: the
     /// subtraction raises the typed execution error
     /// [`crate::Error::MeasureOfRay`] — hosts exclude rays with an
@@ -252,10 +252,11 @@ pub enum MaskTerm {
 /// `classify(lhs, rhs)` is in the mask (`crate::allen`) — and interval
 /// `Eq`/`Ne` are its derived facts (normalization canonicalizes them to
 /// `EQUALS` / `¬EQUALS`, so exactly one interval-pair form reaches the
-/// planner). `Contains` is point membership as a predicate — an interval
-/// left side, an element-typed right side (the predicate form of the
-/// membership binding rule, for terms already bound elsewhere); its
-/// interval⊇interval form is gone — that predicate is `Allen(COVERS)`.
+/// planner). `PointIn` is point membership: an element-typed operand
+/// against an interval operand; `x PointIn iv` iff `iv.start ≤ x < iv.end`.
+/// The ordered IR fields retain the established interval-left, point-right
+/// lowering used by the surface `x in iv`. Interval ⊇ interval is instead
+/// `Allen(COVERS)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,
@@ -265,7 +266,7 @@ pub enum CmpOp {
     Gt,
     Ge,
     Allen { mask: MaskTerm },
-    Contains,
+    PointIn,
 }
 
 impl CmpOp {
@@ -281,8 +282,8 @@ impl CmpOp {
             Self::Ge => left >= right,
             // Interval operators never reach single-word evaluation:
             // normalization lowers `Allen` to mask-carrying shapes and
-            // `Contains` to endpoint compositions (`ir::normalize`).
-            Self::Allen { .. } | Self::Contains => {
+            // `PointIn` to endpoint compositions (`ir::normalize`).
+            Self::Allen { .. } | Self::PointIn => {
                 unreachable!("interval operators are lowered before evaluation")
             }
         }

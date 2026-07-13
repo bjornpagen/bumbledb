@@ -87,7 +87,7 @@ enum Shape {
     /// var points (the var case constructs its scalar anchor first).
     Membership,
     /// `Allen` masks (composites and random singletons) and `Eq`/`Ne`
-    /// between interval terms, plus the point form of `Contains`.
+    /// between interval terms, plus the `PointIn` predicate.
     IntervalJoin,
     /// The adjacent-touching boundary: query literals recomputed to touch
     /// a corpus interval exactly at its endpoint, both polarities.
@@ -278,7 +278,7 @@ pub const CMP_OPS: [CmpOp; 8] = [
     CmpOp::Allen {
         mask: MaskTerm::Literal(AllenMask::INTERSECTS),
     },
-    CmpOp::Contains,
+    CmpOp::PointIn,
 ];
 
 /// Construct counts over a generated batch — the coverage contract's
@@ -357,15 +357,15 @@ pub struct Coverage {
     /// Interval comparisons by element type: `Allen` masks per lane,
     /// composite (≥2 basics) vs singleton mask draws, random (unnamed)
     /// masks, per-basic occurrence across every literal mask (all 13
-    /// reachable per run), and the point form of `Contains` per lane.
+    /// reachable per run), and `PointIn` per lane.
     pub allen_u64: u64,
     pub allen_i64: u64,
     pub allen_composite: u64,
     pub allen_singleton: u64,
     pub allen_random_mask: u64,
     pub allen_basics: [u64; 13],
-    pub contains_u64: u64,
-    pub contains_i64: u64,
+    pub point_in_u64: u64,
+    pub point_in_i64: u64,
     /// Boundary-shape polarities (corpus-adjacent query literals).
     pub adjacent_left: u64,
     pub adjacent_right: u64,
@@ -417,7 +417,7 @@ pub struct Coverage {
     /// Equality-spine cost-bound violations
     /// (`docs/architecture/60-validation.md` § the generator contract):
     /// an atom carrying a var-point membership or a cross-atom
-    /// `Allen`/`Contains` occurrence with neither an equality join
+    /// `Allen`/`PointIn` occurrence with neither an equality join
     /// variable nor an equality selection, or a negated atom whose only
     /// bindings are memberships. Asserted **zero** — the Cartesian
     /// degenerate (`40-execution.md`) must be unemittable.

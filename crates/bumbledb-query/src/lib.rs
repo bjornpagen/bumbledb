@@ -70,7 +70,7 @@
 //! - **Params** are one style per query: named (`?window`, dense ids by
 //!   first occurrence, query-global) or positional (`?0`, the id
 //!   verbatim — the renderer's own spelling, so rendered output reparses).
-//! - **Item-position `in`** is point membership (`Contains`): the right
+//! - **Item-position `in`** is point membership (`PointIn`): the right
 //!   side is the interval — a variable, a `?param`, or a `start..end`
 //!   literal. Set membership is the binding form `field in ?param`.
 //!
@@ -1236,14 +1236,14 @@ impl Emitter<'_> {
                     let _ = write!(conditions, "{},", Self::leaf(&op, &lhs, &rhs));
                 }
                 Item::Membership { element, container } => {
-                    // `Contains` is interval-first; the notation reads
+                    // `PointIn` is stored interval-first; the notation reads
                     // point-first.
                     let element = self.term(&mut scope, element)?;
                     let container = self.term(&mut scope, container)?;
                     let _ = write!(
                         conditions,
                         "{},",
-                        Self::leaf("::bumbledb::CmpOp::Contains", &container, &element)
+                        Self::leaf("::bumbledb::CmpOp::PointIn", &container, &element)
                     );
                 }
                 Item::Cmp { op, lhs, rhs } => {

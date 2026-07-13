@@ -97,6 +97,6 @@ pub(crate) fn overlaps(a: (i128, i128), b: (i128, i128)) -> bool {
 }
 
 /// Point membership: `start <= t < end`.
-pub(crate) fn contains_point(interval: (i128, i128), t: i128) -> bool {
-    interval.0 <= t && t < interval.1
+pub(crate) fn point_in(interval: (i128, i128), point: i128) -> bool {
+    interval.0 <= point && point < interval.1
 }

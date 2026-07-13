@@ -97,8 +97,8 @@ enum OpClass {
     Order { op: CmpOp, mirror: CmpOp },
     /// `Allen { mask }`.
     Allen { mask: MaskTerm },
-    /// `Contains`.
-    Contains,
+    /// `PointIn`.
+    PointIn,
 }
 
 impl OpClass {
@@ -123,7 +123,7 @@ impl OpClass {
                 mirror: CmpOp::Le,
             },
             CmpOp::Allen { mask } => Self::Allen { mask },
-            CmpOp::Contains => Self::Contains,
+            CmpOp::PointIn => Self::PointIn,
         }
     }
 }
@@ -192,15 +192,15 @@ enum Shaped<'rule> {
         var_on_left: bool,
         constant: ConstSide<'rule>,
     },
-    /// `Contains` over two variables, written order (`lhs ∋ rhs`).
-    ContainsVarVar { lhs: VarId, rhs: VarId },
+    /// `PointIn` over two variables, written order (`lhs ∋ rhs`).
+    PointInVarVar { lhs: VarId, rhs: VarId },
     /// `var ∋ constant`.
-    ContainsVarConst {
+    PointInVarConst {
         var: VarId,
         constant: ConstSide<'rule>,
     },
     /// `constant ∋ var`.
-    ContainsConstVar {
+    PointInConstVar {
         constant: ConstSide<'rule>,
         var: VarId,
     },
@@ -242,8 +242,8 @@ fn shaped_var_const(
             var_on_left,
             constant,
         },
-        OpClass::Contains if var_on_left => Shaped::ContainsVarConst { var, constant },
-        OpClass::Contains => Shaped::ContainsConstVar { constant, var },
+        OpClass::PointIn if var_on_left => Shaped::PointInVarConst { var, constant },
+        OpClass::PointIn => Shaped::PointInConstVar { constant, var },
     }
 }
 
@@ -687,7 +687,7 @@ impl Context {
                         lhs: *l,
                         rhs: *r,
                     },
-                    OpClass::Contains => Shaped::ContainsVarVar { lhs: *l, rhs: *r },
+                    OpClass::PointIn => Shaped::PointInVarVar { lhs: *l, rhs: *r },
                 })
             }
             // The measure's comparison discipline (20-query-ir, § the
@@ -831,14 +831,14 @@ impl Context {
     /// bivalent variable and anchoring an unanchored param. Runs to a
     /// fixpoint so comparison order cannot matter. Incompatibilities are
     /// left standing (never overwritten): `comparison_types` diagnoses
-    /// them against final types. `Contains` propagates nothing — its
+    /// them against final types. `PointIn` propagates nothing — its
     /// right side is legally either reading of the left (the predicate
     /// form of the membership rule), so neither side names the other.
     fn propagate_comparison_anchors(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
         loop {
             let mut changed = false;
             for Comparison { op, lhs, rhs } in &rule.conditions {
-                if matches!(op, CmpOp::Contains) {
+                if matches!(op, CmpOp::PointIn) {
                     continue;
                 }
                 let known_lhs = self.term_mono_type(lhs);
@@ -1171,37 +1171,37 @@ impl Context {
                     mask: sealed_mask(*mask, !var_on_left),
                 })
             }
-            // `Contains`: point membership as a predicate — an interval
+            // `PointIn`: point membership as a predicate — an interval
             // side, an **element-typed** point side (the predicate form
             // of the membership binding rule, for terms already bound
             // elsewhere). The interval⊇interval form is gone: that
             // predicate is `Allen(COVERS)`, and an interval-typed point
             // side is an illegal comparison.
-            Shaped::ContainsVarVar { lhs, rhs } => {
+            Shaped::PointInVarVar { lhs, rhs } => {
                 let ValueType::Interval { element } = *self.resolved_var_type(*lhs) else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 if *self.resolved_var_type(*rhs) != element_type(element) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
-                Ok(ClassifiedComparison::ContainsVarVar {
+                Ok(ClassifiedComparison::PointInVarVar {
                     interval: *lhs,
                     point: *rhs,
                 })
             }
-            Shaped::ContainsVarConst { var, constant } => {
+            Shaped::PointInVarConst { var, constant } => {
                 let ValueType::Interval { element } = *self.resolved_var_type(*var) else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 match constant {
                     ConstSide::Param(param) => {
-                        // A `Contains` point side is a point at an
+                        // A `PointIn` point side is a point at an
                         // interval position: the ceiling rule applies at
                         // bind, where the value exists (the point-domain
                         // law).
                         self.interval_position_params.insert(*param);
                         self.anchor_param_mono(*param, &element_type(element))?;
-                        Ok(ClassifiedComparison::ContainsVarPoint {
+                        Ok(ClassifiedComparison::PointInVarPoint {
                             interval: *var,
                             point: SealedConst::Param(*param),
                         })
@@ -1215,7 +1215,7 @@ impl Context {
                                     index,
                                 });
                             }
-                            Ok(ClassifiedComparison::ContainsVarPoint {
+                            Ok(ClassifiedComparison::PointInVarPoint {
                                 interval: *var,
                                 point: SealedConst::Literal((*value).clone()),
                             })
@@ -1224,7 +1224,7 @@ impl Context {
                     },
                 }
             }
-            Shaped::ContainsConstVar { constant, var } => match constant {
+            Shaped::PointInConstVar { constant, var } => match constant {
                 ConstSide::Param(param) => {
                     // The point side is the variable: its element type
                     // names the param's interval domain.

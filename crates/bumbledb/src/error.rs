@@ -987,7 +987,7 @@ pub enum Error {
         expected: ValueType,
     },
     /// Bind-time: a point-position param (an element-typed param meeting
-    /// an interval position — a membership binding or a `Contains`
+    /// an interval position — a membership binding or a `PointIn`
     /// operand) bound to its domain ceiling. The point domain is
     /// `MIN ..= MAX−1`; `MAX` is the ray's ∞, never a point
     /// (`docs/architecture/10-data-model.md`, the point-domain law) — the

@@ -414,7 +414,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 atoms: vec![booking_atom(), atom(MARKER, &[(0, var(3))])],
                 negated: vec![],
                 conditions: vec![ConditionTree::Leaf(Comparison {
-                    op: CmpOp::Contains,
+                    op: CmpOp::PointIn,
                     lhs: var(1),
                     rhs: var(3),
                 })],

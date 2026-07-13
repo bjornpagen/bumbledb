@@ -16,7 +16,7 @@ use crate::querygen::{ChaseVariant, ClosedVariant, Coverage, GenTags, RulesVaria
 
 /// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
 /// all six types, order operators over the two integer types only,
-/// `Allen` (any mask) and `Contains` only at their interval-anchored
+/// `Allen` (any mask) and `PointIn` only at their interval-anchored
 /// shapes.
 #[must_use]
 pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
@@ -38,7 +38,7 @@ fn op_index(op: CmpOp) -> usize {
         CmpOp::Gt => 4,
         CmpOp::Ge => 5,
         CmpOp::Allen { .. } => 6,
-        CmpOp::Contains => 7,
+        CmpOp::PointIn => 7,
     }
 }
 
@@ -140,7 +140,7 @@ fn element_of(ty: &ValueType) -> Option<IntervalElement> {
 /// (`docs/architecture/60-validation.md` § the generator contract;
 /// `40-execution.md` names the degenerate): every atom carrying a
 /// var-point membership binding or an interval-typed side of a
-/// cross-atom `Allen`/`Contains` must share an equality join
+/// cross-atom `Allen`/`PointIn` must share an equality join
 /// variable with another atom or carry an equality selection
 /// (literal/param/set) on a scalar field; a negated atom whose only
 /// bindings are memberships is the same Cartesian. Returns the count of
@@ -186,9 +186,9 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
             }
         }
     }
-    // …and interval-typed sides of cross-atom Allen/Contains.
+    // …and interval-typed sides of cross-atom Allen/PointIn.
     for comparison in rule.conditions.iter().map(super::leaf) {
-        if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::Contains) {
+        if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::PointIn) {
             continue;
         }
         if let (Term::Var(lhs), Term::Var(rhs)) = (&comparison.lhs, &comparison.rhs) {
@@ -375,10 +375,10 @@ impl Coverage {
                         }
                     }
                 }
-                CmpOp::Contains => match element_of(&ty) {
-                    Some(IntervalElement::U64) => self.contains_u64 += 1,
-                    Some(IntervalElement::I64) => self.contains_i64 += 1,
-                    None => unreachable!("Contains' left side is interval-typed"),
+                CmpOp::PointIn => match element_of(&ty) {
+                    Some(IntervalElement::U64) => self.point_in_u64 += 1,
+                    Some(IntervalElement::I64) => self.point_in_i64 += 1,
+                    None => unreachable!("PointIn's left side is interval-typed"),
                 },
                 _ => {}
             }

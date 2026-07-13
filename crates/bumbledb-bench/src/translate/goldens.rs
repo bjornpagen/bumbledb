@@ -62,10 +62,10 @@ pub const INTERSECTS: &str = "SELECT DISTINCT t0.\"org\", t1.\"org\" FROM \"Mand
 /// ∪ started-by) OR'd over the param's halves as two placeholders.
 pub const COVERS_PARAM: &str = "SELECT DISTINCT t0.\"org\" FROM \"Mandate\" AS t0 WHERE ((t0.\"active_start\" = ?1 AND t0.\"active_end\" = ?2) OR (t0.\"active_start\" < ?1 AND t0.\"active_end\" = ?2) OR (t0.\"active_start\" < ?1 AND ?2 < t0.\"active_end\") OR (t0.\"active_start\" = ?1 AND ?2 < t0.\"active_end\"))";
 
-/// `contains_point` — `Q(o, t) :- Mandate(org = o, active = v),
-/// Posting(at = t), Contains(v, t)`: point containment as a predicate —
+/// `point_in` — `Q(o, t) :- Mandate(org = o, active = v),
+/// Posting(at = t), PointIn(v, t)`: point membership as a predicate —
 /// the membership form over an already-bound term.
-pub const CONTAINS_POINT: &str = "SELECT DISTINCT t0.\"org\", t1.\"at\" FROM \"Mandate\" AS t0, \"Posting\" AS t1 WHERE t0.\"active_start\" <= t1.\"at\" AND t1.\"at\" < t0.\"active_end\"";
+pub const POINT_IN: &str = "SELECT DISTINCT t0.\"org\", t1.\"at\" FROM \"Mandate\" AS t0, \"Posting\" AS t1 WHERE t0.\"active_start\" <= t1.\"at\" AND t1.\"at\" < t0.\"active_end\"";
 
 /// `interval_eq` — `Q(a1, a2) :- Mandate(account = a1, active = u),
 /// Mandate(account = a2, active = v), Eq(u, v)`: interval value equality

@@ -161,7 +161,7 @@ fn lower_atom(
                     // variable's binding once bound (the point-membership
                     // scan, docs/architecture/40-execution.md).
                     filters.push(match vars.iter().find(|(_, v)| v == var) {
-                        Some((point_field, _)) => FilterPredicate::FieldsContainPoint {
+                        Some((point_field, _)) => FilterPredicate::FieldsPointIn {
                             interval: *field,
                             point: *point_field,
                         },

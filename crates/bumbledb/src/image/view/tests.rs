@@ -435,7 +435,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
     // Point membership as a same-fact composition, half-open on both
     // fixture boundaries (rows 1 and 2 sit at start, rows 3 and 4 at end).
     assert_eq!(
-        run(FilterPredicate::FieldsContainPoint {
+        run(FilterPredicate::FieldsPointIn {
             interval: P_DURING,
             point: P_AT,
         }),

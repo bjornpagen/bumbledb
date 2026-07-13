@@ -72,7 +72,7 @@ fn op_sql(op: CmpOp) -> &'static str {
         CmpOp::Le => "<=",
         CmpOp::Gt => ">",
         CmpOp::Ge => ">=",
-        CmpOp::Allen { .. } | CmpOp::Contains => {
+        CmpOp::Allen { .. } | CmpOp::PointIn => {
             unreachable!("interval operators take the endpoint forms")
         }
     }
@@ -473,7 +473,7 @@ impl Builder<'_> {
                 format!("({})", arms.join(" OR "))
             }
             // Point containment: the membership form.
-            (CmpOp::Contains, Rendered::Pair(ls, le), Rendered::One(point)) => {
+            (CmpOp::PointIn, Rendered::Pair(ls, le), Rendered::One(point)) => {
                 format!("{ls} <= {point} AND {point} < {le}")
             }
             (

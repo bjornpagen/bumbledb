@@ -130,7 +130,7 @@ impl RangeSummary {
                 Some(below) => self.hi = self.hi.min(below),
                 None => self.mark_empty(),
             },
-            CmpOp::Eq | CmpOp::Ne | CmpOp::Allen { .. } | CmpOp::Contains => {
+            CmpOp::Eq | CmpOp::Ne | CmpOp::Allen { .. } | CmpOp::PointIn => {
                 unreachable!("only order filters narrow the summary")
             }
         }

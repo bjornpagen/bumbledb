@@ -305,7 +305,7 @@ fn functional(name: &str, children: &[ConditionTree], budget: usize) -> String {
 }
 
 /// One comparison item: `Allen(a, MASK, b)`, membership `point in
-/// interval` (the `Contains` predicate's notation), or infix `lhs op rhs`.
+/// interval` (the `PointIn` predicate's notation), or infix `lhs op rhs`.
 fn comparison(cmp: &Comparison) -> String {
     let mut out = String::new();
     match cmp.op {
@@ -318,9 +318,9 @@ fn comparison(cmp: &Comparison) -> String {
             term(&mut out, &cmp.rhs);
             out.push(')');
         }
-        // `Contains(interval, point)` is point membership as a predicate:
+        // `PointIn(interval, point)` is point membership as a predicate:
         // the notation reads point-first.
-        CmpOp::Contains => {
+        CmpOp::PointIn => {
             term(&mut out, &cmp.rhs);
             out.push_str(" in ");
             term(&mut out, &cmp.lhs);
@@ -333,7 +333,7 @@ fn comparison(cmp: &Comparison) -> String {
                 CmpOp::Le => "<=",
                 CmpOp::Gt => ">",
                 CmpOp::Ge => ">=",
-                CmpOp::Allen { .. } | CmpOp::Contains => unreachable!("matched above"),
+                CmpOp::Allen { .. } | CmpOp::PointIn => unreachable!("matched above"),
             };
             term(&mut out, &cmp.lhs);
             out.push(' ');

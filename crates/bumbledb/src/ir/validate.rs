@@ -43,7 +43,7 @@
 //!     String literals and `start >= end` interval literals included),
 //!     and element-typed point literals at the domain ceiling wherever
 //!     they meet an interval position — membership bindings and
-//!     `Contains` operands (the point-domain law: points are
+//!     `PointIn` operands (the point-domain law: points are
 //!     `MIN ..= MAX−1`; `MAX` is the ray's ∞ — point *params* get the
 //!     same rejection at bind, where the value exists)
 //!  6. enum ordinal out of range for the field's variant list (bindings
@@ -58,7 +58,7 @@
 //!  9. comparisons violating the type rules (Eq/Ne all types; order ops
 //!     U64/U64 and I64/I64 only — an interval operand under an order op
 //!     gets its own diagnostic; Allen two intervals of one element type;
-//!     Contains interval × element — its interval⊇interval form is
+//!     `PointIn` interval × element — its interval⊇interval form is
 //!     `Allen(COVERS)`, not an operator), and the Allen vacuity rules:
 //!     the ∅ mask ("never" — write no query) and the full mask
 //!     ("always" — write no condition), distinct typed errors here for
@@ -246,9 +246,9 @@ pub(crate) enum ClassifiedComparison {
         mask: MaskConst,
     },
     /// Point containment between variables: `interval-var ∋ point-var`.
-    ContainsVarVar { interval: VarId, point: VarId },
+    PointInVarVar { interval: VarId, point: VarId },
     /// Point containment of a constant point: `interval-var ∋ point`.
-    ContainsVarPoint { interval: VarId, point: SealedConst },
+    PointInVarPoint { interval: VarId, point: SealedConst },
     /// Point containment in a constant interval: `outer ∋ scalar-var`.
     VarWithin { var: VarId, outer: SealedConst },
     /// The measure comparison, the operator sealed measure-on-left:
@@ -300,7 +300,7 @@ pub struct ValidatedQuery {
     /// `param_types` is the *element* type.
     set_params: BTreeSet<ParamId>,
     /// Element-typed params meeting an interval position (membership
-    /// bindings and `Contains` operands): their values are points, so the
+    /// bindings and `PointIn` operands): their values are points, so the
     /// point-domain law (`docs/architecture/10-data-model.md`) forbids the
     /// domain ceiling — enforced at bind, where the value exists.
     point_params: BTreeSet<ParamId>,
@@ -379,7 +379,7 @@ impl ValidatedQuery {
     }
 
     /// The point-position params: element-typed at an interval position
-    /// (a membership binding or a `Contains` operand). Bind-time rejects
+    /// (a membership binding or a `PointIn` operand). Bind-time rejects
     /// their domain ceiling — points are `MIN ..= MAX−1`; `MAX` is the
     /// ray's ∞ (the point-domain law).
     #[must_use]
@@ -530,7 +530,7 @@ struct Context {
     /// Variables occurring in negated atoms (the negation safety rule).
     negated_vars: BTreeSet<VarId>,
     /// Params anchored at interval positions (membership bindings and
-    /// `Contains` operands); those that resolve element-typed are the
+    /// `PointIn` operands); those that resolve element-typed are the
     /// witness's point params.
     interval_position_params: BTreeSet<ParamId>,
     /// Params in `Allen` mask positions (never in `param_slots` — the

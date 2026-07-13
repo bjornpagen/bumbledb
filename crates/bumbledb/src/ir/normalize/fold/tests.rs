@@ -358,7 +358,7 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
 
 #[test]
 fn a_pinned_point_outside_a_constant_interval_kills_the_rule() {
-    // R(a: v0), v0 == 7 ∧ Contains([2, 5), v0): the reversed membership
+    // R(a: v0), v0 == 7 ∧ PointIn([2, 5), v0): the reversed membership
     // (`FieldWithin`) against the Eq pin — rule (f).
     let schema = schema();
     let normalized = one_rule(
@@ -366,7 +366,7 @@ fn a_pinned_point_outside_a_constant_interval_kills_the_rule() {
         &range_query(vec![
             cmp(CmpOp::Eq, Term::Literal(Value::I64(7))),
             Comparison {
-                op: CmpOp::Contains,
+                op: CmpOp::PointIn,
                 lhs: Term::Literal(Value::IntervalI64(
                     crate::Interval::<i64>::new(2, 5).expect("nonempty interval"),
                 )),

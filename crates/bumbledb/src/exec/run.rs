@@ -278,7 +278,7 @@ enum Source {
 /// 1 is the scalar compare; any wider span — an interval pair or a
 /// `bytes<N>` block — compares **word-wise** under `Eq`/`Ne` only
 /// (`docs/architecture/20-query-ir.md` — interval-pair predicates travel
-/// as Allen mask residuals, point containment as word residuals, and
+/// as Allen mask residuals, point membership as word residuals, and
 /// order over multi-word values is a validation-typed refusal, so a wide
 /// residual is whole-value identity only).
 fn compare_wide(

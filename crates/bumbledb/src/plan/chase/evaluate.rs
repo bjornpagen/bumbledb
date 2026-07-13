@@ -339,7 +339,7 @@ pub(crate) enum ResolvableFilter {
     /// A constant point inside the column's interval.
     PointIn { field: FieldId, point: u64 },
     /// A same-row point field inside an interval field.
-    FieldsContainPoint { interval: FieldId, point: FieldId },
+    FieldsPointIn { interval: FieldId, point: FieldId },
     /// The column's interval within a constant outer interval.
     Within {
         field: FieldId,
@@ -437,8 +437,8 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
             field: *field,
             point: *point,
         }),
-        FilterPredicate::FieldsContainPoint { interval, point } => {
-            Some(ResolvableFilter::FieldsContainPoint {
+        FilterPredicate::FieldsPointIn { interval, point } => {
+            Some(ResolvableFilter::FieldsPointIn {
                 interval: *interval,
                 point: *point,
             })
@@ -471,7 +471,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         }),
         // Param points/masks/intervals, `AnyPointIn`'s stage-3 set, and
         // measure filters refuse for the staging/error-timing reasons
-        // above. The unmatched `FieldsCompare` arm is Allen/Contains,
+        // above. The unmatched `FieldsCompare` arm is Allen/PointIn,
         // which normalization lowers to fixed filter shapes.
         FilterPredicate::FieldsCompare { .. }
         | FilterPredicate::PointIn { .. }
@@ -629,13 +629,13 @@ fn row_satisfies(
             // The parser never constructs these; returning false keeps
             // the consumer total even if this crate-visible enum gains
             // another constructor in the future.
-            CmpOp::Allen { .. } | CmpOp::Contains => false,
+            CmpOp::Allen { .. } | CmpOp::PointIn => false,
         },
         ResolvableFilter::PointIn { field, point } => {
             let (start, end) = pair(*field);
             start <= *point && *point < end
         }
-        ResolvableFilter::FieldsContainPoint { interval, point } => {
+        ResolvableFilter::FieldsPointIn { interval, point } => {
             let (start, end) = pair(*interval);
             let p = word(*point);
             start <= p && p < end
@@ -779,7 +779,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push_str(" in ");
             out.push_str(name(field));
         }
-        FilterPredicate::FieldsContainPoint { interval, point } => {
+        FilterPredicate::FieldsPointIn { interval, point } => {
             out.push_str(name(point));
             out.push_str(" in ");
             out.push_str(name(interval));
@@ -879,7 +879,7 @@ fn op_symbol(op: CmpOp) -> &'static str {
         CmpOp::Gt => " > ",
         CmpOp::Ge => " >= ",
         CmpOp::Allen { .. } => " Allen ",
-        CmpOp::Contains => " contains ",
+        CmpOp::PointIn => " PointIn ",
     }
 }
 

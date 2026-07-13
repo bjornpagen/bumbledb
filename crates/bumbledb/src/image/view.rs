@@ -145,7 +145,7 @@ pub enum FilterPredicate {
     },
     /// Point membership in the interval field: `start ≤ p AND p < end`
     /// over the field's two column words (the lowering of a membership
-    /// binding, and of `Contains(field, point-constant)`).
+    /// binding, and of `PointIn(field, point-constant)`).
     PointIn {
         field: FieldId,
         point: ResolvedWordSource,
@@ -174,12 +174,12 @@ pub enum FilterPredicate {
         other: Const,
         mask: MaskConst,
     },
-    /// Same-atom `Contains` with a point field (the predicate form of the
+    /// Same-atom `PointIn` with a point field (the predicate form of the
     /// membership rule, and the lowering of a same-atom membership-var
     /// binding): `interval.start ≤ point AND point < interval.end`.
-    FieldsContainPoint { interval: FieldId, point: FieldId },
+    FieldsPointIn { interval: FieldId, point: FieldId },
     /// A scalar field's point within a constant interval — the reversed
-    /// point containment `Contains(constant, field)`:
+    /// point membership `PointIn(constant, field)`:
     /// `outer.start ≤ f AND f < outer.end`. `outer` is `Interval`/`Param`
     /// by construction; the field is scalar by construction (an interval
     /// field under a constant is [`FilterPredicate::FieldAllen`]).

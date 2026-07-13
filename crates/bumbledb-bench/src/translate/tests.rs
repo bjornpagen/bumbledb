@@ -537,7 +537,7 @@ fn allen_intersects_matches_its_hand_written_golden() {
 }
 
 #[test]
-fn contains_matches_both_goldens() {
+fn point_in_matches_both_goldens() {
     // The ⊇ composite against an interval param:
     // Q(o) :- Mandate(org = o, active = v), Allen(v, ?0, COVERS).
     let query = Query::single(Rule {
@@ -564,7 +564,7 @@ fn contains_matches_both_goldens() {
     );
 
     // Point containment: Q(o, t) :- Mandate(org = o, active = v),
-    //                               Posting(at = t), Contains(v, t).
+    //                               Posting(at = t), PointIn(v, t).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
@@ -579,13 +579,13 @@ fn contains_matches_both_goldens() {
         ],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
             rhs: var(2),
         })],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
-    assert_eq!(t.sql, goldens::CONTAINS_POINT);
+    assert_eq!(t.sql, goldens::POINT_IN);
 }
 
 #[test]

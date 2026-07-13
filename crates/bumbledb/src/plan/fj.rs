@@ -214,8 +214,8 @@ pub struct PlanNode {
     // phase 2 issues all bucket loads as independent chains). One
     // interleaved rejection list would force per-item dispatch exactly
     // where phase-grouped batches now run.
-    /// Decomposed point-containment word residuals (cross-atom
-    /// `Contains`/membership) evaluated at this node — same placement
+    /// Decomposed point-membership word residuals (cross-atom
+    /// `PointIn`/membership) evaluated at this node — same placement
     /// rule as `residuals`.
     pub word_residuals: Vec<PlacedWordComparison>,
     /// Cross-atom `Allen` residuals evaluated at this node — four

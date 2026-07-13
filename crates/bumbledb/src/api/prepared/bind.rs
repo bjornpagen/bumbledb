@@ -583,7 +583,7 @@ fn resolve_filter_into(
         }
         // Constant-free kinds copy through (cheap: field ids only).
         FilterPredicate::FieldsCompare { .. }
-        | FilterPredicate::FieldsContainPoint { .. }
+        | FilterPredicate::FieldsPointIn { .. }
         | FilterPredicate::DurationFieldsCompare { .. } => {
             dst.clone_from(template);
         }

@@ -175,7 +175,7 @@ fn cmp_op(rng: &mut Rng) -> CmpOp {
         3 => CmpOp::Le,
         4 => CmpOp::Gt,
         5 => CmpOp::Ge,
-        6 => CmpOp::Contains,
+        6 => CmpOp::PointIn,
         7 => CmpOp::Allen {
             mask: MaskTerm::Param(ParamId(u16::try_from(rng.below(3)).expect("small"))),
         },
@@ -369,7 +369,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
                 bindings: vec![(Gauntlet::OOO_PERSON, Term::Var(VarId(0)))],
             }],
             conditions: vec![ConditionTree::Leaf(Comparison {
-                op: CmpOp::Contains,
+                op: CmpOp::PointIn,
                 lhs: Term::Var(VarId(1)),
                 rhs: Term::Literal(Value::U64(rng.below(100))),
             })],

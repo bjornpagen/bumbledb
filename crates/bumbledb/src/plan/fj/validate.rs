@@ -241,7 +241,7 @@ pub fn validate(
         };
         nodes[node].residuals.push(*residual);
     }
-    // Decomposed point-containment word residuals: the same rule over
+    // Decomposed point-membership word residuals: the same rule over
     // the word operands' variables.
     for (residual_idx, residual) in normalized.word_residuals.iter().enumerate() {
         let Some(node) = earliest_bound_node(&bound, &[residual.lhs.var, residual.rhs.var]) else {

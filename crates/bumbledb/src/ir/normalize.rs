@@ -130,7 +130,7 @@ pub struct Occurrence {
     /// variable keeps its first field; later positions became filters).
     /// A membership-bound point variable is **not** a variable of the
     /// occurrence — its binding lowered to a filter
-    /// ([`FilterPredicate::PointIn`] / [`FilterPredicate::FieldsContainPoint`]).
+    /// ([`FilterPredicate::PointIn`] / [`FilterPredicate::FieldsPointIn`]).
     pub vars: Vec<(FieldId, VarId)>,
     /// Per-occurrence filters, evaluated at the source (filtered view).
     pub filters: Vec<FilterPredicate>,
@@ -140,7 +140,7 @@ pub struct Occurrence {
 /// the earliest plan node where both are bound (placement is the
 /// 40-execution doc's job). Scalar single-word semantics: interval
 /// comparisons never reach here — interval `Eq`/`Ne` canonicalize to
-/// masks ([`PlacedAllen`]) and point containment decomposes into
+/// masks ([`PlacedAllen`]) and point membership decomposes into
 /// [`PlacedWordComparison`]s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacedComparison {
@@ -212,12 +212,12 @@ pub struct VarWord {
     pub word: IntervalWord,
 }
 
-/// One word comparison of a decomposed cross-atom point containment
-/// (`Contains(a, p)` between different occurrences' variables):
+/// One word comparison of a decomposed cross-atom point membership
+/// (`PointIn(a, p)` between different occurrences' variables):
 /// `lhs <op> rhs` over binding-slot words — the one fixed composition
 /// (`docs/architecture/20-query-ir.md`, § normalization):
 ///
-/// - `Contains(a, p: point)` ≡ `a.start ≤ p AND p < a.end`
+/// - `PointIn(a, p: point)` ≡ `a.start ≤ p AND p < a.end`
 ///
 /// so `op` is always `Lt` or `Le`. Interval-pair predicates are never
 /// decomposed — they are [`PlacedAllen`] residuals carrying their mask.
@@ -297,7 +297,7 @@ pub struct NormalizedQuery {
     pub occurrences: Vec<Occurrence>,
     /// Cross-atom whole-value comparisons.
     pub residuals: Vec<PlacedComparison>,
-    /// Cross-atom point containments, decomposed into word comparisons
+    /// Cross-atom point memberships, decomposed into word comparisons
     /// over slot pairs.
     pub word_residuals: Vec<PlacedWordComparison>,
     /// Cross-atom `Allen` residuals: four endpoint slots + mask

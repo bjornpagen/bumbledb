@@ -108,8 +108,8 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("allen_composite", cov.allen_composite),
         ("allen_singleton", cov.allen_singleton),
         ("allen_random_mask", cov.allen_random_mask),
-        ("contains_u64", cov.contains_u64),
-        ("contains_i64", cov.contains_i64),
+        ("point_in_u64", cov.point_in_u64),
+        ("point_in_i64", cov.point_in_i64),
         ("adjacent_left", cov.adjacent_left),
         ("adjacent_right", cov.adjacent_right),
         // The boundary-shape ladder, drawn for every interval literal:

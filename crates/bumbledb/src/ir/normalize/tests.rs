@@ -573,23 +573,23 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
         }]
     );
 
-    // Contains' surviving point form: same-atom membership predicate.
-    let contains_point = query(
+    // PointIn's surviving point form: same-atom membership predicate.
+    let point_in = query(
         vec![Atom {
             relation: P,
             bindings: vec![(P_DURING, var(1)), (P_AT, var(0))],
         }],
         vec![],
         vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
             rhs: var(0),
         }],
     );
-    let norm = normalized(&contains_point);
+    let norm = normalized(&point_in);
     assert_eq!(
         norm.occurrences[0].filters,
-        vec![FilterPredicate::FieldsContainPoint {
+        vec![FilterPredicate::FieldsPointIn {
             interval: P_DURING,
             point: P_AT,
         }]
@@ -713,7 +713,7 @@ fn cross_atom_allen_becomes_the_mask_residual() {
     assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::TWO);
     assert_eq!(norm.slot_widths[&VarId(1)], SlotWidth::TWO);
 
-    // Cross-atom Contains over a point variable: x.start ≤ t AND t < x.end
+    // Cross-atom PointIn over a point variable: x.start ≤ t AND t < x.end
     // — the point variable's single word is its Start word.
     let start = |id: u16| VarWord {
         var: VarId(id),
@@ -723,7 +723,7 @@ fn cross_atom_allen_becomes_the_mask_residual() {
         var: VarId(id),
         word: IntervalWord::End,
     };
-    let contains_point = query(
+    let point_in = query(
         vec![
             Atom {
                 relation: P,
@@ -736,12 +736,12 @@ fn cross_atom_allen_becomes_the_mask_residual() {
         ],
         vec![],
         vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(0),
             rhs: var(1),
         }],
     );
-    let norm = normalized(&contains_point);
+    let norm = normalized(&point_in);
     assert_eq!(
         norm.word_residuals,
         vec![
@@ -823,7 +823,7 @@ fn same_atom_membership_variable_lowers_to_the_field_composition() {
     assert_eq!(norm.occurrences[0].vars, vec![(P_AT, VarId(0))]);
     assert_eq!(
         norm.occurrences[0].filters,
-        vec![FilterPredicate::FieldsContainPoint {
+        vec![FilterPredicate::FieldsPointIn {
             interval: P_DURING,
             point: P_AT,
         }]
@@ -969,7 +969,7 @@ fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
         }]
     );
 
-    // Contains([2,9), t) over a scalar variable — the reversed point
+    // PointIn([2,9), t) over a scalar variable — the reversed point
     // containment on the point's field.
     let point_within = query(
         vec![Atom {
@@ -978,7 +978,7 @@ fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
         }],
         vec![],
         vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: iv(),
             rhs: var(1),
         }],
@@ -991,18 +991,18 @@ fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
         }]
     );
 
-    // Contains(x, 5) — a constant point is membership: PointIn.
-    let contains_point = query(
+    // PointIn(x, 5) — a constant point is membership.
+    let point_in = query(
         vec![p_atom()],
         vec![],
         vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(0),
             rhs: Term::Literal(Value::I64(5)),
         }],
     );
     assert_eq!(
-        normalized(&contains_point).occurrences[0].filters,
+        normalized(&point_in).occurrences[0].filters,
         vec![FilterPredicate::PointIn {
             field: P_DURING,
             point: ResolvedWordSource::Word(w(5)),
@@ -1379,7 +1379,7 @@ fn sweep_contains_param_placements() {
         }],
         vec![],
         vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
             rhs: Term::Param(ParamId(0)),
         }],
@@ -1399,7 +1399,7 @@ fn sweep_contains_param_placements() {
         }],
         vec![],
         vec![Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: Term::Param(ParamId(0)),
             rhs: var(1),
         }],

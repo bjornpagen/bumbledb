@@ -83,8 +83,8 @@ fn word_set<'a>(set: &'a Const, params: &'a [Const]) -> &'a [u64] {
 
 /// Point membership under the half-open interval: `start ≤ p AND p < end`
 /// — `p == start` survives, `p == end` does not.
-const fn contains_point(start: u64, end: u64, p: u64) -> bool {
-    start <= p && p < end
+const fn point_in(start: u64, end: u64, point: u64) -> bool {
+    start <= point && point < end
 }
 
 /// The resolved mask of an `Allen` shape: literal masks pass through;
@@ -201,7 +201,7 @@ fn row_matches(
         }
         FilterPredicate::PointIn { field, point } => {
             let (start, end) = interval_at(image, *field, position);
-            contains_point(start, end, point_word(point, params))
+            point_in(start, end, point_word(point, params))
         }
         FilterPredicate::AnyPointIn { field, set } => {
             let (start, end) = interval_at(image, *field, position);
@@ -230,9 +230,9 @@ fn row_matches(
             mask_of(*mask, params)
                 .contains(crate::allen::classify_bounds(&f_start, &f_end, start, end))
         }
-        FilterPredicate::FieldsContainPoint { interval, point } => {
+        FilterPredicate::FieldsPointIn { interval, point } => {
             let (start, end) = interval_at(image, *interval, position);
-            contains_point(start, end, word_at(image, *point, position))
+            point_in(start, end, word_at(image, *point, position))
         }
         FilterPredicate::FieldWithin { field, outer } => {
             let Const::Interval { start, end } = resolve(outer, params) else {
@@ -242,7 +242,7 @@ fn row_matches(
                 // A scalar field: point membership in the outer interval
                 // (the field is scalar by construction — an interval
                 // field under a constant is `FieldAllen`).
-                Operand::Word(word) => contains_point(*start, *end, word),
+                Operand::Word(word) => point_in(*start, *end, word),
                 Operand::Pair(..) | Operand::Byte(_) | Operand::Block { .. } => {
                     unreachable!("validated: within-comparands are scalar words")
                 }
@@ -625,7 +625,7 @@ fn kernel_scan(
         // Same-fact comparisons read two varying columns per position —
         // no constant side, no kernel shape; the scalar loop evaluates
         // them.
-        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsContainPoint { .. } => {
+        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsPointIn { .. } => {
             return false;
         }
         // The measure kinds never reach the infallible machinery: they
@@ -698,7 +698,7 @@ fn kernel_scan(
                 // `Ne` has no fixed-width scan shape; the interval
                 // operators never pair with a single-word constant
                 // (normalization emits the interval filter kinds).
-                CmpOp::Ne | CmpOp::Allen { .. } | CmpOp::Contains => return false,
+                CmpOp::Ne | CmpOp::Allen { .. } | CmpOp::PointIn => return false,
             };
             crate::exec::kernel::filter_range_u64(words, lo, hi, out);
             true

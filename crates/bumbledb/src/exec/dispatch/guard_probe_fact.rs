@@ -93,8 +93,8 @@ fn point_word(point: &ResolvedWordSource, params: &[Const]) -> u64 {
 }
 
 /// Point membership under the half-open interval: `start ≤ p AND p < end`.
-const fn contains_point(start: u64, end: u64, p: u64) -> bool {
-    start <= p && p < end
+const fn point_in(start: u64, end: u64, point: u64) -> bool {
+    start <= point && point < end
 }
 
 /// Evaluates one residual filter on the fetched fact's bytes — the same
@@ -165,7 +165,7 @@ fn fact_matches(
         }
         FilterPredicate::PointIn { field, point } => {
             let (start, end) = pair(*field);
-            contains_point(start, end, point_word(point, params))
+            point_in(start, end, point_word(point, params))
         }
         FilterPredicate::AnyPointIn { .. } => {
             unreachable!("classification: a param-set binding never reaches the guard path")
@@ -190,16 +190,16 @@ fn fact_matches(
                 &f_start, &f_end, &start, &end,
             ))
         }
-        FilterPredicate::FieldsContainPoint { interval, point } => {
+        FilterPredicate::FieldsPointIn { interval, point } => {
             let (start, end) = pair(*interval);
-            contains_point(start, end, word(*point))
+            point_in(start, end, word(*point))
         }
         FilterPredicate::FieldWithin { field, outer } => {
             let FactOperand::Pair(start, end) = const_operand(txn, outer, params)? else {
                 unreachable!("validated: the outer side is an interval constant")
             };
             match operand(*field) {
-                FactOperand::Word(w) => contains_point(start, end, w),
+                FactOperand::Word(w) => point_in(start, end, w),
                 FactOperand::Pair(..) | FactOperand::Block { .. } => {
                     unreachable!("validated: within-comparands are scalar words")
                 }

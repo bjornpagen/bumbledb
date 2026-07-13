@@ -24,7 +24,7 @@ use bumbledb::{
     Value, VarId,
 };
 
-use super::tuple::{cmp_value, contains_point, endpoints, point};
+use super::tuple::{cmp_value, endpoints, point, point_in};
 use super::{NaiveDb, Tuple};
 
 /// One positional parameter, scalar or set — the model's mirror of the
@@ -603,7 +603,7 @@ fn admit(
         Substituted::Var(var) => {
             if field_is_interval && env.scalar_anchored[*var] {
                 if let Some(bound) = &assignment[*var] {
-                    contains_point(
+                    point_in(
                         endpoints(fact_value),
                         point(bound).expect("a scalar-anchored variable holds a scalar"),
                     )
@@ -627,7 +627,7 @@ fn admit(
 /// everything else is value equality.
 fn constrains(fact_value: &Value, field_is_interval: bool, term_value: &Value) -> bool {
     if field_is_interval && let Some(t) = point(term_value) {
-        return contains_point(endpoints(fact_value), t);
+        return point_in(endpoints(fact_value), t);
     }
     term_value == fact_value
 }
@@ -641,7 +641,7 @@ fn leaf_admits(
         let bound = assignment[*var]
             .as_ref()
             .expect("validated: every point variable has a scalar anchor");
-        if !contains_point(
+        if !point_in(
             endpoints(interval),
             point(bound).expect("a scalar-anchored variable holds a scalar"),
         ) {
@@ -800,9 +800,9 @@ fn predicate_holds(
                 .iter()
                 .any(|basic| mask.contains(*basic) && basic_holds(*basic, a, b))
         }
-        CmpOp::Contains => {
-            let t = point(&right).expect("validated: Contains' right side is a point");
-            contains_point(endpoints(&left), t)
+        CmpOp::PointIn => {
+            let t = point(&right).expect("validated: PointIn's right side is a point");
+            point_in(endpoints(&left), t)
         }
     }
 }

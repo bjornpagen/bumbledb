@@ -171,7 +171,7 @@ fn occurrence_estimate(
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
                 CmpOp::Eq => unreachable!("split_filters routed Eq into selections"),
-                CmpOp::Allen { .. } | CmpOp::Contains => {
+                CmpOp::Allen { .. } | CmpOp::PointIn => {
                     unreachable!("interval conditions lower to their fixed shapes")
                 }
             },
@@ -179,7 +179,7 @@ fn occurrence_estimate(
                 CmpOp::Eq => FIELDS_EQ_KEEP_DEN,
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
-                CmpOp::Allen { .. } | CmpOp::Contains => {
+                CmpOp::Allen { .. } | CmpOp::PointIn => {
                     unreachable!("same-atom interval conditions lower to their fixed shapes")
                 }
             },
@@ -191,7 +191,7 @@ fn occurrence_estimate(
             // is exact, not a default).
             FilterPredicate::PointIn { .. }
             | FilterPredicate::AnyPointIn { .. }
-            | FilterPredicate::FieldsContainPoint { .. }
+            | FilterPredicate::FieldsPointIn { .. }
             | FilterPredicate::FieldWithin { .. }
             | FilterPredicate::DurationCompare { .. }
             | FilterPredicate::DurationFieldsCompare { .. } => RANGE_KEEP_DEN,

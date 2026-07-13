@@ -727,15 +727,15 @@ fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
 }
 
 #[test]
-fn rejects_a_point_literal_at_the_ceiling_under_contains() {
-    // The comparison-site sibling: a Contains right side is an interval
+fn rejects_a_point_literal_at_the_ceiling_under_point_in() {
+    // The comparison-site sibling: a PointIn right side is an interval
     // position, so the ceiling is equally not a point there.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
             rhs: Term::Literal(Value::U64(u64::MAX)),
         })],
@@ -839,8 +839,8 @@ fn rejects_allen_over_non_interval_sides() {
 }
 
 #[test]
-fn rejects_contains_between_two_intervals() {
-    // The interval⊇interval Contains is gone — that predicate is
+fn rejects_point_in_between_two_intervals() {
+    // The interval⊇interval PointIn overload is gone — that predicate is
     // Allen(COVERS); an interval-typed right side is illegal.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -850,7 +850,7 @@ fn rejects_contains_between_two_intervals() {
         ],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
             rhs: var(3),
         })],
@@ -865,7 +865,7 @@ fn rejects_contains_between_two_intervals() {
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(
                 crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),

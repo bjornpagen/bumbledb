@@ -1,6 +1,6 @@
 //! The interval-surface shapes: point membership (literal, param, and
 //! var points), interval joins (`Allen` masks — the composites, random
-//! singleton basics, and the `Eq`/`Ne` derived facts — plus `Contains`'
+//! singleton basics, and the `Eq`/`Ne` derived facts — plus `PointIn`'s
 //! point form), and the adjacent-touching boundary probes whose literals
 //! are recomputed from the corpus interval generator — the query touches
 //! a corpus interval at exactly its endpoint, both polarities.
@@ -13,7 +13,7 @@
 //!
 //! **The equality-spine cost bound** (`docs/architecture/60-validation.md`
 //! § the generator contract; `40-execution.md` names the degenerate): a
-//! var-point membership binding or a cross-atom `Allen`/`Contains`
+//! var-point membership binding or a cross-atom `Allen`/`PointIn`
 //! join whose interval occurrence shares **no** equality variable with
 //! the rest of the query is a Cartesian with a filter — O(bindings × n).
 //! Every such construct here is built on a spine: the Mandate lane joins
@@ -284,7 +284,7 @@ enum Right {
 /// reachable over the run), **random masks** (any nonempty proper
 /// subset of the 13 — the coordinate space itself), and the `Eq`/`Ne`
 /// derived facts (the (Eq/Ne, interval) matrix cells) — plus
-/// `Contains`' point form. Var-vs-var joins build the second occurrence
+/// `PointIn`. Var-vs-var joins build the second occurrence
 /// **on the spine**: the Mandate lane equality-joins on account; the
 /// Transfer lane pins each occurrence. Var-vs-literal filters build no
 /// second occurrence at all; their literals draw from the
@@ -300,8 +300,8 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
         // A random singleton basic — every classify branch is reachable.
         7 => (allen(singleton_mask(rng)), Right::Var),
         8 => (allen(singleton_mask(rng)), Right::Literal),
-        // Contains' point form: point membership as a predicate.
-        9 => (CmpOp::Contains, Right::Element),
+        // PointIn: point membership as a predicate.
+        9 => (CmpOp::PointIn, Right::Element),
         10 => (CmpOp::Eq, Right::Var),
         11 => (CmpOp::Ne, Right::Var),
         // Random masks, both operand shapes.
@@ -400,7 +400,7 @@ fn wide_mandate_join(b: &mut Builder) -> (VarId, Term) {
 /// query — in both polarities (the literal ends at a corpus start;
 /// the literal starts at a corpus end). Half the probes are
 /// `Allen(INTERSECTS)` (adjacency must NOT intersect — *meets* shares
-/// no point); half are `Contains` with the touch point itself
+/// no point); half are `PointIn` with the touch point itself
 /// (`b ∉ [a,b)`, `b ∈ [b,c)`). Single-occurrence filters: the accepted
 /// O(n) scan, not the Cartesian shape.
 pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
@@ -524,7 +524,7 @@ fn push_boundary_cmp(b: &mut Builder, rng: &mut Rng, var: VarId, literal: Value,
     let (op, rhs) = if rng.chance(1, 2) {
         (allen(AllenMask::INTERSECTS), Term::Literal(literal))
     } else {
-        (CmpOp::Contains, Term::Literal(point))
+        (CmpOp::PointIn, Term::Literal(point))
     };
     b.conditions.push(Comparison {
         op,

@@ -282,7 +282,7 @@ AggOp      = Sum | Min | Max | Count | CountDistinct
 Comparison { op: CmpOp, lhs: Term, rhs: Term }
 CmpOp      = Eq | Ne | Lt | Le | Gt | Ge
            | Allen { mask: MaskTerm }  // THE interval-pair comparison (below)
-           | Contains                  // point membership as a predicate — the
+           | PointIn                   // point membership as a predicate — the
                                        //   point form only; ⊇ is Allen(COVERS)
 MaskTerm   = Literal(AllenMask) | Param(ParamId)  // a variable or set mask is
                                                   //   unrepresentable, not rejected
@@ -309,7 +309,7 @@ Var, Param, ParamSet, and Literal all participate under the same rule. The point
 domain is `MIN ..= MAX−1` (`10-data-model.md`'s point-domain law — `end == MAX`
 denotes the ray `[s, ∞)`): an element-typed literal equal to the domain ceiling
 is a validation error wherever it meets an interval position (membership bindings
-and `Contains` operands), and a point-position param bound to the ceiling is the
+and `PointIn` operands), and a point-position param bound to the ceiling is the
 matching bind-time error — `MAX` is the ray's ∞, never a point, so the mistake is
 typed out instead of silently matching nothing. One
 consequence, enforced by validation: a variable bound *only* by membership bindings
@@ -322,7 +322,7 @@ where stated (no U64-vs-I64, no silent coercion). `Eq`/`Ne` are legal for all si
 types; `Lt/Le/Gt/Ge` only for U64/U64 and I64/I64 — **never intervals, never
 `bytes<N>`** (`10-data-model.md` orderability; each refusal named in its own
 diagnostic). `Allen { mask }` requires two interval terms of
-one element type — **the** interval-pair comparison (next section). `Contains`
+one element type — **the** interval-pair comparison (next section). `PointIn`
 requires an interval left side and an **element-typed** right side (point
 membership as a predicate — the predicate form of the binding rule, for terms
 already bound elsewhere); its old interval⊇interval form is not an operator —
@@ -333,6 +333,9 @@ measure). Any comparison without
 a variable side (literal-vs-literal, param-vs-literal, param-vs-param) is a
 validation error, and so is a variable compared with itself — both are
 constant-valued: write the query you mean.
+
+`PointIn` (point ∈ interval), `Allen(mask)` (interval × interval), and
+containment `<=` (views) are three predicates with three names.
 
 ## The Allen operator (normative — the interval-pair coordinate system)
 
@@ -538,7 +541,7 @@ three; **normalization lowers IR form to paper form**:
    bindings lower to per-atom range filters over the interval field's two encoded
    words.
 3. Same-atom var-vs-var comparisons lower to per-atom field-vs-field filters:
-   membership and point containment as word compositions over start/end, and
+   membership and `PointIn` as word compositions over start/end, and
    `Allen` as the mask-carrying shape (two interval fields + mask —
    classify-then-test; a comparison written constant-first keeps the field on
    the left and converses the mask, so no operand-order flag exists).
@@ -547,7 +550,7 @@ three; **normalization lowers IR form to paper form**:
    variables are bound (`40-execution.md`), exactly as residual comparisons attach.
 5. Output: distinct-variable positive atoms + per-atom filter lists + a **residual
    list** (cross-atom comparisons — scalar whole-value, decomposed
-   point-containment words, and `Allen` residuals carried whole as four
+   point-membership words, and `Allen` residuals carried whole as four
    endpoint slots + mask — and anti-probe filters; nothing single-atom
    survives to the residual list).
 6. **The statically-empty fold** (last, per rule — the comptime-unreachable
@@ -644,7 +647,7 @@ Per-rule rejections: unknown
 relation/field ids; duplicate FieldId in one atom's bindings; variable type conflicts
 (structural — membership bindings anchor the *element* type); literal-vs-field and
 param-anchor type mismatches (including non-UTF-8 String literals); element-typed
-point literals at the domain ceiling in membership bindings and `Contains`
+point literals at the domain ceiling in membership bindings and `PointIn`
 operands (the point-domain law — point params
 get the same rejection at bind, where the value exists); comparisons violating the
 type rules above (order operators on intervals and on `bytes<N>` each named in
@@ -675,7 +678,7 @@ it legal, the proof is sealed as a `ClassifiedComparison` — a closed sum
 whose variants are exactly the accepted comparison language (scalar
 var/var and var/const with the operator sealed variable-on-left, the
 `Eq`-only set marker, the `Allen` pair and constant forms with the mask
-sealed field-on-left, both point-containment directions, and the measure
+sealed field-on-left, both point-membership directions, and the measure
 with its operator sealed measure-on-left; interval `Eq`/`Ne` canonicalize
 to the `EQUALS` mask inside the seal). The witness carries the list per
 rule (`RuleWitness::classified_comparisons`) and normalization's

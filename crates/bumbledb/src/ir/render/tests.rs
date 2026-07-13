@@ -291,7 +291,7 @@ fn membership_and_param_forms() {
         }],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Var(VarId(0)),
         })],

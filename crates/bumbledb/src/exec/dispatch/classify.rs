@@ -13,7 +13,7 @@ use crate::schema::{FieldId, Relation, Schema, StatementId};
 ///
 /// Eligibility **consumes validation's term typing** through the lowered
 /// filter kinds and never re-infers it: lowering routes a membership
-/// binding into `PointIn`/`FieldsContainPoint`, so an `Eq` `Compare` on an
+/// binding into `PointIn`/`FieldsPointIn`, so an `Eq` `Compare` on an
 /// interval field is interval-typed by construction — a membership binding
 /// is not a key cover because it produces no `Eq` `Compare` at all.
 ///

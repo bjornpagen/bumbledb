@@ -1,7 +1,7 @@
 //! Interval machinery in the executor — the membership point-var join
 //! (`PlanNode::point_probes`), the Allen mask residuals over two-slot
 //! interval variables (four endpoint slots + mask, classify-then-test),
-//! and the decomposed point-containment word residuals
+//! and the decomposed point-membership word residuals
 //! (docs/architecture/20-query-ir.md, § the Allen operator and
 //! § normalization; 40-execution, § access paths).
 
@@ -81,7 +81,7 @@ fn tagged_interval_views(
 /// A hand-assembled two-occurrence interval query:
 /// `A(ta, i), B(tb, j)` with the given residuals — exactly the shapes
 /// normalization emits for a cross-atom `Allen` (the mask residual) and
-/// `Contains` point form (word comparisons), both pinned in
+/// `PointIn` point form (word comparisons), both pinned in
 /// `ir/normalize/tests.rs`.
 fn interval_pair_query(
     word_residuals: Vec<PlacedWordComparison>,
@@ -174,14 +174,14 @@ fn allen_residual(mask: AllenMask) -> Vec<PlacedAllen> {
     }]
 }
 
-/// The point-containment word residuals (`Contains`' surviving point
+/// The point-membership word residuals (`PointIn`'s surviving point
 /// form, `docs/architecture/20-query-ir.md` § normalization):
 /// `i.start ≤ p AND p < i.end` over slot words — `p` reads B's interval
 /// start word (10), so exactly the configurations containing the point
 /// 10 survive, half-open at both boundaries.
 #[test]
-fn point_containment_word_residuals_evaluate_over_slot_words() {
-    let contains_point = vec![
+fn point_membership_word_residuals_evaluate_over_slot_words() {
+    let point_in = vec![
         PlacedWordComparison {
             op: CmpOp::Le,
             lhs: side(1, IntervalWord::Start),
@@ -195,16 +195,11 @@ fn point_containment_word_residuals_evaluate_over_slot_words() {
     ];
     let expected: BTreeSet<u64> = [3, 4, 5, 6, 7, 8].into_iter().collect();
     assert_eq!(
-        surviving_tags(
-            "run-contains-point-01",
-            contains_point.clone(),
-            vec![],
-            &[0, 1]
-        ),
+        surviving_tags("run-point-in-01", point_in.clone(), vec![], &[0, 1]),
         expected
     );
     assert_eq!(
-        surviving_tags("run-contains-point-10", contains_point, vec![], &[1, 0]),
+        surviving_tags("run-point-in-10", point_in, vec![], &[1, 0]),
         expected
     );
 }
