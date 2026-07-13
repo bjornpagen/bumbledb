@@ -39,6 +39,7 @@ documents themselves describe **only the current reality**.
 | `60-validation.md` | The two oracles (SQLite + naive model), ledger benchmark protocol, test families |
 | `70-api.md` | Embedding surface: the schema! grammar, transactions, point reads, results, ETL |
 | `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative (reader: the owner and any agent writing a theory) |
+| `../formal/README.md` | Versioned Lean model, provenance, scope, and the bridge from theorems to Rust evidence |
 
 ## OPEN items
 

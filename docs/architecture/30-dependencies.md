@@ -356,3 +356,25 @@ with no modes. Refuses: constraint modes, triggers, deferrability (all artifacts
 row-at-a-time checking over bags); CHECK constraints (host newtype constructors own
 value validity — parse, don't validate); conditional and non-key FDs (schema shapes
 own them). Every refusal names its replacement; none of them is a gap.
+
+## Formal claims and runtime evidence
+
+The versioned Lean artifact and its scope live in
+[`docs/formal/`](../formal/README.md). The table distinguishes a theorem from
+the extra validator, representation, or runtime premise that realizes it in
+Rust. A theorem proves the mathematical implication named in its row; it does
+not prove that stored bytes or unchecked host input satisfy the Rust premise.
+
+| Public claim | Lean theorem or countermodel | Rust evidence | Epistemic label |
+|---|---|---|---|
+| Containment is subset inclusion between selected projected views. | `contains_iff_view_subset` | `schema/validate.rs::resolve_target_key` requires the target projection's exact field set to resolve to a declared key; `storage/commit/judgment.rs::Checker` checks each delta-touched source against the final state. | Lean theorem + validator and runtime premises |
+| Bare `==` is projected view equality, not unique correspondence. | `containsEq_iff_view_ext`; `bare_containsEq_nonunique` | `bumbledb-macros::parse_statement` lowers `==` to two adjacent `StatementDescriptor::Containment` values; `schema/validate.rs::mirror_of` recognizes the pair. | Lean theorem + lowering rule |
+| Accepted `==` is key-backed unique correspondence in both directions. | `KeyBackedEquality.unique_target`; `KeyBackedEquality.unique_source` | Both lowered containments independently pass `resolve_target_key`; `schema::ContainmentStatement::mirror` records the accepted pair. PRD 12 adds the dedicated reverse-key rejection locks. | Lean theorem + validator premises |
+| A key proves uniqueness, not existence. | `Key.uniqueness` (the imported dependency model's `Key` field) | `schema/validate.rs::validate_functionality` accepts the declaration; `storage/commit/applier.rs::Applier` rejects colliding determinant images but never manufactures a fact. | Definition + validator and runtime premises |
+| An interval-position key proves per-scalar-group pointwise disjointness. | `IntervalFacts.PointwiseKey`; exercised by `overshoot_pointwiseKey` | `validate_functionality` admits one final interval position; `storage/commit/applier.rs::Applier::probe_neighbors` rejects overlap with predecessor or successor. | Formal predicate + validator and runtime premises |
+| One-way interval coverage is source-support inclusion; target overhang is legal. | `intervalContains_iff_support_subset`; `overshoot_isTiling_not_exact` | `storage/commit/judgment.rs::Checker::check_coverage` advances only across the demanded source interval. PRD 03 makes its disjointness premise a `DisjointGuardProof`. | Lean theorem/countermodel + runtime premise |
+| Exact partition is mutual point coverage plus pointwise keys. | `exactTiling_iff_exactPointPartition` | The five ordinary statements and gap/overhang locks are delivered by PRD 11; no special partition primitive exists. | Lean theorem + validator premises |
+| Empty or reversed intervals have empty support, so admitting them would make coverage vacuous. | `empty_nat_interval_has_no_points` | `interval.rs::Interval::new` rejects `start >= end`; the schema, IR, fact-shape, decode, and image-decode boundaries retain typed empty-interval errors. PRD 02 makes `Value` carry `Interval<T>` so encoding is total. | Lean countermodel + representation/runtime premises |
+| Negation safety is positive range restriction and is independent of textual order. | `positive_range_restriction_implies_wellscoped` | `ir/validate/context.rs` derives binders only from positive atoms and emits `ValidationError::NegatedVariableUnbound` for every other occurrence. | Lean theorem + validator acceptance rule |
+| Rule union is set-idempotent. | `ruleUnion_set_idempotent` | Projection and aggregate sinks own canonical-head-tuple seen sets across rules; the distinct-bindings elision is justified by the typed witness delivered by PRD 17. | Lean theorem + runtime representation premise |
+| Bounded sums either produce the mathematical sum in range or reject overflow. | `checkedAdd_sound` | `exec/sink/aggregate/fold_row.rs` accumulates signed values in `i128` and unsigned values in `u128`; `finalize.rs::Aggregate::finalize_acc` performs the destination-range check and returns the typed overflow error. | Lean theorem + runtime invariant |

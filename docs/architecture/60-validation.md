@@ -7,6 +7,10 @@ ledger benchmark protocol. Every count and
 every performance claim is derived and earned on this engine — a claim without a
 current run behind it does not exist.
 
+The [formal-claims table](30-dependencies.md#formal-claims-and-runtime-evidence)
+maps each public semantic claim to its Lean theorem or countermodel and to the
+validator, representation, or always-on Rust evidence that realizes its premises.
+
 ## The two oracles
 
 **SQLite is the external oracle for query results** — never infrastructure. Every
