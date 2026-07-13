@@ -456,7 +456,9 @@ fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(1, 5)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),
+            )),
         })],
     });
     assert!(matches!(
@@ -704,45 +706,6 @@ fn rejects_a_non_orderable_arg_key() {
 }
 
 #[test]
-fn rejects_an_inverted_interval_literal_in_a_binding() {
-    let query = simple(
-        vec![FindTerm::Var(VarId(0))],
-        vec![atom(
-            ACCOUNT,
-            vec![
-                (0, var(0)),
-                (VALIDITY, Term::Literal(Value::IntervalU64(9, 3))),
-            ],
-        )],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::EmptyIntervalLiteral {
-            atom: 0,
-            field: FieldId(VALIDITY)
-        }
-    ));
-}
-
-#[test]
-fn rejects_an_inverted_interval_literal_in_a_comparison() {
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
-        negated: vec![],
-        conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Eq,
-            lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(9, 3)),
-        })],
-    });
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::ComparisonEmptyIntervalLiteral { index: 0 }
-    ));
-}
-
-#[test]
 fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
     // The point-domain law: points are MIN..=MAX-1, and MAX is the ray's
     // ∞ — inside no interval, so the membership is typed out, never
@@ -817,7 +780,9 @@ fn rejects_the_empty_allen_mask() {
                 mask: MaskTerm::Literal(crate::allen::AllenMask::EMPTY),
             },
             lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(1, 5)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),
+            )),
         })],
     });
     assert!(matches!(
@@ -902,7 +867,9 @@ fn rejects_contains_between_two_intervals() {
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Contains,
             lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(1, 5)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),
+            )),
         })],
     });
     assert!(matches!(

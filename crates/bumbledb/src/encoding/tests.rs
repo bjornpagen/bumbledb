@@ -140,8 +140,10 @@ fn mixed_values() -> Vec<ValueRef> {
         ValueRef::I64(i64::MIN),
         ValueRef::String(7),
         ValueRef::fixed_bytes(&[0xAA; 12]),
-        ValueRef::IntervalU64(3, u64::MAX),
-        ValueRef::IntervalI64(i64::MIN, -5),
+        ValueRef::IntervalU64(crate::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval")),
+        ValueRef::IntervalI64(
+            crate::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"),
+        ),
     ]
 }
 
@@ -159,8 +161,12 @@ fn encode_fact_matches_independent_field_encodings() {
     // bytes<12>: the 12 raw bytes zero-padded to the 16-byte word boundary.
     expected.extend_from_slice(&[0xAA; 12]);
     expected.extend_from_slice(&[0x00; 4]);
-    expected.extend_from_slice(&encode_interval_u64(3, u64::MAX));
-    expected.extend_from_slice(&encode_interval_i64(i64::MIN, -5));
+    expected.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"),
+    ));
+    expected.extend_from_slice(&encode_interval_i64(
+        crate::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"),
+    ));
     assert_eq!(fact, expected);
 }
 
@@ -180,11 +186,11 @@ fn field_bytes_slices_equal_independent_encodings() {
     assert_eq!(field_bytes(&fact, &layout, 5), padded);
     assert_eq!(
         field_bytes(&fact, &layout, 6),
-        encode_interval_u64(3, u64::MAX)
+        encode_interval_u64(crate::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"))
     );
     assert_eq!(
         field_bytes(&fact, &layout, 7),
-        encode_interval_i64(i64::MIN, -5)
+        encode_interval_i64(crate::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"))
     );
 }
 
@@ -317,13 +323,17 @@ fn interval_round_trip_edges_and_random_pairs() {
         (-1, i64::MAX),
     ] {
         assert_eq!(
-            decode_interval_i64(encode_interval_i64(start, end)),
+            decode_interval_i64(encode_interval_i64(
+                crate::Interval::<i64>::new(start, end).expect("nonempty interval")
+            )),
             Ok((start, end))
         );
     }
     for (start, end) in [(0, u64::MAX), (0, 1), (u64::MAX - 1, u64::MAX)] {
         assert_eq!(
-            decode_interval_u64(encode_interval_u64(start, end)),
+            decode_interval_u64(encode_interval_u64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval")
+            )),
             Ok((start, end))
         );
     }
@@ -332,7 +342,9 @@ fn interval_round_trip_edges_and_random_pairs() {
     for _ in 0..1_000 {
         let (start, end) = rand_interval_u64(&mut rng);
         assert_eq!(
-            decode_interval_u64(encode_interval_u64(start, end)),
+            decode_interval_u64(encode_interval_u64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval")
+            )),
             Ok((start, end))
         );
         let (start, end) = (
@@ -340,7 +352,9 @@ fn interval_round_trip_edges_and_random_pairs() {
             start.cast_signed().max(end.cast_signed()),
         );
         assert_eq!(
-            decode_interval_i64(encode_interval_i64(start, end)),
+            decode_interval_i64(encode_interval_i64(
+                crate::Interval::<i64>::new(start, end).expect("nonempty interval")
+            )),
             Ok((start, end))
         );
     }
@@ -361,7 +375,10 @@ fn interval_encoding_orders_by_start_then_end() {
             rand_interval_u64_from(&mut rng, x.0)
         };
         assert_eq!(
-            encode_interval_u64(x.0, x.1).cmp(&encode_interval_u64(y.0, y.1)),
+            encode_interval_u64(crate::Interval::<u64>::new(x.0, x.1).expect("nonempty interval"))
+                .cmp(&encode_interval_u64(
+                    crate::Interval::<u64>::new(y.0, y.1).expect("nonempty interval")
+                )),
             x.cmp(&y),
             "u64 encoding order diverges from tuple order for {x:?} vs {y:?}"
         );
@@ -374,7 +391,12 @@ fn interval_encoding_orders_by_start_then_end() {
         // pairs it inverts.
         if xi.0 < xi.1 && yi.0 < yi.1 {
             assert_eq!(
-                encode_interval_i64(xi.0, xi.1).cmp(&encode_interval_i64(yi.0, yi.1)),
+                encode_interval_i64(
+                    crate::Interval::<i64>::new(xi.0, xi.1).expect("nonempty interval")
+                )
+                .cmp(&encode_interval_i64(
+                    crate::Interval::<i64>::new(yi.0, yi.1).expect("nonempty interval")
+                )),
                 xi.cmp(&yi),
                 "i64 encoding order diverges from tuple order for {xi:?} vs {yi:?}"
             );
@@ -605,7 +627,12 @@ fn exhaustive_interval_encoding_orders_by_endpoint_pair_on_the_grid() {
     for &x in &u64_intervals {
         for &y in &u64_intervals {
             assert_eq!(
-                encode_interval_u64(x.0, x.1).cmp(&encode_interval_u64(y.0, y.1)),
+                encode_interval_u64(
+                    crate::Interval::<u64>::new(x.0, x.1).expect("nonempty interval")
+                )
+                .cmp(&encode_interval_u64(
+                    crate::Interval::<u64>::new(y.0, y.1).expect("nonempty interval")
+                )),
                 x.cmp(&y),
                 "u64 {x:?} vs {y:?}"
             );
@@ -625,7 +652,12 @@ fn exhaustive_interval_encoding_orders_by_endpoint_pair_on_the_grid() {
     for &x in &i64_intervals {
         for &y in &i64_intervals {
             assert_eq!(
-                encode_interval_i64(x.0, x.1).cmp(&encode_interval_i64(y.0, y.1)),
+                encode_interval_i64(
+                    crate::Interval::<i64>::new(x.0, x.1).expect("nonempty interval")
+                )
+                .cmp(&encode_interval_i64(
+                    crate::Interval::<i64>::new(y.0, y.1).expect("nonempty interval")
+                )),
                 x.cmp(&y),
                 "i64 {x:?} vs {y:?}"
             );

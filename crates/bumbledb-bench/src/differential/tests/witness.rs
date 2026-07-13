@@ -29,7 +29,9 @@ fn pair(room: u64, span: (u64, u64), reference: u64) -> Delta {
                 BOOKING,
                 vec![
                     Value::U64(room),
-                    Value::IntervalU64(span.0, span.1),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(span.0, span.1).expect("nonempty interval"),
+                    ),
                     Value::U64(reference),
                 ],
             ),
@@ -174,7 +176,13 @@ fn write_from_with_no_intervening_commit_is_write() {
             deletes: vec![],
             inserts: vec![(
                 BOOKING,
-                vec![Value::U64(1), Value::IntervalU64(6, 9), Value::U64(8)],
+                vec![
+                    Value::U64(1),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(6, 9).expect("nonempty interval"),
+                    ),
+                    Value::U64(8),
+                ],
             )],
         },
         pair(2, (10, 12), 5),

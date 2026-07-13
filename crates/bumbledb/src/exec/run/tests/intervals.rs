@@ -55,7 +55,12 @@ fn tagged_interval_views(
         for (tag, start, end) in rows {
             let mut bytes = Vec::new();
             encode_fact(
-                &[ValueRef::U64(*tag), ValueRef::IntervalU64(*start, *end)],
+                &[
+                    ValueRef::U64(*tag),
+                    ValueRef::IntervalU64(
+                        crate::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                    ),
+                ],
                 schema.relation(rel_id).layout(),
                 &mut bytes,
             );
@@ -354,7 +359,12 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
     for (emp, start, end) in [(1u64, 10u64, 20u64), (2, 30, 40)] {
         let mut bytes = Vec::new();
         encode_fact(
-            &[ValueRef::U64(emp), ValueRef::IntervalU64(start, end)],
+            &[
+                ValueRef::U64(emp),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
+            ],
             schema.relation(RelationId(0)).layout(),
             &mut bytes,
         );
@@ -528,7 +538,12 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     for (emp, start, end) in [(1u64, 10u64, 20u64), (2, 30, 40)] {
         let mut bytes = Vec::new();
         encode_fact(
-            &[ValueRef::U64(emp), ValueRef::IntervalU64(start, end)],
+            &[
+                ValueRef::U64(emp),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
+            ],
             schema.relation(RelationId(0)).layout(),
             &mut bytes,
         );
@@ -640,7 +655,12 @@ fn negated_membership_rejects_only_covered_events() {
     for (emp, start, end) in [(1u64, 10u64, 20u64), (2, 30, 40)] {
         let mut bytes = Vec::new();
         encode_fact(
-            &[ValueRef::U64(emp), ValueRef::IntervalU64(start, end)],
+            &[
+                ValueRef::U64(emp),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
+            ],
             schema.relation(RelationId(0)).layout(),
             &mut bytes,
         );

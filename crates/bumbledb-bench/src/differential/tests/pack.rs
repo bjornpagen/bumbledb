@@ -121,7 +121,9 @@ fn random_corpus(rng: &mut Lcg) -> Delta {
                 vec![
                     Value::U64(id),
                     Value::U64(person),
-                    Value::IntervalU64(start, end),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                    ),
                 ],
             ));
             // The i64 lane: the same shape shifted below zero (rays
@@ -138,7 +140,10 @@ fn random_corpus(rng: &mut Lcg) -> Delta {
                 vec![
                     Value::U64(id),
                     Value::U64(person),
-                    Value::IntervalI64(shift(start), shift(end)),
+                    Value::IntervalI64(
+                        bumbledb::Interval::<i64>::new(shift(start), shift(end))
+                            .expect("generated segment is nonempty"),
+                    ),
                 ],
             ));
             id += 1;
@@ -193,7 +198,9 @@ fn the_calendar_golden_coalesces_by_hand() {
             vec![
                 Value::U64(id),
                 Value::U64(person),
-                Value::IntervalU64(start, end),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
             ],
         )
     };
@@ -235,7 +242,12 @@ fn the_calendar_golden_coalesces_by_hand() {
 
     // `run` proved engine == model; pin the hand-checked rows themselves.
     let coalesced = |person: u64, start: u64, end: u64| {
-        Tuple(vec![Value::U64(person), Value::IntervalU64(start, end)])
+        Tuple(vec![
+            Value::U64(person),
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ])
     };
     let expected: std::collections::BTreeSet<Tuple> = [
         coalesced(1, 8, 14),
@@ -299,15 +311,33 @@ fn multi_rule_pack_folds_the_union_differentially() {
         inserts: vec![
             (
                 BUSY,
-                vec![Value::U64(0), Value::U64(1), Value::IntervalU64(1, 3)],
+                vec![
+                    Value::U64(0),
+                    Value::U64(1),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(1, 3).expect("nonempty interval"),
+                    ),
+                ],
             ),
             (
                 BUSY,
-                vec![Value::U64(2), Value::U64(1), Value::IntervalU64(3, 5)],
+                vec![
+                    Value::U64(2),
+                    Value::U64(1),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(3, 5).expect("nonempty interval"),
+                    ),
+                ],
             ),
             (
                 BUSY,
-                vec![Value::U64(4), Value::U64(1), Value::IntervalU64(8, 9)],
+                vec![
+                    Value::U64(4),
+                    Value::U64(1),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(8, 9).expect("nonempty interval"),
+                    ),
+                ],
             ),
         ],
     };

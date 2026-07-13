@@ -60,8 +60,8 @@ fn at_domain_ceiling(value: &Value) -> bool {
 }
 
 /// A literal in an interval-field binding: element-typed means point
-/// membership, interval-typed (same element) means value equality — and
-/// an interval literal with `start >= end` denotes no points.
+/// membership, while interval-typed (same element) means value equality.
+/// Interval literals are nonempty by construction.
 fn check_interval_field_literal(
     atom: usize,
     field: FieldId,
@@ -79,20 +79,8 @@ fn check_interval_field_literal(
             }
         }
         // Value equality against the field's intervals.
-        (Value::IntervalU64(start, end), IntervalElement::U64) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(ValidationError::EmptyIntervalLiteral { atom, field })
-            }
-        }
-        (Value::IntervalI64(start, end), IntervalElement::I64) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(ValidationError::EmptyIntervalLiteral { atom, field })
-            }
-        }
+        (Value::IntervalU64(_), IntervalElement::U64)
+        | (Value::IntervalI64(_), IntervalElement::I64) => Ok(()),
         _ => Err(ValidationError::LiteralTypeMismatch { atom, field }),
     }
 }
@@ -585,14 +573,6 @@ impl Context {
                 // `Value::String` documents the UTF-8 contract.
                 Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
                     return Err(ValidationError::LiteralTypeMismatch {
-                        atom: occ_idx,
-                        field,
-                    });
-                }
-                // Unreachable for a scalar field (kind is checked
-                // first), kept total for the mapping.
-                Err(LiteralMismatch::IntervalEmpty) => {
-                    return Err(ValidationError::EmptyIntervalLiteral {
                         atom: occ_idx,
                         field,
                     });
@@ -1263,9 +1243,6 @@ impl Context {
                     let Some(ValueType::Interval { element }) = literal_anchor_type(value) else {
                         return Err(ValidationError::IllegalComparison { index });
                     };
-                    if literal_matches(value, &ValueType::Interval { element }).is_err() {
-                        return Err(ValidationError::ComparisonEmptyIntervalLiteral { index });
-                    }
                     if *self.resolved_var_type(*var) != element_type(element) {
                         return Err(ValidationError::IllegalComparison { index });
                     }
@@ -1327,9 +1304,6 @@ impl Context {
     ) -> Result<(), ValidationError> {
         match literal_matches(value, expected) {
             Ok(()) => Ok(()),
-            Err(LiteralMismatch::IntervalEmpty) => {
-                Err(ValidationError::ComparisonEmptyIntervalLiteral { index })
-            }
             Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
                 Err(ValidationError::IllegalComparison { index })
             }

@@ -89,13 +89,13 @@ fn u64_point(cfg: GenConfig, rng: &mut Rng) -> u64 {
 fn i64_interval(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
     let ((start, end), drawn) = interval_data::ladder_i64(cfg.seed, rng.range(GROUP_POOL), rng);
     b.saw_rung(drawn);
-    Value::IntervalI64(start, end)
+    Value::IntervalI64(bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"))
 }
 
 fn u64_interval(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
     let ((start, end), drawn) = interval_data::ladder_u64(cfg.seed, rng.range(GROUP_POOL), rng);
     b.saw_rung(drawn);
-    Value::IntervalU64(start, end)
+    Value::IntervalU64(bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"))
 }
 
 /// The cost-bound rule's equality selection for a Transfer occurrence
@@ -418,9 +418,13 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
         let (_, e1) = interval_data::group_i64(cfg.seed, group, 1);
         let width = i64::try_from(TOUCH_WIDTH).expect("small");
         let literal = if left {
-            Value::IntervalI64(s0 - width, s0)
+            Value::IntervalI64(
+                bumbledb::Interval::<i64>::new(s0 - width, s0).expect("nonempty interval"),
+            )
         } else {
-            Value::IntervalI64(e1, e1 + width)
+            Value::IntervalI64(
+                bumbledb::Interval::<i64>::new(e1, e1 + width).expect("nonempty interval"),
+            )
         };
         let point = Value::I64(if left { s0 } else { e1 });
         let mandate = b.add_atom(ids::MANDATE);
@@ -439,9 +443,13 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
         let (s0, _) = interval_data::group_u64(cfg.seed, group, 0);
         let (_, e1) = interval_data::group_u64(cfg.seed, group, 1);
         let literal = if left {
-            Value::IntervalU64(s0 - TOUCH_WIDTH, s0)
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(s0 - TOUCH_WIDTH, s0).expect("nonempty interval"),
+            )
         } else {
-            Value::IntervalU64(e1, e1 + TOUCH_WIDTH)
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(e1, e1 + TOUCH_WIDTH).expect("nonempty interval"),
+            )
         };
         let point = Value::U64(if left { s0 } else { e1 });
         let transfer = b.add_atom(ids::TRANSFER);

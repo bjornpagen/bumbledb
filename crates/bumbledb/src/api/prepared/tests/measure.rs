@@ -87,7 +87,9 @@ fn insert_sessions(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64, (
                 ValueRef::U64(*id),
                 ValueRef::U64(*tag),
                 ValueRef::U64(*cap),
-                ValueRef::IntervalU64(*start, *end),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(SESSION).layout(),
             &mut bytes,
@@ -107,7 +109,9 @@ fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
             &[
                 ValueRef::U64(*id),
                 ValueRef::U64(*tag),
-                ValueRef::IntervalI64(*start, *end),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(SHIFT).layout(),
             &mut bytes,
@@ -395,7 +399,9 @@ fn ray_guard() -> ConditionTree {
             mask: MaskTerm::Literal(AllenMask::DISJOINT),
         },
         lhs: Term::Var(VarId(1)),
-        rhs: Term::Literal(Value::IntervalU64(u64::MAX - 1, u64::MAX)),
+        rhs: Term::Literal(Value::IntervalU64(
+            crate::Interval::<u64>::new(u64::MAX - 1, u64::MAX).expect("nonempty interval"),
+        )),
     })
 }
 
@@ -499,7 +505,9 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
             mask: MaskTerm::Literal(AllenMask::COVERED_BY),
         },
         lhs: Term::Var(VarId(1)),
-        rhs: Term::Literal(Value::IntervalU64(0, 100)),
+        rhs: Term::Literal(Value::IntervalU64(
+            crate::Interval::<u64>::new(0, 100).expect("nonempty interval"),
+        )),
     }));
     let query = Query::single(bounded);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");

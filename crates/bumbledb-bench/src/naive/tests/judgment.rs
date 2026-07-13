@@ -153,7 +153,9 @@ fn booking(room: u64, start: u64, end: u64, tag: u64) -> (RelationId, Vec<Value>
         BOOKING,
         vec![
             Value::U64(room),
-            Value::IntervalU64(start, end),
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
             Value::U64(tag),
         ],
     )
@@ -447,7 +449,9 @@ mod source_side {
             SHIFT,
             vec![
                 Value::U64(worker),
-                Value::IntervalU64(start, end),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
                 Value::Bool(rested),
             ],
         )
@@ -456,7 +460,12 @@ mod source_side {
     fn span(rel: RelationId, worker: u64, start: u64, end: u64) -> (RelationId, Vec<Value>) {
         (
             rel,
-            vec![Value::U64(worker), Value::IntervalU64(start, end)],
+            vec![
+                Value::U64(worker),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
+            ],
         )
     }
 
@@ -869,7 +878,12 @@ mod target_side {
     fn span(rel: RelationId, worker: u64, start: u64, end: u64) -> (RelationId, Vec<Value>) {
         (
             rel,
-            vec![Value::U64(worker), Value::IntervalU64(start, end)],
+            vec![
+                Value::U64(worker),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
+            ],
         )
     }
 
@@ -885,7 +899,9 @@ mod target_side {
             ROSTER,
             vec![
                 Value::U64(worker),
-                Value::IntervalU64(start, end),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
                 Value::Bool(rested),
             ],
         )

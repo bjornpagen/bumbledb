@@ -164,7 +164,10 @@ fn mandate_rows_stream_the_segment_table() {
             vec![
                 Value::U64(i / MANDATE_SEGMENTS),
                 Value::U64(segment.org),
-                Value::IntervalI64(segment.start, segment.end),
+                Value::IntervalI64(
+                    bumbledb::Interval::<i64>::new(segment.start, segment.end)
+                        .expect("nonempty interval")
+                ),
             ]
         );
     }

@@ -440,11 +440,11 @@ pub(crate) fn literal(out: &mut String, value: &Value) {
         Value::I64(v) => {
             let _ = write!(out, "{v}");
         }
-        Value::IntervalU64(start, end) => {
-            let _ = write!(out, "{start}..{end}");
+        Value::IntervalU64(interval) => {
+            let _ = write!(out, "{}..{}", interval.start(), interval.end());
         }
-        Value::IntervalI64(start, end) => {
-            let _ = write!(out, "{start}..{end}");
+        Value::IntervalI64(interval) => {
+            let _ = write!(out, "{}..{}", interval.start(), interval.end());
         }
         Value::String(bytes) => {
             out.push('"');

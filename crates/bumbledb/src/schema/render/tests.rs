@@ -88,7 +88,12 @@ fn example() -> SchemaDescriptor {
                 side_where(
                     RelationId(4),
                     &[FieldId(0)],
-                    vec![(FieldId(1), Value::IntervalU64(0, 86_400))],
+                    vec![(
+                        FieldId(1),
+                        Value::IntervalU64(
+                            crate::Interval::<u64>::new(0, 86_400).expect("nonempty interval"),
+                        ),
+                    )],
                 ),
                 side(RelationId(3), &[FieldId(0)]),
             ),

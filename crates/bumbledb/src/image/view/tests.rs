@@ -309,8 +309,12 @@ fn interval_image(dir: &TempDir) -> std::sync::Arc<crate::image::RelationImage> 
         encode_fact(
             &[
                 ValueRef::U64(id),
-                ValueRef::IntervalI64(during.0, during.1),
-                ValueRef::IntervalI64(review.0, review.1),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(during.0, during.1).expect("nonempty interval"),
+                ),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(review.0, review.1).expect("nonempty interval"),
+                ),
                 ValueRef::I64(at),
             ],
             schema.relation(P).layout(),

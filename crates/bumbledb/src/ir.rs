@@ -549,8 +549,12 @@ mod tests {
             Value::I64(i64::MIN),
             Value::String(Box::from(&b"text"[..])),
             Value::FixedBytes(Box::from(&[0xDEu8, 0xAD][..])),
-            Value::IntervalU64(0, u64::MAX),
-            Value::IntervalI64(i64::MIN, i64::MAX),
+            Value::IntervalU64(
+                crate::Interval::<u64>::new(0, u64::MAX).expect("nonempty interval"),
+            ),
+            Value::IntervalI64(
+                crate::Interval::<i64>::new(i64::MIN, i64::MAX).expect("nonempty interval"),
+            ),
             // Plus the one non-field value shape: the Allen mask (a
             // param's bind-time payload, never a stored type).
             Value::AllenMask(crate::allen::AllenMask::DISJOINT),
@@ -563,8 +567,14 @@ mod tests {
         // `From<Interval<_>>`: same halves, no re-check needed — the
         // checked type already holds `start < end`.
         let iv = Interval::<i64>::new(-5, 9).expect("valid bounds");
-        assert_eq!(Value::from(iv), Value::IntervalI64(-5, 9));
+        assert_eq!(
+            Value::from(iv),
+            Value::IntervalI64(crate::Interval::<i64>::new(-5, 9).expect("nonempty interval"))
+        );
         let iv = Interval::<u64>::new(3, 7).expect("valid bounds");
-        assert_eq!(Value::from(iv), Value::IntervalU64(3, 7));
+        assert_eq!(
+            Value::from(iv),
+            Value::IntervalU64(crate::Interval::<u64>::new(3, 7).expect("nonempty interval"))
+        );
     }
 }

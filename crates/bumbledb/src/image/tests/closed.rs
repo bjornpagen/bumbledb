@@ -45,7 +45,9 @@ fn theory() -> Schema {
                     Row {
                         handle: "Winter".into(),
                         values: Box::new([
-                            Value::IntervalU64(1, 90),
+                            Value::IntervalU64(
+                                crate::Interval::<u64>::new(1, 90).expect("nonempty interval"),
+                            ),
                             Value::Bool(false),
                             Value::U64(10),
                         ]),
@@ -53,7 +55,9 @@ fn theory() -> Schema {
                     Row {
                         handle: "Summer".into(),
                         values: Box::new([
-                            Value::IntervalU64(172, 265),
+                            Value::IntervalU64(
+                                crate::Interval::<u64>::new(172, 265).expect("nonempty interval"),
+                            ),
                             Value::Bool(true),
                             Value::U64(30),
                         ]),
@@ -61,7 +65,9 @@ fn theory() -> Schema {
                     Row {
                         handle: "Autumn".into(),
                         values: Box::new([
-                            Value::IntervalU64(265, 355),
+                            Value::IntervalU64(
+                                crate::Interval::<u64>::new(265, 355).expect("nonempty interval"),
+                            ),
                             Value::Bool(false),
                             Value::U64(20),
                         ]),
@@ -125,7 +131,9 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
     let spans = [(1u64, 90u64), (172, 265), (265, 355)];
     let encoded: Vec<[u8; 16]> = spans
         .iter()
-        .map(|(s, e)| encode_interval_u64(*s, *e))
+        .map(|(s, e)| {
+            encode_interval_u64(crate::Interval::<u64>::new(*s, *e).expect("nonempty interval"))
+        })
         .collect();
     let expected_starts: Vec<u64> = encoded
         .iter()

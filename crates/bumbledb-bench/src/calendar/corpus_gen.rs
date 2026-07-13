@@ -365,7 +365,10 @@ fn event_row(seed: u64, row: &SegmentRow) -> Vec<Value> {
     vec![
         Value::U64(event),
         Value::U64(row.person), // calendar id = owner id
-        Value::IntervalI64(row.segment.start, row.segment.end),
+        Value::IntervalI64(
+            bumbledb::Interval::<i64>::new(row.segment.start, row.segment.end)
+                .expect("nonempty interval"),
+        ),
         Value::I64(created_at(seed, event)),
         event_hash(seed, event),
     ]
@@ -410,7 +413,10 @@ fn claim_row(sizes: &CalSizes, row: &SegmentRow) -> Vec<Value> {
         Value::U64(source),
         Value::U64(row.person),
         Value::U64(arm),
-        Value::IntervalI64(row.segment.start, row.segment.end),
+        Value::IntervalI64(
+            bumbledb::Interval::<i64>::new(row.segment.start, row.segment.end)
+                .expect("nonempty interval"),
+        ),
     ]
 }
 
@@ -418,7 +424,14 @@ fn claim_row(sizes: &CalSizes, row: &SegmentRow) -> Vec<Value> {
 fn work_rows(seed: u64, person: u64) -> Vec<Vec<Value>> {
     work_chain(seed, person)
         .into_iter()
-        .map(|(start, end)| vec![Value::U64(person), Value::IntervalI64(start, end)])
+        .map(|(start, end)| {
+            vec![
+                Value::U64(person),
+                Value::IntervalI64(
+                    bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"),
+                ),
+            ]
+        })
         .collect()
 }
 
@@ -472,7 +485,10 @@ pub fn relation_rows_sized(
                     vec![
                         Value::U64(row.person),
                         Value::U64(row.event.expect("busy")),
-                        Value::IntervalI64(row.segment.start, row.segment.end),
+                        Value::IntervalI64(
+                            bumbledb::Interval::<i64>::new(row.segment.start, row.segment.end)
+                                .expect("nonempty interval"),
+                        ),
                     ]
                 }),
         ),

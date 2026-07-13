@@ -96,8 +96,12 @@ pub fn from_sqlite(
                         .map_err(|_| format!("column {}: non-UTF-8 text", column - 1))?,
                 ),
                 Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
-                Value::IntervalU64(start, end) => Owned::IntervalU64(start, end),
-                Value::IntervalI64(start, end) => Owned::IntervalI64(start, end),
+                Value::IntervalU64(interval) => {
+                    Owned::IntervalU64(interval.start(), interval.end())
+                }
+                Value::IntervalI64(interval) => {
+                    Owned::IntervalI64(interval.start(), interval.end())
+                }
                 Value::AllenMask(_) => {
                     return Err(format!(
                         "column {}: mask values are not results",

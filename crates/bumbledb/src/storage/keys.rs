@@ -384,13 +384,18 @@ mod tests {
         // 7-byte header is tag + relation(u32) + statement(u16).
         let mut guard = Vec::new();
         guard.extend_from_slice(&encode_u64(0xAAAA_BBBB_CCCC_DDDD));
-        guard.extend_from_slice(&encode_interval_u64(10, 20));
+        guard.extend_from_slice(&encode_interval_u64(
+            crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+        ));
         assert_eq!(guard.len(), 24);
 
         let k = key(|b| guard_key(b, RelationId(3), StatementId(9), &guard));
         assert_eq!(k.len(), 7 + 24);
         // The interval's 16 bytes sit unsplit at the guard's tail.
-        assert_eq!(&k[7 + 8..], encode_interval_u64(10, 20));
+        assert_eq!(
+            &k[7 + 8..],
+            encode_interval_u64(crate::Interval::<u64>::new(10, 20).expect("nonempty interval"))
+        );
         assert_eq!(&k[7..], &guard[..]);
     }
 
@@ -413,7 +418,9 @@ mod tests {
     fn reverse_key_with_interval_bearing_key_bytes_parses_back() {
         let mut key_bytes = Vec::new();
         key_bytes.extend_from_slice(&encode_u64(4));
-        key_bytes.extend_from_slice(&encode_interval_u64(100, 200));
+        key_bytes.extend_from_slice(&encode_interval_u64(
+            crate::Interval::<u64>::new(100, 200).expect("nonempty interval"),
+        ));
 
         let r = key(|b| reverse_key(b, StatementId(2), &key_bytes, RelationId(6), 77));
         let (stmt, parsed, src_rel, src_row) =
@@ -448,7 +455,9 @@ mod tests {
         encode_fact(
             &[
                 ValueRef::U64(0x1111_1111_1111_1111),
-                ValueRef::IntervalU64(3, 9),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(3, 9).expect("nonempty interval"),
+                ),
                 ValueRef::U64(0x2222_2222_2222_2222),
             ],
             &interval_layout(),
@@ -467,7 +476,9 @@ mod tests {
 
         let mut expected = Vec::new();
         expected.extend_from_slice(&encode_u64(0x2222_2222_2222_2222));
-        expected.extend_from_slice(&encode_interval_u64(3, 9));
+        expected.extend_from_slice(&encode_interval_u64(
+            crate::Interval::<u64>::new(3, 9).expect("nonempty interval"),
+        ));
         assert_eq!(guard, expected);
     }
 
@@ -492,7 +503,9 @@ mod tests {
         let mut expected = Vec::new();
         expected.extend_from_slice(&encode_u64(0x1111_1111_1111_1111)); // f0
         expected.extend_from_slice(&encode_u64(0x2222_2222_2222_2222)); // f2
-        expected.extend_from_slice(&encode_interval_u64(3, 9)); // f1, whole
+        expected.extend_from_slice(&encode_interval_u64(
+            crate::Interval::<u64>::new(3, 9).expect("nonempty interval"),
+        )); // f1, whole
         assert_eq!(key_bytes, expected);
 
         // The permutation-ordered R key round-trips through the parser.

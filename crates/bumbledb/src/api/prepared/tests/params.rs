@@ -167,7 +167,12 @@ fn insert_mandates(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64)])
     for (account, start, end) in rows {
         let mut bytes = Vec::new();
         encode_fact(
-            &[ValueRef::U64(*account), ValueRef::IntervalU64(*start, *end)],
+            &[
+                ValueRef::U64(*account),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                ),
+            ],
             schema.relation(RelationId(0)).layout(),
             &mut bytes,
         );
@@ -225,7 +230,9 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
                 mask: MaskTerm::Param(crate::ir::ParamId(0)),
             },
             lhs: Term::Var(VarId(1)),
-            rhs: Term::Literal(Value::IntervalU64(10, 20)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+            )),
         })],
     });
     let txn = env.read_txn().expect("txn");

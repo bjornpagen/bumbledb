@@ -300,7 +300,9 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
             mask: MaskTerm::Literal(AllenMask::DISJOINT),
         },
         var(1),
-        Term::Literal(Value::IntervalI64(i64::MAX - 1, i64::MAX)),
+        Term::Literal(Value::IntervalI64(
+            bumbledb::Interval::<i64>::new(i64::MAX - 1, i64::MAX).expect("nonempty interval"),
+        )),
     );
     let measure = |finds: Vec<FindTerm>, conditions: Vec<ConditionTree>| {
         query(Query::single(Rule {

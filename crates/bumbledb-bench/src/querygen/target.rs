@@ -813,7 +813,9 @@ pub fn corpus_row(
             vec![
                 Value::U64(account),
                 Value::U64(org),
-                Value::IntervalI64(start, end),
+                Value::IntervalI64(
+                    bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"),
+                ),
             ]
         }
         ids::TRANSFER => {
@@ -821,7 +823,9 @@ pub fn corpus_row(
             let mut row = vec![
                 Value::U64(i),
                 extref(cfg, i),
-                Value::IntervalU64(start, end),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
             ];
             row.extend(DIGEST_WIDTHS.map(|width| transfer_tag(cfg, i, width)));
             row

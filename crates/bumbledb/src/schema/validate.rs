@@ -606,10 +606,10 @@ fn validate_side_selection(
 }
 
 /// Roster "selection literal type mismatch (including out-of-range enum
-/// ordinals and non-UTF-8 string literals)", plus the interval bound rule
-/// `start < end` (an empty interval denotes no points, and a fact never
-/// denotes nothing) — the one shared [`value_matches`] check, so the σ
-/// rules cannot drift from the query-literal and dynamic-fact boundaries.
+/// ordinals and non-UTF-8 string literals)" — the one shared
+/// [`value_matches`] check, so the σ rules cannot drift from the
+/// query-literal and dynamic-fact boundaries. Interval literals already
+/// carry the checked [`crate::Interval`] representation.
 fn validate_selection_literal(
     id: StatementId,
     relation: RelationId,
@@ -624,11 +624,6 @@ fn validate_selection_literal(
             field,
         },
         ValueMismatch::Utf8 => SchemaError::SelectionLiteralNotUtf8 {
-            statement: id,
-            relation,
-            field,
-        },
-        ValueMismatch::IntervalEmpty => SchemaError::SelectionIntervalEmpty {
             statement: id,
             relation,
             field,
@@ -906,13 +901,6 @@ fn validate_extension(
         {
             let field_id = FieldId(u16::try_from(field_idx).expect("field count fits u16"));
             value_matches(value, &field.value_type).map_err(|mismatch| match mismatch {
-                // The constructor law holds for axioms too: a malformed
-                // ground axiom is a schema error, not corruption.
-                ValueMismatch::IntervalEmpty => SchemaError::ExtensionIntervalEmpty {
-                    relation: rel_id,
-                    row: row_idx,
-                    field: field_id,
-                },
                 // `str` columns are refused above, so Utf8 cannot arise;
                 // the match stays total and maps malformed internal data
                 // to the ordinary type-mismatch error.
@@ -930,8 +918,8 @@ fn validate_extension(
             // the witnessed write that eventually closes it needs an
             // ordinary relation. Rays stay honest values everywhere else.
             let is_ray = match value {
-                Value::IntervalU64(_, end) => *end == crate::Interval::<u64>::MAX_END,
-                Value::IntervalI64(_, end) => *end == crate::Interval::<i64>::MAX_END,
+                Value::IntervalU64(interval) => interval.is_ray(),
+                Value::IntervalI64(interval) => interval.is_ray(),
                 _ => false,
             };
             if is_ray {

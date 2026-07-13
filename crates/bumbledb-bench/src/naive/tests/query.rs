@@ -76,7 +76,12 @@ fn tag(posting: u64, tag: u64) -> (RelationId, Vec<Value>) {
 fn mandate(account: u64, start: u64, end: u64) -> (RelationId, Vec<Value>) {
     (
         MANDATE,
-        vec![Value::U64(account), Value::IntervalU64(start, end)],
+        vec![
+            Value::U64(account),
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
     )
 }
 
@@ -417,7 +422,9 @@ fn allen_masks_use_the_point_set_definitions() {
                 mask: MaskTerm::Literal(AllenMask::COVERS),
             },
             lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(16, 22)),
+            rhs: Term::Literal(Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(16, 22).expect("nonempty interval"),
+            )),
         })],
     });
     assert_eq!(

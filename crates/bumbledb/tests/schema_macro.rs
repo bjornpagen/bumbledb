@@ -499,7 +499,12 @@ mod selection_literals {
         assert_eq!(
             target.selection[..],
             [
-                (FieldId(1), Value::IntervalI64(-10, 10)),
+                (
+                    FieldId(1),
+                    Value::IntervalI64(
+                        bumbledb::Interval::<i64>::new(-10, 10).expect("nonempty interval")
+                    )
+                ),
                 (FieldId(2), Value::I64(-3)),
                 (FieldId(3), Value::Bool(true)),
                 (FieldId(4), Value::String(Box::from(&b"north"[..]))),

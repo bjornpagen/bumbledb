@@ -440,38 +440,6 @@ fn rejects_non_utf8_string_selection_literal() {
 
 /// The interval literal bound rule: `start >= end` denotes no points, and a
 /// fact never denotes nothing.
-#[test]
-fn rejects_empty_interval_selection_literal() {
-    let decl = two_relations(
-        vec![
-            field("a", ValueType::U64),
-            field(
-                "span",
-                ValueType::Interval {
-                    element: IntervalElement::U64,
-                },
-            ),
-        ],
-        vec![field("x", ValueType::U64)],
-        vec![containment(
-            side_where(
-                RelationId(0),
-                &[FieldId(0)],
-                vec![(FieldId(1), Value::IntervalU64(5, 5))],
-            ),
-            side(RelationId(1), &[FieldId(0)]),
-        )],
-    );
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::SelectionIntervalEmpty {
-            statement: StatementId(0),
-            relation: RelationId(0),
-            field: FieldId(1)
-        }
-    );
-}
-
 /// Roster "IND whose target projection matches no key of the target".
 #[test]
 fn rejects_no_matching_target_key() {
@@ -679,33 +647,6 @@ fn rejects_an_extension_value_type_mismatch() {
 }
 
 #[test]
-fn rejects_an_empty_interval_axiom() {
-    // The constructor law holds for axioms too: a malformed ground axiom
-    // is a schema error, not corruption.
-    let decl = SchemaDescriptor {
-        relations: vec![closed(
-            "Quarter",
-            vec![field(
-                "span",
-                ValueType::Interval {
-                    element: IntervalElement::U64,
-                },
-            )],
-            vec![row("Q1", vec![Value::IntervalU64(5, 5)])],
-        )],
-        statements: vec![],
-    };
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::ExtensionIntervalEmpty {
-            relation: RelationId(0),
-            row: 0,
-            field: FieldId(1)
-        }
-    );
-}
-
-#[test]
 fn rejects_a_ray_axiom() {
     // The ray refusal (`docs/architecture/10-data-model.md`): `[s, ∞)` says the
     // theory's constant is still running, and a still-running span is
@@ -725,15 +666,25 @@ fn rejects_a_ray_axiom() {
         field: FieldId(1),
     };
     assert_eq!(
-        of_element(IntervalElement::U64, Value::IntervalU64(5, u64::MAX))
-            .validate()
-            .unwrap_err(),
+        of_element(
+            IntervalElement::U64,
+            Value::IntervalU64(
+                crate::Interval::<u64>::new(5, u64::MAX).expect("nonempty interval")
+            )
+        )
+        .validate()
+        .unwrap_err(),
         expected
     );
     assert_eq!(
-        of_element(IntervalElement::I64, Value::IntervalI64(5, i64::MAX))
-            .validate()
-            .unwrap_err(),
+        of_element(
+            IntervalElement::I64,
+            Value::IntervalI64(
+                crate::Interval::<i64>::new(5, i64::MAX).expect("nonempty interval")
+            )
+        )
+        .validate()
+        .unwrap_err(),
         expected
     );
 }
@@ -814,7 +765,12 @@ fn closed_window() -> RelationDescriptor {
                 element: IntervalElement::U64,
             },
         )],
-        vec![row("Morning", vec![Value::IntervalU64(6, 12)])],
+        vec![row(
+            "Morning",
+            vec![Value::IntervalU64(
+                crate::Interval::<u64>::new(6, 12).expect("nonempty interval"),
+            )],
+        )],
     )
 }
 
@@ -991,8 +947,18 @@ fn rejects_a_declared_pointwise_key_the_axioms_refute() {
                 },
             )],
             vec![
-                row("Morning", vec![Value::IntervalU64(6, 12)]),
-                row("Brunch", vec![Value::IntervalU64(10, 14)]),
+                row(
+                    "Morning",
+                    vec![Value::IntervalU64(
+                        crate::Interval::<u64>::new(6, 12).expect("nonempty interval"),
+                    )],
+                ),
+                row(
+                    "Brunch",
+                    vec![Value::IntervalU64(
+                        crate::Interval::<u64>::new(10, 14).expect("nonempty interval"),
+                    )],
+                ),
             ],
         )],
         statements: vec![fd(RelationId(0), &[FieldId(1)])],

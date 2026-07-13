@@ -78,11 +78,6 @@ impl fmt::Display for FactShapeError {
                 "relation {}, field {}: string bytes are not UTF-8",
                 relation.0, field.0
             ),
-            Self::EmptyInterval { relation, field } => write!(
-                f,
-                "relation {}, field {}: interval start >= end",
-                relation.0, field.0
-            ),
             Self::NotAKeyStatement {
                 relation,
                 statement,
@@ -209,15 +204,6 @@ impl fmt::Display for SchemaError {
             } => write!(
                 f,
                 "relation {}, row {row}: value type mismatch at field {}",
-                r.0, fd.0
-            ),
-            Self::ExtensionIntervalEmpty {
-                relation: r,
-                row,
-                field: fd,
-            } => write!(
-                f,
-                "relation {}, row {row}: interval axiom start >= end at field {}",
                 r.0, fd.0
             ),
             Self::ExtensionIntervalRay {
@@ -358,15 +344,6 @@ impl fmt::Display for SchemaError {
                 "statement {}: string literal is not UTF-8 at relation {}, field {}",
                 s.0, r.0, fd.0
             ),
-            Self::SelectionIntervalEmpty {
-                statement: s,
-                relation: r,
-                field: fd,
-            } => write!(
-                f,
-                "statement {}: interval literal start >= end at relation {}, field {}",
-                s.0, r.0, fd.0
-            ),
             Self::NoMatchingTargetKey {
                 statement: s,
                 relation: r,
@@ -470,11 +447,6 @@ impl fmt::Display for ValidationError {
             Self::LiteralTypeMismatch { atom, field } => {
                 write!(f, "atom {atom}: literal type mismatch at field {}", field.0)
             }
-            Self::EmptyIntervalLiteral { atom, field } => write!(
-                f,
-                "atom {atom}: interval literal start >= end at field {}",
-                field.0
-            ),
             Self::PointLiteralAtCeiling { atom, field } => write!(
                 f,
                 "atom {atom}: point literal at the domain ceiling at field {} — \
@@ -519,9 +491,6 @@ impl fmt::Display for ValidationError {
             }
             Self::SelfComparison { index } => {
                 write!(f, "comparison {index}: a variable compared with itself")
-            }
-            Self::ComparisonEmptyIntervalLiteral { index } => {
-                write!(f, "comparison {index}: interval literal start >= end")
             }
             Self::ComparisonPointLiteralAtCeiling { index } => write!(
                 f,
@@ -855,7 +824,6 @@ impl SchemaError {
             | Self::DuplicateExtensionHandle { .. }
             | Self::ExtensionArityMismatch { .. }
             | Self::ExtensionValueTypeMismatch { .. }
-            | Self::ExtensionIntervalEmpty { .. }
             | Self::ExtensionIntervalRay { .. }
             | Self::StrOnClosedRelation { .. }
             | Self::FreshOnClosedRelation { .. } => None,
@@ -873,7 +841,6 @@ impl SchemaError {
             | Self::SelectedFieldProjected { statement, .. }
             | Self::SelectionLiteralTypeMismatch { statement, .. }
             | Self::SelectionLiteralNotUtf8 { statement, .. }
-            | Self::SelectionIntervalEmpty { statement, .. }
             | Self::NoMatchingTargetKey { statement, .. }
             | Self::NoPointwiseTargetKey { statement, .. }
             | Self::ClosedContainmentInterval { statement, .. }

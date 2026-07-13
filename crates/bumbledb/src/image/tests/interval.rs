@@ -60,7 +60,9 @@ fn fact(schema: &Schema, id: u64, start: i64, end: i64, kind: bool) -> Vec<u8> {
     encode_fact(
         &[
             ValueRef::U64(id),
-            ValueRef::IntervalI64(start, end),
+            ValueRef::IntervalI64(
+                crate::Interval::<i64>::new(start, end).expect("nonempty interval"),
+            ),
             ValueRef::Bool(kind),
         ],
         schema.relation(T).layout(),

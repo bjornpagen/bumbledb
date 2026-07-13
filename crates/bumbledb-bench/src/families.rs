@@ -57,8 +57,8 @@ pub fn bind_value(value: &Value) -> BindValue<'_> {
             BindValue::Str(std::str::from_utf8(raw).expect("corpus strings are UTF-8"))
         }
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
-        Value::IntervalU64(start, end) => BindValue::IntervalU64(*start, *end),
-        Value::IntervalI64(start, end) => BindValue::IntervalI64(*start, *end),
+        Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
+        Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
         Value::AllenMask(mask) => BindValue::AllenMask(*mask),
     }
 }

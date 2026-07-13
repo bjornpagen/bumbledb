@@ -107,7 +107,7 @@ fn busy_scan_query() -> Query {
 const ACTIVE_SPAN: i64 = 22_000_000;
 
 fn window(at: i64, width: i64) -> Value {
-    Value::IntervalI64(at, at + width)
+    Value::IntervalI64(bumbledb::Interval::<i64>::new(at, at + width).expect("nonempty interval"))
 }
 
 fn busy_scan_params(_: &GenConfig) -> Vec<Draw> {
@@ -153,8 +153,13 @@ fn meets_chain_query() -> Query {
 
 fn meets_chain_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = CalSizes::of(cfg.scale);
-    let full = Value::IntervalI64(CAL_BASE - HOUR, CAL_HORIZON);
-    let quarter = Value::IntervalI64(CAL_BASE - HOUR, CAL_BASE + ACTIVE_SPAN / 4);
+    let full = Value::IntervalI64(
+        bumbledb::Interval::<i64>::new(CAL_BASE - HOUR, CAL_HORIZON).expect("nonempty interval"),
+    );
+    let quarter = Value::IntervalI64(
+        bumbledb::Interval::<i64>::new(CAL_BASE - HOUR, CAL_BASE + ACTIVE_SPAN / 4)
+            .expect("nonempty interval"),
+    );
     vec![
         scalar_draw(vec![Value::U64(0), full.clone()]),
         scalar_draw(vec![Value::U64(sizes.persons / 2), full.clone()]),
@@ -314,7 +319,10 @@ fn free_busy_query() -> Query {
 
 fn free_busy_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = CalSizes::of(cfg.scale);
-    let wide = Value::IntervalI64(CAL_BASE - HOUR, CAL_BASE + ACTIVE_SPAN);
+    let wide = Value::IntervalI64(
+        bumbledb::Interval::<i64>::new(CAL_BASE - HOUR, CAL_BASE + ACTIVE_SPAN)
+            .expect("nonempty interval"),
+    );
     let narrow = window(CAL_BASE + ACTIVE_SPAN / 8, ACTIVE_SPAN / 64);
     vec![
         scalar_draw(vec![Value::U64(0), wide.clone()]),
@@ -354,8 +362,7 @@ fn claim_hours_query() -> Query {
         conditions: vec![allen(
             var(2),
             Term::Literal(Value::IntervalI64(
-                CAL_HORIZON,
-                bumbledb::Interval::<i64>::MAX_END,
+                bumbledb::Interval::<i64>::ray(CAL_HORIZON).expect("calendar ray"),
             )),
             AllenMask::DISJOINT,
         )],
@@ -634,7 +641,7 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
         let start = CAL_BASE - HOUR + i64::try_from(rng.range(span)).expect("fits");
         let width = 1 + i64::try_from(rng.range(u64::try_from(max_width).expect("positive")))
             .expect("fits");
-        Value::IntervalI64(start, start + width)
+        window(start, width)
     };
     match name {
         "busy_scan" => Some(scalar_draw(vec![window(rng, ACTIVE_SPAN / 8)])),
@@ -670,7 +677,7 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
 /// these make every join produce witnesses).
 #[must_use]
 pub fn unit_draw(name: &str, seed: u64, sizes: &CalSizes) -> Draw {
-    let wide = Value::IntervalI64(CAL_BASE - HOUR, CAL_HORIZON - 1);
+    let wide = window(CAL_BASE - HOUR, CAL_HORIZON - CAL_BASE + HOUR - 1);
     match name {
         "busy_scan" => scalar_draw(vec![wide]),
         "meets_chain" | "free_busy" => scalar_draw(vec![Value::U64(0), wide]),

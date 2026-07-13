@@ -124,7 +124,9 @@ fn deleting_a_fact_with_a_scrubbed_interval_guard_is_corruption() {
     {
         let mut guard = Vec::new();
         guard.extend_from_slice(&encode_u64(1));
-        guard.extend_from_slice(&encode_interval_u64(10, 20));
+        guard.extend_from_slice(&encode_interval_u64(
+            crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+        ));
         let mut wtxn = env.write_txn().expect("wtxn");
         let mut key: KeyBuf = [0; MAX_KEY];
         let u_len = keys::guard_key(&mut key, BOOKING, BOOKING_KEY, &guard);
@@ -432,7 +434,9 @@ fn rederived_guard_keys_match_independent_computation() {
     ))));
     let mut booking_guard = Vec::new();
     booking_guard.extend_from_slice(&encode_u64(3));
-    booking_guard.extend_from_slice(&encode_interval_u64(100, 200));
+    booking_guard.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(100, 200).expect("nonempty interval"),
+    ));
     assert!(keys_present.contains(&key(|b| keys::guard_key(
         b,
         BOOKING,

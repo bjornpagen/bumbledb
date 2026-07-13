@@ -151,14 +151,6 @@ pub enum SchemaError {
         row: usize,
         field: FieldId,
     },
-    /// An interval ground axiom with `start >= end`: the constructor law
-    /// holds for axioms too — a malformed ground axiom is a schema error,
-    /// not corruption.
-    ExtensionIntervalEmpty {
-        relation: RelationId,
-        row: usize,
-        field: FieldId,
-    },
     /// A ray `[start, ∞)` as a ground axiom: an unbounded end says the
     /// theory's constant is still running, and a still-running span is
     /// policy, not an intrinsic property (the intrinsic-vs-policy law) —
@@ -280,13 +272,6 @@ pub enum SchemaError {
         relation: RelationId,
         field: FieldId,
     },
-    /// Roster "selection literal type mismatch", the interval bound rule:
-    /// `start >= end` denotes no points, and a fact never denotes nothing.
-    SelectionIntervalEmpty {
-        statement: StatementId,
-        relation: RelationId,
-        field: FieldId,
-    },
     /// Roster "IND whose target projection matches no key of the target":
     /// probe-ability requires Y to be a permutation of a declared key.
     NoMatchingTargetKey {
@@ -366,13 +351,6 @@ pub enum FactShapeError {
     },
     /// `Value::String` bytes are not UTF-8.
     InvalidUtf8 {
-        relation: RelationId,
-        field: FieldId,
-    },
-    /// An interval value with `start >= end`: the empty interval denotes
-    /// no points, and a fact never denotes nothing
-    /// (`docs/architecture/10-data-model.md`).
-    EmptyInterval {
         relation: RelationId,
         field: FieldId,
     },
@@ -477,14 +455,6 @@ pub enum ValidationError {
         atom: usize,
         field: FieldId,
     },
-    /// An interval literal with `start >= end` in a binding position — it
-    /// denotes no points, and no field value equals or contains nothing
-    /// (comparison sites report
-    /// [`ValidationError::ComparisonEmptyIntervalLiteral`]).
-    EmptyIntervalLiteral {
-        atom: usize,
-        field: FieldId,
-    },
     /// The point-domain law (`docs/architecture/10-data-model.md`): points
     /// are `MIN ..= MAX−1`; `end == MAX` denotes the ray `[s, ∞)`, so an
     /// element-typed literal equal to the domain ceiling in a membership
@@ -546,12 +516,6 @@ pub enum ValidationError {
     /// Both sides are the same variable — constant-valued; write the
     /// query you mean.
     SelfComparison {
-        index: usize,
-    },
-    /// An interval literal with `start >= end` in a comparison position
-    /// (the binding-site sibling of
-    /// [`ValidationError::EmptyIntervalLiteral`]).
-    ComparisonEmptyIntervalLiteral {
         index: usize,
     },
     /// An element-typed literal equal to the domain ceiling as a

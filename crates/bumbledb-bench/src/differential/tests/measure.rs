@@ -65,6 +65,18 @@ const STAY: RelationId = RelationId(0);
 const SHIFT: RelationId = RelationId(1);
 const LIMIT: RelationId = RelationId(2);
 
+fn interval_u64(start: u64, end: u64) -> Value {
+    Value::IntervalU64(
+        bumbledb::Interval::<u64>::new(start, end).expect("fixture interval is nonempty"),
+    )
+}
+
+fn interval_i64(start: i64, end: i64) -> Value {
+    Value::IntervalI64(
+        bumbledb::Interval::<i64>::new(start, end).expect("fixture interval is nonempty"),
+    )
+}
+
 fn stay_atom() -> Atom {
     atom(STAY, &[(0, var(0)), (1, var(1)), (2, var(2))])
 }
@@ -91,18 +103,52 @@ fn bounded_corpus() -> Delta {
         inserts: vec![
             (
                 STAY,
-                vec![Value::U64(0), Value::IntervalU64(5, 6), Value::U64(1)],
+                vec![
+                    Value::U64(0),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(5, 6).expect("nonempty interval"),
+                    ),
+                    Value::U64(1),
+                ],
             ),
             (
                 STAY,
-                vec![Value::U64(1), Value::IntervalU64(10, 25), Value::U64(20)],
+                vec![
+                    Value::U64(1),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(10, 25).expect("nonempty interval"),
+                    ),
+                    Value::U64(20),
+                ],
             ),
             (
                 STAY,
-                vec![Value::U64(2), Value::IntervalU64(3, 11), Value::U64(8)],
+                vec![
+                    Value::U64(2),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(3, 11).expect("nonempty interval"),
+                    ),
+                    Value::U64(8),
+                ],
             ),
-            (SHIFT, vec![Value::U64(0), Value::IntervalI64(-4, 4)]),
-            (SHIFT, vec![Value::U64(1), Value::IntervalI64(7, 8)]),
+            (
+                SHIFT,
+                vec![
+                    Value::U64(0),
+                    Value::IntervalI64(
+                        bumbledb::Interval::<i64>::new(-4, 4).expect("nonempty interval"),
+                    ),
+                ],
+            ),
+            (
+                SHIFT,
+                vec![
+                    Value::U64(1),
+                    Value::IntervalI64(
+                        bumbledb::Interval::<i64>::new(7, 8).expect("nonempty interval"),
+                    ),
+                ],
+            ),
             (LIMIT, vec![Value::U64(0), Value::U64(2)]),
             (LIMIT, vec![Value::U64(1), Value::U64(14)]),
             (LIMIT, vec![Value::U64(2), Value::U64(9)]),
@@ -269,29 +315,21 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
         inserts: vec![
             (
                 STAY,
-                vec![
-                    Value::U64(0),
-                    Value::IntervalU64(0, u64::MAX - 1),
-                    Value::U64(0),
-                ],
+                vec![Value::U64(0), interval_u64(0, u64::MAX - 1), Value::U64(0)],
             ),
             (
                 STAY,
-                vec![
-                    Value::U64(0),
-                    Value::IntervalU64(1, u64::MAX - 1),
-                    Value::U64(0),
-                ],
+                vec![Value::U64(0), interval_u64(1, u64::MAX - 1), Value::U64(0)],
             ),
             (
                 SHIFT,
-                vec![Value::U64(0), Value::IntervalI64(i64::MIN, i64::MAX - 1)],
+                vec![Value::U64(0), interval_i64(i64::MIN, i64::MAX - 1)],
             ),
             (
                 STAY,
                 vec![
                     Value::U64(7),
-                    Value::IntervalU64(3, u64::MAX), // the ray [3, ∞)
+                    interval_u64(3, u64::MAX), // the ray [3, ∞)
                     Value::U64(0),
                 ],
             ),
@@ -329,7 +367,7 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
                 mask: MaskTerm::Literal(AllenMask::DISJOINT),
             },
             lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(u64::MAX - 1, u64::MAX)),
+            rhs: Term::Literal(interval_u64(u64::MAX - 1, u64::MAX)),
         })],
     );
 

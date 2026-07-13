@@ -492,10 +492,15 @@ pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Valu
         ValueType::Interval {
             element: IntervalElement::I64,
         } => Value::IntervalI64(
-            decode_i64(pair.0.to_be_bytes()),
-            decode_i64(pair.1.to_be_bytes()),
+            crate::Interval::<i64>::new(
+                decode_i64(pair.0.to_be_bytes()),
+                decode_i64(pair.1.to_be_bytes()),
+            )
+            .expect("validated interval constant"),
         ),
-        _ => Value::IntervalU64(pair.0, pair.1),
+        _ => Value::IntervalU64(
+            crate::Interval::<u64>::new(pair.0, pair.1).expect("validated interval constant"),
+        ),
     }
 }
 

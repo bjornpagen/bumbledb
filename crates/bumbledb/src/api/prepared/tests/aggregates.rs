@@ -368,7 +368,9 @@ fn insert_payroll(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i
             &[
                 ValueRef::U64(*id),
                 ValueRef::U64(*emp),
-                ValueRef::IntervalI64(*start, *end),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(PAYROLL).layout(),
             &mut bytes,

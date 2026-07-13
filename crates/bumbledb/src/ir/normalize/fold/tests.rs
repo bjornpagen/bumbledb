@@ -336,14 +336,18 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
             ConditionTree::Leaf(Comparison {
                 op: CmpOp::Eq,
                 lhs: Term::Var(VarId(0)),
-                rhs: Term::Literal(Value::IntervalI64(2, 5)),
+                rhs: Term::Literal(Value::IntervalI64(
+                    crate::Interval::<i64>::new(2, 5).expect("nonempty interval"),
+                )),
             }),
             ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
                     mask: MaskTerm::Literal(AllenMask::AFTER),
                 },
                 lhs: Term::Var(VarId(0)),
-                rhs: Term::Literal(Value::IntervalI64(7, 9)),
+                rhs: Term::Literal(Value::IntervalI64(
+                    crate::Interval::<i64>::new(7, 9).expect("nonempty interval"),
+                )),
             }),
         ],
     });
@@ -363,7 +367,9 @@ fn a_pinned_point_outside_a_constant_interval_kills_the_rule() {
             cmp(CmpOp::Eq, Term::Literal(Value::I64(7))),
             Comparison {
                 op: CmpOp::Contains,
-                lhs: Term::Literal(Value::IntervalI64(2, 5)),
+                lhs: Term::Literal(Value::IntervalI64(
+                    crate::Interval::<i64>::new(2, 5).expect("nonempty interval"),
+                )),
                 rhs: Term::Var(VarId(0)),
             },
         ]),

@@ -56,8 +56,10 @@ fn sql_literal(value: &Value) -> Result<String, String> {
 /// endpoints (u64 halves under the same `< 2⁶³` axiom as scalar u64).
 fn interval_halves(value: &Value) -> Result<(String, String), String> {
     match value {
-        Value::IntervalU64(start, end) => Ok((sql_u64(*start)?, sql_u64(*end)?)),
-        Value::IntervalI64(start, end) => Ok((start.to_string(), end.to_string())),
+        Value::IntervalU64(interval) => Ok((sql_u64(interval.start())?, sql_u64(interval.end())?)),
+        Value::IntervalI64(interval) => {
+            Ok((interval.start().to_string(), interval.end().to_string()))
+        }
         _ => Err("scalar literal in an interval position".to_owned()),
     }
 }

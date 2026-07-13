@@ -126,12 +126,17 @@ fn value(rng: &mut Rng) -> Value {
         }
         10 => {
             let start = rng.below(50);
-            // start < end, start == end, and start > end all occur.
-            let end = rng.below(60);
-            Value::IntervalU64(start, end)
+            let end = start + rng.below(10) + 1;
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            )
         }
-        11 => Value::IntervalU64(rng.below(10), u64::MAX), // the ray
-        12 => Value::IntervalI64(-5, i64::MAX),
+        11 => Value::IntervalU64(
+            bumbledb::Interval::<u64>::ray(rng.below(10)).expect("ray start is below MAX"),
+        ),
+        12 => Value::IntervalI64(
+            bumbledb::Interval::<i64>::new(-5, i64::MAX).expect("nonempty interval"),
+        ),
         13 => Value::AllenMask(AllenMask::DISJOINT),
         _ => unreachable!("below(14)"),
     }
@@ -440,14 +445,10 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                     .push((Gauntlet::BUSY_DURING, Term::Literal(Value::U64(u64::MAX))));
             }
         }
-        // An empty interval literal.
+        // An empty interval literal cannot enter the IR: the constructor is
+        // the rejection boundary.
         7 => {
-            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
-                atom.bindings.push((
-                    Gauntlet::BUSY_DURING,
-                    Term::Literal(Value::IntervalU64(7, 7)),
-                ));
-            }
+            assert!(bumbledb::Interval::<u64>::new(7, 7).is_none());
         }
         // The DNF blowup: wide Or of Ands past the cap.
         8 => {

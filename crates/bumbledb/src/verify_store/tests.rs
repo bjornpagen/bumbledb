@@ -158,11 +158,29 @@ fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
             HOLDER,
             vec![Value::U64(2), Value::String("bob".as_bytes().into())],
         ),
-        (BOOKING, vec![Value::U64(7), Value::IntervalU64(0, 10)]),
-        (BOOKING, vec![Value::U64(7), Value::IntervalU64(20, 30)]),
+        (
+            BOOKING,
+            vec![
+                Value::U64(7),
+                Value::IntervalU64(crate::Interval::<u64>::new(0, 10).expect("nonempty interval")),
+            ],
+        ),
+        (
+            BOOKING,
+            vec![
+                Value::U64(7),
+                Value::IntervalU64(crate::Interval::<u64>::new(20, 30).expect("nonempty interval")),
+            ],
+        ),
         (ACCOUNT, vec![Value::U64(1), Value::U64(0)]),
         (ACCOUNT, vec![Value::U64(2), Value::U64(1)]),
-        (CLAIM, vec![Value::U64(7), Value::IntervalU64(2, 8)]),
+        (
+            CLAIM,
+            vec![
+                Value::U64(7),
+                Value::IntervalU64(crate::Interval::<u64>::new(2, 8).expect("nonempty interval")),
+            ],
+        ),
     ];
     for (rel, values) in facts {
         db.write(|tx| tx.insert_dyn(*rel, values).map(|_| ()))
@@ -191,7 +209,12 @@ fn raw_write(db: &Db<SchemaDescriptor>, f: impl FnOnce(&mut crate::storage::env:
 fn booking_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> Vec<u8> {
     let mut out = Vec::new();
     encode_fact(
-        &[ValueRef::U64(room), ValueRef::IntervalU64(start, end)],
+        &[
+            ValueRef::U64(room),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
         db.schema().relation(BOOKING).layout(),
         &mut out,
     );
@@ -202,7 +225,9 @@ fn booking_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> 
 fn booking_guard(room: u64, start: u64, end: u64) -> Vec<u8> {
     let mut guard = Vec::new();
     guard.extend_from_slice(&encode_u64(room));
-    guard.extend_from_slice(&encode_interval_u64(start, end));
+    guard.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+    ));
     guard
 }
 
@@ -219,7 +244,12 @@ fn account_bytes(db: &Db<SchemaDescriptor>, holder: u64, kind: u64) -> Vec<u8> {
 fn claim_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> Vec<u8> {
     let mut out = Vec::new();
     encode_fact(
-        &[ValueRef::U64(room), ValueRef::IntervalU64(start, end)],
+        &[
+            ValueRef::U64(room),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
         db.schema().relation(CLAIM).layout(),
         &mut out,
     );

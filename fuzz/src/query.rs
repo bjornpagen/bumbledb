@@ -222,7 +222,6 @@ fn validation_variant(rejection: &ValidationError) -> &'static str {
         ValidationError::DuplicateFieldBinding { .. } => "DuplicateFieldBinding",
         ValidationError::VariableTypeConflict { .. } => "VariableTypeConflict",
         ValidationError::LiteralTypeMismatch { .. } => "LiteralTypeMismatch",
-        ValidationError::EmptyIntervalLiteral { .. } => "EmptyIntervalLiteral",
         ValidationError::PointLiteralAtCeiling { .. } => "PointLiteralAtCeiling",
         ValidationError::ParamIdGap { .. } => "ParamIdGap",
         ValidationError::ParamTypeConflict { .. } => "ParamTypeConflict",
@@ -234,7 +233,6 @@ fn validation_variant(rejection: &ValidationError) -> &'static str {
         ValidationError::OrderComparisonOnFixedBytes { .. } => "OrderComparisonOnFixedBytes",
         ValidationError::ConstantComparison { .. } => "ConstantComparison",
         ValidationError::SelfComparison { .. } => "SelfComparison",
-        ValidationError::ComparisonEmptyIntervalLiteral { .. } => "ComparisonEmptyIntervalLiteral",
         ValidationError::ComparisonPointLiteralAtCeiling { .. } => {
             "ComparisonPointLiteralAtCeiling"
         }

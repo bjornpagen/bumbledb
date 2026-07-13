@@ -147,7 +147,9 @@ fn selection_negation_and_literal_mask_golden() {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },
             lhs: Term::Var(VarId(1)),
-            rhs: Term::Literal(Value::IntervalU64(100, 200)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(100, 200).expect("nonempty interval"),
+            )),
         })],
     });
     let schema = calendar();
@@ -352,7 +354,9 @@ fn mask_union_spelling() {
                 mask: MaskTerm::Literal(mask),
             },
             lhs: Term::Var(VarId(1)),
-            rhs: Term::Literal(Value::IntervalU64(5, 9)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(5, 9).expect("nonempty interval"),
+            )),
         })],
     });
     assert_eq!(

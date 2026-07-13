@@ -74,7 +74,9 @@ fn insert_busy(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64, (u64,
                 ValueRef::U64(*id),
                 ValueRef::U64(*person),
                 ValueRef::U64(*cap),
-                ValueRef::IntervalU64(*start, *end),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(BUSY).layout(),
             &mut bytes,
@@ -94,7 +96,9 @@ fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
             &[
                 ValueRef::U64(*id),
                 ValueRef::U64(*person),
-                ValueRef::IntervalI64(*start, *end),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(SHIFT).layout(),
             &mut bytes,

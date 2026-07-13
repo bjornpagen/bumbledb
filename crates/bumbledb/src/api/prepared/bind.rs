@@ -645,8 +645,8 @@ fn element_view(value: &Value) -> Option<BindValue<'_>> {
         Value::I64(v) => BindValue::I64(*v),
         Value::String(raw) => BindValue::Str(std::str::from_utf8(raw).ok()?),
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
-        Value::IntervalU64(start, end) => BindValue::IntervalU64(*start, *end),
-        Value::IntervalI64(start, end) => BindValue::IntervalI64(*start, *end),
+        Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
+        Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
         // A mask is no element type — a set never holds masks; the
         // caller reports the element mismatch.
         Value::AllenMask(_) => return None,

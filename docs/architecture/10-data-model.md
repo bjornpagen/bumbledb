@@ -109,10 +109,13 @@ timestamp in it. **Reverses if:** never — the jobs are covered separately and 
 ## Interval: the denotation
 
 An `Interval` value `[s, e)` is **a set of points, written as its bounds** —
-half-open over the element domain, `s < e` enforced at the encoding boundary exactly
-as Bool's strict 0/1 is (a stored `s ≥ e` is corruption, and the empty interval is
-unrepresentable: a fact never denotes nothing). Half-open and nonempty are not house
-conventions but **Allen's algebra's preconditions**: the 13 basic interval relations
+half-open over the element domain. `Interval::new` is the one construction boundary:
+`Value` and the encoding layer carry that checked type, so malformed intervals are
+unconstructible in any encodable value. Decoding still rejects stored `s ≥ e` as
+corruption; that check detects damage at rest rather than repairing host input. The
+empty interval is unrepresentable because a fact never denotes nothing. Half-open
+and nonempty are not house conventions but **Allen's algebra's preconditions**: the
+13 basic interval relations
 are jointly exhaustive and pairwise disjoint (JEPD) only over nonempty intervals —
 an empty interval satisfies none of them cleanly — and *meets* (`a.end == b.start`,
 no shared point) is only well-defined half-open; closed intervals would make meeting

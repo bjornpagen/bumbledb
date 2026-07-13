@@ -92,11 +92,15 @@ fn theory() -> Schema {
                 extension: Some(Box::new([
                     Row {
                         handle: "X".into(),
-                        values: Box::new([Value::IntervalU64(2, 5)]),
+                        values: Box::new([Value::IntervalU64(
+                            crate::Interval::<u64>::new(2, 5).expect("nonempty interval"),
+                        )]),
                     },
                     Row {
                         handle: "Y".into(),
-                        values: Box::new([Value::IntervalU64(5, 9)]),
+                        values: Box::new([Value::IntervalU64(
+                            crate::Interval::<u64>::new(5, 9).expect("nonempty interval"),
+                        )]),
                     },
                 ])),
                 name: "Cal".into(),
@@ -893,7 +897,9 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
                 mask: MaskTerm::Literal(AllenMask::BEFORE),
             },
             lhs: var(2),
-            rhs: Term::Literal(Value::IntervalU64(6, 8)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(6, 8).expect("nonempty interval"),
+            )),
         })],
     });
     let normalized = chased(&schema, &allen);

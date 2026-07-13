@@ -205,7 +205,9 @@ fn room(schema: &Schema, room: u64, start: u64, end: u64, tag: u64) -> Vec<u8> {
         ROOM,
         &[
             ValueRef::U64(room),
-            ValueRef::IntervalU64(start, end),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
             ValueRef::U64(tag),
         ],
     )
@@ -215,7 +217,12 @@ fn stay(schema: &Schema, room: u64, start: u64, end: u64) -> Vec<u8> {
     fact(
         schema,
         STAY,
-        &[ValueRef::U64(room), ValueRef::IntervalU64(start, end)],
+        &[
+            ValueRef::U64(room),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
     )
 }
 
@@ -323,7 +330,9 @@ fn scalar_and_pointwise_guards_carry_exact_bytes() {
     let room_op = op_for(&plan.inserts, ROOM, &r);
     let mut room_guard = Vec::new();
     room_guard.extend_from_slice(&encode_u64(3));
-    room_guard.extend_from_slice(&encode_interval_u64(10, 20));
+    room_guard.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+    ));
     let [guard] = &*room_op.guards else {
         panic!("one key statement");
     };
@@ -426,7 +435,9 @@ fn interval_edges_are_marked_for_the_coverage_walk() {
 
     let mut expected = Vec::new();
     expected.extend_from_slice(&encode_u64(3));
-    expected.extend_from_slice(&encode_interval_u64(12, 15));
+    expected.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(12, 15).expect("nonempty interval"),
+    ));
     let [edge] = &*op_for(&plan.inserts, STAY, &s).edges else {
         panic!("one outgoing statement");
     };
@@ -550,7 +561,9 @@ fn pointwise_tuple_keeps_its_interval_tail_and_coverage_marker() {
     assert_eq!(schema.key(check.key).relation, ROOM);
     let mut guard = Vec::new();
     guard.extend_from_slice(&encode_u64(3));
-    guard.extend_from_slice(&encode_interval_u64(10, 20));
+    guard.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+    ));
     assert_eq!(&*check.guard, guard.as_slice());
     let [dependent] = &*check.dependents else {
         panic!("one dependent");

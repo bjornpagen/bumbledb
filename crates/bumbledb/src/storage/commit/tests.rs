@@ -188,7 +188,9 @@ fn booking_fact(schema: &Schema, room: u64, start: u64, end: u64, tag: u64) -> V
         BOOKING,
         &[
             ValueRef::U64(room),
-            ValueRef::IntervalU64(start, end),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
             ValueRef::U64(tag),
         ],
     )

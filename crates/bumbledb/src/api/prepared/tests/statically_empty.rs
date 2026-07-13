@@ -61,7 +61,9 @@ fn insert_events(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
             &[
                 ValueRef::U64(*id),
                 ValueRef::U64(*kind),
-                ValueRef::IntervalI64(*start, *end),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                ),
                 ValueRef::I64(*score),
             ],
             schema.relation(EVENT).layout(),
@@ -218,7 +220,9 @@ fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
             mask: MaskTerm::Param(ParamId(0)),
         },
         lhs: Term::Var(VarId(1)),
-        rhs: Term::Literal(Value::IntervalI64(7, 9)),
+        rhs: Term::Literal(Value::IntervalI64(
+            crate::Interval::<i64>::new(7, 9).expect("nonempty interval"),
+        )),
     });
     let mut rule1 = by_kind_rule(7, masked);
     rule1.atoms[0]

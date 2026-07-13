@@ -196,11 +196,11 @@ impl<S> WriteTx<'_, S> {
                 Value::Bool(v) => out.push(encode_bool(*v)),
                 Value::U64(v) => out.extend_from_slice(&encode_u64(*v)),
                 Value::I64(v) => out.extend_from_slice(&encode_i64(*v)),
-                Value::IntervalU64(start, end) => {
-                    out.extend_from_slice(&encode_interval_u64(*start, *end));
+                Value::IntervalU64(interval) => {
+                    out.extend_from_slice(&encode_interval_u64(*interval));
                 }
-                Value::IntervalI64(start, end) => {
-                    out.extend_from_slice(&encode_interval_i64(*start, *end));
+                Value::IntervalI64(interval) => {
+                    out.extend_from_slice(&encode_interval_i64(*interval));
                 }
                 Value::String(raw) => {
                     let text =

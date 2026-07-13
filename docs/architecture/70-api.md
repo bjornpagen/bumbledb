@@ -420,10 +420,12 @@ workspace error lands in `Error::BulkLoad { committed, error }`, never dropping 
 count (it is the resumability payload the type exists for). The returned/carried
 count is **facts that changed
 state** (idempotent re-inserts are consumed but not counted) — changed-not-consumed
-semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids and
-`start ≥ end` intervals) are typed `FactShape` errors (decided: ETL input is data,
-not code — no panics on the import path). Explicit fresh values preserve identity
-(high-water advances past them). Untyped fresh minting is resolve-once/mint-per-row:
+semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids)
+are typed `FactShape` errors (decided: ETL input is data, not code — no panics on the
+import path). Interval fields accept only the checked `Interval<T>` carried by
+`Value`, so `start ≥ end` cannot enter this path. Explicit fresh values preserve
+identity (high-water advances past them). Untyped fresh minting is
+resolve-once/mint-per-row:
 `Schema::fresh_field(relation, field) -> Result<FreshField, FactShapeError>`
 validates the ids and the `Fresh` generation once and returns a `Copy` witness
 (private fields, one construction site — the type is the proof);

@@ -231,7 +231,9 @@ fn payroll_views_of(
             &[
                 ValueRef::U64(*id),
                 ValueRef::U64(*emp),
-                ValueRef::IntervalI64(*start, *end),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(PAYROLL).layout(),
             &mut bytes,

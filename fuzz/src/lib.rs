@@ -361,8 +361,8 @@ fn owned(value: ResultValue<'_>) -> Value {
         ResultValue::I64(v) => Value::I64(v),
         ResultValue::String(v) => Value::String(Box::from(v.as_bytes())),
         ResultValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
-        ResultValue::IntervalU64(iv) => Value::IntervalU64(iv.start(), iv.end()),
-        ResultValue::IntervalI64(iv) => Value::IntervalI64(iv.start(), iv.end()),
+        ResultValue::IntervalU64(iv) => Value::IntervalU64(iv),
+        ResultValue::IntervalI64(iv) => Value::IntervalI64(iv),
     }
 }
 
@@ -535,7 +535,6 @@ fn schema_variant(rejection: &SchemaError) -> &'static str {
         SchemaError::DuplicateExtensionHandle { .. } => "DuplicateExtensionHandle",
         SchemaError::ExtensionArityMismatch { .. } => "ExtensionArityMismatch",
         SchemaError::ExtensionValueTypeMismatch { .. } => "ExtensionValueTypeMismatch",
-        SchemaError::ExtensionIntervalEmpty { .. } => "ExtensionIntervalEmpty",
         SchemaError::ExtensionIntervalRay { .. } => "ExtensionIntervalRay",
         SchemaError::StrOnClosedRelation { .. } => "StrOnClosedRelation",
         SchemaError::FreshOnClosedRelation { .. } => "FreshOnClosedRelation",
@@ -553,7 +552,6 @@ fn schema_variant(rejection: &SchemaError) -> &'static str {
         SchemaError::SelectedFieldProjected { .. } => "SelectedFieldProjected",
         SchemaError::SelectionLiteralTypeMismatch { .. } => "SelectionLiteralTypeMismatch",
         SchemaError::SelectionLiteralNotUtf8 { .. } => "SelectionLiteralNotUtf8",
-        SchemaError::SelectionIntervalEmpty { .. } => "SelectionIntervalEmpty",
         SchemaError::NoMatchingTargetKey { .. } => "NoMatchingTargetKey",
         SchemaError::NoPointwiseTargetKey { .. } => "NoPointwiseTargetKey",
         SchemaError::ClosedContainmentInterval { .. } => "ClosedContainmentInterval",

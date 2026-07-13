@@ -630,7 +630,9 @@ fn interval_equality_matches_its_goldens() {
                 (ids::mandate::ORG, var(0)),
                 (
                     ids::mandate::ACTIVE,
-                    Term::Literal(Value::IntervalI64(1700, 1800)),
+                    Term::Literal(Value::IntervalI64(
+                        bumbledb::Interval::<i64>::new(1700, 1800).expect("nonempty interval"),
+                    )),
                 ),
             ],
         }],

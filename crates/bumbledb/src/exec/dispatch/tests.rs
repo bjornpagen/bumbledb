@@ -546,12 +546,16 @@ fn pointwise_guard_hit_is_byte_exact() {
         &[
             vec![
                 ValueRef::U64(1),
-                ValueRef::IntervalU64(5, 10),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+                ),
                 ValueRef::U64(100),
             ],
             vec![
                 ValueRef::U64(1),
-                ValueRef::IntervalU64(20, 30),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(20, 30).expect("nonempty interval"),
+                ),
                 ValueRef::U64(200),
             ],
         ],
@@ -602,7 +606,10 @@ fn full_fact_membership_lookup_with_an_interval_field() {
     let env = populated(
         &dir,
         &schema,
-        &[vec![ValueRef::U64(2), ValueRef::IntervalU64(5, 10)]],
+        &[vec![
+            ValueRef::U64(2),
+            ValueRef::IntervalU64(crate::Interval::<u64>::new(5, 10).expect("nonempty interval")),
+        ]],
     );
     let exact = single(occurrence(
         &[],
@@ -645,7 +652,10 @@ fn an_interval_variable_decodes_into_its_two_slot_span() {
     let env = populated(
         &dir,
         &schema,
-        &[vec![ValueRef::U64(1), ValueRef::IntervalU64(5, 10)]],
+        &[vec![
+            ValueRef::U64(1),
+            ValueRef::IntervalU64(crate::Interval::<u64>::new(5, 10).expect("nonempty interval")),
+        ]],
     );
     // Q(span) :- Shift(id = 1, span) — span is a two-word variable.
     let normalized = single_with_widths(

@@ -297,9 +297,9 @@ field is absent from `bindings`, so "wildcard bound to something" is unwritable.
 Variables carry dense ids only; names are a debugging sidecar. `Value` has exactly one
 variant per data-model type — no universal-integer variant: U64 and I64 literals are
 exact-typed, out-of-range is unrepresentable rather than truncated, and an interval
-literal with `start ≥ end` is rejected at the validation boundary like a non-UTF-8
-string. Negated atoms reuse `Atom` unchanged — negation is a *position* in the query,
-not a kind of atom.
+literal carries `Interval<T>`, making `start ≥ end` unconstructible before IR
+validation. Non-UTF-8 strings remain a validation-boundary rejection. Negated atoms
+reuse `Atom` unchanged — negation is a *position* in the query, not a kind of atom.
 
 **Membership is a typing rule, not a node.** A binding `(field, term)` where the
 field is `Interval(E)` and the term's type is `E` means **point membership**:
@@ -643,9 +643,9 @@ density is judged jointly across the whole program.
 Per-rule rejections: unknown
 relation/field ids; duplicate FieldId in one atom's bindings; variable type conflicts
 (structural — membership bindings anchor the *element* type); literal-vs-field and
-param-anchor type mismatches (non-UTF-8 String literals and `start ≥ end` interval
-literals included); element-typed point literals at the domain ceiling in
-membership bindings and `Contains` operands (the point-domain law — point params
+param-anchor type mismatches (including non-UTF-8 String literals); element-typed
+point literals at the domain ceiling in membership bindings and `Contains`
+operands (the point-domain law — point params
 get the same rejection at bind, where the value exists); comparisons violating the
 type rules above (order operators on intervals and on `bytes<N>` each named in
 their own diagnostic — the predictable mistake gets the good error); the Allen vacuity rules (the ∅

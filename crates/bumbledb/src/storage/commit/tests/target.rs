@@ -197,7 +197,12 @@ fn span_fact(schema: &Schema, rel: RelationId, worker: u64, start: u64, end: u64
     fact(
         schema,
         rel,
-        &[ValueRef::U64(worker), ValueRef::IntervalU64(start, end)],
+        &[
+            ValueRef::U64(worker),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
     )
 }
 
@@ -219,7 +224,9 @@ fn roster_fact(schema: &Schema, worker: u64, start: u64, end: u64, rested: bool)
         ROSTER,
         &[
             ValueRef::U64(worker),
-            ValueRef::IntervalU64(start, end),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
             ValueRef::Bool(rested),
         ],
     )

@@ -171,7 +171,9 @@ fn shift(schema: &Schema, worker: u64, start: u64, end: u64, rested: bool) -> Ve
         SHIFT,
         &[
             ValueRef::U64(worker),
-            ValueRef::IntervalU64(start, end),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
             ValueRef::Bool(rested),
         ],
     )
@@ -181,7 +183,12 @@ fn session(schema: &Schema, worker: u64, start: u64, end: u64) -> Vec<u8> {
     fact(
         schema,
         SESSION,
-        &[ValueRef::U64(worker), ValueRef::IntervalU64(start, end)],
+        &[
+            ValueRef::U64(worker),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
     )
 }
 
@@ -189,7 +196,12 @@ fn rest(schema: &Schema, worker: u64, start: u64, end: u64) -> Vec<u8> {
     fact(
         schema,
         REST,
-        &[ValueRef::U64(worker), ValueRef::IntervalU64(start, end)],
+        &[
+            ValueRef::U64(worker),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
     )
 }
 

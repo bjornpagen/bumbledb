@@ -22,7 +22,7 @@ pub use encode::{
 };
 pub use fact_hash::fact_hash;
 
-use crate::schema::IntervalElement;
+use crate::{Interval, schema::IntervalElement};
 
 /// The `bytes<N>` width ceiling: 64 bytes = 8 words = two cache lines of
 /// key material — digests in the wild are 16/20/32/64
@@ -147,10 +147,10 @@ pub enum ValueRef {
     String(u64),
     /// A `bytes<N>` value, inline.
     FixedBytes(FixedBytesValue),
-    /// Interval over U64: `(start, end)`, strictly `start < end`.
-    IntervalU64(u64, u64),
-    /// Interval over I64: `(start, end)`, strictly `start < end`.
-    IntervalI64(i64, i64),
+    /// Nonempty interval over U64.
+    IntervalU64(Interval<u64>),
+    /// Nonempty interval over I64.
+    IntervalI64(Interval<i64>),
 }
 
 impl ValueRef {

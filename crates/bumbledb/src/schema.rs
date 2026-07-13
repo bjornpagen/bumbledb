@@ -132,14 +132,10 @@ pub(crate) enum ValueMismatch {
     Type,
     /// `Value::String` bytes are not UTF-8 (the type's contract).
     Utf8,
-    /// Interval bounds with `start >= end` — the empty interval denotes
-    /// no points and is unrepresentable
-    /// (`docs/architecture/10-data-model.md`).
-    IntervalEmpty,
 }
 
-/// The one `Value` ↔ `ValueType` compatibility check (kind, String UTF-8,
-/// interval non-emptiness) — IR validation, bind-time, the dynamic write
+/// The one `Value` ↔ `ValueType` compatibility check (kind and String UTF-8)
+/// — IR validation, bind-time, the dynamic write
 /// path, and selection validation all call this so the rules cannot drift
 /// apart. Note the membership rule is *not* here: an element-typed value
 /// against an `Interval` field is a kind mismatch to this check, and the
@@ -149,7 +145,19 @@ pub(crate) fn value_matches(value: &Value, expected: &ValueType) -> Result<(), V
     match (value, expected) {
         (Value::Bool(_), ValueType::Bool)
         | (Value::U64(_), ValueType::U64)
-        | (Value::I64(_), ValueType::I64) => Ok(()),
+        | (Value::I64(_), ValueType::I64)
+        | (
+            Value::IntervalU64(_),
+            ValueType::Interval {
+                element: IntervalElement::U64,
+            },
+        )
+        | (
+            Value::IntervalI64(_),
+            ValueType::Interval {
+                element: IntervalElement::I64,
+            },
+        ) => Ok(()),
         // The length is the type: a bytes<N> literal of any other width
         // is a kind mismatch.
         (Value::FixedBytes(raw), ValueType::FixedBytes { len }) => {
@@ -164,30 +172,6 @@ pub(crate) fn value_matches(value: &Value, expected: &ValueType) -> Result<(), V
                 Ok(())
             } else {
                 Err(ValueMismatch::Utf8)
-            }
-        }
-        (
-            Value::IntervalU64(start, end),
-            ValueType::Interval {
-                element: IntervalElement::U64,
-            },
-        ) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(ValueMismatch::IntervalEmpty)
-            }
-        }
-        (
-            Value::IntervalI64(start, end),
-            ValueType::Interval {
-                element: IntervalElement::I64,
-            },
-        ) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(ValueMismatch::IntervalEmpty)
             }
         }
         _ => Err(ValueMismatch::Type),

@@ -10,6 +10,10 @@ current run behind it does not exist.
 The [formal-claims table](30-dependencies.md#formal-claims-and-runtime-evidence)
 maps each public semantic claim to its Lean theorem or countermodel and to the
 validator, representation, or always-on Rust evidence that realizes its premises.
+For the empty-interval vacuity countermodel specifically, `Value` and `ValueRef`
+carry checked `Interval<T>` values, so malformed bounds cannot reach an encoder;
+the always-on decode checks remain independent evidence against damaged stored
+bytes.
 
 ## The two oracles
 

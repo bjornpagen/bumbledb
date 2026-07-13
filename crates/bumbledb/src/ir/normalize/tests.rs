@@ -238,11 +238,15 @@ fn fixed_bytes_literals_lower_to_padded_words_with_no_dict_traffic() {
 fn interval_literals_lower_to_encoded_word_pairs() {
     // Each half is encoded exactly like the scalar of its element type.
     assert_eq!(
-        lower_literal(&Value::IntervalU64(3, 9)),
+        lower_literal(&Value::IntervalU64(
+            crate::Interval::<u64>::new(3, 9).expect("nonempty interval")
+        )),
         Const::Interval { start: 3, end: 9 }
     );
     assert_eq!(
-        lower_literal(&Value::IntervalI64(-5, 9)),
+        lower_literal(&Value::IntervalI64(
+            crate::Interval::<i64>::new(-5, 9).expect("nonempty interval")
+        )),
         Const::Interval {
             start: w(-5),
             end: w(9),
@@ -868,7 +872,11 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
     reason = "the linear table or protocol is clearer kept together"
 )] // a fixed list, one entry per const shape
 fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
-    let iv = || Term::Literal(Value::IntervalI64(2, 9));
+    let iv = || {
+        Term::Literal(Value::IntervalI64(
+            crate::Interval::<i64>::new(2, 9).expect("nonempty interval"),
+        ))
+    };
     let iv_const = Const::Interval {
         start: w(2),
         end: w(9),

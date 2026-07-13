@@ -172,7 +172,9 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 &[
                     Value::U64(id),
                     Value::U64(person),
-                    Value::IntervalU64(start, end),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                    ),
                 ],
             )?;
         }

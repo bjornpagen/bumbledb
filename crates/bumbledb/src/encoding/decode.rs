@@ -2,7 +2,7 @@
 //! corruption-checked field decoder.
 
 use super::{FactLayout, FixedBytesValue, I64_SIGN_BIT, IntervalElement, TypeDesc, ValueRef};
-use crate::error::CorruptionError;
+use crate::{Interval, error::CorruptionError};
 
 /// Decodes a canonical Bool byte.
 ///
@@ -158,12 +158,18 @@ pub fn decode_field(
                 .try_into()
                 .expect("interval field: the layout derives the width");
             match element {
-                IntervalElement::U64 => {
-                    decode_interval_u64(bytes).map(|(s, e)| ValueRef::IntervalU64(s, e))
-                }
-                IntervalElement::I64 => {
-                    decode_interval_i64(bytes).map(|(s, e)| ValueRef::IntervalI64(s, e))
-                }
+                IntervalElement::U64 => decode_interval_u64(bytes).map(|(start, end)| {
+                    ValueRef::IntervalU64(
+                        Interval::<u64>::new(start, end)
+                            .expect("decode_interval_u64 accepted these bounds"),
+                    )
+                }),
+                IntervalElement::I64 => decode_interval_i64(bytes).map(|(start, end)| {
+                    ValueRef::IntervalI64(
+                        Interval::<i64>::new(start, end)
+                            .expect("decode_interval_i64 accepted these bounds"),
+                    )
+                }),
             }
         }
     }

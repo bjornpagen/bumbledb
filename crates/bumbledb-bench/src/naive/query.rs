@@ -74,19 +74,21 @@ pub fn dnf_width(rule: &Rule) -> usize {
 /// element domain's MAX) has no finite measure.
 fn measure_value(value: &Value) -> Result<u64, QueryError> {
     match value {
-        Value::IntervalU64(start, end) => {
-            if *end == u64::MAX {
+        Value::IntervalU64(interval) => {
+            if interval.is_ray() {
                 Err(QueryError::MeasureOfRay)
             } else {
-                Ok(end - start)
+                Ok(interval.end() - interval.start())
             }
         }
-        Value::IntervalI64(start, end) => {
-            if *end == i64::MAX {
+        Value::IntervalI64(interval) => {
+            if interval.is_ray() {
                 Err(QueryError::MeasureOfRay)
             } else {
-                Ok(u64::try_from(i128::from(*end) - i128::from(*start))
-                    .expect("constructor: end > start, difference below 2^64"))
+                Ok(
+                    u64::try_from(i128::from(interval.end()) - i128::from(interval.start()))
+                        .expect("constructor: end > start, difference below 2^64"),
+                )
             }
         }
         other => panic!("validated: Duration takes an interval, got {other:?}"),
@@ -116,12 +118,18 @@ fn pack_segments(claims: &[&Value]) -> Vec<Value> {
     }
     let rebuild = |(start, end): (i128, i128)| match claims[0] {
         Value::IntervalU64(..) => Value::IntervalU64(
-            u64::try_from(start).expect("u64 endpoints round-trip"),
-            u64::try_from(end).expect("u64 endpoints round-trip"),
+            bumbledb::Interval::<u64>::new(
+                u64::try_from(start).expect("u64 endpoints round-trip"),
+                u64::try_from(end).expect("u64 endpoints round-trip"),
+            )
+            .expect("packing preserves nonempty intervals"),
         ),
         Value::IntervalI64(..) => Value::IntervalI64(
-            i64::try_from(start).expect("i64 endpoints round-trip"),
-            i64::try_from(end).expect("i64 endpoints round-trip"),
+            bumbledb::Interval::<i64>::new(
+                i64::try_from(start).expect("i64 endpoints round-trip"),
+                i64::try_from(end).expect("i64 endpoints round-trip"),
+            )
+            .expect("packing preserves nonempty intervals"),
         ),
         other => panic!("validated: Pack takes an interval, got {other:?}"),
     };

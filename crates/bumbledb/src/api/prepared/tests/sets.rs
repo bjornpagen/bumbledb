@@ -233,7 +233,9 @@ fn insert_interval_fixture(env: &Environment, schema: &Schema) {
         crate::encoding::encode_fact(
             &[
                 crate::encoding::ValueRef::U64(emp),
-                crate::encoding::ValueRef::IntervalU64(start, end),
+                crate::encoding::ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(PAYROLL).layout(),
             &mut bytes,
@@ -380,7 +382,9 @@ fn ray_fixture(dir: &TempDir, schema: &Schema) -> Environment {
     crate::encoding::encode_fact(
         &[
             crate::encoding::ValueRef::U64(1),
-            crate::encoding::ValueRef::IntervalU64(10, u64::MAX),
+            crate::encoding::ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(10, u64::MAX).expect("nonempty interval"),
+            ),
         ],
         schema.relation(PAYROLL).layout(),
         &mut bytes,
