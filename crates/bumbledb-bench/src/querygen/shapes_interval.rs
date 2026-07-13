@@ -41,14 +41,21 @@ fn singleton_mask(rng: &mut Rng) -> AllenMask {
 /// system's whole space, not just the named composites (the vacuous
 /// EMPTY and FULL masks are roster rejections, exercised by the verify
 /// error-parity lane, so the generator never emits them).
+///
+/// Total by repair, never by rejection sampling: the fuzzer arm's
+/// exhausted `Rng::Bytes` yields a CONSTANT zero tail, so a redraw
+/// loop on a rejected draw spins forever (the ops target's second
+/// finding — a generator hang, not an engine one). EMPTY gains the
+/// lowest bit, FULL drops one drawn bit; every other draw is itself.
 fn random_mask(rng: &mut Rng) -> AllenMask {
-    loop {
-        let bits = u16::try_from(rng.range(1 << 13)).expect("13 bits");
-        let mask = AllenMask::new(bits).expect("13 bits are in range");
-        if !mask.is_empty() && !mask.is_full() {
-            return mask;
-        }
-    }
+    let bits = match u16::try_from(rng.range(1 << 13)).expect("13 bits") {
+        0 => 1,
+        0x1FFF => 0x1FFF & !(1 << rng.range(13)),
+        drawn => drawn,
+    };
+    let mask = AllenMask::new(bits).expect("13 bits are in range");
+    assert!(!mask.is_empty() && !mask.is_full(), "the repair is total");
+    mask
 }
 
 use crate::corpus_gen::{GenConfig, Rng};
@@ -516,4 +523,25 @@ fn push_boundary_cmp(b: &mut Builder, rng: &mut Rng, var: VarId, literal: Value,
         lhs: Term::Var(var),
         rhs,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::random_mask;
+    use crate::corpus_gen::Rng;
+
+    /// The fuzz campaign's generator-hang pin (ops finding 2): an
+    /// exhausted byte source draws zero forever, so `random_mask` must
+    /// be total on a CONSTANT stream — rejection sampling here once
+    /// spun the fuzzer for minutes per input. Both vacuous constants
+    /// (EMPTY's zero draw; the all-ones FULL draw) must terminate with
+    /// a legal mask.
+    #[test]
+    fn random_mask_is_total_on_constant_streams() {
+        let empty_tail = random_mask(&mut Rng::from_bytes(&[]));
+        assert!(!empty_tail.is_empty() && !empty_tail.is_full());
+        let full: Vec<u8> = 0x1FFFu64.to_le_bytes().repeat(4);
+        let full_tail = random_mask(&mut Rng::from_bytes(&full));
+        assert!(!full_tail.is_empty() && !full_tail.is_full());
+    }
 }

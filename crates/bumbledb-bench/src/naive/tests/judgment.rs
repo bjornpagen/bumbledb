@@ -1051,3 +1051,95 @@ mod target_side {
         );
     }
 }
+
+// ---------- the multi-violation citation set ----------
+//
+// One delta breaking SEVERAL statements at once (the ops fuzz target's
+// first finding, docs/prd-crucible/12-fuzz-ops.md § conflict): the
+// citation ORDER among simultaneous violations is unpinned — the engine
+// cites per affected tuple, the model per statement id — so the model
+// exposes the COMPLETE set (`violations`), whose head is `apply`'s
+// verdict, one derivation.
+mod citation_set {
+    use super::*;
+
+    const P1: RelationId = RelationId(0);
+    const P2: RelationId = RelationId(1);
+    const C: RelationId = RelationId(2);
+
+    /// P1(id), P2(id), C(x, y); C(x) <= P1(id) is statement 0 and
+    /// C(y) <= P2(id) statement 1 (no fresh fields, so the declared
+    /// statements open the materialized order).
+    fn schema() -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: None,
+                    name: "P1".into(),
+                    fields: vec![field("id", ValueType::U64)],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "P2".into(),
+                    fields: vec![field("id", ValueType::U64)],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "C".into(),
+                    fields: vec![field("x", ValueType::U64), field("y", ValueType::U64)],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Containment {
+                    source: side(C, &[0], &[]),
+                    target: side(P1, &[0], &[]),
+                },
+                StatementDescriptor::Containment {
+                    source: side(C, &[0], &[]),
+                    target: side(P2, &[0], &[]),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn the_complete_set_lists_every_simultaneous_violation_in_statement_order() {
+        let mut db = NaiveDb::new(&schema());
+        db.apply(&Delta {
+            deletes: vec![],
+            inserts: vec![
+                (P1, vec![Value::U64(0)]),
+                (P2, vec![Value::U64(0)]),
+                (C, vec![Value::U64(0), Value::U64(0)]),
+            ],
+        })
+        .expect("the base world commits");
+        let both = Delta {
+            deletes: vec![(P2, vec![Value::U64(0)]), (P1, vec![Value::U64(0)])],
+            inserts: vec![],
+        };
+        assert_eq!(
+            db.violations(&both),
+            vec![target_required(0), target_required(1)],
+            "both broken statements, statement order — regardless of delete order"
+        );
+        // `apply`'s verdict is the set's head: one derivation.
+        assert_eq!(db.clone().apply(&both), Err(target_required(0)));
+        // A single-violation delta degenerates to the singleton set.
+        let one = Delta {
+            deletes: vec![(P2, vec![Value::U64(0)])],
+            inserts: vec![],
+        };
+        assert_eq!(db.violations(&one), vec![target_required(1)]);
+        assert_eq!(db.apply(&one), Err(target_required(1)));
+        // A committing delta has the empty set.
+        let clean = Delta {
+            deletes: vec![
+                (C, vec![Value::U64(0), Value::U64(0)]),
+                (P1, vec![Value::U64(0)]),
+            ],
+            inserts: vec![],
+        };
+        assert_eq!(db.violations(&clean), vec![]);
+    }
+}

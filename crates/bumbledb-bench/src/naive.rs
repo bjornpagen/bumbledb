@@ -216,22 +216,8 @@ impl NaiveDb {
                 });
             }
         }
-        let mut next = self.relations.clone();
-        for (rel, fact) in &delta.deletes {
-            next[rel.0 as usize].remove(&Tuple(fact.clone()));
-        }
-        // The facts this delta genuinely establishes (absent before): the
-        // set that separates the two containment directions, exactly as
-        // the engine's no-op-insert rule does.
-        let mut inserted: Vec<BTreeSet<Tuple>> = vec![BTreeSet::new(); next.len()];
-        for (rel, fact) in &delta.inserts {
-            let tuple = Tuple(fact.clone());
-            if !self.relations[rel.0 as usize].contains(&tuple) {
-                inserted[rel.0 as usize].insert(tuple.clone());
-            }
-            next[rel.0 as usize].insert(tuple);
-        }
-        if let Some(violation) = self.judge(&next, &inserted) {
+        let (next, inserted) = self.staged(delta);
+        if let Some(violation) = self.judge(&next, &inserted).into_iter().next() {
             return Err(violation);
         }
         // State-changing commits only advance the generation — a no-op
@@ -244,17 +230,69 @@ impl NaiveDb {
         Ok(())
     }
 
+    /// The COMPLETE violation set of one delta against the committed
+    /// state, in [`NaiveDb::apply`]'s phase order and deduplicated —
+    /// `apply`'s verdict is exactly this list's head, one derivation.
+    ///
+    /// The consumer is the multi-violation citation ruling
+    /// (docs/prd-crucible/12-fuzz-ops.md § conflict): where a single
+    /// delta violates several statements at once, the engine cites the
+    /// first it *discovers* (per affected tuple), the model the first in
+    /// statement order — an unpinned tie. The `ops` fuzz oracle accepts
+    /// any citation drawn from this set, and nothing outside it.
+    #[must_use]
+    pub fn violations(&self, delta: &Delta) -> Vec<Violation> {
+        for (relation, _) in delta.deletes.iter().chain(&delta.inserts) {
+            if self.extensions[relation.0 as usize].is_some() {
+                return vec![Violation::ClosedRelationWrite {
+                    relation: *relation,
+                }];
+            }
+        }
+        let (next, inserted) = self.staged(delta);
+        self.judge(&next, &inserted)
+    }
+
+    /// The delta's candidate final state beside the facts it genuinely
+    /// establishes (absent before) — the set that separates the two
+    /// containment directions, exactly as the engine's no-op-insert rule
+    /// does. Pure staging; nothing is applied.
+    fn staged(&self, delta: &Delta) -> (Vec<BTreeSet<Tuple>>, Vec<BTreeSet<Tuple>>) {
+        let mut next = self.relations.clone();
+        for (rel, fact) in &delta.deletes {
+            next[rel.0 as usize].remove(&Tuple(fact.clone()));
+        }
+        let mut inserted: Vec<BTreeSet<Tuple>> = vec![BTreeSet::new(); next.len()];
+        for (rel, fact) in &delta.inserts {
+            let tuple = Tuple(fact.clone());
+            if !self.relations[rel.0 as usize].contains(&tuple) {
+                inserted[rel.0 as usize].insert(tuple.clone());
+            }
+            next[rel.0 as usize].insert(tuple);
+        }
+        (next, inserted)
+    }
+
     /// Judges every statement against a candidate final state, mirroring
     /// the engine's phase order at statement granularity (so the
     /// differential runner can compare violators, not just verdicts):
     /// functionality per inserted fact, then containment source-side per
     /// inserted fact, then containment target-side over surviving facts.
+    /// Returns the COMPLETE deduplicated violation list in that phase
+    /// order — the head is `apply`'s verdict, the whole list is the
+    /// citation set [`NaiveDb::violations`] exposes.
     /// A **closed source** (domain quantification) needs no case of its
     /// own: its "surviving facts" are the seeded extension tuples, φ is
     /// the same [`satisfies_selection`] value comparison, and the
     /// ordinary set-containment judgment runs unchanged against the
     /// mutable target — the A-side tuples ARE φ over the extension.
-    fn judge(&self, state: &[BTreeSet<Tuple>], inserted: &[BTreeSet<Tuple>]) -> Option<Violation> {
+    fn judge(&self, state: &[BTreeSet<Tuple>], inserted: &[BTreeSet<Tuple>]) -> Vec<Violation> {
+        let mut found: Vec<Violation> = Vec::new();
+        let mut cite = |violation: Violation| {
+            if !found.contains(&violation) {
+                found.push(violation);
+            }
+        };
         for (rel, facts) in inserted.iter().enumerate() {
             for fact in facts {
                 for (sid, statement) in self.statements.iter().enumerate() {
@@ -268,7 +306,7 @@ impl NaiveDb {
                     if relation.0 as usize == rel
                         && self.functionality_violated(state, *relation, projection, fact)
                     {
-                        return Some(Violation::Functionality {
+                        cite(Violation::Functionality {
                             statement: statement_id(sid),
                         });
                     }
@@ -285,7 +323,7 @@ impl NaiveDb {
                         && satisfies_selection(fact, &source.selection)
                         && !self.contained(state, source, target, fact)
                     {
-                        return Some(Violation::Containment {
+                        cite(Violation::Containment {
                             statement: statement_id(sid),
                             direction: Direction::SourceUnsatisfied,
                         });
@@ -317,14 +355,14 @@ impl NaiveDb {
                     && self.contained(&self.relations, source, target, fact)
                     && !self.contained(state, source, target, fact)
                 {
-                    return Some(Violation::Containment {
+                    cite(Violation::Containment {
                         statement: statement_id(sid),
                         direction: Direction::TargetRequired,
                     });
                 }
             }
         }
-        None
+        found
     }
 
     /// Does inserting `fact` leave two distinct facts agreeing on the

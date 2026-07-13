@@ -206,13 +206,14 @@ pub fn schema() -> &'static Schema {
 
 /// The declared target ledger, as the raw descriptor — the value the
 /// naive model and the mirror's extension INSERTs consume beside the
-/// sealed schema (`pub(crate)` for the closed-relation differential,
-/// which drives all three write-scenario classes over this theory).
+/// sealed schema (the closed-relation differential and the `ops` fuzz
+/// runner both build their [`crate::naive::NaiveDb`] from it).
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // the declared ledger, one relation per block
-pub(crate) fn descriptor() -> SchemaDescriptor {
+#[must_use]
+pub fn descriptor() -> SchemaDescriptor {
     {
         SchemaDescriptor {
             relations: vec![

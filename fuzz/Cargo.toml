@@ -27,6 +27,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "ops"
+path = "fuzz_targets/ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "query"
 path = "fuzz_targets/query.rs"
 test = false

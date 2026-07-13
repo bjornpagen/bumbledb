@@ -425,7 +425,16 @@ runner.
 - **Targets** (one entry point each): `theory` — schema acceptance over
   the random-descriptor arm (`corpus_gen::theorygen`): structurally-free
   descriptors, deliberately-invalid shapes alongside valid ones, judged
-  by `Db::create`. `query` — three-way parity per iteration over a
+  by `Db::create`. `ops` — the op-stream flagship: generated lifecycle
+  sequences (`corpus_gen::opgen`) over a ten-verb alphabet (insert,
+  delete, and mixed batches; commit; rollback; prepared execution with
+  live params; re-prepare; view read; reopen from disk; `verify_store`)
+  against the live engine with the naive model in lockstep, under five
+  oracles — commit-verdict parity with the typed violator (any citation
+  from the model's complete violation set where one delta breaks
+  several statements), set-semantic query parity, reopen equivalence
+  over full relation contents, `verify_store` green after every commit
+  and reopen, and rejected-commits-change-nothing. `query` — three-way parity per iteration over a
   cached Tiny target corpus: querygen's valid-by-construction arm
   compared across the prepared engine, the naive model, and the `SQLite`
   lane where the ψ-subset mapping expresses the shape (drops counted and
@@ -437,8 +446,7 @@ runner.
   thread-local switches, one build — cargo refuses a dual-build
   dependency on one package), demanding identical result sets: the
   rewrite layers continuously proven semantics-preserving, never
-  assumed. Later targets extend the roster: `ops` (the op-stream
-  flagship), `crash`.
+  assumed. Later targets extend the roster: `crash`.
 - **Oracle discipline** (every iteration, all of them): *no-panic
   totality* — hostile input yields `Ok` or a typed error, any
   panic/abort is a finding by definition; *typed rejection* — every
