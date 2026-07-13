@@ -249,9 +249,9 @@ fn explain_reports_the_fold_with_its_filters_and_handles() {
 
 /// |S| == 0 is the statically-empty channel: the rule dies at prepare
 /// with the evaluator's rendered reason, and an all-dead program
-/// prepares to the empty plan.
+/// prepares to the empty program.
 #[test]
-fn an_empty_fold_prepares_the_statically_empty_plan() {
+fn an_empty_fold_prepares_the_statically_empty_program() {
     let dir = TempDir::new("folded-empty");
     let schema = closed_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -261,7 +261,7 @@ fn an_empty_fold_prepares_the_statically_empty_plan() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &fold_query(99)).expect("prepare");
     assert!(
-        matches!(prepared.rules[0].plan, ExecPlan::Empty),
+        matches!(prepared.program, Program::Empty),
         "no Kind row has rank 99: the rule died at prepare"
     );
     let out = prepared

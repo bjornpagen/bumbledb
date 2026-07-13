@@ -55,13 +55,14 @@ fn a_str_literal_latches_on_first_execution() {
         .expect("execute");
     assert_eq!(amounts(&out), vec![10]);
     assert_eq!(prepared.unresolved_literals, 0, "the hit latched");
-    assert!(prepared.rules[0].resolved_complete);
+    let [PreparedRule::FreeJoin(rule)] = prepared.program.rules() else {
+        panic!("free join fixture");
+    };
+    assert!(rule.resolved_complete);
 
     // The latch IS the rewrite: the template slot now carries the word —
     // no parallel resolution state exists to consult.
-    let ExecPlan::FreeJoin(plan) = &prepared.rules[0].plan else {
-        panic!("free join fixture");
-    };
+    let plan = &rule.plan;
     let pending = plan.occurrences().iter().any(|occurrence| {
         occurrence
             .selections
@@ -103,7 +104,13 @@ fn a_miss_stays_live_and_latches_after_interning() {
     assert!(out.is_empty(), "an uninterned Eq literal empties the rule");
     assert_eq!(prepared.unresolved_literals, 1, "a miss never latches");
     assert!(
-        !prepared.rules[0].resolved_complete,
+        matches!(
+            prepared.program.rules(),
+            [PreparedRule::FreeJoin(FreeJoinRule {
+                resolved_complete: false,
+                ..
+            })]
+        ),
         "a short-circuited pass does not arm the skip"
     );
     drop(txn);

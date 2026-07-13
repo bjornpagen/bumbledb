@@ -1,4 +1,4 @@
-use super::{BindValue, ExecPlan, PreparedQuery, ResultBuffer, ValueType};
+use super::{BindValue, PreparedQuery, PreparedRule, Program, ResultBuffer, ValueType};
 
 use crate::api::stats::{ExecutionStats, GuardStats, RuleStats};
 use crate::error::Result;
@@ -30,15 +30,16 @@ impl<S> PreparedQuery<'_, S> {
     ) -> Result<(ResultBuffer, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
         let report = Report {
-            rules: self
-                .rules
-                .iter()
-                .map(|rule| match &rule.plan {
-                    ExecPlan::GuardProbe(guard) => RulePlan::GuardProbe(guard),
-                    ExecPlan::FreeJoin(plan) => RulePlan::FreeJoin(plan),
-                    ExecPlan::Empty => RulePlan::Empty,
-                })
-                .collect(),
+            rules: match &self.program {
+                Program::Empty => vec![RulePlan::Empty],
+                Program::Rules(rules) => rules
+                    .iter()
+                    .map(|rule| match rule {
+                        PreparedRule::Guard(rule) => RulePlan::GuardProbe(&rule.plan),
+                        PreparedRule::FreeJoin(rule) => RulePlan::FreeJoin(&rule.plan),
+                    })
+                    .collect(),
+            },
             stats,
         };
         // The report opens with the query in the rule notation
@@ -80,13 +81,13 @@ impl<S> PreparedQuery<'_, S> {
         // The statically-empty program mirrors `run_bound`'s
         // short-circuit: bind (errors surface), then nothing runs and
         // nothing is counted — the death record is the whole story.
-        if matches!(self.rules[0].plan, ExecPlan::Empty) {
+        if matches!(self.program, Program::Empty) {
             self.bind_params(txn, params)?;
             return Ok((out, self.empty_stats()));
         }
         // The single-rule guard program keeps its fast lane: `execute`
         // dispatches it whole, and the stats are the probe's outcome.
-        if self.rules.len() == 1 && matches!(self.rules[0].plan, ExecPlan::GuardProbe(_)) {
+        if matches!(self.program.rules(), [PreparedRule::Guard(_)]) {
             self.execute(txn, cache, params, &mut out)?;
             let emitted = out.len() as u64;
             let stats = ExecutionStats {
@@ -124,16 +125,14 @@ impl<S> PreparedQuery<'_, S> {
         // to drain).
         self.bind_params(txn, params)?;
         self.sink.reset();
-        let mut rule_stats = Vec::with_capacity(self.rules.len());
+        let rule_count = self.program.rules().len();
+        let mut rule_stats = Vec::with_capacity(rule_count);
         let mut ran = false;
-        for rule_idx in 0..self.rules.len() {
+        for rule_idx in 0..rule_count {
             let seen_before = self.sink.distinct_seen().unwrap_or(0);
-            let mut counters = match &self.rules[rule_idx].plan {
-                ExecPlan::FreeJoin(plan) => CountingCounters::new(plan),
-                ExecPlan::GuardProbe(_) => CountingCounters::for_guard(),
-                ExecPlan::Empty => {
-                    unreachable!("the empty plan short-circuited above")
-                }
+            let mut counters = match &self.program.rules()[rule_idx] {
+                PreparedRule::FreeJoin(rule) => CountingCounters::new(&rule.plan),
+                PreparedRule::Guard(_) => CountingCounters::for_guard(),
             };
             ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
             // The union accounting (docs/architecture/40-execution.md
@@ -145,14 +144,14 @@ impl<S> PreparedQuery<'_, S> {
                 .distinct_seen()
                 .map_or(emitted, |seen| (seen - seen_before) as u64);
             let absorbed = emitted - newly_seen;
-            rule_stats.push(match &self.rules[rule_idx].plan {
-                ExecPlan::FreeJoin(plan) => counters.into_rule_stats(
-                    plan,
+            rule_stats.push(match &self.program.rules()[rule_idx] {
+                PreparedRule::FreeJoin(rule) => counters.into_rule_stats(
+                    &rule.plan,
                     self.schema,
                     self.rule_pinned_rows(rule_idx),
                     absorbed,
                 ),
-                ExecPlan::GuardProbe(_) => RuleStats {
+                PreparedRule::Guard(_) => RuleStats {
                     nodes: Vec::new(),
                     eliminated: Vec::new(),
                     folded: Vec::new(),
@@ -161,9 +160,6 @@ impl<S> PreparedQuery<'_, S> {
                     absorbed,
                     guard: Some(GuardStats { hit: emitted > 0 }),
                 },
-                ExecPlan::Empty => {
-                    unreachable!("the empty plan short-circuited above")
-                }
             });
         }
         if ran {
@@ -205,7 +201,7 @@ impl<S> PreparedQuery<'_, S> {
                 guard: None,
             }],
             emits: 0,
-            // One empty plan, no pair to prove.
+            // An empty program has no pair to prove.
             disjoint_rules: None,
             subsumed: self.subsumed.clone(),
             dead: self.dead.clone(),
@@ -219,8 +215,8 @@ impl<S> PreparedQuery<'_, S> {
     /// its spanning head-projection seen-set is the union representation.
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
-        match &*self.rules {
-            [rule] => rule.plan.distinct_bindings(),
+        match self.program.rules() {
+            [rule] => rule.distinct_bindings(),
             _ => false,
         }
     }

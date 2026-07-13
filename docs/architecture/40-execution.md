@@ -63,9 +63,9 @@ mechanism names its reader; this is `U`/`M`'s read-side reader).
 
 **Statically empty programs.** A program whose every rule the normalization
 fold refuted on constants (`20-query-ir.md`, § normalization — mutually
-unsatisfiable constant predicates) prepares to the `Empty` plan: the third
-plan kind beside the guard probe and Free Join, classified once at prepare
-like both. Execution binds params first — bind errors still surface, a
+unsatisfiable constant predicates) prepares to the empty program. Prepared
+execution has two rule kinds — guard probe and Free Join — plus this
+program-level empty variant. Execution binds params first — bind errors still surface, a
 vacuous Allen mask param is rejected exactly as on a live plan — then
 touches no images, binds no views, runs no join, and the result is the
 empty buffer. EXPLAIN prints `access path: statically empty` plus each dead
@@ -283,8 +283,9 @@ interval type. **Reverses if:** never structurally.
 
 ## The rule loop
 
-A prepared query is a program — one head, a list of rules, each with its own
-`ValidatedPlan` (the whole plan pipeline runs per rule at prepare). Execution runs the
+A prepared query is a program — one head, a list of prepared rules, each either a
+guard probe or a Free Join rule carrying its own `ValidatedPlan` (the whole planning
+pipeline runs for each non-guard rule at prepare). Execution runs the
 rules **sequentially** into **one sink**: the sink resets once per execution, never
 per rule, and its dedup machinery spanning rules is the *entire* implementation of set
 union. **Union is not an operator** — no merge node, no concat-then-dedup pass exists

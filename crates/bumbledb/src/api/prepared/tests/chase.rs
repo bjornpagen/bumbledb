@@ -5,7 +5,6 @@
 
 use super::*;
 
-use crate::exec::dispatch::ExecPlan;
 use crate::ir::normalize::Role;
 use crate::ir::AggOp;
 use crate::plan::chase::with_chase_disabled;
@@ -136,10 +135,10 @@ fn walk_atoms() -> Vec<Atom> {
 /// One prepared rule's roles — asserting the marks so neither side of
 /// the differential is vacuously equal.
 fn plan_roles(prepared: &PreparedQuery<'_, ()>, rule: usize) -> Vec<Role> {
-    let ExecPlan::FreeJoin(plan) = &prepared.rules[rule].plan else {
+    let PreparedRule::FreeJoin(rule) = &prepared.program.rules()[rule] else {
         panic!("a two-atom query plans as Free Join");
     };
-    plan.occurrences().iter().map(|o| o.role).collect()
+    rule.plan.occurrences().iter().map(|o| o.role).collect()
 }
 
 fn rows(buffer: &ResultBuffer) -> Vec<Vec<ResultValue<'_>>> {
@@ -408,7 +407,11 @@ fn per_rule_elimination_marks_one_rule_only() {
         rules: vec![rule(false), rule(true)],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert_eq!(prepared.rules.len(), 2, "differing bodies never subsume");
+    assert_eq!(
+        prepared.program.rules().len(),
+        2,
+        "differing bodies never subsume"
+    );
     assert_eq!(
         plan_roles(&prepared, 0),
         vec![
@@ -493,7 +496,11 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
         ])],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert_eq!(prepared.rules.len(), 1, "the subsumed disjunct is deleted");
+    assert_eq!(
+        prepared.program.rules().len(),
+        1,
+        "the subsumed disjunct is deleted"
+    );
     assert_eq!(
         plan_roles(&prepared, 0),
         vec![
@@ -519,7 +526,7 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
     let mut disabled =
         with_chase_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
     assert_eq!(
-        disabled.rules.len(),
+        disabled.program.rules().len(),
         2,
         "the off switch covers both passes: no elimination, no deletion"
     );

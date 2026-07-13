@@ -36,7 +36,13 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
     let cache = crate::image::cache::ImageCache::new(&schema);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
     assert!(
-        prepared.rules[0].guard_finds.is_some(),
+        matches!(
+            prepared.program.rules(),
+            [PreparedRule::Guard(GuardRule {
+                guard_finds: Some(_),
+                ..
+            })]
+        ),
         "plain-variable guard takes the fast lane"
     );
     let mut out = ResultBuffer::new();
@@ -92,7 +98,13 @@ fn a_guard_prepare_and_execute_build_no_image() {
     let cache = crate::image::cache::ImageCache::new(&schema);
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
     assert!(
-        prepared.rules[0].guard_finds.is_some(),
+        matches!(
+            prepared.program.rules(),
+            [PreparedRule::Guard(GuardRule {
+                guard_finds: Some(_),
+                ..
+            })]
+        ),
         "the fast lane classified"
     );
     let mut out = ResultBuffer::new();
@@ -130,7 +142,7 @@ fn guard_probe_queries_flow_through_the_same_surface() {
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.rules[0].plan, ExecPlan::GuardProbe(_)));
+    assert!(matches!(prepared.program.rules(), [PreparedRule::Guard(_)]));
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
@@ -238,7 +250,7 @@ fn pointwise_key_point_lookup_is_guarded_and_image_free() {
     let txn = env.read_txn().expect("txn");
     let query = booking_query(Term::Literal(Value::IntervalU64(5, 10)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.rules[0].plan, ExecPlan::GuardProbe(_)));
+    assert!(matches!(prepared.program.rules(), [PreparedRule::Guard(_)]));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -294,7 +306,7 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
     let query = booking_query(Term::Literal(Value::U64(7)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
-        matches!(prepared.rules[0].plan, ExecPlan::FreeJoin(_)),
+        matches!(prepared.program.rules(), [PreparedRule::FreeJoin(_)]),
         "membership binding is not a key cover"
     );
 
@@ -390,7 +402,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
         })
     };
     let mut prepared = prepare(&txn, &cache, &schema, &count_stay((5, 10))).expect("prepare");
-    assert!(matches!(prepared.rules[0].plan, ExecPlan::GuardProbe(_)));
+    assert!(matches!(prepared.program.rules(), [PreparedRule::Guard(_)]));
     let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
     assert!(report.contains("full-fact membership probe"), "{report}");
 
@@ -474,7 +486,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
         predicates: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.rules[0].plan, ExecPlan::GuardProbe(_)));
+    assert!(matches!(prepared.program.rules(), [PreparedRule::Guard(_)]));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::Str("ghost")])

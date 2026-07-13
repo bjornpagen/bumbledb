@@ -4,18 +4,16 @@
 //! read-side readers).
 //!
 //! The dispatch is a **representation**, not a runtime mode: classification
-//! happens once at prepare time into the three-variant [`ExecPlan`]; the
-//! branch exists exactly once. No images are touched on the guard path —
+//! happens once at prepare time into the prepared rule sum; the branch
+//! exists exactly once. No images are touched on the guard path —
 //! it works identically on a cold, just-committed database (the latency
 //! property the decision exists for).
 
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::VarId;
-use crate::plan::fj::ValidatedPlan;
 use crate::schema::{FieldId, RelationId, StatementId};
 
 mod classify;
-mod exec_plan;
 mod execute_guard;
 mod fact_word;
 mod guard_probe_fact;
@@ -26,23 +24,6 @@ pub use classify::classify;
 pub use execute_guard::execute_guard;
 pub(crate) use fact_word::{fact_operand, fact_word, FactOperand};
 pub(crate) use guard_probe_fact::guard_probe_fact;
-
-/// The prepared execution plan: the guard-probe fast path, the Free
-/// Join engine, or the statically-empty plan.
-#[derive(Debug)]
-pub enum ExecPlan {
-    GuardProbe(GuardPlan),
-    FreeJoin(ValidatedPlan),
-    /// The statically-empty program (docs/architecture/20-query-ir.md,
-    /// § normalization — the fold's verdict): every rule was refuted on
-    /// constants at prepare, so the denotation is stage-2-known to be
-    /// the empty set. Execution binds params first — bind errors still
-    /// surface — then touches no images, binds no views, runs no join
-    /// (docs/architecture/40-execution.md, § access paths). The per-rule
-    /// killing predicates ride the prepared query's death record, the
-    /// EXPLAIN/stats surface.
-    Empty,
-}
 
 /// One variable a guard plan decodes from the fetched fact: the field it
 /// reads and its binding-slot span (the `SlotWidth` layout — an interval
@@ -78,6 +59,26 @@ pub struct GuardPlan {
 }
 
 impl GuardPlan {
+    /// The first slot index of a variable.
+    #[must_use]
+    pub fn slot_of(&self, var: VarId) -> usize {
+        self.vars
+            .iter()
+            .find(|binding| binding.var == var)
+            .expect("guard plans bind every variable")
+            .slot
+    }
+
+    /// A variable's slot width in words.
+    #[must_use]
+    pub fn width_of(&self, var: VarId) -> usize {
+        self.vars
+            .iter()
+            .find(|binding| binding.var == var)
+            .expect("guard plans bind every variable")
+            .width
+    }
+
     /// Total binding-slot words (the `SlotWidth` layout over `vars`).
     #[must_use]
     pub fn slot_count(&self) -> usize {

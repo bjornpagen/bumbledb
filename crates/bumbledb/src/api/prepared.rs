@@ -12,10 +12,11 @@
 //! execution.
 
 use crate::exec::colt::Colt;
-use crate::exec::dispatch::ExecPlan;
+use crate::exec::dispatch::GuardPlan;
 use crate::exec::run::{Bindings, Executor};
 use crate::exec::sink::{AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::{Const, FilterPredicate};
+use crate::plan::fj::ValidatedPlan;
 use crate::schema::{Schema, ValueType};
 
 mod bind;
@@ -183,8 +184,7 @@ pub struct PreparedQuery<'s, S> {
     /// The statically-empty record (`ir/normalize/fold.rs`): rules whose
     /// constant predicates refuted themselves at normalize, deleted at
     /// prepare with the killing predicate — `rules` below holds only the
-    /// live ones (or the one `ExecPlan::Empty` artifact when every rule
-    /// died). Readers: EXPLAIN and the structured stats.
+    /// live ones. Readers: EXPLAIN and the structured stats.
     dead: Vec<crate::api::stats::DeadRule>,
     /// Per rule, in rule order: the rule's validated plan plus its
     /// plan-shaped execution scratch — the whole plan pipeline ran per
@@ -193,7 +193,7 @@ pub struct PreparedQuery<'s, S> {
     /// loop): the sink resets once per execution, never per rule, and
     /// its seen-set spanning rules is the entire implementation of ∪ —
     /// no merge node, no concat-then-dedup pass exists.
-    rules: Vec<PreparedRule>,
+    program: Program,
     /// Per head position: the result type (identical across rules — the
     /// head's positional alignment pins it at validation).
     column_types: Vec<ValueType>,
@@ -260,15 +260,29 @@ pub struct PreparedQuery<'s, S> {
     marker: std::marker::PhantomData<PreparedMarker<S>>,
 }
 
-/// One rule's prepared artifact: the validated plan the pipeline built
-/// for it, plus every piece of execution scratch whose shape is the
-/// plan's (slot layout, occurrence count, view memo). The prepared query
-/// is a list of these — one per rule — under one head-owned sink.
-struct PreparedRule {
-    plan: ExecPlan,
-    /// The Free Join executor scratch (unused for guard probes) — plan-
-    /// shaped, so per-rule where the binding-slot scratch is shared.
-    executor: Option<Executor>,
+/// The prepared program. Emptiness is a property of the whole union, not
+/// a sentinel rule impersonating one of its disjuncts.
+enum Program {
+    /// Every rule was statically refuted. Binding still runs so errors
+    /// surface; execution touches no sink, image, view, or plan.
+    Empty,
+    Rules(Vec<PreparedRule>),
+}
+
+/// One rule's prepared artifact. Its kind carries exactly the scratch that
+/// kind can consume.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the decided representation keeps rule scratch inline; programs contain at most the validated rule cap"
+)]
+enum PreparedRule {
+    FreeJoin(FreeJoinRule),
+    Guard(GuardRule),
+}
+
+struct FreeJoinRule {
+    plan: ValidatedPlan,
+    executor: Executor,
     /// The rule's head projection: per head position, the output spec
     /// over this rule's binding-slot layout (result types live on the
     /// query — they are the head's, identical across rules).
@@ -290,18 +304,66 @@ struct PreparedRule {
     /// The view memo (docs/architecture/40-execution.md): per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
-    /// The guard fast lane's find table: each output
-    /// column's fact field and type, in find order. `Some` for guard
-    /// plans whose finds are all plain variables; aggregate-find guards
-    /// keep the sink path.
-    guard_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
     /// The staleness pin record (`staleness.rs`): per participating
     /// occurrence, the statistics the rule's plan was costed with. Cold
     /// data — written once at build, read only by
     /// [`PreparedQuery::staleness`] and the stats surface, never by
-    /// execution. Empty for guard probes (classification precedes
-    /// statistics; nothing is read).
+    /// execution.
     pinned: Box<[OccurrencePin]>,
+}
+
+struct GuardRule {
+    plan: GuardPlan,
+    finds: Vec<FindSpec>,
+    /// The direct point lane's find table. `Some` iff every find is a plain
+    /// variable; aggregate and measure guard rules keep the shared sink.
+    guard_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
+}
+
+impl Program {
+    fn rules(&self) -> &[PreparedRule] {
+        match self {
+            Self::Empty => &[],
+            Self::Rules(rules) => rules,
+        }
+    }
+
+    fn rules_mut(&mut self) -> &mut [PreparedRule] {
+        match self {
+            Self::Empty => &mut [],
+            Self::Rules(rules) => rules,
+        }
+    }
+}
+
+impl PreparedRule {
+    fn finds(&self) -> &[FindSpec] {
+        match self {
+            Self::FreeJoin(rule) => &rule.finds,
+            Self::Guard(rule) => &rule.finds,
+        }
+    }
+
+    fn slot_count(&self) -> usize {
+        match self {
+            Self::FreeJoin(rule) => rule.plan.slot_count(),
+            Self::Guard(rule) => rule.plan.slot_count(),
+        }
+    }
+
+    fn distinct_bindings(&self) -> bool {
+        match self {
+            Self::FreeJoin(rule) => rule.plan.distinct_bindings(),
+            Self::Guard(_) => true,
+        }
+    }
+
+    fn pinned(&self) -> &[OccurrencePin] {
+        match self {
+            Self::FreeJoin(rule) => &rule.pinned,
+            Self::Guard(_) => &[],
+        }
+    }
 }
 
 /// [`PreparedQuery`]'s phantom payload: `!Sync` scratch pinned to `S`.

@@ -1,7 +1,7 @@
 //! Statically empty: predicate folding at normalize (docs/architecture/
 //! 20-query-ir.md § normalization, 40-execution.md § access paths). A
 //! rule whose constant predicates are mutually unsatisfiable dies at
-//! prepare; a program of only dead rules prepares to `ExecPlan::Empty`
+//! prepare; a program of only dead rules prepares to `Program::Empty`
 //! — params bind first (errors surface), then nothing runs. The fold's
 //! set-preservation rides the folded/unfolded differential below.
 
@@ -140,8 +140,15 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     // The dead rule was deleted at prepare — only the live plan exists.
-    assert_eq!(prepared.rules.len(), 1, "the dead rule prepared no plan");
-    assert!(matches!(prepared.rules[0].plan, ExecPlan::FreeJoin(_)));
+    assert_eq!(
+        prepared.program.rules().len(),
+        1,
+        "the dead rule prepared no plan"
+    );
+    assert!(matches!(
+        prepared.program.rules(),
+        [PreparedRule::FreeJoin(_)]
+    ));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -194,7 +201,7 @@ fn a_dead_rule_opens_no_rule_span() {
 }
 
 #[test]
-fn an_all_dead_program_prepares_to_the_empty_plan_and_binds_params_first() {
+fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
     let dir = TempDir::new("statically-empty-all");
     let schema = event_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -204,7 +211,7 @@ fn an_all_dead_program_prepares_to_the_empty_plan_and_binds_params_first() {
 
     // Both rules die on the score contradiction; rule 1 also carries an
     // Allen mask param — params are stage-3, so the mask leg never
-    // folds, and bind must still judge it on the empty plan.
+    // folds, and bind must still judge it on the empty program.
     let mut masked = contradiction();
     masked.push(Comparison {
         op: CmpOp::Allen {
@@ -222,10 +229,9 @@ fn an_all_dead_program_prepares_to_the_empty_plan_and_binds_params_first() {
         rules: vec![by_kind_rule(3, contradiction()), rule1],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert_eq!(prepared.rules.len(), 1);
     assert!(
-        matches!(prepared.rules[0].plan, ExecPlan::Empty),
-        "all rules dead: the empty plan"
+        matches!(prepared.program, Program::Empty),
+        "all rules dead: the empty program"
     );
 
     // Params bind FIRST: a vacuous mask param still errors, exactly as
@@ -244,7 +250,7 @@ fn an_all_dead_program_prepares_to_the_empty_plan_and_binds_params_first() {
         .expect("execute");
     assert_eq!(out.len(), 0, "stage-2-known empty");
 
-    // EXPLAIN prints the plan kind and both killing predicates.
+    // EXPLAIN prints the program kind and both killing predicates.
     let (out, report) = prepared
         .explain(&txn, &cache, &[BindValue::AllenMask(AllenMask::INTERSECTS)])
         .expect("explain");
@@ -260,11 +266,11 @@ fn an_all_dead_program_prepares_to_the_empty_plan_and_binds_params_first() {
     );
 }
 
-/// The `[shape]` leg: the empty plan touches no image and binds no view
+/// The `[shape]` leg: the empty program touches no image and binds no view
 /// — the obs counters that would record either stay silent.
 #[cfg(feature = "trace")]
 #[test]
-fn the_empty_plan_builds_no_image_and_binds_no_view() {
+fn the_empty_program_builds_no_image_and_binds_no_view() {
     use crate::obs;
 
     let dir = TempDir::new("statically-empty-no-images");
@@ -279,7 +285,7 @@ fn the_empty_plan_builds_no_image_and_binds_no_view() {
         rules: vec![by_kind_rule(3, contradiction())],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.rules[0].plan, ExecPlan::Empty));
+    assert!(matches!(prepared.program, Program::Empty));
 
     obs::start_capture();
     let out = prepared
@@ -296,7 +302,7 @@ fn the_empty_plan_builds_no_image_and_binds_no_view() {
     ] {
         assert!(
             !names.contains(&touched),
-            "the empty plan must not reach {touched}: {names:?}"
+            "the empty program must not reach {touched}: {names:?}"
         );
     }
 }

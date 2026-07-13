@@ -33,7 +33,7 @@ pub struct ExecutionStats {
     /// (`ir/normalize/fold.rs`): each carries its killing predicate —
     /// EXPLAIN's `statically empty: rule N: <picture>` line. Indices are
     /// lowered-rule indices, exactly as `subsumed`; a program of only
-    /// dead rules planned to `ExecPlan::Empty`.
+    /// dead rules represented by an empty prepared program.
     pub dead: Vec<DeadRule>,
 }
 

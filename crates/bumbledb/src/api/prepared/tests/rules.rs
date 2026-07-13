@@ -63,10 +63,13 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
     let txn = env.read_txn().expect("txn");
 
     let prepared = prepare(&txn, &cache, &schema, &union_query()).expect("multi-rule builds");
-    assert_eq!(prepared.rules.len(), 2, "one plan per rule");
-    for rule in &prepared.rules {
+    assert_eq!(prepared.program.rules().len(), 2, "one plan per rule");
+    for rule in prepared.program.rules() {
         // Each rule went through the full pipeline: a real plan with the
         // rule's own occurrence scratch exists.
+        let PreparedRule::FreeJoin(rule) = rule else {
+            panic!("fixture rules use Free Join");
+        };
         assert_eq!(rule.resolved_filters.len(), 1, "one occurrence per rule");
     }
     assert_eq!(
@@ -402,7 +405,7 @@ fn a_guard_rule_unions_through_the_sink() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
-        matches!(prepared.rules[1].plan, ExecPlan::GuardProbe(_)),
+        matches!(prepared.program.rules()[1], PreparedRule::Guard(_)),
         "rule 1 classifies as the point fast path"
     );
     let out = prepared

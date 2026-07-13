@@ -1,4 +1,4 @@
-use super::{BindValue, ExecPlan, PreparedQuery, ResultBuffer, ValueType};
+use super::{BindValue, GuardRule, PreparedQuery, PreparedRule, Program, ResultBuffer, ValueType};
 
 use crate::error::Result;
 use crate::exec::dispatch::execute_guard;
@@ -84,9 +84,9 @@ impl<S> PreparedQuery<'_, S> {
         // included — and nothing else exists to run: no sink reset, no
         // rule loop, no image, no view bind, no finalize; the cleared
         // buffer IS the empty result (docs/architecture/40-execution.md
-        // § access paths). Always the whole program: the empty plan is
+        // § access paths). Always the whole program: this variant is
         // built only when every rule died.
-        if matches!(self.rules[0].plan, ExecPlan::Empty) {
+        if matches!(self.program, Program::Empty) {
             return Ok(());
         }
         // The point fast lane, single-rule programs only: one probe, one
@@ -94,10 +94,13 @@ impl<S> PreparedQuery<'_, S> {
         // bindings, no finalize pass. Aggregate-find guards (rare) and
         // guard rules inside multi-rule programs keep the sink path (the
         // union must hear them).
-        if self.rules.len() == 1
-            && matches!(self.rules[0].plan, ExecPlan::GuardProbe(_))
-            && self.rules[0].guard_finds.is_some()
-        {
+        if matches!(
+            self.program.rules(),
+            [PreparedRule::Guard(GuardRule {
+                guard_finds: Some(_),
+                ..
+            })]
+        ) {
             return self.execute_guard_direct(txn, out);
         }
         // Phase attribution engages only under an active obs capture
@@ -152,7 +155,8 @@ impl<S> PreparedQuery<'_, S> {
     ) -> Result<bool> {
         self.sink.reset();
         let mut ran = false;
-        for rule_idx in 0..self.rules.len() {
+        let rule_count = self.program.rules().len();
+        for rule_idx in 0..rule_count {
             ran |= self.run_rule(rule_idx, txn, cache, counters)?;
         }
         Ok(ran)
@@ -176,30 +180,28 @@ impl<S> PreparedQuery<'_, S> {
         let seen_before = self.sink.distinct_seen().unwrap_or(0);
         // Re-aim per rule only where a switch exists: a single-rule sink
         // is built aimed, and the hot single-rule path stays untouched.
-        if self.rules.len() > 1 {
-            let rule = &self.rules[rule_idx];
-            self.sink.aim(&rule.finds, rule.plan.slot_count());
+        let rule_count = self.program.rules().len();
+        if rule_count > 1 {
+            let rule = &self.program.rules()[rule_idx];
+            self.sink.aim(rule.finds(), rule.slot_count());
         }
         // The rule-shared binding-slot scratch, sized to this rule's
         // layout (capacity is the high-water across all rules).
-        self.bindings.resize(self.rules[rule_idx].plan.slot_count());
+        let slot_count = self.program.rules()[rule_idx].slot_count();
+        self.bindings.resize(slot_count);
         // The fully-latched fast path: zero pending literals and zero
         // params of any shape means the resolved tables were written
         // once and are final — `resolve_predicates` is skipped entirely
         // (one cold branch; the latch only removes work).
         let fast_eligible = self.unresolved_literals == 0 && self.param_types.is_empty();
         let mut latched = 0u32;
-        let rule = &mut self.rules[rule_idx];
-        let ran = match &mut rule.plan {
-            // The empty plan is always a whole (single-rule) program and
-            // short-circuits before the rule loop (`run_bound`,
-            // `profile`) — no rule span, no sink touch.
-            ExecPlan::Empty => {
-                unreachable!("the empty plan short-circuits before the rule loop")
-            }
-            ExecPlan::GuardProbe(guard) => {
+        let Program::Rules(rules) = &mut self.program else {
+            return Ok(false);
+        };
+        let ran = match &mut rules[rule_idx] {
+            PreparedRule::Guard(rule) => {
                 execute_guard(
-                    guard,
+                    &rule.plan,
                     txn,
                     self.schema,
                     &self.resolved_params,
@@ -210,7 +212,8 @@ impl<S> PreparedQuery<'_, S> {
                 )?;
                 true
             }
-            ExecPlan::FreeJoin(plan) => {
+            PreparedRule::FreeJoin(rule) => {
+                let plan = &mut rule.plan;
                 let resolved = if fast_eligible && rule.resolved_complete {
                     true
                 } else {
@@ -234,18 +237,13 @@ impl<S> PreparedQuery<'_, S> {
                     // bound param) resolve into the executor before the
                     // join runs — the hot path never touches the param
                     // slice.
-                    rule.executor
-                        .as_mut()
-                        .expect("free join plans carry executor scratch")
-                        .bind_allen_masks(&self.resolved_params);
+                    rule.executor.bind_allen_masks(&self.resolved_params);
                     run_join(
                         plan,
                         self.schema,
                         txn,
                         cache,
-                        rule.executor
-                            .as_mut()
-                            .expect("free join plans carry executor scratch"),
+                        &mut rule.executor,
                         &mut self.bindings,
                         &rule.resolved_filters,
                         &rule.resolved_selections,
@@ -277,11 +275,14 @@ impl<S> PreparedQuery<'_, S> {
     /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery.
     fn execute_guard_direct(&mut self, txn: &ReadTxn<'_>, out: &mut ResultBuffer) -> Result<()> {
-        let rule = &self.rules[0];
-        let ExecPlan::GuardProbe(guard) = &rule.plan else {
-            unreachable!("guard_finds implies a guard plan")
+        let [PreparedRule::Guard(GuardRule {
+            plan: guard,
+            guard_finds: Some(guard_finds),
+            ..
+        })] = self.program.rules()
+        else {
+            return Ok(());
         };
-        let guard_finds = rule.guard_finds.as_ref().expect("checked by the caller");
         self.resolve_memo.clear();
         let Some(fact) = crate::exec::dispatch::guard_probe_fact(
             guard,

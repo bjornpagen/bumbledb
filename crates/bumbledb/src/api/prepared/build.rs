@@ -1,7 +1,7 @@
 use super::{
-    AggregateSink, Bindings, Colt, EitherSink, ExecPlan, Executor, FindSpec, OccurrencePin,
-    PreparedQuery, PreparedRule, ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo,
-    PARKED_SLOTS,
+    AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, GuardRule,
+    OccurrencePin, PreparedQuery, PreparedRule, Program, ProjectionSink, ResolveMemo, Schema,
+    ValueType, ViewMemo, PARKED_SLOTS,
 };
 
 use crate::error::Result;
@@ -86,14 +86,6 @@ pub(crate) fn prepare<'s, S>(
     // one live rule has no pair left to prove (the stats surface's
     // single-rule contract; pairwise over a superset held regardless).
     let disjoint_rules = (rules.len() > 1).then_some(disjoint_rules).flatten();
-    if rules.is_empty() {
-        // Every rule died: the program is stage-2-known empty and
-        // prepares to the one `ExecPlan::Empty` artifact — execution
-        // binds params (errors surface), then touches nothing
-        // (docs/architecture/40-execution.md, § access paths).
-        rules.push(empty_rule());
-    }
-
     let (param_types, param_is_set, param_is_point) = param_tables(&witness);
 
     // The one sink configuration — head-owned shape (projection vs
@@ -105,22 +97,26 @@ pub(crate) fn prepare<'s, S>(
     // spanning all rules: that map is the union representation.
     let output_hint = output_hint(&rules);
     let union = rules.len() > 1;
-    let first = &rules[0];
-    let sink = make_sink(
-        &first.finds,
-        first.plan.slot_count(),
-        !union && first.plan.distinct_bindings(),
-        union,
-        output_hint,
+    let sink = rules.first().map_or_else(
+        || make_sink(&[], 0, true, false, 0),
+        |first| {
+            make_sink(
+                first.finds(),
+                first.slot_count(),
+                !union && first.distinct_bindings(),
+                union,
+                output_hint,
+            )
+        },
     );
     // The rule-shared binding-slot scratch, sized at the rules'
     // high-water so the per-rule resize never allocates.
     let bindings = Bindings::new(
         rules
             .iter()
-            .map(|rule| rule.plan.slot_count())
+            .map(PreparedRule::slot_count)
             .max()
-            .expect("at least one rule"),
+            .unwrap_or(0),
     );
 
     // The byte-heap types keep the resolving finalize: String resolves
@@ -130,13 +126,18 @@ pub(crate) fn prepare<'s, S>(
         .iter()
         .all(|ty| !matches!(ty, ValueType::String | ValueType::FixedBytes { .. }));
     let unresolved_literals = rules.iter().map(pending_literals).sum();
+    let program = if rules.is_empty() {
+        Program::Empty
+    } else {
+        Program::Rules(rules)
+    };
     Ok(PreparedQuery {
         schema,
         env_instance: txn.env_instance(),
         disjoint_rules,
         subsumed,
         dead,
-        rules,
+        program,
         column_types,
         param_types,
         param_is_set,
@@ -160,19 +161,18 @@ pub(crate) fn prepare<'s, S>(
 fn output_hint(rules: &[PreparedRule]) -> usize {
     rules
         .iter()
-        .map(|rule| match &rule.plan {
+        .map(|rule| match rule {
             // Sink presizing: the last node's planner estimate bounds
             // the binding stream the sink consumes.
-            ExecPlan::FreeJoin(plan) => {
+            PreparedRule::FreeJoin(rule) => {
+                let plan = &rule.plan;
                 usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
                     .expect("clamped")
             }
-            ExecPlan::GuardProbe(_) => 1,
-            // Nothing ever emits under the empty plan.
-            ExecPlan::Empty => 0,
+            PreparedRule::Guard(_) => 1,
         })
         .max()
-        .expect("at least one rule")
+        .unwrap_or(0)
 }
 
 /// The head's result-type row from one rule's find terms alone — the
@@ -201,25 +201,6 @@ fn result_types(rule: &RuleWitness<'_>) -> Vec<ValueType> {
         .collect()
 }
 
-/// The all-dead program's one prepared artifact: the `ExecPlan::Empty`
-/// plan with nothing attached — no executor, no finds (the sink is
-/// never fed and finalize never runs: the rule loop reports nothing
-/// ran, exactly the Eq-miss short-circuit's empty-result path), no
-/// view memo entries, no pins (nothing was read, so nothing drifts).
-fn empty_rule() -> PreparedRule {
-    PreparedRule {
-        plan: ExecPlan::Empty,
-        executor: None,
-        finds: Vec::new(),
-        resolved_filters: Vec::new(),
-        resolved_selections: Vec::new(),
-        resolved_complete: false,
-        memo: build_view_memo(&ExecPlan::Empty),
-        guard_finds: None,
-        pinned: Box::new([]),
-    }
-}
-
 /// The rule's `str` literals awaiting dictionary words — the latch
 /// counter's initial value ([`PreparedQuery::unresolved_literals`]).
 /// Guard plans resolve their key constants per probe and stay outside
@@ -230,9 +211,10 @@ fn empty_rule() -> PreparedRule {
 /// and never resolved — a fold must not block the fully-latched fast
 /// path.
 fn pending_literals(rule: &PreparedRule) -> u32 {
-    let ExecPlan::FreeJoin(plan) = &rule.plan else {
+    let PreparedRule::FreeJoin(rule) = rule else {
         return 0;
     };
+    let plan = &rule.plan;
     let pending = |value: &crate::image::view::Const| {
         matches!(value, crate::image::view::Const::PendingIntern { .. })
     };
@@ -363,88 +345,91 @@ fn prepare_rule(
         let _s = obs::span(obs::names::CLASSIFY, obs::Category::Prepare);
         classify(normalized, schema)
     };
+    if let Some(plan) = classified {
+        let finds = find_specs(rule, &plan);
+        let guard_finds = guard_find_table(&plan, &finds);
+        let (finds, types) = finds.into_iter().unzip();
+        return Ok((
+            PreparedRule::Guard(GuardRule {
+                plan,
+                finds,
+                guard_finds,
+            }),
+            types,
+        ));
+    }
+
     // The staleness pin record (`staleness.rs`): the statistics below,
     // kept instead of dropped. Stays empty for guard probes — they read
     // no statistics, so there is nothing to drift.
     let mut pins = Vec::new();
-    let exec_plan = if let Some(guard) = classified {
-        ExecPlan::GuardProbe(guard)
-    } else {
-        // Per-occurrence input estimates (docs/architecture/40-execution.md): row counters
-        // shaped by the selectivity ladder — key-exact counts,
-        // resident-image distinct counts (peek only: prepare never
-        // builds an image for statistics), documented bounds and floors.
-        // Participating occurrences only: negated occurrences enter no
-        // DP state and chase-eliminated occurrences left planning
-        // entirely, so neither earns a statistics read — and, by the
-        // same token, neither earns a pin.
-        let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
-        let mut stats = Vec::with_capacity(normalized.occurrences.len());
-        for occurrence in normalized
-            .occurrences
-            .iter()
-            .filter(|o| o.role.participates())
-        {
-            let rows = read::row_count(txn, occurrence.relation)?;
-            let occ_stats =
-                crate::plan::selectivity::occurrence_stats(txn, cache, schema, occurrence, rows)?;
-            pins.push(OccurrencePin {
-                occ_id: occurrence.occ_id,
-                relation: occurrence.relation,
-                rows,
-                survivors: (!occurrence.filters.is_empty()).then_some(occ_stats.rows),
-            });
-            stats.push(occ_stats);
-        }
-        stats_span.set_args(stats.len() as u64, 0);
-        stats_span.end();
-        let order = {
-            let _s = obs::span(obs::names::PLAN_DP, obs::Category::Prepare);
-            plan_order(normalized, schema, &stats)
-        };
-        let lower_span = obs::span(obs::names::LOWER, obs::Category::Prepare);
-        let mut fj = binary2fj(normalized, &order);
-        factor(&mut fj);
-        // Group key for projections; every variable for aggregates —
-        // skip-illegality under a fold is encoded in the bits themselves
-        // (`RuleWitness::sink_vars`).
-        let sink_vars = rule.sink_vars();
-        let validated =
-            crate::plan::fj::validate(&fj, normalized, schema, order.estimates.clone(), &sink_vars)
-                .expect("binary2fj + factor construct valid plans");
-        lower_span.end();
-        ExecPlan::FreeJoin(validated)
+    // Per-occurrence input estimates (docs/architecture/40-execution.md): row counters
+    // shaped by the selectivity ladder — key-exact counts,
+    // resident-image distinct counts (peek only: prepare never
+    // builds an image for statistics), documented bounds and floors.
+    // Participating occurrences only: negated occurrences enter no
+    // DP state and chase-eliminated occurrences left planning
+    // entirely, so neither earns a statistics read — and, by the
+    // same token, neither earns a pin.
+    let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
+    let mut stats = Vec::with_capacity(normalized.occurrences.len());
+    for occurrence in normalized
+        .occurrences
+        .iter()
+        .filter(|o| o.role.participates())
+    {
+        let rows = read::row_count(txn, occurrence.relation)?;
+        let occ_stats =
+            crate::plan::selectivity::occurrence_stats(txn, cache, schema, occurrence, rows)?;
+        pins.push(OccurrencePin {
+            occ_id: occurrence.occ_id,
+            relation: occurrence.relation,
+            rows,
+            survivors: (!occurrence.filters.is_empty()).then_some(occ_stats.rows),
+        });
+        stats.push(occ_stats);
+    }
+    stats_span.set_args(stats.len() as u64, 0);
+    stats_span.end();
+    let order = {
+        let _s = obs::span(obs::names::PLAN_DP, obs::Category::Prepare);
+        plan_order(normalized, schema, &stats)
     };
+    let lower_span = obs::span(obs::names::LOWER, obs::Category::Prepare);
+    let mut fj = binary2fj(normalized, &order);
+    factor(&mut fj);
+    // Group key for projections; every variable for aggregates —
+    // skip-illegality under a fold is encoded in the bits themselves
+    // (`RuleWitness::sink_vars`).
+    let sink_vars = rule.sink_vars();
+    let plan =
+        crate::plan::fj::validate(&fj, normalized, schema, order.estimates.clone(), &sink_vars)
+            .expect("binary2fj + factor construct valid plans");
+    lower_span.end();
 
-    let finds = find_specs(rule, &exec_plan);
-
-    let (executor, occurrence_count) = match &exec_plan {
-        ExecPlan::FreeJoin(plan) => (Some(Executor::new(plan)), plan.occurrences().len()),
-        ExecPlan::GuardProbe(_) => (None, 1),
-        ExecPlan::Empty => unreachable!("dead rules never reach the per-rule pipeline"),
-    };
+    let finds = find_specs(rule, &plan);
+    let executor = Executor::new(&plan);
+    let occurrence_count = plan.occurrences().len();
 
     // BUILD_COLTS is pure column-schema construction since the unbound-
     // views cutover: prepare provably never touches an image (the stats
     // phase peeks, never builds), so a prepared query pins nothing.
     let memo = {
         let _s = obs::span(obs::names::BUILD_COLTS, obs::Category::Prepare);
-        build_view_memo(&exec_plan)
+        build_view_memo(&plan)
     };
-    let guard_finds = guard_find_table(&exec_plan, &finds);
     let (specs, types) = finds.into_iter().unzip();
     Ok((
-        PreparedRule {
-            plan: exec_plan,
+        PreparedRule::FreeJoin(FreeJoinRule {
+            plan,
             executor,
             finds: specs,
             resolved_filters: vec![Vec::new(); occurrence_count],
             resolved_selections: vec![Vec::new(); occurrence_count],
             resolved_complete: false,
             memo,
-            guard_finds,
             pinned: pins.into_boxed_slice(),
-        },
+        }),
         types,
     ))
 }
@@ -454,7 +439,7 @@ fn prepare_rule(
 /// the ordinary memo-miss path (a `None` generation never matches),
 /// paying the image build exactly where a cold execution already pays
 /// it. Pure column-schema construction; nothing here can fail.
-fn build_view_memo(exec_plan: &ExecPlan) -> ViewMemo {
+fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
     let mut memo = ViewMemo {
         colts: Vec::new(),
         generation: Vec::new(),
@@ -462,9 +447,6 @@ fn build_view_memo(exec_plan: &ExecPlan) -> ViewMemo {
         parked: Vec::new(),
         spare_buffers: Vec::new(),
         tick: 0,
-    };
-    let ExecPlan::FreeJoin(plan) = exec_plan else {
-        return memo; // guard probes never touch views
     };
     for occurrence in plan.occurrences() {
         // Field→column through the span map (docs/architecture/
@@ -528,15 +510,40 @@ fn build_view_memo(exec_plan: &ExecPlan) -> ViewMemo {
 /// `SlotWidth` map): an interval variable's find spans two words, and no
 /// consumer assumes width 1. The types are the head's (validation aligned
 /// every rule's row); the specs are this rule's.
-fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, ValueType)> {
+trait SlotLayout {
+    fn slot_of(&self, var: crate::ir::VarId) -> usize;
+    fn width_of(&self, var: crate::ir::VarId) -> usize;
+}
+
+impl SlotLayout for crate::plan::fj::ValidatedPlan {
+    fn slot_of(&self, var: crate::ir::VarId) -> usize {
+        self.slot_of(var)
+    }
+
+    fn width_of(&self, var: crate::ir::VarId) -> usize {
+        self.width_of(var)
+    }
+}
+
+impl SlotLayout for crate::exec::dispatch::GuardPlan {
+    fn slot_of(&self, var: crate::ir::VarId) -> usize {
+        self.slot_of(var)
+    }
+
+    fn width_of(&self, var: crate::ir::VarId) -> usize {
+        self.width_of(var)
+    }
+}
+
+fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<(FindSpec, ValueType)> {
     rule.rule()
         .finds
         .iter()
         .map(|term| match term {
             FindTerm::Var(var) => (
                 FindSpec::Var {
-                    slot: exec_plan.slot_of(*var),
-                    width: exec_plan.width_of(*var),
+                    slot: layout.slot_of(*var),
+                    width: layout.width_of(*var),
                 },
                 rule.var_type(*var).clone(),
             ),
@@ -545,7 +552,7 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
             // subtraction and the ray check — `exec::sink`).
             FindTerm::Duration(var) => (
                 FindSpec::Duration {
-                    slot: exec_plan.slot_of(*var),
+                    slot: layout.slot_of(*var),
                 },
                 ValueType::U64,
             ),
@@ -563,7 +570,7 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
                             unreachable!("validated: measure folds are Sum/Min/Max")
                         }
                     },
-                    slot: exec_plan.slot_of(*over),
+                    slot: layout.slot_of(*over),
                 },
                 ValueType::U64,
             ),
@@ -574,9 +581,9 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
                     let carry = over.expect("validated: Arg carries a variable");
                     (
                         FindSpec::Arg {
-                            slot: exec_plan.slot_of(carry),
-                            width: exec_plan.width_of(carry),
-                            key_slot: exec_plan.slot_of(*key),
+                            slot: layout.slot_of(carry),
+                            width: layout.width_of(carry),
+                            key_slot: layout.slot_of(*key),
                             max: matches!(op, AggOp::ArgMax { .. }),
                         },
                         rule.var_type(carry).clone(),
@@ -589,7 +596,7 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
                     let over = over.expect("validated: Pack carries a variable");
                     (
                         FindSpec::Pack {
-                            slot: exec_plan.slot_of(over),
+                            slot: layout.slot_of(over),
                         },
                         rule.var_type(over).clone(),
                     )
@@ -597,8 +604,8 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
                 AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Count | AggOp::CountDistinct => {
                     let (over_slot, over_width, over_ty) = match over {
                         Some(var) => (
-                            Some(exec_plan.slot_of(*var)),
-                            exec_plan.width_of(*var),
+                            Some(layout.slot_of(*var)),
+                            layout.width_of(*var),
                             rule.var_type(*var).clone(),
                         ),
                         None => (None, 1, ValueType::U64), // Count
@@ -633,31 +640,28 @@ fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, Va
 /// The guard fast lane's find table: `Some` for
 /// guard plans whose finds are all plain variables.
 fn guard_find_table(
-    exec_plan: &ExecPlan,
+    guard: &crate::exec::dispatch::GuardPlan,
     finds: &[(FindSpec, ValueType)],
 ) -> Option<Vec<(crate::schema::FieldId, ValueType)>> {
-    match exec_plan {
-        ExecPlan::GuardProbe(guard) => finds
-            .iter()
-            .map(|(spec, ty)| match spec {
-                FindSpec::Var { slot, .. } => {
-                    let var = guard
-                        .vars
-                        .iter()
-                        .find(|v| v.slot == *slot)
-                        .expect("find slots come from the guard plan's layout");
-                    Some((var.field, ty.clone()))
-                }
-                // aggregate and measure guards keep the sink path
-                FindSpec::Agg { .. }
-                | FindSpec::Arg { .. }
-                | FindSpec::Pack { .. }
-                | FindSpec::Duration { .. }
-                | FindSpec::AggDuration { .. } => None,
-            })
-            .collect::<Option<Vec<_>>>(),
-        ExecPlan::FreeJoin(_) | ExecPlan::Empty => None,
-    }
+    finds
+        .iter()
+        .map(|(spec, ty)| match spec {
+            FindSpec::Var { slot, .. } => {
+                let var = guard
+                    .vars
+                    .iter()
+                    .find(|v| v.slot == *slot)
+                    .expect("find slots come from the guard plan's layout");
+                Some((var.field, ty.clone()))
+            }
+            // aggregate and measure guards keep the sink path
+            FindSpec::Agg { .. }
+            | FindSpec::Arg { .. }
+            | FindSpec::Pack { .. }
+            | FindSpec::Duration { .. }
+            | FindSpec::AggDuration { .. } => None,
+        })
+        .collect::<Option<Vec<_>>>()
 }
 
 /// The rule-disjointness proof (docs/architecture/40-execution.md § set

@@ -325,7 +325,7 @@ pub struct NormalizedQuery {
     /// the chase-evaluator (`plan/chase/evaluate.rs`, a closed atom
     /// whose prepare-time evaluation empties — `folded to ∅: …`). A dead
     /// rule is deleted at prepare (`api/prepared/build.rs`); a program
-    /// of only dead rules prepares to `ExecPlan::Empty`.
+    /// of only dead rules prepares to `Program::Empty`.
     pub dead: Option<String>,
 }
 
