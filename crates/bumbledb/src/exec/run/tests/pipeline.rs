@@ -167,3 +167,102 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
         );
     }
 }
+
+/// The zero-binding nonemptiness gate (a participating atom with no
+/// variables) asks one question — "does the relation hold any fact?" —
+/// yet the executor used to ENUMERATE the gate relation once per
+/// pending entry: every position yields the same empty key row, so a
+/// gate of |G| rows multiplied the join's work by |G| for zero
+/// distinguishable bindings. Under a projection sink D2's first-emit
+/// skip hid it; under an aggregate sink (never skips, gate forces the
+/// dedup seen-set) it was the S-scale crucible hang — verify random
+/// case 19, `MIN ... GROUP BY` over a star join × a bare `PostingTag`
+/// atom, |join| × |PostingTag| ≈ 10¹⁰ folds. The collapse: a
+/// zero-arity cover yields at most one entry — in `pump` (middle node)
+/// and `run_node` (leaf) both — and an empty gate still kills every
+/// binding.
+#[test]
+fn zero_binding_gate_yields_one_entry_not_the_relation() {
+    #[derive(Default)]
+    struct EmitCount {
+        emits: u64,
+    }
+    impl Counters for EmitCount {
+        fn node_entry(&mut self, _: usize) {}
+        fn batch(&mut self, _: usize, _: usize) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn probe_hash(&mut self, _: usize, _: usize) {}
+        fn probe(&mut self, _: usize, _: usize, _: bool) {}
+        fn residual(&mut self, _: usize, _: bool) {}
+        fn anti_probe(&mut self, _: usize, _: bool) {}
+        fn emit(&mut self) {
+            self.emits += 1;
+        }
+        fn skip(&mut self, _: usize) {}
+    }
+
+    let schema = schema(3);
+    // R0 ⋈ R2 on y: 300 result rows; the gate holds 500 rows the
+    // executor must never enumerate (emits stay at the join's own 300).
+    let r: Vec<(u64, u64)> = (0..300u64).map(|i| (i, i % 7)).collect();
+    let t: Vec<(u64, u64)> = (0..7u64).map(|i| (i, i + 100)).collect();
+    let gate: Vec<(u64, u64)> = (0..500u64).map(|i| (i, i)).collect();
+    let normalized = normalized(
+        vec![
+            occurrence(0, 0, &[(0, 0), (1, 1)]),
+            occurrence(1, 1, &[]), // the gate: no bindings at all
+            occurrence(2, 2, &[(0, 1), (1, 2)]),
+        ],
+        vec![],
+    );
+    let sinks = all_vars(&normalized);
+    let expected: BTreeSet<Vec<u64>> = r
+        .iter()
+        .map(|(x, y)| {
+            let (_, z) = t.iter().find(|(ty, _)| ty == y).expect("dense join key");
+            vec![*x, *y, *z]
+        })
+        .collect();
+    // Both placements: the gate as a middle pipeline node (`pump`'s
+    // collapse) and as the leaf (`run_node`'s collapse).
+    for order in [[0u16, 1, 2], [0u16, 2, 1]] {
+        let plan = planned_with_sinks(&normalized, &schema, &order, &sinks);
+        for present in [true, false] {
+            let gate_rows = if present { gate.clone() } else { Vec::new() };
+            let dir = TempDir::new(&format!("run-gate-{}-{}", order[2], usize::from(present)));
+            let views = views_of(&dir, &schema, &[r.clone(), gate_rows, t.clone()]);
+            let mut executor = Executor::new(&plan);
+            assert!(executor.pipe.is_some(), "three nodes pipeline");
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = Bindings::new(plan.slot_count());
+            let mut sink = CollectSink::default();
+            let mut counters = EmitCount::default();
+            executor
+                .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+                .expect("execute");
+            let got: BTreeSet<Vec<u64>> = sink
+                .rows
+                .iter()
+                .map(|row| {
+                    (0..3u16)
+                        .map(|v| row[plan.slot_of(VarId(v))])
+                        .collect::<Vec<u64>>()
+                })
+                .collect();
+            if present {
+                assert_eq!(got, expected, "order {order:?}");
+                assert_eq!(
+                    counters.emits,
+                    expected.len() as u64,
+                    "order {order:?}: the gate is never enumerated"
+                );
+            } else {
+                assert!(
+                    got.is_empty(),
+                    "order {order:?}: an empty gate kills the rule"
+                );
+                assert_eq!(counters.emits, 0, "order {order:?}");
+            }
+        }
+    }
+}

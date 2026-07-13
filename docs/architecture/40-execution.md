@@ -157,6 +157,19 @@ no residual concept; we own filter placement because there is no external optimi
   paths and emits complete bindings to the sink. D2 suffix skips cancel the origin
   below the absorb node instead of unwinding a call stack.
 
+  **The zero-arity cover collapses to one entry.** A zero-binding nonemptiness gate
+  (a positive atom with no variables) reaches the executor as a zero-arity cover —
+  every position yields the same empty key row, so under set semantics one entry
+  stands for the whole suffix and `pump`/`run_node` stop after a single yield.
+  Enumerating instead multiplies the join by the gate relation's row count for zero
+  distinguishable bindings; a projection's D2 first-emit skip masked that, an
+  aggregate (never skips, and a gate defeats the distinct-bindings elision, so the
+  seen-set runs) folded |join| × |gate| duplicate bindings — the S-scale crucible
+  hang, pinned by `zero_binding_gate_yields_one_entry_not_the_relation`. The one
+  consumer that can distinguish a zero-arity cover's positions is a membership probe
+  reading that occurrence's cursor (each position carries its own interval columns):
+  membership-probed occurrences keep enumerating.
+
   **Deviation (paper §3.3):** the paper presents per-tuple recursive descent with
   backtracking. BumbleDB accumulates work across node entries in the pipeline above
   so deep nodes receive full batches. Origin cancellation is sound because a late

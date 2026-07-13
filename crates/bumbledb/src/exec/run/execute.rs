@@ -227,6 +227,15 @@ impl Executor {
             .collect();
         let anti_probe_slots = anti_probe_slots(plan);
         let point_probe_slots = point_probe_slots(plan);
+        // Occurrences whose positions a membership probe reads: the
+        // zero-arity cover collapse must keep enumerating those (each
+        // position carries its own interval columns).
+        let mut point_probed = vec![false; plan.occurrences().len()];
+        for node in plan.nodes() {
+            for probe in &node.point_probes {
+                point_probed[usize::from(probe.occ.0)] = true;
+            }
+        }
         let scratch = plan
             .nodes()
             .iter()
@@ -290,6 +299,7 @@ impl Executor {
             allen_masks,
             duration_residual_slots,
             point_probe_slots,
+            point_probed,
             var_widths,
             anti_probe_slots,
             scratch,

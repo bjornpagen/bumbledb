@@ -114,9 +114,20 @@ impl Executor {
                 Some(col) => scratch.pending_cursors[entry * carried_w + col],
                 None => colts[cover_occ].start(),
             };
+            // A zero-arity cover is a nonemptiness gate: every position
+            // yields the same empty key row, so under set semantics one
+            // entry stands for the whole suffix — enumerating it would
+            // multiply this entry's descendants by the occurrence's row
+            // count for no distinguishable binding (the S-scale hang:
+            // an aggregate over a zero-binding gate atom folded
+            // |gate-relation| duplicate bindings per pending entry).
+            // The one consumer that CAN distinguish positions is a
+            // membership probe reading this occurrence's cursor — those
+            // occurrences keep enumerating.
+            let gate_cover = cur_arity == 0 && !self.point_probed[cover_occ];
             let mut token = BatchToken::default();
             loop {
-                let want = self.batch - fill;
+                let want = if gate_cover { 1 } else { self.batch - fill };
                 let (yielded, next) = colts[cover_occ].iter_batch(
                     cover_cursor,
                     cover_level,
@@ -149,12 +160,12 @@ impl Executor {
                         counters,
                     );
                     fill = 0;
-                    if yielded == want {
+                    if !gate_cover && yielded == want {
                         continue; // the entry may have more; resume its token
                     }
                 }
-                if yielded < want {
-                    break; // entry exhausted
+                if gate_cover || yielded < want {
+                    break; // entry exhausted (a gate entry at its one yield)
                 }
             }
         }
