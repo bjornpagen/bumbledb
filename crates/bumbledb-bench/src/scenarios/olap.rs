@@ -6,7 +6,7 @@
 //! set (the true-rollup pattern the ledger's balance family pins).
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, PredicateTree, Query, Rule, Term,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term,
     Value, VarId,
 };
 
@@ -166,7 +166,7 @@ fn revenue_by_region() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -200,13 +200,13 @@ fn category_window() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(3),
                 rhs: param(0),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(3),
                 rhs: param(1),
@@ -244,7 +244,7 @@ fn promo_split() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -278,7 +278,7 @@ fn segment_category() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -306,7 +306,7 @@ fn store_extremes() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -333,7 +333,7 @@ fn brand_drill() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
             rhs: param(1),

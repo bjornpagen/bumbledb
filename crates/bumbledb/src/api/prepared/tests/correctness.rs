@@ -32,7 +32,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::U64(7)),
@@ -75,7 +75,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: Term::Var(VarId(0)),
             rhs: Term::Var(VarId(1)),
@@ -155,7 +155,7 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
 
     // The nested-loop reference over distinct (x, y, m) bindings.
@@ -217,7 +217,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::String(Box::from(&b"ghost"[..]))),
@@ -241,7 +241,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(crate::ir::ParamId(0)),

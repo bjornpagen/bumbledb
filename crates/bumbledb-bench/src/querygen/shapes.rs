@@ -158,7 +158,7 @@ pub(super) fn self_join(b: &mut Builder, rng: &mut Rng) {
     b.find_var(x);
     b.find_var(y);
     if rng.chance(1, 2) {
-        b.predicates.push(Comparison {
+        b.conditions.push(Comparison {
             op: order_op(rng),
             lhs: Term::Var(x),
             rhs: Term::Var(y),

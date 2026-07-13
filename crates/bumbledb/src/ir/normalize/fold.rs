@@ -17,15 +17,15 @@
 //!    once) and fewer kernel passes.
 //! 2. **Contradiction detection** — each rule judged on **constants
 //!    only**, each producing a statically-empty verdict for the RULE
-//!    ([`super::NormalizedQuery::dead`]), with the killing predicate
+//!    ([`super::NormalizedQuery::dead`]), with the killing condition
 //!    rendered for EXPLAIN: an empty range summary; `Eq` to two distinct
 //!    constants on one slot; an `Eq` constant outside the range summary;
 //!    a membership set empty after sentinel-trim, or intersected with an
-//!    `Eq` constant not in it; an `Allen` literal-vs-literal predicate
+//!    `Eq` constant not in it; an `Allen` literal-vs-literal condition
 //!    `classify` refutes (both operands constant intervals); a constant
 //!    point in a constant interval that fails.
 //!
-//! `Ne` and param-bearing predicates never fold — `Ne` prunes nothing
+//! `Ne` and param-bearing conditions never fold — `Ne` prunes nothing
 //! statically, and params are stage-3 (bind-time) values a stage-2 pass
 //! must not judge. Interval variables fold via their two slot summaries
 //! independently — no cross-slot reasoning in v0 (the constructor
@@ -189,7 +189,7 @@ fn set_refutes_eq(words: &[u64], eq: Option<u64>) -> bool {
     }
 }
 
-/// Rule (e): a literal-vs-literal `Allen` predicate `classify` refutes —
+/// Rule (e): a literal-vs-literal `Allen` condition `classify` refutes —
 /// both operands constant intervals (encoded endpoint words preserve
 /// value order, so classification over words equals classification over
 /// values — `crate::allen::classify_bounds`). Degenerate encoded pairs
@@ -296,7 +296,7 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
 /// The constant-interval contradiction pass — rules (e) and (f). An
 /// interval slot pair is pinned by a value-equality binding (`Compare`
 /// Eq against an interval constant) or by an `Allen(EQUALS)` literal
-/// predicate — the canonical form interval `Eq` lowers to
+/// condition — the canonical form interval `Eq` lowers to
 /// (`place_comparisons`); a scalar pin comes from the Eq table.
 fn interval_contradictions(
     relation: &Relation,

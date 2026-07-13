@@ -1,7 +1,7 @@
 use super::*;
 use crate::ir::normalize::{NormalizedQuery, OccId, normalize};
 use crate::ir::validate::validate;
-use crate::ir::{Atom, Comparison, PredicateTree, Query, Rule, Term, Value};
+use crate::ir::{Atom, Comparison, ConditionTree, Query, Rule, Term, Value};
 use crate::plan::planner::{OccStats, plan};
 use crate::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
@@ -115,7 +115,7 @@ fn walk_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -213,7 +213,7 @@ fn du_one_sided_walk_eliminates_the_header() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(
@@ -284,7 +284,7 @@ fn a_containment_chain_eliminates_both_targets_in_fixpoint() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(
@@ -348,7 +348,7 @@ fn a_partial_key_join_refuses() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
@@ -378,7 +378,7 @@ fn a_projected_non_key_field_refuses() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
@@ -437,7 +437,7 @@ fn a_negated_atom_referencing_the_target_refuses() {
             relation: RelationId(2),
             bindings: vec![(FieldId(0), Term::Var(VarId(2)))],
         }],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(
@@ -507,7 +507,7 @@ fn a_membership_point_sourced_from_the_target_refuses() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(
@@ -566,7 +566,7 @@ fn a_missing_source_selection_refuses() {
                 },
             ],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         })
     };
     let normalized = chased(&schema, &query(false));
@@ -611,7 +611,7 @@ fn an_extra_target_selection_refuses() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
@@ -670,7 +670,7 @@ fn an_interval_typed_pair_refuses() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
@@ -717,13 +717,13 @@ fn residue_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Or(vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Or(vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Gt,
                 lhs: Term::Var(VarId(1)),
                 rhs: Term::Literal(Value::I64(30)),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Eq,
                 lhs: Term::Var(VarId(2)),
                 rhs: Term::Literal(Value::U64(0)),
@@ -840,7 +840,7 @@ fn mutual_containments_never_eliminate_both() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(

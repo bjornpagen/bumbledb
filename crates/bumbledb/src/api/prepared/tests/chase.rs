@@ -282,7 +282,7 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 
@@ -323,7 +323,7 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: walk_atoms(),
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     // Aggregate sink: Q(x, Sum(m)) — pid stays bound (not projected),
     // so the fold domain counts every posting; the eliminated plan must
@@ -338,7 +338,7 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
         ],
         atoms: walk_atoms(),
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
 
     for query in [&projection, &aggregate] {
@@ -399,7 +399,7 @@ fn per_rule_elimination_marks_one_rule_only() {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
             atoms,
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         }
     };
     let query = Query {
@@ -482,13 +482,13 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Or(vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Or(vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Gt,
                 lhs: Term::Var(VarId(1)),
                 rhs: Term::Literal(Value::I64(30)),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Eq,
                 lhs: Term::Var(VarId(2)),
                 rhs: Term::Literal(Value::U64(0)),

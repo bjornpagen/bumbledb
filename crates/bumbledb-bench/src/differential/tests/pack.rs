@@ -68,7 +68,7 @@ fn pack_query(relation: RelationId) -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -281,7 +281,7 @@ fn multi_rule_pack_folds_the_union_differentially() {
             ],
         }],
         negated: vec![],
-        predicates: vec![bumbledb::PredicateTree::Leaf(bumbledb::Comparison {
+        conditions: vec![bumbledb::ConditionTree::Leaf(bumbledb::Comparison {
             op,
             lhs: Term::Var(VarId(2)),
             rhs: Term::Literal(Value::U64(bound)),

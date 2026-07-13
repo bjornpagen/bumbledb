@@ -1,5 +1,5 @@
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query,
     Rule, Term, Value, VarId,
 };
 
@@ -27,7 +27,7 @@ fn point_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -64,7 +64,7 @@ fn containment_walk_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -122,7 +122,7 @@ fn chain_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
             rhs: param(0),
@@ -153,13 +153,13 @@ fn range_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(2),
                 rhs: param(0),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(2),
                 rhs: param(1),
@@ -211,7 +211,7 @@ pub(super) fn balance_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -262,7 +262,7 @@ fn stats_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -294,7 +294,7 @@ fn string_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -338,7 +338,7 @@ fn skew_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -377,7 +377,7 @@ fn spread_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
             rhs: var(1),
@@ -425,13 +425,13 @@ fn triangle_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(0),
                 rhs: param(0),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(0),
                 rhs: param(1),
@@ -479,7 +479,7 @@ fn entries_for_account_set_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -523,7 +523,7 @@ fn postings_without_tag_query() -> Query {
             relation: ids::POSTING_TAG,
             bindings: vec![(ids::posting_tag::POSTING, var(0))],
         }],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -561,7 +561,7 @@ fn latest_posting_per_account_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -598,7 +598,7 @@ fn mandate_at_instant_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -654,7 +654,7 @@ fn mandate_overlap_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },

@@ -145,7 +145,7 @@ decision accommodates narrower platforms). Full research notes with sources:
   in two-phase probing. Kernel adoption never changes semantics: Sum stays
   i128-accumulated with one range check at finalization, and every kernel ships
   with a portable reference and a bit-identity differential test. Interval
-  predicates introduced no new shape — they lower to two-word compares over the
+  conditions introduced no new shape — they lower to two-word compares over the
   start/end column pair (`50-storage.md`).
 - **60–120 GB/s memory bandwidth**: sequential scan+decode of a 100 MB relation is
   single-digit milliseconds — the quantitative reason the image-cache design

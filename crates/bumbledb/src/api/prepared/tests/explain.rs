@@ -49,7 +49,7 @@ fn the_explain_header_renders_the_predicate() {
             bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &count_query).expect("prepare");
     let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
@@ -110,7 +110,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     let (_, stats) = guard
@@ -176,7 +176,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     let (rows, stats) = guard

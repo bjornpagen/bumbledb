@@ -5,7 +5,7 @@
 //! is a program. Each rule lowers exactly as the conjunctive query did:
 //! distinct-variable atom
 //! occurrences (positive and negated, one table with a [`Role`]), per-atom
-//! filters (membership and interval predicates included), and the residual
+//! filters (membership and interval conditions included), and the residual
 //! list: cross-atom comparisons, decomposed interval word comparisons, and
 //! anti-probe descriptors (`docs/architecture/20-query-ir.md`, Deviation
 //! vs paper §2: the paper's all-distinct-variables / pushed-selections
@@ -106,7 +106,7 @@ impl Role {
 
     /// Whether the chase discharged this occurrence from execution
     /// entirely (eliminated or folded): no statistics read, no view, no
-    /// image, no predicate resolution, no selection probe — the negative
+    /// image, no filter resolution, no selection probe — the negative
     /// space of [`Role::participates`] that negated occurrences (which
     /// still probe through their anti-probes) do **not** share. Every
     /// execution-side skip routes through this one predicate
@@ -318,10 +318,10 @@ pub struct NormalizedQuery {
     /// exported to the plan witness.
     pub slot_widths: BTreeMap<VarId, SlotWidth>,
     /// The statically-empty verdict: `Some` iff the rule provably
-    /// denotes ∅ on constants alone — the rendered killing predicate
+    /// denotes ∅ on constants alone — the rendered killing condition
     /// (e.g. `R: a ∈ [8, 19] ∧ a == 3`), because EXPLAIN must print what
     /// refuted the rule. Two writers, one channel: the normalization
-    /// fold (`fold.rs`, mutually unsatisfiable constant predicates) and
+    /// fold (`fold.rs`, mutually unsatisfiable constant conditions) and
     /// the chase-evaluator (`plan/chase/evaluate.rs`, a closed atom
     /// whose prepare-time evaluation empties — `folded to ∅: …`). A dead
     /// rule is deleted at prepare (`api/prepared/build.rs`); a program

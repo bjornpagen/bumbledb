@@ -408,10 +408,10 @@ impl Context {
     /// comparisons (no variable side), comparison-only variables, param
     /// roles, and the `ParamSet`-only-under-`Eq` rule.
     fn comparison_shapes(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
-        for (index, Comparison { op, lhs, rhs }) in rule.predicates.iter().enumerate() {
+        for (index, Comparison { op, lhs, rhs }) in rule.conditions.iter().enumerate() {
             // The Allen mask position, both vacuity rules for literals
             // (∅ = "never": write no query; full = "always": write no
-            // predicate) and the roster registration for params (their
+            // condition) and the roster registration for params (their
             // vacuity is checked at bind, where the value exists).
             if let CmpOp::Allen { mask } = op {
                 match mask {
@@ -492,7 +492,7 @@ impl Context {
     fn propagate_comparison_anchors(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
         loop {
             let mut changed = false;
-            for Comparison { op, lhs, rhs } in &rule.predicates {
+            for Comparison { op, lhs, rhs } in &rule.conditions {
                 if matches!(op, CmpOp::Contains) {
                     continue;
                 }
@@ -577,7 +577,7 @@ impl Context {
     ///    a term of known type, typed literals — collapse a bivalent slot
     ///    to whichever of its two candidates they name; an anchor naming
     ///    neither candidate is a type conflict (atoms) or an illegal
-    ///    comparison (predicates).
+    ///    comparison (conditions).
     /// 2. A slot still bivalent here — every anchor was an interval-field
     ///    position — resolves to `Interval(E)`: the term is interval-typed
     ///    and each such binding is value equality. This step is why
@@ -605,7 +605,7 @@ impl Context {
     /// anchoring those rules imply. Runs after `resolve_bivalents`: every
     /// variable slot is monovalent here.
     fn comparison_types(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
-        for (index, Comparison { op, lhs, rhs }) in rule.predicates.iter().enumerate() {
+        for (index, Comparison { op, lhs, rhs }) in rule.conditions.iter().enumerate() {
             match op {
                 CmpOp::Eq | CmpOp::Ne => self.check_equality(index, lhs, rhs)?,
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {

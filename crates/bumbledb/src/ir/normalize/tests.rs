@@ -5,7 +5,7 @@ use crate::encoding::{ValueRef, encode_fact, encode_i64};
 use crate::image::view::{Const, MaskConst, ResolvedWordSource};
 use crate::ir::validate::validate;
 use crate::ir::{
-    Atom, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query, Rule, Term, Value,
+    Atom, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term, Value,
 };
 use crate::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, Schema, SchemaDescriptor,
@@ -99,12 +99,12 @@ fn normalized(query: &Query) -> NormalizedQuery {
     rules.remove(0)
 }
 
-fn query(atoms: Vec<Atom>, negated: Vec<Atom>, predicates: Vec<Comparison>) -> Query {
+fn query(atoms: Vec<Atom>, negated: Vec<Atom>, conditions: Vec<Comparison>) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms,
         negated,
-        predicates: predicates.into_iter().map(PredicateTree::Leaf).collect(),
+        conditions: conditions.into_iter().map(ConditionTree::Leaf).collect(),
     })
 }
 
@@ -279,7 +279,7 @@ fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let norm = normalized(&query);
     assert_eq!(norm.occurrences.len(), 2);
@@ -851,7 +851,7 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let norm = normalized(&query);
     assert_eq!(norm.occurrences[0].vars, vec![(P_EMP, VarId(1))]);
@@ -1149,7 +1149,7 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
             relation: R,
             bindings: vec![(FieldId(1), var(0)), (FieldId(2), var(1))],
         }],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
             rhs: var(1),

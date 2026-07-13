@@ -322,7 +322,7 @@ impl Executor {
     /// Resolves this execution's Allen-residual masks in place: literal
     /// masks are re-copied (idempotent), param masks read the bind slice
     /// — with the ∅/full vacuity already rejected at bind, the hot path
-    /// sees only honest predicates. Called by the prepared query before
+    /// sees only honest masks. Called by the prepared query before
     /// every join execution; the executor itself never touches params.
     pub fn bind_allen_masks(&mut self, params: &[crate::image::view::Const]) {
         for (node_slots, node_masks) in self.allen_residual_slots.iter().zip(&mut self.allen_masks)

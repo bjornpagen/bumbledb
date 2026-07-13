@@ -183,8 +183,8 @@ pub struct PreparedQuery<'s, S> {
     /// EXPLAIN and the structured stats.
     subsumed: Vec<crate::api::stats::SubsumedRule>,
     /// The statically-empty record (`ir/normalize/fold.rs`): rules whose
-    /// constant predicates refuted themselves at normalize, deleted at
-    /// prepare with the killing predicate — `rules` below holds only the
+    /// constant conditions refuted themselves at normalize, deleted at
+    /// prepare with the killing condition — `rules` below holds only the
     /// live ones. Readers: EXPLAIN and the structured stats.
     dead: Vec<crate::api::stats::DeadRule>,
     /// Per rule, in rule order: the rule's validated plan plus its
@@ -212,7 +212,7 @@ pub struct PreparedQuery<'s, S> {
     /// `str` literals in the rules' templates still awaiting their
     /// dictionary word ([`Const::PendingIntern`]): decremented as each
     /// latches (`bind.rs`), and the zero — with no params of any shape —
-    /// is the fully-latched fast path: `resolve_predicates` is skipped
+    /// is the fully-latched fast path: `resolve_filters` is skipped
     /// entirely, the resolved tables having been written once and final.
     unresolved_literals: u32,
     /// Per param: whether this execution's value missed the dictionary
@@ -292,7 +292,7 @@ struct FreeJoinRule {
     /// constant, k sorted deduplicated words for a set. Reused in place.
     resolved_selections: Vec<Vec<Vec<u64>>>,
     /// This rule's resolved tables were fully written by a completed
-    /// `resolve_predicates` pass (a short-circuited pass leaves later
+    /// `resolve_filters` pass (a short-circuited pass leaves later
     /// slots unwritten and does not set it) — one leg of the
     /// fully-latched fast path.
     resolved_complete: bool,
@@ -402,7 +402,7 @@ struct ParkedView {
 /// immutability makes a memoized view provably valid for its whole
 /// generation, so repeated residual bindings (range windows, Ne
 /// constants) skip the rebuild scan entirely. Occurrences whose only
-/// predicates are selections never park — their single binding hits on
+/// conditions are selections never park — their single binding hits on
 /// generation alone (docs/architecture/40-execution.md).
 struct ViewMemo {
     /// The executor-facing COLTs: each occurrence's *active* binding

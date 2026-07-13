@@ -1,6 +1,6 @@
-//! Statically empty: predicate folding at normalize (docs/architecture/
+//! Statically empty: condition folding at normalize (docs/architecture/
 //! 20-query-ir.md § normalization, 40-execution.md § access paths). A
-//! rule whose constant predicates are mutually unsatisfiable dies at
+//! rule whose constant conditions are mutually unsatisfiable dies at
 //! prepare; a program of only dead rules prepares to `Program::Empty`
 //! — params bind first (errors surface), then nothing runs. The fold's
 //! set-preservation rides the folded/unfolded differential below.
@@ -75,7 +75,7 @@ fn insert_events(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
 
 /// One rule over Event: `Event(kind == <kind>, score: v0)` plus the
 /// given extra comparisons on v0 — finds (v0).
-fn by_kind_rule(kind: u64, predicates: Vec<Comparison>) -> Rule {
+fn by_kind_rule(kind: u64, conditions: Vec<Comparison>) -> Rule {
     Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -86,7 +86,7 @@ fn by_kind_rule(kind: u64, predicates: Vec<Comparison>) -> Rule {
             ],
         }],
         negated: vec![],
-        predicates: predicates.into_iter().map(PredicateTree::Leaf).collect(),
+        conditions: conditions.into_iter().map(ConditionTree::Leaf).collect(),
     }
 }
 
@@ -155,7 +155,7 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
         .expect("execute");
     assert_eq!(scores_of(&out), vec![40], "kind 7's row; kind 3 never ran");
 
-    // The death record names the killing predicate — EXPLAIN's line.
+    // The death record names the killing condition — EXPLAIN's line.
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(stats.rules.len(), 1, "stats cover the live rule only");
     assert_eq!(stats.dead.len(), 1);
@@ -254,7 +254,7 @@ fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
     assert_eq!(out.len(), 0, "stage-2-known empty");
     assert_eq!(out.arity(), 1, "the predicate shapes the empty buffer");
 
-    // EXPLAIN prints the program kind and both killing predicates.
+    // EXPLAIN prints the program kind and both killing conditions.
     let (out, report) = prepared
         .explain(&txn, &cache, &[BindValue::AllenMask(AllenMask::INTERSECTS)])
         .expect("explain");
@@ -345,7 +345,7 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
         // constants drawn to make merges, contradictions, and Eq pins
         // all likely.
         let count = next() % 4 + 1;
-        let predicates: Vec<Comparison> = (0..count)
+        let conditions: Vec<Comparison> = (0..count)
             .map(|_| {
                 let op = match next() % 6 {
                     0 => CmpOp::Lt,
@@ -359,7 +359,7 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
                 score_cmp(op, value)
             })
             .collect();
-        let query = Query::single(by_kind_rule(next() % 5, predicates));
+        let query = Query::single(by_kind_rule(next() % 5, conditions));
 
         let mut folded = prepare(&txn, &cache, &schema, &query).expect("prepare folded");
         let mut unfolded =

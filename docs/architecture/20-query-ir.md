@@ -48,7 +48,7 @@ A query is a **program**: one head and a non-empty list of conjunctive
 **rules** — which is precisely a **non-recursive Datalog program**. The head
 owns the find shape (arity, aggregate ops, and the output typing — the
 predicate below, sealed at validation); each rule is a conjunct
-(positive atoms, negated atoms, predicates) whose find terms align against
+(positive atoms, negated atoms, conditions) whose find terms align against
 the head position by position. The single-rule query is the degenerate case
 and embeds the conjunctive query unchanged (`Query::single`); every
 pre-rules query is a one-rule program.
@@ -85,7 +85,7 @@ pre-rules query is a one-rule program.
 
 - The logical solution of a **rule** is the **set of distinct bindings of
   the rule's variables** that satisfy every positive atom, every membership
-  binding, every predicate, and **no negated atom** (below); projection
+  binding, every condition, and **no negated atom** (below); projection
   returns the **set** of projected facts, and the query's solution is the
   union of its rules' projections.
 - **Existential variables never multiply projection output.** (Scoped to projection —
@@ -198,13 +198,13 @@ Rule {
     finds:      Vec<FindTerm>,        // one per head position; duplicates rejected
     atoms:      Vec<Atom>,            // ≥1; conjunctive, positive
     negated:    Vec<Atom>,            // anti-join atoms (safety rule above)
-    predicates: Vec<PredicateTree>,   // the list is a conjunction; trees are
+    conditions: Vec<ConditionTree>,   // the list is a conjunction; trees are
                                       //   the INPUT grammar — validation
                                       //   distributes them away (below)
 }
-PredicateTree = Leaf(Comparison)      // the input predicate grammar: any
-              | And(Vec<PredicateTree>)  // boolean combination of positive
-              | Or(Vec<PredicateTree>)   // comparisons — lowered at validation
+ConditionTree = Leaf(Comparison)      // the input condition grammar: any
+              | And(Vec<ConditionTree>)  // boolean combination of positive
+              | Or(Vec<ConditionTree>)   // comparisons — lowered at validation
 HeadTerm   = Var | Aggregate(HeadOp)  // var-free: variables are rule-scoped,
                                       //   so the head names shapes and the
                                       //   rules supply the variables (a
@@ -319,7 +319,7 @@ never grow again, because nothing exists outside the coordinate system.
   `COVERED_BY` (its converse), `DISJOINT` (before ∪ meets ∪ met-by ∪ after,
   `INTERSECTS`' complement).
 - **Vacuity is typed out**: validation rejects the empty mask ("never" —
-  write no query) and the full mask ("always" — write no predicate) with
+  write no query) and the full mask ("always" — write no condition) with
   distinct errors; a mask *param* gets the same two rejections at bind, where
   the value exists.
 - **The mask is paramable**: `MaskTerm::Param` makes the temporal relation a
@@ -334,13 +334,13 @@ never grow again, because nothing exists outside the coordinate system.
 
 **The three-confinement disjunction law** (the set's organizing rule):
 OR is never an execution node — disjunction is
-data in exactly three confinements. *Inside a predicate*: an Allen mask is a
+data in exactly three confinements. *Inside a condition*: an Allen mask is a
 disjunction of basics, evaluated as one classify-and-test. *Inside a
 position*: a `ParamSet` is a disjunction of values, evaluated as one probe
 set. *At the top*: rules (the query shape above) are a disjunction of
 conjunctive queries, evaluated as a set union. The tangled middle — a
 cross-atom OR inside one rule — is refused representation downstream; DNF
-lowering (§ the input predicate grammar, below) recovers it as rules at
+lowering (§ the input condition grammar, below) recovers it as rules at
 the validation boundary.
 
 Constraint-side unification (no semantics change): the pointwise key
@@ -384,7 +384,7 @@ of one comparison, a non-interval variable, and any fold but the three.
   — a same-atom guard always runs before the subtraction, so a guarded
   fact never reaches it. Cross-atom measure comparisons are residuals
   (evaluated where whole-value residuals attach), and the measure in finds
-  and folds evaluates at emit — after every predicate — so guards protect
+  and folds evaluates at emit — after every condition — so guards protect
   those positions unconditionally.
 - **Lowering:** normalization lowers the measure to a two-slot read +
   subtraction feeding the existing word machinery — a constant or same-atom
@@ -396,7 +396,7 @@ of one comparison, a non-interval variable, and any fold but the three.
   scan (dense case NEON per the port-topology law — subtraction is not
   flag-bound; strided/gathered shapes stay scalar until measured, per the
   standing rule).
-- **Selectivity:** a measure comparison is a range predicate over the
+- **Selectivity:** a measure comparison is a range condition over the
   derived duration word; the existing range keep-fraction floor applies
   unmodified.
 - The measure position weakens no proof silently: rule-disjointness treats
@@ -436,14 +436,14 @@ bind (sets are sets). Intern-miss semantics apply per element. This is the `IN` 
 the surveyed workloads (the second-most-used operator in both — 150 and 3 sites),
 admitted as a term because the alternative is N point queries per batch fetch.
 
-## The input predicate grammar and DNF lowering (owned here; runs inside validation)
+## The input condition grammar and DNF lowering (owned here; runs inside validation)
 
-The rule's predicate list admits trees: `PredicateTree = Leaf(Comparison) |
+The rule's condition list admits trees: `ConditionTree = Leaf(Comparison) |
 And(Vec) | Or(Vec)`, the list itself conjunctive — the one place the surface
 accepts a nested OR. The engine never sees it: **DNF of a query is a set of
 rules**, so validation distributes every rule's trees to disjunctive normal
 form and **each disjunct becomes a rule** — atoms and finds cloned, the
-rule's predicates that disjunct's leaves — before any per-rule check runs.
+rule's conditions that disjunct's leaves — before any per-rule check runs.
 This is the outer-join precedent applied to disjunction: a documented
 decomposition, never a node. The refusal it recovers (README refusals, "OR
 tangled mid-rule across atoms"): a cross-atom disjunction poisons filter
@@ -458,8 +458,8 @@ disjoin by writing rules, which is what rules are for.
   `DnfExceedsRules { produced, cap }` — the exponential case is rejected at
   declaration, exactly like guard-width overflow. (A program *written* with
   more than `MAX_RULES` rules is still `TooManyRules`, judged first.)
-- **The nesting cap:** trees deeper than `MAX_PREDICATE_DEPTH` (64) are the
-  typed `PredicateNestingTooDeep`, judged **iteratively** (an explicit work
+- **The nesting cap:** trees deeper than `MAX_CONDITION_DEPTH` (64) are the
+  typed `ConditionNestingTooDeep`, judged **iteratively** (an explicit work
   list) before the count or the distribution runs — those walks recurse by
   depth, so an unguarded hostile depth would be a stack exhaustion, not an
   error (the trust-boundary law, § validation boundary). The cap is generous:
@@ -467,12 +467,12 @@ disjoin by writing rules, which is what rules are for.
   already limits leaves.
 - **Duplicate rules after distribution collapse** — set semantics at the
   representation level, the duplicate-statement machinery's sibling:
-  identical normalized bodies (finds, atoms, negated verbatim; predicate
+  identical normalized bodies (finds, atoms, negated verbatim; condition
   lists as sets — conjunction is idempotent and commutative) keep their
   first occurrence.
 - **The empty combinations keep their algebraic readings**: `And([])` is
   true (no leaves), `Or([])` is false — its rule lowers to zero rules,
-  accepted exactly as statically contradictory predicates are (the semantics
+  accepted exactly as statically contradictory conditions are (the semantics
   are exact); a program whose *every* rule vanishes is the empty union,
   rejected as the empty rule set.
 - **The validated artifact contains no `Or`** — grep-provable: everything
@@ -519,19 +519,19 @@ three; **normalization lowers IR form to paper form**:
    among constants — an empty summary; `Eq` to two distinct constants on
    one slot; an `Eq` constant outside the summary; a membership set empty
    after sentinel-trim, or refuting an `Eq` constant; an `Allen`
-   literal-vs-literal predicate `classify` refutes; a failed
+   literal-vs-literal condition `classify` refutes; a failed
    constant-point-in-constant-interval membership — are a **statically
    empty verdict for the rule**: the rule is marked dead carrying the
-   rendered killing predicate (EXPLAIN prints it), a dead rule inside a
+   rendered killing condition (EXPLAIN prints it), a dead rule inside a
    live program is deleted at prepare and never runs, and a program of
    only dead rules prepares to the `Empty` plan (`40-execution.md`,
-   § access paths). `Ne` and param-bearing predicates never fold (params
+   § access paths). `Ne` and param-bearing conditions never fold (params
    are stage-3; `Ne` prunes nothing statically); interval variables fold
    via their two slot summaries independently — no cross-slot reasoning in
    v0 (the constructor invariant `start < end` is data, not plan
    knowledge); a negated occurrence's contradiction is no verdict (its
    anti-probe just never rejects). Estimator note: a folded summary is ONE
-   range predicate — its keep fraction applies once per slot, never per
+   range condition — its keep fraction applies once per slot, never per
    constituent (`plan/selectivity.rs`; the fold is also the
    double-counted-range selectivity fix).
 
@@ -561,7 +561,7 @@ The law, extended from the dyn write surface's ("ETL input is data, not code",
 normalization, and prepare return `Ok` or a typed error on *arbitrary* input:
 out-of-range ids, duplicate bindings, vacuous masks, MAX-point literals,
 cap-exceeders, hostile nesting. The caps (`MAX_RULES`, the DNF blowup cap,
-`MAX_PREDICATE_DEPTH`, `MAX_OCCURRENCES`, the 128-variable cap) are **boundary
+`MAX_CONDITION_DEPTH`, `MAX_OCCURRENCES`, the 128-variable cap) are **boundary
 guards**, not planner hygiene — the nesting cap in particular exists because the
 tree walks recurse by depth, and its own judge is iterative so the guard is total.
 Enforced mechanically: the adversarial sweep (a property test in the engine's
@@ -582,9 +582,9 @@ resolved input types pin the head's positional row; every later rule must
 agree position by position — that alignment is *how* every rule derives
 the one predicate, whose signature the witness then seals from rule 0). Between the program shape and
 the per-rule roster, the **nesting boundary guard** (trees deeper than
-`MAX_PREDICATE_DEPTH` are the typed `PredicateNestingTooDeep`, judged
+`MAX_CONDITION_DEPTH` are the typed `ConditionNestingTooDeep`, judged
 iteratively before any recursive walk — the trust-boundary law above), then
-**DNF distribution** (§ the input predicate grammar):
+**DNF distribution** (§ the input condition grammar):
 the blowup past `MAX_RULES` is the typed `DnfExceedsRules { produced, cap }`
 on the structural term count, duplicates collapse, and a program whose every
 disjunction is empty is the empty union. Rules then validate **one at a
@@ -661,8 +661,8 @@ Deterministic, golden-pinned (the calendar union query, the Pack/Duration heads,
 and the closed-reference handles, byte-exact), and **total on plain data**:
 variables render as `v{id}` and params as
 `?{id}` (ids are all the IR carries), unresolvable ids as `relation#N`/`field#N`
-placeholders, and a nested predicate tree functionally (`and(..)`/`or(..)`, depth-
-budgeted at `MAX_PREDICATE_DEPTH`) — malformed queries must render, because the
+placeholders, and a nested condition tree functionally (`and(..)`/`or(..)`, depth-
+budgeted at `MAX_CONDITION_DEPTH`) — malformed queries must render, because the
 renderer's consumers are diagnostics: roster errors print the offending query
 (`Db::render_query` — prepare rejected it, so no prepared handle exists), EXPLAIN's
 report opens with the query it explains (`PreparedQuery::rendered_query` is the

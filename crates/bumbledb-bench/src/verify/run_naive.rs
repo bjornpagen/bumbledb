@@ -46,7 +46,7 @@ fn closed_join_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 

@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
-    AggOp, Atom, Basic, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Query, Rule, Term,
+    AggOp, Atom, Basic, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Query, Rule, Term,
     Value, VarId,
 };
 
@@ -57,14 +57,14 @@ pub enum QueryError {
 /// sides, typed identity included.
 #[must_use]
 pub fn dnf_width(rule: &Rule) -> usize {
-    fn width(tree: &PredicateTree) -> usize {
+    fn width(tree: &ConditionTree) -> usize {
         match tree {
-            PredicateTree::Leaf(_) => 1,
-            PredicateTree::And(children) => children.iter().map(width).product(),
-            PredicateTree::Or(children) => children.iter().map(width).sum(),
+            ConditionTree::Leaf(_) => 1,
+            ConditionTree::And(children) => children.iter().map(width).product(),
+            ConditionTree::Or(children) => children.iter().map(width).sum(),
         }
     }
-    rule.predicates.iter().map(width).product()
+    rule.conditions.iter().map(width).product()
 }
 
 /// The measure, from the definition: `|[s, e)| = e − s` over the logical
@@ -174,7 +174,7 @@ struct Env<'a> {
     atoms: Vec<FlatAtom>,
     negated: Vec<FlatAtom>,
     /// The rule's predicate trees, conjoined — evaluated directly.
-    predicates: Vec<SubstitutedTree>,
+    conditions: Vec<SubstitutedTree>,
     /// Per variable: bound on some non-interval field of a positive atom,
     /// hence a scalar (an occurrence on an interval field is then point
     /// membership; without a scalar anchor the variable is interval-typed
@@ -265,8 +265,8 @@ impl NaiveDb {
                 .iter()
                 .map(|atom| self.flatten(atom, params))
                 .collect(),
-            predicates: rule
-                .predicates
+            conditions: rule
+                .conditions
                 .iter()
                 .map(|tree| substitute_tree(tree, params))
                 .collect(),
@@ -425,13 +425,13 @@ fn count_vars(rule: &Rule) -> usize {
             see(count, *var);
         }
     }
-    fn see_tree(count: &mut usize, tree: &PredicateTree) {
+    fn see_tree(count: &mut usize, tree: &ConditionTree) {
         match tree {
-            PredicateTree::Leaf(Comparison { lhs, rhs, .. }) => {
+            ConditionTree::Leaf(Comparison { lhs, rhs, .. }) => {
                 see_term(count, lhs);
                 see_term(count, rhs);
             }
-            PredicateTree::And(children) | PredicateTree::Or(children) => {
+            ConditionTree::And(children) | ConditionTree::Or(children) => {
                 for child in children {
                     see_tree(count, child);
                 }
@@ -444,7 +444,7 @@ fn count_vars(rule: &Rule) -> usize {
             see_term(&mut count, term);
         }
     }
-    for tree in &rule.predicates {
+    for tree in &rule.conditions {
         see_tree(&mut count, tree);
     }
     for find in &rule.finds {
@@ -467,9 +467,9 @@ fn count_vars(rule: &Rule) -> usize {
 /// Substitutes params through a predicate tree, keeping its shape. A
 /// param mask substitutes like any param — the model sees only literal
 /// masks past this point.
-fn substitute_tree(tree: &PredicateTree, params: &[ParamValue]) -> SubstitutedTree {
+fn substitute_tree(tree: &ConditionTree, params: &[ParamValue]) -> SubstitutedTree {
     match tree {
-        PredicateTree::Leaf(Comparison { op, lhs, rhs }) => {
+        ConditionTree::Leaf(Comparison { op, lhs, rhs }) => {
             let op = match op {
                 CmpOp::Allen {
                     mask: MaskTerm::Param(param),
@@ -486,13 +486,13 @@ fn substitute_tree(tree: &PredicateTree, params: &[ParamValue]) -> SubstitutedTr
             };
             SubstitutedTree::Leaf(op, substitute(lhs, params), substitute(rhs, params))
         }
-        PredicateTree::And(children) => SubstitutedTree::And(
+        ConditionTree::And(children) => SubstitutedTree::And(
             children
                 .iter()
                 .map(|child| substitute_tree(child, params))
                 .collect(),
         ),
-        PredicateTree::Or(children) => SubstitutedTree::Or(
+        ConditionTree::Or(children) => SubstitutedTree::Or(
             children
                 .iter()
                 .map(|child| substitute_tree(child, params))
@@ -640,7 +640,7 @@ fn leaf_admits(
             return false;
         }
     }
-    for tree in &env.predicates {
+    for tree in &env.conditions {
         if !tree_holds(tree, assignment, &env.ray) {
             return false;
         }

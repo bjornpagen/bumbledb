@@ -399,9 +399,9 @@ impl fmt::Display for ValidationError {
                 f,
                 "DNF distribution produces {produced} rules against the cap of {cap}"
             ),
-            Self::PredicateNestingTooDeep { rule, depth, cap } => write!(
+            Self::ConditionNestingTooDeep { rule, depth, cap } => write!(
                 f,
-                "rule {rule}: predicate trees nest {depth} deep against the cap of {cap}"
+                "rule {rule}: condition trees nest {depth} deep against the cap of {cap}"
             ),
             Self::HeadArityMismatch {
                 rule,
@@ -506,7 +506,7 @@ impl fmt::Display for ValidationError {
             Self::FullAllenMask { index } => write!(
                 f,
                 "comparison {index}: full Allen mask — every pair satisfies it; \
-                 write no predicate"
+                 write no condition"
             ),
             Self::MembershipOnlyVariable { var } => write!(
                 f,
@@ -730,7 +730,7 @@ impl fmt::Display for Error {
             Self::FullAllenMaskParam { param } => write!(
                 f,
                 "parameter {}: full Allen mask — every pair satisfies it; \
-                 write no predicate",
+                 write no condition",
                 param.0
             ),
             Self::MeasureOfRay { start, end } => write!(

@@ -1173,7 +1173,7 @@ impl Emitter<'_> {
 
     fn leaf(op: &str, lhs: &str, rhs: &str) -> String {
         format!(
-            "::bumbledb::PredicateTree::Leaf(::bumbledb::Comparison {{ \
+            "::bumbledb::ConditionTree::Leaf(::bumbledb::Comparison {{ \
                  op: {op}, lhs: {lhs}, rhs: {rhs} }})"
         )
     }
@@ -1213,13 +1213,13 @@ impl Emitter<'_> {
     }
 
     /// One clause as a `Rule` expression. Items lower in source order;
-    /// the IR buckets them (atoms, negated, predicates) — the renderer's
+    /// the IR buckets them (atoms, negated, conditions) — the renderer's
     /// normalized order.
     fn rule(&mut self, clause: &Clause) -> Parse<String> {
         let mut scope = Scope::default();
         let mut atoms = String::new();
         let mut negated = String::new();
-        let mut predicates = String::new();
+        let mut conditions = String::new();
         for item in &clause.items {
             match item {
                 Item::Atom(atom) => {
@@ -1233,7 +1233,7 @@ impl Emitter<'_> {
                     let rhs = self.term(&mut scope, rhs)?;
                     let mask = self.mask(mask)?;
                     let op = format!("::bumbledb::CmpOp::Allen {{ mask: {mask} }}");
-                    let _ = write!(predicates, "{},", Self::leaf(&op, &lhs, &rhs));
+                    let _ = write!(conditions, "{},", Self::leaf(&op, &lhs, &rhs));
                 }
                 Item::Membership { element, container } => {
                     // `Contains` is interval-first; the notation reads
@@ -1241,7 +1241,7 @@ impl Emitter<'_> {
                     let element = self.term(&mut scope, element)?;
                     let container = self.term(&mut scope, container)?;
                     let _ = write!(
-                        predicates,
+                        conditions,
                         "{},",
                         Self::leaf("::bumbledb::CmpOp::Contains", &container, &element)
                     );
@@ -1250,7 +1250,7 @@ impl Emitter<'_> {
                     let lhs = self.term(&mut scope, lhs)?;
                     let rhs = self.term(&mut scope, rhs)?;
                     let op = format!("::bumbledb::CmpOp::{op}");
-                    let _ = write!(predicates, "{},", Self::leaf(&op, &lhs, &rhs));
+                    let _ = write!(conditions, "{},", Self::leaf(&op, &lhs, &rhs));
                 }
             }
         }
@@ -1263,7 +1263,7 @@ impl Emitter<'_> {
                  finds: ::std::vec![{finds}], \
                  atoms: ::std::vec![{atoms}], \
                  negated: ::std::vec![{negated}], \
-                 predicates: ::std::vec![{predicates}] }}"
+                 conditions: ::std::vec![{conditions}] }}"
         ))
     }
 }

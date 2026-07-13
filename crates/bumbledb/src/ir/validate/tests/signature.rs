@@ -345,7 +345,7 @@ fn query_of(case: &Case) -> Query {
                 .collect(),
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 

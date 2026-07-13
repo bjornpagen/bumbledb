@@ -187,7 +187,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
         }
     }
     // …and interval-typed sides of cross-atom Allen/Contains.
-    for comparison in rule.predicates.iter().map(super::leaf) {
+    for comparison in rule.conditions.iter().map(super::leaf) {
         if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::Contains) {
             continue;
         }
@@ -332,7 +332,7 @@ impl Coverage {
 
     fn record_comparisons(&mut self, rule: &Rule, t: &Typing) -> bool {
         let mut has_allen = false;
-        for comparison in rule.predicates.iter().map(super::leaf) {
+        for comparison in rule.conditions.iter().map(super::leaf) {
             // A measure side types the comparison u64 (the measure word)
             // and is its own construct row.
             if matches!(comparison.lhs, Term::Duration(_))
@@ -620,7 +620,7 @@ impl Coverage {
                 .chain(&rule.negated)
                 .flat_map(|atom| &atom.bindings)
                 .any(|(_, term)| matches!(term, Term::ParamSet(_)))
-                || rule.predicates.iter().map(super::leaf).any(|c| {
+                || rule.conditions.iter().map(super::leaf).any(|c| {
                     matches!(c.lhs, Term::ParamSet(_)) || matches!(c.rhs, Term::ParamSet(_))
                 });
             self.spine_violations += spine_violations(rule, &t);

@@ -1,7 +1,7 @@
 //! The literal latch (PRD 09): the dictionary is append-only, so `str`
 //! literal resolution is monotone — a hit rewrites the plan template
 //! once, permanently; a miss stays live. With zero pending literals and
-//! zero params, `resolve_predicates` is skipped entirely (the
+//! zero params, `resolve_filters` is skipped entirely (the
 //! fully-latched fast path).
 
 use super::*;
@@ -22,7 +22,7 @@ fn literal_query(memo: &str) -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -135,7 +135,7 @@ fn a_miss_stays_live_and_latches_after_interning() {
 
 /// The trace-level pins: the latch event fires exactly once per distinct
 /// literal, and the fully-latched + param-free execution skips
-/// `resolve_predicates` provably (its span is absent) with results
+/// `resolve_filters` provably (its span is absent) with results
 /// identical to the slow path on the same snapshot.
 #[cfg(feature = "trace")]
 #[test]
@@ -182,6 +182,6 @@ fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
     );
     assert!(
         !events.iter().any(|e| e.name == obs::names::RESOLVE_FILTERS),
-        "resolve_predicates provably skipped"
+        "resolve_filters provably skipped"
     );
 }

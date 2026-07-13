@@ -348,7 +348,7 @@ fn generated_string_literals_are_nul_free() {
                     }
                 }
             }
-            for comparison in rule.predicates.iter().map(crate::querygen::leaf) {
+            for comparison in rule.conditions.iter().map(crate::querygen::leaf) {
                 for term in [&comparison.lhs, &comparison.rhs] {
                     if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
                         assert!(!raw.contains(&0), "a generated literal carries NUL");

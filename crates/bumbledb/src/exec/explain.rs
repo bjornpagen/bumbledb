@@ -73,6 +73,6 @@ pub enum RulePlan<'p> {
     FreeJoin(&'p ValidatedPlan),
     /// The statically-empty program (`ir/normalize/fold.rs`): every
     /// rule refuted on constants at prepare — nothing runs, and the
-    /// per-rule killing predicates print from `stats.dead`.
+    /// per-rule killing conditions print from `stats.dead`.
     Empty,
 }

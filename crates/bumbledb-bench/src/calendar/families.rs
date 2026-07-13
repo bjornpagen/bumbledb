@@ -13,7 +13,7 @@
 //! the engine and the naive model before any timing.
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query,
     Rule, Term, Value, VarId,
 };
 
@@ -28,8 +28,8 @@ fn param(id: u16) -> Term {
     Term::Param(ParamId(id))
 }
 
-fn allen(lhs: Term, rhs: Term, mask: AllenMask) -> PredicateTree {
-    PredicateTree::Leaf(Comparison {
+fn allen(lhs: Term, rhs: Term, mask: AllenMask) -> ConditionTree {
+    ConditionTree::Leaf(Comparison {
         op: CmpOp::Allen {
             mask: MaskTerm::Literal(mask),
         },
@@ -97,7 +97,7 @@ fn busy_scan_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![allen(var(1), param(0), AllenMask::INTERSECTS)],
+        conditions: vec![allen(var(1), param(0), AllenMask::INTERSECTS)],
     })
 }
 
@@ -144,7 +144,7 @@ fn meets_chain_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![
+        conditions: vec![
             allen(var(1), var(2), AllenMask::MEETS),
             allen(var(1), param(1), AllenMask::DURING),
         ],
@@ -181,7 +181,7 @@ fn rsvp_union_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     Query {
         head: vec![bumbledb::HeadTerm::Var, bumbledb::HeadTerm::Var],
@@ -223,7 +223,7 @@ fn conflict_pairs_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![allen(var(2), var(3), AllenMask::INTERSECTS)],
+        conditions: vec![allen(var(2), var(3), AllenMask::INTERSECTS)],
     })
 }
 
@@ -262,7 +262,7 @@ fn conflict_free_query() -> Query {
             relation: ids::CLAIM,
             bindings: vec![(ids::claim::PERSON, var(0)), (ids::claim::SPAN, param(1))],
         }],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -308,7 +308,7 @@ fn free_busy_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![allen(var(2), param(1), AllenMask::INTERSECTS)],
+        conditions: vec![allen(var(2), param(1), AllenMask::INTERSECTS)],
     })
 }
 
@@ -351,7 +351,7 @@ fn claim_hours_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![allen(
+        conditions: vec![allen(
             var(2),
             Term::Literal(Value::IntervalI64(
                 CAL_HORIZON,

@@ -4,7 +4,7 @@ use super::*;
 use crate::fixture::{field, fresh, var};
 use bumbledb::AggOp;
 use bumbledb::AllenMask;
-use bumbledb::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Rule, Term};
+use bumbledb::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Rule, Term};
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
 
 /// Relation and field ids for the test ledger below — declaration order
@@ -181,7 +181,7 @@ fn point_matches_its_hand_written_golden() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::POINT);
@@ -218,7 +218,7 @@ fn containment_walk_matches_its_hand_written_golden() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CONTAINMENT_WALK);
@@ -259,7 +259,7 @@ fn balance_matches_its_hand_written_golden() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::BALANCE);
@@ -281,7 +281,7 @@ fn negated_atoms_match_their_goldens() {
                 (ids::posting_tag::TAG, Term::Literal(Value::U64(0))),
             ],
         }],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::NO_TAG);
@@ -302,7 +302,7 @@ fn negated_atoms_match_their_goldens() {
             relation: ids::ORG_PARENT,
             bindings: vec![(ids::org_parent::CHILD, var(1))],
         }],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::SELF_NEGATION);
@@ -321,7 +321,7 @@ fn negated_atoms_match_their_goldens() {
                 (ids::posting_tag::TAG, Term::Param(ParamId(0))),
             ],
         }],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert!(t.sql.contains("n0.\"tag\" = ?1"), "{}", t.sql);
@@ -341,7 +341,7 @@ fn param_sets_render_as_literal_in_lists() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let sets = vec![(
         ParamId(0),
@@ -376,7 +376,7 @@ fn param_sets_render_as_literal_in_lists() {
                 (ids::posting::ENTRY, Term::ParamSet(ParamId(0))),
             ],
         }],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &sets).expect("translates");
     assert!(
@@ -402,7 +402,7 @@ fn set_forms_cover_interval_membership_and_predicate_equality() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let sets = vec![(ParamId(0), vec![Value::I64(1), Value::I64(2)])];
     let t = translate(&query, schema(), &sets).expect("translates");
@@ -428,7 +428,7 @@ fn set_forms_cover_interval_membership_and_predicate_equality() {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(1),
             rhs: Term::ParamSet(ParamId(0)),
@@ -460,7 +460,7 @@ fn membership_matches_its_goldens() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::MEMBERSHIP);
@@ -487,7 +487,7 @@ fn membership_matches_its_goldens() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::MEMBERSHIP_PARAM);
@@ -524,7 +524,7 @@ fn allen_intersects_matches_its_hand_written_golden() {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },
@@ -547,7 +547,7 @@ fn contains_matches_both_goldens() {
             bindings: vec![(ids::mandate::ORG, var(0)), (ids::mandate::ACTIVE, var(1))],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::COVERS),
             },
@@ -578,7 +578,7 @@ fn contains_matches_both_goldens() {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Contains,
             lhs: var(1),
             rhs: var(2),
@@ -612,7 +612,7 @@ fn interval_equality_matches_its_goldens() {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(2),
             rhs: var(3),
@@ -635,7 +635,7 @@ fn interval_equality_matches_its_goldens() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::INTERVAL_EQ_LITERAL);
@@ -652,7 +652,7 @@ fn interval_equality_matches_its_goldens() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::INTERVAL_EQ_PARAM);
@@ -688,7 +688,7 @@ fn count_distinct_matches_its_hand_written_golden() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::COUNT_DISTINCT);
@@ -712,7 +712,7 @@ fn count_distinct_over_an_interval_concatenates_the_halves() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert!(
@@ -743,7 +743,7 @@ fn arg_restriction_matches_its_goldens() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::ARG_MAX);
@@ -759,7 +759,7 @@ fn arg_restriction_matches_its_goldens() {
             bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AT, var(1))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::ARG_MAX_GLOBAL);
@@ -775,7 +775,7 @@ fn arg_restriction_matches_its_goldens() {
             bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AT, var(1))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert!(t.sql.contains("SELECT MIN(v1) AS mk FROM d"), "{}", t.sql);
@@ -792,7 +792,7 @@ fn an_interval_find_projects_both_halves() {
             bindings: vec![(ids::mandate::ORG, var(0)), (ids::mandate::ACTIVE, var(1))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(
@@ -832,18 +832,18 @@ fn every_scalar_construct_translates() {
             },
         ],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(0),
                 rhs: var(1),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(1),
                 rhs: Term::Literal(Value::I64(-5)),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ne,
                 lhs: var(0),
                 rhs: Term::Param(ParamId(0)),
@@ -875,7 +875,7 @@ fn every_scalar_construct_translates() {
             bindings: vec![(ids::posting::AMOUNT, var(0)), (ids::posting::AT, var(0))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&repeated, schema(), &[]).expect("translates");
     assert!(t.sql.contains("t0.\"amount\" = t0.\"at\""), "{}", t.sql);
@@ -895,7 +895,7 @@ fn global_aggregates_carry_the_having_rule() {
             bindings: vec![(ids::posting::AMOUNT, var(0))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert!(t.sql.ends_with("HAVING COUNT(*) > 0"), "{}", t.sql);
@@ -922,7 +922,7 @@ fn global_aggregates_carry_the_having_rule() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&grouped, schema(), &[]).expect("translates");
     assert!(t.sql.contains("MIN(v1)"), "{}", t.sql);
@@ -942,7 +942,7 @@ fn errors_name_the_untranslatable_construct() {
             bindings: vec![],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let err = translate(&gates_only, schema(), &[]).unwrap_err();
     assert!(err.contains("no bound atoms"), "{err}");
@@ -966,7 +966,7 @@ fn a_nul_string_literal_is_a_named_error() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let err = translate(&query, schema(), &[]).unwrap_err();
     assert!(err.contains("NUL byte in string literal"), "{err}");
@@ -993,7 +993,7 @@ fn pack_heads_are_inexpressible_and_route_to_the_naive_lane() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(
         sqlite_expressible(&LaneCase::Query(&query)),
@@ -1018,7 +1018,7 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
             relation: ids::POSTING_TAG,
             bindings: vec![(ids::posting_tag::POSTING, var(0))],
         }],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(sqlite_expressible(&LaneCase::Query(&query)), Ok(()));
 
@@ -1065,7 +1065,7 @@ fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
                     bindings: vec![(ids::posting::ACCOUNT, var(0))],
                 }],
                 negated: vec![],
-                predicates: vec![],
+                conditions: vec![],
             },
             Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
@@ -1074,7 +1074,7 @@ fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
                     bindings: vec![(ids::posting_tag::POSTING, var(0))],
                 }],
                 negated: vec![],
-                predicates: vec![],
+                conditions: vec![],
             },
         ],
     };
@@ -1095,7 +1095,7 @@ fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
     // The union fold: per-rule SELECT DISTINCT head projections
     // (aliased hN), one UNION, the fold grouped by the variable
     // positions. The param is query-global: one ?1 slot.
-    let arm = |predicates: Vec<PredicateTree>| Rule {
+    let arm = |conditions: Vec<ConditionTree>| Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -1111,13 +1111,13 @@ fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
             ],
         }],
         negated: vec![],
-        predicates,
+        conditions,
     };
     let query = Query {
         head: arm(vec![]).head(),
         rules: vec![
             arm(vec![]),
-            arm(vec![PredicateTree::Leaf(Comparison {
+            arm(vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(1),
                 rhs: Term::Param(ParamId(0)),
@@ -1152,7 +1152,7 @@ fn a_param_repeated_across_rules_keeps_one_positional_slot() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![bumbledb::HeadTerm::Var],
@@ -1178,7 +1178,7 @@ fn a_duration_find_is_end_minus_start_on_the_stored_columns() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(

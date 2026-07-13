@@ -123,7 +123,7 @@ pub(super) fn place_comparisons(
     let mut word_residuals = Vec::new();
     let mut allen_residuals = Vec::new();
     let mut duration_residuals = Vec::new();
-    for comparison in &rule.rule().predicates {
+    for comparison in &rule.rule().conditions {
         let op = canonicalize(rule, comparison);
         // The measure comparisons first (validation admitted exactly the
         // order operators with one Duration side — 20-query-ir, § the

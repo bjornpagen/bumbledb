@@ -18,8 +18,8 @@ use bumbledb::schema::{
     ValueType,
 };
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, HeadOp, HeadTerm, MaskTerm, ParamId,
-    PredicateTree, Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, HeadOp, HeadTerm,
+    MaskTerm, ParamId, Query, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::differential::{Op, Summary, run};
@@ -245,7 +245,7 @@ fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>) -> Query {
         finds,
         atoms,
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -312,7 +312,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                     BOOKING,
                     &[(0, Term::Literal(Value::U64(0))), (2, var(0))],
                 )],
-                predicates: vec![],
+                conditions: vec![],
             }),
             vec![],
         ),
@@ -364,15 +364,15 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                     atom(BOOKING, &[(0, var(3)), (1, var(4)), (2, var(5))]),
                 ],
                 negated: vec![],
-                predicates: vec![
-                    PredicateTree::Leaf(Comparison {
+                conditions: vec![
+                    ConditionTree::Leaf(Comparison {
                         op: CmpOp::Allen {
                             mask: MaskTerm::Literal(AllenMask::INTERSECTS),
                         },
                         lhs: var(1),
                         rhs: var(4),
                     }),
-                    PredicateTree::Leaf(Comparison {
+                    ConditionTree::Leaf(Comparison {
                         op: CmpOp::Lt,
                         lhs: var(2),
                         rhs: var(5),
@@ -390,15 +390,15 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                     atom(BOOKING, &[(0, var(3)), (1, var(4)), (2, var(5))]),
                 ],
                 negated: vec![],
-                predicates: vec![
-                    PredicateTree::Leaf(Comparison {
+                conditions: vec![
+                    ConditionTree::Leaf(Comparison {
                         op: CmpOp::Allen {
                             mask: MaskTerm::Literal(AllenMask::COVERS),
                         },
                         lhs: var(1),
                         rhs: var(4),
                     }),
-                    PredicateTree::Leaf(Comparison {
+                    ConditionTree::Leaf(Comparison {
                         op: CmpOp::Ne,
                         lhs: var(2),
                         rhs: var(5),
@@ -413,7 +413,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 finds: vec![v(2), v(3)],
                 atoms: vec![booking_atom(), atom(MARKER, &[(0, var(3))])],
                 negated: vec![],
-                predicates: vec![PredicateTree::Leaf(Comparison {
+                conditions: vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Contains,
                     lhs: var(1),
                     rhs: var(3),
@@ -449,7 +449,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 finds: vec![v(2)],
                 atoms: vec![booking_atom()],
                 negated: vec![],
-                predicates: vec![PredicateTree::Leaf(Comparison {
+                conditions: vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Ge,
                     lhs: var(2),
                     rhs: Term::Literal(Value::U64(4)),
@@ -467,7 +467,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                     BOOKING,
                     &[(0, Term::ParamSet(ParamId(0))), (2, var(0))],
                 )],
-                predicates: vec![],
+                conditions: vec![],
             }),
             vec![ParamValue::Set(vec![Value::U64(1), Value::U64(2)])],
         ),
@@ -494,13 +494,13 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                             &[(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
                         )],
                         negated: vec![],
-                        predicates: vec![],
+                        conditions: vec![],
                     },
                     Rule {
                         finds: vec![v(0)],
                         atoms: vec![booking_atom()],
                         negated: vec![],
-                        predicates: vec![PredicateTree::Leaf(Comparison {
+                        conditions: vec![ConditionTree::Leaf(Comparison {
                             op: CmpOp::Ge,
                             lhs: var(2),
                             rhs: Term::Literal(Value::U64(4)),
@@ -528,13 +528,13 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                             &[(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
                         )],
                         negated: vec![],
-                        predicates: vec![],
+                        conditions: vec![],
                     },
                     Rule {
                         finds: vec![agg(AggOp::Sum, Some(2)), agg(AggOp::Count, None)],
                         atoms: vec![booking_atom()],
                         negated: vec![],
-                        predicates: vec![PredicateTree::Leaf(Comparison {
+                        conditions: vec![ConditionTree::Leaf(Comparison {
                             op: CmpOp::Ge,
                             lhs: var(2),
                             rhs: Term::Literal(Value::U64(4)),
@@ -555,13 +555,13 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                         finds: vec![v(1)],
                         atoms: vec![atom(BOOKING, &[(0, Term::Param(ParamId(0))), (2, var(1))])],
                         negated: vec![],
-                        predicates: vec![],
+                        conditions: vec![],
                     },
                     Rule {
                         finds: vec![v(2)],
                         atoms: vec![booking_atom()],
                         negated: vec![],
-                        predicates: vec![PredicateTree::Leaf(Comparison {
+                        conditions: vec![ConditionTree::Leaf(Comparison {
                             op: CmpOp::Ge,
                             lhs: var(2),
                             rhs: Term::Param(ParamId(0)),

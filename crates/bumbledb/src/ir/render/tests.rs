@@ -10,7 +10,7 @@ use super::render;
 use crate::allen::AllenMask;
 use crate::ir::validate::validate;
 use crate::ir::{
-    AggOp, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query, Rule, Term,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term,
     Value, VarId,
 };
 use crate::schema::{
@@ -93,7 +93,7 @@ fn projection_rule(relation: RelationId) -> Rule {
             bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Param(ParamId(0)),
             },
@@ -142,7 +142,7 @@ fn selection_negation_and_literal_mask_golden() {
             relation: OOO,
             bindings: vec![(PERSON, Term::Var(VarId(0)))],
         }],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },
@@ -176,7 +176,7 @@ fn closed_reference_handles_golden() {
                 ],
             }],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         })
     };
     let schema = calendar();
@@ -206,7 +206,7 @@ fn closed_reference_handles_golden() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(
         render(&schema, &own_id),
@@ -231,7 +231,7 @@ fn pack_head_golden() {
             bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let schema = calendar();
     validate(&schema, &query).expect("the golden query is a real query");
@@ -258,7 +258,7 @@ fn duration_head_golden() {
             bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Duration(VarId(1)),
             rhs: Term::Literal(Value::U64(3600)),
@@ -288,7 +288,7 @@ fn membership_and_param_forms() {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Contains,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Var(VarId(0)),
@@ -317,15 +317,15 @@ fn malformed_queries_render_with_placeholders() {
             bindings: vec![(FieldId(7), Term::Var(VarId(3)))],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Or(vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Or(vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
                     mask: MaskTerm::Literal(AllenMask::EMPTY),
                 },
                 lhs: Term::Var(VarId(3)),
                 rhs: Term::Var(VarId(4)),
             }),
-            PredicateTree::And(vec![]),
+            ConditionTree::And(vec![]),
         ])],
     });
     assert_eq!(
@@ -347,7 +347,7 @@ fn mask_union_spelling() {
             bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(mask),
             },

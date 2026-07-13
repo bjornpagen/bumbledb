@@ -24,7 +24,7 @@
 //!   against the naive model's own from-the-definition computation.
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, Error, FindTerm, MaskTerm, PredicateTree, Query,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, Error, FindTerm, MaskTerm, Query,
     Rule, Term, Value, VarId,
 };
 
@@ -36,8 +36,8 @@ use crate::schema::ids;
 use crate::translate::{Inexpressible, LaneCase, sqlite_expressible};
 use crate::verify::Run;
 
-fn leaf(op: CmpOp, lhs: Term, rhs: Term) -> PredicateTree {
-    PredicateTree::Leaf(Comparison { op, lhs, rhs })
+fn leaf(op: CmpOp, lhs: Term, rhs: Term) -> ConditionTree {
+    ConditionTree::Leaf(Comparison { op, lhs, rhs })
 }
 
 /// `Mandate(account = v0, active = v1)`.
@@ -83,14 +83,14 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let span = i64::try_from(sizes.postings).expect("fits") * AT_STEP;
     let posting_arm = |floor: i64, finds: Vec<FindTerm>| Rule {
         finds,
         atoms: vec![posting_atom()],
         negated: vec![],
-        predicates: vec![leaf(CmpOp::Ge, var(1), Term::Literal(Value::I64(floor)))],
+        conditions: vec![leaf(CmpOp::Ge, var(1), Term::Literal(Value::I64(floor)))],
     };
     let assemble = |rules: Vec<Rule>| Query {
         head: rules[0].head(),
@@ -166,17 +166,17 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
 fn tree(
     rng: &mut Rng,
     depth: u64,
-    leaf: &mut impl FnMut(&mut Rng) -> PredicateTree,
-) -> PredicateTree {
+    leaf: &mut impl FnMut(&mut Rng) -> ConditionTree,
+) -> ConditionTree {
     if depth == 0 || rng.chance(2, 5) {
         return leaf(rng);
     }
     let arity = 1 + rng.range(3);
     let children = (0..arity).map(|_| tree(rng, depth - 1, leaf)).collect();
     if rng.chance(1, 2) {
-        PredicateTree::And(children)
+        ConditionTree::And(children)
     } else {
-        PredicateTree::Or(children)
+        ConditionTree::Or(children)
     }
 }
 
@@ -206,21 +206,21 @@ fn dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     };
     (0..12)
         .map(|_| {
-            let predicates: Vec<PredicateTree> = (0..=rng.range(2))
+            let conditions: Vec<ConditionTree> = (0..=rng.range(2))
                 .map(|_| tree(&mut rng, 3, &mut tree_leaf))
                 .collect();
             let rule = Rule {
                 finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
                 atoms: vec![posting_atom()],
                 negated: vec![],
-                predicates,
+                conditions,
             };
             // The generated tree must stay under the cap — width control
             // is the generator's duty; the exceeders are constructed
             // deliberately in `error_parity`.
             if dnf_width(&rule) > bumbledb::MAX_RULES || dnf_width(&rule) == 0 {
                 let mut trimmed = rule;
-                trimmed.predicates = vec![tree_leaf(&mut rng)];
+                trimmed.conditions = vec![tree_leaf(&mut rng)];
                 query(Query::single(trimmed))
             } else {
                 query(Query::single(rule))
@@ -247,7 +247,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
         ],
         atoms: vec![mandate_atom()],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     }]);
     let global = pack(vec![Rule {
         finds: vec![FindTerm::Aggregate {
@@ -256,7 +256,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
         }],
         atoms: vec![mandate_atom()],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     }]);
     // The multi-rule Pack: per-org arms whose claims union before the
     // coalesce — the union fold's relation-shaped form.
@@ -277,7 +277,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let multi = pack(vec![org_arm(0), org_arm(1)]);
     let pack_queries = [grouped, global, multi];
@@ -302,12 +302,12 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
         var(1),
         Term::Literal(Value::IntervalI64(i64::MAX - 1, i64::MAX)),
     );
-    let measure = |finds: Vec<FindTerm>, predicates: Vec<PredicateTree>| {
+    let measure = |finds: Vec<FindTerm>, conditions: Vec<ConditionTree>| {
         query(Query::single(Rule {
             finds,
             atoms: vec![mandate_atom()],
             negated: vec![],
-            predicates,
+            conditions,
         }))
     };
     ops.push(measure(
@@ -364,14 +364,14 @@ enum Expected {
 /// The parity cases: the invalid shapes the roster owns, each paired
 /// with the naive side's expectation.
 fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
-    let posting_rule = |predicates: Vec<PredicateTree>| Rule {
+    let posting_rule = |conditions: Vec<ConditionTree>| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![posting_atom()],
         negated: vec![],
-        predicates,
+        conditions,
     };
     let account_leaf = |k: u64| leaf(CmpOp::Eq, var(0), Term::Literal(Value::U64(k)));
-    let wide_or = |n: u64| PredicateTree::Or((0..n).map(account_leaf).collect());
+    let wide_or = |n: u64| ConditionTree::Or((0..n).map(account_leaf).collect());
     let mask_query = |mask: AllenMask| {
         Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -386,7 +386,7 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
                 },
             ],
             negated: vec![],
-            predicates: vec![leaf(
+            conditions: vec![leaf(
                 CmpOp::Allen {
                     mask: MaskTerm::Literal(mask),
                 },
@@ -413,7 +413,7 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
             // rule vanishes, and a one-rule program vanishes whole.
             "vanished program (empty Or)",
             Query::single(posting_rule(vec![
-                PredicateTree::Or(vec![]),
+                ConditionTree::Or(vec![]),
                 account_leaf(0),
             ])),
             Expected::Vanished,

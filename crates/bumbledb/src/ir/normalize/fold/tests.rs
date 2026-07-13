@@ -3,7 +3,7 @@ use super::*;
 use crate::encoding::encode_i64;
 use crate::ir::validate::validate;
 use crate::ir::{
-    Atom, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query, Rule, Term, VarId,
+    Atom, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term, VarId,
 };
 use crate::schema::{
     FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
@@ -152,7 +152,7 @@ fn an_eq_constant_in_the_trimmed_set_survives() {
     assert!(!set_refutes_eq(&[1, 2], None));
 }
 
-// Rule (e) — a literal-vs-literal Allen predicate classify refutes.
+// Rule (e) — a literal-vs-literal Allen condition classify refutes.
 
 #[test]
 fn a_refuted_literal_allen_pair_is_statically_empty() {
@@ -195,7 +195,7 @@ fn one_rule(schema: &Schema, query: &Query) -> super::super::NormalizedQuery {
 }
 
 /// R(a: v0, id: v1) with the given comparisons on v0.
-fn range_query(predicates: Vec<Comparison>) -> Query {
+fn range_query(conditions: Vec<Comparison>) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -203,7 +203,7 @@ fn range_query(predicates: Vec<Comparison>) -> Query {
             bindings: vec![(R_A, Term::Var(VarId(0)))],
         }],
         negated: vec![],
-        predicates: predicates.into_iter().map(PredicateTree::Leaf).collect(),
+        conditions: conditions.into_iter().map(ConditionTree::Leaf).collect(),
     })
 }
 
@@ -270,7 +270,7 @@ fn an_eq_pin_subsumes_its_folded_bounds() {
 }
 
 #[test]
-fn param_and_ne_predicates_never_fold() {
+fn param_and_ne_conditions_never_fold() {
     // a >= ?0 ∧ a < ?1 ∧ a != 3: params are stage-3, Ne prunes nothing
     // statically — all three filters survive verbatim.
     let schema = schema();
@@ -332,13 +332,13 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
             ],
         }],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Eq,
                 lhs: Term::Var(VarId(0)),
                 rhs: Term::Literal(Value::IntervalI64(2, 5)),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
                     mask: MaskTerm::Literal(AllenMask::AFTER),
                 },

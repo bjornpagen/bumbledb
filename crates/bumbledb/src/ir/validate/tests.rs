@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::ValidationError;
-use crate::ir::{FindTerm, PredicateTree, Query, Rule, Term};
+use crate::ir::{ConditionTree, FindTerm, Query, Rule, Term};
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
 };
@@ -90,7 +90,7 @@ fn simple(finds: Vec<FindTerm>, atoms: Vec<crate::ir::Atom>) -> Query {
         finds,
         atoms,
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 

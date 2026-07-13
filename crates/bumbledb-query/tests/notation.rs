@@ -238,7 +238,7 @@ fn calendar_union_golden() {
 #[test]
 fn calendar_union_lowers_to_the_exact_ir() {
     use bumbledb::{
-        AllenMask, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Rule, Term,
+        AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Rule, Term,
         Value, VarId,
     };
     let lowered = query!(Scheduling {
@@ -256,7 +256,7 @@ fn calendar_union_lowers_to_the_exact_ir() {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },
@@ -289,7 +289,7 @@ fn tax_rate_golden() {
 }
 
 /// The normalized text is a fixed point: the renderer's own output —
-/// `v{id}` variables, positional `?N` params, atoms-then-predicates —
+/// `v{id}` variables, positional `?N` params, atoms-then-conditions —
 /// reparses to a query that renders back to itself, byte-exactly.
 #[test]
 fn tax_rate_normalized_text_is_a_fixed_point() {

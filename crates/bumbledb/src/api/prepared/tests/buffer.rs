@@ -32,7 +32,7 @@ fn overflow_errors_leave_the_buffer_reusable() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let txn = env.read_txn().expect("txn");
     let cache = crate::image::cache::ImageCache::new(&schema);
@@ -62,7 +62,7 @@ fn overflow_errors_leave_the_buffer_reusable() {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: Term::Var(VarId(0)),
             rhs: Term::Literal(crate::ir::Value::U64(8)),

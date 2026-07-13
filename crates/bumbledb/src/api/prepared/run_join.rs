@@ -54,7 +54,7 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
                     )
                 })
             }),
-        "Eq-constant predicates never reach a positive occurrence's view filters"
+        "Eq-constant conditions never reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         // A discharged occurrence (chase-eliminated or chase-folded) is

@@ -151,7 +151,7 @@ fn contradiction_draws_are_empty_on_both_sides() {
             bindings: vec![(ids::account::ID, Term::Var(VarId(0)))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let crate::differential::Rows::Ok(rows) = engine_query(&db, &control, &[]) else {
         panic!("the control scan errors");

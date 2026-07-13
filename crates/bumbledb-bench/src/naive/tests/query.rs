@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query,
+    AggOp, AllenMask, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query,
     RelationId, Rule, Term, Value, VarId,
 };
 
@@ -107,7 +107,7 @@ fn duplicate_witnesses_collapse() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
@@ -130,7 +130,7 @@ fn aggregation_footgun_triples_the_sum() {
         ],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(
         db.query(&plain, &[]).unwrap(),
@@ -149,7 +149,7 @@ fn aggregation_footgun_triples_the_sum() {
             atom(TAG, &[(0, var(1)), (1, var(3))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(
         db.query(&joined, &[]).unwrap(),
@@ -174,7 +174,7 @@ fn empty_input_global_aggregate_is_the_empty_set() {
         ],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(db.query(&query, &[]).unwrap(), rows(vec![]));
 }
@@ -195,7 +195,7 @@ fn arg_tie_yields_every_attaining_row() {
         }],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
@@ -215,7 +215,7 @@ fn membership_boundaries_are_half_open() {
                 &[(0, var(0)), (1, Term::Literal(Value::U64(point)))],
             )],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         });
         let expected = if expect_hit {
             rows(vec![vec![Value::U64(1)]])
@@ -243,7 +243,7 @@ fn point_variable_membership_uses_the_scalar_anchor() {
             atom(MANDATE, &[(0, var(3)), (1, var(0))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
@@ -267,7 +267,7 @@ fn interval_variable_on_interval_fields_is_value_equality() {
             atom(MANDATE, &[(0, var(2)), (1, var(1))]),
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
             rhs: var(2),
@@ -294,7 +294,7 @@ fn negation_rejects_once_regardless_of_multiplicities() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, &[(0, var(0)), (1, var(1)), (2, var(2))])],
         negated: vec![atom(TAG, &[(0, var(0))])],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
@@ -309,7 +309,7 @@ fn negated_zero_binding_atom_is_an_emptiness_gate() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, &[(0, var(0)), (1, var(1)), (2, var(2))])],
         negated: vec![atom(TAG, &[])],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert_eq!(db.query(&query, &[]).unwrap(), rows(vec![]));
 }
@@ -334,7 +334,7 @@ fn count_distinct_folds_values_not_bindings() {
         ],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     // 3 distinct bindings, 2 distinct accounts.
     assert_eq!(
@@ -357,7 +357,7 @@ fn param_set_membership_and_the_empty_set() {
             &[(0, var(0)), (1, Term::ParamSet(ParamId(0))), (2, var(1))],
         )],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let hit = db
         .query(
@@ -384,15 +384,15 @@ fn allen_masks_use_the_point_set_definitions() {
             atom(MANDATE, &[(0, var(2)), (1, var(3))]),
         ],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
                     mask: MaskTerm::Literal(AllenMask::INTERSECTS),
                 },
                 lhs: var(1),
                 rhs: var(3),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(0),
                 rhs: var(2),
@@ -412,7 +412,7 @@ fn allen_masks_use_the_point_set_definitions() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(MANDATE, &[(0, var(0)), (1, var(1))])],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::COVERS),
             },
@@ -436,7 +436,7 @@ fn sum_overflow_is_the_one_runtime_error() {
         }],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert!(db.query(&query, &[]).is_err());
 }
@@ -458,7 +458,7 @@ fn a_query_denotes_the_set_union_of_its_rules_denotations() {
             &[(1, Term::Literal(Value::U64(account))), (2, var(0))],
         )],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![bumbledb::HeadTerm::Var],
@@ -483,13 +483,13 @@ fn variables_are_rule_scoped_in_the_model_too() {
             &[(1, Term::Literal(Value::U64(7))), (2, var(0))],
         )],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let second = Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![atom(POSTING, &[(1, var(0)), (2, var(1))])],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
             rhs: Term::Literal(Value::U64(8)),
@@ -526,7 +526,7 @@ fn a_multi_rule_aggregate_folds_over_the_union_projected_to_the_head() {
             &[(1, Term::Literal(Value::U64(account))), (2, var(0))],
         )],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Sum)],

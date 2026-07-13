@@ -197,7 +197,7 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         b.bind(second, ids::mandate::ORG, Term::Var(org));
         let active = b.bind_var(second, ids::mandate::ACTIVE);
         let rhs = Term::Literal(i64_interval(b, rng, cfg));
-        b.predicates.push(Comparison {
+        b.conditions.push(Comparison {
             op: allen(AllenMask::INTERSECTS),
             lhs: Term::Var(active),
             rhs,
@@ -252,7 +252,7 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         let _payload = pin_transfer(b, rng, cfg, domains, second);
         let window = b.bind_var(second, ids::transfer::WINDOW);
         let rhs = Term::Literal(u64_interval(b, rng, cfg));
-        b.predicates.push(Comparison {
+        b.conditions.push(Comparison {
             op: allen(AllenMask::INTERSECTS),
             lhs: Term::Var(window),
             rhs,
@@ -331,7 +331,7 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
         };
         (lhs, rhs)
     };
-    b.predicates.push(Comparison {
+    b.conditions.push(Comparison {
         op,
         lhs: Term::Var(lhs),
         rhs,
@@ -476,7 +476,7 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
             let id = b.bind_var(transfer, ids::transfer::ID);
             b.find_var(id);
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
-            b.predicates.push(Comparison {
+            b.conditions.push(Comparison {
                 op: crate::querygen::shapes::order_op(rng),
                 lhs: Term::Duration(window),
                 rhs: Term::Literal(Value::U64(rng.range(3 * interval_data::GROUP_SPAN))),
@@ -493,7 +493,7 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
             if op == bumbledb::AggOp::Sum {
                 // The Sum bound: durations capped at a group span, so
                 // the sum tops out near transfers × 4096 ≪ 2⁶³.
-                b.predicates.push(Comparison {
+                b.conditions.push(Comparison {
                     op: bumbledb::CmpOp::Le,
                     lhs: Term::Duration(window),
                     rhs: Term::Literal(Value::U64(4 * interval_data::GROUP_SPAN)),
@@ -511,7 +511,7 @@ fn push_boundary_cmp(b: &mut Builder, rng: &mut Rng, var: VarId, literal: Value,
     } else {
         (CmpOp::Contains, Term::Literal(point))
     };
-    b.predicates.push(Comparison {
+    b.conditions.push(Comparison {
         op,
         lhs: Term::Var(var),
         rhs,

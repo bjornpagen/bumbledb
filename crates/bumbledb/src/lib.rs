@@ -121,8 +121,8 @@ pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{
-    AggOp, Atom, CmpOp, Comparison, FindTerm, HeadOp, HeadTerm, MAX_PREDICATE_DEPTH, MAX_RULES,
-    MaskTerm, ParamId, PredicateTree, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm, MAX_CONDITION_DEPTH,
+    MAX_RULES, MaskTerm, ParamId, Query, Rule, Term, Value, VarId,
 };
 pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
 pub use verify_store::{StoreFinding, StoreReport};

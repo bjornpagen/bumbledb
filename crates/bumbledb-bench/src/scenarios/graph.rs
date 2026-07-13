@@ -6,7 +6,7 @@
 //! B-tree plans.
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, PredicateTree, Query, Rule, Term,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term,
     Value, VarId,
 };
 
@@ -138,7 +138,7 @@ fn neighbors() -> Query {
             bindings: vec![(FieldId(0), param(0)), (FieldId(1), var(0))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -157,7 +157,7 @@ fn two_hop() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -183,7 +183,7 @@ fn three_hop_count() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -206,7 +206,7 @@ fn mutual() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -232,7 +232,7 @@ fn triangles_from() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -255,13 +255,13 @@ fn weighted_hop() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(1),
                 rhs: param(1),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(2),
                 rhs: param(2),

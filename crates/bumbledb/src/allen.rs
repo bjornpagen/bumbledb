@@ -168,10 +168,10 @@ impl AllenMask {
     /// (`docs/architecture/30-dependencies.md`).
     pub const DISJOINT: Self =
         Self(Basic::Before.bit() | Basic::Meets.bit() | Basic::MetBy.bit() | Basic::After.bit());
-    /// All 13 basics — the vacuous "always" (rejected as a predicate; a
+    /// All 13 basics — the vacuous "always" (rejected as a condition; a
     /// value of the algebra, e.g. the complement's identity).
     pub const FULL: Self = Self(ALL_BITS);
-    /// No basic — the vacuous "never" (rejected as a predicate).
+    /// No basic — the vacuous "never" (rejected as a condition).
     pub const EMPTY: Self = Self(0);
 
     /// Parses raw bits; `None` when any bit above the low 13 is set.
@@ -218,14 +218,14 @@ impl AllenMask {
         self.0.count_ones()
     }
 
-    /// The vacuous "never" — rejected as a predicate at the query
+    /// The vacuous "never" — rejected as a condition at the query
     /// boundary.
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    /// The vacuous "always" — rejected as a predicate at the query
+    /// The vacuous "always" — rejected as a condition at the query
     /// boundary.
     #[must_use]
     pub const fn is_full(self) -> bool {

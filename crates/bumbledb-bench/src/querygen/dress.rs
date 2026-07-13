@@ -51,7 +51,7 @@ pub(super) fn i64_dress(
     } else {
         Term::Param(b.fresh_param())
     };
-    b.predicates.push(Comparison {
+    b.conditions.push(Comparison {
         op,
         lhs: Term::Var(var),
         rhs,
@@ -73,7 +73,7 @@ pub(super) fn u64_dress(b: &mut Builder, rng: &mut Rng, atom: usize, field: Fiel
     } else {
         Term::Param(b.fresh_param())
     };
-    b.predicates.push(Comparison {
+    b.conditions.push(Comparison {
         op,
         lhs: Term::Var(var),
         rhs,
@@ -95,7 +95,7 @@ fn vocab_cmp(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, rows: 
     } else {
         Term::Literal(Value::U64(rng.range(rows)))
     };
-    b.predicates.push(Comparison {
+    b.conditions.push(Comparison {
         op,
         lhs: Term::Var(var),
         rhs,
@@ -131,7 +131,7 @@ pub(super) fn string_cmp(
             _ => Term::Param(b.fresh_param()),
         }
     };
-    b.predicates.push(Comparison {
+    b.conditions.push(Comparison {
         op,
         lhs: Term::Var(var),
         rhs,
@@ -216,7 +216,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                         continue;
                     }
                     let rhs = Term::Literal(window_literal_u64(b, rng, cfg));
-                    b.predicates.push(Comparison {
+                    b.conditions.push(Comparison {
                         op: eq_ne(rng),
                         lhs: Term::Var(var),
                         rhs,
@@ -250,7 +250,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                         }
                         _ => Term::Param(b.fresh_param()),
                     };
-                    b.predicates.push(Comparison {
+                    b.conditions.push(Comparison {
                         op,
                         lhs: Term::Var(var),
                         rhs,
@@ -293,7 +293,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                             _ => Term::Param(b.fresh_param()),
                         }
                     };
-                    b.predicates.push(Comparison {
+                    b.conditions.push(Comparison {
                         op,
                         lhs: Term::Var(var),
                         rhs,
@@ -311,7 +311,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
                     continue;
                 }
                 let rhs = Term::Literal(active_literal_i64(b, rng, cfg));
-                b.predicates.push(Comparison {
+                b.conditions.push(Comparison {
                     op: eq_ne(rng),
                     lhs: Term::Var(var),
                     rhs,

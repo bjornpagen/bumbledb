@@ -116,7 +116,7 @@ direction-divergence lesson, generalized): wherever both oracles reject, the
 verdicts compare *whole* — the judgment verdict with statement id and `Direction`,
 `MeasureOfRay` and aggregate overflow as query verdicts through the differential
 runner, and the roster rejections against the naive model's own
-from-the-definition computation: a cap-exceeding predicate tree must be
+from-the-definition computation: a cap-exceeding condition tree must be
 `DnfExceedsRules` with `produced` equal to the naive DNF width (leaf = 1, `And` =
 product, `Or` = sum), a program whose every disjunct vanishes is the empty union,
 and the vacuous masks (EMPTY and FULL) are the mask-cardinality rejections. A
@@ -324,7 +324,7 @@ time the emulation, not the engine.
   head rows across rules (the union's
   teeth), and the multi-rule aggregate union fold (`rules ∧ aggregate`, at least
   once per run); **the measure** in all three construct kinds — find position,
-  order predicate, and `Sum`/`Min`/`Max` fold (`Sum` under a duration bound, the
+  order condition, and `Sum`/`Min`/`Max` fold (`Sum` under a duration bound, the
   same Sum-range duty) — over the ray-free U64 window lane, with ray-bearing
   measure parity in the naive lane; **`Allen` masks** as named composites, all 13
   singletons, and random masks (every basic reachable through some literal mask
@@ -352,7 +352,7 @@ time the emulation, not the engine.
   multi-rule programs replayed engine-vs-naive, the naive model evaluating rules
   **directly** — the union of per-rule binding sets from the definition, sharing
   no lowering, kernel, or sweep code with the engine (the independence law: the
-  model imports the engine's *types* only); seeded random predicate **trees to
+  model imports the engine's *types* only); seeded random condition **trees to
   depth 3**, the naive model evaluating the *input tree* while the engine
   evaluates the lowered rules — the differential is the DNF-lowering proof — with
   the cap-exceeders and vanished programs in the error-parity cases above;

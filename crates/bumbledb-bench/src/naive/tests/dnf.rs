@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    Atom, CmpOp, Comparison, FieldId, FindTerm, PredicateTree, Query, RelationId, Rule, Term,
+    Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, Query, RelationId, Rule, Term,
     Value, VarId, ir,
 };
 
@@ -17,7 +17,7 @@ use crate::corpus_gen::Rng;
 use crate::fixture::field;
 use crate::naive::{Delta, NaiveDb, Tuple};
 
-/// One relation is enough: the property is about predicates, not joins —
+/// One relation is enough: the property is about conditions, not joins —
 /// Posting(account u64, amount i64), with tiny value domains so random
 /// comparisons select real subsets.
 fn schema() -> SchemaDescriptor {
@@ -61,7 +61,7 @@ fn corpus(rng: &mut Rng, rows: u64) -> NaiveDb {
 
 /// One random comparison: a variable side (account or amount) against a
 /// literal drawn from the same small domain, under a random operator.
-fn leaf(rng: &mut Rng) -> PredicateTree {
+fn leaf(rng: &mut Rng) -> ConditionTree {
     let (var, literal) = if rng.chance(1, 2) {
         (VarId(0), Value::U64(rng.range(ACCOUNT_DOMAIN)))
     } else {
@@ -83,25 +83,25 @@ fn leaf(rng: &mut Rng) -> PredicateTree {
     } else {
         (Term::Literal(literal), Term::Var(var))
     };
-    PredicateTree::Leaf(Comparison { op, lhs, rhs })
+    ConditionTree::Leaf(Comparison { op, lhs, rhs })
 }
 
 /// A random predicate tree. Child counts include zero, so the empty
 /// conjunction (true) and the empty disjunction (false — the rule lowers
 /// to zero rules) are exercised, not just tolerated.
-fn tree(rng: &mut Rng, depth: u64) -> PredicateTree {
+fn tree(rng: &mut Rng, depth: u64) -> ConditionTree {
     if depth == 0 || rng.chance(2, 5) {
         return leaf(rng);
     }
     let children = (0..rng.range(4)).map(|_| tree(rng, depth - 1)).collect();
     if rng.chance(1, 2) {
-        PredicateTree::And(children)
+        ConditionTree::And(children)
     } else {
-        PredicateTree::Or(children)
+        ConditionTree::Or(children)
     }
 }
 
-fn posting_rule(predicates: Vec<PredicateTree>) -> Rule {
+fn posting_rule(conditions: Vec<ConditionTree>) -> Rule {
     Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
@@ -112,7 +112,7 @@ fn posting_rule(predicates: Vec<PredicateTree>) -> Rule {
             ],
         }],
         negated: vec![],
-        predicates,
+        conditions,
     }
 }
 
@@ -126,9 +126,9 @@ fn lowered_rule_set_union_equals_naive_tree_evaluation() {
         let mut rng = Rng::new(seed);
         let rows = 1 + rng.range(24);
         let db = corpus(&mut rng, rows);
-        let predicates: Vec<PredicateTree> =
+        let conditions: Vec<ConditionTree> =
             (0..=rng.range(2)).map(|_| tree(&mut rng, 3)).collect();
-        let query = Query::single(posting_rule(predicates));
+        let query = Query::single(posting_rule(conditions));
 
         let direct = db.query(&query, &[]).expect("no aggregates: no overflow");
 
@@ -138,13 +138,13 @@ fn lowered_rule_set_union_equals_naive_tree_evaluation() {
                 finds,
                 atoms,
                 negated,
-                predicates,
+                conditions,
             } = lowered;
             let conjunctive = Query::single(Rule {
                 finds,
                 atoms,
                 negated,
-                predicates: predicates.into_iter().map(PredicateTree::Leaf).collect(),
+                conditions: conditions.into_iter().map(ConditionTree::Leaf).collect(),
             });
             union.extend(
                 db.query(&conjunctive, &[])

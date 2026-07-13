@@ -123,7 +123,7 @@ fn pack_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -209,7 +209,7 @@ fn pack_absorbs_rays_over_i64_spans() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
@@ -263,7 +263,7 @@ fn pack_groups_exactly_as_sum_does() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut sum = prepare(&txn, &cache, &schema, &sum_query).expect("prepare");
     let sum_out = sum.execute_collect(&txn, &cache, &[]).expect("execute");
@@ -324,7 +324,7 @@ fn multi_rule_pack_folds_the_union() {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op,
             lhs: Term::Var(VarId(2)),
             rhs: Term::Param(ParamId(param)),

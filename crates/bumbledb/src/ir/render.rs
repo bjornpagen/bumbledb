@@ -38,7 +38,7 @@
 //! - the Arg terms, absent from the notation grammar (Arg is single-rule
 //!   only and its key is rule-internal), render as `ArgMax(carried,
 //!   key)` — an honest extension, not grammar;
-//! - a nested predicate tree renders functionally (`and(..)` / `or(..)`)
+//! - a nested condition tree renders functionally (`and(..)` / `or(..)`)
 //!   — validated queries are Or-free downstream, so grammar-pure output
 //!   holds for every query written in the notation; the functional forms
 //!   appear only when diagnostics picture an input tree.
@@ -51,7 +51,7 @@ use std::fmt::Write as _;
 
 use crate::allen::AllenMask;
 use crate::ir::{
-    AggOp, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query, Rule, Term,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term,
     Value, VarId,
 };
 use crate::schema::{Enforcement, FieldDescriptor, FieldId, Relation, RelationId, Schema};
@@ -155,7 +155,7 @@ fn clause(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
     for atom in &rule.negated {
         items.push(atom_item(schema, refs, atom, true));
     }
-    for tree in &rule.predicates {
+    for tree in &rule.conditions {
         items.push(tree_item(tree));
     }
     if !items.is_empty() {
@@ -275,28 +275,28 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
     out
 }
 
-/// One predicate tree: a leaf is a comparison item; `And`/`Or` render
+/// One condition tree: a leaf is a comparison item; `And`/`Or` render
 /// functionally (module doc — the input grammar's trees are pictures,
-/// not notation). Depth-budgeted at [`crate::ir::MAX_PREDICATE_DEPTH`]:
+/// not notation). Depth-budgeted at [`crate::ir::MAX_CONDITION_DEPTH`]:
 /// the renderer recurses by depth and must stay total on the hostile
 /// nesting validation rejects, so anything past the boundary guard's own
 /// cap elides to `...` instead of exhausting the stack.
-fn tree_item(tree: &PredicateTree) -> String {
-    tree_item_within(tree, crate::ir::MAX_PREDICATE_DEPTH)
+fn tree_item(tree: &ConditionTree) -> String {
+    tree_item_within(tree, crate::ir::MAX_CONDITION_DEPTH)
 }
 
-fn tree_item_within(tree: &PredicateTree, budget: usize) -> String {
+fn tree_item_within(tree: &ConditionTree, budget: usize) -> String {
     if budget == 0 {
         return "...".to_owned();
     }
     match tree {
-        PredicateTree::Leaf(cmp) => comparison(cmp),
-        PredicateTree::And(children) => functional("and", children, budget),
-        PredicateTree::Or(children) => functional("or", children, budget),
+        ConditionTree::Leaf(cmp) => comparison(cmp),
+        ConditionTree::And(children) => functional("and", children, budget),
+        ConditionTree::Or(children) => functional("or", children, budget),
     }
 }
 
-fn functional(name: &str, children: &[PredicateTree], budget: usize) -> String {
+fn functional(name: &str, children: &[ConditionTree], budget: usize) -> String {
     let inner: Vec<String> = children
         .iter()
         .map(|child| tree_item_within(child, budget - 1))

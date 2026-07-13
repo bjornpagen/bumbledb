@@ -29,7 +29,7 @@ pub(super) fn dress_posting(b: &mut Builder, rng: &mut Rng, atom: usize, domains
             let Some(var) = b.var_at(atom, ids::posting::RECONCILED) else {
                 return;
             };
-            b.predicates.push(Comparison {
+            b.conditions.push(Comparison {
                 op: eq_ne(rng),
                 lhs: Term::Var(var),
                 rhs: Term::Literal(Value::Bool(rng.chance(1, 2))),
@@ -66,7 +66,7 @@ pub(super) fn dress_posting(b: &mut Builder, rng: &mut Rng, atom: usize, domains
                 4 => CmpOp::Gt,
                 _ => CmpOp::Ge,
             };
-            b.predicates.push(Comparison {
+            b.conditions.push(Comparison {
                 op,
                 lhs: Term::Var(amount),
                 rhs: Term::Var(at),

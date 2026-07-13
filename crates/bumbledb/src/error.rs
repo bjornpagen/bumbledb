@@ -406,7 +406,7 @@ pub enum ValidationError {
     TooManyRules {
         count: usize,
     },
-    /// DNF distribution of the rules' predicate trees would produce more
+    /// DNF distribution of the rules' condition trees would produce more
     /// rules than the cap ([`crate::ir::MAX_RULES`]) — the exponential
     /// case is rejected at declaration, exactly like guard-width
     /// overflow. `produced` names the blowup: the structural term count
@@ -416,12 +416,12 @@ pub enum ValidationError {
         produced: usize,
         cap: usize,
     },
-    /// A rule's predicate trees nest deeper than
-    /// [`crate::ir::MAX_PREDICATE_DEPTH`] — the boundary guard for every
+    /// A rule's condition trees nest deeper than
+    /// [`crate::ir::MAX_CONDITION_DEPTH`] — the boundary guard for every
     /// recursive tree walk (the trust-boundary law: hostile nesting must
     /// be a typed rejection, never a stack exhaustion). Judged
     /// iteratively, before any recursion sees the tree.
-    PredicateNestingTooDeep {
+    ConditionNestingTooDeep {
         rule: usize,
         depth: usize,
         cap: usize,
@@ -562,15 +562,15 @@ pub enum ValidationError {
         index: usize,
     },
     /// An `Allen` comparison whose literal mask is empty — no basic
-    /// relation can hold, so the predicate is "never": write no query
+    /// relation can hold, so the condition is "never": write no query
     /// (`docs/architecture/20-query-ir.md` § the Allen operator; the
     /// bind-time sibling is [`Error::EmptyAllenMaskParam`]).
     EmptyAllenMask {
         index: usize,
     },
     /// An `Allen` comparison whose literal mask is all 13 basics — every
-    /// pair satisfies it, so the predicate is "always": write no
-    /// predicate (the bind-time sibling is [`Error::FullAllenMaskParam`]).
+    /// pair satisfies it, so the condition is "always": write no
+    /// condition (the bind-time sibling is [`Error::FullAllenMaskParam`]).
     FullAllenMask {
         index: usize,
     },
@@ -926,13 +926,13 @@ pub enum Error {
     AllenMaskParamExpected {
         param: ParamId,
     },
-    /// Bind-time: a mask param bound to the empty mask — the predicate
+    /// Bind-time: a mask param bound to the empty mask — the condition
     /// would be "never" (the validation-time sibling is
     /// [`ValidationError::EmptyAllenMask`]).
     EmptyAllenMaskParam {
         param: ParamId,
     },
-    /// Bind-time: a mask param bound to the full mask — the predicate
+    /// Bind-time: a mask param bound to the full mask — the condition
     /// would be "always" (the validation-time sibling is
     /// [`ValidationError::FullAllenMask`]).
     FullAllenMaskParam {

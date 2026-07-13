@@ -1,14 +1,14 @@
 use super::{Context, ParamKind, RuleTyping, TypeSlot, ValidatedQuery};
 use crate::error::ValidationError;
 use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
-use crate::ir::{AggOp, FindTerm, MAX_PREDICATE_DEPTH, MAX_RULES, ParamId, Query, VarId};
+use crate::ir::{AggOp, FindTerm, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, VarId};
 use crate::schema::{Schema, ValueType};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Validates a query against the schema, yielding the sealed witness.
 ///
 /// The program shape first (empty rule set, the rule cap, empty head);
-/// then **DNF distribution** — each rule's predicate trees distribute
+/// then **DNF distribution** — each rule's condition trees distribute
 /// and each disjunct becomes a rule, with the blowup capped at
 /// [`MAX_RULES`] on the structural term count (before materializing)
 /// and duplicates collapsed by normalized-form equality; then each
@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// the query-global param unification (params are one binding surface
 /// across rules; variables never cross them).
 ///
-/// Duplicate and even statically contradictory predicates (`x < 5,
+/// Duplicate and even statically contradictory conditions (`x < 5,
 /// x > 9`) are accepted deliberately: the semantics are exact (an empty
 /// result), and the "write the query you mean" roster rejects only
 /// shapes with no meaning at all (constant and self comparisons) — it
@@ -49,12 +49,12 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     // by depth, so a hostile depth must be a typed rejection here, judged
     // by the iterative `nesting_depth`, never a stack exhaustion there).
     for (rule_idx, rule) in query.rules.iter().enumerate() {
-        let depth = nesting_depth(&rule.predicates);
-        if depth > MAX_PREDICATE_DEPTH {
-            return Err(ValidationError::PredicateNestingTooDeep {
+        let depth = nesting_depth(&rule.conditions);
+        if depth > MAX_CONDITION_DEPTH {
+            return Err(ValidationError::ConditionNestingTooDeep {
                 rule: rule_idx,
                 depth,
-                cap: MAX_PREDICATE_DEPTH,
+                cap: MAX_CONDITION_DEPTH,
             });
         }
     }

@@ -8,7 +8,7 @@ use crate::allen::AllenMask;
 use crate::ir::normalize::{NormalizedQuery, normalize};
 use crate::ir::validate::validate;
 use crate::ir::{
-    Atom, Comparison, FindTerm, HeadTerm, MaskTerm, PredicateTree, Query, Rule, Term, Value,
+    Atom, Comparison, ConditionTree, FindTerm, HeadTerm, MaskTerm, Query, Rule, Term, Value,
 };
 use crate::plan::chase::{chase, with_chase_disabled};
 use crate::schema::{
@@ -181,7 +181,7 @@ fn selected_fold_query(rank: u64) -> Query {
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(rank)))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -230,7 +230,7 @@ fn a_live_payload_variable_blocks_the_fold() {
             atom(KIND, &[(0, var(1)), (1, var(2))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
@@ -250,7 +250,7 @@ fn a_dead_payload_variable_folds() {
             atom(KIND, &[(0, var(1)), (1, var(2))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(4, false)]);
@@ -272,7 +272,7 @@ fn a_param_filter_blocks_the_fold() {
             ),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
@@ -636,7 +636,7 @@ fn a_negated_closed_atom_folds_to_the_complement() {
             KIND,
             &[(0, var(1)), (1, Term::Literal(Value::U64(20)))],
         )],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(2, true)]);
@@ -666,7 +666,7 @@ fn a_negated_fold_without_the_domain_guarantee_refuses() {
             KIND,
             &[(0, var(1)), (1, Term::Literal(Value::U64(20)))],
         )],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Negated]);
@@ -689,7 +689,7 @@ fn a_negated_atom_over_an_empty_set_deletes_and_rejects_nothing() {
             KIND,
             &[(0, var(1)), (1, Term::Literal(Value::U64(99)))],
         )],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(0, true)]);
@@ -708,7 +708,7 @@ fn an_empty_complement_kills_the_rule() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ITEM, &[(0, var(0)), (1, var(1))])],
         negated: vec![atom(KIND, &[(0, var(1))])],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(
@@ -731,7 +731,7 @@ fn a_satisfied_var_less_guard_deletes_outright() {
             atom(KIND, &[(1, Term::Literal(Value::U64(20)))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(2, false)]);
@@ -756,7 +756,7 @@ fn a_var_binding_guard_refuses() {
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(20)))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
@@ -787,7 +787,7 @@ fn an_unsatisfiable_guard_kills_the_rule() {
             atom(KIND, &[(1, Term::Literal(Value::U64(99)))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(
@@ -809,7 +809,7 @@ fn a_fold_with_no_membership_home_refuses() {
             &[(0, var(0)), (1, Term::Literal(Value::U64(20)))],
         )],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive]);
@@ -829,7 +829,7 @@ fn multi_rule_programs_fold_per_rule_independently() {
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(20)))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let refusing_rule = Rule {
         finds: vec![FindTerm::Var(VarId(2))],
@@ -838,7 +838,7 @@ fn multi_rule_programs_fold_per_rule_independently() {
             atom(KIND, &[(0, var(1)), (1, var(2))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![HeadTerm::Var],
@@ -874,7 +874,7 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
             atom(CAL, &[(0, var(1)), (1, Term::Literal(Value::U64(3)))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let normalized = chased(&schema, &membership);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(1, false)]);
@@ -888,7 +888,7 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
             atom(CAL, &[(0, var(1)), (1, var(2))]),
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::BEFORE),
             },
@@ -918,7 +918,7 @@ fn a_second_closed_atom_folds_over_the_first_folds_set() {
             atom(KIND, &[(0, var(1)), (1, var(2))]),
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
             rhs: Term::Literal(Value::U64(20)),

@@ -91,7 +91,7 @@ fn rule_core<'q>(
         types: types::infer(rule, schema),
         sets,
         from: Vec::new(),
-        predicates: Vec::new(),
+        conditions: Vec::new(),
         deferred: Vec::new(),
         columns: BTreeMap::new(),
         param_index: std::mem::take(&mut params.index),
@@ -101,7 +101,7 @@ fn rule_core<'q>(
         b.render_atom(atom)?;
     }
     b.flush_deferred()?;
-    for comparison in rule.predicates.iter().map(super::leaf) {
+    for comparison in rule.conditions.iter().map(super::leaf) {
         b.comparison(comparison)?;
     }
     // Negation last: the NOT EXISTS subqueries append to the core's WHERE.
@@ -118,10 +118,10 @@ fn rule_core<'q>(
 
 fn from_where(b: &Builder) -> (String, String) {
     let from = b.from.join(", ");
-    let where_clause = if b.predicates.is_empty() {
+    let where_clause = if b.conditions.is_empty() {
         String::new()
     } else {
-        format!(" WHERE {}", b.predicates.join(" AND "))
+        format!(" WHERE {}", b.conditions.join(" AND "))
     };
     (from, where_clause)
 }

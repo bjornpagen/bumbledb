@@ -30,7 +30,7 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let txn = env.read_txn().expect("txn");
     let cache = crate::image::cache::ImageCache::new(&schema);
@@ -92,7 +92,7 @@ fn a_guard_prepare_and_execute_build_no_image() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let txn = env.read_txn().expect("txn");
     let cache = crate::image::cache::ImageCache::new(&schema);
@@ -138,7 +138,7 @@ fn guard_probe_queries_flow_through_the_same_surface() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
@@ -229,7 +229,7 @@ fn booking_query(span_term: Term) -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -398,7 +398,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
                 ],
             }],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         })
     };
     let mut prepared = prepare(&txn, &cache, &schema, &count_stay((5, 10))).expect("prepare");
@@ -483,7 +483,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(matches!(prepared.program.rules(), [PreparedRule::Guard(_)]));

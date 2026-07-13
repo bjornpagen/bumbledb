@@ -238,7 +238,7 @@ impl Builder<'_> {
         let relation = self.schema.relation(atom.relation);
         if atom.bindings.is_empty() {
             // The nonemptiness gate.
-            self.predicates
+            self.conditions
                 .push(format!("EXISTS (SELECT 1 FROM \"{}\")", relation.name()));
             return Ok(());
         }
@@ -302,7 +302,7 @@ impl Builder<'_> {
                 }
             }
         }
-        self.predicates.append(&mut out);
+        self.conditions.append(&mut out);
         Ok(())
     }
 
@@ -316,8 +316,8 @@ impl Builder<'_> {
                     var.0
                 ));
             };
-            self.predicates.push(format!("{start} <= {column}"));
-            self.predicates.push(format!("{column} < {end}"));
+            self.conditions.push(format!("{start} <= {column}"));
+            self.conditions.push(format!("{column} < {end}"));
         }
         Ok(())
     }
@@ -331,7 +331,7 @@ impl Builder<'_> {
         let relation = self.schema.relation(atom.relation);
         if atom.bindings.is_empty() {
             // The negated nonemptiness gate: the relation must be empty.
-            self.predicates.push(format!(
+            self.conditions.push(format!(
                 "NOT EXISTS (SELECT 1 FROM \"{}\")",
                 relation.name()
             ));
@@ -384,7 +384,7 @@ impl Builder<'_> {
                 }
             }
         }
-        self.predicates.push(format!(
+        self.conditions.push(format!(
             "NOT EXISTS (SELECT 1 FROM \"{}\" AS {alias} WHERE {})",
             relation.name(),
             conjuncts.join(" AND ")
@@ -435,7 +435,7 @@ impl Builder<'_> {
                 return Err(format!("param set {} compared to an interval", param.0));
             };
             let rendered = self.in_list(&column, param)?;
-            self.predicates.push(rendered);
+            self.conditions.push(rendered);
             return Ok(());
         }
         let lhs = self.render_term(&comparison.lhs)?;
@@ -481,7 +481,7 @@ impl Builder<'_> {
             ) => format!("{l} {} {r}", op_sql(op)),
             _ => return Err("comparison mixes interval and scalar operands".to_owned()),
         };
-        self.predicates.push(conjunct);
+        self.conditions.push(conjunct);
         Ok(())
     }
 }

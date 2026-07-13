@@ -57,7 +57,7 @@ fn join_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -89,7 +89,7 @@ fn aggregate_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -105,7 +105,7 @@ fn point_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -779,7 +779,7 @@ fn cover_choice_iterates_the_selected_side() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = db.prepare(&query).expect("prepare");
     let params = vec![BindValue::Str("target")];

@@ -65,7 +65,7 @@ pub(crate) fn prepare<'s, S>(
         // Rule death (ir/normalize/fold.rs): a statically-empty rule is
         // deleted here — no statistics read, no DP, no plan; the union
         // loses nothing because the rule denotes the empty set. The
-        // record keeps the killing predicate for EXPLAIN.
+        // record keeps the killing condition for EXPLAIN.
         if let Some(reason) = &normalized_rule.dead {
             dead.push(crate::api::stats::DeadRule {
                 rule: u16::try_from(rule_idx).expect("rule count fits u16"),
@@ -180,7 +180,7 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
 /// Guard plans resolve their key constants per probe and stay outside
 /// the latch (the templates the latch rewrites are Free Join plan
 /// arrays). Discharged occurrences count nothing: an eliminated one
-/// carries no predicates, and a folded one's retained filters are
+/// carries no conditions, and a folded one's retained filters are
 /// plan-constant by the fold's own conditions (`plan/chase/evaluate.rs`)
 /// and never resolved — a fold must not block the fully-latched fast
 /// path.

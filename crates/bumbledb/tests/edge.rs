@@ -346,7 +346,7 @@ fn zero_binding_gate_with_global_count() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = db.prepare(&query).expect("prepare");
 
@@ -380,7 +380,7 @@ fn mixed_params_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 

@@ -2,7 +2,7 @@ use super::Selection;
 use crate::image::view::FilterPredicate;
 use crate::ir::CmpOp;
 
-/// Splits an occurrence's lowered predicates into probeable selections
+/// Splits an occurrence's lowered conditions into probeable selections
 /// (every Eq-against-a-constant, literal or param alike) and the
 /// scannable residue (non-Eq compares and every `FieldsCompare` — a
 /// repeated in-atom variable is a same-fact condition, not a constant

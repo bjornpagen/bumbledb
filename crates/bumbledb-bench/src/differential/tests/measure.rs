@@ -9,7 +9,7 @@
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, MaskTerm, ParamId, PredicateTree,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, MaskTerm, ParamId,
     Query, RelationId, Rule, Term, Value, VarId,
 };
 
@@ -73,12 +73,12 @@ fn shift_atom() -> Atom {
     atom(SHIFT, &[(0, var(0)), (1, var(1))])
 }
 
-fn single(finds: Vec<FindTerm>, atoms: Vec<Atom>, predicates: Vec<PredicateTree>) -> Query {
+fn single(finds: Vec<FindTerm>, atoms: Vec<Atom>, conditions: Vec<ConditionTree>) -> Query {
     Query::single(Rule {
         finds,
         atoms,
         negated: vec![],
-        predicates,
+        conditions,
     })
 }
 
@@ -156,7 +156,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
             single(
                 vec![FindTerm::Var(VarId(0))],
                 vec![stay_atom()],
-                vec![PredicateTree::Leaf(Comparison {
+                vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Gt,
                     lhs: Term::Duration(VarId(1)),
                     rhs: Term::Literal(Value::U64(7)),
@@ -169,7 +169,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
             single(
                 vec![FindTerm::Var(VarId(0))],
                 vec![stay_atom()],
-                vec![PredicateTree::Leaf(Comparison {
+                vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Ge,
                     lhs: Term::Param(ParamId(0)),
                     rhs: Term::Duration(VarId(1)),
@@ -182,7 +182,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
             single(
                 vec![FindTerm::Var(VarId(0))],
                 vec![stay_atom()],
-                vec![PredicateTree::Leaf(Comparison {
+                vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Lt,
                     lhs: Term::Duration(VarId(1)),
                     rhs: var(2),
@@ -198,7 +198,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
                     atom(STAY, &[(0, var(0)), (1, var(1))]),
                     atom(LIMIT, &[(0, var(0)), (1, var(3))]),
                 ],
-                vec![PredicateTree::Leaf(Comparison {
+                vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Ge,
                     lhs: Term::Duration(VarId(1)),
                     rhs: var(3),
@@ -218,13 +218,13 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
                         finds: vec![FindTerm::Duration(VarId(1))],
                         atoms: vec![stay_atom()],
                         negated: vec![],
-                        predicates: vec![],
+                        conditions: vec![],
                     },
                     Rule {
                         finds: vec![FindTerm::Duration(VarId(1))],
                         atoms: vec![shift_atom()],
                         negated: vec![],
-                        predicates: vec![],
+                        conditions: vec![],
                     },
                 ],
             },
@@ -324,7 +324,7 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
         vec![stay_atom()],
         // The ray probe [MAX−1, MAX): an interval intersects it iff its
         // end is MAX — exactly the rays; DISJOINT keeps the bounded.
-        vec![PredicateTree::Leaf(Comparison {
+        vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::DISJOINT),
             },

@@ -195,7 +195,7 @@ impl<S> PreparedQuery<'_, S> {
 
     /// The statically-empty program's counted execution: every count is
     /// honestly zero — nothing ran, nothing was read — and the death
-    /// record (`stats.dead`) carries the per-rule killing predicates.
+    /// record (`stats.dead`) carries the per-rule killing conditions.
     fn empty_stats(&self) -> ExecutionStats {
         ExecutionStats {
             rules: vec![RuleStats {

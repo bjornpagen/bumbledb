@@ -5,7 +5,7 @@
 //! because folding is set-preserving by construction and a semantic fold
 //! would diverge here first.
 
-use bumbledb::{CmpOp, Comparison, FieldId, PredicateTree, Query, RelationId, Rule, Term, Value};
+use bumbledb::{CmpOp, Comparison, ConditionTree, FieldId, Query, RelationId, Rule, Term, Value};
 
 use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::target::ids;
@@ -45,7 +45,7 @@ fn plant(rule: &mut Rule, rng: &mut Rng) -> bool {
         })
     };
     let mut leaf = |op: CmpOp, rhs: Term| {
-        rule.predicates.push(PredicateTree::Leaf(Comparison {
+        rule.conditions.push(ConditionTree::Leaf(Comparison {
             op,
             lhs: Term::Var(var),
             rhs,
