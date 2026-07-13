@@ -45,19 +45,6 @@ impl EitherSink {
             Self::Aggregate(sink) => sink.measure_of_ray(),
         }
     }
-
-    /// The differential guard's override (docs/architecture/
-    /// 40-execution.md § set semantics): forces the disjointness elision
-    /// off — the projection sink back to the spanning regime, the
-    /// aggregate seen-set reinstated — so a covered query runs both ways
-    /// and the results must be byte-identical (the elision is *never*
-    /// semantic).
-    pub(super) fn force_disjoint_off(&mut self) {
-        match self {
-            Self::Projection(sink) => sink.force_spanning(),
-            Self::Aggregate(sink) => sink.force_seen(),
-        }
-    }
 }
 
 impl Sink for EitherSink {

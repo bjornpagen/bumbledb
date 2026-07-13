@@ -282,21 +282,6 @@ impl AggregateSink {
         self.seen.is_none()
     }
 
-    /// The differential guard's override: reinstates an elided seen-set
-    /// (whole-binding or head-projection keyed, matching the regime) so a
-    /// covered query runs both ways — the elision is *never* semantic,
-    /// and forced-off results must be byte-identical.
-    pub fn force_seen(&mut self) {
-        if self.seen.is_none() {
-            let arity = if self.union_spans.is_some() {
-                self.union_scratch.len()
-            } else {
-                self.binding_scratch.len()
-            };
-            self.seen = Some(WordMap::with_capacity_hint(arity, 0));
-        }
-    }
-
     /// Distinct values held across every live `CountDistinct` set — the
     /// value-dedup observable the elision fixture asserts alongside
     /// [`Self::seen_elided`].

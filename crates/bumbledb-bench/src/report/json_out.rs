@@ -38,7 +38,11 @@ fn push_read_family(out: &mut String, family: &ReadFamilyReport) {
                 exec.worst_estimate_factor
             );
             json::push_str_lit(out, &exec.covers);
-            let _ = write!(out, ",\"emits\":{}}}", exec.emits);
+            let _ = write!(
+                out,
+                ",\"emitted\":{},\"absorbed\":{}}}",
+                exec.emitted, exec.absorbed
+            );
         }
         None => out.push_str("null"),
     }

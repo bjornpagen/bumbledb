@@ -263,7 +263,10 @@ direction), and exact-abutment working-hour chains from the epoch to ∞.
 twice — the proof on, then forced off (`PreparedQuery::force_disjoint_off`, the
 same override the differential guard uses; never semantic) — reported as the
 `rsvp_union_off` row plus a delta line. The elision's number exists in every
-report.
+report. Its one-variable isolation is typed by
+`force_disjoint_off_changes_only_the_union_sink_configuration`, which pins
+plans, estimates, scratch shapes, and capacity hints while changing only the
+sink's union regime and its absorbed accounting.
 
 **Mirror rules.** The calendar mirror follows the value-mapping and template
 rules above; `free_busy` is the one family the IR→SQL translator cannot express

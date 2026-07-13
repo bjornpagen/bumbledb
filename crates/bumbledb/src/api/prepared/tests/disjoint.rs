@@ -109,6 +109,99 @@ fn table(out: &ResultBuffer, arity: usize) -> Vec<Vec<String>> {
     rows
 }
 
+fn assert_plan_derived_artifacts_equal<S>(
+    proof_on: &PreparedQuery<'_, S>,
+    forced_off: &PreparedQuery<'_, S>,
+) {
+    assert_eq!(proof_on.rules.len(), forced_off.rules.len());
+    for (on, off) in proof_on.rules.iter().zip(&forced_off.rules) {
+        match (&on.plan, &off.plan) {
+            (ExecPlan::FreeJoin(on), ExecPlan::FreeJoin(off)) => {
+                assert_eq!(on, off, "validated plans differ");
+                assert_eq!(on.estimates(), off.estimates(), "estimates differ");
+            }
+            (ExecPlan::GuardProbe(on), ExecPlan::GuardProbe(off)) => assert_eq!(on, off),
+            (ExecPlan::Empty, ExecPlan::Empty) => {}
+            _ => panic!("execution-plan variants differ"),
+        }
+        assert_eq!(on.finds, off.finds, "sink layouts differ");
+        assert_eq!(
+            on.resolved_filters, off.resolved_filters,
+            "filter scratch shapes differ"
+        );
+        assert_eq!(
+            on.resolved_selections, off.resolved_selections,
+            "selection scratch shapes differ"
+        );
+        assert_eq!(
+            on.executor.is_some(),
+            off.executor.is_some(),
+            "executor scratch variants differ"
+        );
+        assert_eq!(on.memo.colts.len(), off.memo.colts.len());
+        assert_eq!(on.memo.generation, off.memo.generation);
+        assert_eq!(on.memo.filters, off.memo.filters);
+        assert_eq!(on.memo.parked.len(), off.memo.parked.len());
+        assert_eq!(on.memo.spare_buffers, off.memo.spare_buffers);
+        let on_pins: Vec<_> = on
+            .pinned
+            .iter()
+            .map(|pin| (pin.occ_id, pin.relation, pin.rows, pin.survivors))
+            .collect();
+        let off_pins: Vec<_> = off
+            .pinned
+            .iter()
+            .map(|pin| (pin.occ_id, pin.relation, pin.rows, pin.survivors))
+            .collect();
+        assert_eq!(on_pins, off_pins, "pinned estimates differ");
+    }
+    assert_eq!(
+        super::super::build::output_hint(&proof_on.rules),
+        super::super::build::output_hint(&forced_off.rules),
+        "sink capacity hints differ"
+    );
+}
+
+/// The benchmark override is a one-variable experiment: two independent
+/// prepares produce identical plans, estimates, memos, and executor shapes;
+/// forcing the control arm reconstructs only its sink and updates the
+/// elision observable. Counted execution may differ only in how many emitted
+/// bindings that spanning sink absorbs.
+#[test]
+fn force_disjoint_off_changes_only_the_union_sink_configuration() {
+    let dir = TempDir::new("prepared-disjoint-isolation");
+    let schema = du_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_items(&env, &schema, &item_rows());
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+    let query = du_query(vec![arm_rule(0), arm_rule(1)]);
+
+    let mut proof_on = prepare(&txn, &cache, &schema, &query).expect("proof-on prepare");
+    let mut forced_off = prepare(&txn, &cache, &schema, &query).expect("control prepare");
+    assert_plan_derived_artifacts_equal(&proof_on, &forced_off);
+    assert!(proof_on.union_elided);
+    assert!(forced_off.union_elided);
+
+    forced_off.force_disjoint_off();
+    assert_plan_derived_artifacts_equal(&proof_on, &forced_off);
+    assert!(proof_on.union_elided);
+    assert!(!forced_off.union_elided);
+    assert_eq!(proof_on.disjoint_rules, forced_off.disjoint_rules);
+
+    let (on_rows, mut on_stats) = proof_on.profile(&txn, &cache, &[]).expect("profile on");
+    let (off_rows, mut off_stats) = forced_off.profile(&txn, &cache, &[]).expect("profile off");
+    assert_eq!(table(&on_rows, 2), table(&off_rows, 2));
+    for (on, off) in on_stats.rules.iter_mut().zip(&mut off_stats.rules) {
+        on.absorbed = 0;
+        off.absorbed = 0;
+    }
+    assert_eq!(
+        on_stats, off_stats,
+        "only per-rule absorbed accounting may differ"
+    );
+}
+
 /// The DU-arm union (two arms, `kind`-selected) proves disjoint;
 /// removing one rule's selection unproves it — the pair has no witness,
 /// so the flag conservatively stays off.

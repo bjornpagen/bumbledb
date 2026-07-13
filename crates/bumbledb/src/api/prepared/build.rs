@@ -104,21 +104,7 @@ pub(crate) fn prepare<'s, S>(
     // the plan's distinct-bindings proof; a multi-rule one keys head
     // projections and elides only under the rule-disjointness
     // composition below — correct first, elided when proven.
-    let output_hint = rules
-        .iter()
-        .map(|rule| match &rule.plan {
-            // Sink presizing: the last node's planner estimate bounds
-            // the binding stream the sink consumes.
-            ExecPlan::FreeJoin(plan) => {
-                usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
-                    .expect("clamped")
-            }
-            ExecPlan::GuardProbe(_) => 1,
-            // Nothing ever emits under the empty plan.
-            ExecPlan::Empty => 0,
-        })
-        .max()
-        .expect("at least one rule");
+    let output_hint = output_hint(&rules);
     let union = rules.len() > 1;
     let union_elided = union && disjoint_rules.is_some() && union_elision(&rules);
     let first = &rules[0];
@@ -175,6 +161,27 @@ pub(crate) fn prepare<'s, S>(
         rendered: crate::ir::render::render(schema, query),
         marker: std::marker::PhantomData,
     })
+}
+
+/// The shared sink's capacity hint, derived only from the already-frozen
+/// rule plans. The differential override reuses this exact derivation when
+/// it reconstructs the sink, so capacity cannot become a second variable.
+pub(super) fn output_hint(rules: &[PreparedRule]) -> usize {
+    rules
+        .iter()
+        .map(|rule| match &rule.plan {
+            // Sink presizing: the last node's planner estimate bounds
+            // the binding stream the sink consumes.
+            ExecPlan::FreeJoin(plan) => {
+                usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
+                    .expect("clamped")
+            }
+            ExecPlan::GuardProbe(_) => 1,
+            // Nothing ever emits under the empty plan.
+            ExecPlan::Empty => 0,
+        })
+        .max()
+        .expect("at least one rule")
 }
 
 /// The head's result-type row from one rule's find terms alone — the
@@ -754,7 +761,7 @@ fn head_reads_every_slot(finds: &[FindSpec], slot_count: usize) -> bool {
 /// bare disjointness proof, which drops the projection sink's cross-rule
 /// guard (per-rule dedup stays — docs/architecture/40-execution.md § set
 /// semantics).
-fn make_sink(
+pub(super) fn make_sink(
     finds: &[FindSpec],
     slot_count: usize,
     distinct: bool,

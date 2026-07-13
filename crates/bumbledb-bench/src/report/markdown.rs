@@ -162,14 +162,17 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
     }
 
     let _ = writeln!(out, "## Execution digests\n");
-    let _ = writeln!(out, "| family | worst est/actual | covers | emits |");
-    let _ = writeln!(out, "|---|---|---|---|");
+    let _ = writeln!(
+        out,
+        "| family | worst est/actual | covers | emitted | absorbed |"
+    );
+    let _ = writeln!(out, "|---|---|---|---|---|");
     for family in &report.reads {
         if let Some(exec) = &family.exec {
             let _ = writeln!(
                 out,
-                "| {} | {:.2} | {} | {} |",
-                family.name, exec.worst_estimate_factor, exec.covers, exec.emits,
+                "| {} | {:.2} | {} | {} | {} |",
+                family.name, exec.worst_estimate_factor, exec.covers, exec.emitted, exec.absorbed,
             );
         }
     }

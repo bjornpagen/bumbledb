@@ -261,8 +261,31 @@ impl<S> PreparedQuery<'_, S> {
     /// `docs/architecture/60-validation.md`). One-way by design: the
     /// override sticks for the prepared query's lifetime — measure the
     /// proof-on regime on a second prepared instance.
+    ///
+    /// The disjointness witness gates exactly the sink representation:
+    /// projection keeps one map across rules or drains it per rule;
+    /// aggregate retains or elides its union seen-set. The public proof
+    /// metadata remains present, while `union_elided` records the forced
+    /// sink honestly. Plans, estimates, view-memo shapes, executor scratch,
+    /// and the capacity hint are all reused unchanged. The test
+    /// `force_disjoint_off_changes_only_the_union_sink_configuration`
+    /// compares those artifacts and the resulting statistics directly.
     pub fn force_disjoint_off(&mut self) {
-        self.sink.force_disjoint_off();
+        let union = self.rules.len() > 1;
+        let first = &self.rules[0];
+        self.sink = super::build::make_sink(
+            &first.finds,
+            first.plan.slot_count(),
+            if union {
+                false
+            } else {
+                first.plan.distinct_bindings()
+            },
+            union,
+            false,
+            super::build::output_hint(&self.rules),
+        );
+        self.union_elided = false;
     }
 
     /// The result column types, one per head position — the metadata a

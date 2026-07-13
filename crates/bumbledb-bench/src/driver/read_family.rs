@@ -39,7 +39,8 @@ fn exec_digest(stats: &bumbledb::ExecutionStats) -> report::ExecDigest {
     report::ExecDigest {
         worst_estimate_factor: worst,
         covers,
-        emits: stats.emits,
+        emitted: stats.emits,
+        absorbed: stats.rules.iter().map(|rule| rule.absorbed).sum(),
     }
 }
 

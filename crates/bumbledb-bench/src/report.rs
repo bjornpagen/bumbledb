@@ -57,7 +57,10 @@ pub struct ExecDigest {
     pub worst_estimate_factor: f64,
     /// Condensed cover histogram (e.g. `n0:t0x256 n1:t1x255/t2x1`).
     pub covers: String,
-    pub emits: u64,
+    /// Bindings emitted to the shared sink across all rules.
+    pub emitted: u64,
+    /// Emitted bindings rejected by the sink's active seen-set.
+    pub absorbed: u64,
 }
 
 /// The clock-proxy bracket around one family's measurement block:
