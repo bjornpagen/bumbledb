@@ -15,7 +15,8 @@ use std::collections::BTreeSet;
 use bumbledb::ir::Value;
 use bumbledb::ir::render::render;
 use bumbledb::{
-    Db, ParamArg, PreparedQuery, Query, ResultBuffer, ResultValue, Schema, Snapshot, Theory,
+    BindValue, Db, Fact, ParamArg, PreparedQuery, Query, ResultBuffer, ResultValue, Schema,
+    Snapshot, Theory,
 };
 use bumbledb_query::query;
 
@@ -457,6 +458,35 @@ recipe!(r25, Accounts, {
     Posting(account) <= Account(id);
 });
 
+recipe!(r26, Payroll, {
+    pub Payroll;
+
+    relation Employee { id: u64 as EmployeeId, fresh, name: str }
+    relation Salary {
+        employee: u64 as EmployeeId,
+        amount: i64,
+        applies: interval<i64>,
+    }
+
+    Salary(employee) <= Employee(id);
+    Salary(employee, applies) -> Salary;
+});
+
+/// Recipe 26's OLD theory — the v1 store the migration exports from. Not
+/// a roster entry (the doc shows it as text, not a pinned schema block):
+/// the recipe's pinned schema is the v2 target above; v1 exists so the
+/// compiled test can drive the whole ETL loop against two real theories.
+mod r26_old {
+    bumbledb::schema! {
+        pub PayrollV1;
+
+        relation Employee { id: u64 as EmployeeId, fresh, name: str }
+        relation Salary   { employee: u64 as EmployeeId, amount: i64 }
+
+        Salary(employee) <= Employee(id);
+    }
+}
+
 /// The roster, exhaustively — one entry per doc recipe, in doc order.
 struct Recipe {
     title: &'static str,
@@ -464,7 +494,7 @@ struct Recipe {
     validate: fn() -> Result<Schema, bumbledb::error::SchemaError>,
 }
 
-const ROSTER: [Recipe; 25] = [
+const ROSTER: [Recipe; 26] = [
     Recipe {
         title: "The minimal interval schema",
         source: r01::SOURCE,
@@ -590,6 +620,11 @@ const ROSTER: [Recipe; 25] = [
         source: r25::SOURCE,
         validate: r25::validate,
     },
+    Recipe {
+        title: "Migration is ETL",
+        source: r26::SOURCE,
+        validate: r26::validate,
+    },
 ];
 
 /// Comments and whitespace out; what remains is exactly what the token
@@ -647,7 +682,7 @@ fn the_doc_roster_is_exactly_this_roster() {
         "doc recipes and test entries must correspond one-to-one"
     );
     for (i, ((n, title), recipe)) in headings.iter().zip(ROSTER.iter()).enumerate() {
-        assert_eq!(*n, i + 1, "recipe numbering is 1..=25 in order");
+        assert_eq!(*n, i + 1, "recipe numbering is 1..=26 in order");
         assert_eq!(title, recipe.title, "recipe {} title", i + 1);
     }
 }
@@ -1034,4 +1069,120 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
         Ok(())
     })
     .expect("the rollup composes the closure with one Sum");
+}
+
+/// Recipe 26: migration is ETL — the whole loop against two real
+/// theories. Seeds a v1 store, proves the fingerprint refusal, exports
+/// under one snapshot, transforms (the ray supplies the missing
+/// `applies` dimension), loads containment targets first, then proves
+/// the three laws: identity, mint catch-up, judgment under v2.
+#[test]
+fn r26_migration_is_etl() {
+    let dir_v1 = TempDir::new("r26-v1");
+    let dir_v2 = TempDir::new("r26-v2");
+
+    // Seed the v1 store; remember the fresh high water.
+    let v1 = Db::create(dir_v1.path(), r26_old::PayrollV1).expect("create the v1 store");
+    let high_water = v1
+        .write(|tx| {
+            let mut max = 0;
+            for (name, amount) in [("ada", 90_000i64), ("bo", 70_000), ("cy", 80_000)] {
+                let id: r26_old::EmployeeId = tx.alloc()?;
+                tx.insert(&r26_old::Employee { id, name })?;
+                tx.insert(&r26_old::Salary {
+                    employee: id,
+                    amount,
+                })?;
+                max = max.max(id.0);
+            }
+            Ok(max)
+        })
+        .expect("seed the v1 store");
+
+    // Export under ONE snapshot (one generation — a consistent instant);
+    // the transform appends the ray: the old amount, in force since the
+    // migration epoch.
+    const EPOCH: i64 = 0;
+    let (employees, salaries) = v1
+        .read(|snap| {
+            let employees: Vec<Vec<Value>> = snap
+                .scan(r26_old::Employee::RELATION)?
+                .collect::<bumbledb::Result<_>>()?;
+            let salaries: Vec<Vec<Value>> = snap
+                .scan(r26_old::Salary::RELATION)?
+                .map(|fact| {
+                    let mut fact = fact?;
+                    fact.push(Value::IntervalI64(EPOCH, i64::MAX));
+                    Ok(fact)
+                })
+                .collect::<bumbledb::Result<_>>()?;
+            Ok((employees, salaries))
+        })
+        .expect("export the v1 facts");
+
+    // The fingerprint law: with the v1 handle dropped (LMDB is one
+    // handle per env), the store refuses to open under the v2 theory.
+    drop(v1);
+    let Err(err) = Db::open(dir_v1.path(), r26::Payroll) else {
+        panic!("a changed theory must not open");
+    };
+    assert!(
+        matches!(err, bumbledb::Error::SchemaMismatch { .. }),
+        "{err:?}"
+    );
+
+    // Load containment targets first; explicit fresh values keep identity.
+    let v2 = Db::create(dir_v2.path(), r26::Payroll).expect("create the v2 store");
+    let loaded = v2
+        .bulk_load(r26::Employee::RELATION, employees)
+        .expect("load employees");
+    assert_eq!(loaded, 3);
+    let loaded = v2
+        .bulk_load(r26::Salary::RELATION, salaries)
+        .expect("load salaries");
+    assert_eq!(loaded, 3);
+
+    // The mint sequence cleared the imported high water: no collision.
+    v2.write(|tx| {
+        let next: r26::EmployeeId = tx.alloc()?;
+        assert!(
+            next.0 > high_water,
+            "minted {} at or below the imported high water {high_water}",
+            next.0
+        );
+        Ok(())
+    })
+    .expect("mint after import");
+
+    // The migrated store answers under the new theory: every v1 salary
+    // is in force at any post-epoch instant, keyed by its old identity.
+    let in_force = query!(r26::Payroll {
+        (name, amount) | Employee(id: e, name), Salary(employee: e, amount, applies: w),
+                         ?at in w;
+    });
+    let mut prepared = v2.prepare(&in_force).expect("prepare the v2 query");
+    let mut out = ResultBuffer::new();
+    v2.read(|snap| {
+        snap.execute_args(
+            &mut prepared,
+            &[ParamArg::Scalar(BindValue::I64(1))],
+            &mut out,
+        )
+    })
+    .expect("query the migrated store");
+    let mut answers = BTreeSet::new();
+    for row in 0..out.len() {
+        let ResultValue::String(name) = out.get(row, 0) else {
+            panic!("column 0 is the name");
+        };
+        let ResultValue::I64(amount) = out.get(row, 1) else {
+            panic!("column 1 is the amount");
+        };
+        answers.insert((name.to_owned(), amount));
+    }
+    let expected: BTreeSet<(String, i64)> = [("ada", 90_000i64), ("bo", 70_000), ("cy", 80_000)]
+        .into_iter()
+        .map(|(n, a)| (n.to_owned(), a))
+        .collect();
+    assert_eq!(answers, expected, "the v1 facts answer under the v2 theory");
 }

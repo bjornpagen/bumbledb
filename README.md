@@ -291,7 +291,7 @@ broken until they agree.
 | [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, witnessed writes, prepared queries |
 
 The intuition-transfer companion is [`docs/cookbook.md`](docs/cookbook.md) —
-twenty-five worked schemas (unions, vocabularies, trees, calendars, tax
+twenty-six worked schemas (unions, vocabularies, trees, calendars, tax
 brackets, ledgers, host-driven closures), each rot-proofed by a compile test,
 each comment naming the theorem its statement buys.
 

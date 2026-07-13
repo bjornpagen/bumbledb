@@ -888,3 +888,71 @@ The rollup is two prepared queries with the recipe-24 loop between them;
 the test drives a three-level hierarchy with postings and asserts the
 hand-computed subtree sum — equal postings to one account both count,
 because the fresh id keeps their bindings distinct.
+
+## Operating the store
+
+## 26. Migration is ETL
+
+There is no in-place migration and never will be: a schema is a theory,
+the store records the theory's fingerprint, and `Db::open` under a changed
+theory is a hard `SchemaMismatch` — the engine refuses to reinterpret facts
+it judged under different laws. Migration is extract, transform, load:
+`scan` exports every fact of a relation as typed values under one snapshot
+(one generation — the export is a consistent instant), the host transforms,
+and `bulk_load` imports into a store created under the new theory. The
+engine owns both ends; the host owns exactly the middle, because the
+semantic transform is the part that cannot be generic.
+
+Three laws make the loop honest. **Load containment targets first** — every
+chunk commits through the ordinary final-state judgment, so a `Salary` fact
+whose `Employee` has not landed yet is a rejection (with the complete
+violation set cited), not a deferral. **Fresh identity survives** —
+`bulk_load` takes explicit values for every field, `fresh` ones included,
+so facts keep their ids across the move, and the mint sequence catches up
+past the imported high water: the next `alloc` cannot collide. **The new
+theory judges the old data** — every dependency of the new schema holds of
+every migrated fact, or the chunk aborts whole. A migration that lands is
+already valid; there is no "migrate now, validate later."
+
+The v2 theory below adds what v1 (shown as text) never recorded — *when* a
+salary applied — as an interval with a pointwise functionality: one salary
+per employee per instant. The transform supplies the missing dimension (a
+ray from the migration epoch), which is the honest reading of "the old
+amount, still in force."
+
+```text
+pub PayrollV1;                     // the old theory, judged and fingerprinted
+
+relation Employee { id: u64 as EmployeeId, fresh, name: str }
+relation Salary   { employee: u64 as EmployeeId, amount: i64 }
+
+Salary(employee) <= Employee(id);
+```
+
+```rust
+bumbledb::schema! {
+    pub Payroll;
+
+    relation Employee { id: u64 as EmployeeId, fresh, name: str }
+    relation Salary {
+        employee: u64 as EmployeeId,
+        amount: i64,
+        applies: interval<i64>,
+    }
+
+    Salary(employee) <= Employee(id);
+    Salary(employee, applies) -> Salary;   // one salary per instant
+
+    // The post-migration read — salaries in force at an instant:
+    //   (name, amount) | Employee(id: e, name),
+    //                    Salary(employee: e, amount, applies: w), ?at in w;
+}
+```
+
+The compiled test drives the whole loop: seed a v1 store, export both
+relations under one snapshot, drop the v1 handle and prove the
+fingerprint refusal (`Db::open` of the v1 store under `Payroll` is
+`SchemaMismatch`), append the ray to each salary, load employees before
+salaries, then prove the three laws — identity (the v1 ids answer the v2 query), catch-up (the next
+minted id clears the imported high water), and judgment (the migrated
+store answers under the new theory's guarantees).
