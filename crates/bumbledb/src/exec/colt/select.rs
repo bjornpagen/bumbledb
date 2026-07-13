@@ -1,4 +1,4 @@
-use super::{hash_words, Chunk, Colt, Cursor, NodeRef, NodeState, PoolMark, Positions, CHUNK_LEN};
+use super::{CHUNK_LEN, Chunk, Colt, Cursor, NodeRef, NodeState, PoolMark, Positions, hash_words};
 
 impl Colt {
     /// Probes the selection levels with this execution's resolved words,

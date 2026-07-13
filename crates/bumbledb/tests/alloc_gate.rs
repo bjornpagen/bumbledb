@@ -27,7 +27,7 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
-use bumbledb::{BindValue, Db, PredicateTree, PreparedQuery, ResultBuffer, Snapshot};
+use bumbledb::{BindValue, ConditionTree, Db, PreparedQuery, ResultBuffer, Snapshot};
 
 mod common;
 
@@ -223,7 +223,7 @@ fn join_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
@@ -263,7 +263,7 @@ fn aggregate_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
@@ -295,7 +295,7 @@ fn string_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(3)),
             rhs: Term::Literal(Value::String(Box::from(&b"memo-0"[..]))),
@@ -335,7 +335,7 @@ fn minmax_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -359,7 +359,7 @@ fn latch_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -378,7 +378,7 @@ fn selection_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -397,7 +397,7 @@ fn string_rotation_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -429,7 +429,7 @@ fn escalation_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -459,7 +459,7 @@ fn union_rules_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
@@ -504,7 +504,7 @@ fn union_aggregate_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
@@ -543,7 +543,7 @@ fn pack_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -559,7 +559,7 @@ fn guard_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 

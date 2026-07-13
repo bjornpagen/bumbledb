@@ -11,12 +11,12 @@
 
 use bumbledb::{Db, Direction, Value};
 
-use crate::differential::{run, Op};
-use crate::fixture::{string, TempDir};
-use crate::gen::{GenConfig, Rng, Scale};
+use crate::corpus_gen::{GenConfig, Rng, Scale};
+use crate::differential::{Op, run};
+use crate::fixture::{TempDir, string};
 use crate::naive::{Delta, NaiveDb, ParamValue, Violation};
 use crate::querygen::target::{self, ids};
-use crate::querygen::writes::{closed_write_cases, ClosedWriteCase, ClosedWriteKind};
+use crate::querygen::writes::{ClosedWriteCase, ClosedWriteKind, closed_write_cases};
 use crate::querygen::{params_for, random_query};
 
 const CFG: GenConfig = GenConfig {
@@ -203,17 +203,17 @@ fn the_closed_write_classes_agree_with_the_engine() {
     for case in &cases {
         assert_eq!(
             naive.apply(&case_delta(case)),
-            Err(case.expected),
+            Err(vec![case.expected]),
             "{:?} must abort with its hand-derived violation",
             case.kind
         );
     }
     assert_eq!(
         naive.apply(&strand),
-        Err(Violation::Containment {
+        Err(vec![Violation::Containment {
             statement: target::CURRENCY_BACKED,
             direction: Direction::TargetRequired,
-        }),
+        }]),
         "the domain quantification judges the stranded axiom target-side"
     );
 }

@@ -1,11 +1,11 @@
+use std::simd::prelude::*;
+
 use super::gather::biased_to_i64;
-#[cfg(target_arch = "aarch64")]
-use super::neon;
 
 /// Contiguous strided sum of biased-i64 words over
 /// `values[offset], values[offset + stride], ..` for `count` elements —
 /// the dense-survivor fast form (no index loads). Stride 1 takes the
-/// NEON carry-count path through the bias identity:
+/// lane carry-count path through the bias identity:
 /// each biased word is `value + 2^63 (mod 2^64)`, so
 /// `Σ value = Σ word − count·2^63` exactly in i128.
 ///
@@ -20,9 +20,8 @@ use super::neon;
 )]
 pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: usize) -> i128 {
     assert!(stride > 0 && (count == 0 || (count - 1) * stride + offset < values.len()));
-    #[cfg(target_arch = "aarch64")]
     if stride == 1 {
-        let total = neon::fold_sum_u64_dense(&values[offset..offset + count]);
+        let total = fold_sum_u64_dense(&values[offset..offset + count]);
         let bias = u128::from(count as u64) << 63;
         // Both fit i128 comfortably: total < count·2^64 ≤ 2^96-ish.
         return i128::try_from(total).expect("sum of u32-counted words fits i128")
@@ -47,7 +46,7 @@ pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: 
 }
 
 /// Contiguous strided sum of u64 words (see [`fold_sum_biased_i64`]).
-/// Stride 1 takes the NEON carry-count path.
+/// Stride 1 takes the lane carry-count path.
 ///
 /// # Panics
 ///
@@ -60,9 +59,8 @@ pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: 
 )]
 pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> u128 {
     assert!(stride > 0 && (count == 0 || (count - 1) * stride + offset < values.len()));
-    #[cfg(target_arch = "aarch64")]
     if stride == 1 {
-        return neon::fold_sum_u64_dense(&values[offset..offset + count]);
+        return fold_sum_u64_dense(&values[offset..offset + count]);
     }
     let mut acc = [0u128; 4];
     let mut i = 0;
@@ -82,9 +80,9 @@ pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) 
     acc[0] + acc[1] + acc[2] + acc[3]
 }
 
-/// Contiguous strided (min, max) in one pass. Stride 1 takes the NEON
-/// lane path on aarch64 (`vcgtq_u64` + `vbslq_u64` — the compare-select
-/// pair; there is no 64-bit lane min/max instruction).
+/// Contiguous strided (min, max) in one pass. Stride 1 takes the lane
+/// path (`simd_min`/`simd_max` — on aarch64 the compare-select pair;
+/// there is no 64-bit lane min/max instruction).
 ///
 /// # Panics
 ///
@@ -93,15 +91,78 @@ pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) 
 #[must_use]
 pub fn fold_min_max_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> (u64, u64) {
     assert!(count > 0 && stride > 0 && (count - 1) * stride + offset < values.len());
-    #[cfg(target_arch = "aarch64")]
     if stride == 1 {
-        return neon::fold_min_max_u64_dense(&values[offset..offset + count]);
+        return fold_min_max_u64_dense(&values[offset..offset + count]);
     }
     fold_min_max_u64_strided(values, stride, offset, count)
 }
 
-/// The scalar strided (min, max) — the live path wherever the NEON dense
-/// form does not apply.
+/// Dense exact-u128 sum via carry counting (`std::simd`, all targets —
+/// PRD 03's Q2 fold verdict: measured parity with the retired NEON body
+/// at 7.9–8.0 rows/ns, `unsafe` deleted): four 2-lane accumulators take
+/// wrapping lane adds while a parallel counter lane counts carries —
+/// unsigned overflow iff `new < old`, i.e. `old.simd_gt(new)` all-ones,
+/// subtracted to count +1. Total = Σ lane lo + (Σ lane carries << 64):
+/// exact, and bit-identical to any-association i128/u128 folding. Flag
+/// ports untouched — the scalar exact loop's `adds/adcs` are confined
+/// to 3 of 6 ALUs, which was the whole wall (the port-topology law).
+fn fold_sum_u64_dense(values: &[u64]) -> u128 {
+    let mut lows = [Simd::<u64, 2>::splat(0); 4];
+    let mut carries = [Simd::<u64, 2>::splat(0); 4];
+    let (chunks, tail) = values.as_chunks::<8>();
+    for chunk in chunks {
+        for lane in 0..4 {
+            let v = Simd::<u64, 2>::from_slice(&chunk[lane * 2..lane * 2 + 2]);
+            let new = lows[lane] + v;
+            // Overflowed lanes read all-ones; subtracting adds 1.
+            let carry = lows[lane].simd_gt(new).to_simd().cast::<u64>();
+            carries[lane] -= carry;
+            lows[lane] = new;
+        }
+    }
+    let mut total: u128 = 0;
+    for lane in 0..4 {
+        for half in 0..2 {
+            total += u128::from(lows[lane].as_array()[half])
+                + (u128::from(carries[lane].as_array()[half]) << 64);
+        }
+    }
+    for &v in tail {
+        total += u128::from(v);
+    }
+    total
+}
+
+/// Dense (min, max) over a contiguous u64 slice (`std::simd`, all
+/// targets — measured parity with the retired NEON body): compare-select
+/// lanes, four vector accumulators to break the dependency chains,
+/// scalar tail.
+fn fold_min_max_u64_dense(values: &[u64]) -> (u64, u64) {
+    let mut mins = [Simd::<u64, 2>::splat(u64::MAX); 4];
+    let mut maxs = [Simd::<u64, 2>::splat(u64::MIN); 4];
+    let (chunks, tail) = values.as_chunks::<8>();
+    for chunk in chunks {
+        for lane in 0..4 {
+            let v = Simd::<u64, 2>::from_slice(&chunk[lane * 2..lane * 2 + 2]);
+            mins[lane] = mins[lane].simd_min(v);
+            maxs[lane] = maxs[lane].simd_max(v);
+        }
+    }
+    let mut min_scalar = u64::MAX;
+    let mut max_scalar = u64::MIN;
+    for lane in 0..4 {
+        min_scalar = min_scalar.min(mins[lane].reduce_min());
+        max_scalar = max_scalar.max(maxs[lane].reduce_max());
+    }
+    for &v in tail {
+        min_scalar = min_scalar.min(v);
+        max_scalar = max_scalar.max(v);
+    }
+    (min_scalar, max_scalar)
+}
+
+/// The scalar strided (min, max) — the live path wherever the dense
+/// lane form does not apply.
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"

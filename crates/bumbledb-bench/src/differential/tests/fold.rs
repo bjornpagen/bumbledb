@@ -17,13 +17,13 @@ use bumbledb::schema::{
     StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    with_chase_disabled, AggOp, CmpOp, Comparison, Db, FindTerm, PredicateTree, Query, RelationId,
-    Rule, Term, Value, VarId,
+    AggOp, CmpOp, Comparison, ConditionTree, Db, FindTerm, Query, RelationId, Rule, Term, Value,
+    VarId, with_chase_disabled,
 };
 
-use crate::differential::{engine_query, Rows};
-use crate::fixture::{atom, field, var, TempDir};
-use crate::gen::{GenConfig, Rng, Scale};
+use crate::corpus_gen::{GenConfig, Rng, Scale};
+use crate::differential::{Rows, engine_query};
+use crate::fixture::{TempDir, atom, field, var};
 use crate::naive::query::{ParamValue, QueryError};
 use crate::naive::{Delta, NaiveDb};
 use crate::querygen::target;
@@ -160,7 +160,7 @@ fn selected(rank: u64) -> Query {
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(rank)))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -180,7 +180,7 @@ fn selected_count(rank: u64) -> Query {
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(rank)))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -194,7 +194,7 @@ fn dead_payload() -> Query {
             atom(KIND, &[(0, var(1)), (1, var(3))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -210,7 +210,7 @@ fn double_closed() -> Query {
             atom(KIND, &[(0, var(1)), (1, var(3))]),
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(3),
             rhs: Term::Literal(Value::U64(20)),
@@ -228,7 +228,7 @@ fn negated_subset(rank: u64) -> Query {
             KIND,
             &[(0, var(1)), (1, Term::Literal(Value::U64(rank)))],
         )],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -240,7 +240,7 @@ fn negated_whole() -> Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(READING, &[(0, var(0)), (1, var(1))])],
         negated: vec![atom(KIND, &[(0, var(1))])],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 

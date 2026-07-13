@@ -1,9 +1,9 @@
-use crate::error::{CorruptionError, Error, Result};
+use crate::error::{CorruptionError, Error, Result, Violation};
 use crate::schema::{RelationId, StatementId};
-use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
+use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 
 use super::plan::FactOp;
-use super::{decode_row_id, fact_by_row, Applier};
+use super::{Applier, crashpoint, decode_row_id, fact_by_row};
 
 impl Applier<'_> {
     /// Phase-1 step: removes one fact's F/M/U/R entries, every key byte
@@ -58,10 +58,14 @@ impl Applier<'_> {
 
     /// Phase-2 step: lands one fact's F/M/U/R entries, enforcing every key
     /// statement — scalar by put-conflict, pointwise by the
-    /// ordered-neighbor probe the plan marked. The fact is absent from
-    /// base state by the delta's net-disposition invariant the plan was
-    /// derived from — a live `M` entry means storage disagrees with what
-    /// the plan *proved*, unambiguously corruption
+    /// ordered-neighbor probe the plan marked. A conflict RECORDS into the
+    /// collector and the step continues (scan-complete: every guard of
+    /// every fact is judged, so the rejection carries the complete set of
+    /// violated key statements; the transaction aborts after phase 2
+    /// either way, so the skipped put persists nothing). The fact is
+    /// absent from base state by the delta's net-disposition invariant
+    /// the plan was derived from — a live `M` entry means storage
+    /// disagrees with what the plan *proved*, unambiguously corruption
     /// (docs/architecture/50-storage.md).
     pub(super) fn insert_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
         let rel = op.relation;
@@ -78,9 +82,11 @@ impl Applier<'_> {
             &self.key[..m_len],
             row_id.to_le_bytes().as_slice(),
         )?;
+        crashpoint!("mid-write-m");
         let f_len = keys::fact_key(&mut self.key, rel, row_id);
         self.data
             .put(self.txn.raw_mut(), &self.key[..f_len], op.fact)?;
+        crashpoint!("mid-write-f");
 
         for guard in &op.guards {
             let u_len = keys::guard_key(&mut self.key, rel, guard.statement, &guard.guard);
@@ -90,6 +96,9 @@ impl Applier<'_> {
             // this exact-bytes conflict is the exact-duplicate-interval
             // case; the incumbent is named via its row_id (cold aborting
             // path — one extra get, docs/architecture/50-storage.md).
+            // Recorded, put skipped (the incumbent keeps the guard —
+            // later conflicts against these exact bytes convict the same
+            // statement), next guard.
             if let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? {
                 let incumbent = if guard.pointwise {
                     let incumbent_row = decode_row_id(value)?;
@@ -97,17 +106,19 @@ impl Applier<'_> {
                 } else {
                     None
                 };
-                return Err(Error::FunctionalityViolation {
+                self.violations.push(Violation::Functionality {
                     statement: guard.statement,
                     fact: op.fact.into(),
                     incumbent,
                 });
+                continue;
             }
             self.data.put(
                 self.txn.raw_mut(),
                 &self.key[..u_len],
                 row_id.to_le_bytes().as_slice(),
             )?;
+            crashpoint!("mid-write-u");
             if guard.pointwise {
                 // The exact put cannot detect overlap — only equality —
                 // so a pointwise key additionally probes its ordered
@@ -119,6 +130,7 @@ impl Applier<'_> {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
+            crashpoint!("mid-write-r");
         }
         Ok(())
     }
@@ -127,7 +139,11 @@ impl Applier<'_> {
     /// put at `self.key[..u_len]`, checks the two adjacent guard entries of
     /// the same scalar-prefix group for interval overlap. Two probes,
     /// O(log n), same write transaction — LMDB write txns read their own
-    /// writes, so intra-delta overlaps are caught identically.
+    /// writes, so intra-delta overlaps are caught identically. An overlap
+    /// records into the collector (the segment stays put — the commit
+    /// aborts after phase 2, and one recorded conviction per group
+    /// suffices: any later overlap in the group cites the same
+    /// statement).
     ///
     /// Comparison directions, derived once from half-open semantics: a
     /// guard is `prefix ‖ start ‖ end` with order-preserving 8-byte halves,
@@ -152,34 +168,33 @@ impl Applier<'_> {
         let end = &inserted[u_len - 8..u_len];
 
         let mut incumbent_row: Option<u64> = None;
-        if let Some((pk, pv)) = self.data.get_lower_than(self.txn.raw(), inserted)? {
-            if pk.starts_with(prefix) {
-                // Same statement, same guard width: a prefix-sharing key
-                // of any other length is corrupt data, a hard error.
-                if pk.len() != u_len {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "U guard key length",
-                    )));
-                }
-                // Predecessor `[ps, pe)`: violation iff `pe > s`.
-                if &pk[u_len - 8..] > start {
-                    incumbent_row = Some(decode_row_id(pv)?);
-                }
+        if let Some((pk, pv)) = self.data.get_lower_than(self.txn.raw(), inserted)?
+            && pk.starts_with(prefix)
+        {
+            // Same statement, same guard width: a prefix-sharing key
+            // of any other length is corrupt data, a hard error.
+            if pk.len() != u_len {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "U guard key length",
+                )));
+            }
+            // Predecessor `[ps, pe)`: violation iff `pe > s`.
+            if &pk[u_len - 8..] > start {
+                incumbent_row = Some(decode_row_id(pv)?);
             }
         }
-        if incumbent_row.is_none() {
-            if let Some((nk, nv)) = self.data.get_greater_than(self.txn.raw(), inserted)? {
-                if nk.starts_with(prefix) {
-                    if nk.len() != u_len {
-                        return Err(Error::Corruption(CorruptionError::MalformedValue(
-                            "U guard key length",
-                        )));
-                    }
-                    // Successor `[ns, ne)`: violation iff `ns < e`.
-                    if &nk[u_len - 16..u_len - 8] < end {
-                        incumbent_row = Some(decode_row_id(nv)?);
-                    }
-                }
+        if incumbent_row.is_none()
+            && let Some((nk, nv)) = self.data.get_greater_than(self.txn.raw(), inserted)?
+            && nk.starts_with(prefix)
+        {
+            if nk.len() != u_len {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "U guard key length",
+                )));
+            }
+            // Successor `[ns, ne)`: violation iff `ns < e`.
+            if &nk[u_len - 16..u_len - 8] < end {
+                incumbent_row = Some(decode_row_id(nv)?);
             }
         }
         let Some(row) = incumbent_row else {
@@ -188,11 +203,12 @@ impl Applier<'_> {
         // Cold aborting path: name the incumbent by its fact bytes via
         // row_id → F get (errors carry facts, never row ids).
         let incumbent = fact_by_row(self.data, self.txn.raw(), rel, row)?;
-        Err(Error::FunctionalityViolation {
+        self.violations.push(Violation::Functionality {
             statement,
             fact: fact_bytes.into(),
             incumbent: Some(incumbent.into()),
-        })
+        });
+        Ok(())
     }
 
     /// Assigns the next row id for `rel`, lazily initializing from the

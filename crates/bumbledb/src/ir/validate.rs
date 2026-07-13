@@ -15,12 +15,12 @@
 //!     pins the head's positional types, and every later rule must agree)
 //!
 //! Between the program shape and the per-rule roster, first the
-//! **nesting boundary guard**: predicate trees deeper than
-//! [`crate::ir::MAX_PREDICATE_DEPTH`] are the typed
-//! `PredicateNestingTooDeep` — judged by an iterative depth walk before
+//! **nesting boundary guard**: condition trees deeper than
+//! [`crate::ir::MAX_CONDITION_DEPTH`] are the typed
+//! `ConditionNestingTooDeep` — judged by an iterative depth walk before
 //! any recursive tree walk runs, so hostile nesting is a rejection,
 //! never a stack exhaustion (the trust-boundary law). Then **DNF
-//! distribution** ([`crate::ir::distribute`]): each rule's predicate
+//! distribution** ([`crate::ir::distribute`]): each rule's condition
 //! trees distribute to disjunctive normal form and each disjunct becomes
 //! a rule — the structural term count past [`crate::ir::MAX_RULES`] is
 //! the typed `DnfExceedsRules { produced, cap }` (judged before
@@ -61,7 +61,7 @@
 //!     Contains interval × element — its interval⊇interval form is
 //!     `Allen(COVERS)`, not an operator), and the Allen vacuity rules:
 //!     the ∅ mask ("never" — write no query) and the full mask
-//!     ("always" — write no predicate), distinct typed errors here for
+//!     ("always" — write no condition), distinct typed errors here for
 //!     literal masks and at bind for mask params
 //! 10. constant comparisons (no variable side) and self-comparisons
 //! 11. point variables bound only by membership (no enumerable domain)
@@ -84,8 +84,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
-use crate::ir::{FindTerm, ParamId, VarId};
+use crate::ir::{CmpOp, FindTerm, MaskTerm, ParamId, Value, VarId};
 use crate::schema::{IntervalElement, ValueType};
 
 mod context;
@@ -97,6 +98,184 @@ mod finds;
 mod validate;
 
 pub use validate::validate;
+
+/// The predicate a query defines — anonymous (names live in the host,
+/// exactly like relations pre-`as`), its typed output signature derived
+/// ONCE at validation and sealed. The single authority for sink
+/// construction, result-buffer typing, finalize's all-words decision,
+/// and EXPLAIN's header. Referenced by NOTHING — the named-view refusal
+/// stands; a reference to a predicate is the recursion trigger firing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Predicate {
+    /// The signature: one column per head position, in head order.
+    pub columns: Box<[PredicateColumn]>,
+}
+
+impl std::fmt::Display for Predicate {
+    /// The signature in one line — EXPLAIN's header (`(u64, Sum i64)`:
+    /// declaration type spellings, rule-notation fold names).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("(")?;
+        for (index, column) in self.columns.iter().enumerate() {
+            if index > 0 {
+                f.write_str(", ")?;
+            }
+            if let Some(op) = column.op {
+                write!(f, "{op} ")?;
+            }
+            match &column.ty {
+                ValueType::Bool => f.write_str("bool")?,
+                ValueType::U64 => f.write_str("u64")?,
+                ValueType::I64 => f.write_str("i64")?,
+                ValueType::String => f.write_str("string")?,
+                ValueType::FixedBytes { len } => write!(f, "bytes<{len}>")?,
+                ValueType::Interval { element } => match element {
+                    IntervalElement::U64 => f.write_str("interval<u64>")?,
+                    IntervalElement::I64 => f.write_str("interval<i64>")?,
+                },
+            }
+        }
+        f.write_str(")")
+    }
+}
+
+/// One column of the predicate's signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PredicateColumn {
+    /// The RESULT type — what lands in the buffer. Count is U64 here
+    /// whatever it counted; Duration's measure is U64; Min/Max/Sum
+    /// carry their input's type; Pack carries the interval type; the
+    /// Arg forms carry the projected payload's type.
+    pub ty: ValueType,
+    /// None = plain projection; Some = the fold producing the column.
+    /// Kept together deliberately: the sink needs both jointly, and a
+    /// signature-only split would re-create a parallel table (decided
+    /// here, not inherited from the sketch).
+    pub op: Option<AggKind>,
+}
+
+/// The fold producing a predicate column, by kind alone: an Arg key is a
+/// rule-scoped variable outside the signature's vocabulary, so the head
+/// owns the payload-free kind (a projected measure is a plain column —
+/// `None` — while a folded measure carries its fold's kind).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AggKind {
+    /// [`crate::ir::AggOp::Sum`].
+    Sum,
+    /// [`crate::ir::AggOp::Min`].
+    Min,
+    /// [`crate::ir::AggOp::Max`].
+    Max,
+    /// [`crate::ir::AggOp::Count`].
+    Count,
+    /// [`crate::ir::AggOp::CountDistinct`].
+    CountDistinct,
+    /// [`crate::ir::AggOp::ArgMax`], key elided.
+    ArgMax,
+    /// [`crate::ir::AggOp::ArgMin`], key elided.
+    ArgMin,
+    /// [`crate::ir::AggOp::Pack`].
+    Pack,
+}
+
+impl std::fmt::Display for AggKind {
+    /// The rule notation's fold names (`ir/render.rs`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Sum => "Sum",
+            Self::Min => "Min",
+            Self::Max => "Max",
+            Self::Count => "Count",
+            Self::CountDistinct => "CountDistinct",
+            Self::ArgMax => "ArgMax",
+            Self::ArgMin => "ArgMin",
+            Self::Pack => "Pack",
+        })
+    }
+}
+
+/// A comparison's proven legal shape — validation's classification,
+/// sealed. Constructed at the exact point the typed comparison rules
+/// prove legality (`context.rs`: the proof and the seal are the same
+/// lines), carried per rule on the witness
+/// ([`RuleWitness::classified_comparisons`]), and consumed by
+/// normalization's placement (`ir/normalize/place_comparisons.rs`) with
+/// a **total** match — no shape is re-derived downstream, so no
+/// defensive arm exists. The fifth sealed finding, alongside the
+/// witness's typing tables, `ResolvableFilter`, `SinkSpec`, and
+/// `ParamSpec`.
+///
+/// The variants are exactly the comparison language validation accepts —
+/// nothing aspirational — and each carries the RESOLVED facts placement
+/// needs: the rule-variable ids, the sealed constant or param handle,
+/// the operator sealed variable-on-left / measure-on-left, the mask
+/// sealed field-on-left. Interval `Eq`/`Ne` canonicalize here (the
+/// `EQUALS` mask / its complement), so exactly one interval-pair form
+/// leaves validation.
+///
+/// Pipeline-internal: never part of `ir.rs`'s input language, never in
+/// the public API, never serialized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ClassifiedComparison {
+    /// Scalar var-vs-var under `Eq`/`Ne`/order — one shared non-interval
+    /// type (interval equality seals as [`Self::AllenVarVar`]).
+    VarVar { op: CmpOp, lhs: VarId, rhs: VarId },
+    /// Scalar var-vs-constant under `Eq`/`Ne`/order, the operator sealed
+    /// variable-on-left (a constant-first order comparison mirrors).
+    VarConst {
+        op: CmpOp,
+        var: VarId,
+        value: SealedConst,
+    },
+    /// `Eq` against the set marker (`Term::ParamSet` — legal under `Eq`
+    /// alone): a selection-level word-set membership at execution.
+    VarInSet { var: VarId, set: ParamId },
+    /// The interval-pair comparison over two variables, the mask
+    /// symbolic in written operand order.
+    AllenVarVar {
+        lhs: VarId,
+        rhs: VarId,
+        mask: MaskTerm,
+    },
+    /// The interval-pair comparison against a constant, the mask sealed
+    /// field-on-left ([`MaskConst`]: conversed immediately for a literal
+    /// written constant-first, `ConversedParam` for a param).
+    AllenVarConst {
+        var: VarId,
+        other: SealedConst,
+        mask: MaskConst,
+    },
+    /// Point containment between variables: `interval-var ∋ point-var`.
+    ContainsVarVar { interval: VarId, point: VarId },
+    /// Point containment of a constant point: `interval-var ∋ point`.
+    ContainsVarPoint { interval: VarId, point: SealedConst },
+    /// Point containment in a constant interval: `outer ∋ scalar-var`.
+    VarWithin { var: VarId, outer: SealedConst },
+    /// The measure comparison, the operator sealed measure-on-left:
+    /// `Duration(interval) <op> other`.
+    Duration {
+        interval: VarId,
+        op: CmpOp,
+        other: DurationOperand,
+    },
+}
+
+/// A classified comparison's sealed constant side: the bind-time param
+/// handle, or the literal exactly as written (encoding to column words
+/// stays normalization's job — the seal is IR-algebra only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SealedConst {
+    Param(ParamId),
+    Literal(Value),
+}
+
+/// The measure's comparison side: another rule variable (u64-resolved),
+/// or a sealed constant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DurationOperand {
+    Var(VarId),
+    Const(SealedConst),
+}
 
 /// The sealed witness: the query plus the derived tables downstream layers
 /// trust. Unconstructible outside this module.
@@ -110,11 +289,10 @@ pub struct ValidatedQuery {
     /// input rules (duplicates collapsed) — the artifact everything
     /// downstream reads. No `Or` survives validation.
     lowered: Vec<LoweredRule>,
-    /// The head's positional type row, pinned at validation: rule 0's
-    /// resolved find-term types (an aggregate position carries its fold
-    /// input type; nullary `Count` is `U64`), which every later rule was
-    /// checked against position by position.
-    head_types: Vec<ValueType>,
+    /// The predicate the query defines, derived once from rule 0 after
+    /// every rule was checked to derive the same signature (the per-rule
+    /// positional alignment below).
+    predicate: Predicate,
     /// Per rule, in rule order: its variable typing and group key.
     rules: Vec<RuleTyping>,
     param_types: BTreeMap<ParamId, ValueType>,
@@ -139,15 +317,18 @@ struct RuleTyping {
     var_types: BTreeMap<VarId, ValueType>,
     /// Non-aggregated find variables — the group key under aggregation.
     group_key: BTreeSet<VarId>,
+    /// The rule's comparisons, classified — one sealed proof per
+    /// condition, in condition order ([`ClassifiedComparison`]).
+    classified: Vec<ClassifiedComparison>,
 }
 
 impl ValidatedQuery {
-    /// The head's pinned positional type row (see the field doc); the
-    /// rule loop's result-type row derives from it per rule at prepare.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The predicate this query defines (see [`Predicate`]): the sealed
+    /// signature every downstream consumer reads — no other derivation
+    /// of the output row types exists.
     #[must_use]
-    pub fn head_types(&self) -> &[ValueType] {
-        &self.head_types
+    pub fn predicate(&self) -> &Predicate {
+        &self.predicate
     }
 
     /// One rule's slice of the witness — the unit the per-rule pipeline
@@ -253,6 +434,15 @@ impl<'a> RuleWitness<'a> {
         self.typing.var_types.iter().map(|(v, t)| (*v, t))
     }
 
+    /// The rule's comparisons, classified — validation's sealed proof of
+    /// each comparison's legal shape, in condition order. Placement
+    /// (`ir/normalize/place_comparisons.rs`) consumes exactly this;
+    /// nothing downstream re-derives a comparison's shape from its terms.
+    #[must_use]
+    pub(crate) fn classified_comparisons(&self) -> &'a [ClassifiedComparison] {
+        &self.typing.classified
+    }
+
     /// The resolved type of a param — query-global
     /// ([`ValidatedQuery::param_type`]).
     ///
@@ -318,7 +508,16 @@ enum ParamKind {
 /// Accumulated typing state while walking the query.
 #[derive(Default)]
 struct Context {
+    /// Variable inference slots — the pre-resolution state. CONSUMED by
+    /// [`Context::resolve_bivalents`] into [`Context::var_types`]: the
+    /// phase change is a type change, so no post-resolution reader can
+    /// see (or re-match) an unresolved slot.
     var_slots: BTreeMap<VarId, TypeSlot>,
+    /// Every variable's resolved structural type — the resolution's
+    /// product, empty until [`Context::resolve_bivalents`] runs.
+    var_types: BTreeMap<VarId, ValueType>,
+    /// Param inference slots. Params stay slots past resolution: the
+    /// typed comparison pass still anchors them.
     param_slots: BTreeMap<ParamId, TypeSlot>,
     /// Every param seen, with its scalar-vs-set role (doubles as the
     /// density-check roster).

@@ -23,7 +23,7 @@ use crate::schema::{ContainmentId, Enforcement, KeyId, RelationId, Schema, State
 use crate::storage::delta::WriteDelta;
 use crate::storage::keys;
 
-use super::judgment::{satisfies, SelectionCheck, Selections};
+use super::judgment::{SelectionCheck, Selections, satisfies};
 
 /// One commit's derivable bookkeeping, borrowed from the delta's arena.
 pub(crate) struct CommitPlan<'d> {
@@ -255,14 +255,14 @@ fn fact_op<'d>(
                 });
             }
             Enforcement::Closed { .. } => {
-                let word = crate::encoding::field_bytes(
+                let word = crate::encoding::field_word_bytes(
                     fact,
                     layout,
                     usize::from(statement.source.projection[0].0),
                 );
                 memberships.push(MembershipOp {
                     containment: containment_id,
-                    id: u64::from_be_bytes(word.try_into().expect("u64 field is 8 bytes")),
+                    id: u64::from_be_bytes(word),
                 });
             }
         }

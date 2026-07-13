@@ -6,8 +6,8 @@ use super::*;
 use crate::image::{ColumnSpan, ColumnWidth};
 use crate::ir::normalize::normalize;
 use crate::ir::validate::validate as validate_ir;
-use crate::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Query, Rule, Term};
-use crate::plan::planner::{plan, OccStats};
+use crate::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Query, Rule, Term};
+use crate::plan::planner::{OccStats, plan};
 use crate::schema::IntervalElement;
 use std::collections::BTreeSet;
 
@@ -139,7 +139,7 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     // 100 A-rows into 1000 B-rows on a non-key field of B: the walk
     // iterates A (its fresh key makes the reverse direction fanout 1,
@@ -185,7 +185,7 @@ fn outer_join_idiom_absence_half_validates_into_the_witness() {
             relation: RelationId(1),
             bindings: vec![(FieldId(1), Term::Var(x))],
         }],
-        predicates: vec![],
+        conditions: vec![],
     });
     let witness = witness(&schema, &query, &stats(&[(100, &[(0, 100)])]));
 
@@ -228,7 +228,7 @@ fn allen_residual_query_validates_into_the_witness() {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
             },
@@ -328,7 +328,7 @@ fn interval_value_equality_joins_with_a_two_word_key() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let witness = witness(
         &schema,

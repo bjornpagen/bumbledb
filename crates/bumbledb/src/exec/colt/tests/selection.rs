@@ -129,9 +129,11 @@ fn set_probes_union_survivors_per_element() {
     let cursor = colt.select(&[vec![3, 7]]).expect("both keys exist");
     let entries = drain(&mut colt, cursor, 0);
     assert_eq!(entries.len(), 200, "the union of k = 3 and k = 7");
-    assert!(entries
-        .iter()
-        .all(|(key, _)| key[0] % 10 == 3 || key[0] % 10 == 7));
+    assert!(
+        entries
+            .iter()
+            .all(|(key, _)| key[0] % 10 == 3 || key[0] % 10 == 7)
+    );
 
     // A single element behaves like the scalar probe.
     let cursor = colt.select(&[vec![7]]).expect("key 7 exists");

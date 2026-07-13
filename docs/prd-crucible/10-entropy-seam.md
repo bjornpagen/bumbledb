@@ -2,7 +2,7 @@
 
 **Depends on:** 01 (toolchain). Phase D's foundation — 11–14 all build
 on this seam.
-**Modules:** `crates/bumbledb-bench/src/gen/` (the generator's xorshift
+**Modules:** `crates/bumbledb-bench/src/corpus_gen/` (the generator's xorshift
 core and every call site that draws randomness: schema descriptors,
 data, querygen, opgen), the corpus-digest pin test.
 **Authority:** Ned-Williamson-style generative fuzzing (decided

@@ -1,80 +1,29 @@
 use super::{
-    lower_literal::{lower_literal, point_word},
     IntervalWord, Occurrence, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
-    VarWord,
+    VarWord, lower_literal::lower_literal, lower_literal::point_word,
 };
-use crate::allen::AllenMask;
 use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
-use crate::ir::validate::RuleWitness;
-use crate::ir::{CmpOp, Comparison, MaskTerm, Term, VarId};
-use crate::schema::{FieldId, ValueType};
+use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
+use crate::ir::{CmpOp, MaskTerm, VarId};
+use crate::schema::FieldId;
 
-/// Mirrors an operator across the comparison when the constant was on the
-/// left: `c < x` becomes `x > c`.
-fn flip(op: CmpOp) -> CmpOp {
-    match op {
-        CmpOp::Eq => CmpOp::Eq,
-        CmpOp::Ne => CmpOp::Ne,
-        CmpOp::Lt => CmpOp::Gt,
-        CmpOp::Le => CmpOp::Ge,
-        CmpOp::Gt => CmpOp::Lt,
-        CmpOp::Ge => CmpOp::Le,
-        // The interval operators are lowered to their mask/endpoint
-        // shapes before any mirroring (`Allen`'s mirror is the mask's
-        // converse; `Contains` has a shape per direction).
-        CmpOp::Allen { .. } | CmpOp::Contains => {
-            unreachable!("interval operators are lowered before mirroring")
-        }
-    }
-}
-
-/// Whether the variable resolved to an interval type.
-fn interval_typed(rule: &RuleWitness<'_>, var: VarId) -> bool {
-    matches!(rule.var_type(var), ValueType::Interval { .. })
-}
-
-/// The constant side of an interval comparison, as a filter constant
-/// (`Const::Interval` from a literal, `Const::Param` resolved at bind).
-fn interval_const(constant: &Term) -> Const {
+/// The lowered constant of a sealed comparison side. String stays a
+/// pending intern, `bytes<N>` self-encodes, intervals lower to their two
+/// column words — [`lower_literal`] owns every case; a param stays a
+/// bind-time marker.
+fn sealed_const(constant: &SealedConst) -> Const {
     match constant {
-        Term::Param(param) => Const::Param(*param),
-        Term::Literal(literal) => lower_literal(literal),
-        Term::ParamSet(_) => unreachable!("validated: sets only under Eq"),
-        Term::Var(_) => unreachable!("matched the var-var arm above"),
-        Term::Duration(_) => unreachable!("measure comparisons lower before this match"),
+        SealedConst::Param(param) => Const::Param(*param),
+        SealedConst::Literal(literal) => lower_literal(literal),
     }
 }
 
-/// The lowered mask side. `mirrored` pre-encodes operand order:
-/// `Allen(a, b, m) ≡ Allen(b, a, converse(m))`, so a comparison written
-/// constant-first keeps the field on the left and converses the mask —
-/// immediately for a literal, deferred to bind for a param.
-fn mask_const(mask: MaskTerm, mirrored: bool) -> MaskConst {
-    match (mask, mirrored) {
-        (MaskTerm::Literal(mask), false) => MaskConst::Mask(mask),
-        (MaskTerm::Literal(mask), true) => MaskConst::Mask(mask.converse()),
-        (MaskTerm::Param(param), false) => MaskConst::Param(param),
-        (MaskTerm::Param(param), true) => MaskConst::ConversedParam(param),
-    }
-}
-
-/// Interval `Eq`/`Ne` canonicalization: they are the derived facts
-/// `Allen(EQUALS)` / `Allen(¬EQUALS)`, so exactly one interval-pair form
-/// leaves normalization. Every other comparison passes through.
-fn canonicalize(rule: &RuleWitness<'_>, comparison: &Comparison) -> CmpOp {
-    let on_intervals = || {
-        [&comparison.lhs, &comparison.rhs]
-            .iter()
-            .any(|term| matches!(term, Term::Var(var) if interval_typed(rule, *var)))
-    };
-    match comparison.op {
-        CmpOp::Eq if on_intervals() => CmpOp::Allen {
-            mask: MaskTerm::Literal(AllenMask::EQUALS),
-        },
-        CmpOp::Ne if on_intervals() => CmpOp::Allen {
-            mask: MaskTerm::Literal(AllenMask::EQUALS.complement()),
-        },
-        op => op,
+/// The same-atom mask side of an `Allen` variable pair: the field kept on
+/// the left (both variables are the atom's fields), so no mirror applies.
+fn same_atom_mask(mask: MaskTerm) -> MaskConst {
+    match mask {
+        MaskTerm::Literal(mask) => MaskConst::Mask(mask),
+        MaskTerm::Param(param) => MaskConst::Param(param),
     }
 }
 
@@ -93,25 +42,50 @@ fn field_of(occurrences: &[Occurrence], var: VarId) -> (usize, FieldId) {
         .expect("validated: comparison variables are atom-bound")
 }
 
+/// The occurrence (by table index) binding both variables of a pair, if
+/// any — the same-atom test — with each side's first field there.
+fn same_atom(
+    occurrences: &[Occurrence],
+    lhs: VarId,
+    rhs: VarId,
+) -> Option<(usize, FieldId, FieldId)> {
+    occurrences
+        .iter()
+        .enumerate()
+        .filter(|(_, occ)| occ.role.participates())
+        .find_map(|(idx, occ)| {
+            let left = occ.vars.iter().find(|(_, v)| *v == lhs);
+            let right = occ.vars.iter().find(|(_, v)| *v == rhs);
+            match (left, right) {
+                (Some((lf, _)), Some((rf, _))) => Some((idx, *lf, *rf)),
+                _ => None,
+            }
+        })
+}
+
 fn word(var: VarId, word: IntervalWord) -> VarWord {
     VarWord { var, word }
 }
 
-/// Places each comparison. Var-vs-constant pushes down as a filter on the
+/// Places each classified comparison — a **total** consumer of
+/// validation's sealed proofs ([`ClassifiedComparison`]): the shape,
+/// operator, resolved variables, and sealed constants are all decided,
+/// so every arm constructs placement and nothing re-derives a
+/// comparison's form. Var-vs-constant pushes down as a filter on the
 /// variable's first positive occurrence (sound for multi-occurrence
 /// variables — join equality propagates the restriction); same-atom
-/// var-vs-var lowers to a per-atom field composition (`FieldsCompare`, or
-/// an interval shape); only cross-atom var-vs-var pairs become residuals —
-/// whole-value comparisons, except the interval-pair form `Allen`, which
-/// stays whole (four endpoint slots + mask, [`PlacedAllen`]), and point
-/// containment, which decomposes into word comparisons
-/// (docs/architecture/20-query-ir.md).
+/// var-vs-var lowers to a per-atom field composition (`FieldsCompare`,
+/// or an interval shape); only cross-atom var-vs-var pairs become
+/// residuals — whole-value comparisons, except the interval-pair form
+/// `Allen`, which stays whole (four endpoint slots + mask,
+/// [`PlacedAllen`]), and point containment, which decomposes into word
+/// comparisons (docs/architecture/20-query-ir.md).
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // one linear pass, each comparison class in order
+)] // one arm per classified shape, each constructing its placement
 pub(super) fn place_comparisons(
-    rule: &RuleWitness<'_>,
+    comparisons: &[ClassifiedComparison],
     occurrences: &mut [Occurrence],
 ) -> (
     Vec<PlacedComparison>,
@@ -123,142 +97,147 @@ pub(super) fn place_comparisons(
     let mut word_residuals = Vec::new();
     let mut allen_residuals = Vec::new();
     let mut duration_residuals = Vec::new();
-    for comparison in &rule.rule().predicates {
-        let op = canonicalize(rule, comparison);
-        // The measure comparisons first (validation admitted exactly the
-        // order operators with one Duration side — 20-query-ir, § the
-        // measure): the two Term::Var arms below would otherwise claim
-        // the u64 variable side and misread the measure as a constant.
-        if let (Term::Duration(interval), other) | (other, Term::Duration(interval)) =
-            (&comparison.lhs, &comparison.rhs)
-        {
-            // The measure stays the left operand; a comparison written
-            // measure-second mirrors its operator (`flip`).
-            let measure_on_left = matches!(&comparison.lhs, Term::Duration(_));
-            let op = if measure_on_left { op } else { flip(op) };
-            place_duration(occurrences, &mut duration_residuals, *interval, op, other);
-            continue;
-        }
-        match (&comparison.lhs, &comparison.rhs) {
-            (Term::Var(lhs), Term::Var(rhs)) => {
-                let same_atom = occurrences
-                    .iter()
-                    .filter(|occ| occ.role.participates())
-                    .find_map(|occ| {
-                        let left = occ.vars.iter().find(|(_, v)| v == lhs);
-                        let right = occ.vars.iter().find(|(_, v)| v == rhs);
-                        match (left, right) {
-                            (Some((lf, _)), Some((rf, _))) => Some((occ.occ_id, *lf, *rf)),
-                            _ => None,
-                        }
-                    });
-                if let Some((occ_id, left, right)) = same_atom {
-                    // The two fixed same-atom interval shapes; every
-                    // other operator is a plain field comparison.
-                    let filter = match op {
-                        CmpOp::Allen { mask } => FilterPredicate::FieldsAllen {
-                            left,
-                            right,
-                            mask: mask_const(mask, false),
-                        },
-                        CmpOp::Contains => FilterPredicate::FieldsContainPoint {
-                            interval: left,
-                            point: right,
-                        },
-                        op => FilterPredicate::FieldsCompare { left, right, op },
-                    };
-                    let occ = occurrences
-                        .iter_mut()
-                        .find(|o| o.occ_id == occ_id)
-                        .expect("just found");
-                    occ.filters.push(filter);
-                } else {
-                    // Cross-atom: the Allen form stays whole (the mask
-                    // residual — four endpoint slots + mask); point
-                    // containment decomposes into word comparisons over
-                    // slot pairs; everything else is a scalar
-                    // whole-value residual.
-                    match op {
-                        CmpOp::Allen { mask } => allen_residuals.push(PlacedAllen {
-                            lhs: *lhs,
-                            rhs: *rhs,
-                            mask,
-                        }),
-                        CmpOp::Contains => word_residuals.extend([
-                            PlacedWordComparison {
-                                op: CmpOp::Le,
-                                lhs: word(*lhs, IntervalWord::Start),
-                                rhs: word(*rhs, IntervalWord::Start),
-                            },
-                            PlacedWordComparison {
-                                op: CmpOp::Lt,
-                                lhs: word(*rhs, IntervalWord::Start),
-                                rhs: word(*lhs, IntervalWord::End),
-                            },
-                        ]),
-                        op => residuals.push(PlacedComparison {
-                            op,
-                            lhs: *lhs,
-                            rhs: *rhs,
-                        }),
+    for comparison in comparisons {
+        match comparison {
+            // Scalar var-vs-var: same-atom is a per-atom field
+            // composition; cross-atom is a whole-value residual.
+            ClassifiedComparison::VarVar { op, lhs, rhs } => {
+                match same_atom(occurrences, *lhs, *rhs) {
+                    Some((occurrence, left, right)) => {
+                        occurrences[occurrence]
+                            .filters
+                            .push(FilterPredicate::FieldsCompare {
+                                left,
+                                right,
+                                op: *op,
+                            });
                     }
+                    None => residuals.push(PlacedComparison {
+                        op: *op,
+                        lhs: *lhs,
+                        rhs: *rhs,
+                    }),
                 }
             }
-            (Term::Var(var), constant) | (constant, Term::Var(var)) => {
-                let var_on_left = matches!(&comparison.lhs, Term::Var(v) if v == var);
+            // Var-vs-constant: pushes down on the variable's first
+            // positive occurrence — the operator is sealed
+            // variable-on-left.
+            ClassifiedComparison::VarConst { op, var, value } => {
                 let (occurrence, field) = field_of(occurrences, *var);
-                let filter = match op {
-                    // The field stays the left operand; a constant-first
-                    // comparison pre-encodes the mirror as the mask's
-                    // converse (`mask_const`).
-                    CmpOp::Allen { mask } => FilterPredicate::FieldAllen {
+                occurrences[occurrence]
+                    .filters
+                    .push(FilterPredicate::Compare {
                         field,
-                        other: interval_const(constant),
-                        mask: mask_const(mask, !var_on_left),
-                    },
-                    // `var ∋ constant`: the constant is a point
-                    // (element-typed by validation).
-                    CmpOp::Contains if var_on_left => match constant {
-                        Term::Param(param) => FilterPredicate::PointIn {
-                            field,
-                            point: ResolvedWordSource::Param(*param),
-                        },
-                        Term::Literal(value) => FilterPredicate::PointIn {
-                            field,
-                            point: ResolvedWordSource::Word(point_word(value)),
-                        },
-                        Term::ParamSet(_) => unreachable!("validated: sets only under Eq"),
-                        Term::Var(_) => unreachable!("matched the var-var arm above"),
-                        Term::Duration(_) => {
-                            unreachable!("measure comparisons lower before this match")
-                        }
-                    },
-                    // `constant ∋ var`: the variable's scalar field lies
-                    // within the constant interval.
-                    CmpOp::Contains => FilterPredicate::FieldWithin {
-                        field,
-                        outer: interval_const(constant),
-                    },
-                    op => {
-                        let op = if var_on_left { op } else { flip(op) };
-                        let value = match constant {
-                            Term::Param(param) => Const::Param(*param),
-                            // `Eq` only (validated) — the selection-level
-                            // set marker (docs/architecture/20-query-ir.md,
-                            // § param sets).
-                            Term::ParamSet(param) => Const::ParamSet(*param),
-                            Term::Literal(literal) => lower_literal(literal),
-                            Term::Var(_) => unreachable!("matched the var-var arm above"),
-                            Term::Duration(_) => {
-                                unreachable!("measure comparisons lower before this match")
-                            }
-                        };
-                        FilterPredicate::Compare { field, op, value }
-                    }
-                };
-                occurrences[occurrence].filters.push(filter);
+                        op: *op,
+                        value: sealed_const(value),
+                    });
             }
-            _ => unreachable!("validated: constant comparisons are rejected"),
+            // The set marker: the selection-level `Eq` compare the plan
+            // routes into `selections` (docs/architecture/20-query-ir.md,
+            // § param sets).
+            ClassifiedComparison::VarInSet { var, set } => {
+                let (occurrence, field) = field_of(occurrences, *var);
+                occurrences[occurrence]
+                    .filters
+                    .push(FilterPredicate::Compare {
+                        field,
+                        op: CmpOp::Eq,
+                        value: Const::ParamSet(*set),
+                    });
+            }
+            // Interval-pair `Allen`: same-atom rides the mask-carrying
+            // filter kind; cross-atom stays whole as the mask residual
+            // (four endpoint slots + mask).
+            ClassifiedComparison::AllenVarVar { lhs, rhs, mask } => {
+                match same_atom(occurrences, *lhs, *rhs) {
+                    Some((occurrence, left, right)) => {
+                        occurrences[occurrence]
+                            .filters
+                            .push(FilterPredicate::FieldsAllen {
+                                left,
+                                right,
+                                mask: same_atom_mask(*mask),
+                            });
+                    }
+                    None => allen_residuals.push(PlacedAllen {
+                        lhs: *lhs,
+                        rhs: *rhs,
+                        mask: *mask,
+                    }),
+                }
+            }
+            // Interval `Allen` against a constant — the field stays the
+            // left operand; the mask is sealed field-on-left already.
+            ClassifiedComparison::AllenVarConst { var, other, mask } => {
+                let (occurrence, field) = field_of(occurrences, *var);
+                occurrences[occurrence]
+                    .filters
+                    .push(FilterPredicate::FieldAllen {
+                        field,
+                        other: sealed_const(other),
+                        mask: *mask,
+                    });
+            }
+            // `interval ∋ point`: same-atom is the field composition;
+            // cross-atom decomposes into two word comparisons over slot
+            // pairs (`a.start ≤ p AND p < a.end`).
+            ClassifiedComparison::ContainsVarVar { interval, point } => {
+                match same_atom(occurrences, *interval, *point) {
+                    Some((occurrence, interval_field, point_field)) => occurrences[occurrence]
+                        .filters
+                        .push(FilterPredicate::FieldsContainPoint {
+                            interval: interval_field,
+                            point: point_field,
+                        }),
+                    None => word_residuals.extend([
+                        PlacedWordComparison {
+                            op: CmpOp::Le,
+                            lhs: word(*interval, IntervalWord::Start),
+                            rhs: word(*point, IntervalWord::Start),
+                        },
+                        PlacedWordComparison {
+                            op: CmpOp::Lt,
+                            lhs: word(*point, IntervalWord::Start),
+                            rhs: word(*interval, IntervalWord::End),
+                        },
+                    ]),
+                }
+            }
+            // `interval-var ∋ constant point`: the point is
+            // element-typed by validation — a point membership on the
+            // interval field.
+            ClassifiedComparison::ContainsVarPoint { interval, point } => {
+                let (occurrence, field) = field_of(occurrences, *interval);
+                let point = match point {
+                    SealedConst::Param(param) => ResolvedWordSource::Param(*param),
+                    SealedConst::Literal(value) => ResolvedWordSource::Word(point_word(value)),
+                };
+                occurrences[occurrence]
+                    .filters
+                    .push(FilterPredicate::PointIn { field, point });
+            }
+            // `constant interval ∋ var`: the variable's scalar field lies
+            // within the constant interval.
+            ClassifiedComparison::VarWithin { var, outer } => {
+                let (occurrence, field) = field_of(occurrences, *var);
+                occurrences[occurrence]
+                    .filters
+                    .push(FilterPredicate::FieldWithin {
+                        field,
+                        outer: sealed_const(outer),
+                    });
+            }
+            // The measure, operator sealed measure-on-left: constant and
+            // same-atom variable sides push down as filters on the
+            // measured variable's first positive occurrence (where the
+            // filter-order law holds — an occurrence's other filters run
+            // first, so a guarded fact never reaches the subtraction);
+            // only the cross-atom variable side is a residual.
+            ClassifiedComparison::Duration {
+                interval,
+                op,
+                other,
+            } => place_duration(occurrences, &mut duration_residuals, *interval, *op, other),
         }
     }
     (
@@ -270,31 +249,28 @@ pub(super) fn place_comparisons(
 }
 
 /// Places one measure comparison, `Duration(interval) <op> other` (the
-/// measure already on the left). Constant sides and same-atom variable
-/// sides push down as filters on the measured variable's first positive
-/// occurrence — where the filter-order law holds: an occurrence's other
-/// filters (an `Allen` guard, a bounded-end filter) run first, so a
-/// guarded fact never reaches the subtraction
-/// ([`crate::image::view::FilterPredicate::DurationCompare`]). Only the
-/// cross-atom variable side becomes a residual ([`PlacedDuration`]).
+/// operator already sealed measure-on-left). Constant sides and same-atom
+/// variable sides push down as filters on the measured variable's first
+/// positive occurrence; only the cross-atom variable side becomes a
+/// residual ([`PlacedDuration`]).
 fn place_duration(
     occurrences: &mut [Occurrence],
     duration_residuals: &mut Vec<PlacedDuration>,
     interval: VarId,
     op: CmpOp,
-    other: &Term,
+    other: &DurationOperand,
 ) {
     let (occ_idx, interval_field) = field_of(occurrences, interval);
     match other {
-        Term::Var(scalar) => {
+        DurationOperand::Var(scalar) => {
             // Same-atom when the u64 variable is bound on the measured
             // variable's occurrence; cross-atom is the residual.
-            let same_atom = occurrences[occ_idx]
+            let same = occurrences[occ_idx]
                 .vars
                 .iter()
                 .find(|(_, v)| v == scalar)
                 .map(|(field, _)| *field);
-            match same_atom {
+            match same {
                 Some(scalar_field) => {
                     occurrences[occ_idx]
                         .filters
@@ -311,25 +287,14 @@ fn place_duration(
                 }),
             }
         }
-        Term::Param(param) => {
+        DurationOperand::Const(value) => {
             occurrences[occ_idx]
                 .filters
                 .push(FilterPredicate::DurationCompare {
                     field: interval_field,
                     op,
-                    value: Const::Param(*param),
+                    value: sealed_const(value),
                 });
         }
-        Term::Literal(literal) => {
-            occurrences[occ_idx]
-                .filters
-                .push(FilterPredicate::DurationCompare {
-                    field: interval_field,
-                    op,
-                    value: lower_literal(literal),
-                });
-        }
-        Term::ParamSet(_) => unreachable!("validated: sets only under Eq"),
-        Term::Duration(_) => unreachable!("validated: one measure side per comparison"),
     }
 }

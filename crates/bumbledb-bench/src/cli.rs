@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use crate::gen::Scale;
+use crate::corpus_gen::Scale;
 
 mod help;
 mod parse;

@@ -13,8 +13,8 @@
 
 use bumbledb::{AggOp, FieldId, FindTerm, RelationId, Term, Value};
 
-use crate::gen::Rng;
-use crate::querygen::target::{ids, SOURCE_IMPORT};
+use crate::corpus_gen::Rng;
+use crate::querygen::target::{SOURCE_IMPORT, ids};
 use crate::querygen::{Builder, ChaseVariant};
 
 /// The containment walks the existence shape rotates over: (source

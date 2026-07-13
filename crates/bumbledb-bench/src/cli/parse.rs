@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::gen::Scale;
+use crate::corpus_gen::Scale;
 use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{BenchArgs, Cmd, CorpusArgs, ScenarioArgs};

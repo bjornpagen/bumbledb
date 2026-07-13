@@ -9,7 +9,7 @@ use bumbledb::schema::{Generation, IntervalElement, ValueType};
 use bumbledb::{AggOp, Atom, Basic, CmpOp, FindTerm, MaskTerm, Query, Term, VarId};
 use std::collections::{HashMap, HashSet};
 
-use crate::gen::{GenConfig, Rng};
+use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
 use crate::querygen::{ChaseVariant, ClosedVariant, Coverage, GenTags, RulesVariant, Shape};
@@ -179,15 +179,15 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
             if !matches!(field_type(atom, *field), ValueType::Interval { .. }) {
                 continue;
             }
-            if let Term::Var(var) = term {
-                if !matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) {
-                    needs.insert(index);
-                }
+            if let Term::Var(var) = term
+                && !matches!(t.var_types.get(var), Some(ValueType::Interval { .. }))
+            {
+                needs.insert(index);
             }
         }
     }
     // …and interval-typed sides of cross-atom Allen/Contains.
-    for comparison in rule.predicates.iter().map(super::leaf) {
+    for comparison in rule.conditions.iter().map(super::leaf) {
         if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::Contains) {
             continue;
         }
@@ -332,7 +332,7 @@ impl Coverage {
 
     fn record_comparisons(&mut self, rule: &Rule, t: &Typing) -> bool {
         let mut has_allen = false;
-        for comparison in rule.predicates.iter().map(super::leaf) {
+        for comparison in rule.conditions.iter().map(super::leaf) {
             // A measure side types the comparison u64 (the measure word)
             // and is its own construct row.
             if matches!(comparison.lhs, Term::Duration(_))
@@ -492,10 +492,10 @@ impl Coverage {
                         // in the SQL-paired grammar here.
                         AggOp::Pack => {}
                     }
-                    if let Some(var) = over {
-                        if matches!(t.var_types.get(var), Some(ValueType::U64)) {
-                            self.agg_u64 += 1;
-                        }
+                    if let Some(var) = over
+                        && matches!(t.var_types.get(var), Some(ValueType::U64))
+                    {
+                        self.agg_u64 += 1;
                     }
                 }
                 // The measure positions: one projected word / one fold
@@ -620,7 +620,7 @@ impl Coverage {
                 .chain(&rule.negated)
                 .flat_map(|atom| &atom.bindings)
                 .any(|(_, term)| matches!(term, Term::ParamSet(_)))
-                || rule.predicates.iter().map(super::leaf).any(|c| {
+                || rule.conditions.iter().map(super::leaf).any(|c| {
                     matches!(c.lhs, Term::ParamSet(_)) || matches!(c.rhs, Term::ParamSet(_))
                 });
             self.spine_violations += spine_violations(rule, &t);

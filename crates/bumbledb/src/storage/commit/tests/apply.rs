@@ -75,10 +75,11 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
         let mut wtxn = env.write_txn().expect("wtxn");
         let mut key: KeyBuf = [0; MAX_KEY];
         let f_len = keys::fact_key(&mut key, TARGET, 0);
-        assert!(env
-            .data()
-            .delete(wtxn.raw_mut(), &key[..f_len])
-            .expect("del"));
+        assert!(
+            env.data()
+                .delete(wtxn.raw_mut(), &key[..f_len])
+                .expect("del")
+        );
         wtxn.commit().expect("commit");
     }
     let view = env.read_txn().expect("txn");
@@ -127,10 +128,11 @@ fn deleting_a_fact_with_a_scrubbed_interval_guard_is_corruption() {
         let mut wtxn = env.write_txn().expect("wtxn");
         let mut key: KeyBuf = [0; MAX_KEY];
         let u_len = keys::guard_key(&mut key, BOOKING, BOOKING_KEY, &guard);
-        assert!(env
-            .data()
-            .delete(wtxn.raw_mut(), &key[..u_len])
-            .expect("del"));
+        assert!(
+            env.data()
+                .delete(wtxn.raw_mut(), &key[..u_len])
+                .expect("del")
+        );
         wtxn.commit().expect("commit");
     }
     let view = env.read_txn().expect("txn");
@@ -202,10 +204,11 @@ fn base_state_disagreeing_with_a_proved_disposition_is_corruption() {
         let hash = crate::encoding::fact_hash(&t5);
         let mut key: KeyBuf = [0; MAX_KEY];
         let m_len = keys::membership_key(&mut key, TARGET, &hash);
-        assert!(env
-            .data()
-            .delete(wtxn.raw_mut(), &key[..m_len])
-            .expect("del"));
+        assert!(
+            env.data()
+                .delete(wtxn.raw_mut(), &key[..m_len])
+                .expect("del")
+        );
         wtxn.commit().expect("commit");
     }
     let plan = plan_for(&delete_delta, &env);

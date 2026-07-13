@@ -9,8 +9,8 @@
 //! Both engines touch every value; decoding into `compare::Owned` is
 //! verify's job, never the timed path's.
 
-use bumbledb::schema::ValueType;
 use bumbledb::Value;
+use bumbledb::schema::ValueType;
 
 use crate::sqlmap;
 use crate::translate::ParamSlot;
@@ -38,7 +38,9 @@ pub use sample::{sample, sample_args};
 pub struct PreparedFamily<'c> {
     stmt: rusqlite::Statement<'c>,
     param_order: Vec<ParamSlot>,
-    result_types: Vec<ValueType>,
+    /// The family's output signature — the column types the drain walks
+    /// (mirroring the bumbledb query's predicate).
+    signature: Vec<ValueType>,
 }
 
 /// The positional bindings of one execution: each placeholder slot takes

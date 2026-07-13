@@ -7,11 +7,11 @@
 //! and runtime cover choice (docs/architecture/40-execution.md) carries the load-bearing
 //! decisions either way.
 
+use crate::image::ColumnWidth;
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
-use crate::image::ColumnWidth;
-use crate::ir::normalize::Occurrence;
 use crate::ir::CmpOp;
+use crate::ir::normalize::Occurrence;
 use crate::plan::fj::split_filters;
 use crate::plan::planner::OccStats;
 use crate::schema::{FieldId, Schema};
@@ -27,13 +27,13 @@ pub(crate) const DEFAULT_EQ_DISTINCT: u64 = 64;
 
 /// A range residual (`Lt/Le/Gt/Ge` against a constant) keeps 1/4 of its
 /// input — the classic textbook fraction; ranges are scans by design and
-/// the estimate only orders joins. Membership predicates are fixed
+/// the estimate only orders joins. Membership conditions are fixed
 /// word-range compositions over the start/end column pair
 /// (docs/architecture/40-execution.md), so they take the same class.
 pub(crate) const RANGE_KEEP_DEN: u64 = 4;
 
 /// The Allen basics partition every interval pair (JEPD), so a mask
-/// predicate's honest keep fraction is `popcount/13` — the mask's measure
+/// condition's honest keep fraction is `popcount/13` — the mask's measure
 /// in the coordinate system, no workload assumption needed — clamped to
 /// the existing floor ladder exactly like every residual: never below one
 /// row here, never outside `[1, rows]` at the end of the estimate. A
@@ -138,7 +138,7 @@ fn occurrence_estimate(
     // Fields already charged for a folded constant range: the fold
     // (`ir/normalize/fold.rs`) collapsed each slot's constant order
     // filters into ONE `[lo, hi]` summary, emitted back as at most two
-    // bounds — one summary is one range predicate, so its keep fraction
+    // bounds — one summary is one range condition, so its keep fraction
     // applies once per field, never per constituent. This is the
     // double-counted-range selectivity fix (PRD 10): pre-fold, `x > a ∧
     // x < b` priced as 1/16 instead of 1/4. Param bounds never fold
@@ -172,7 +172,7 @@ fn occurrence_estimate(
                 CmpOp::Ne => 1,
                 CmpOp::Eq => unreachable!("split_filters routed Eq into selections"),
                 CmpOp::Allen { .. } | CmpOp::Contains => {
-                    unreachable!("interval predicates lower to their fixed shapes")
+                    unreachable!("interval conditions lower to their fixed shapes")
                 }
             },
             FilterPredicate::FieldsCompare { op, .. } => match op {
@@ -180,12 +180,12 @@ fn occurrence_estimate(
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
                 CmpOp::Allen { .. } | CmpOp::Contains => {
-                    unreachable!("same-atom interval predicates lower to their fixed shapes")
+                    unreachable!("same-atom interval conditions lower to their fixed shapes")
                 }
             },
             // The fixed membership compositions (word ranges over the
             // start/end pair), and the measure comparisons — a range
-            // predicate over the derived duration word, riding the
+            // condition over the derived duration word, riding the
             // existing range keep-fraction floor unmodified (20-query-ir § the measure;
             // validation admits order operators only, so the range class
             // is exact, not a default).
@@ -282,7 +282,7 @@ fn distinct_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encoding::{encode_fact, ValueRef};
+    use crate::encoding::{ValueRef, encode_fact};
     use crate::image::view::Const;
     use crate::ir::normalize::{OccId, Role};
     use crate::schema::{
@@ -511,7 +511,7 @@ mod tests {
     /// A folded constant range counts ONCE: the fold
     /// (`ir/normalize/fold.rs`) collapsed the slot's constant bounds
     /// into one `[lo, hi]` summary, so the two emitted bounds are one
-    /// range predicate — 1/4, never 1/16 (the double-counted-range fix,
+    /// range condition — 1/4, never 1/16 (the double-counted-range fix,
     /// PRD 10). Constant ranges on distinct fields still compose, and
     /// param bounds (which never fold) keep the per-filter fraction —
     /// `residual_fractions_compose_and_clamp` above pins that side.
@@ -807,7 +807,7 @@ mod tests {
                 },
             ],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         })
     }
 
@@ -817,7 +817,7 @@ mod tests {
         schema: &Schema,
         finds: Vec<crate::ir::FindTerm>,
     ) -> crate::api::stats::ExecutionStats {
-        use crate::api::prepared::{prepare, PreparedQuery};
+        use crate::api::prepared::{PreparedQuery, prepare};
 
         let mut prepared: PreparedQuery<'_, ()> =
             prepare(txn, cache, schema, &cyclic_query(finds)).expect("prepare cycle");
@@ -830,7 +830,7 @@ mod tests {
     /// additionally shows that EXPLAIN's final-node `actual` is emitted set
     /// witnesses after D2 cancellation, not the cycle's full binding count.
     /// P1 is pinned by the closed-domain fanout, and P2 is absent by
-    /// construction (there are no range predicates).
+    /// construction (there are no range conditions).
     #[test]
     fn cyclic_estimate_diagnosis_is_p3_not_a_domain_or_range_defect() {
         use crate::ir::{FindTerm, VarId};

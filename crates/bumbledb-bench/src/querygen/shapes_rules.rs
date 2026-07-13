@@ -20,12 +20,12 @@
 //! variants' bands are the point, so nothing is appended.
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FindTerm, PredicateTree, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value, VarId,
 };
 
-use crate::gen::Rng;
-use crate::querygen::target::{self, ids, Domains};
+use crate::corpus_gen::Rng;
 use crate::querygen::RulesVariant;
+use crate::querygen::target::{self, Domains, ids};
 
 /// One multi-rule query and its variant tag.
 pub(super) fn rules(rng: &mut Rng, domains: &Domains) -> (Query, RulesVariant) {
@@ -81,7 +81,7 @@ fn disjoint_arms(rng: &mut Rng) -> Query {
                 ],
             }],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         })
         .collect();
     assemble(rules)
@@ -105,7 +105,7 @@ fn du_twin() -> Query {
                 ],
             }],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         },
         Rule {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -114,7 +114,7 @@ fn du_twin() -> Query {
                 bindings: vec![(ids::import_batch::ENTRY, Term::Var(VarId(0)))],
             }],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         },
     ])
 }
@@ -132,7 +132,7 @@ fn posting_arm(finds: Vec<FindTerm>, floor: i64) -> Rule {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::I64(floor)),
@@ -203,8 +203,8 @@ fn union_fold(rng: &mut Rng, domains: &Domains) -> Query {
                 rule.atoms[0]
                     .bindings
                     .push((ids::posting::AMOUNT, Term::Var(VarId(1))));
-                rule.predicates.clear();
-                rule.predicates.push(PredicateTree::Leaf(Comparison {
+                rule.conditions.clear();
+                rule.conditions.push(ConditionTree::Leaf(Comparison {
                     op: CmpOp::Ge,
                     lhs: Term::Var(VarId(2)),
                     rhs: Term::Literal(Value::I64(floor)),

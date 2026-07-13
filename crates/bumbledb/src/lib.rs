@@ -70,6 +70,20 @@
 //! cargo test --workspace
 //! ```
 
+// Nightly dividend (docs/prd-crucible/02-nightly-dividend.md): `try`
+// blocks replace the immediately-invoked-closure error idiom — the
+// block states "this region fails as a unit" without a fake function
+// call.
+#![feature(try_blocks)]
+// Nightly dividend (docs/prd-crucible/03-portable-simd.md): the
+// predicate-scan, dense-fold, and index-gather kernels are `std::simd`
+// bodies on every target — measured at or above the retired hand-NEON
+// twins, deleting the intrinsic dual and most of the kernel layer's
+// `unsafe`, and Miri-interpretable for the UB lane (PRD 15). The Allen
+// configuration kernel alone stays intrinsic per that PRD's measured
+// verdict matrix.
+#![feature(portable_simd)]
+
 // 64-bit only (docs/architecture/00-product.md): `usize` is 8 bytes everywhere
 // and no design decision accommodates narrower platforms. Building for a
 // 32-bit target (e.g. `--target i686-unknown-linux-gnu`) fails with this
@@ -96,7 +110,7 @@ pub(crate) mod storage;
 mod value;
 mod verify_store;
 
-pub use allen::{classify, AllenMask, Basic};
+pub use allen::{AllenMask, Basic, classify};
 pub use api::db::{BulkLoadError, Db, Fact, Fresh, FreshKeyed, Snapshot, WriteTx};
 pub use api::prepared::{
     BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
@@ -105,13 +119,32 @@ pub use api::stats::{
     CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
     GuardStats, NodeStats, PinnedRows, RuleStats,
 };
-pub use error::{Direction, Error, OverflowKind, Result};
+pub use error::{Direction, Error, OverflowKind, Result, Violation, Violations};
 pub use interval::Interval;
+/// The statically-empty fold's off switch (`ir/normalize/fold.rs`):
+/// reachable only under the `fold-off` fuzz-oracle feature. History,
+/// recorded honestly: deleted as dead configuration 2026-07-12 (nothing
+/// in-workspace consumed it), revived 2026-07-13 with a named consumer —
+/// the detached fuzz crate's `rewrites` dual-pipeline differential
+/// (docs/prd-crucible/13-fuzz-query-rewrites.md), which an external
+/// crate can only reach through a feature, never through `cfg(test)`.
+#[cfg(feature = "fold-off")]
+pub use ir::normalize::with_fold_disabled;
 /// The chase's test-support off switch (`plan/chase.rs`): reachable only
-/// under the `chase-off` feature, which only the bench crate's dual-run
-/// differential unit tests enable (as a dev-dependency).
+/// under the `chase-off` feature, which the bench crate's dual-run
+/// differential unit tests (as a dev-dependency) and the fuzz crate's
+/// `rewrites` dual-pipeline differential enable.
 #[cfg(feature = "chase-off")]
 pub use plan::chase::with_chase_disabled;
+/// The crashpoint table (`storage/commit.rs`): the commit pipeline's
+/// named phase boundaries with their expected recovery sides, reachable
+/// only under the `crashpoint` fuzz-oracle feature. The detached fuzz
+/// crate's `crash` target (docs/prd-crucible/14-fuzz-crash.md) consumes
+/// the table as its single authority — the harness draws points from it
+/// and judges recovery by its sides, so the engine's claimed atomicity
+/// structure and the adversary's expectations are one value.
+#[cfg(feature = "crashpoint")]
+pub use storage::commit::{CRASHPOINTS, CrashpointSide};
 /// The storage format version (`storage/env.rs`), public so
 /// store-shaped derived identities (the bench corpus cache, stamps) can
 /// key on it: a format bump must regenerate every store-derived
@@ -121,8 +154,8 @@ pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{
-    AggOp, Atom, CmpOp, Comparison, FindTerm, HeadOp, HeadTerm, MaskTerm, ParamId, PredicateTree,
-    Query, Rule, Term, Value, VarId, MAX_PREDICATE_DEPTH, MAX_RULES,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm, MAX_CONDITION_DEPTH,
+    MAX_RULES, MaskTerm, ParamId, Query, Rule, Term, Value, VarId,
 };
 pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
 pub use verify_store::{StoreFinding, StoreReport};

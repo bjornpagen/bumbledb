@@ -63,13 +63,13 @@ mechanism names its reader; this is `U`/`M`'s read-side reader).
 
 **Statically empty programs.** A program whose every rule the normalization
 fold refuted on constants (`20-query-ir.md`, § normalization — mutually
-unsatisfiable constant predicates) prepares to the empty program. Prepared
+unsatisfiable constant conditions) prepares to the empty program. Prepared
 execution has two rule kinds — guard probe and Free Join — plus this
 program-level empty variant. Execution binds params first — bind errors still surface, a
 vacuous Allen mask param is rejected exactly as on a live plan — then
 touches no images, binds no views, runs no join, and the result is the
 empty buffer. EXPLAIN prints `access path: statically empty` plus each dead
-rule's killing predicate; a dead rule inside a live program was deleted at
+rule's killing condition; a dead rule inside a live program was deleted at
 prepare and its record prints the same way.
 
 **Time-range scans, point-membership scans, and interval-overlap joins are O(n)**
@@ -156,6 +156,19 @@ no residual concept; we own filter placement because there is no external optimi
   survivors. Survivors become the next node's pending rows; the leaf runs its batch
   paths and emits complete bindings to the sink. D2 suffix skips cancel the origin
   below the absorb node instead of unwinding a call stack.
+
+  **The zero-arity cover collapses to one entry.** A zero-binding nonemptiness gate
+  (a positive atom with no variables) reaches the executor as a zero-arity cover —
+  every position yields the same empty key row, so under set semantics one entry
+  stands for the whole suffix and `pump`/`run_node` stop after a single yield.
+  Enumerating instead multiplies the join by the gate relation's row count for zero
+  distinguishable bindings; a projection's D2 first-emit skip masked that, an
+  aggregate (never skips, and a gate defeats the distinct-bindings elision, so the
+  seen-set runs) folded |join| × |gate| duplicate bindings — the S-scale crucible
+  hang, pinned by `zero_binding_gate_yields_one_entry_not_the_relation`. The one
+  consumer that can distinguish a zero-arity cover's positions is a membership probe
+  reading that occurrence's cursor (each position carries its own interval columns):
+  membership-probed occurrences keep enumerating.
 
   **Deviation (paper §3.3):** the paper presents per-tuple recursive descent with
   backtracking. BumbleDB accumulates work across node entries in the pipeline above
@@ -349,7 +362,10 @@ never removals, so occurrence ids never move. Elimination removes atoms that
 statements prove redundant; evaluation removes atoms whose extension is
 stage-0-known by *running them at prepare*: `Kind(id: k, mastered == true)` is
 not a join to plan — it is a three-element id-set computed before the DP ever
-sees the query, residual cost zero.
+sees the query, residual cost zero. Both rewrites are continuously verified
+semantics-preserving by the rewrites fuzz target (`60-validation.md` § the
+fuzzing charter — the dual-pipeline differential through the `chase-off`
+switch).
 
 *Elimination.* An accepted containment
 `A(X | φ) <= B(Y | ψ)` makes the query's join of `A` to `B` on X→Y redundant
@@ -454,9 +470,11 @@ payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated
 `folded: !Kind{…} → {…} rejected`); the differential off-switch
 (`with_chase_disabled`) covers the evaluator inside the same fixpoint, and the
 dual-run corpus pins byte-identical results — the fold is never semantic.
-The normalization fold's narrower `with_fold_disabled` switch is compiled only
-under `cfg(test)` for its engine unit suites; the bench differential deliberately
-uses the chase switch because that switch covers the evaluator in the same fixpoint.
+The normalization fold's narrower `with_fold_disabled` switch is compiled under
+`cfg(any(test, feature = "fold-off"))` — the engine unit suites and, through the
+revived `fold-off` fuzz-oracle feature, the fuzz crate's rewrites dual-pipeline
+differential reach it; the bench differential deliberately uses the chase switch
+because that switch covers the evaluator in the same fixpoint.
 
 **Rule subsumption, the restricted witness.** After elimination, if one rule's
 normalized body equals a sibling's *modulo the filters elimination removed* —
@@ -550,7 +568,7 @@ extra line per miss, and on L2-hot always-hit paths the 2.5× instruction bill
 is retire-bound loss. The bucket-of-8 SWAR group walk is
 the shipped shape. **No indirect
 dispatch exists in the hot path**: sinks, counters, and kernels are monomorphized
-generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) is confined to the
+generics, never `dyn`. Explicit SIMD (128-bit = 2×u64) is confined to the
 sanctioned kernel shapes:
 fixed-width predicate scans (interval membership included — two-word
 compares over the start/end column pair, no new width), **the
@@ -565,15 +583,34 @@ on the release disassembly), survivor compaction,
 fold/accumulate kernels (Sum/Min/Max/Count over batch columns, strided or
 gathered — Sum semantics unchanged: i128 accumulation, one range check at
 finalization), gather kernels (position-indexed column reads), and
-software-prefetch passes (`prfm`) between probe phase 1 and phase 2. Fold kernels
+software-prefetch passes (`prfm`) between probe phase 1 and phase 2.
+
+**The portable/intrinsic split is measured, not stylistic**
+(docs/prd-crucible/03-portable-simd.md's verdict matrix is the record):
+the predicate scans, dense folds, and index gathers are `std::simd`
+bodies compiled on every target — each measured at or above its retired
+hand-NEON twin on the reference host (filters 1.03–1.5× faster, folds
+and gathered sums at parity, gathered min/max ~1.1×), deleting the
+intrinsic dual and most of the kernel layer's `unsafe`, and
+Miri-interpretable. The Allen configuration kernel alone keeps hand
+NEON intrinsics: its 64-byte `tbl4` signature table has no `std::simd`
+primitive (the 4×`swizzle_dyn` emulation measured +8% instructions per
+pair), and the flag-free asm gates forbid the bounds-check `cmp` that
+safe portable code would reintroduce. The scalar SWAR group walk and
+the scalar cursor-write compaction stay scalar — they are already
+portable, GPR-resident, and `std::simd` offers no compress primitive.
+
+Fold kernels
 follow the **port-topology law** (measured): every flag-writing scalar op
 (`adds/adcs/cmp/csel`) is confined to 3 of the reference core's 6 integer ALUs, so
 exact scalar summation caps at ~2.8 flag-µops/cycle while NEON escapes the triad
 and rides the 3×16 B load ports — dense exact sums measured 8.8 vs 4.0–4.6 rows/ns
-at L1 (carry-counted u128 via `vcgtq_u64`), min/max 2.65× at every tier, with DRAM
+at L1 (carry-counted u128 compare lanes), min/max 2.65× at every tier, with DRAM
 converging all parallel kernels (~7.5 rows/ns single-core). Dense (stride-1) folds
-therefore take NEON unconditionally; strided and gathered folds stay scalar until
-measured (latency×MLP-bound — a different law). Deep-OoO scalar remains the shape
+therefore take the lane form unconditionally; strided folds stay scalar until
+measured (latency×MLP-bound — a different law), and the index gathers took the
+portable lane form when it measured at or above the scalar-unrolled bodies
+(PRD 03's matrix). Deep-OoO scalar remains the shape
 for irregular control flow —
 the law is about reductions, not loops in general (`00-product.md` machine
 model; unsafe policy there too). Columns are 128-byte-aligned SoA
@@ -773,7 +810,7 @@ Six measured decisions, enforced structurally by
   stays live: the template keeps its bytes and re-checks each execution,
   with the miss semantics (`Eq` short-circuit, `Ne` sentinel) verbatim.
   When the count is zero and the query has no params of any shape,
-  `resolve_predicates` is **skipped entirely** — the resolved tables were
+  `resolve_filters` is **skipped entirely** — the resolved tables were
   written once and are final (one cold branch at rule entry). Sound
   because the prepared query owns its plan (`!Sync`, env-instance-guarded)
   and generational immutability never invalidates a word. The latch writes

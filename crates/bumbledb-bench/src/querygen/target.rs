@@ -34,8 +34,8 @@ use std::sync::OnceLock;
 use bumbledb::schema::{IntervalElement, RelationDescriptor, Row, SchemaDescriptor, ValueType};
 use bumbledb::{Schema, Value};
 
+use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::fixture::{field, fresh};
-use crate::gen::{GenConfig, Rng, Scale};
 use crate::querygen::interval_data;
 
 /// Relation and field ids by name — declaration order is the id order,
@@ -206,13 +206,14 @@ pub fn schema() -> &'static Schema {
 
 /// The declared target ledger, as the raw descriptor — the value the
 /// naive model and the mirror's extension INSERTs consume beside the
-/// sealed schema (`pub(crate)` for the closed-relation differential,
-/// which drives all three write-scenario classes over this theory).
+/// sealed schema (the closed-relation differential and the `ops` fuzz
+/// runner both build their [`crate::naive::NaiveDb`] from it).
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // the declared ledger, one relation per block
-pub(crate) fn descriptor() -> SchemaDescriptor {
+#[must_use]
+pub fn descriptor() -> SchemaDescriptor {
     {
         SchemaDescriptor {
             relations: vec![
@@ -534,12 +535,15 @@ pub struct Domains {
 }
 
 impl Domains {
+    /// Mirrors the corpus scale ladder's size table
+    /// ([`crate::corpus_gen::Sizes::of`]), `Tiny` included.
     #[must_use]
     pub fn of(scale: Scale) -> Self {
-        let postings: u64 = match scale {
-            Scale::S => 100_000,
-            Scale::M => 1_000_000,
-            Scale::L => 10_000_000,
+        let (postings, instruments, orgs): (u64, u64, u64) = match scale {
+            Scale::Tiny => (1_024, 32, 8),
+            Scale::S => (100_000, 512, 64),
+            Scale::M => (1_000_000, 512, 64),
+            Scale::L => (10_000_000, 512, 64),
         };
         let accounts = postings / 200;
         Self {
@@ -547,8 +551,8 @@ impl Domains {
             entries: postings / 2,
             accounts,
             holders: (accounts / 4).max(1),
-            instruments: 512,
-            orgs: 64,
+            instruments,
+            orgs,
             mandates: accounts * interval_data::PER_GROUP,
             transfers: postings / 2,
             posting_tags: postings,

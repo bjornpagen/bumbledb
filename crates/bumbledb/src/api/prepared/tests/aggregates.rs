@@ -57,7 +57,7 @@ fn count_distinct_collapses_multiplicities_per_group_and_over_strings() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
@@ -116,7 +116,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
@@ -169,7 +169,7 @@ fn arg_max_picks_the_latest_posting_per_account() {
             ],
             atoms: atoms.clone(),
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         })
     };
 
@@ -210,7 +210,7 @@ fn arg_max_picks_the_latest_posting_per_account() {
         }],
         atoms,
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &global).expect("prepare");
     let out = prepared
@@ -267,7 +267,7 @@ fn arg_ties_are_set_honest() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &carry_memo).expect("prepare");
     let out = prepared
@@ -309,7 +309,7 @@ fn arg_ties_are_set_honest() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &carry_key).expect("prepare");
     let out = prepared
@@ -381,7 +381,7 @@ fn insert_payroll(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i
 
 /// The interval find round-trip: a projected interval variable
 /// materializes as `Value::IntervalI64` rows equal to the stored
-/// facts', and `column_types` reports the interval type.
+/// facts', and the predicate's signature reports the interval type.
 #[test]
 fn interval_find_round_trips_through_the_result_buffer() {
     let dir = TempDir::new("prepared-interval-roundtrip");
@@ -407,10 +407,15 @@ fn interval_find_round_trips_through_the_result_buffer() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let types: Vec<ValueType> = prepared.column_types().cloned().collect();
+    let types: Vec<ValueType> = prepared
+        .predicate()
+        .columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect();
     assert_eq!(
         types,
         vec![
@@ -419,7 +424,7 @@ fn interval_find_round_trips_through_the_result_buffer() {
                 element: IntervalElement::I64
             },
         ],
-        "column_types reports the interval type"
+        "the predicate reports the interval type"
     );
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -478,7 +483,7 @@ fn count_distinct_over_intervals_uses_value_identity() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared

@@ -1,11 +1,11 @@
 use super::*;
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{ValueRef, encode_fact};
 use crate::image::view::apply;
 use crate::ir::normalize::{
     AntiProbe, NormalizedQuery, OccId, Occurrence, PlacedComparison, Role, SlotWidth,
 };
 use crate::ir::{CmpOp, VarId};
-use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
+use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,

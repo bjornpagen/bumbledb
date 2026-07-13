@@ -29,13 +29,13 @@ pub(super) fn check_occurrence_coverage(
                     return Err(PlanError::UnknownOccurrence {
                         node: node_idx,
                         occ: subatom.occ,
-                    })
+                    });
                 }
                 Some(occurrence) if !occurrence.role.participates() => {
                     return Err(PlanError::NonParticipatingOccurrenceInNode {
                         node: node_idx,
                         occ: subatom.occ,
-                    })
+                    });
                 }
                 Some(_) => {}
             }

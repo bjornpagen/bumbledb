@@ -1,4 +1,4 @@
-use super::{densify::densify, estimate::estimate, JoinOrder, OccStats, State, MAX_OCCURRENCES};
+use super::{JoinOrder, MAX_OCCURRENCES, OccStats, State, densify::densify, estimate::estimate};
 use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence};
 use crate::schema::Schema;
 

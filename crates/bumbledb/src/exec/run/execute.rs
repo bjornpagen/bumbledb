@@ -1,9 +1,9 @@
 //! Executor construction and the per-execution entry point.
 
 use super::{
-    AntiProbeSpec, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
+    AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
     PipeTables, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
-    PointProbeSpec, Sink, ValidatedPlan, BATCH,
+    PointProbeSpec, Sink, ValidatedPlan,
 };
 
 /// The membership-filter column/slot table shared by both probe kinds:
@@ -104,7 +104,7 @@ impl Executor {
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
     )] // table construction, one table at a
-       // time — splitting scatters the shapes
+    // time — splitting scatters the shapes
     pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(
             batch > 0,
@@ -227,6 +227,15 @@ impl Executor {
             .collect();
         let anti_probe_slots = anti_probe_slots(plan);
         let point_probe_slots = point_probe_slots(plan);
+        // Occurrences whose positions a membership probe reads: the
+        // zero-arity cover collapse must keep enumerating those (each
+        // position carries its own interval columns).
+        let mut point_probed = vec![false; plan.occurrences().len()];
+        for node in plan.nodes() {
+            for probe in &node.point_probes {
+                point_probed[usize::from(probe.occ.0)] = true;
+            }
+        }
         let scratch = plan
             .nodes()
             .iter()
@@ -290,6 +299,7 @@ impl Executor {
             allen_masks,
             duration_residual_slots,
             point_probe_slots,
+            point_probed,
             var_widths,
             anti_probe_slots,
             scratch,
@@ -312,7 +322,7 @@ impl Executor {
     /// Resolves this execution's Allen-residual masks in place: literal
     /// masks are re-copied (idempotent), param masks read the bind slice
     /// — with the ∅/full vacuity already rejected at bind, the hot path
-    /// sees only honest predicates. Called by the prepared query before
+    /// sees only honest masks. Called by the prepared query before
     /// every join execution; the executor itself never touches params.
     pub fn bind_allen_masks(&mut self, params: &[crate::image::view::Const]) {
         for (node_slots, node_masks) in self.allen_residual_slots.iter().zip(&mut self.allen_masks)

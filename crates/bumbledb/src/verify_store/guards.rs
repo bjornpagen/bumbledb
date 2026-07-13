@@ -6,10 +6,10 @@
 //! invariant the neighbor probe assumes but never re-checks globally.
 
 use crate::error::Result;
-use crate::schema::{RelationId, StatementId, StatementView};
+use crate::schema::StatementView;
 use crate::storage::keys;
 
-use super::{namespace, StoreFinding, Sweep};
+use super::{StoreFinding, Sweep, namespace};
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
@@ -23,17 +23,11 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         let (key, value) = entry?;
         // U | relation(4) | statement(2) | guard — the guard is nonempty
         // (projections are non-empty by validation).
-        if key.len() <= 7 {
+        let Some((rel, sid, guard)) = keys::parse_guard_key(key) else {
             s.malformed(key, "U key length");
             prev_pointwise = None;
             continue;
-        }
-        let rel = RelationId(u32::from_be_bytes(
-            key[1..5].try_into().expect("fixed-width slice"),
-        ));
-        let sid = StatementId(u16::from_be_bytes(
-            key[5..7].try_into().expect("fixed-width slice"),
-        ));
+        };
         let Some(relation) = schema.relation_checked(rel) else {
             s.malformed(key, "U key relation");
             prev_pointwise = None;
@@ -59,7 +53,6 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             prev_pointwise = None;
             continue;
         }
-        let guard = &key[7..];
         let Ok(row_bytes) = <[u8; 8]>::try_from(value) else {
             s.malformed(key, "U row id");
             prev_pointwise = None;

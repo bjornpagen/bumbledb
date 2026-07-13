@@ -1,6 +1,6 @@
 use super::*;
 use crate::allen::AllenMask;
-use crate::encoding::{decode_field, encode_fact, encode_i64, encode_u64, ValueRef};
+use crate::encoding::{ValueRef, decode_field, encode_fact, encode_i64, encode_u64};
 use crate::error::Result as DbResult;
 use crate::image::build;
 use crate::ir::ParamId;
@@ -386,9 +386,11 @@ fn any_point_in_matches_any_element_of_the_bound_set() {
 
     // The empty set lies in no interval.
     let empty = [Const::WordSet(Vec::new())];
-    assert!(apply(&image, &predicates, &empty, Vec::new())
-        .expect("no measure filters")
-        .is_empty());
+    assert!(
+        apply(&image, &predicates, &empty, Vec::new())
+            .expect("no measure filters")
+            .is_empty()
+    );
 }
 
 #[test]

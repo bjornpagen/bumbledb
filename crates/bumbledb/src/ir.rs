@@ -8,7 +8,7 @@
 
 pub(crate) mod normalize;
 pub mod render;
-pub(crate) mod validate;
+pub mod validate;
 
 use crate::schema::{FieldId, RelationId};
 
@@ -17,10 +17,10 @@ use crate::schema::{FieldId, RelationId};
 pub use crate::value::Value;
 
 /// The DNF distribution — the declared decomposition of the input
-/// predicate grammar ([`PredicateTree`]) into Or-free rules; validation
+/// condition grammar ([`ConditionTree`]) into Or-free rules; validation
 /// runs it, and it is exported so the differential suite can prove it
 /// against the naive model's direct tree evaluation.
-pub use normalize::{distribute, LoweredRule};
+pub use normalize::{LoweredRule, distribute};
 
 /// The rule-count cap: a query is a program of at most this many rules,
 /// rejected at validation (`ValidationError::TooManyRules`). Counted
@@ -30,8 +30,8 @@ pub use normalize::{distribute, LoweredRule};
 /// width there.
 pub const MAX_RULES: usize = 16;
 
-/// The predicate-tree nesting cap: a [`PredicateTree`] deeper than this
-/// is rejected at validation (`ValidationError::PredicateNestingTooDeep`)
+/// The condition-tree nesting cap: a [`ConditionTree`] deeper than this
+/// is rejected at validation (`ValidationError::ConditionNestingTooDeep`)
 /// — a **boundary guard**, not planner hygiene (the trust-boundary law,
 /// `docs/architecture/20-query-ir.md`): queries arrive as data, the tree
 /// walks (DNF counting, distribution, rendering) recurse by depth, and an
@@ -41,7 +41,7 @@ pub const MAX_RULES: usize = 16;
 /// recursive walks run only on guarded trees. The cap is generous: a
 /// meaningful tree's depth is bounded by its leaf count, and the DNF
 /// blowup cap ([`MAX_RULES`]) already limits leaves per disjunct.
-pub const MAX_PREDICATE_DEPTH: usize = 64;
+pub const MAX_CONDITION_DEPTH: usize = 64;
 
 /// Dense query-variable id — **rule-scoped**: the same `VarId` in two
 /// rules names two unrelated variables (each rule is its own scope).
@@ -289,7 +289,7 @@ impl CmpOp {
     }
 }
 
-/// One comparison predicate. `Eq` between two variables is unification and
+/// One comparison condition. `Eq` between two variables is unification and
 /// obeys identical type rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comparison {
@@ -298,8 +298,8 @@ pub struct Comparison {
     pub rhs: Term,
 }
 
-/// The *input* predicate grammar: any boolean combination of positive
-/// comparisons (`docs/architecture/20-query-ir.md`, § the input predicate
+/// The *input* condition grammar: any boolean combination of positive
+/// comparisons (`docs/architecture/20-query-ir.md`, § the input condition
 /// grammar). This is the one place the surface admits a nested OR — and
 /// the engine never sees it: validation distributes every rule's trees to
 /// DNF, each disjunct becomes a rule ([`distribute`]), and the validated
@@ -314,17 +314,17 @@ pub struct Comparison {
 /// the empty conjunction (true: it contributes no leaves) and `Or([])`
 /// is the empty disjunction (false: the rule denotes nothing and lowers
 /// to zero rules) — accepted exactly as statically contradictory
-/// predicates are: the semantics are exact.
+/// conditions are: the semantics are exact.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PredicateTree {
+pub enum ConditionTree {
     Leaf(Comparison),
-    And(Vec<PredicateTree>),
-    Or(Vec<PredicateTree>),
+    And(Vec<ConditionTree>),
+    Or(Vec<ConditionTree>),
 }
 
 /// One rule: a conjunctive body projecting its find terms against the
 /// query's head. The rule's denotation is the set of distinct bindings of
-/// its variables satisfying every positive atom, every predicate, and no
+/// its variables satisfying every positive atom, every condition, and no
 /// negated atom, projected through `finds`.
 ///
 /// A rule is its **own variable scope**: `VarId`s never cross rules — the
@@ -347,12 +347,12 @@ pub struct Rule {
     /// here; negation is a *position* in the rule, not a kind of atom, so
     /// the list reuses [`Atom`] unchanged.
     pub negated: Vec<Atom>,
-    /// The predicate trees, conjoined — the list is an `And`, so the flat
+    /// The condition trees, conjoined — the list is an `And`, so the flat
     /// conjunctive rule is written without wrapping. Any nested OR is
-    /// distributed away at validation ([`PredicateTree`]); downstream of
-    /// the boundary a rule's predicates are a flat comparison list
+    /// distributed away at validation ([`ConditionTree`]); downstream of
+    /// the boundary a rule's conditions are a flat comparison list
     /// ([`LoweredRule`]).
-    pub predicates: Vec<PredicateTree>,
+    pub conditions: Vec<ConditionTree>,
 }
 
 impl Rule {
@@ -370,7 +370,7 @@ impl Rule {
 /// **Denotation: the set union of the rules' denotations.** Set semantics
 /// means there is exactly one union — no bag distinction exists or is
 /// representable. Disjunction is data, never an execution node: a mask
-/// inside a predicate, a set inside a position, rules at the top — the
+/// inside a condition, a set inside a position, rules at the top — the
 /// three confinements; a cross-atom OR inside one rule is refused
 /// representation (DNF lowering recovers it as rules).
 ///
@@ -423,13 +423,13 @@ mod tests {
                 ],
             }],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         });
         assert_eq!(query.rules[0].atoms.len(), 1);
     }
 
     #[test]
-    fn containment_walk_join_with_range_predicate() {
+    fn containment_walk_join_with_range_condition() {
         // Posting(account = a, amount = amt, at = t), Account(id = a):
         // a containment walk joined on `a`, with t >= <timestamp>.
         let query = Query::single(Rule {
@@ -449,14 +449,14 @@ mod tests {
                 },
             ],
             negated: vec![],
-            predicates: vec![PredicateTree::Leaf(Comparison {
+            conditions: vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: Term::Var(VarId(2)),
                 rhs: Term::Literal(Value::I64(1_700_000_000_000_000)),
             })],
         });
         assert_eq!(query.rules[0].atoms.len(), 2);
-        assert_eq!(query.rules[0].predicates.len(), 1);
+        assert_eq!(query.rules[0].conditions.len(), 1);
     }
 
     #[test]
@@ -484,7 +484,7 @@ mod tests {
                 ],
             }],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         });
         assert!(matches!(
             query.rules[0].finds[1],
@@ -510,7 +510,7 @@ mod tests {
                 },
             ],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         });
         assert!(query.rules[0].atoms[1].bindings.is_empty());
     }
@@ -533,7 +533,7 @@ mod tests {
                 relation: RelationId(4),
                 bindings: vec![(FieldId(2), Term::Var(VarId(0)))],
             }],
-            predicates: vec![],
+            conditions: vec![],
         });
         assert_eq!(query.rules[0].negated.len(), 1);
     }

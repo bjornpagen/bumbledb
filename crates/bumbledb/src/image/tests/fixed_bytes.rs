@@ -3,9 +3,9 @@
 //! boundary, and the pad-corruption arm — a nonzero trailing pad byte is
 //! typed corruption at build, never a skip.
 
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{ValueRef, encode_fact};
 use crate::error::{CorruptionError, Error};
-use crate::image::{build, ColumnWidth};
+use crate::image::{ColumnWidth, build};
 use crate::schema::{
     FieldDescriptor, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
     ValueType,

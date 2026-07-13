@@ -1,10 +1,10 @@
 use bumbledb::{Db, Query, ResultBuffer};
 
 use crate::calendar;
-use crate::families::{has_sets, param_args, scalar_values, set_bindings, Draw, Kind};
+use crate::families::{Draw, Kind, has_sets, param_args, scalar_values, set_bindings};
 use crate::harness::{self, Modes, Rotation};
 use crate::schema::schema;
-use crate::translate::{translate, Translated};
+use crate::translate::{Translated, translate};
 use crate::{clockproxy, families, report, sqlite_run, trace_out};
 
 use super::BenchRun;
@@ -124,7 +124,12 @@ impl BenchRun<'_> {
             .prepare(&spec.query)
             .map_err(|e| format!("{}: prepare: {e:?}", spec.name))?;
         let sets = spec.sets.clone();
-        let types: Vec<bumbledb::schema::ValueType> = prepared.column_types().cloned().collect();
+        let types: Vec<bumbledb::schema::ValueType> = prepared
+            .predicate()
+            .columns
+            .iter()
+            .map(|column| column.ty.clone())
+            .collect();
 
         let mut rotation = Rotation::new(sets.clone());
         let mut buffer = ResultBuffer::new();

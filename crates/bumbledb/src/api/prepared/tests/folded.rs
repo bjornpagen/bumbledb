@@ -124,7 +124,7 @@ fn fold_query(rank: u64) -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -152,7 +152,7 @@ const READINGS: &[(u64, u64, i64)] = &[
 
 /// The fold executes correctly and its plan-constant set never counts
 /// as an unresolved literal — the fully-latched fast path stays open
-/// (zero pending literals, zero params ⇒ `resolve_predicates` is
+/// (zero pending literals, zero params ⇒ `resolve_filters` is
 /// skipped from the second execution on).
 #[test]
 fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {

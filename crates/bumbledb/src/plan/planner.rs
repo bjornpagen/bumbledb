@@ -7,8 +7,8 @@
 //! fields, no histograms, no magic selectivity constants (the post-mortem's
 //! central engine finding, §30).
 
-use crate::ir::normalize::OccId;
 use crate::ir::VarId;
+use crate::ir::normalize::OccId;
 
 mod densify;
 mod estimate;
@@ -40,7 +40,7 @@ pub(crate) const MAX_DISTINCT_VARS: usize = 128;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OccStats {
     pub occ_id: OccId,
-    /// Estimated cardinality after this occurrence's own predicates.
+    /// Estimated cardinality after this occurrence's own conditions.
     pub rows: u64,
     /// `(var, distinct count of its field over the base relation)`.
     pub var_distincts: Vec<(VarId, u64)>,

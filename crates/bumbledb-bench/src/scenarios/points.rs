@@ -6,13 +6,13 @@
 //! dictionary on every lookup.
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, PredicateTree, Query, Rule, Term,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term,
     Value, VarId,
 };
 
-use super::{mix, Scenario, ScenarioQuery};
+use super::{Scenario, ScenarioQuery, mix};
+use crate::corpus_gen::Rng;
 use crate::fixture::var;
-use crate::gen::Rng;
 
 bumbledb::schema! {
     pub Points;
@@ -102,7 +102,7 @@ fn by_id() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -129,7 +129,7 @@ fn by_key() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -159,7 +159,7 @@ fn bucket_fetch() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(1),
             rhs: param(1),
@@ -189,13 +189,13 @@ fn size_band() -> Query {
             bindings: vec![(FieldId(0), var(0)), (FieldId(3), var(1))],
         }],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(1),
                 rhs: param(0),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(1),
                 rhs: param(1),

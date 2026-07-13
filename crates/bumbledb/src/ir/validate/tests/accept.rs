@@ -4,7 +4,7 @@ use crate::ir::{AggOp, CmpOp, Comparison, MaskTerm, Value};
 // --- Accepting shapes ---
 
 #[test]
-fn accepts_the_containment_walk_join_with_predicates() {
+fn accepts_the_containment_walk_join_with_conditions() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -12,7 +12,7 @@ fn accepts_the_containment_walk_join_with_predicates() {
             atom(ACCOUNT, vec![(0, var(0))]),
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
             rhs: Term::Literal(Value::I64(100)),
@@ -33,7 +33,7 @@ fn accepts_params_anchored_by_fields_and_comparisons() {
             vec![(1, Term::Param(ParamId(0))), (0, var(0)), (3, var(1))],
         )],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(1),
             rhs: Term::Param(ParamId(1)),
@@ -56,7 +56,7 @@ fn param_anchoring_is_total_by_construction() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
             rhs: Term::Param(ParamId(0)),
@@ -231,7 +231,7 @@ fn accepts_allen_between_interval_variables_from_different_atoms() {
                 atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
             ],
             negated: vec![],
-            predicates: vec![PredicateTree::Leaf(Comparison {
+            conditions: vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen { mask },
                 lhs: var(1),
                 rhs: var(3),
@@ -257,7 +257,7 @@ fn accepts_a_zero_binding_negated_atom_as_an_emptiness_gate() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![atom(POSTING, vec![])],
-        predicates: vec![],
+        conditions: vec![],
     });
     validate(&schema(), &query).expect("valid");
 }
@@ -278,7 +278,7 @@ fn accepts_literals_params_and_sets_inside_negated_atoms() {
                 (4, Term::ParamSet(ParamId(1))),
             ],
         )],
-        predicates: vec![],
+        conditions: vec![],
     });
     let witness = validate(&schema(), &query).expect("valid");
     let params: Vec<_> = witness.param_types().collect();
@@ -307,7 +307,7 @@ fn accepts_param_sets_in_bindings_and_under_eq() {
             vec![(0, var(0)), (1, Term::ParamSet(ParamId(0)))],
         )],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
             rhs: Term::ParamSet(ParamId(1)),
@@ -370,7 +370,7 @@ fn accepts_an_arg_carry_equal_to_its_key() {
 fn accepts_pack_and_pins_the_interval_result_type() {
     // finds [account, Pack(span)]: the coalescing fold — the result
     // position is interval-typed (a packed segment shares its input's
-    // type), pinned in the head's positional row.
+    // type), sealed in the predicate's signature.
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
@@ -382,9 +382,15 @@ fn accepts_pack_and_pins_the_interval_result_type() {
         vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
     );
     let witness = validate(&schema(), &query).expect("valid");
+    let types: Vec<ValueType> = witness
+        .predicate()
+        .columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect();
     assert_eq!(
-        witness.head_types(),
-        &[
+        types,
+        vec![
             ValueType::U64,
             ValueType::Interval {
                 element: IntervalElement::U64
@@ -408,7 +414,7 @@ fn accepts_pack_across_rules() {
         ],
         atoms,
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![
@@ -441,13 +447,13 @@ fn accepts_identity_operations_over_fixed_bytes() {
             atom(POSTING, vec![(0, var(2)), (4, Term::ParamSet(ParamId(0)))]),
         ],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ne,
                 lhs: var(1),
                 rhs: Term::Literal(Value::FixedBytes(vec![7u8; 32].into())),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Eq,
                 lhs: var(1),
                 rhs: Term::Param(ParamId(1)),

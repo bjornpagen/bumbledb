@@ -1,4 +1,4 @@
-use super::{ctrl_tag, eq_byte_mask, zero_byte_mask, WordMap, WINDOW};
+use super::{WINDOW, WordMap, ctrl_tag, eq_byte_mask, zero_byte_mask};
 
 impl<V: Copy> WordMap<V> {
     /// Whether the stored key at `slot` equals `key` — a manual word
@@ -53,18 +53,21 @@ impl<V: Copy> WordMap<V> {
         let wanted = ctrl_tag(hash);
         let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
         loop {
-            // The mirror tail makes an 8-byte read at any idx < capacity
-            // in-bounds and wrap-correct.
+            // The mirror tail makes a WINDOW-byte read at any
+            // idx < capacity in-bounds and wrap-correct
+            // (`ctrl.len() == capacity + WINDOW − 1`) — a construction
+            // invariant the slice type cannot carry, because windows
+            // load at arbitrary unaligned indices.
             let window = u64::from_le_bytes(
-                self.ctrl[idx..idx + WINDOW]
-                    .try_into()
-                    .expect("window read"),
+                *self.ctrl[idx..]
+                    .first_chunk::<WINDOW>()
+                    .expect("mirror tail keeps windows in-bounds"),
             );
             let empties = zero_byte_mask(window);
             let matches = eq_byte_mask(window, wanted);
             let mut candidates = empties | matches;
             while candidates != 0 {
-                let bit = candidates & candidates.wrapping_neg();
+                let bit = candidates.isolate_lowest_one();
                 let offset = (bit.trailing_zeros() as usize) >> 3;
                 let slot = (idx + offset) & mask;
                 if empties & bit != 0 {

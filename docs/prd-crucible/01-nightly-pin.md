@@ -32,9 +32,9 @@ two CI stories. One pinned nightly deletes the split before it exists.
   own scope and its `// SAFETY:` comment moves adjacent), RPIT lifetime
   capture rules (check `impl Iterator` returns in colt/iter, sweep,
   scan), `gen` becoming a reserved keyword (the bench crate has a `gen`
-  module — rename to `r#gen` is FORBIDDEN as inelegance; rename the
-  module to `corpus_gen` or fold per PRD 10's touch of the same files;
-  decide at execution and record), match ergonomics changes, and
+  module — rename to `r#gen` is FORBIDDEN as inelegance; the packet
+  audit decided `corpus_gen`, which PRD 10 names as its later seam),
+  match ergonomics changes, and
   `static_mut_refs` (expected: none — no static muts exist).
 - `cargo fmt`/`clippy` move to the nightly versions — expect new lints;
   fix them, never blanket-allow (each new suppression follows the
@@ -52,14 +52,15 @@ two CI stories. One pinned nightly deletes the split before it exists.
 1. Land the pin + editions in one motion; `cargo build --workspace` is
    the worklist. Fix breakage per the known-surface list above, then
    whatever else surfaces — every fix direct, no bridging attributes.
-2. Run the full gate suite. Diff the clippy lint set: new fires get real
+2. Run the full workspace gate suite, then the separate asm gate. Diff
+   the clippy lint set: new fires get real
    fixes or `#[expect(…, reason)]` with the reason argued.
 3. Run `check-asm.sh` and the `#[ignore]`d microbenches once,
    informally, to size the codegen delta for the register's re-earn
    session (do not update any pinned numbers here — measurement is human
    work; just report what moved in the commit body).
-4. The `gen`-keyword resolution: pick the rename, apply it everywhere
-   (module path, imports, docs), record the choice.
+4. The `gen`-keyword resolution: rename the module to `corpus_gen` and
+   apply it everywhere (module path, imports, docs).
 
 ## Passing criteria
 
@@ -70,11 +71,49 @@ two CI stories. One pinned nightly deletes the split before it exists.
 - `[shape]` Zero new `#[allow]`; every new suppression is `#[expect]`
   with a reason; `unsafe fn` bodies contain explicit `unsafe {}` scopes
   with adjacent SAFETY comments.
-- `[gate]` `scripts/check.sh` exit 0 on the nightly pin — including the
-  asm gates unmodified (or a recorded conflict per direction 3, which
-  BLOCKS this PRD until ruled).
+- `[gate]` `scripts/check.sh` and `scripts/check-asm.sh` each exit 0 on
+  the nightly pin; the asm gates remain unmodified (or a recorded
+  conflict per direction 3, which BLOCKS this PRD until ruled).
 - `[shape]` The commit body reports the informal microbench delta and
   names the re-earn session as pending human work.
+
+## Recorded conflicts (policy 5, 2026-07-13)
+
+1. **The asm gate misfires on v0 mangling, not on codegen.**
+   `nightly-2026-07-12` defaults to v0 symbol mangling (1.96 used
+   legacy). The outlined recursive `Colt::any_position<closure>` —
+   called from `probe_pass`/`run_node` on BOTH toolchains, 12 identical
+   `bl` sites in the 1.96 binary (verified by building HEAD pre-port at
+   1.96.0 and disassembling) — was named `…12any_position17h…` under
+   legacy mangling and is named
+   `…any_positionNCNvB2_20any_position_matches0…` under v0. The gate's
+   forbidden class `position_matches` now matches the *name* of the
+   same machine code that always passed. The probe loop is unchanged;
+   the per-element probe class carries no new calls. Per direction 3
+   the gate was NOT edited by this PRD's executor.
+   **RESOLVED 2026-07-13 by owner ruling:** symbol-name forbidden-class
+   greps are ceremony — a gate that fails on mangling spelling asserts
+   naming, not machine code. All `no_calls_inside` gates (probe_pass,
+   run_node, emit_batch × name-regex classes) were REMOVED from
+   `check-asm.sh`; the instruction-class gates (the three Allen
+   flag-free asserts: cmp/csel/adds/ccmp/bl greps over kernel bodies)
+   stay — they read instructions, not names. The inlining discipline
+   the removed gates watched is owned by the #[ignore]d microbench
+   pins, which measure the thing itself. `check-asm.sh` exits 0 on the
+   nightly binary; PRD 01's asm-gate criterion is met.
+2. **Two S-scale gate tests hang on a pre-existing liveness bug.**
+   `driver::tests::the_full_sequence_runs_at_s` and
+   `verify::tests::a_full_verify_at_s_succeeds` loop forever in the
+   executor (pump/probe_pass ↔ AggregateSink dedup on one seeded
+   random query). Reproduced identically on the unported stable binary
+   (2.5 h hang), so the port is not the cause; a parallel lane owns the
+   root-cause. `check.sh`'s stages were run individually: fmt --check,
+   workspace clippy `-D warnings`, `cargo test --workspace` minus the
+   two hung tests (0 failures), doc tests, the release alloc gate, the
+   bench obs clippy + harness/trace_out/tripwires lanes — all exit 0;
+   the cross check took the script's honest-skip branch (no cross C
+   compiler on this host). The full unfiltered script re-runs when the
+   liveness fix lands, at latest with PRD 09's reconciliation.
 
 ## Doc amendments (rule 5)
 

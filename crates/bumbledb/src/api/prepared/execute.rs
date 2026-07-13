@@ -7,7 +7,7 @@ use crate::image::cache::ImageCache;
 use crate::obs;
 use crate::storage::env::ReadTxn;
 
-use super::bind::resolve_predicates;
+use super::bind::resolve_filters;
 use super::finalize::finalize;
 use super::run_join::run_join;
 
@@ -33,7 +33,7 @@ impl<S> PreparedQuery<'_, S> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
-        out.arity = self.column_types.len();
+        out.arity = self.predicate.columns.len();
         {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_params(txn, params)?;
@@ -61,7 +61,7 @@ impl<S> PreparedQuery<'_, S> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
-        out.arity = self.column_types.len();
+        out.arity = self.predicate.columns.len();
         {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_param_args(txn, args)?;
@@ -133,7 +133,7 @@ impl<S> PreparedQuery<'_, S> {
             &mut self.row_scratch,
             &mut self.resolve_memo,
             txn,
-            &self.column_types,
+            &self.predicate.columns,
             self.all_words,
             out,
         )
@@ -163,7 +163,7 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// One rule of the loop: re-aim the sink's slot tables at the rule's
-    /// binding layout, resolve this execution's predicate constants, and
+    /// binding layout, resolve this execution's filter constants, and
     /// run the rule's plan — guard probe or Free Join — into the shared
     /// sink. `Ok(false)` = the positive-occurrence `Eq` short-circuit (a
     /// dictionary miss or empty set emptied this conjunctive rule; the
@@ -191,7 +191,7 @@ impl<S> PreparedQuery<'_, S> {
         self.bindings.resize(slot_count);
         // The fully-latched fast path: zero pending literals and zero
         // params of any shape means the resolved tables were written
-        // once and are final — `resolve_predicates` is skipped entirely
+        // once and are final — `resolve_filters` is skipped entirely
         // (one cold branch; the latch only removes work).
         let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
         let mut latched = 0u32;
@@ -218,7 +218,7 @@ impl<S> PreparedQuery<'_, S> {
                     true
                 } else {
                     let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
-                    let complete = resolve_predicates(
+                    let complete = resolve_filters(
                         txn,
                         plan,
                         &self.resolved_params,
@@ -275,11 +275,13 @@ impl<S> PreparedQuery<'_, S> {
     /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery.
     fn execute_guard_direct(&mut self, txn: &ReadTxn<'_>, out: &mut ResultBuffer) -> Result<()> {
-        let [PreparedRule::Guard(GuardRule {
-            plan: guard,
-            guard_finds: Some(guard_finds),
-            ..
-        })] = self.program.rules()
+        let [
+            PreparedRule::Guard(GuardRule {
+                plan: guard,
+                guard_finds: Some(guard_finds),
+                ..
+            }),
+        ] = self.program.rules()
         else {
             return Ok(());
         };

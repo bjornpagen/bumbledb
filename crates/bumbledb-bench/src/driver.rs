@@ -8,14 +8,14 @@ use std::path::PathBuf;
 use bumbledb::Db;
 use rusqlite::Connection;
 
-use crate::gen::GenConfig;
+use crate::corpus_gen::GenConfig;
 use crate::harness::Protocol;
 use crate::report;
 use crate::schema::Ledger;
 
 mod bench;
 mod corpus;
-mod gen;
+mod corpus_gen;
 mod merge;
 mod read_family;
 mod scenarios;
@@ -27,7 +27,7 @@ mod write_families;
 
 pub use bench::cmd_bench;
 pub use corpus::{corpus_paths, ensure_corpus, ensure_corpus_with};
-pub use gen::{cmd_gen, cmd_verify};
+pub use corpus_gen::{cmd_gen, cmd_verify};
 pub use merge::cmd_merge;
 pub use scenarios::cmd_scenarios;
 pub use trace::cmd_trace;

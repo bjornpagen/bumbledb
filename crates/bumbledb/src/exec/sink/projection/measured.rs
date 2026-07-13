@@ -9,7 +9,7 @@
 
 use crate::exec::colt::SuffixRun;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, LeafSource};
-use crate::exec::sink::{measure, MeasuredSource, ProjSource, ProjectionSink, ProjectionSources};
+use crate::exec::sink::{MeasuredSource, ProjSource, ProjectionSink, ProjectionSources, measure};
 use crate::image::ColumnView;
 
 impl ProjectionSink {

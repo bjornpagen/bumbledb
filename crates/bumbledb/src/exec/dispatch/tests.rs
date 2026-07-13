@@ -1,5 +1,5 @@
 use super::*;
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{ValueRef, encode_fact};
 use crate::exec::run::Bindings;
 use crate::exec::sink::{AggregateSink, FindSpec, FoldOp, ProjectionSink};
 use crate::image::view::ResolvedWordSource;
@@ -615,9 +615,11 @@ fn full_fact_membership_lookup_with_an_interval_field() {
     assert_eq!(plan.statement, None, "the M path");
     let txn = env.read_txn().expect("txn");
     let mut key = Vec::new();
-    assert!(guard_probe_fact(&plan, &txn, &schema, &[], &mut key)
-        .expect("probe")
-        .is_some());
+    assert!(
+        guard_probe_fact(&plan, &txn, &schema, &[], &mut key)
+            .expect("probe")
+            .is_some()
+    );
 
     // A different interval value is a different fact: miss.
     let other = single(occurrence(
@@ -629,9 +631,11 @@ fn full_fact_membership_lookup_with_an_interval_field() {
     ));
     let plan = classify(&other, &schema).expect("guard probe");
     let mut key = Vec::new();
-    assert!(guard_probe_fact(&plan, &txn, &schema, &[], &mut key)
-        .expect("probe")
-        .is_none());
+    assert!(
+        guard_probe_fact(&plan, &txn, &schema, &[], &mut key)
+            .expect("probe")
+            .is_none()
+    );
 }
 
 #[test]

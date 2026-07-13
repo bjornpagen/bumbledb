@@ -13,8 +13,8 @@
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{AggOp, Atom, Db, FieldId, FindTerm, Query, RelationId, Rule, Term, Value, VarId};
 
-use crate::differential::{run, Op};
-use crate::fixture::{field, TempDir};
+use crate::differential::{Op, run};
+use crate::fixture::{TempDir, field};
 use crate::naive::{Delta, NaiveDb, Tuple};
 
 /// Busy(id u64, person u64, slot interval<u64>);
@@ -68,7 +68,7 @@ fn pack_query(relation: RelationId) -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -281,7 +281,7 @@ fn multi_rule_pack_folds_the_union_differentially() {
             ],
         }],
         negated: vec![],
-        predicates: vec![bumbledb::PredicateTree::Leaf(bumbledb::Comparison {
+        conditions: vec![bumbledb::ConditionTree::Leaf(bumbledb::Comparison {
             op,
             lhs: Term::Var(VarId(2)),
             rhs: Term::Literal(Value::U64(bound)),

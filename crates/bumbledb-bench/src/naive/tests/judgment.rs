@@ -54,6 +54,9 @@ struct Case {
     base: Facts,
     deletes: Facts,
     inserts: Facts,
+    /// The expected verdict — every fixture here is single-violation by
+    /// construction, so the rejection is the singleton set (the runner
+    /// wraps it); the multi-violation sets live in [`citation_set`].
     verdict: Result<(), Violation>,
 }
 
@@ -64,13 +67,18 @@ fn run(schema: &SchemaDescriptor, cases: Vec<Case>) {
             deletes: vec![],
             inserts: case.base.clone(),
         })
-        .unwrap_or_else(|violation| panic!("{}: base commit refused: {violation:?}", case.name));
+        .unwrap_or_else(|violations| panic!("{}: base commit refused: {violations:?}", case.name));
         let before = db.clone();
         let got = db.apply(&Delta {
             deletes: case.deletes.clone(),
             inserts: case.inserts.clone(),
         });
-        assert_eq!(got, case.verdict, "{}", case.name);
+        assert_eq!(
+            got,
+            case.verdict.map_err(|violation| vec![violation]),
+            "{}",
+            case.name
+        );
         if got.is_err() {
             assert_eq!(db, before, "{}: an abort must not apply", case.name);
         }
@@ -311,8 +319,8 @@ fn scalar_key_conflicts() {
 
 mod source_side {
     use super::{
-        field, interval, run, selected, side, source_unsatisfied, Case, FieldId,
-        RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, Value, ValueType,
+        Case, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor,
+        Value, ValueType, field, interval, run, selected, side, source_unsatisfied,
     };
 
     const PARENT: RelationId = RelationId(0);
@@ -702,8 +710,8 @@ mod source_side {
 
 mod target_side {
     use super::{
-        field, interval, run, selected, side, target_required, Case, FieldId, RelationDescriptor,
-        RelationId, SchemaDescriptor, StatementDescriptor, Value, ValueType,
+        Case, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor,
+        Value, ValueType, field, interval, run, selected, side, target_required,
     };
 
     const TARGET2: RelationId = RelationId(0);
@@ -1049,5 +1057,99 @@ mod target_side {
                 },
             ],
         );
+    }
+}
+
+// ---------- the multi-violation citation set ----------
+//
+// One delta breaking SEVERAL statements at once (the ops fuzz target's
+// first finding, docs/prd-crucible/12-fuzz-ops.md § conflict — resolved
+// by representation): a rejection IS the complete violation set, sorted
+// by materialized statement order, on both oracles. The model's
+// `violations` and `apply`'s rejection are one derivation.
+mod citation_set {
+    use super::*;
+
+    const P1: RelationId = RelationId(0);
+    const P2: RelationId = RelationId(1);
+    const C: RelationId = RelationId(2);
+
+    /// P1(id), P2(id), C(x, y); C(x) <= P1(id) is statement 0 and
+    /// C(y) <= P2(id) statement 1 (no fresh fields, so the declared
+    /// statements open the materialized order).
+    fn schema() -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: None,
+                    name: "P1".into(),
+                    fields: vec![field("id", ValueType::U64)],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "P2".into(),
+                    fields: vec![field("id", ValueType::U64)],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "C".into(),
+                    fields: vec![field("x", ValueType::U64), field("y", ValueType::U64)],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Containment {
+                    source: side(C, &[0], &[]),
+                    target: side(P1, &[0], &[]),
+                },
+                StatementDescriptor::Containment {
+                    source: side(C, &[0], &[]),
+                    target: side(P2, &[0], &[]),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn the_complete_set_lists_every_simultaneous_violation_in_statement_order() {
+        let mut db = NaiveDb::new(&schema());
+        db.apply(&Delta {
+            deletes: vec![],
+            inserts: vec![
+                (P1, vec![Value::U64(0)]),
+                (P2, vec![Value::U64(0)]),
+                (C, vec![Value::U64(0), Value::U64(0)]),
+            ],
+        })
+        .expect("the base world commits");
+        let both = Delta {
+            deletes: vec![(P2, vec![Value::U64(0)]), (P1, vec![Value::U64(0)])],
+            inserts: vec![],
+        };
+        assert_eq!(
+            db.violations(&both),
+            vec![target_required(0), target_required(1)],
+            "both broken statements, statement order — regardless of delete order"
+        );
+        // `apply`'s rejection IS the complete set: one derivation.
+        assert_eq!(
+            db.clone().apply(&both),
+            Err(vec![target_required(0), target_required(1)])
+        );
+        // A single-violation delta degenerates to the singleton set.
+        let one = Delta {
+            deletes: vec![(P2, vec![Value::U64(0)])],
+            inserts: vec![],
+        };
+        assert_eq!(db.violations(&one), vec![target_required(1)]);
+        assert_eq!(db.apply(&one), Err(vec![target_required(1)]));
+        // A committing delta has the empty set.
+        let clean = Delta {
+            deletes: vec![
+                (C, vec![Value::U64(0), Value::U64(0)]),
+                (P1, vec![Value::U64(0)]),
+            ],
+            inserts: vec![],
+        };
+        assert_eq!(db.violations(&clean), vec![]);
     }
 }

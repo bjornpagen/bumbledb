@@ -12,7 +12,7 @@
 //! with a changed ψ-relevant non-key field.
 
 use crate::encoding::ValueRef;
-use crate::error::{Direction, Error, Result};
+use crate::error::{Direction, Error, Result, Violation};
 use crate::schema::{
     FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementDescriptor,
     StatementId, ValueType,
@@ -247,13 +247,18 @@ fn base_then_delta(
 
 fn assert_target_violation(result: Result<()>, statement: StatementId, source_fact: &[u8]) {
     let err = result.unwrap_err();
-    let Error::ContainmentViolation {
-        statement: named,
-        direction,
-        fact,
-    } = &err
+    let Error::CommitRejected { violations } = &err else {
+        panic!("expected a rejected commit, got {err:?}");
+    };
+    let [
+        Violation::Containment {
+            statement: named,
+            direction,
+            fact,
+        },
+    ] = violations.as_slice()
     else {
-        panic!("expected a containment violation, got {err:?}");
+        panic!("expected one containment citation, got {violations:?}");
     };
     assert_eq!(*named, statement);
     assert_eq!(*direction, Direction::TargetRequired);

@@ -116,7 +116,7 @@ direction-divergence lesson, generalized): wherever both oracles reject, the
 verdicts compare *whole* — the judgment verdict with statement id and `Direction`,
 `MeasureOfRay` and aggregate overflow as query verdicts through the differential
 runner, and the roster rejections against the naive model's own
-from-the-definition computation: a cap-exceeding predicate tree must be
+from-the-definition computation: a cap-exceeding condition tree must be
 `DnfExceedsRules` with `produced` equal to the naive DNF width (leaf = 1, `And` =
 product, `Or` = sum), a program whose every disjunct vanishes is the empty union,
 and the vacuous masks (EMPTY and FULL) are the mask-cardinality rejections. A
@@ -324,7 +324,7 @@ time the emulation, not the engine.
   head rows across rules (the union's
   teeth), and the multi-rule aggregate union fold (`rules ∧ aggregate`, at least
   once per run); **the measure** in all three construct kinds — find position,
-  order predicate, and `Sum`/`Min`/`Max` fold (`Sum` under a duration bound, the
+  order condition, and `Sum`/`Min`/`Max` fold (`Sum` under a duration bound, the
   same Sum-range duty) — over the ray-free U64 window lane, with ray-bearing
   measure parity in the naive lane; **`Allen` masks** as named composites, all 13
   singletons, and random masks (every basic reachable through some literal mask
@@ -336,11 +336,23 @@ time the emulation, not the engine.
   Empty relations are covered by the verify run's **empty-store pass**: every
   family plus a seeded randomized slice runs against a zero-row store pair each
   verify — every gate false, every scan empty, every aggregate folding nothing.
+- **The entropy seam** (`corpus_gen::rng`): every generator draw goes through
+  one closed sum — `Rng::Seeded` (the bench/differential arm, the seeded
+  stream above) and `Rng::Bytes` (the fuzzer arm: draws consume a fuzzer's
+  byte string; exhaustion falls back to a deterministic zero tail, never a
+  panic) — two sources, one generation path, with the corpus digest pinning
+  the seeded arm byte-identically across the seam. The fuzz lanes generate at
+  `Scale::Tiny`, the scale ladder's fuzz-iteration point (ledger: 1 024
+  postings / 32 instruments / 8 orgs; calendar: 32 persons with 16-segment
+  max chains — everything else derives as at S/M/L), sized so a full
+  build-store → ops → oracles iteration is milliseconds; Tiny is a
+  first-class scale under the same by-construction invariants, not a
+  special-cased path.
 - **The algebra oracle rows in every verify run** (the naive lane's extension):
   multi-rule programs replayed engine-vs-naive, the naive model evaluating rules
   **directly** — the union of per-rule binding sets from the definition, sharing
   no lowering, kernel, or sweep code with the engine (the independence law: the
-  model imports the engine's *types* only); seeded random predicate **trees to
+  model imports the engine's *types* only); seeded random condition **trees to
   depth 3**, the naive model evaluating the *input tree* while the engine
   evaluates the lowered rules — the differential is the DNF-lowering proof — with
   the cap-exceeders and vanished programs in the error-parity cases above;
@@ -389,12 +401,159 @@ time the emulation, not the engine.
   (`50-storage.md`); full round-trip (export → fresh database → import in
   dependency-cluster order → oracle-equal results). ETL is the migration story; an
   ETL bug is a data-loss bug.
-- **Encoding round-trip fuzzing is retained** (decision: the one fuzz target that
-  earns its place — order-preserving encodings and composite guard keys are where a
+- **Encoding round-trip fuzzing is retained** (decision: the one *in-tree* fuzz
+  target — order-preserving encodings and composite guard keys are where a
   boundary bug corrupts sort order silently; i64::MIN, empty bytes, max-length
   values, and now interval starts/ends at element extremes and `start+1 == end`
   minimal intervals). Executor differential fuzzing is subsumed by the seeded
-  generator above.
+  generator above; the coverage-guided campaign over the public API lives in the
+  detached `fuzz/` crate (the fuzzing charter, below).
+
+## The fuzzing charter
+
+The detached `fuzz/` crate (cargo-fuzz layout, its own workspace — the
+workspace gates never build fuzz artifacts) is the adversary-first lane:
+coverage-guided, structure-aware generation through the entropy seam
+(`Rng::Bytes` steering the same `corpus_gen` generators the seeded lanes
+run, at `Scale::Tiny`), driving the REAL public API against the oracles
+this engine already owns. The harness owns no logic worth fuzzing
+(refusal: we do not fuzz the harness — a fuzzer for the judge has no
+judge); generation arms live in `bumbledb-bench`'s `corpus_gen`, and each
+target in `fuzz/fuzz_targets/` is one thin call into one shared-harness
+runner.
+
+- **Targets** (one entry point each): `theory` — schema acceptance over
+  the random-descriptor arm (`corpus_gen::theorygen`): structurally-free
+  descriptors, deliberately-invalid shapes alongside valid ones, judged
+  by `Db::create`. `ops` — the op-stream flagship: generated lifecycle
+  sequences (`corpus_gen::opgen`) over a ten-verb alphabet (insert,
+  delete, and mixed batches; commit; rollback; prepared execution with
+  live params; re-prepare; view read; reopen from disk; `verify_store`)
+  against the live engine with the naive model in lockstep, under five
+  oracles — commit-verdict parity by strict equality of the COMPLETE
+  violation sets, order included (a rejection IS the sealed set on both
+  sides — `30-dependencies.md`), set-semantic query parity, reopen equivalence
+  over full relation contents, `verify_store` green after every commit
+  and reopen, and rejected-commits-change-nothing. `query` — three-way parity per iteration over a
+  cached Tiny target corpus: querygen's valid-by-construction arm
+  compared across the prepared engine, the naive model, and the `SQLite`
+  lane where the ψ-subset mapping expresses the shape (drops counted and
+  logged, never silent), plus a hostile structurally-free-IR arm
+  (`corpus_gen::irgen`) under the validation-totality oracle and
+  prepare/execute determinism. `rewrites` — the dual-pipeline
+  differential: every query × draw executed through the rewritten
+  pipeline and the rewrite-free one (the `chase-off`/`fold-off`
+  thread-local switches, one build — cargo refuses a dual-build
+  dependency on one package), demanding identical result sets: the
+  rewrite layers continuously proven semantics-preserving, never
+  assumed. `crash` — durability under torn commits: an ops prefix plus
+  one victim commit, replayed in a CHILD process that aborts at a drawn
+  crashpoint (the commit pipeline's named phase boundaries,
+  `50-storage.md` § crashpoints — engine hooks under the `crashpoint`
+  feature, env-var-armed, compiled to nothing by default); the parent
+  autopsies the corpse: reopen succeeds, `verify_store` green, full
+  contents equal the naive model at the point's expected side (prefix
+  before `mdb_txn_commit`, post after — all-or-nothing), and the victim
+  commit replays to the post state. A deterministic sweep
+  (`fuzz/tests/crash.rs`) kills every crashpoint × a small ops-prefix
+  matrix under plain `cargo test`; the fuzzer explores prefixes and
+  victims around them.
+- **Oracle discipline** (every iteration, all of them): *no-panic
+  totality* — hostile input yields `Ok` or a typed error, any
+  panic/abort is a finding by definition; *typed rejection* — every
+  `Err` is a named variant, matched TOTALLY in the harness (zero `_ =>`
+  arms over engine error enums, so a new variant is a compile error —
+  the matcher is a census instrument); *judgment determinism* — the same
+  input judged twice on fresh stores yields the identical verdict, and
+  accepted schemas reopen cleanly with `verify_store` passing on the
+  empty store.
+- **Corpus policy**: `fuzz/corpus/<target>/` is a checked-in seed corpus
+  from a small deterministic generator run; `fuzz/artifacts/` is
+  gitignored. Every real counterexample is minimized (`cargo fuzz tmin`)
+  and pinned as a permanent regression test in the crate that owns the
+  bug.
+- **Trophy ledger**: `fuzz/README.md` — one row per real finding (date,
+  target, root cause, the pinning test).
+- **Operations** (docs/prd-crucible/16-ci-firepower.md): `scripts/fuzz.sh`
+  is the firepower launcher — no args runs all five targets time-sliced
+  in libFuzzer fork mode across the machine's 12 cores (the all-cores
+  default IS the default); `fuzz.sh <target> [minutes]` bounds one
+  target; `fuzz.sh --asan <target>` is the sanitizer lane (query carries
+  `-rss_limit_mb=4096` there, the PRD 15 disposition). After every
+  session the launcher minimizes the target's corpus (`cargo fuzz cmin`)
+  and appends one line to `fuzz/SESSIONS.md` — the honest zero
+  ("0 findings in N executions") is a recorded result. **The trophy
+  pipeline:** an artifact that reproduces is minimized, becomes a NAMED
+  `#[test]` in the crate that owns the bug (input inlined or checked
+  into `fuzz/trophies/<target>/`, replayed by `fuzz/tests/replay*.rs`),
+  gets its ledger row, and THEN the artifact is deleted; an artifact
+  that triages environmental (the worked example: the `Lmdb(Io(EINVAL))`
+  storms under concurrent compile load — every artifact replayed clean
+  on a quiet machine) gets its disposition recorded in `SESSIONS.md`,
+  then deleted. Triage is structurally not optional: the launcher
+  REFUSES to start while `fuzz/artifacts` holds any file. CI
+  (`.github/workflows/ci.yml`) runs the check lane (`scripts/check.sh`)
+  and the corpus-replay lane (plain `cargo test` in `fuzz/`) per push,
+  and the Miri lane (`scripts/miri.sh`) on a nightly cron (measured
+  12.5 min locally — over the per-push budget). CI deliberately runs NO
+  benches, NO asm gates, and NO long fuzz sessions: timing and codegen
+  gates are local measurement discipline on the pinned M2 Max, and
+  firepower is the owner's machine (the human work register).
+
+## Small worlds, Miri, and ASAN — the charter's complement
+
+Where a domain is finite and small, random exploration is strictly worse than
+exhaustive enumeration: enumerate it once and close the question forever
+(docs/prd-crucible/15-exhaustive-miri.md). Three small worlds are enumerated as
+plain `#[test]`s, each carrying its domain-size arithmetic in a comment — the
+loop bound is the claim, never a sample — and are therefore **never fuzzed**
+(a fuzz iteration inside an exhaustively closed domain is spent evidence):
+
+- **The Allen mask space** (`exec/kernel/tests.rs`, `allen.rs` tests): all
+  2¹³ = 8,192 masks × all 784 configuration classes (every ordered pair of
+  nonempty intervals over an 8-value endpoint set, which realizes every
+  4-endpoint order type, rays and unsigned extremes included) — the vectorized
+  configuration kernel agrees with the scalar classifier on every cell; the
+  converse involution over the full mask space; and composition-table spot
+  laws over the exhaustively enumerated 13 × 13 table (46,656 triples on a
+  9-value grid — a witness needs at most 6 distinct endpoints, so the
+  enumerated table is the whole table, not a sample).
+- **The closed-target bitset** (`schema/tests/closed_member.rs`): every
+  in-range id 0..=255 plus the out-of-range probes × 834 structured `[u64; 4]`
+  patterns — the prefix and suffix families (covering empty, all-set, and the
+  63/64, 127/128, 191/192 word boundaries), every singleton, and random fill —
+  judged against a naive bit walk sharing none of the word/shift arithmetic.
+- **Encoding order preservation** (`encoding/tests.rs`): per value type, the
+  canonical encoding preserves value order over an exhaustive small domain,
+  all ordered pairs checked (order preservation and injectivity at once):
+  i64 and u64 at byte granularity across the sign boundary (derived 677- and
+  605-value domains), interval endpoint-pair order on dense grids (rays and
+  extremes included, both element types), `bytes<N>` prefix laws over all 84
+  NUL-free strings of length ≤ 3, Bool's whole 2-value domain, and the str
+  intern-id word (id order only — string-value order stays refused,
+  `10-data-model.md`).
+
+**The Miri lane** (`scripts/miri.sh`) covers the one axis neither oracle nor
+fuzzer sees: undefined behavior that happens to produce right answers today.
+Its scope is the honest FFI boundary — LMDB is foreign code Miri cannot
+cross, so every Db-touching test is out (each exclusion is commented with its
+reason in the script). The lane interprets the pure modules — encodings, the
+portable `std::simd` kernels and their scalar twins, the SWAR probe
+primitives, condition folding, the Allen algebra and scalar classifier, the
+closed-member bitset, the wordmap — on the native target AND cross-interpreted
+`--target x86_64-unknown-linux-gnu`, which checks endianness and width
+assumptions in the scalar kernels for free. The hand-NEON Allen kernel is
+non-interpretable (intrinsics, the same wall as FFI): natively its batch tests
+are skipped; the cross pass runs them through the scalar reference dispatch,
+so the whole Allen kernel surface is interpreted on one target or the other.
+
+**The ASAN lane** covers what Miri cannot reach: the FFI boundary itself.
+Every fuzz target runs under `cargo fuzz run <target> -s address` — LMDB map
+handling, the unsafe key-slice reads at the heed seam, the crash target's
+child-process autopsies — with zero suppressions (a suppression is a conflict
+block, not a shrug). PRD 15 proved every target clean for 1k iterations; the
+long-exploration sessions of the human work register inherit the flag through
+the PRD 16 orchestrator.
 
 ## Golden set
 
@@ -479,8 +638,9 @@ the hot parameter; gates cite p95 where that matters.
 ## What we deliberately do not have
 
 Line-count gates. PRD-map checks. Banned-identifier greps. Coverage percentages.
-Allocation budget *tables*. Failpoint matrices (the crash/reopen family above replaces
-them with fewer, sharper tests). Trigger-emulated constraints in the oracle. The gate
+Allocation budget *tables*. Filesystem fault injection (LMDB owns that layer; the
+crashpoint table and the crash/reopen family kill the process between logical phases
+instead — fewer, sharper tests). Trigger-emulated constraints in the oracle. The gate
 surface is: `cargo fmt` / `clippy -D warnings` / `cargo test`, the two oracles, the
 differential suite, the allocation boolean, and the EXPLAIN family. A gate earns its
 place by catching a real bug class.

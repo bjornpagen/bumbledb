@@ -1,5 +1,5 @@
 use bumbledb::{
-    Atom, CmpOp, Comparison, FieldId, FindTerm, PredicateTree, Query, Rule, Value, VarId,
+    Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, Query, Rule, Value, VarId,
 };
 
 use super::ids;
@@ -41,13 +41,13 @@ pub(super) fn five_way() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(5),
                 rhs: param(2),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(5),
                 rhs: param(3),

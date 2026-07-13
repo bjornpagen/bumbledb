@@ -18,6 +18,6 @@ pub(super) fn costars() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }

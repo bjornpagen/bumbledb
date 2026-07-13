@@ -39,9 +39,7 @@ impl DistinctCounter {
     }
 
     fn count_words(&mut self, column: &[u64]) -> u64 {
-        for flag in &mut self.occupied {
-            *flag = false;
-        }
+        self.occupied.fill(false);
         let mask = self.slots.len() - 1;
         let mut distinct = 0u64;
         for &word in column {

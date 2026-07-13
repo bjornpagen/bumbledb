@@ -2,7 +2,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use crate::gen::GenConfig;
+use crate::corpus_gen::GenConfig;
 use crate::harness::{self, Measurement};
 use crate::schema::schema;
 use crate::writebench::{non_posting_relations, write_protocol};

@@ -41,20 +41,27 @@ fn singleton_mask(rng: &mut Rng) -> AllenMask {
 /// system's whole space, not just the named composites (the vacuous
 /// EMPTY and FULL masks are roster rejections, exercised by the verify
 /// error-parity lane, so the generator never emits them).
+///
+/// Total by repair, never by rejection sampling: the fuzzer arm's
+/// exhausted `Rng::Bytes` yields a CONSTANT zero tail, so a redraw
+/// loop on a rejected draw spins forever (the ops target's second
+/// finding — a generator hang, not an engine one). EMPTY gains the
+/// lowest bit, FULL drops one drawn bit; every other draw is itself.
 fn random_mask(rng: &mut Rng) -> AllenMask {
-    loop {
-        let bits = u16::try_from(rng.range(1 << 13)).expect("13 bits");
-        let mask = AllenMask::new(bits).expect("13 bits are in range");
-        if !mask.is_empty() && !mask.is_full() {
-            return mask;
-        }
-    }
+    let bits = match u16::try_from(rng.range(1 << 13)).expect("13 bits") {
+        0 => 1,
+        0x1FFF => 0x1FFF & !(1 << rng.range(13)),
+        drawn => drawn,
+    };
+    let mask = AllenMask::new(bits).expect("13 bits are in range");
+    assert!(!mask.is_empty() && !mask.is_full(), "the repair is total");
+    mask
 }
 
-use crate::gen::{GenConfig, Rng};
-use crate::querygen::interval_data;
-use crate::querygen::target::{self, ids, Domains};
+use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::Builder;
+use crate::querygen::interval_data;
+use crate::querygen::target::{self, Domains, ids};
 
 /// The collision-group pool query literals draw from — small enough
 /// that every drawn group exists at every scale.
@@ -197,7 +204,7 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         b.bind(second, ids::mandate::ORG, Term::Var(org));
         let active = b.bind_var(second, ids::mandate::ACTIVE);
         let rhs = Term::Literal(i64_interval(b, rng, cfg));
-        b.predicates.push(Comparison {
+        b.conditions.push(Comparison {
             op: allen(AllenMask::INTERSECTS),
             lhs: Term::Var(active),
             rhs,
@@ -252,7 +259,7 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         let _payload = pin_transfer(b, rng, cfg, domains, second);
         let window = b.bind_var(second, ids::transfer::WINDOW);
         let rhs = Term::Literal(u64_interval(b, rng, cfg));
-        b.predicates.push(Comparison {
+        b.conditions.push(Comparison {
             op: allen(AllenMask::INTERSECTS),
             lhs: Term::Var(window),
             rhs,
@@ -331,7 +338,7 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
         };
         (lhs, rhs)
     };
-    b.predicates.push(Comparison {
+    b.conditions.push(Comparison {
         op,
         lhs: Term::Var(lhs),
         rhs,
@@ -476,7 +483,7 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
             let id = b.bind_var(transfer, ids::transfer::ID);
             b.find_var(id);
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
-            b.predicates.push(Comparison {
+            b.conditions.push(Comparison {
                 op: crate::querygen::shapes::order_op(rng),
                 lhs: Term::Duration(window),
                 rhs: Term::Literal(Value::U64(rng.range(3 * interval_data::GROUP_SPAN))),
@@ -493,7 +500,7 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
             if op == bumbledb::AggOp::Sum {
                 // The Sum bound: durations capped at a group span, so
                 // the sum tops out near transfers × 4096 ≪ 2⁶³.
-                b.predicates.push(Comparison {
+                b.conditions.push(Comparison {
                     op: bumbledb::CmpOp::Le,
                     lhs: Term::Duration(window),
                     rhs: Term::Literal(Value::U64(4 * interval_data::GROUP_SPAN)),
@@ -511,9 +518,30 @@ fn push_boundary_cmp(b: &mut Builder, rng: &mut Rng, var: VarId, literal: Value,
     } else {
         (CmpOp::Contains, Term::Literal(point))
     };
-    b.predicates.push(Comparison {
+    b.conditions.push(Comparison {
         op,
         lhs: Term::Var(var),
         rhs,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::random_mask;
+    use crate::corpus_gen::Rng;
+
+    /// The fuzz campaign's generator-hang pin (ops finding 2): an
+    /// exhausted byte source draws zero forever, so `random_mask` must
+    /// be total on a CONSTANT stream — rejection sampling here once
+    /// spun the fuzzer for minutes per input. Both vacuous constants
+    /// (EMPTY's zero draw; the all-ones FULL draw) must terminate with
+    /// a legal mask.
+    #[test]
+    fn random_mask_is_total_on_constant_streams() {
+        let empty_tail = random_mask(&mut Rng::from_bytes(&[]));
+        assert!(!empty_tail.is_empty() && !empty_tail.is_full());
+        let full: Vec<u8> = 0x1FFFu64.to_le_bytes().repeat(4);
+        let full_tail = random_mask(&mut Rng::from_bytes(&full));
+        assert!(!full_tail.is_empty() && !full_tail.is_full());
+    }
 }

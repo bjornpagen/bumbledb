@@ -13,7 +13,7 @@ use crate::storage::env::ReadTxn;
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
 )] // the prepared query's split borrows;
-   // bundling them into a struct would only rename the same ten things
+// bundling them into a struct would only rename the same ten things
 pub(super) fn run_join<C: crate::exec::run::Counters>(
     plan: &crate::plan::fj::ValidatedPlan,
     schema: &Schema,
@@ -54,7 +54,7 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
                     )
                 })
             }),
-        "Eq-constant predicates never reach a positive occurrence's view filters"
+        "Eq-constant conditions never reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         // A discharged occurrence (chase-eliminated or chase-folded) is

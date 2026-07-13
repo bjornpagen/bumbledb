@@ -1,5 +1,5 @@
 use super::R;
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{ValueRef, encode_fact};
 use crate::image::build;
 use crate::schema::{
     FieldDescriptor, Generation, RelationDescriptor, Schema, SchemaDescriptor, ValueType,

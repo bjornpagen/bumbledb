@@ -1,5 +1,5 @@
 use bumbledb::{
-    Atom, FieldId, FindTerm, ParamId, PredicateTree, Query, RelationId, Rule, Term, VarId,
+    Atom, ConditionTree, FieldId, FindTerm, ParamId, Query, RelationId, Rule, Term, VarId,
 };
 
 use crate::querygen::Builder;
@@ -111,10 +111,10 @@ impl Builder {
             // The generator emits flat conjunctions — leaves only. The
             // tree grammar's OR shapes are proven by the DNF property
             // suite against the naive model (`naive/tests/dnf.rs`).
-            predicates: self
-                .predicates
+            conditions: self
+                .conditions
                 .into_iter()
-                .map(PredicateTree::Leaf)
+                .map(ConditionTree::Leaf)
                 .collect(),
         })
     }

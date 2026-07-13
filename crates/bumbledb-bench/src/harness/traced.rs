@@ -11,7 +11,7 @@ pub fn traced_sample<F>(f: &mut F) -> Result<(u64, Vec<TraceEvent>), String>
 where
     F: FnMut() -> Result<u64, String>,
 {
-    use bumbledb::obs::{names, Category};
+    use bumbledb::obs::{Category, names};
     bumbledb::obs::start_capture();
     let span = bumbledb::obs::span(names::SAMPLE, Category::Harness);
     let result = f();
@@ -32,7 +32,7 @@ where
     T: FnMut() -> Result<(), String>,
     F: FnMut() -> Result<u64, String>,
 {
-    use bumbledb::obs::{names, Category};
+    use bumbledb::obs::{Category, names};
     bumbledb::obs::start_capture();
     let span = bumbledb::obs::span(names::TOUCH, Category::Harness);
     let touched = touch();

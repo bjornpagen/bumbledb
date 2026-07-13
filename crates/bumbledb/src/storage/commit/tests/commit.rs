@@ -1,11 +1,11 @@
 use super::*;
 
-use crate::error::Error;
+use crate::error::{Error, Violation};
 use crate::schema::{FieldId, RelationId};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
-use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
+use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 use crate::testutil::TempDir;
 
 // ---------- 50-storage § Write path: full commit ----------
@@ -32,11 +32,14 @@ fn scalar_key_conflict_in_one_delta_aborts_with_the_statement_id() {
     assert!(
         matches!(
             &err,
-            Error::FunctionalityViolation {
-                statement: KEYED_KEY,
-                incumbent: None,
-                fact,
-            } if **fact == a[..] || **fact == b[..]
+            Error::CommitRejected { violations } if matches!(
+                violations.as_slice(),
+                [Violation::Functionality {
+                    statement: KEYED_KEY,
+                    incumbent: None,
+                    fact,
+                }] if **fact == a[..] || **fact == b[..]
+            )
         ),
         "{err:?}"
     );
@@ -60,11 +63,14 @@ fn scalar_key_conflict_across_deltas_aborts_with_the_statement_id() {
     assert!(
         matches!(
             &err,
-            Error::FunctionalityViolation {
-                statement: KEYED_KEY,
-                incumbent: None,
-                fact,
-            } if **fact == contender[..]
+            Error::CommitRejected { violations } if matches!(
+                violations.as_slice(),
+                [Violation::Functionality {
+                    statement: KEYED_KEY,
+                    incumbent: None,
+                    fact,
+                }] if **fact == contender[..]
+            )
         ),
         "{err:?}"
     );
@@ -286,12 +292,16 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
     // must write nothing at all.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert!(!delta
-        .insert(&view, TARGET, &target_fact(&schema, 5))
-        .expect("insert"));
-    assert!(!delta
-        .delete(&view, TARGET, &target_fact(&schema, 9))
-        .expect("delete"));
+    assert!(
+        !delta
+            .insert(&view, TARGET, &target_fact(&schema, 5))
+            .expect("insert")
+    );
+    assert!(
+        !delta
+            .delete(&view, TARGET, &target_fact(&schema, 9))
+            .expect("delete")
+    );
     drop(view);
     let report = commit(delta, &env).expect("commit");
     assert!(!report.changed);

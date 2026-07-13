@@ -1,6 +1,6 @@
 use super::stamp_value::stamp_value_with;
 use super::*;
-use crate::gen::Scale;
+use crate::corpus_gen::Scale;
 
 fn scratch(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("bumbledb-bench-verify-{tag}"))
@@ -8,7 +8,7 @@ fn scratch(tag: &str) -> PathBuf {
 
 fn cfg(tag: &str) -> VerifyConfig {
     VerifyConfig {
-        gen: GenConfig {
+        corpus_gen: GenConfig {
             seed: 1,
             scale: Scale::S,
         },
@@ -27,7 +27,7 @@ fn the_stamp_tracks_every_ingredient() {
     let baseline = stamp_value(&base);
     assert_eq!(baseline, stamp_value(&base), "deterministic");
     let mut seed = base.clone();
-    seed.gen.seed = 2;
+    seed.corpus_gen.seed = 2;
     assert_ne!(stamp_value(&seed), baseline, "seed is an ingredient");
     let mut cases = base.clone();
     cases.random_cases = 51;

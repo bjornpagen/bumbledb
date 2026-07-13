@@ -1,6 +1,6 @@
 use super::{FjPlan, Node, Subatom};
-use crate::ir::normalize::{NormalizedQuery, OccId};
 use crate::ir::VarId;
+use crate::ir::normalize::{NormalizedQuery, OccId};
 use crate::plan::planner::JoinOrder;
 use std::collections::BTreeSet;
 

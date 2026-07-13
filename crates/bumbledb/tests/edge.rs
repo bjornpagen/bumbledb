@@ -85,7 +85,7 @@ fn cyclic_containments_insert_in_one_transaction() {
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(err, Error::ContainmentViolation { .. }));
+    assert!(matches!(err, Error::CommitRejected { .. }));
 }
 
 /// Empty strings intern and round-trip (the reverse dictionary entry is
@@ -203,7 +203,7 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(err, Error::ContainmentViolation { .. }));
+    assert!(matches!(err, Error::CommitRejected { .. }));
 }
 
 /// A compound key plus a containment over 1-byte fields (bool, bool):
@@ -297,7 +297,7 @@ fn one_byte_compound_guards() {
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(err, Error::ContainmentViolation { .. }));
+    assert!(matches!(err, Error::CommitRejected { .. }));
 
     // The target side holds too: deleting the required pair aborts.
     let err = db
@@ -306,7 +306,7 @@ fn one_byte_compound_guards() {
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(err, Error::ContainmentViolation { .. }));
+    assert!(matches!(err, Error::CommitRejected { .. }));
 }
 
 /// Nullary use of a relation as a nonemptiness gate, end to end: a
@@ -346,7 +346,7 @@ fn zero_binding_gate_with_global_count() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = db.prepare(&query).expect("prepare");
 
@@ -380,7 +380,7 @@ fn mixed_params_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 

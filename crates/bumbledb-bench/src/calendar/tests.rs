@@ -1,9 +1,9 @@
 use bumbledb::{Db, Interval, ResultBuffer};
 
-use crate::calendar::gen::{chain, work_chain, CalSizes, CAL_BASE, CAL_HORIZON};
-use crate::calendar::{corpus, families, ids, schema, Scheduling};
+use crate::calendar::corpus_gen::{CAL_BASE, CAL_HORIZON, CalSizes, chain, work_chain};
+use crate::calendar::{Scheduling, corpus, families, ids, schema};
+use crate::corpus_gen::{GenConfig, Scale};
 use crate::families::{param_args, set_bindings};
-use crate::gen::{GenConfig, Scale};
 use crate::translate::translate;
 
 const CFG: GenConfig = GenConfig {
@@ -230,7 +230,12 @@ fn the_hand_coalesce_matches_pack() {
         .expect("registered");
     let query = (family.query)();
     let mut prepared = db.prepare(&query).expect("prepare");
-    let types: Vec<bumbledb::schema::ValueType> = prepared.column_types().cloned().collect();
+    let types: Vec<bumbledb::schema::ValueType> = prepared
+        .predicate()
+        .columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect();
     let draw = families::unit_draw("free_busy", CFG.seed, &sizes);
     let args = param_args(&draw);
     let mut buffer = ResultBuffer::new();

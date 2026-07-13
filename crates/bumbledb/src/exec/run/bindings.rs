@@ -52,9 +52,7 @@ impl Bindings {
         #[cfg(debug_assertions)]
         {
             self.current += 1;
-            for epoch in &mut self.epochs {
-                *epoch = self.current;
-            }
+            self.epochs.fill(self.current);
         }
     }
 

@@ -36,7 +36,7 @@ fn by_account_rule(account: u64) -> Rule {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
@@ -73,7 +73,12 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
         assert_eq!(rule.resolved_filters.len(), 1, "one occurrence per rule");
     }
     assert_eq!(
-        prepared.column_types().collect::<Vec<_>>(),
+        prepared
+            .predicate()
+            .columns
+            .iter()
+            .map(|column| &column.ty)
+            .collect::<Vec<_>>(),
         vec![&ValueType::String, &ValueType::I64],
         "the head's result row types the program once"
     );
@@ -196,7 +201,7 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![
@@ -247,7 +252,7 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Sum)],
@@ -307,7 +312,7 @@ fn the_all_count_head_counts_the_singleton_union() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
@@ -395,10 +400,10 @@ fn a_guard_rule_unions_through_the_sink() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let mut rule0 = by_account_rule(3);
-    rule0.predicates.clear(); // no param: the guard rule binds none
+    rule0.conditions.clear(); // no param: the guard rule binds none
     let query = Query {
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule0, guard_rule],
@@ -444,7 +449,7 @@ fn arg_restriction_across_rules_is_the_typed_validation_refusal() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![HeadTerm::Aggregate(crate::ir::HeadOp::ArgMax)],

@@ -17,15 +17,15 @@
 //!    once) and fewer kernel passes.
 //! 2. **Contradiction detection** — each rule judged on **constants
 //!    only**, each producing a statically-empty verdict for the RULE
-//!    ([`super::NormalizedQuery::dead`]), with the killing predicate
+//!    ([`super::NormalizedQuery::dead`]), with the killing condition
 //!    rendered for EXPLAIN: an empty range summary; `Eq` to two distinct
 //!    constants on one slot; an `Eq` constant outside the range summary;
 //!    a membership set empty after sentinel-trim, or intersected with an
-//!    `Eq` constant not in it; an `Allen` literal-vs-literal predicate
+//!    `Eq` constant not in it; an `Allen` literal-vs-literal condition
 //!    `classify` refutes (both operands constant intervals); a constant
 //!    point in a constant interval that fails.
 //!
-//! `Ne` and param-bearing predicates never fold — `Ne` prunes nothing
+//! `Ne` and param-bearing conditions never fold — `Ne` prunes nothing
 //! statically, and params are stage-3 (bind-time) values a stage-2 pass
 //! must not judge. Interval variables fold via their two slot summaries
 //! independently — no cross-slot reasoning in v0 (the constructor
@@ -44,12 +44,14 @@ use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, Value};
 use crate::schema::{FieldId, IntervalElement, Relation, Schema, ValueType};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fold-off"))]
 thread_local! {
     /// The test-only off switch (the chase-off-switch precedent,
     /// `plan/chase.rs`): the fold-preservation differential runs the
     /// same query folded and unfolded. Reachable from this crate's own
-    /// tests only; no production or benchmark build can see it, and no
+    /// tests and — through the `fold-off` fuzz-oracle feature, enabled
+    /// only by the detached fuzz crate's `rewrites` dual-pipeline
+    /// differential — from nowhere a production build can see: no
     /// runtime mode ships.
     /// Thread-local because the test harness runs tests concurrently.
     static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -57,7 +59,7 @@ thread_local! {
 
 /// Runs `f` with the fold bypassed on this thread — the fold-preservation
 /// differential's off switch. Restores on unwind.
-#[cfg(test)]
+#[cfg(any(test, feature = "fold-off"))]
 pub fn with_fold_disabled<T>(f: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
@@ -74,7 +76,7 @@ pub fn with_fold_disabled<T>(f: impl FnOnce() -> T) -> T {
 /// the first contradiction's rendered picture — the rule's
 /// statically-empty verdict ([`super::NormalizedQuery::dead`]).
 pub(super) fn fold(schema: &Schema, occurrences: &mut [Occurrence]) -> Option<String> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "fold-off"))]
     if DISABLED.with(std::cell::Cell::get) {
         return None;
     }
@@ -189,7 +191,7 @@ fn set_refutes_eq(words: &[u64], eq: Option<u64>) -> bool {
     }
 }
 
-/// Rule (e): a literal-vs-literal `Allen` predicate `classify` refutes —
+/// Rule (e): a literal-vs-literal `Allen` condition `classify` refutes —
 /// both operands constant intervals (encoded endpoint words preserve
 /// value order, so classification over words equals classification over
 /// values — `crate::allen::classify_bounds`). Degenerate encoded pairs
@@ -277,10 +279,10 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
             return Some(order_filters_picture(relation, *field, &occurrence.filters));
         }
         // Rule (c): the pinned Eq constant lies outside it.
-        if let Some(Const::Word(eq_word)) = eqs.get(field) {
-            if eq_outside_range(*eq_word, summary) {
-                return Some(eq_outside_picture(relation, *field, summary, *eq_word));
-            }
+        if let Some(Const::Word(eq_word)) = eqs.get(field)
+            && eq_outside_range(*eq_word, summary)
+        {
+            return Some(eq_outside_picture(relation, *field, summary, *eq_word));
         }
     }
 
@@ -296,7 +298,7 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
 /// The constant-interval contradiction pass — rules (e) and (f). An
 /// interval slot pair is pinned by a value-equality binding (`Compare`
 /// Eq against an interval constant) or by an `Allen(EQUALS)` literal
-/// predicate — the canonical form interval `Eq` lowers to
+/// condition — the canonical form interval `Eq` lowers to
 /// (`place_comparisons`); a scalar pin comes from the Eq table.
 fn interval_contradictions(
     relation: &Relation,
@@ -315,10 +317,9 @@ fn interval_contradictions(
             other: Const::Interval { start, end },
             mask: MaskConst::Mask(mask),
         } = filter
+            && *mask == AllenMask::EQUALS
         {
-            if *mask == AllenMask::EQUALS {
-                interval_pins.entry(*field).or_insert((*start, *end));
-            }
+            interval_pins.entry(*field).or_insert((*start, *end));
         }
     }
     for filter in filters {
@@ -333,16 +334,16 @@ fn interval_contradictions(
                 other: Const::Interval { start, end },
                 mask: MaskConst::Mask(mask),
             } => {
-                if let Some(pin) = interval_pins.get(field) {
-                    if allen_refuted(*pin, *mask, (*start, *end)) {
-                        return Some(field_allen_picture(
-                            relation,
-                            *field,
-                            *pin,
-                            *mask,
-                            (*start, *end),
-                        ));
-                    }
+                if let Some(pin) = interval_pins.get(field)
+                    && allen_refuted(*pin, *mask, (*start, *end))
+                {
+                    return Some(field_allen_picture(
+                        relation,
+                        *field,
+                        *pin,
+                        *mask,
+                        (*start, *end),
+                    ));
                 }
             }
             // Rule (e), field-vs-field: both sides pinned.
@@ -352,12 +353,11 @@ fn interval_contradictions(
                 mask: MaskConst::Mask(mask),
             } => {
                 if let (Some(lhs), Some(rhs)) = (interval_pins.get(left), interval_pins.get(right))
+                    && allen_refuted(*lhs, *mask, *rhs)
                 {
-                    if allen_refuted(*lhs, *mask, *rhs) {
-                        return Some(fields_allen_picture(
-                            relation, *left, *lhs, *mask, *right, *rhs,
-                        ));
-                    }
+                    return Some(fields_allen_picture(
+                        relation, *left, *lhs, *mask, *right, *rhs,
+                    ));
                 }
             }
             // Rule (f): a constant point against the pinned interval.
@@ -365,10 +365,10 @@ fn interval_contradictions(
                 field,
                 point: ResolvedWordSource::Word(point),
             } => {
-                if let Some(pin) = interval_pins.get(field) {
-                    if point_outside(*pin, *point) {
-                        return Some(point_in_picture(relation, *field, *pin, *point));
-                    }
+                if let Some(pin) = interval_pins.get(field)
+                    && point_outside(*pin, *point)
+                {
+                    return Some(point_in_picture(relation, *field, *pin, *point));
                 }
             }
             // Rule (f), reversed: the pinned scalar against the constant
@@ -377,15 +377,15 @@ fn interval_contradictions(
                 field,
                 outer: Const::Interval { start, end },
             } => {
-                if let Some(Const::Word(point)) = eqs.get(field) {
-                    if point_outside((*start, *end), *point) {
-                        return Some(field_within_picture(
-                            relation,
-                            *field,
-                            *point,
-                            (*start, *end),
-                        ));
-                    }
+                if let Some(Const::Word(point)) = eqs.get(field)
+                    && point_outside((*start, *end), *point)
+                {
+                    return Some(field_within_picture(
+                        relation,
+                        *field,
+                        *point,
+                        (*start, *end),
+                    ));
                 }
             }
             _ => {}

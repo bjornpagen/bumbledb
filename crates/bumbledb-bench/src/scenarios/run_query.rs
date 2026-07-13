@@ -1,5 +1,5 @@
-use bumbledb::schema::ValueType;
 use bumbledb::ResultBuffer;
+use bumbledb::schema::ValueType;
 
 use super::{QueryReport, Scenario, ScenarioQuery, Stores};
 use crate::compare;
@@ -25,7 +25,12 @@ pub(super) fn run_query(
         .db
         .prepare(&query)
         .map_err(|e| format!("{}/{}: prepare: {e:?}", scenario.name, sq.name))?;
-    let types: Vec<ValueType> = prepared.column_types().cloned().collect();
+    let types: Vec<ValueType> = prepared
+        .predicate()
+        .columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect();
     let translated = translate(&query, schema, &[])
         .map_err(|e| format!("{}/{}: {e}", scenario.name, sq.name))?;
 

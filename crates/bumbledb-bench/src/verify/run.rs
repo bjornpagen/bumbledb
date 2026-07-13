@@ -1,15 +1,15 @@
 use super::{
-    stamp_value, Case, Db, Run, VerifyConfig, VerifyFailure, VerifyReport,
-    EMPTY_STORE_RANDOM_CASES, MAX_BUNDLES,
+    Case, Db, EMPTY_STORE_RANDOM_CASES, MAX_BUNDLES, Run, VerifyConfig, VerifyFailure,
+    VerifyReport, stamp_value,
 };
 
 use bumbledb::Value;
 
+use crate::corpus_gen::Rng;
 use crate::families::set_bindings;
-use crate::gen::Rng;
 use crate::naive::ParamValue;
-use crate::querygen::{self, target, ParamDraw};
-use crate::schema::{schema, Ledger};
+use crate::querygen::{self, ParamDraw, target};
+use crate::schema::{Ledger, schema};
 use crate::translate::translate;
 use crate::{corpus, families, sqlmap};
 
@@ -55,20 +55,22 @@ pub fn run_with_sql_override(
 
     eprintln!(
         "verify: loading corpus (seed {}, scale {})",
-        cfg.gen.seed,
-        cfg.gen.scale.label()
+        cfg.corpus_gen.seed,
+        cfg.corpus_gen.scale.label()
     );
     let db = Db::create(&cfg.out_dir.join("db"), Ledger).expect("create store");
-    corpus::load_bumbledb(&db, cfg.gen).expect("load bumbledb");
-    let (conn, _) =
-        corpus::load_sqlite(&cfg.out_dir.join("oracle.sqlite"), cfg.gen).expect("load oracle");
+    corpus::load_bumbledb(&db, cfg.corpus_gen).expect("load bumbledb");
+    let (conn, _) = corpus::load_sqlite(&cfg.out_dir.join("oracle.sqlite"), cfg.corpus_gen)
+        .expect("load oracle");
     eprintln!("verify: loading the calendar corpus");
     let cal_db = Db::create(&cfg.out_dir.join("cal-db"), crate::calendar::Scheduling)
         .expect("create calendar store");
-    crate::calendar::corpus::load_bumbledb(&cal_db, cfg.gen).expect("load calendar");
-    let (cal_conn, _) =
-        crate::calendar::corpus::load_sqlite(&cfg.out_dir.join("cal-oracle.sqlite"), cfg.gen)
-            .expect("load calendar oracle");
+    crate::calendar::corpus::load_bumbledb(&cal_db, cfg.corpus_gen).expect("load calendar");
+    let (cal_conn, _) = crate::calendar::corpus::load_sqlite(
+        &cfg.out_dir.join("cal-oracle.sqlite"),
+        cfg.corpus_gen,
+    )
+    .expect("load calendar oracle");
     run_prepared(cfg, &db, &conn, &cal_db, &cal_conn, override_sql)
 }
 
@@ -108,7 +110,7 @@ pub(super) fn family_lane<S>(
 ) {
     'families: for family in families::all() {
         let query = (family.query)();
-        for params in (family.params)(&cfg.gen) {
+        for params in (family.params)(&cfg.corpus_gen) {
             let translated =
                 translate(&query, schema(), &set_bindings(&params)).expect("families translate");
             let sql = override_sql(family.name).unwrap_or(translated.sql);
@@ -137,11 +139,11 @@ pub(super) fn random_lane<S>(
     label: &str,
     mut on_query: impl FnMut(&bumbledb::Query),
 ) {
-    let mut rng = Rng::new(cfg.gen.seed ^ seed_salt);
+    let mut rng = Rng::new(cfg.corpus_gen.seed ^ seed_salt);
     'random: for index in 0..cases {
-        let query = querygen::random_query(&mut rng, cfg.gen);
+        let query = querygen::random_query(&mut rng, cfg.corpus_gen);
         on_query(&query);
-        for draw in querygen::params_for(&query, &mut rng, cfg.gen) {
+        for draw in querygen::params_for(&query, &mut rng, cfg.corpus_gen) {
             let translated = translate(&query, target::schema(), &draw.sets)
                 .expect("generated queries translate");
             let case = Case {
@@ -183,7 +185,7 @@ pub(super) fn positional(draw: &ParamDraw) -> Vec<ParamValue> {
 /// write transactions ([`load_du_cluster`]).
 pub(super) fn load_target_stores(
     dir: &std::path::Path,
-    cfg: crate::gen::GenConfig,
+    cfg: crate::corpus_gen::GenConfig,
 ) -> (Db<target::Target>, rusqlite::Connection) {
     let _ = std::fs::remove_dir_all(dir);
     let db = Db::create(dir, target::Target).expect("create target store");
@@ -251,7 +253,7 @@ pub(super) fn load_target_stores(
 /// `ImportBatch` rows naming entries in that slice
 /// (`target::import_batch_entry` — row `k` names entry `3k + 1`), so
 /// every commit's final state satisfies both `==` directions.
-fn load_du_cluster(db: &Db<target::Target>, cfg: crate::gen::GenConfig) {
+fn load_du_cluster(db: &Db<target::Target>, cfg: crate::corpus_gen::GenConfig) {
     const CHUNK: u64 = 4096;
     let domains = target::Domains::of(cfg.scale);
     let entries = target::corpus_rows(&domains, target::ids::JOURNAL_ENTRY);
@@ -310,7 +312,7 @@ pub fn run_prepared(
 
     let family_cases: u64 = families::all()
         .iter()
-        .map(|f| (f.params)(&cfg.gen).len() as u64)
+        .map(|f| (f.params)(&cfg.corpus_gen).len() as u64)
         .sum();
     let mut run = Run {
         db,
@@ -341,7 +343,8 @@ pub fn run_prepared(
     // converse-property lane over the same store.
     if run.bundles.len() < MAX_BUNDLES && cfg.random_cases > 0 {
         eprintln!("verify: loading the randomized lane's target corpus");
-        let (target_db, target_conn) = load_target_stores(&cfg.out_dir.join("target-db"), cfg.gen);
+        let (target_db, target_conn) =
+            load_target_stores(&cfg.out_dir.join("target-db"), cfg.corpus_gen);
         run.lane(&target_db, &target_conn, |lane| {
             random_lane(lane, cfg, cfg.random_cases, 0x0112_0001, "random", |_| {});
             if lane.bundles.len() < MAX_BUNDLES {

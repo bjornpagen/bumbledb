@@ -19,14 +19,18 @@ impl ImageCache {
         #[cfg(feature = "trace")]
         {
             let before = inner.map.len();
-            inner.map.retain(|(_, gen), _| *gen >= generation);
+            inner
+                .map
+                .retain(|(_, entry_gen), _| *entry_gen >= generation);
             let evicted = before - inner.map.len();
             self.counters
                 .evicted
                 .fetch_add(evicted as u64, std::sync::atomic::Ordering::Relaxed);
         }
         #[cfg(not(feature = "trace"))]
-        inner.map.retain(|(_, gen), _| *gen >= generation);
+        inner
+            .map
+            .retain(|(_, entry_gen), _| *entry_gen >= generation);
         inner.newest = inner.newest.max(generation);
     }
 }

@@ -163,15 +163,19 @@ variant agreement.
 2. **Inserts**: per inserted fact — `F` put (row_id from the in-memory high-water),
    `M` put, `U` puts, `R` puts (per containment statement whose selection the fact
    satisfies). Because every delete has already landed and the insert-set is
-   deduplicated, a scalar `U` put conflict here **is** a functionality violation →
-   typed error, whole transaction aborts. For a **pointwise FD** (interval-carrying
-   guard), the put cannot conflict on exact bytes alone; the insert additionally
-   runs the **ordered-neighbor probe** — cursor-seek to (scalar prefix, start):
+   deduplicated, a scalar `U` put conflict here **is** a functionality violation —
+   recorded into the commit's violation collector (the conflicting put is skipped;
+   the incumbent keeps the guard) and the phase finishes scan-complete, so the
+   rejection after step 2 carries the COMPLETE set of violated key statements
+   (`30-dependencies.md` § judged on final states) and preempts step 3; the whole
+   transaction aborts. For a **pointwise FD** (interval-carrying guard), the put
+   cannot conflict on exact bytes alone; the insert additionally runs the
+   **ordered-neighbor probe** — cursor-seek to (scalar prefix, start):
    predecessor in the same prefix group with `end > start`, or successor with
-   `start < end`, is the violation. Two probes, O(log n), same B-tree. Deletes and
-   inserts both check what they touch: a live `M` entry whose `F` row or `U` guard
-   is missing is the membership-desync corruption, a hard error — never silently
-   scrubbed.
+   `start < end`, is the violation, recorded identically. Two probes, O(log n),
+   same B-tree. Deletes and inserts both check what they touch: a live `M` entry
+   whose `F` row or `U` guard is missing is the membership-desync corruption, a
+   hard error — never silently scrubbed.
 3. **Judgment phase** (final-state probes; LMDB write txns read their own writes) —
    one checker, statement-driven, restricted to delta-touched bindings:
    - **Containment, source side:** every inserted fact satisfying a statement's
@@ -189,8 +193,11 @@ variant agreement.
      re-established in step 2 probes its statements' `R` prefixes for surviving
      source entries; for interval positions the deleted-or-shrunk window's `R`
      range is walked and each surviving source is re-checked for coverage against
-     the final target state. A surviving requirer → typed error naming the *source*
-     fact by its bytes. **Re-establishment is per statement, ψ-qualified:** for a
+     the final target state. Survivors *inserted this commit* are skipped — the two
+     sides partition the final state's sources (`30-dependencies.md` § judged on
+     final states): an inserted source's own probe already judged the same tuple
+     source-side. A surviving pre-existing requirer → violation recorded, naming
+     the *source* fact by its bytes. **Re-establishment is per statement, ψ-qualified:** for a
      dependent statement with a nonempty target selection, a re-landed guard tuple
      counts as re-established only if the establishing fact satisfies that
      statement's ψ (one `F` get per re-established tuple per ψ-carrying dependent;
@@ -220,9 +227,45 @@ variant agreement.
 
 User operation order inside the closure is therefore semantically irrelevant; the
 delete-before-insert trap and reference-insertion-ordering are unrepresentable. Crash
-consistency is LMDB atomicity — *tested* (crash/reopen family, `60-validation.md`).
-Dictionary entries are never removed (accepted leak; the delete path never *adds*
-one either — a never-interned value proves its fact absent).
+consistency is LMDB atomicity — *tested* (the kill-during-commit crash/reopen family,
+`60-validation.md`, plus the crashpoint table below, exercised adversarially by the
+`crash` fuzz target). Dictionary entries are never removed (accepted leak; the delete
+path never *adds* one either — a never-interned value proves its fact absent).
+
+**Crashpoints: the named atomicity structure.** Under the `crashpoint` feature (off
+by default; the hook macro expands to nothing without it, and the compiled hooks are
+inert unless `BUMBLEDB_CRASHPOINT` is set) every phase boundary above is NAMED, and a
+process whose environment names one aborts there — a real unclean death, no unwinding
+cleanup. The table (`storage/commit.rs`, the code authority the fuzz harness consumes)
+IS the claimed atomicity structure, reviewable in one grep of the hook macro's call
+sites, and the recovery claim it makes is proven per point by the `crash` fuzz target
+and its deterministic sweep (`60-validation.md` § the fuzzing charter): the store
+reopens, `verify_store` is green, full contents equal the pre-victim state at every
+point before `mdb_txn_commit` and the post-commit state after it (all-or-nothing —
+there is no third observable outcome), and re-running the torn commit lands its post
+state. We do not fault-inject the filesystem — LMDB owns that layer; we kill
+ourselves between logical phases.
+
+| crashpoint | where | recovery |
+| --- | --- | --- |
+| `after-staging` | staging over, before plan derivation | prefix |
+| `mid-write-m` | phase 2, after a fact's `M` put | prefix |
+| `mid-write-f` | phase 2, after a fact's `F` put | prefix |
+| `mid-write-u` | phase 2, after a `U` guard put | prefix |
+| `mid-write-r` | phase 2, after an `R` edge put | prefix |
+| `before-judgment` | phases 1–2 applied, before phase 3 | prefix |
+| `mid-write-s` | phase 4, after an `S` row-count put | prefix |
+| `after-judgment` | phases 3–4 done, before `mdb_txn_commit` | prefix |
+| `after-commit` | `mdb_txn_commit` returned, before the memo update | post |
+| `after-memo-update` | after the image-cache eviction and commit-seq bump | post |
+
+The counters-only no-op commit is deliberately outside the table: it never changes
+query-visible state, and its crash story is the existing kill test. The one
+recovery-side nuance, recorded: a prefix-side death during the very *first* commit
+recovers to the empty store, which the offline sweeper flags for unsatisfied domain
+quantifications by design (`30-dependencies.md` — closed-source statements are
+violated until their backings land); the crash oracle compares that case's findings
+against a fresh store's, exactly.
 
 Two write-side asymmetries, recorded as decisions rather than left as surprises:
 **R-delete verification** — deleting a fact deletes its `R` entries without

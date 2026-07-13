@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use crate::error::Result;
-use crate::image::{build, RelationImage};
+use crate::image::{RelationImage, build};
 use crate::schema::{RelationId, Schema};
 use crate::storage::env::ReadTxn;
 
-use super::{apply, Const, FilterPredicate, View};
+use super::{Const, FilterPredicate, View, apply};
 
 /// Cold dual-output build (`40-storage.md`): one storage scan produces both
 /// the cacheable unfiltered image and the query-local survivor view. The

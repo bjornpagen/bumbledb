@@ -6,9 +6,9 @@
 
 use bumbledb::{Atom, Db, FindTerm, Query, Rule, Term, Value, VarId};
 
-use crate::differential::{engine_query, run, Op};
-use crate::fixture::{string, TempDir};
-use crate::gen::{GenConfig, Rng, Scale};
+use crate::corpus_gen::{GenConfig, Rng, Scale};
+use crate::differential::{Op, engine_query, run};
+use crate::fixture::{TempDir, string};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb};
 use crate::querygen::target::{self, ids};
@@ -151,7 +151,7 @@ fn contradiction_draws_are_empty_on_both_sides() {
             bindings: vec![(ids::account::ID, Term::Var(VarId(0)))],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let crate::differential::Rows::Ok(rows) = engine_query(&db, &control, &[]) else {
         panic!("the control scan errors");

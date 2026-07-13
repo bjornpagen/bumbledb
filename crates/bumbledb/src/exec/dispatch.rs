@@ -22,7 +22,7 @@ mod tests;
 
 pub use classify::classify;
 pub use execute_guard::execute_guard;
-pub(crate) use fact_word::{fact_operand, fact_word, FactOperand};
+pub(crate) use fact_word::{FactOperand, fact_operand, fact_word};
 pub(crate) use guard_probe_fact::guard_probe_fact;
 
 /// One variable a guard plan decodes from the fetched fact: the field it

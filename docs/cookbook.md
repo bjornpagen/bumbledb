@@ -347,8 +347,9 @@ bumbledb::schema! {
     Add(rhs) <= Node(id);
     // Functional parent (one parent per child) ⇒ the reachable shape is
     // paths-or-cycles; acyclicity itself is outside the ∀∃ vocabulary —
-    // host discipline, recorded. Recursion stays refused (README OPEN item);
-    // transitive reach is a precomputed relation the host maintains.
+    // host discipline, recorded. Recursion stays refused (20-query-ir.md
+    // records the refusal); transitive reach is recipe 24's host-driven
+    // closure, or a precomputed relation the host maintains.
     Parent(child) -> Parent;
     Parent(child)  <= Node(id);
     Parent(parent) <= Node(id);
@@ -794,3 +795,96 @@ bumbledb::schema! {
     Usage(meter, used) -> Usage;
 }
 ```
+
+## Host-driven closure
+
+## 24. The closure idiom
+
+Reachability on the current engine: the recursion the IR refuses, run as
+honest control flow in the host. The refusal is recorded with its trigger
+(`20-query-ir.md` § engine recursion — refused); what makes this loop honest
+at census scale is that the censused hierarchies are **depth-bounded**, so
+the loop runs depth-many rounds and each round is one ∈-set query — a
+`ParamSet` probe, microsecond-class — against the engine as it stands. The
+frontier discipline below *is* semi-naive evaluation's Δ, spent where a loop
+is a loop: the host.
+
+```rust
+bumbledb::schema! {
+    pub Closure;
+
+    relation Node   { id: u64 as NodeId, fresh, name: str }
+    // One parent per child — a forest (recipe 10's edge shape); a root
+    // is a node whose Parent fact is absent (recipe 3's honest 0..1).
+    relation Parent { child: u64 as NodeId, parent: u64 as NodeId }
+
+    Parent(child) -> Parent;
+    Parent(child)  <= Node(id);
+    Parent(parent) <= Node(id);
+
+    // The loop's one query — the frontier's children, one ∈-set probe:
+    //   (c) | Parent(child: c, parent in ?frontier);
+}
+```
+
+The loop (the compiled, tested copy is `reachable` in `cookbook.rs`, driven
+over a three-level tree with the exact reachable set asserted):
+
+```text
+frontier = {root};  seen = {root}
+loop:
+    next = query(parent ∈ frontier, child)   // one set-param query
+    new  = next − seen
+    if new.is_empty() { break }
+    seen ∪= new; frontier = new
+```
+
+Termination is the host's theorem: `seen` grows strictly or the loop breaks,
+inside a finite node set. The failure modes are the refusal's trigger
+clauses, verbatim: **unbounded or large depth** (the per-round query cost
+stops being noise); **closure composed into a larger plan** (the reachable
+set must join further inside one plan for performance); and
+**interval-intersection-along-paths** (the chain-window class). When one
+fires on a real workload, go through the recorded refusal and its pre-paid
+design (`docs/reference/recursion-design.md`), not around it.
+
+## 25. The chart of accounts
+
+The ledger workload's real recursion case, solved on the current engine: a
+hierarchical chart of accounts and a subtree rollup. Composition, not a new
+operator — recipe 24's loop accumulates the subtree's ∈-set, then **one
+`Sum` query over the accumulated set** folds the postings. The engine
+aggregates, the host composes (aggregates never nest — recipe 18's refusal
+family), and the refusal record (`20-query-ir.md` § engine recursion —
+refused) names this composition as the covered case.
+
+```rust
+bumbledb::schema! {
+    pub Accounts;
+
+    relation Account { id: u64 as AccountId, fresh, name: str }
+    relation AccountParent { child: u64 as AccountId, parent: u64 as AccountId }
+    relation Posting {
+        id: u64 as PostingId, fresh,
+        account: u64 as AccountId,
+        minor: i64,
+    }
+
+    AccountParent(child) -> AccountParent;   // one parent per account
+    AccountParent(child)  <= Account(id);
+    AccountParent(parent) <= Account(id);
+    Posting(account) <= Account(id);
+
+    // The two queries the rollup composes:
+    //   the frontier step (recipe 24's loop, verbatim):
+    //     (c) | AccountParent(child: c, parent in ?frontier);
+    //   the rollup over the accumulated subtree (bind the fresh id —
+    //   recipe 19's discipline, spent again):
+    //     (total: Sum(minor)) | Posting(id, account in ?subtree, minor);
+}
+```
+
+The rollup is two prepared queries with the recipe-24 loop between them;
+the test drives a three-level hierarchy with postings and asserts the
+hand-computed subtree sum — equal postings to one account both count,
+because the fresh id keeps their bindings distinct.

@@ -20,7 +20,7 @@ fn by_account_set_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -153,7 +153,7 @@ fn out_of_vocabulary_string_elements_contribute_nothing() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 
@@ -305,7 +305,7 @@ fn membership_point_var_join_end_to_end() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let got = prepared
@@ -341,7 +341,7 @@ fn set_membership_matches_any_element() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let emps = |buffer: &ResultBuffer| {
@@ -403,7 +403,7 @@ fn membership_literal_query(point: u64) -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -479,7 +479,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &scalar_query).expect("prepare");
     let err = prepared
@@ -502,7 +502,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &set_query).expect("prepare");
     let ceiling = [Value::U64(u64::MAX)];
@@ -622,7 +622,7 @@ fn negated_set_bindings_reject_under_any_element() {
                 (FieldId(1), Term::ParamSet(ParamId(0))),
             ],
         }],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let run = |prepared: &mut PreparedQuery<'_, ()>, kinds: &[u64]| {

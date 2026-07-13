@@ -145,7 +145,7 @@ decision accommodates narrower platforms). Full research notes with sources:
   in two-phase probing. Kernel adoption never changes semantics: Sum stays
   i128-accumulated with one range check at finalization, and every kernel ships
   with a portable reference and a bit-identity differential test. Interval
-  predicates introduced no new shape — they lower to two-word compares over the
+  conditions introduced no new shape — they lower to two-word compares over the
   start/end column pair (`50-storage.md`).
 - **60–120 GB/s memory bandwidth**: sequential scan+decode of a 100 MB relation is
   single-digit milliseconds — the quantitative reason the image-cache design
@@ -205,6 +205,18 @@ formalism reaches Generic Join for the cyclic/skew cases free of charge. The uni
 plan space is strictly larger for one kernel's complexity, and exploring that space is
 the stated point of the project. **Reverses if:** the ledger benchmark shows the FJ
 kernel measurably slower than a plain hash join on the same plans.
+
+**Decision: one pinned nightly toolchain, edition 2024.** `rust-toolchain.toml`
+names one dated nightly (`nightly-2026-07-12`; the comment block records the
+selection checks). **Alternative (refused):** a stable pin with a nightly split
+for the fuzz targets — a dual toolchain is a dual truth: two codegens, two sets
+of measured margins, two CI stories. **Why one nightly:** cargo-fuzz needs
+nightly anyway; a single dated pin keeps reproducibility while deleting the
+split before it exists, and nightly features are adopted only as dividends —
+where they delete code, never because they exist. **The deliberate-move rule:**
+the pin moves only as an explicit PRD-sized action that carries the `#[ignore]`d
+microbench re-earn session with it (codegen changes invalidate every pinned
+margin); it never floats and never moves implicitly.
 
 ## Dependencies (crates)
 

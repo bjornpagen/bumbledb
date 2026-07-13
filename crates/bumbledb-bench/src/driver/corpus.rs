@@ -4,7 +4,7 @@ use bumbledb::Db;
 
 use crate::cli::CorpusArgs;
 use crate::corpus;
-use crate::gen::{self, GenConfig};
+use crate::corpus_gen::{self, GenConfig};
 use crate::schema::Ledger;
 
 use super::CorpusPaths;
@@ -20,7 +20,7 @@ pub(super) fn gen_config(corpus: &CorpusArgs) -> GenConfig {
 /// is the corpus identity).
 #[must_use]
 pub fn corpus_paths(dir: &Path, cfg: GenConfig) -> CorpusPaths {
-    let digest = gen::digest_hex(&gen::corpus_digest(cfg));
+    let digest = corpus_gen::digest_hex(&corpus_gen::corpus_digest(cfg));
     let root = dir.join(&digest[..16]);
     CorpusPaths {
         db: root.join("db"),

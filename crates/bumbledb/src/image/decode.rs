@@ -1,7 +1,7 @@
 //! Per-fact decode: the hoisted per-column decode plan
 //! and the scan loop that fills the structure-of-arrays slabs through it.
 
-use crate::encoding::{decode_bool, TypeDesc};
+use crate::encoding::{TypeDesc, decode_bool};
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::{RelationId, Schema};
 use crate::storage::env::ReadTxn;
@@ -191,14 +191,12 @@ pub(super) fn decode_fact(
     for step in plan {
         match step {
             Decode::Word { offset, start } => {
-                // SAFETY: offset + 8 <= fact_width (layout-derived)
-                // and the width was checked above; position <
-                // row_count checked above, slabs sized to row_count.
+                // SAFETY: offset + 8 <= fact_width (layout-derived) and
+                // the width was checked above, so the byte-aligned
+                // array read is in-bounds; position < row_count checked
+                // above, slabs sized to row_count.
                 let word = u64::from_be_bytes(unsafe {
-                    fact_bytes
-                        .get_unchecked(*offset..*offset + 8)
-                        .try_into()
-                        .expect("8-byte field")
+                    fact_bytes.as_ptr().add(*offset).cast::<[u8; 8]>().read()
                 });
                 unsafe {
                     *words.get_unchecked_mut(start + position) = word;
@@ -212,14 +210,15 @@ pub(super) fn decode_fact(
                 // SAFETY: offset + 8 * starts.len() <= fact_width
                 // (layout-derived) and the width was checked above;
                 // slab bounds as for Word.
+                let field =
+                    unsafe { fact_bytes.get_unchecked(*offset..*offset + 8 * starts.len()) };
+                // `as_chunks` carries the walk's width in its type; the
+                // remainder is empty by construction (the field spans
+                // whole words).
+                let (word_bytes, _) = field.as_chunks::<8>();
                 let mut last = 0u64;
-                for (i, start) in starts.iter().enumerate() {
-                    let word = u64::from_be_bytes(unsafe {
-                        fact_bytes
-                            .get_unchecked(*offset + 8 * i..*offset + 8 * i + 8)
-                            .try_into()
-                            .expect("8-byte word")
-                    });
+                for (start, &bytes) in starts.iter().zip(word_bytes) {
+                    let word = u64::from_be_bytes(bytes);
                     unsafe {
                         *words.get_unchecked_mut(start + position) = word;
                     }
@@ -239,15 +238,13 @@ pub(super) fn decode_fact(
                 end_column,
             } => {
                 // SAFETY: offset + 16 <= fact_width (layout-derived),
-                // width checked above; slab bounds as for Word.
-                let halves: [u8; 16] = unsafe {
-                    fact_bytes
-                        .get_unchecked(*offset..*offset + 16)
-                        .try_into()
-                        .expect("16-byte field")
-                };
-                let start_word = u64::from_be_bytes(halves[..8].try_into().expect("8-byte half"));
-                let end_word = u64::from_be_bytes(halves[8..].try_into().expect("8-byte half"));
+                // width checked above, so the byte-aligned array read
+                // is in-bounds; slab bounds as for Word.
+                let halves: [u8; 16] =
+                    unsafe { fact_bytes.as_ptr().add(*offset).cast::<[u8; 16]>().read() };
+                let (start_half, end_half) = crate::encoding::split_halves(halves);
+                let start_word = u64::from_be_bytes(start_half);
+                let end_word = u64::from_be_bytes(end_half);
                 // The stored halves are order-preserving words (the
                 // I64 sign-flip lives inside the encoding), so the
                 // strict `start < end` invariant IS this u64 compare.

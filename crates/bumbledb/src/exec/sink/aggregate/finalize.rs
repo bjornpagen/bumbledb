@@ -1,6 +1,6 @@
 use crate::error::{Error, OverflowKind, Result};
-use crate::exec::sink::{i64_to_word, Acc, AggregateSink, SinkSpec};
-use crate::interval::sweep::{sweep, Continuation};
+use crate::exec::sink::{Acc, AggregateSink, SinkSpec, i64_to_word};
+use crate::interval::sweep::{Continuation, sweep};
 
 impl AggregateSink {
     /// Finalizes each group into `emit` as **word rows** (find order,

@@ -1,4 +1,4 @@
-use super::{ctrl_tag, hash_words, zero_byte_mask, Colt, Map};
+use super::{Colt, Map, ctrl_tag, hash_words, zero_byte_mask};
 
 impl Colt {
     /// Rehash-doubles a map mid-force: fresh slot/key/dense ranges at
@@ -30,9 +30,12 @@ impl Colt {
             let hash = hash_words(&key);
             let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
             let idx = loop {
-                let group = ctrl_start + b * 8;
-                let cw =
-                    u64::from_le_bytes(self.ctrl[group..group + 8].try_into().expect("ctrl group"));
+                // Ctrl regions are 8-aligned (`Map::ctrl_start`), so the
+                // slab reads as whole SWAR groups; re-chunked per read
+                // because the slab is written below (a pointer cast, not
+                // a scan).
+                let (groups, _) = self.ctrl.as_chunks::<8>();
+                let cw = u64::from_le_bytes(groups[ctrl_start / 8 + b]);
                 let empties = zero_byte_mask(cw);
                 if empties != 0 {
                     break b * 8 + ((empties.trailing_zeros() as usize) >> 3);

@@ -46,7 +46,7 @@ fn sql_literal(value: &Value) -> Result<String, String> {
             hex
         }
         Value::IntervalU64(..) | Value::IntervalI64(..) => {
-            return Err("interval literal in a scalar position".to_owned())
+            return Err("interval literal in a scalar position".to_owned());
         }
         Value::AllenMask(_) => return Err("mask value in a scalar position".to_owned()),
     })
@@ -238,7 +238,7 @@ impl Builder<'_> {
         let relation = self.schema.relation(atom.relation);
         if atom.bindings.is_empty() {
             // The nonemptiness gate.
-            self.predicates
+            self.conditions
                 .push(format!("EXISTS (SELECT 1 FROM \"{}\")", relation.name()));
             return Ok(());
         }
@@ -302,7 +302,7 @@ impl Builder<'_> {
                 }
             }
         }
-        self.predicates.append(&mut out);
+        self.conditions.append(&mut out);
         Ok(())
     }
 
@@ -316,8 +316,8 @@ impl Builder<'_> {
                     var.0
                 ));
             };
-            self.predicates.push(format!("{start} <= {column}"));
-            self.predicates.push(format!("{column} < {end}"));
+            self.conditions.push(format!("{start} <= {column}"));
+            self.conditions.push(format!("{column} < {end}"));
         }
         Ok(())
     }
@@ -331,7 +331,7 @@ impl Builder<'_> {
         let relation = self.schema.relation(atom.relation);
         if atom.bindings.is_empty() {
             // The negated nonemptiness gate: the relation must be empty.
-            self.predicates.push(format!(
+            self.conditions.push(format!(
                 "NOT EXISTS (SELECT 1 FROM \"{}\")",
                 relation.name()
             ));
@@ -384,7 +384,7 @@ impl Builder<'_> {
                 }
             }
         }
-        self.predicates.push(format!(
+        self.conditions.push(format!(
             "NOT EXISTS (SELECT 1 FROM \"{}\" AS {alias} WHERE {})",
             relation.name(),
             conjuncts.join(" AND ")
@@ -428,15 +428,15 @@ impl Builder<'_> {
 
     pub(super) fn comparison(&mut self, comparison: &Comparison) -> Result<(), String> {
         // Eq against a set: "any element" — the literal IN form.
-        if matches!(comparison.op, CmpOp::Eq) {
-            if let Some((param, other)) = set_side(comparison) {
-                let Rendered::One(column) = self.render_term(other)? else {
-                    return Err(format!("param set {} compared to an interval", param.0));
-                };
-                let rendered = self.in_list(&column, param)?;
-                self.predicates.push(rendered);
-                return Ok(());
-            }
+        if matches!(comparison.op, CmpOp::Eq)
+            && let Some((param, other)) = set_side(comparison)
+        {
+            let Rendered::One(column) = self.render_term(other)? else {
+                return Err(format!("param set {} compared to an interval", param.0));
+            };
+            let rendered = self.in_list(&column, param)?;
+            self.conditions.push(rendered);
+            return Ok(());
         }
         let lhs = self.render_term(&comparison.lhs)?;
         let rhs = self.render_term(&comparison.rhs)?;
@@ -481,7 +481,7 @@ impl Builder<'_> {
             ) => format!("{l} {} {r}", op_sql(op)),
             _ => return Err("comparison mixes interval and scalar operands".to_owned()),
         };
-        self.predicates.push(conjunct);
+        self.conditions.push(conjunct);
         Ok(())
     }
 }

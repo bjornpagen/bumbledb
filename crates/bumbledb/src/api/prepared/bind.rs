@@ -220,7 +220,7 @@ impl<S> PreparedQuery<'_, S> {
         }
         // The empty set matches nothing — the `Eq`-miss
         // short-circuit machinery, applied where sound
-        // (positive occurrences; `resolve_predicates` reads the
+        // (positive occurrences; `resolve_filters` reads the
         // role).
         self.missed_params[idx] = words.is_empty();
         self.resolved_params[idx] = Const::WordSet(words);
@@ -272,17 +272,17 @@ fn element_words(
     }))
 }
 
-/// Resolves every occurrence's symbolic predicate constants for this
+/// Resolves every occurrence's symbolic filter constants for this
 /// execution — residual filters into `out_filters`, selection key words
 /// into `out_selections`, both **in place** (the lists' shapes are plan
 /// constants, so a warm execution rewrites slots and reuses every
 /// `WordSet` capacity). `Ok(false)` = a dictionary miss or empty set
-/// under an `Eq` predicate of a **positive** occurrence, which empties
+/// under an `Eq` filter of a **positive** occurrence, which empties
 /// the whole conjunctive query (sound for `Eq` on positive occurrences
 /// only — on a negated occurrence the same miss just matches nothing,
 /// so its anti-probe never rejects; a missed value under `Ne` resolves
 /// to the sentinel id and matches everything).
-pub(super) fn resolve_predicates(
+pub(super) fn resolve_filters(
     txn: &ReadTxn<'_>,
     plan: &mut crate::plan::fj::ValidatedPlan,
     params: &[Const],

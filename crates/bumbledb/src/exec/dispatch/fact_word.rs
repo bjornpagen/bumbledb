@@ -1,4 +1,4 @@
-use crate::encoding::{field_bytes, TypeDesc};
+use crate::encoding::{TypeDesc, field_bytes};
 use crate::schema::{FieldId, RelationId, Schema};
 
 /// One field's value sliced straight out of canonical fact bytes, in
@@ -28,8 +28,10 @@ pub(crate) fn fact_operand(
 ) -> FactOperand {
     let layout = schema.relation(relation).layout();
     let bytes = field_bytes(fact, layout, usize::from(field.0));
-    let word_at =
-        |i: usize| u64::from_be_bytes(bytes[8 * i..8 * i + 8].try_into().expect("8-byte word"));
+    // The field's whole words, width carried by `as_chunks`'s type — a
+    // scalar is one chunk, an interval two, a `bytes<N>` block `⌈N/8⌉`.
+    let (word_bytes, _) = bytes.as_chunks::<8>();
+    let word_at = |i: usize| u64::from_be_bytes(word_bytes[i]);
     match layout.field_type(usize::from(field.0)) {
         TypeDesc::Bool => FactOperand::Word(u64::from(bytes[0])),
         TypeDesc::U64 | TypeDesc::I64 | TypeDesc::String => FactOperand::Word(word_at(0)),
@@ -39,8 +41,8 @@ pub(crate) fn fact_operand(
                 FactOperand::Word(word_at(0))
             } else {
                 let mut words = [0u64; 8];
-                for (i, slot) in words[..count].iter_mut().enumerate() {
-                    *slot = word_at(i);
+                for (slot, &chunk) in words[..count].iter_mut().zip(word_bytes) {
+                    *slot = u64::from_be_bytes(chunk);
                 }
                 FactOperand::Block {
                     words,

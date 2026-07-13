@@ -626,7 +626,7 @@ fn kernel_scan(
         // no constant side, no kernel shape; the scalar loop evaluates
         // them.
         FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsContainPoint { .. } => {
-            return false
+            return false;
         }
         // The measure kinds never reach the infallible machinery: they
         // evaluate on the fallible refinement pass (`apply`).

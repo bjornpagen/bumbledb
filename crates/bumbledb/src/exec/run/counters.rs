@@ -3,7 +3,7 @@
 use super::Counters;
 use super::NoopCounters;
 #[cfg(feature = "trace")]
-use super::{JoinPhase, PhaseTimers, PHASE_NODE_CAP};
+use super::{JoinPhase, PHASE_NODE_CAP, PhaseTimers};
 
 #[cfg(feature = "trace")]
 impl JoinPhase {

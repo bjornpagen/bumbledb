@@ -8,13 +8,13 @@
 //! no second scan) and collects the referenced intern ids, checking each
 //! against the dictionary next-id counter.
 
-use crate::encoding::{fact_hash, field_bytes, TypeDesc};
-use crate::error::{Direction, Error, Result};
+use crate::encoding::{TypeDesc, fact_hash, field_word_bytes};
+use crate::error::{Direction, Error, Result, Violation, Violations};
 use crate::schema::{Enforcement, RelationId};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 
-use super::{namespace, StoreFinding, Sweep};
+use super::{StoreFinding, Sweep, namespace};
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
@@ -24,14 +24,10 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let mut checker = judgment::Checker::new(txn.raw(), s.data, schema);
     for entry in namespace(s.data, txn, keys::NS_FACT)? {
         let (key, fact) = entry?;
-        if key.len() != keys::FACT_KEY_LEN {
+        let Some((rel, row_id)) = keys::parse_fact_key(key) else {
             s.malformed(key, "F key length");
             continue;
-        }
-        let rel = RelationId(u32::from_be_bytes(
-            key[1..5].try_into().expect("fixed-width slice"),
-        ));
-        let row_id = u64::from_be_bytes(key[5..].try_into().expect("fixed-width slice"));
+        };
         let Some(relation) = schema.relation_checked(rel) else {
             s.malformed(key, "F key relation");
             continue;
@@ -62,11 +58,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // (String only — bytes<N> values are inline, never interned).
         for idx in 0..layout.field_count() {
             if matches!(layout.field_type(idx), TypeDesc::String) {
-                let id = u64::from_be_bytes(
-                    field_bytes(fact, layout, idx)
-                        .try_into()
-                        .expect("interned fields are 8 bytes"),
-                );
+                let id = u64::from_be_bytes(field_word_bytes(fact, layout, idx));
                 s.referenced_interns.insert(id);
                 if id >= s.dict_next_id {
                     s.push(StoreFinding::InternBeyondNextId {
@@ -156,8 +148,11 @@ fn check_outgoing(
             // probe — the F↔R walk skips it, and the global judgment is
             // the membership test itself.
             Enforcement::Closed { members } => {
-                let word = field_bytes(fact, layout, usize::from(statement.source.projection[0].0));
-                let id = u64::from_be_bytes(word.try_into().expect("u64 field is 8 bytes"));
+                let id = u64::from_be_bytes(field_word_bytes(
+                    fact,
+                    layout,
+                    usize::from(statement.source.projection[0].0),
+                ));
                 if !crate::schema::closed_member(members, id) {
                     s.push(StoreFinding::JudgmentViolation {
                         statement: sid,
@@ -200,16 +195,22 @@ fn check_outgoing(
             });
         }
         match judged {
-            Err(Error::ContainmentViolation {
-                statement,
-                direction,
-                fact,
-            }) => {
-                s.push(StoreFinding::JudgmentViolation {
-                    statement,
-                    direction,
-                    fact,
-                });
+            Err(Error::CommitRejected { violations }) => {
+                for violation in violations {
+                    let Violation::Containment {
+                        statement,
+                        direction,
+                        fact,
+                    } = violation
+                    else {
+                        unreachable!("the judgment probes cite containments only");
+                    };
+                    s.push(StoreFinding::JudgmentViolation {
+                        statement,
+                        direction,
+                        fact,
+                    });
+                }
             }
             // A corruption inside the probe (a guard row id resolving to
             // no fact, a malformed key width) is a namespace desync the
@@ -279,33 +280,42 @@ fn check_extension_sources(
                         })
                     }
                     Enforcement::Closed { members } => {
-                        let word = field_bytes(
+                        let id = u64::from_be_bytes(field_word_bytes(
                             &row.fact,
                             layout,
                             usize::from(statement.source.projection[0].0),
-                        );
-                        let id = u64::from_be_bytes(word.try_into().expect("u64 field is 8 bytes"));
+                        ));
                         if crate::schema::closed_member(members, id) {
                             Ok(())
                         } else {
-                            Err(Error::ContainmentViolation {
-                                statement: sid,
-                                direction: Direction::TargetRequired,
-                                fact: row.fact.clone(),
+                            Err(Error::CommitRejected {
+                                violations: Violations::one(Violation::Containment {
+                                    statement: sid,
+                                    direction: Direction::TargetRequired,
+                                    fact: row.fact.clone(),
+                                }),
                             })
                         }
                     }
                 };
                 match judged {
-                    Err(Error::ContainmentViolation {
-                        statement,
-                        direction,
-                        fact,
-                    }) => s.push(StoreFinding::JudgmentViolation {
-                        statement,
-                        direction,
-                        fact,
-                    }),
+                    Err(Error::CommitRejected { violations }) => {
+                        for violation in violations {
+                            let Violation::Containment {
+                                statement,
+                                direction,
+                                fact,
+                            } = violation
+                            else {
+                                unreachable!("the judgment probes cite containments only");
+                            };
+                            s.push(StoreFinding::JudgmentViolation {
+                                statement,
+                                direction,
+                                fact,
+                            });
+                        }
+                    }
                     Ok(()) | Err(Error::Corruption(_)) => {}
                     Err(other) => return Err(other),
                 }

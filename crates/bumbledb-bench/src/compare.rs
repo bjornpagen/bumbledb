@@ -25,7 +25,7 @@ pub enum Owned {
 pub type Row = Vec<Owned>;
 
 /// Decodes a bumbledb result buffer into canonical rows (column types
-/// from `PreparedQuery::column_types`).
+/// from the prepared query's predicate — the buffer-typing authority).
 #[must_use]
 pub fn from_buffer(buffer: &ResultBuffer, types: &[ValueType]) -> Vec<Row> {
     buffer
@@ -102,7 +102,7 @@ pub fn from_sqlite(
                     return Err(format!(
                         "column {}: mask values are not results",
                         column - 1
-                    ))
+                    ));
                 }
             });
         }

@@ -37,8 +37,8 @@ const PROXY_ITERS: u64 = 30_000;
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
 )] // 00-product policy: register-only asm, no memory —
-   // the proxy's cycle count must be known by construction, which no
-   // compiler-emitted loop guarantees across rustc versions.
+// the proxy's cycle count must be known by construction, which no
+// compiler-emitted loop guarantees across rustc versions.
 fn chain(seed: u64, iters: u64) -> u64 {
     // An odd multiplier keeps the chain value from collapsing to zero.
     let mut x = seed | 1;

@@ -1,9 +1,9 @@
-use super::oracle::{param_anchors, u64_domain, LARGE_BOUNDARY};
+use super::oracle::{LARGE_BOUNDARY, param_anchors, u64_domain};
 use super::target::{self, Domains};
 use super::*;
 use bumbledb::Value;
 
-use crate::gen::{GenConfig, Rng, Scale};
+use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::translate::translate;
 
 const SEED: u64 = 11;
@@ -213,8 +213,8 @@ fn the_coverage_contract_holds_at_a_thousand() {
 /// a refused shape appear per run, held to the engine's verdict.
 #[test]
 fn chase_shapes_eliminate_and_near_misses_refuse() {
-    use super::construct::random_query_tagged;
     use super::ChaseVariant;
+    use super::construct::random_query_tagged;
     let dir = std::env::temp_dir().join("bumbledb-bench-querygen-chase");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
@@ -282,7 +282,7 @@ fn chase_shapes_eliminate_and_near_misses_refuse() {
 /// hand-derived typed violation.
 #[test]
 fn the_closed_relation_classes_are_emitted() {
-    use crate::querygen::writes::{closed_write_cases, ClosedWriteKind};
+    use crate::querygen::writes::{ClosedWriteKind, closed_write_cases};
 
     let cov = coverage(N, SEED, CFG);
     // (a) joins, with and without the payload-column selection.
@@ -348,7 +348,7 @@ fn generated_string_literals_are_nul_free() {
                     }
                 }
             }
-            for comparison in rule.predicates.iter().map(crate::querygen::leaf) {
+            for comparison in rule.conditions.iter().map(crate::querygen::leaf) {
                 for term in [&comparison.lhs, &comparison.rhs] {
                     if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
                         assert!(!raw.contains(&0), "a generated literal carries NUL");

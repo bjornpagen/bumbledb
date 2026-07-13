@@ -7,8 +7,8 @@ use super::keyword_kind::{keyword_kind, keyword_kind_params};
 use super::keyword_neighborhood::keyword_neighborhood;
 use super::person_params::person_params;
 use super::{
-    ids, schema, Scenario, ScenarioQuery, CASTS, COMPANIES, KEYWORDS, KINDS, MOVIES,
-    MOVIE_COMPANIES, MOVIE_KEYWORDS, PEOPLE,
+    CASTS, COMPANIES, KEYWORDS, KINDS, MOVIE_COMPANIES, MOVIE_KEYWORDS, MOVIES, PEOPLE, Scenario,
+    ScenarioQuery, ids, schema,
 };
 
 /// The scenario registration.

@@ -60,7 +60,7 @@ impl fmt::Display for Report<'_> {
             )?;
         }
         // The death record (`ir/normalize/fold.rs`): each statically-
-        // empty rule with its killing predicate — lowered-rule indices,
+        // empty rule with its killing condition — lowered-rule indices,
         // exactly as the subsumption lines.
         for dead in &self.stats.dead {
             writeln!(f, "statically empty: rule {}: {}", dead.rule, dead.rendered)?;

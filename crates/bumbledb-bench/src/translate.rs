@@ -59,10 +59,10 @@ pub use query::translate;
 /// list (the fleet's generators and scenarios emit no trees). The tree
 /// grammar's OR shapes are proven against the naive model by the DNF
 /// property suite, never round-tripped through SQL.
-fn leaf(tree: &bumbledb::PredicateTree) -> &bumbledb::Comparison {
+fn leaf(tree: &bumbledb::ConditionTree) -> &bumbledb::Comparison {
     match tree {
-        bumbledb::PredicateTree::Leaf(comparison) => comparison,
-        bumbledb::PredicateTree::And(_) | bumbledb::PredicateTree::Or(_) => {
+        bumbledb::ConditionTree::Leaf(comparison) => comparison,
+        bumbledb::ConditionTree::And(_) | bumbledb::ConditionTree::Or(_) => {
             unreachable!("the SQL translation consumes flat conjunctions only")
         }
     }
@@ -107,7 +107,7 @@ struct Builder<'q> {
     /// FROM entries: `"Table" AS tN`.
     from: Vec<String>,
     /// WHERE conjuncts.
-    predicates: Vec<String>,
+    conditions: Vec<String>,
     /// Membership tests (interval half columns × point variable) deferred
     /// until every positive atom is walked — the variable's scalar anchor
     /// may be bound by a later atom.

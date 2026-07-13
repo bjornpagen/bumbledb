@@ -1,4 +1,4 @@
-use super::{ctrl_tag, hash_core, hash_words, WordMap, LOAD_DEN};
+use super::{LOAD_DEN, WordMap, ctrl_tag, hash_core, hash_words};
 
 impl<V: Copy> WordMap<V> {
     /// Gets the value for `key`, inserting `make()` when absent. Returns
@@ -8,7 +8,7 @@ impl<V: Copy> WordMap<V> {
     ///
     /// Only on a programmer-invariant violation: `key.len() != arity`.
     #[inline(always)] // the whole chain inlines into the sink row loops so
-                      // LLVM can hoist batch-constant prefix hashes out of them
+    // LLVM can hoist batch-constant prefix hashes out of them
     pub fn get_or_insert_with(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
         assert_eq!(key.len(), self.arity);
         // The const-arity dispatch (measured): runtime

@@ -1,5 +1,5 @@
-use super::fact_word::{fact_operand, FactOperand};
 use super::GuardPlan;
+use super::fact_word::{FactOperand, fact_operand};
 use crate::error::Result;
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::CmpOp;

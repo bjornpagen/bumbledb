@@ -1,12 +1,12 @@
 use super::*;
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{ValueRef, encode_fact};
 use crate::error::Result;
 use crate::exec::colt::Colt;
 use crate::exec::run::{Counters, Executor};
 use crate::image::view::apply;
-use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, Role, SlotWidth};
 use crate::ir::VarId;
-use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
+use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, Role, SlotWidth};
+use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,

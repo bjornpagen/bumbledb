@@ -178,7 +178,7 @@ fn duration_find_projects_the_measure_u64() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
@@ -219,7 +219,7 @@ fn duration_find_projects_the_measure_i64() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
@@ -266,7 +266,7 @@ fn sum_min_max_over_the_measure() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
@@ -313,23 +313,23 @@ fn duration_comparisons_filter_and_join() {
             .expect("execute");
         u64_rows(&out, 1)
     };
-    let single = |predicates: Vec<PredicateTree>| {
+    let single = |conditions: Vec<ConditionTree>| {
         Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![session_atom.clone()],
             negated: vec![],
-            predicates,
+            conditions,
         })
     };
 
     // Literal, both orientations (the mirrored form flips the operator).
-    let literal = single(vec![PredicateTree::Leaf(Comparison {
+    let literal = single(vec![ConditionTree::Leaf(Comparison {
         op: CmpOp::Gt,
         lhs: Term::Duration(VarId(1)),
         rhs: Term::Literal(Value::U64(2)),
     })]);
     assert_eq!(run(&literal), vec![vec![10], vec![20]]);
-    let mirrored = single(vec![PredicateTree::Leaf(Comparison {
+    let mirrored = single(vec![ConditionTree::Leaf(Comparison {
         op: CmpOp::Ge,
         lhs: Term::Literal(Value::U64(3)),
         rhs: Term::Duration(VarId(1)),
@@ -337,7 +337,7 @@ fn duration_comparisons_filter_and_join() {
     assert_eq!(run(&mirrored), vec![vec![20], vec![30]]);
 
     // Param bound at execution.
-    let param = single(vec![PredicateTree::Leaf(Comparison {
+    let param = single(vec![ConditionTree::Leaf(Comparison {
         op: CmpOp::Lt,
         lhs: Term::Duration(VarId(1)),
         rhs: Term::Param(ParamId(0)),
@@ -349,7 +349,7 @@ fn duration_comparisons_filter_and_join() {
     assert_eq!(u64_rows(&out, 1), vec![vec![20], vec![30]]);
 
     // Same-atom u64 variable: measure vs the fact's own cap.
-    let same_atom = single(vec![PredicateTree::Leaf(Comparison {
+    let same_atom = single(vec![ConditionTree::Leaf(Comparison {
         op: CmpOp::Ge,
         lhs: Term::Duration(VarId(1)),
         rhs: Term::Var(VarId(2)),
@@ -376,7 +376,7 @@ fn duration_comparisons_filter_and_join() {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Duration(VarId(1)),
             rhs: Term::Var(VarId(3)),
@@ -389,8 +389,8 @@ fn duration_comparisons_filter_and_join() {
 
 /// The ray probe `[MAX−1, MAX)`: an interval intersects it iff it covers
 /// the point `MAX−1`, i.e. iff `end == MAX` — exactly the rays.
-fn ray_guard() -> PredicateTree {
-    PredicateTree::Leaf(Comparison {
+fn ray_guard() -> ConditionTree {
+    ConditionTree::Leaf(Comparison {
         op: CmpOp::Allen {
             mask: MaskTerm::Literal(AllenMask::DISJOINT),
         },
@@ -442,7 +442,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
         }
     };
     let run_guarded = |mut rule: Rule| -> Vec<Vec<u64>> {
-        rule.predicates.push(ray_guard());
+        rule.conditions.push(ray_guard());
         let query = Query::single(rule);
         let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         let out = prepared
@@ -456,7 +456,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
         atoms: vec![session_atom.clone()],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     assert_ray(&Query::single(find_rule.clone()));
     assert_eq!(run_guarded(find_rule.clone()), vec![vec![10, 4]]);
@@ -472,7 +472,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
         ],
         atoms: vec![session_atom.clone()],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     assert_ray(&Query::single(fold_rule.clone()));
     assert_eq!(run_guarded(fold_rule), vec![vec![10, 4]]);
@@ -482,7 +482,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![session_atom.clone()],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Gt,
             lhs: Term::Duration(VarId(1)),
             rhs: Term::Literal(Value::U64(1)),
@@ -494,7 +494,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
     // The bounded-end guard form: span ⊆ [0, 100) bounds the end below
     // the ceiling, so the ray never reaches the subtraction.
     let mut bounded = filter_rule.clone();
-    bounded.predicates.push(PredicateTree::Leaf(Comparison {
+    bounded.conditions.push(ConditionTree::Leaf(Comparison {
         op: CmpOp::Allen {
             mask: MaskTerm::Literal(AllenMask::COVERED_BY),
         },
@@ -523,7 +523,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Duration(VarId(1)),
             rhs: Term::Var(VarId(3)),
@@ -569,7 +569,7 @@ fn sum_of_durations_overflow_is_the_typed_overflow_error() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     match prepared.execute_collect(&txn, &cache, &[]) {

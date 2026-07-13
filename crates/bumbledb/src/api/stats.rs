@@ -30,7 +30,7 @@ pub struct ExecutionStats {
     /// in order.
     pub subsumed: Vec<SubsumedRule>,
     /// Rules the statically-empty fold refuted at prepare
-    /// (`ir/normalize/fold.rs`): each carries its killing predicate —
+    /// (`ir/normalize/fold.rs`): each carries its killing condition —
     /// EXPLAIN's `statically empty: rule N: <picture>` line. Indices are
     /// lowered-rule indices, exactly as `subsumed`; a program of only
     /// dead rules represented by an empty prepared program.
@@ -38,13 +38,13 @@ pub struct ExecutionStats {
 }
 
 /// One statically-empty rule (`ir/normalize/fold.rs`): its constant
-/// predicates are mutually unsatisfiable, so it was deleted at prepare
-/// with the killing predicate as the record.
+/// conditions are mutually unsatisfiable, so it was deleted at prepare
+/// with the killing condition as the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeadRule {
     /// The dead rule's lowered-rule index.
     pub rule: u16,
-    /// The killing predicate, rendered in the rule notation's value
+    /// The killing condition, rendered in the rule notation's value
     /// formats (e.g. `R: a ∈ [8, 19] ∧ a == 3`).
     pub rendered: String,
 }

@@ -95,3 +95,84 @@ The fuzzing charter's operations section: the launcher, the session
 log, the trophy pipeline, the CI lanes and their deliberate exclusions.
 README gains the one-line "fuzzed continuously" claim ONLY after the
 commissioning sessions exist — the claim cites `SESSIONS.md`.
+
+## Results (2026-07-13, executed at eba32a5 + this change)
+
+**The launcher.** `scripts/fuzz.sh` landed against cargo-fuzz 0.13.1's
+verified flag surface (`cargo fuzz run --help` read first; libFuzzer
+knobs pass through after `--`). **Fork mode works on this darwin host**:
+the pinned nightly's libFuzzer ran `-fork=N -ignore_ooms=0
+-ignore_crashes=0 -max_total_time=…` cleanly in every verification
+session (jobs cycling, cumulative stats lines, clean exit 0) — the
+`-jobs=12 -workers=12` fallback this file reserved was NOT needed. Two
+lanes: the default builds `-s none` (throughput fuzzing — the oracles
+are debug assertions and harness panics; cargo-fuzz's ASAN default
+would tax every exec for coverage PRD 15 already assigns to its own
+lane), and `--asan` builds `-s address`, with query carrying
+`-rss_limit_mb=4096` there per PRD 15's disposition (the flag was
+verified present in the ASAN session's binary invocation). Sessions on
+a machine IN USE today were deliberately bounded (1 minute, 2–4
+workers via the `FUZZ_WORKERS` env knob — the DEFAULT stays
+`-fork=12`); the 10-minute-plus all-cores commissioning cadence is the
+human register's, and the overnight firepower session already on the
+books (`fuzz/SESSIONS.md`) is its precedent.
+
+**Mode verification (all three, bounded, zero findings each):**
+
+| mode | session | evidence |
+| --- | --- | --- |
+| single target | `FUZZ_WORKERS=4 fuzz.sh theory 1` | 54,142 execs (873/s), cov 1,419, corpus 298→310 post-cmin, logged |
+| all five (default) | `FUZZ_WORKERS=2 fuzz.sh 1` | theory 53,577 (824/s) / ops 2,256 (34/s) / query 50 / rewrites 27,425 (421/s) / crash 2,246 (36/s); each cmin'd + logged; exit 0 |
+| `--asan` | `FUZZ_WORKERS=2 fuzz.sh --asan query 1` | 73 execs, cov 20,608, `-rss_limit_mb=4096` in the invocation, clean |
+
+**The dirty-artifacts refusal, proven:** a planted
+`fuzz/artifacts/ops/planted-untriaged` made `fuzz.sh theory 1` refuse
+with the file named and exit 1; removed, the session ran. The same
+refusal is the trophy pipeline's enforcement arm.
+
+**Artifact-shelf triage (the refusal's first real workout):** the shelf
+held five files from the morning's sessions. Four crash `slow-unit`s
+replay in 21–65 ms each on a quiet machine — child-spawn latency under
+the overnight session's load, environmental. One query
+`oom-d9bbe585…` is PRD 15's dispositioned ASAN-quarantine case
+(replays clean: 10.5 s under ASAN defaults there, 1.31 s at `-s none`
+here). All five dispositions recorded in `fuzz/SESSIONS.md`, artifacts
+deleted; **no new trophies** (the ledger's two ops rows stand,
+cross-referenced from `SESSIONS.md`).
+
+**Corpus minimization (the one sanctioned corpus commit):**
+`cargo fuzz cmin` per target over the ~12.6k accumulated files:
+
+| target | before | after cmin | after the verification sessions (committed) |
+| --- | --- | --- | --- |
+| theory | 398 | 298 | 316 |
+| ops | 3,379 | 2,416 | 2,393 |
+| query | 3,329 | 2,441 | 2,418 |
+| rewrites | 4,835 | 3,372 | 3,380 |
+| crash | 615 | 420 | 441 |
+| total | 12,556 | 8,947 | 8,948 |
+
+ops/query/rewrites stay above the 2k-per-target line — recorded and
+checked in anyway: corpus is coverage capital, and the replay lane
+guards every entry. **Replay tests green post-cmin** (the critical
+gate): `cargo test` in `fuzz/` — 4 replay suites + the crashpoint
+sweep, 463 s wall locally, query's three-way replay dominating at
+~400 s.
+
+**CI spine** (`.github/workflows/ci.yml`, macos-latest arm64, cargo +
+toolchain cached, YAML parse verified): check lane (`scripts/check.sh`,
+fold-off matrix included) and corpus-replay lane (plain `cargo test` in
+`fuzz/` — no libFuzzer in CI) per push; **Miri lane on the nightly
+cron by measurement** — `scripts/miri.sh` is 752 s ≈ 12.5 min locally,
+over the 10-minute per-push budget, the number recorded in the
+workflow comment. Local walls: check lane 178 s (`scripts/check.sh`,
+all gates green, the x86_64 cross check self-skipping as recorded),
+replay lane 463 s test wall — per-push wall = max of the parallel
+lanes, estimated under 15 minutes warm-cached (the first cold run
+exceeds it once). Exclusions each commented in the workflow with the
+reason: no benches, no asm gates (shared-runner timing/codegen is
+noise — local measurement discipline), no long fuzz sessions and no
+ASAN lane (firepower is the owner's machine; CI replays the corpus
+deterministically). **First-run verification on a real push: pending**
+— CI cannot be exercised from this machine; the `[test]` criterion for
+the three lanes closes on the first push.

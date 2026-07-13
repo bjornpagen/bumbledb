@@ -406,7 +406,7 @@ pub enum ValidationError {
     TooManyRules {
         count: usize,
     },
-    /// DNF distribution of the rules' predicate trees would produce more
+    /// DNF distribution of the rules' condition trees would produce more
     /// rules than the cap ([`crate::ir::MAX_RULES`]) — the exponential
     /// case is rejected at declaration, exactly like guard-width
     /// overflow. `produced` names the blowup: the structural term count
@@ -416,12 +416,12 @@ pub enum ValidationError {
         produced: usize,
         cap: usize,
     },
-    /// A rule's predicate trees nest deeper than
-    /// [`crate::ir::MAX_PREDICATE_DEPTH`] — the boundary guard for every
+    /// A rule's condition trees nest deeper than
+    /// [`crate::ir::MAX_CONDITION_DEPTH`] — the boundary guard for every
     /// recursive tree walk (the trust-boundary law: hostile nesting must
     /// be a typed rejection, never a stack exhaustion). Judged
     /// iteratively, before any recursion sees the tree.
-    PredicateNestingTooDeep {
+    ConditionNestingTooDeep {
         rule: usize,
         depth: usize,
         cap: usize,
@@ -562,15 +562,15 @@ pub enum ValidationError {
         index: usize,
     },
     /// An `Allen` comparison whose literal mask is empty — no basic
-    /// relation can hold, so the predicate is "never": write no query
+    /// relation can hold, so the condition is "never": write no query
     /// (`docs/architecture/20-query-ir.md` § the Allen operator; the
     /// bind-time sibling is [`Error::EmptyAllenMaskParam`]).
     EmptyAllenMask {
         index: usize,
     },
     /// An `Allen` comparison whose literal mask is all 13 basics — every
-    /// pair satisfies it, so the predicate is "always": write no
-    /// predicate (the bind-time sibling is [`Error::FullAllenMaskParam`]).
+    /// pair satisfies it, so the condition is "always": write no
+    /// condition (the bind-time sibling is [`Error::FullAllenMaskParam`]).
     FullAllenMask {
         index: usize,
     },
@@ -707,7 +707,10 @@ pub enum ValidationError {
 
 /// Which side of a containment statement the commit-time judgment found
 /// unsatisfied (`docs/architecture/30-dependencies.md` § enforcement).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Ord` is citation order: within one statement cited in both
+/// directions, source before target ([`Violations`]' sort key).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Direction {
     /// An inserted source fact inside σ has no target: the guard probe
     /// missed, or the coverage walk found a gap.
@@ -715,6 +718,128 @@ pub enum Direction {
     /// A deleted target key tuple is still required by a surviving
     /// source fact (the reverse-edge scan).
     TargetRequired,
+}
+
+/// One violated statement of a rejected commit — the element of
+/// [`Violations`]. Payloads carry the statement id and canonical fact
+/// bytes, never storage row ids (`docs/architecture/10-data-model.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Violation {
+    /// A `Functionality` statement violated by the final state: two live
+    /// facts claim one key — the same guard bytes (scalar put-conflict),
+    /// or overlapping intervals within one scalar-prefix group (the
+    /// pointwise neighbor probe).
+    Functionality {
+        statement: StatementId,
+        /// The fact whose insert violated the statement.
+        fact: Box<[u8]>,
+        /// The already-standing fact, for the pointwise arm — the probe
+        /// names both parties. `None` for a scalar put-conflict, where
+        /// the guard bytes inside `fact` already identify the collision.
+        incumbent: Option<Box<[u8]>>,
+    },
+    /// A `Containment` statement violated by the final state
+    /// (`docs/architecture/30-dependencies.md` § judged on final states).
+    /// `fact` is canonical source-fact bytes on either side: the judgment
+    /// speaks about sources — a missing target is named by the source
+    /// that requires it.
+    Containment {
+        statement: StatementId,
+        direction: Direction,
+        /// The source fact: the inserted fact whose target is missing
+        /// (`SourceUnsatisfied`), or the surviving fact still requiring a
+        /// deleted target key (`TargetRequired`).
+        fact: Box<[u8]>,
+    },
+}
+
+impl Violation {
+    /// The violated statement.
+    #[must_use]
+    pub fn statement(&self) -> StatementId {
+        match self {
+            Self::Functionality { statement, .. } | Self::Containment { statement, .. } => {
+                *statement
+            }
+        }
+    }
+
+    /// The citation identity — [`Violations`]' sort and dedup key:
+    /// statement id (materialized order), then direction (source before
+    /// target; a key statement has none). Witness facts are deliberately
+    /// outside the identity: a statement is cited once per direction,
+    /// whatever the count of facts convicting it.
+    fn citation(&self) -> (StatementId, Option<Direction>) {
+        match self {
+            Self::Functionality { statement, .. } => (*statement, None),
+            Self::Containment {
+                statement,
+                direction,
+                ..
+            } => (*statement, Some(*direction)),
+        }
+    }
+}
+
+/// The complete violation set of one rejected commit — sealed: nonempty,
+/// one citation per statement (per direction for a containment), sorted
+/// by materialized statement order. The only constructors sort and dedup
+/// and refuse emptiness, so an empty, unsorted, or duplicated set is
+/// unrepresentable — a rejection IS this set, never an arbitrary
+/// representative (`docs/architecture/30-dependencies.md` § judged on
+/// final states).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Violations(Box<[Violation]>);
+
+impl Violations {
+    /// Seals a collector's raw finds: stable-sorts by citation (so the
+    /// first-discovered witness of each citation survives), dedups by
+    /// citation, and returns `None` for the empty collection — the
+    /// accept path, never an empty rejection.
+    pub(crate) fn seal(mut found: Vec<Violation>) -> Option<Self> {
+        if found.is_empty() {
+            return None;
+        }
+        found.sort_by_key(Violation::citation);
+        found.dedup_by_key(|violation| violation.citation());
+        Some(Self(found.into_boxed_slice()))
+    }
+
+    /// The singleton set — a lone violation is trivially sealed. The
+    /// judgment probes convict through this shape and the collectors
+    /// flatten it ([`Violations::seal`] re-sorts the union).
+    pub(crate) fn one(violation: Violation) -> Self {
+        Self(Box::new([violation]))
+    }
+
+    /// Every violation, in citation order.
+    #[must_use]
+    pub fn as_slice(&self) -> &[Violation] {
+        &self.0
+    }
+
+    /// Iterates the violations, in citation order.
+    pub fn iter(&self) -> std::slice::Iter<'_, Violation> {
+        self.0.iter()
+    }
+}
+
+impl IntoIterator for Violations {
+    type Item = Violation;
+    type IntoIter = std::vec::IntoIter<Violation>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_vec().into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Violations {
+    type Item = &'a Violation;
+    type IntoIter = std::slice::Iter<'a, Violation>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
 }
 
 /// Which computation crossed its representation — [`Error::Overflow`]'s
@@ -786,32 +911,18 @@ pub enum Error {
     FactShape(FactShapeError),
 
     // --- Write errors ---
-    /// A `Functionality` statement violated by the committed final state:
-    /// two live facts claim one key — the same guard bytes (scalar
-    /// put-conflict), or overlapping intervals within one scalar-prefix
-    /// group (the pointwise neighbor probe). Payloads are canonical fact
-    /// bytes, never row ids (`docs/architecture/10-data-model.md`).
-    FunctionalityViolation {
-        statement: StatementId,
-        /// The fact whose insert violated the statement.
-        fact: Box<[u8]>,
-        /// The already-standing fact, for the pointwise arm — the probe
-        /// names both parties. `None` for a scalar put-conflict, where
-        /// the guard bytes inside `fact` already identify the collision.
-        incumbent: Option<Box<[u8]>>,
-    },
-    /// A `Containment` statement violated by the committed final state
-    /// (`docs/architecture/30-dependencies.md` § judged on final states).
-    /// `fact` is canonical source-fact bytes on either side: the judgment
-    /// speaks about sources — a missing target is named by the source
-    /// that requires it.
-    ContainmentViolation {
-        statement: StatementId,
-        direction: Direction,
-        /// The source fact: the inserted fact whose target is missing
-        /// (`SourceUnsatisfied`), or the surviving fact still requiring a
-        /// deleted target key (`TargetRequired`).
-        fact: Box<[u8]>,
+    /// A commit rejected by the dependency judgment: the payload is the
+    /// COMPLETE violation set — every violated statement, cited once
+    /// (per direction for a containment), in materialized statement
+    /// order — never an arbitrary representative among simultaneous
+    /// violations (`docs/architecture/30-dependencies.md` § judged on
+    /// final states). Key (`Functionality`) violations preempt the
+    /// containment judgment: the containment probes are defined over the
+    /// keyed final state, which exists only when every key statement
+    /// holds — so one rejection is all-key or all-containment, complete
+    /// within its phase.
+    CommitRejected {
+        violations: Violations,
     },
     /// A fresh sequence reached `u64::MAX`; the generator can issue no
     /// further values for this field.
@@ -926,13 +1037,13 @@ pub enum Error {
     AllenMaskParamExpected {
         param: ParamId,
     },
-    /// Bind-time: a mask param bound to the empty mask — the predicate
+    /// Bind-time: a mask param bound to the empty mask — the condition
     /// would be "never" (the validation-time sibling is
     /// [`ValidationError::EmptyAllenMask`]).
     EmptyAllenMaskParam {
         param: ParamId,
     },
-    /// Bind-time: a mask param bound to the full mask — the predicate
+    /// Bind-time: a mask param bound to the full mask — the condition
     /// would be "always" (the validation-time sibling is
     /// [`ValidationError::FullAllenMask`]).
     FullAllenMaskParam {

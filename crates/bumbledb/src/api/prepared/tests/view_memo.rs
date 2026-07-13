@@ -120,7 +120,7 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(0)),
             rhs: Term::Literal(Value::I64(0)),
@@ -301,7 +301,7 @@ fn read_path_traces_phases_memo_hits_and_guard() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     obs::start_capture();
@@ -391,7 +391,7 @@ fn closed_relation_views_stay_warm_across_generations() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 

@@ -45,9 +45,12 @@ documents themselves describe **only the current reality**.
 - **Every measured claim is unearned**: the oracle stamp, the benchmark ALL-WIN, and
   every pinned denominator are void until derived and run on this engine. *Trigger:
   the implementation reaching the bench milestone.*
-- **Recursion** (explicit semi-naive fixpoint): not designed in; no IR decision may
-  assume it never comes. The modeling discipline (precomputed closures) has absorbed
-  every sighting so far. *Trigger: first real query that needs one.*
+- **Recursion** (explicit semi-naive fixpoint): refused with a recorded trigger
+  (`20-query-ir.md` § engine recursion — refused); the closure idiom covers the
+  censused depth-bounded hierarchies (`../cookbook.md` recipes 24–25), and the full
+  design is a paper proof with a seam ledger (`../reference/recursion-design.md`).
+  *Trigger: the refusal's three clauses — unbounded/large depth; closure composed
+  into one plan; the chain-window class.*
 - **Ordering/limit conveniences and top-k pushdown**: presentation-layer; results are
   sets, the host sorts. *Trigger: owner pain, or a measured materialize-then-sort
   latency-budget violation.*

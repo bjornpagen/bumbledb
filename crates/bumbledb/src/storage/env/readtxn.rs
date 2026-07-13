@@ -1,7 +1,7 @@
 use crate::error::Result;
 
 use super::read_meta::{read_dict_next_id, read_u64};
-use super::{ReadTxn, META_TX_ID};
+use super::{META_TX_ID, ReadTxn};
 
 impl ReadTxn<'_> {
     /// The reader's generation: the storage tx id read from `_meta` *inside

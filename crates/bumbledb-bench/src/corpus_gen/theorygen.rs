@@ -1,0 +1,361 @@
+//! The random-descriptor arm (docs/architecture/60-validation.md § the
+//! fuzzing charter): structurally-free [`SchemaDescriptor`]s for the fuzz
+//! lanes. Unlike the fixed ledger theory (`crate::schema`), this arm
+//! deliberately reaches invalid shapes — dangling relation/field ids,
+//! arity mismatches, duplicate names, closed-relation member abuse,
+//! interval misuse (empty bounds, the ray end) — alongside valid ones,
+//! and the ENGINE judges. The generator shares the ledger's vocabulary
+//! and owns no validity logic: index-anchored name draws and typed-value
+//! hints bias toward acceptance, but nothing here re-implements the
+//! acceptance gate (refusal: a generator that knows the rules can only
+//! confirm them).
+
+use bumbledb::Value;
+use bumbledb::schema::{
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Row,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType,
+};
+
+use super::Rng;
+
+/// The ledger's relation vocabulary — shared names, so mutated inputs
+/// collide meaningfully instead of drifting into gibberish.
+const RELATION_NAMES: &[&str] = &[
+    "Holder",
+    "Account",
+    "Instrument",
+    "Posting",
+    "Org",
+    "Mandate",
+    "Currency",
+    "Tag",
+];
+
+const FIELD_NAMES: &[&str] = &[
+    "id", "holder", "name", "amount", "at", "account", "org", "active", "tag", "symbol",
+];
+
+const HANDLES: &[&str] = &["Usd", "Eur", "Gbp", "Manual", "Import", "Fee"];
+
+/// `bytes<N>` widths: legal points, both illegal edges (0 and 65), and a
+/// far-out width — the roster's `FixedBytesWidthOutOfRange` is a draw
+/// away, never a special case.
+const FIXED_LENS: &[u16] = &[0, 1, 16, 32, 64, 65, 300];
+
+/// A structurally-free schema descriptor: 0–4 relations, 0–5 statements,
+/// every shape the descriptor type can spell reachable by some byte
+/// string. Valid and invalid descriptors both arise; the verdict is the
+/// engine's.
+pub fn random_descriptor(rng: &mut Rng) -> SchemaDescriptor {
+    let relation_count = draw(rng, 5);
+    let relations: Vec<_> = (0..relation_count)
+        .map(|idx| random_relation(rng, idx))
+        .collect();
+    let statement_count = draw(rng, 6);
+    let statements = (0..statement_count)
+        .map(|_| random_statement(rng, &relations))
+        .collect();
+    SchemaDescriptor {
+        relations,
+        statements,
+    }
+}
+
+fn random_relation(rng: &mut Rng, idx: usize) -> RelationDescriptor {
+    // Index-anchored names are mostly distinct; the free draw forces the
+    // occasional `DuplicateRelationName` collision.
+    let name = if rng.chance(1, 8) {
+        pick(rng, RELATION_NAMES)
+    } else {
+        RELATION_NAMES[idx % RELATION_NAMES.len()]
+    };
+    let field_count = draw(rng, 5);
+    let fields: Vec<_> = (0..field_count)
+        .map(|field_idx| random_field(rng, field_idx))
+        .collect();
+    // A quarter of relations declare an extension (closed): rows over the
+    // handle vocabulary, values hinted by the columns but free to abuse
+    // arity, type, interval bounds, and the ray end.
+    let extension = if rng.chance(1, 4) {
+        Some(random_extension(rng, &fields))
+    } else {
+        None
+    };
+    RelationDescriptor {
+        name: name.into(),
+        fields,
+        extension,
+    }
+}
+
+fn random_field(rng: &mut Rng, idx: usize) -> FieldDescriptor {
+    let name = if rng.chance(1, 8) {
+        pick(rng, FIELD_NAMES)
+    } else {
+        FIELD_NAMES[idx % FIELD_NAMES.len()]
+    };
+    // `Fresh` lands on any type and any relation kind — `FreshOnNonU64`
+    // and `FreshOnClosedRelation` are the engine's to refuse.
+    let generation = if rng.chance(1, 5) {
+        Generation::Fresh
+    } else {
+        Generation::None
+    };
+    FieldDescriptor {
+        name: name.into(),
+        value_type: random_type(rng),
+        generation,
+    }
+}
+
+fn random_type(rng: &mut Rng) -> ValueType {
+    match rng.range(8) {
+        0 => ValueType::Bool,
+        1 | 2 => ValueType::U64,
+        3 => ValueType::I64,
+        4 => ValueType::String,
+        5 => ValueType::FixedBytes {
+            len: FIXED_LENS[draw(rng, FIXED_LENS.len())],
+        },
+        6 => ValueType::Interval {
+            element: IntervalElement::U64,
+        },
+        _ => ValueType::Interval {
+            element: IntervalElement::I64,
+        },
+    }
+}
+
+fn random_extension(rng: &mut Rng, fields: &[FieldDescriptor]) -> Box<[Row]> {
+    let rows = draw(rng, 4); // zero rows: the vocabulary of nothing
+    (0..rows)
+        .map(|row| {
+            let handle = if rng.chance(1, 8) {
+                pick(rng, HANDLES)
+            } else {
+                HANDLES[row % HANDLES.len()]
+            };
+            // Mostly the declared arity with column-typed values; the
+            // free draw reaches `ExtensionArityMismatch`.
+            let arity = if rng.chance(7, 8) {
+                fields.len()
+            } else {
+                draw(rng, 4)
+            };
+            let values = (0..arity)
+                .map(|col| random_value(rng, fields.get(col).map(|f| &f.value_type)))
+                .collect();
+            Row {
+                handle: handle.into(),
+                values,
+            }
+        })
+        .collect()
+}
+
+/// A literal, usually inhabiting the hinted column type and sometimes any
+/// shape at all — the type-mismatch rosters stay reachable.
+fn random_value(rng: &mut Rng, hint: Option<&ValueType>) -> Value {
+    match hint {
+        Some(value_type) if rng.chance(7, 8) => typed_value(rng, value_type),
+        _ => {
+            let value_type = random_type(rng);
+            typed_value(rng, &value_type)
+        }
+    }
+}
+
+fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
+    match value_type {
+        ValueType::Bool => Value::Bool(rng.chance(1, 2)),
+        ValueType::U64 => Value::U64(rng.range(16)),
+        ValueType::I64 => Value::I64(signed(rng)),
+        ValueType::String => {
+            if rng.chance(1, 8) {
+                // Non-UTF-8 bytes: `SelectionLiteralNotUtf8` and the
+                // extension's value check both see hostile strings.
+                Value::String(Box::from(&[0xFF, 0xFE, 0x00][..]))
+            } else {
+                Value::String(pick(rng, HANDLES).as_bytes().into())
+            }
+        }
+        ValueType::FixedBytes { len } => {
+            let declared = usize::from(*len);
+            // The width is the type: an off-by-one draw is a mismatch.
+            let width = if rng.chance(7, 8) {
+                declared
+            } else {
+                declared + 1
+            };
+            Value::FixedBytes(vec![0xA5; width].into())
+        }
+        ValueType::Interval { element } => interval_value(rng, *element),
+    }
+}
+
+/// Interval bounds over the shape ladder: empty (`start == end`), unit,
+/// wide, and the ray end (`MAX` = ∞) — misuse is a draw, not a mode.
+fn interval_value(rng: &mut Rng, element: IntervalElement) -> Value {
+    match element {
+        IntervalElement::U64 => {
+            let start = rng.range(8);
+            let end = match rng.range(4) {
+                0 => start,
+                1 => start + 1,
+                2 => start + 2 + rng.range(5),
+                _ => u64::MAX,
+            };
+            Value::IntervalU64(start, end)
+        }
+        IntervalElement::I64 => {
+            let start = signed(rng);
+            let end = match rng.range(4) {
+                0 => start,
+                1 => start + 1,
+                2 => start + 2 + signed(rng).abs(),
+                _ => i64::MAX,
+            };
+            Value::IntervalI64(start, end)
+        }
+    }
+}
+
+fn random_statement(rng: &mut Rng, relations: &[RelationDescriptor]) -> StatementDescriptor {
+    if rng.chance(1, 3) {
+        let relation = random_relation_id(rng, relations.len());
+        StatementDescriptor::Functionality {
+            relation,
+            projection: random_projection(rng, relations, relation),
+        }
+    } else {
+        StatementDescriptor::Containment {
+            source: random_side(rng, relations),
+            target: random_side(rng, relations),
+        }
+    }
+}
+
+fn random_side(rng: &mut Rng, relations: &[RelationDescriptor]) -> Side {
+    let relation = random_relation_id(rng, relations.len());
+    let projection = random_projection(rng, relations, relation);
+    let bindings = draw(rng, 3);
+    let selection = (0..bindings)
+        .map(|_| {
+            let field = random_field_id(rng, field_span(relations, relation));
+            let hint = relations
+                .get(usize::try_from(relation.0).expect("relation id fits usize"))
+                .and_then(|rel| rel.fields.get(usize::from(field.0)))
+                .map(|f| &f.value_type);
+            (field, random_value(rng, hint))
+        })
+        .collect();
+    Side {
+        relation,
+        projection,
+        selection,
+    }
+}
+
+/// Mostly a declared relation, sometimes a dangling id — the
+/// `StatementUnknownRelation` roster line stays a draw away.
+fn random_relation_id(rng: &mut Rng, count: usize) -> RelationId {
+    let count = u64::try_from(count).expect("relation count fits u64");
+    let id = if count > 0 && rng.chance(7, 8) {
+        rng.range(count)
+    } else {
+        rng.range(count + 3)
+    };
+    RelationId(u32::try_from(id).expect("relation id fits u32"))
+}
+
+fn random_projection(
+    rng: &mut Rng,
+    relations: &[RelationDescriptor],
+    relation: RelationId,
+) -> Box<[FieldId]> {
+    let span = field_span(relations, relation);
+    let len = draw(rng, 4); // zero fields: the empty projection
+    (0..len).map(|_| random_field_id(rng, span)).collect()
+}
+
+/// Mostly within the relation's declared fields (duplicates arise freely),
+/// sometimes dangling.
+fn random_field_id(rng: &mut Rng, span: u64) -> FieldId {
+    let id = if span > 0 && rng.chance(7, 8) {
+        rng.range(span)
+    } else {
+        rng.range(span + 3)
+    };
+    FieldId(u16::try_from(id).expect("field id fits u16"))
+}
+
+/// The relation's declared field count, zero when the id dangles.
+fn field_span(relations: &[RelationDescriptor], relation: RelationId) -> u64 {
+    relations
+        .get(usize::try_from(relation.0).expect("relation id fits usize"))
+        .map_or(0, |rel| {
+            u64::try_from(rel.fields.len()).expect("field count fits u64")
+        })
+}
+
+/// A small signed draw centered on zero.
+fn signed(rng: &mut Rng) -> i64 {
+    i64::try_from(rng.range(16)).expect("small draw fits i64") - 8
+}
+
+fn draw(rng: &mut Rng, n: usize) -> usize {
+    let n = u64::try_from(n).expect("count fits u64");
+    usize::try_from(rng.range(n)).expect("draw fits usize")
+}
+
+fn pick<'pool>(rng: &mut Rng, pool: &'pool [&'pool str]) -> &'pool str {
+    pool[draw(rng, pool.len())]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::random_descriptor;
+    use crate::corpus_gen::Rng;
+
+    /// The arm is deterministic in its entropy: the same byte string
+    /// yields the identical descriptor, and a different one steers away.
+    #[test]
+    fn the_same_bytes_yield_the_same_descriptor() {
+        let bytes: Vec<u8> = (1..=64u64)
+            .flat_map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15).to_le_bytes())
+            .collect();
+        let first = random_descriptor(&mut Rng::from_bytes(&bytes));
+        assert_eq!(
+            first,
+            random_descriptor(&mut Rng::from_bytes(&bytes)),
+            "same bytes, same descriptor"
+        );
+        let other: Vec<u8> = (1..=64u64)
+            .flat_map(|i| i.wrapping_mul(0xC2B2_AE3D_27D4_EB4F).to_le_bytes())
+            .collect();
+        assert_ne!(
+            first,
+            random_descriptor(&mut Rng::from_bytes(&other)),
+            "bytes steer the descriptor"
+        );
+    }
+
+    /// The arm's whole point: across a modest seed sweep the engine both
+    /// accepts and rejects — a generator that only produces one verdict
+    /// class fuzzes nothing.
+    #[test]
+    fn the_arm_reaches_both_verdict_classes() {
+        let mut accepted = 0u32;
+        let mut rejected = 0u32;
+        for seed in 0..256 {
+            let descriptor = random_descriptor(&mut Rng::new(seed));
+            match descriptor.validate() {
+                Ok(_) => accepted += 1,
+                Err(_) => rejected += 1,
+            }
+        }
+        assert!(accepted > 0, "no accepted schema in 256 seeds");
+        assert!(rejected > 0, "no rejected schema in 256 seeds");
+        eprintln!("mix: {accepted} accepted / {rejected} rejected");
+    }
+}

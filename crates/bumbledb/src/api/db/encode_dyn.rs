@@ -1,5 +1,5 @@
 use super::{InternMode, WriteTx};
-use crate::encoding::{decode_field, encode_fact, FactLayout, ValueRef};
+use crate::encoding::{FactLayout, ValueRef, decode_field, encode_fact};
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
 use crate::schema::{FieldDescriptor, FieldId, RelationId};

@@ -6,7 +6,7 @@
 
 use bumbledb::{BindValue, ParamArg, ParamId, Query, Value};
 
-use crate::gen::GenConfig;
+use crate::corpus_gen::GenConfig;
 use crate::naive::ParamValue;
 
 mod digest;

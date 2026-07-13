@@ -15,10 +15,10 @@ use std::path::Path;
 
 use bumbledb::{Db, RelationId, ResultBuffer};
 
+use crate::corpus_gen::{self, GenConfig, Rng, Sizes};
 use crate::families::{self, param_args};
-use crate::gen::{self, GenConfig, Rng, Sizes};
 use crate::harness::{self, Measurement, Protocol, Rotation};
-use crate::schema::{ids, AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId};
+use crate::schema::{AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId, ids};
 
 /// The registered protocol for a write family (shared with the `SQLite`
 /// mirror runners in `sqlite_run`).
@@ -43,7 +43,7 @@ pub(crate) fn prepared_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> P
         account: AccountId(rng.range(sizes.accounts)),
         instrument: InstrumentId(rng.range(sizes.instruments)),
         amount: i64::try_from(1 + rng.range(5_000_000)).expect("fits"),
-        at: gen::AT_BASE + i64::try_from(rng.range(1 << 30)).expect("fits"),
+        at: corpus_gen::AT_BASE + i64::try_from(rng.range(1 << 30)).expect("fits"),
     }
 }
 
@@ -143,7 +143,7 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
         let dir = scratch.join(format!("bulk-bumbledb-{sample}"));
         let db = Db::create(&dir, Ledger).map_err(|e| format!("create: {e:?}"))?;
         for rel in non_posting_relations() {
-            db.bulk_load(rel, gen::relation_rows(cfg, rel))
+            db.bulk_load(rel, corpus_gen::relation_rows(cfg, rel))
                 .map_err(|e| format!("seed: {e:?}"))?;
         }
         pending.push_back(db);
@@ -153,10 +153,13 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
     harness::measure(proto, || {
         let db = pending.borrow_mut().pop_front().expect("pre-seeded store");
         let mut facts = db
-            .bulk_load(ids::POSTING, gen::relation_rows(cfg, ids::POSTING))
+            .bulk_load(ids::POSTING, corpus_gen::relation_rows(cfg, ids::POSTING))
             .map_err(|e| format!("bulk: {e:?}"))?;
         facts += db
-            .bulk_load(ids::POSTING_TAG, gen::relation_rows(cfg, ids::POSTING_TAG))
+            .bulk_load(
+                ids::POSTING_TAG,
+                corpus_gen::relation_rows(cfg, ids::POSTING_TAG),
+            )
             .map_err(|e| format!("bulk tags: {e:?}"))?;
         // Keep the store alive: its Drop must not land inside a sample.
         done.borrow_mut().push(db);
@@ -204,7 +207,7 @@ pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
 mod tests {
     use super::*;
     use crate::corpus;
-    use crate::gen::Scale;
+    use crate::corpus_gen::Scale;
 
     const CFG: GenConfig = GenConfig {
         seed: 1,
@@ -223,7 +226,7 @@ mod tests {
     fn containment_target_db(dir: &Path) -> Db<Ledger> {
         let db = Db::create(dir, Ledger).expect("create");
         for rel in non_posting_relations() {
-            db.bulk_load(rel, gen::relation_rows(CFG, rel))
+            db.bulk_load(rel, corpus_gen::relation_rows(CFG, rel))
                 .expect("seed");
         }
         db

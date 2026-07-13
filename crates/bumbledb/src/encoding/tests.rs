@@ -218,7 +218,12 @@ fn decode_field_surfaces_corruption() {
     fact[1] = 0x00;
     // Invert the IntervalU64 field (offset 42): end half below its start.
     fact[50..58].copy_from_slice(&encode_u64(0));
-    let corrupt: [u8; 16] = fact[42..58].try_into().expect("16-byte field");
+    // The expected error payload, rebuilt from the same primitives the
+    // fixture used: the untouched start half ‖ the zeroed end half.
+    let mut corrupt = [0u8; 16];
+    let (corrupt_start, corrupt_end) = corrupt.split_at_mut(8);
+    corrupt_start.copy_from_slice(&encode_u64(3));
+    corrupt_end.copy_from_slice(&encode_u64(0));
     assert_eq!(
         decode_field(&fact, &layout, 6),
         Err(CorruptionError::InvalidInterval(corrupt))
@@ -228,7 +233,11 @@ fn decode_field_surfaces_corruption() {
     // trailing pad (offsets 26 + 12 .. 26 + 16) is typed corruption —
     // the pad is encoding, not data.
     fact[39] = 0x5A;
-    let tail: [u8; 8] = fact[34..42].try_into().expect("trailing word");
+    // The bytes<12> field's trailing word, sliced layout-first — the
+    // error payload is the field's last whole word.
+    let &tail = field_bytes(&fact, &layout, 5)
+        .last_chunk()
+        .expect("bytes<12> spans two whole words");
     assert_eq!(
         decode_field(&fact, &layout, 5),
         Err(CorruptionError::NonzeroFixedBytesPad(tail))
@@ -395,6 +404,232 @@ fn interval_decode_rejects_start_at_or_beyond_end() {
             decode_interval_i64(bytes),
             Err(CorruptionError::InvalidInterval(bytes))
         );
+    }
+}
+
+// ---------------------------------------------------------------------
+// The exhaustive order-preservation suite (docs/prd-crucible/
+// 15-exhaustive-miri.md, suite 3): for each of the six value types, the
+// canonical encoding preserves the value order over an exhaustive small
+// domain — every ordered pair checked (which pins injectivity too:
+// `cmp` equality both ways). Each test carries its domain-size
+// arithmetic; the domain is the claim.
+// ---------------------------------------------------------------------
+
+/// The i64 domain at byte granularity: the dense sign-boundary window
+/// −260..=260 (crossing 0 and the ±255/±256 first-byte boundary), plus
+/// every byte-boundary magnitude `v · 256^k` for `v ∈ {0x01, 0x7F,
+/// 0x80, 0xFF}`, `k ∈ 0..8`, with both signs and ±1 neighbors (clamped
+/// to the i64 range), plus the type extremes — so every encoded byte
+/// position is exercised at its carry and sign edges.
+fn i64_byte_granularity_domain() -> Vec<i64> {
+    let mut set = std::collections::BTreeSet::new();
+    set.extend(-260..=260i64);
+    for k in 0..8u32 {
+        for byte in [0x01i128, 0x7F, 0x80, 0xFF] {
+            let m = byte << (8 * k);
+            for candidate in [m - 1, m, m + 1, -m - 1, -m, -m + 1] {
+                if let Ok(v) = i64::try_from(candidate) {
+                    set.insert(v);
+                }
+            }
+        }
+    }
+    set.extend([
+        i64::MIN,
+        i64::MIN + 1,
+        i64::MIN + 2,
+        i64::MAX - 2,
+        i64::MAX - 1,
+        i64::MAX,
+    ]);
+    set.into_iter().collect()
+}
+
+/// Bool: the whole domain is {false, true} — all 2² = 4 ordered pairs.
+/// (false, 0x00) < (true, 0x01) is the entire order claim.
+#[test]
+fn exhaustive_bool_encoding_preserves_order() {
+    for x in [false, true] {
+        for y in [false, true] {
+            assert_eq!(encode_bool(x).cmp(&encode_bool(y)), x.cmp(&y));
+        }
+    }
+}
+
+/// I64 across the sign boundary at byte granularity: the sign-flipped
+/// big-endian encoding preserves numeric order over the whole derived
+/// domain ([`i64_byte_granularity_domain`] — 677 values, size asserted),
+/// checked on all 677² = 458,329 ordered pairs. `cmp` equality in both
+/// directions makes this order preservation AND injectivity.
+#[test]
+fn exhaustive_i64_encoding_preserves_order_across_the_sign_boundary() {
+    let domain = i64_byte_granularity_domain();
+    assert_eq!(domain.len(), 677, "the derived byte-granularity domain");
+    for &x in &domain {
+        for &y in &domain {
+            assert_eq!(encode_i64(x).cmp(&encode_i64(y)), x.cmp(&y), "{x} vs {y}");
+        }
+    }
+}
+
+/// U64 at byte granularity: the dense window 0..=520, every
+/// byte-boundary magnitude with ±1 neighbors (as in the i64 domain,
+/// unsigned), and the top extremes — 605 values (size asserted), all
+/// 605² = 366,025 ordered pairs.
+#[test]
+fn exhaustive_u64_encoding_preserves_order_at_byte_boundaries() {
+    let mut set = std::collections::BTreeSet::new();
+    set.extend(0..=520u64);
+    for k in 0..8u32 {
+        for byte in [0x01u128, 0x7F, 0x80, 0xFF] {
+            let m = byte << (8 * k);
+            for candidate in [m - 1, m, m + 1] {
+                if let Ok(v) = u64::try_from(candidate) {
+                    set.insert(v);
+                }
+            }
+        }
+    }
+    set.extend([u64::MAX - 2, u64::MAX - 1, u64::MAX]);
+    let domain: Vec<u64> = set.into_iter().collect();
+    assert_eq!(domain.len(), 605, "the derived byte-granularity domain");
+    for &x in &domain {
+        for &y in &domain {
+            assert_eq!(encode_u64(x).cmp(&encode_u64(y)), x.cmp(&y), "{x} vs {y}");
+        }
+    }
+}
+
+/// String: the fact encoding is the interned id's big-endian word — the
+/// ONLY order it carries is id order (string-value order is refused by
+/// design, `docs/architecture/10-data-model.md`: intern ids are
+/// meaningless to order, and `Lt`-family operators on str are typed
+/// validation errors). Domain: ids 0..=255 exhaustively, the word
+/// boundaries 2⁸ᵏ ± 1, and the never-minted sentinel `u64::MAX` — 278
+/// values (size asserted), all 278² = 77,284 ordered pairs.
+#[test]
+fn exhaustive_string_id_word_preserves_id_order_only() {
+    let mut set = std::collections::BTreeSet::new();
+    set.extend(0..=255u64);
+    for k in 1..8u32 {
+        let m = 1u64 << (8 * k);
+        set.extend([m - 1, m, m + 1]);
+    }
+    set.extend([
+        crate::storage::dict::SENTINEL_ID - 1,
+        crate::storage::dict::SENTINEL_ID,
+    ]);
+    let domain: Vec<u64> = set.into_iter().collect();
+    assert_eq!(domain.len(), 278, "the derived id domain");
+    for &x in &domain {
+        for &y in &domain {
+            assert_eq!(encode_u64(x).cmp(&encode_u64(y)), x.cmp(&y));
+        }
+    }
+}
+
+/// bytes<N> prefix laws: ALL byte strings of length 1..=3 over the
+/// NUL-free 4-symbol alphabet {0x01, 0x55, 0xAA, 0xFF} — 4 + 4² + 4³ =
+/// 84 strings (count asserted), all 84² = 7,056 ordered pairs. Every
+/// string pads to the same single 8-byte word, and because the 0x00 pad
+/// byte sorts strictly below every alphabet symbol, padded memcmp order
+/// equals raw lexicographic order INCLUDING the prefix law (a proper
+/// prefix sorts strictly first) — and the encoding is injective over
+/// the domain. The engine only ever compares equal declared widths
+/// (`TypeDesc::FixedBytes { len }` is per-field), where the law holds
+/// for arbitrary bytes; the cross-length half is the mathematical
+/// boundary of the claim, and the final assert documents why it needs
+/// the NUL-free alphabet.
+#[test]
+fn exhaustive_fixed_bytes_prefix_laws_over_all_short_strings() {
+    let alphabet = [0x01u8, 0x55, 0xAA, 0xFF];
+    let mut strings: Vec<Vec<u8>> = Vec::new();
+    for &a in &alphabet {
+        strings.push(vec![a]);
+        for &b in &alphabet {
+            strings.push(vec![a, b]);
+            for &c in &alphabet {
+                strings.push(vec![a, b, c]);
+            }
+        }
+    }
+    assert_eq!(strings.len(), 84, "4 + 16 + 64 strings of length <= 3");
+    let padded: Vec<Vec<u8>> = strings
+        .iter()
+        .map(|raw| {
+            let mut out = Vec::new();
+            encode_fixed_bytes(raw, &mut out);
+            assert_eq!(out.len(), 8, "lengths <= 3 pad to one word");
+            out
+        })
+        .collect();
+    for (x, px) in strings.iter().zip(&padded) {
+        for (y, py) in strings.iter().zip(&padded) {
+            assert_eq!(
+                px.cmp(py),
+                x.cmp(y),
+                "padded order diverges from raw order for {x:?} vs {y:?}"
+            );
+        }
+    }
+    // The boundary of the claim: a NUL in the value collides with the
+    // pad, so the cross-length law requires the NUL-free alphabet (the
+    // engine never faces this — widths are fixed per field).
+    let (mut with_nul, mut without) = (Vec::new(), Vec::new());
+    encode_fixed_bytes(&[0x01, 0x00], &mut with_nul);
+    encode_fixed_bytes(&[0x01], &mut without);
+    assert_eq!(with_nul, without, "NUL and pad are indistinguishable");
+}
+
+/// Interval endpoint-pair ordering on a dense grid, both element types:
+/// the 16-byte `start ‖ end` encoding sorts by the `(start, end)` tuple
+/// under the element order.
+///
+/// Domain arithmetic — u64: endpoints {0..=20} ∪ {MAX−2, MAX−1, MAX}
+/// (24 values, rays included: end == MAX), so C(24,2) = 276 nonempty
+/// intervals and 276² = 76,176 ordered pairs. i64: endpoints {−10..=10}
+/// ∪ {MIN, MIN+1, MAX−1, MAX} (25 values), so C(25,2) = 300 intervals
+/// and 300² = 90,000 ordered pairs. Every pair checked.
+#[test]
+fn exhaustive_interval_encoding_orders_by_endpoint_pair_on_the_grid() {
+    let mut u64_points: Vec<u64> = (0..=20).collect();
+    u64_points.extend([u64::MAX - 2, u64::MAX - 1, u64::MAX]);
+    let mut u64_intervals = Vec::new();
+    for (i, &s) in u64_points.iter().enumerate() {
+        for &e in &u64_points[i + 1..] {
+            u64_intervals.push((s, e));
+        }
+    }
+    assert_eq!(u64_intervals.len(), 276, "C(24,2) intervals");
+    for &x in &u64_intervals {
+        for &y in &u64_intervals {
+            assert_eq!(
+                encode_interval_u64(x.0, x.1).cmp(&encode_interval_u64(y.0, y.1)),
+                x.cmp(&y),
+                "u64 {x:?} vs {y:?}"
+            );
+        }
+    }
+
+    let mut i64_points: Vec<i64> = (-10..=10).collect();
+    i64_points.extend([i64::MIN, i64::MIN + 1, i64::MAX - 1, i64::MAX]);
+    i64_points.sort_unstable();
+    let mut i64_intervals = Vec::new();
+    for (i, &s) in i64_points.iter().enumerate() {
+        for &e in &i64_points[i + 1..] {
+            i64_intervals.push((s, e));
+        }
+    }
+    assert_eq!(i64_intervals.len(), 300, "C(25,2) intervals");
+    for &x in &i64_intervals {
+        for &y in &i64_intervals {
+            assert_eq!(
+                encode_interval_i64(x.0, x.1).cmp(&encode_interval_i64(y.0, y.1)),
+                x.cmp(&y),
+                "i64 {x:?} vs {y:?}"
+            );
+        }
     }
 }
 

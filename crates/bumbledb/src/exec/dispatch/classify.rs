@@ -1,7 +1,7 @@
 use super::{GuardPlan, GuardVar};
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
-use crate::ir::normalize::NormalizedQuery;
 use crate::ir::CmpOp;
+use crate::ir::normalize::NormalizedQuery;
 use crate::schema::{FieldId, Relation, Schema, StatementId};
 
 /// Classifies a normalized query: `Some(GuardPlan)` iff it is guard-probe

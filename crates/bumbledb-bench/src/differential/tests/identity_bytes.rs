@@ -11,12 +11,12 @@ use bumbledb::schema::{
     FieldId, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, Db, FindTerm, PredicateTree, Query, RelationId, Rule, Term,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, Query, RelationId, Rule, Term,
     Value, VarId,
 };
 
-use crate::differential::{run, Op};
-use crate::fixture::{field, var, TempDir};
+use crate::differential::{Op, run};
+use crate::fixture::{TempDir, field, var};
 use crate::naive::{Delta, NaiveDb};
 
 const BLOB: RelationId = RelationId(0);
@@ -190,12 +190,12 @@ fn blob_atom(bindings: Vec<(u16, Term)>) -> Atom {
     }
 }
 
-fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>, predicates: Vec<PredicateTree>) -> Query {
+fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>, conditions: Vec<ConditionTree>) -> Query {
     Query::single(Rule {
         finds,
         atoms,
         negated: vec![],
-        predicates,
+        conditions,
     })
 }
 
@@ -242,7 +242,7 @@ fn queries() -> Vec<Op> {
         query: plain(
             vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             vec![blob_atom(vec![(2, var(0)), (7, var(1))])],
-            vec![PredicateTree::Leaf(Comparison {
+            vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ne,
                 lhs: var(0),
                 rhs: Term::Literal(digest(16, 1)),
@@ -254,7 +254,7 @@ fn queries() -> Vec<Op> {
         query: plain(
             vec![FindTerm::Var(VarId(0))],
             vec![blob_atom(vec![(2, var(0)), (7, var(1))])],
-            vec![PredicateTree::Leaf(Comparison {
+            vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Eq,
                 lhs: var(0),
                 rhs: Term::ParamSet(bumbledb::ParamId(0)),

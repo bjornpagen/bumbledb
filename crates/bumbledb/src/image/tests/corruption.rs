@@ -1,4 +1,4 @@
-use super::{populated, schema, R};
+use super::{R, populated, schema};
 use crate::error::{CorruptionError, Error};
 use crate::image::build;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};

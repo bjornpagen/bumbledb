@@ -2,7 +2,7 @@ use super::{Colt, Cursor, NodeRef, NodeState, Positions, SelectionLevel, View};
 
 impl Colt {
     /// Builds the root over a view: O(1) — nothing decodes until a force.
-    /// `selections` are the occurrence's Eq-constant predicate levels, in
+    /// `selections` are the occurrence's Eq-constant selection levels, in
     /// plan order (image columns plus set-ness — [`SelectionLevel`]);
     /// `join_schema` the join levels below them.
     #[must_use]

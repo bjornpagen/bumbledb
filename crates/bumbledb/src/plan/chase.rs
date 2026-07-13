@@ -82,7 +82,7 @@
 use std::collections::BTreeSet;
 
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
-use crate::ir::normalize::{lower_literal, NormalizedQuery, Occurrence, Role};
+use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, lower_literal};
 use crate::ir::{AggOp, CmpOp, FindTerm, VarId};
 use crate::schema::{Enforcement, FieldId, Schema, Side, StatementId};
 

@@ -63,19 +63,17 @@ pub fn scan<'txn>(
         if dead {
             return None;
         }
-        let item = (|| {
-            let (raw_key, bytes) = entry?;
-            // F | relation(4) | row_id(8): fixed 13-byte shape, checked
-            // before slicing — a short key is corruption, typed.
-            if raw_key.len() != keys::FACT_KEY_LEN {
-                return Err(Error::Corruption(CorruptionError::MalformedValue(
-                    "F key length",
-                )));
-            }
-            let row_id = u64::from_be_bytes(raw_key[5..].try_into().expect("length checked above"));
+        let item: Result<(u64, &[u8])> = try {
+            let (raw_key, bytes) = entry.map_err(Error::from)?;
+            // F | relation(4) | row_id(8): fixed 13-byte shape — the
+            // parser's split chain is the length check, and a
+            // mis-shaped key is corruption, typed.
+            let (_, row_id) = keys::parse_fact_key(raw_key).ok_or(Error::Corruption(
+                CorruptionError::MalformedValue("F key length"),
+            ))?;
             check_width(schema, rel, row_id, bytes)?;
-            Ok((row_id, bytes))
-        })();
+            (row_id, bytes)
+        };
         dead = item.is_err();
         Some(item)
     })))

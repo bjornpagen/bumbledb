@@ -10,7 +10,7 @@
 //! `==` pair, and a containment whose target projection permutes the
 //! target key's order.
 
-use crate::encoding::{encode_interval_u64, encode_u64, ValueRef};
+use crate::encoding::{ValueRef, encode_interval_u64, encode_u64};
 use crate::schema::{
     ContainmentId, FieldId, KeyId, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
     StatementDescriptor, StatementId, ValueType,

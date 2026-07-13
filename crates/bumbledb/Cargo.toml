@@ -1,7 +1,7 @@
 [package]
 name = "bumbledb"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 [features]
@@ -13,6 +13,23 @@ alloc-counter = []
 # (`plan/chase.rs`) from the bench crate's dual-run differential unit
 # tests. Enabled only as a bench dev-dependency; no runtime mode ships.
 chase-off = []
+# Fuzz-oracle infrastructure: reaches the statically-empty fold's
+# thread-local off switch (`ir/normalize/fold.rs`) from outside the
+# engine. History, recorded honestly: deleted as dead configuration
+# 2026-07-12 (936ede5 — nothing in-workspace consumed it), revived
+# 2026-07-13 with a named consumer: the detached fuzz crate's `rewrites`
+# dual-pipeline differential (docs/prd-crucible/13-fuzz-query-rewrites.md)
+# — an external crate cannot reach `cfg(test)`. No runtime mode ships.
+fold-off = []
+# Fuzz-oracle infrastructure: the crashpoint hooks — the commit
+# pipeline's named phase boundaries (`storage/commit.rs`, the table)
+# consult `BUMBLEDB_CRASHPOINT` and abort the process on match, for the
+# detached fuzz crate's `crash` target
+# (docs/prd-crucible/14-fuzz-crash.md). Off (the default) the hook macro
+# expands to nothing; on, the hooks are still inert unless the
+# environment variable is set. No runtime mode ships.
+crashpoint = []
+
 [dependencies]
 blake3 = "1"
 bumbledb-macros = { path = "../bumbledb-macros" }

@@ -3,14 +3,14 @@ use std::path::{Path, PathBuf};
 use bumbledb::Db;
 
 use crate::cli::{BenchArgs, CorpusArgs};
-use crate::gen::{self, GenConfig};
+use crate::corpus_gen::{self, GenConfig};
 use crate::harness::Protocol;
 use crate::schema::Ledger;
 use crate::{clockproxy, families, report, sqlite_run, verify};
 
 use super::corpus::gen_config;
 use super::write_families::write_families;
-use super::{ensure_corpus, BenchRun, CorpusPaths, CASES_FILE};
+use super::{BenchRun, CASES_FILE, CorpusPaths, ensure_corpus};
 
 /// The stamp-refusal message, with the user's own flags substituted.
 pub(super) fn stamp_refusal(corpus: &CorpusArgs) -> String {
@@ -42,7 +42,7 @@ fn stamp_is_fresh(paths: &CorpusPaths, cfg: GenConfig) -> bool {
         return false;
     };
     let vcfg = verify::VerifyConfig {
-        gen: cfg,
+        corpus_gen: cfg,
         random_cases: cases,
         out_dir: paths.root.clone(),
     };
@@ -183,7 +183,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
             seed: cfg.seed,
             samples: proto.samples,
         },
-        corpus_digest: gen::digest_hex(&gen::corpus_digest(cfg)),
+        corpus_digest: corpus_gen::digest_hex(&corpus_gen::corpus_digest(cfg)),
         verify_stamp: if verified {
             // The provenance shows how much evidence earned the stamp:
             // a --cases 0 run is legal (families-only verification is
@@ -196,7 +196,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         } else {
             "UNVERIFIED".to_owned()
         },
-        budget_gates: cfg.scale == gen::Scale::L,
+        budget_gates: cfg.scale == corpus_gen::Scale::L,
         partial: args.families.is_some(),
         reads,
         writes,

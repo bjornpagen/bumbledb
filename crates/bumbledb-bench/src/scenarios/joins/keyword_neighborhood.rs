@@ -23,6 +23,6 @@ pub(super) fn keyword_neighborhood() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }

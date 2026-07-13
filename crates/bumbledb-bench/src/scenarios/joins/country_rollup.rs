@@ -33,6 +33,6 @@ pub(super) fn country_rollup() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }

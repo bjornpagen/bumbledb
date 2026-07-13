@@ -9,12 +9,12 @@
 //! generator's mask distribution: named composites, singletons, and
 //! random masks, over both element lanes and every operand shape.
 
-use bumbledb::{CmpOp, MaskTerm, PredicateTree, Query};
+use bumbledb::{CmpOp, ConditionTree, MaskTerm, Query};
 
+use crate::corpus_gen::Rng;
 use crate::differential::engine_query;
-use crate::gen::Rng;
 use crate::querygen::{self, target};
-use crate::verify::{Run, VerifyConfig, MAX_BUNDLES};
+use crate::verify::{MAX_BUNDLES, Run, VerifyConfig};
 
 use super::run::positional;
 
@@ -29,8 +29,8 @@ fn converse_twin(query: &Query) -> Option<Query> {
     let mut twin = query.clone();
     let mut any = false;
     for rule in &mut twin.rules {
-        for tree in &mut rule.predicates {
-            let PredicateTree::Leaf(comparison) = tree else {
+        for tree in &mut rule.conditions {
+            let ConditionTree::Leaf(comparison) = tree else {
                 continue; // the generator emits flat conjunctions
             };
             if let CmpOp::Allen {
@@ -53,7 +53,7 @@ fn converse_twin(query: &Query) -> Option<Query> {
 /// verdicts alike — a `MeasureOfRay` on one side of a converse pair
 /// would be its own bug).
 pub(super) fn converse_lane(run: &mut Run<'_, target::Target>, cfg: &VerifyConfig) {
-    let mut rng = Rng::new(cfg.gen.seed ^ 0x0115_C09E);
+    let mut rng = Rng::new(cfg.corpus_gen.seed ^ 0x0115_C09E);
     let mut compared = 0u32;
     // A generous draw budget: Allen-bearing shapes are a sizable band,
     // so the budget is slack, not a hidden skip.
@@ -61,11 +61,11 @@ pub(super) fn converse_lane(run: &mut Run<'_, target::Target>, cfg: &VerifyConfi
         if compared >= CONVERSE_CASES || run.bundles.len() >= MAX_BUNDLES {
             break;
         }
-        let query = querygen::random_query(&mut rng, cfg.gen);
+        let query = querygen::random_query(&mut rng, cfg.corpus_gen);
         let Some(twin) = converse_twin(&query) else {
             continue;
         };
-        let Some(draw) = querygen::params_for(&query, &mut rng, cfg.gen)
+        let Some(draw) = querygen::params_for(&query, &mut rng, cfg.corpus_gen)
             .into_iter()
             .next()
         else {

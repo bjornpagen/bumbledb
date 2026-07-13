@@ -4,22 +4,18 @@
 
 use crate::encoding::fact_hash;
 use crate::error::Result;
-use crate::schema::RelationId;
 use crate::storage::keys;
 
-use super::{namespace, StoreFinding, Sweep};
+use super::{StoreFinding, Sweep, namespace};
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
     for entry in namespace(s.data, txn, keys::NS_MEMBERSHIP)? {
         let (key, value) = entry?;
-        if key.len() != keys::MEMBERSHIP_KEY_LEN {
+        let Some((rel, hash)) = keys::parse_membership_key(key) else {
             s.malformed(key, "M key length");
             continue;
-        }
-        let rel = RelationId(u32::from_be_bytes(
-            key[1..5].try_into().expect("fixed-width slice"),
-        ));
+        };
         let Some(relation) = s.schema.relation_checked(rel) else {
             s.malformed(key, "M key relation");
             continue;
@@ -40,7 +36,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         let row_id = u64::from_le_bytes(row_bytes);
         let resolves = s
             .fact(rel, row_id)?
-            .is_some_and(|fact| fact_hash(fact) == key[5..]);
+            .is_some_and(|fact| fact_hash(fact) == *hash);
         if !resolves {
             s.push(StoreFinding::MembershipWithoutFact {
                 relation: rel,

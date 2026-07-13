@@ -1,6 +1,6 @@
 use bumbledb::Query;
 
-use crate::gen::{GenConfig, Rng};
+use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::dress::dress;
 use crate::querygen::negate::negate;
 use crate::querygen::shapes::{aggregate, chain, guard, self_join, star};
@@ -9,8 +9,8 @@ use crate::querygen::shapes_closed::{closed_fold, closed_join};
 use crate::querygen::shapes_interval::{boundary, interval_join, measure, membership};
 use crate::querygen::shapes_rules::rules;
 use crate::querygen::shapes_sink::{arg, count_distinct};
-use crate::querygen::target::{ids, Domains};
-use crate::querygen::{Builder, GenTags, Shape, SHAPE_WEIGHTS};
+use crate::querygen::target::{Domains, ids};
+use crate::querygen::{Builder, GenTags, SHAPE_WEIGHTS, Shape};
 
 fn shape_of(rng: &mut Rng) -> Shape {
     let total: u64 = SHAPE_WEIGHTS.iter().map(|(_, w)| w).sum();

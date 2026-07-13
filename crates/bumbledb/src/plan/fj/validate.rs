@@ -1,11 +1,11 @@
 use super::{
+    FjPlan, PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
     check_occurrence_coverage::check_occurrence_coverage, check_selections,
-    derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters, FjPlan,
-    PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
+    derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters,
 };
 use crate::image::view::{FilterPredicate, ResolvedWordSource};
-use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::ir::VarId;
+use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::schema::{FieldId, Schema};
 use std::collections::BTreeSet;
 
@@ -72,11 +72,13 @@ fn build_occurrences(
                 Role::Negated => {
                     let occ_vars: BTreeSet<VarId> =
                         occurrence.vars.iter().map(|(_, v)| *v).collect();
-                    vec![slots
-                        .iter()
-                        .map(|(v, _)| *v)
-                        .filter(|v| occ_vars.contains(v))
-                        .collect()]
+                    vec![
+                        slots
+                            .iter()
+                            .map(|(v, _)| *v)
+                            .filter(|v| occ_vars.contains(v))
+                            .collect(),
+                    ]
                 }
                 Role::Eliminated(_) | Role::Folded(_) => Vec::new(),
             };
@@ -179,7 +181,7 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // the placement rules read in order;
-   // each attaches one residual kind
+// each attaches one residual kind
 pub fn validate(
     plan: &FjPlan,
     normalized: &NormalizedQuery,

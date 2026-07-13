@@ -13,11 +13,11 @@ use bumbledb::schema::{
     FieldId, RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    with_chase_disabled, AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId, with_chase_disabled,
 };
 
-use crate::differential::{engine_query, Rows};
-use crate::fixture::{atom, field, fresh, side, var, TempDir};
+use crate::differential::{Rows, engine_query};
+use crate::fixture::{TempDir, atom, field, fresh, side, var};
 use crate::naive::{Delta, NaiveDb};
 
 /// One store pair over a fixture: the engine store and the model,
@@ -145,7 +145,7 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: atoms.clone(),
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let aggregate = Query::single(Rule {
         finds: vec![
@@ -157,7 +157,7 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
         ],
         atoms,
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     three_way(&db, &naive, &projection, "Account");
     three_way(&db, &naive, &aggregate, "Account");
@@ -236,7 +236,7 @@ fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: atoms.clone(),
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let aggregate = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
@@ -245,7 +245,7 @@ fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
         }],
         atoms,
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     three_way(&db, &naive, &projection, "Grading");
     three_way(&db, &naive, &aggregate, "Grading");
@@ -267,7 +267,7 @@ fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: atoms.clone(),
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let aggregate = Query::single(Rule {
         finds: vec![
@@ -279,7 +279,7 @@ fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
         ],
         atoms,
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     three_way(&db, &naive, &projection, "Det");
     three_way(&db, &naive, &aggregate, "Det");
@@ -303,7 +303,7 @@ fn the_missing_phi_near_miss_refuses_and_still_agrees() {
             atom(RelationId(1), &[(0, var(0)), (1, var(1))]),
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     assert!(
         eliminated(&db, &query).is_empty(),

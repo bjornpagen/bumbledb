@@ -291,9 +291,9 @@ broken until they agree.
 | [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, witnessed writes, prepared queries |
 
 The intuition-transfer companion is [`docs/cookbook.md`](docs/cookbook.md) —
-twenty-three worked schemas (unions, vocabularies, trees, calendars, tax
-brackets, ledgers), each rot-proofed by a compile test, each comment naming
-the theorem its statement buys.
+twenty-five worked schemas (unions, vocabularies, trees, calendars, tax
+brackets, ledgers, host-driven closures), each rot-proofed by a compile test,
+each comment naming the theorem its statement buys.
 
 The algorithmic reference is Wang, Willsey & Suciu, *Free Join: Unifying
 Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in
@@ -320,8 +320,17 @@ by machinery, not judgment:
   gate, not a code review.
 - **Checked lint exceptions**: suppressions are `#[expect]` claims with a
   reason, so an exception that stops being necessary fails the gate itself.
+- **One pinned toolchain**: `rust-toolchain.toml` names one dated nightly
+  (edition 2024, every gate and the fuzzer on the same compiler); the pin
+  moves deliberately — a PRD-sized action carrying the microbench re-earn
+  session — never implicitly.
 - **Microbench pins**: load-bearing mechanisms carry `#[ignore]`d in-tree
   benchmarks that re-assert their measured margins on demand.
+- **Fuzzed continuously**: five coverage-guided targets over the public API
+  drive the same oracles at full firepower (`scripts/fuzz.sh`, all cores,
+  fork mode), every session on the record in
+  [`fuzz/SESSIONS.md`](fuzz/SESSIONS.md) — including the zero-finding ones —
+  and every checked-in corpus entry replayed deterministically in CI.
 - **Refutation is a result.** A mechanism that measures as a loss is
   reverted, and the record keeps the numbers and the failure mechanism —
   deletion is gated exactly like addition.

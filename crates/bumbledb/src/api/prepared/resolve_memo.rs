@@ -29,10 +29,10 @@ impl ResolveMemo {
         word: u64,
         buffer: &mut ResultBuffer,
     ) -> Result<(usize, usize)> {
-        if let Some((last_word, range)) = self.last {
-            if last_word == word {
-                return Ok(range);
-            }
+        if let Some((last_word, range)) = self.last
+            && last_word == word
+        {
+            return Ok(range);
         }
         let key = [word];
         if let (range, false) = self.ranges.get_or_insert_with(&key, || (0, 0)) {

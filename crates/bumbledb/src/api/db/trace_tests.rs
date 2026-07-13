@@ -249,7 +249,7 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))

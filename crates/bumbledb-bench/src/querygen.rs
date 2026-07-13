@@ -43,7 +43,7 @@ pub mod writes;
 pub use construct::random_query;
 pub use contradict::contradiction_query;
 pub use coverage::{cmp_cell_legal, coverage};
-pub use oracle::{params_for, ParamDraw};
+pub use oracle::{ParamDraw, params_for};
 
 /// The shape grammar's weights (drawn by range over the sum). The five
 /// original join shapes keep their proportions; the redesign's surface
@@ -163,10 +163,10 @@ enum ChaseVariant {
 /// (coverage, oracles, tests) unwrap through here. The tree grammar's
 /// OR shapes are the DNF property suite's territory
 /// (`naive/tests/dnf.rs`), never the generator's.
-fn leaf(tree: &bumbledb::PredicateTree) -> &Comparison {
+fn leaf(tree: &bumbledb::ConditionTree) -> &Comparison {
     match tree {
-        bumbledb::PredicateTree::Leaf(comparison) => comparison,
-        bumbledb::PredicateTree::And(_) | bumbledb::PredicateTree::Or(_) => {
+        bumbledb::ConditionTree::Leaf(comparison) => comparison,
+        bumbledb::ConditionTree::And(_) | bumbledb::ConditionTree::Or(_) => {
             unreachable!("the generator emits flat conjunctions only")
         }
     }
@@ -184,7 +184,7 @@ fn leaf(tree: &bumbledb::PredicateTree) -> &Comparison {
 struct Builder {
     atoms: Vec<Atom>,
     negated: Vec<Atom>,
-    predicates: Vec<Comparison>,
+    conditions: Vec<Comparison>,
     finds: Vec<FindTerm>,
     next_var: u16,
     next_param: u16,

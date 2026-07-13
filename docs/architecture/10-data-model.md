@@ -55,7 +55,7 @@ relation does natively. The rewritten theory is a **different theory** (the
 fingerprint moves); no store compatibility, no migration, per policy.
 
 **Orderability, complete:** U64 and I64 support ordering (`Lt/Le/Gt/Ge`, `Min`, `Max`,
-range predicates). Interval supports **equality, the `Allen` mask (the whole
+range conditions). Interval supports **equality, the `Allen` mask (the whole
 interval-pair algebra as one comparison — `20-query-ir.md` § the Allen
 operator), and point membership** (below) — never `Lt`-family order or
 `Min`/`Max`: the value order that
@@ -533,7 +533,7 @@ standing instance.
 **Virtual views are host-level IR composition — a view is a function returning
 atoms.** Queries are plain data (`20-query-ir.md`), so the composition layer is
 the host language: a derived predicate is a Rust function returning IR fragments
-(atoms, predicates, rule bodies) that callers splice into their queries. Worked,
+(atoms, conditions, rule bodies) that callers splice into their queries. Worked,
 from the calendar theory (`60-validation.md`):
 
 ```rust

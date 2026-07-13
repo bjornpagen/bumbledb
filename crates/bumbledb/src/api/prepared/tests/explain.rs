@@ -17,6 +17,45 @@ fn explain_reports_the_join_plan_with_actuals() {
     assert!(report.contains("emitted bindings: 2"));
 }
 
+/// The report's header renders the predicate the query defines — the
+/// signature authority (`ir/validate`), one column per head position,
+/// fold kinds by their rule-notation names.
+#[test]
+fn the_explain_header_renders_the_predicate() {
+    let dir = TempDir::new("prepared-explain-predicate");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(&env, &schema, &[(1, 7, "a", 1), (2, 7, "b", 2)]);
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+    let (_, report) = prepared
+        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .expect("explain");
+    assert!(report.contains("predicate: (string, i64)"), "{report}");
+
+    // The fold-bearing head: the column renders its producing kind.
+    let count_query = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: crate::ir::AggOp::Count,
+                over: None,
+            },
+        ],
+        atoms: vec![Atom {
+            relation: POSTING,
+            bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &count_query).expect("prepare");
+    let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    assert!(report.contains("predicate: (u64, Count u64)"), "{report}");
+}
+
 /// The stats surface carries the pin record — golden on one EXPLAIN
 /// report: every node estimate is "estimated from (pinned rows at
 /// prepare)", and a guard probe (which reads no statistics) pins
@@ -71,7 +110,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     let (_, stats) = guard
@@ -137,7 +176,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     });
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     let (rows, stats) = guard

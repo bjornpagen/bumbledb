@@ -1,12 +1,80 @@
 //! Find-list rules: Datalog safety, the aggregate roster, and the Arg
-//! discipline (`docs/architecture/20-query-ir.md` § aggregation).
+//! discipline (`docs/architecture/20-query-ir.md` § aggregation) — and
+//! the predicate's signature derivation, the ONE place result-column
+//! types come from.
 
-use super::Context;
+use super::{AggKind, Context, Predicate, PredicateColumn, RuleTyping};
 use crate::error::ValidationError;
 use crate::ir::normalize::LoweredRule;
 use crate::ir::{AggOp, FindTerm, VarId};
 use crate::schema::ValueType;
 use std::collections::BTreeSet;
+
+impl Predicate {
+    /// Derives the signature from one rule's find terms and resolved
+    /// typing — called exactly once, at validation, on rule 0 (the
+    /// per-rule alignment already proved every rule derives the same
+    /// predicate). No other derivation of the output row exists.
+    pub(super) fn derive(rule: &LoweredRule, typing: &RuleTyping) -> Self {
+        let var_type = |var: &VarId| typing.var_types[var].clone();
+        let columns = rule
+            .finds
+            .iter()
+            .map(|term| match term {
+                FindTerm::Var(var) => PredicateColumn {
+                    ty: var_type(var),
+                    op: None,
+                },
+                // The measure positions are u64 by definition (|[s, e)| =
+                // e − s — 20-query-ir § the measure): projected plain,
+                // folded under the fold's kind.
+                FindTerm::Duration(_) => PredicateColumn {
+                    ty: ValueType::U64,
+                    op: None,
+                },
+                FindTerm::AggregateDuration { op, .. } => PredicateColumn {
+                    ty: ValueType::U64,
+                    op: Some(AggKind::of(*op)),
+                },
+                FindTerm::Aggregate { op, over } => PredicateColumn {
+                    ty: match op {
+                        // The counting folds are U64 whatever they
+                        // counted.
+                        AggOp::Count | AggOp::CountDistinct => ValueType::U64,
+                        // The arithmetic folds carry their input's type;
+                        // Pack its interval type; the Arg forms the
+                        // carried payload's type.
+                        AggOp::Sum
+                        | AggOp::Min
+                        | AggOp::Max
+                        | AggOp::ArgMax { .. }
+                        | AggOp::ArgMin { .. }
+                        | AggOp::Pack => var_type(&over.expect("validated: only Count is nullary")),
+                    },
+                    op: Some(AggKind::of(*op)),
+                },
+            })
+            .collect();
+        Self { columns }
+    }
+}
+
+impl AggKind {
+    /// The fold kind of an aggregate op — the key payloads of the Arg
+    /// forms stay rule-scoped and are elided here.
+    fn of(op: AggOp) -> Self {
+        match op {
+            AggOp::Sum => Self::Sum,
+            AggOp::Min => Self::Min,
+            AggOp::Max => Self::Max,
+            AggOp::Count => Self::Count,
+            AggOp::CountDistinct => Self::CountDistinct,
+            AggOp::ArgMax { .. } => Self::ArgMax,
+            AggOp::ArgMin { .. } => Self::ArgMin,
+            AggOp::Pack => Self::Pack,
+        }
+    }
+}
 
 impl Context {
     #[expect(

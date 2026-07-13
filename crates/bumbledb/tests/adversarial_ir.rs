@@ -18,11 +18,11 @@
 //! sweep both exercises the roster's rejections and drives *valid*
 //! queries deep into the planner.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FieldId, FindTerm, MaskTerm, ParamId,
-    PredicateTree, Query, RelationId, Rule, Term, Value, VarId, MAX_PREDICATE_DEPTH, MAX_RULES,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
+    MAX_CONDITION_DEPTH, MAX_RULES, MaskTerm, ParamId, Query, RelationId, Rule, Term, Value, VarId,
 };
 
 mod common;
@@ -199,15 +199,15 @@ fn comparison(rng: &mut Rng) -> Comparison {
 
 /// A predicate tree with hostile nesting: leaves mostly, `And`/`Or`
 /// nodes (empty child lists included) down to a bounded depth.
-fn tree(rng: &mut Rng, depth: u64) -> PredicateTree {
+fn tree(rng: &mut Rng, depth: u64) -> ConditionTree {
     if depth == 0 || rng.chance(2) {
-        return PredicateTree::Leaf(comparison(rng));
+        return ConditionTree::Leaf(comparison(rng));
     }
     let children = (0..rng.below(4)).map(|_| tree(rng, depth - 1)).collect();
     if rng.chance(2) {
-        PredicateTree::And(children)
+        ConditionTree::And(children)
     } else {
-        PredicateTree::Or(children)
+        ConditionTree::Or(children)
     }
 }
 
@@ -242,7 +242,7 @@ fn random_rule(rng: &mut Rng) -> Rule {
         finds: (0..rng.below(4)).map(|_| find_term(rng)).collect(),
         atoms: (0..rng.below(4)).map(|_| atom(rng)).collect(),
         negated: (0..rng.below(3)).map(|_| atom(rng)).collect(),
-        predicates: (0..rng.below(3)).map(|_| tree(rng, 4)).collect(),
+        conditions: (0..rng.below(3)).map(|_| tree(rng, 4)).collect(),
     }
 }
 
@@ -281,7 +281,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
             bindings: vec![(person, Term::Var(VarId(0))), (during, Term::Var(VarId(1)))],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },
@@ -319,7 +319,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
                 (Gauntlet::BUSY_OFFSET, Term::Var(VarId(1))),
             ])],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         }),
         // Pack: the coalesced calendar.
         3 => Query::single(Rule {
@@ -335,7 +335,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
                 (Gauntlet::BUSY_DURING, Term::Var(VarId(1))),
             ])],
             negated: vec![],
-            predicates: vec![],
+            conditions: vec![],
         }),
         // The measure, projected and compared.
         4 => Query::single(Rule {
@@ -345,7 +345,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
                 (Gauntlet::BUSY_DURING, Term::Var(VarId(1))),
             ])],
             negated: vec![],
-            predicates: vec![PredicateTree::Leaf(Comparison {
+            conditions: vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: Term::Duration(VarId(1)),
                 rhs: Term::Literal(Value::U64(rng.below(10_000))),
@@ -363,7 +363,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
                 relation: OOO,
                 bindings: vec![(Gauntlet::OOO_PERSON, Term::Var(VarId(0)))],
             }],
-            predicates: vec![PredicateTree::Leaf(Comparison {
+            conditions: vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Contains,
                 lhs: Term::Var(VarId(1)),
                 rhs: Term::Literal(Value::U64(rng.below(100))),
@@ -420,7 +420,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         // The vacuous masks.
         5 => {
             if let Some(rule) = query.rules.first_mut() {
-                rule.predicates.push(PredicateTree::Leaf(Comparison {
+                rule.conditions.push(ConditionTree::Leaf(Comparison {
                     op: CmpOp::Allen {
                         mask: MaskTerm::Literal(if rng.chance(2) {
                             AllenMask::EMPTY
@@ -453,32 +453,32 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         8 => {
             if let Some(rule) = query.rules.first_mut() {
                 let leaf = || {
-                    PredicateTree::Leaf(Comparison {
+                    ConditionTree::Leaf(Comparison {
                         op: CmpOp::Ge,
                         lhs: Term::Var(VarId(0)),
                         rhs: Term::Literal(Value::U64(1)),
                     })
                 };
-                let or = PredicateTree::Or((0..5).map(|_| leaf()).collect());
-                rule.predicates = vec![or.clone(), or];
+                let or = ConditionTree::Or((0..5).map(|_| leaf()).collect());
+                rule.conditions = vec![or.clone(), or];
             }
         }
         // Hostile nesting: a deep And/Or chain.
         9 => {
             if let Some(rule) = query.rules.first_mut() {
-                let mut chain = PredicateTree::Leaf(Comparison {
+                let mut chain = ConditionTree::Leaf(Comparison {
                     op: CmpOp::Ge,
                     lhs: Term::Var(VarId(0)),
                     rhs: Term::Literal(Value::U64(1)),
                 });
                 for level in 0..200 {
                     chain = if level % 2 == 0 {
-                        PredicateTree::And(vec![chain])
+                        ConditionTree::And(vec![chain])
                     } else {
-                        PredicateTree::Or(vec![chain])
+                        ConditionTree::Or(vec![chain])
                     };
                 }
-                rule.predicates.push(chain);
+                rule.conditions.push(chain);
             }
         }
         // A param-id gap.
@@ -541,10 +541,10 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         }
         // A random term swapped into a random binding.
         _ => {
-            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
-                if let Some((_, term_slot)) = atom.bindings.first_mut() {
-                    *term_slot = term(rng);
-                }
+            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut())
+                && let Some((_, term_slot)) = atom.bindings.first_mut()
+            {
+                *term_slot = term(rng);
             }
         }
     }
@@ -602,7 +602,7 @@ fn adversarial_ir_never_panics() {
 }
 
 /// Hostile nesting alone, far past the sweep's per-query depth: a deep
-/// alternating And/Or chain is the typed `PredicateNestingTooDeep` —
+/// alternating And/Or chain is the typed `ConditionNestingTooDeep` —
 /// judged iteratively, so neither validation nor distribution ever
 /// recurses into it (the sweep's founding find: before the boundary
 /// guard existed, this input exhausted the stack).
@@ -611,7 +611,7 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
     let dir = common::TempDir::new("adversarial-ir-nesting");
     let db = Db::create(dir.path(), Gauntlet).expect("create");
     let leaf = || {
-        PredicateTree::Leaf(Comparison {
+        ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(0)),
             rhs: Term::Literal(Value::U64(1)),
@@ -621,14 +621,14 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
         let mut tree = leaf();
         for level in 1..depth {
             tree = if level % 2 == 0 {
-                PredicateTree::And(vec![tree])
+                ConditionTree::And(vec![tree])
             } else {
-                PredicateTree::Or(vec![tree])
+                ConditionTree::Or(vec![tree])
             };
         }
         tree
     };
-    let query = |tree: PredicateTree| {
+    let query = |tree: ConditionTree| {
         Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
@@ -636,7 +636,7 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
                 bindings: vec![(Gauntlet::OOO_PERSON, Term::Var(VarId(0)))],
             }],
             negated: vec![],
-            predicates: vec![tree],
+            conditions: vec![tree],
         })
     };
     // Past the cap: the typed rejection, never a stack exhaustion.
@@ -648,9 +648,9 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
         matches!(
             err,
             bumbledb::Error::Validation(
-                bumbledb::error::ValidationError::PredicateNestingTooDeep {
+                bumbledb::error::ValidationError::ConditionNestingTooDeep {
                     depth: 3_000,
-                    cap: MAX_PREDICATE_DEPTH,
+                    cap: MAX_CONDITION_DEPTH,
                     ..
                 }
             )
@@ -659,6 +659,6 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
     );
     // At the cap: an ordinary query (the chain is one disjunct).
     let _ = db
-        .prepare(&query(chain(MAX_PREDICATE_DEPTH)))
+        .prepare(&query(chain(MAX_CONDITION_DEPTH)))
         .expect("cap-deep nesting is an ordinary query");
 }

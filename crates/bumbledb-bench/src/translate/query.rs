@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bumbledb::ir::{FindTerm, Rule};
 use bumbledb::{AggOp, ParamId, Query, Schema, Value, VarId};
 
-use super::{types, Builder, ParamSlot, Translated, VarCols};
+use super::{Builder, ParamSlot, Translated, VarCols, types};
 
 /// Translates one validated-shape query over the given schema. `sets`
 /// carries the bound element list of every set param: set params render
@@ -91,7 +91,7 @@ fn rule_core<'q>(
         types: types::infer(rule, schema),
         sets,
         from: Vec::new(),
-        predicates: Vec::new(),
+        conditions: Vec::new(),
         deferred: Vec::new(),
         columns: BTreeMap::new(),
         param_index: std::mem::take(&mut params.index),
@@ -101,7 +101,7 @@ fn rule_core<'q>(
         b.render_atom(atom)?;
     }
     b.flush_deferred()?;
-    for comparison in rule.predicates.iter().map(super::leaf) {
+    for comparison in rule.conditions.iter().map(super::leaf) {
         b.comparison(comparison)?;
     }
     // Negation last: the NOT EXISTS subqueries append to the core's WHERE.
@@ -118,10 +118,10 @@ fn rule_core<'q>(
 
 fn from_where(b: &Builder) -> (String, String) {
     let from = b.from.join(", ");
-    let where_clause = if b.predicates.is_empty() {
+    let where_clause = if b.conditions.is_empty() {
         String::new()
     } else {
-        format!(" WHERE {}", b.predicates.join(" AND "))
+        format!(" WHERE {}", b.conditions.join(" AND "))
     };
     (from, where_clause)
 }
@@ -168,7 +168,7 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
                     cols.push(format!("({end} - {start})"));
                 }
                 Some(VarCols::Scalar(_)) => {
-                    return Err(format!("Duration over scalar variable {}", var.0))
+                    return Err(format!("Duration over scalar variable {}", var.0));
                 }
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
@@ -484,7 +484,7 @@ fn arg_sql(
                 outer.extend(var_names(b, carry, "d.")?);
             }
             FindTerm::AggregateDuration { .. } => {
-                return Err("Arg terms and measure folds never mix".to_owned())
+                return Err("Arg terms and measure folds never mix".to_owned());
             }
         }
     }

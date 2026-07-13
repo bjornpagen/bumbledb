@@ -6,7 +6,7 @@
 //! engine side.
 
 use crate::encoding::ValueRef;
-use crate::error::{Direction, Error, Result};
+use crate::error::{Direction, Error, Result, Violation};
 use crate::schema::{
     ContainmentId, Enforcement, FieldId, KeyId, RelationDescriptor, RelationId, Row, Schema,
     SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
@@ -144,13 +144,18 @@ fn assert_violation(
     named_fact: &[u8],
 ) {
     let err = result.unwrap_err();
-    let Error::ContainmentViolation {
-        statement: named,
-        direction: dir,
-        fact,
-    } = &err
+    let Error::CommitRejected { violations } = &err else {
+        panic!("expected a rejected commit, got {err:?}");
+    };
+    let [
+        Violation::Containment {
+            statement: named,
+            direction: dir,
+            fact,
+        },
+    ] = violations.as_slice()
     else {
-        panic!("expected a containment violation, got {err:?}");
+        panic!("expected one containment citation, got {violations:?}");
     };
     assert_eq!(*named, statement);
     assert_eq!(*dir, direction);

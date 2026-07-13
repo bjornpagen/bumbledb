@@ -80,7 +80,7 @@ fn arm_rule(kind: u8) -> Rule {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     }
 }
 
@@ -126,7 +126,7 @@ fn the_du_arm_union_proves_and_an_unselected_arm_unproves() {
     // Equal literals pin the pair TOGETHER, not apart (the rules differ
     // structurally so DNF dedup keeps both — the pair really is judged).
     let mut same_kind = arm_rule(0);
-    same_kind.predicates = vec![PredicateTree::Leaf(Comparison {
+    same_kind.conditions = vec![ConditionTree::Leaf(Comparison {
         op: CmpOp::Ge,
         lhs: Term::Var(VarId(1)),
         rhs: Term::Literal(Value::U64(0)),
@@ -219,7 +219,7 @@ fn count_over_a_proven_disjoint_union_absorbs_nothing() {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     };
     let query = Query {
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Count)],

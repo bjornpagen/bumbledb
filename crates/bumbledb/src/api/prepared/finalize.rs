@@ -1,6 +1,7 @@
 use super::{EitherSink, ResolveMemo, ResultBuffer, ValueType};
 
 use crate::error::Result;
+use crate::ir::validate::PredicateColumn;
 use crate::storage::env::ReadTxn;
 
 /// Drains the sink into the result buffer, decoding words by result type
@@ -18,7 +19,7 @@ pub(super) fn finalize(
     row_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
     txn: &ReadTxn<'_>,
-    types: &[ValueType],
+    columns: &[PredicateColumn],
     all_words: bool,
     out: &mut ResultBuffer,
 ) -> Result<()> {
@@ -30,38 +31,38 @@ pub(super) fn finalize(
     // semantics, softened by the run memo).
     match sink {
         EitherSink::Projection(sink) => {
-            out.cells.reserve(sink.len() * types.len());
+            out.cells.reserve(sink.len() * columns.len());
             if all_words {
                 for row in sink.rows() {
-                    push_word_row(out, types, row);
+                    push_word_row(out, columns, row);
                 }
                 return Ok(());
             }
             for row in sink.rows() {
-                push_resolved_row(out, txn, memo, types, row)?;
+                push_resolved_row(out, txn, memo, columns, row)?;
             }
             Ok(())
         }
         EitherSink::Aggregate(sink) => {
-            out.cells.reserve(sink.group_count() * types.len());
+            out.cells.reserve(sink.group_count() * columns.len());
             if all_words {
                 return sink.finalize_into(row_scratch, |row| {
-                    push_word_row(out, types, row);
+                    push_word_row(out, columns, row);
                     Ok(())
                 });
             }
             sink.finalize_into(row_scratch, |row| {
-                push_resolved_row(out, txn, memo, types, row)
+                push_resolved_row(out, txn, memo, columns, row)
             })
         }
     }
 }
 
 /// One word row's cells, all-words regime: infallible, no dictionary.
-fn push_word_row(out: &mut ResultBuffer, types: &[ValueType], row: &[u64]) {
+fn push_word_row(out: &mut ResultBuffer, columns: &[PredicateColumn], row: &[u64]) {
     let mut word = 0;
-    for ty in types {
-        if let ValueType::Interval { element } = ty {
+    for column in columns {
+        if let ValueType::Interval { element } = &column.ty {
             out.cells.push(ResultBuffer::interval_cell(
                 *element,
                 row[word],
@@ -69,7 +70,8 @@ fn push_word_row(out: &mut ResultBuffer, types: &[ValueType], row: &[u64]) {
             ));
             word += 2;
         } else {
-            out.cells.push(ResultBuffer::word_cell(ty, row[word]));
+            out.cells
+                .push(ResultBuffer::word_cell(&column.ty, row[word]));
             word += 1;
         }
     }
@@ -82,12 +84,12 @@ fn push_resolved_row(
     out: &mut ResultBuffer,
     txn: &ReadTxn<'_>,
     memo: &mut ResolveMemo,
-    types: &[ValueType],
+    columns: &[PredicateColumn],
     row: &[u64],
 ) -> Result<()> {
     let mut word = 0;
-    for ty in types {
-        match ty {
+    for column in columns {
+        match &column.ty {
             ValueType::Interval { element } => {
                 out.cells.push(ResultBuffer::interval_cell(
                     *element,

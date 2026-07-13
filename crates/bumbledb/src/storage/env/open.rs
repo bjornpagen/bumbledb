@@ -1,12 +1,12 @@
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
-use heed::types::Bytes;
 use heed::Database;
+use heed::types::Bytes;
 
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::fingerprint::{fingerprint, SchemaFingerprint};
 use crate::schema::Schema;
+use crate::schema::fingerprint::{SchemaFingerprint, fingerprint};
 
 use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;

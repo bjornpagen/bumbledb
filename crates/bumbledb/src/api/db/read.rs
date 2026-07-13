@@ -39,15 +39,14 @@ impl<S> Db<S> {
         // and the slot is free. A snapshot that fails either check
         // drops here, freeing its reader slot.
         let Snapshot { txn, .. } = snap;
-        if self.commit_seq.load(Ordering::Acquire) == seq {
-            if let Ok(mut slot) = self.read_cache.try_lock() {
-                if slot.is_none() {
-                    *slot = Some(ParkedReader {
-                        txn: txn.into_raw_txn(),
-                        commit_seq: seq,
-                    });
-                }
-            }
+        if self.commit_seq.load(Ordering::Acquire) == seq
+            && let Ok(mut slot) = self.read_cache.try_lock()
+            && slot.is_none()
+        {
+            *slot = Some(ParkedReader {
+                txn: txn.into_raw_txn(),
+                commit_seq: seq,
+            });
         }
         result
     }

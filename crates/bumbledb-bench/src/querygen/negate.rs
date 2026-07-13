@@ -10,9 +10,9 @@
 
 use bumbledb::{Term, Value};
 
-use crate::gen::Rng;
-use crate::querygen::target::ids;
+use crate::corpus_gen::Rng;
 use crate::querygen::Builder;
+use crate::querygen::target::ids;
 
 /// The templates a query's anchors make available.
 #[derive(Clone, Copy)]

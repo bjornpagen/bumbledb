@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use super::{ctrl_tag, hash_core, hash_words, WordMap, WINDOW};
+use super::{WINDOW, WordMap, ctrl_tag, hash_core, hash_words};
 
 impl<V: Copy> WordMap<V> {
     pub(super) fn grow(&mut self) {

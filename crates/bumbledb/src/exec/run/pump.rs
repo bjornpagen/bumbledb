@@ -1,8 +1,8 @@
 //! The single in-order pass over a middle node's pending entries.
 
 use super::{
-    better_cover, BatchToken, Bindings, Colt, Counters, Executor, KeyCount, PipeTables, Sink,
-    ValidatedPlan,
+    BatchToken, Bindings, Colt, Counters, Executor, KeyCount, PipeTables, Sink, ValidatedPlan,
+    better_cover,
 };
 
 impl Executor {
@@ -90,32 +90,44 @@ impl Executor {
             let cover_level = tables.entry_level[node_idx][cover_occ];
             // Word-level batch arity (the SlotWidth layout).
             let cur_arity = self.slot_map[node_idx][cover_sub].len();
-            if let Some((open_sub, open_arity, _, _)) = group {
-                if open_sub != cover_sub && fill > 0 {
-                    self.probe_pass(
-                        tables,
-                        plan,
-                        node_idx,
-                        open_sub,
-                        open_arity,
-                        fill,
-                        &mut scratch,
-                        colts,
-                        bindings,
-                        sink,
-                        counters,
-                    );
-                    fill = 0;
-                }
+            if let Some((open_sub, open_arity, _, _)) = group
+                && open_sub != cover_sub
+                && fill > 0
+            {
+                self.probe_pass(
+                    tables,
+                    plan,
+                    node_idx,
+                    open_sub,
+                    open_arity,
+                    fill,
+                    &mut scratch,
+                    colts,
+                    bindings,
+                    sink,
+                    counters,
+                );
+                fill = 0;
             }
             group = Some((cover_sub, cur_arity, cover_occ, cover_level));
             let cover_cursor = match tables.carried_col[node_idx][cover_occ] {
                 Some(col) => scratch.pending_cursors[entry * carried_w + col],
                 None => colts[cover_occ].start(),
             };
+            // A zero-arity cover is a nonemptiness gate: every position
+            // yields the same empty key row, so under set semantics one
+            // entry stands for the whole suffix — enumerating it would
+            // multiply this entry's descendants by the occurrence's row
+            // count for no distinguishable binding (the S-scale hang:
+            // an aggregate over a zero-binding gate atom folded
+            // |gate-relation| duplicate bindings per pending entry).
+            // The one consumer that CAN distinguish positions is a
+            // membership probe reading this occurrence's cursor — those
+            // occurrences keep enumerating.
+            let gate_cover = cur_arity == 0 && !self.point_probed[cover_occ];
             let mut token = BatchToken::default();
             loop {
-                let want = self.batch - fill;
+                let want = if gate_cover { 1 } else { self.batch - fill };
                 let (yielded, next) = colts[cover_occ].iter_batch(
                     cover_cursor,
                     cover_level,
@@ -148,31 +160,31 @@ impl Executor {
                         counters,
                     );
                     fill = 0;
-                    if yielded == want {
+                    if !gate_cover && yielded == want {
                         continue; // the entry may have more; resume its token
                     }
                 }
-                if yielded < want {
-                    break; // entry exhausted
+                if gate_cover || yielded < want {
+                    break; // entry exhausted (a gate entry at its one yield)
                 }
             }
         }
-        if fill > 0 {
-            if let Some((open_sub, open_arity, _, _)) = group {
-                self.probe_pass(
-                    tables,
-                    plan,
-                    node_idx,
-                    open_sub,
-                    open_arity,
-                    fill,
-                    &mut scratch,
-                    colts,
-                    bindings,
-                    sink,
-                    counters,
-                );
-            }
+        if fill > 0
+            && let Some((open_sub, open_arity, _, _)) = group
+        {
+            self.probe_pass(
+                tables,
+                plan,
+                node_idx,
+                open_sub,
+                open_arity,
+                fill,
+                &mut scratch,
+                colts,
+                bindings,
+                sink,
+                counters,
+            );
         }
         scratch.pending_len = 0;
         scratch.pending_bindings.clear();

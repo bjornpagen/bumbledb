@@ -40,8 +40,23 @@ exactly the two containments, each judged independently.
 
 **Judged on final states, only.** A dependency is a property of *committed*
 databases: it is checked once at commit, against the transaction's final state; a
-violation aborts the whole transaction with a typed error carrying the statement id
-and the offending fact's bytes (never storage row ids — `10-data-model.md`). Since
+violation aborts the whole transaction with a typed error whose payload is the
+**complete violation set** — every violated statement, cited exactly once (per
+direction for a containment: source before target), in materialized statement
+order, each citation carrying the statement id and the offending fact's bytes
+(never storage row ids — `10-data-model.md`). A commit violating several
+statements at once never cites an arbitrary representative: the reject path is
+scan-complete (the accept path already scans everything), and the set is sealed —
+nonempty, sorted, deduplicated — by its only constructor, so an under-reported
+rejection is unrepresentable. One preemption, from the enforcement structure
+itself: key (`Functionality`) violations preempt the containment judgment, because
+the containment probes are defined over the *keyed* final state (guards are the
+probe index), which exists only when every key statement holds — so one rejection
+is the complete set of violated key statements, or the complete set of violated
+containment statements, never a mix. Within the containment set, the two
+directions partition the final state's source facts: a fact inserted this commit
+is judged source-side only, a pre-existing survivor target-side — one statement is
+never convicted twice through one fact. Since
 point reads inside write transactions see the same final-state view the checker sees
 (`70-api.md`) and full queries there are forbidden, no observable state ever
 violates any statement, with no way out — stricter than SQL's opt-in deferrable
@@ -258,7 +273,9 @@ untouched by it. The phases:
 - IND, target side: per deleted-and-not-reestablished B key tuple
   (re-establishment ψ-qualified per statement — `50-storage.md`), probe the
   statement's reverse-edge namespace for surviving A-facts that still require it
-  (interval positions: the touched window).
+  (interval positions: the touched window). Survivors inserted this commit are
+  the source side's work (the direction partition, § judged on final states);
+  the target side convicts through pre-existing survivors only.
 - IND into a closed target: **O(1)** per inserted A-fact inside φ — one AND and
   one test against the compiled member set; an out-of-range word is simply a miss
   (the same violation as any dangling reference). No `R` reverse edges are ever

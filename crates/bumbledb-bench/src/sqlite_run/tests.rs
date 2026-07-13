@@ -1,8 +1,8 @@
 use super::*;
-use crate::gen::{GenConfig, Scale};
+use crate::corpus_gen::{GenConfig, Scale};
 use crate::translate::translate;
 use crate::writebench::non_posting_relations;
-use crate::{corpus, families, gen, sqlmap};
+use crate::{corpus, corpus_gen, families, sqlmap};
 use rusqlite::Connection;
 
 const CFG: GenConfig = GenConfig {
@@ -40,7 +40,12 @@ fn fairness_and_the_prepared_sample_contract() {
         let db_dir = dir.join("types-db");
         let db = bumbledb::Db::create(&db_dir, crate::schema::Ledger).expect("create");
         let prepared = db.prepare(&(family.query)()).expect("prepare");
-        prepared.column_types().cloned().collect()
+        prepared
+            .predicate()
+            .columns
+            .iter()
+            .map(|column| column.ty.clone())
+            .collect()
     };
     let mut prepared = PreparedFamily::new(&conn, &translated, types).expect("prepare once");
 
@@ -76,7 +81,12 @@ fn fairness_and_the_prepared_sample_contract() {
     let point_types: Vec<ValueType> = {
         let db = bumbledb::Db::open(&dir.join("types-db"), crate::schema::Ledger).expect("reopen");
         let prepared = db.prepare(&(point.query)()).expect("prepare");
-        prepared.column_types().cloned().collect()
+        prepared
+            .predicate()
+            .columns
+            .iter()
+            .map(|column| column.ty.clone())
+            .collect()
     };
     let mut point_prepared =
         PreparedFamily::new(&conn, &point_translated, point_types).expect("prepare once");
@@ -148,7 +158,7 @@ fn write_mirrors_run_with_sane_direction() {
 fn bulk_mirror_reports_positive_throughput() {
     let dir = scratch("bulk");
     let m = bulk(CFG, &dir).expect("bulk");
-    let sizes = gen::Sizes::of(CFG.scale);
+    let sizes = corpus_gen::Sizes::of(CFG.scale);
     assert_eq!(m.work, (sizes.postings + sizes.posting_tags) * 8);
     assert!(m.stats.min > 0);
     let _ = std::fs::remove_dir_all(&dir);

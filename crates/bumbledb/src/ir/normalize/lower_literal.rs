@@ -49,9 +49,11 @@ pub(crate) fn fixed_bytes_const(raw: &[u8]) -> Const {
 fn fixed_bytes_words(raw: &[u8]) -> Vec<u64> {
     let mut padded = Vec::with_capacity(raw.len().div_ceil(8) * 8);
     encode_fixed_bytes(raw, &mut padded);
-    padded
-        .chunks_exact(8)
-        .map(|chunk| u64::from_be_bytes(chunk.try_into().expect("8-byte chunk")))
+    let (words, tail) = padded.as_chunks::<8>();
+    debug_assert!(tail.is_empty(), "encode_fixed_bytes pads to whole words");
+    words
+        .iter()
+        .map(|chunk| u64::from_be_bytes(*chunk))
         .collect()
 }
 

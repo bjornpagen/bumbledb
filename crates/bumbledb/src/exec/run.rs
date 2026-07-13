@@ -456,6 +456,12 @@ pub struct Executor {
     /// Per membership probe, aligned with each node's `point_probes`
     /// list ([`PointProbeSpec`]).
     point_probe_slots: Vec<Vec<PointProbeSpec>>,
+    /// Per occurrence: some node's membership probe reads this
+    /// occurrence's advanced cursor (`PointProbe::occ`), so its
+    /// per-position children are semantically live and the zero-arity
+    /// cover collapse (`pump`/`run_node`: one entry stands for the whole
+    /// suffix) must not fire on it.
+    point_probed: Vec<bool>,
     /// Every variable's slot width in words — the word-level source
     /// resolution's lookup (tiny; linear scan).
     var_widths: Vec<(crate::ir::VarId, usize)>,

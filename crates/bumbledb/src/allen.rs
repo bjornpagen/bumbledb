@@ -168,10 +168,10 @@ impl AllenMask {
     /// (`docs/architecture/30-dependencies.md`).
     pub const DISJOINT: Self =
         Self(Basic::Before.bit() | Basic::Meets.bit() | Basic::MetBy.bit() | Basic::After.bit());
-    /// All 13 basics — the vacuous "always" (rejected as a predicate; a
+    /// All 13 basics — the vacuous "always" (rejected as a condition; a
     /// value of the algebra, e.g. the complement's identity).
     pub const FULL: Self = Self(ALL_BITS);
-    /// No basic — the vacuous "never" (rejected as a predicate).
+    /// No basic — the vacuous "never" (rejected as a condition).
     pub const EMPTY: Self = Self(0);
 
     /// Parses raw bits; `None` when any bit above the low 13 is set.
@@ -218,14 +218,14 @@ impl AllenMask {
         self.0.count_ones()
     }
 
-    /// The vacuous "never" — rejected as a predicate at the query
+    /// The vacuous "never" — rejected as a condition at the query
     /// boundary.
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    /// The vacuous "always" — rejected as a predicate at the query
+    /// The vacuous "always" — rejected as a condition at the query
     /// boundary.
     #[must_use]
     pub const fn is_full(self) -> bool {
@@ -288,7 +288,7 @@ pub(crate) fn classify_bounds<T: Ord>(a_start: &T, a_end: &T, b_start: &T, b_end
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, AllenMask, Basic};
+    use super::{AllenMask, Basic, classify};
     use crate::interval::Interval;
 
     /// A splitmix64 step — the repo's no-dependency randomness.
@@ -434,6 +434,155 @@ mod tests {
         // Bits above the low 13 are unrepresentable, not truncated.
         assert!(AllenMask::new(0x2000).is_none());
         assert!(AllenMask::new(0x1FFF).is_some());
+    }
+
+    /// The converse involution over the FULL mask space, with the domain
+    /// size asserted as a counted loop bound (docs/prd-crucible/
+    /// 15-exhaustive-miri.md: the loop bound is the claim).
+    ///
+    /// Domain arithmetic: a mask is a 13-bit word, so the whole space is
+    /// 2¹³ = 8,192 masks — every one visited, none sampled.
+    #[test]
+    fn exhaustive_converse_involution_over_all_8192_masks() {
+        let mut visited = 0u32;
+        for bits in 0..=0x1FFF_u16 {
+            let mask = AllenMask::new(bits).expect("13-bit range");
+            assert_eq!(
+                mask.converse().converse(),
+                mask,
+                "involution at {bits:#06x}"
+            );
+            // The 13-bit reversal stays inside the mask space and
+            // preserves cardinality (a permutation of the bits).
+            assert_eq!(mask.converse().popcount(), mask.popcount());
+            visited += 1;
+        }
+        assert_eq!(visited, 8_192, "the full 2^13 mask space was enumerated");
+    }
+
+    /// The 13 × 13 composition table, enumerated exhaustively:
+    /// `table[r1][r2]` collects every basic `r3` witnessed as
+    /// `classify(a, c)` over interval triples with `classify(a, b) = r1`
+    /// and `classify(b, c) = r2`.
+    ///
+    /// Domain arithmetic: endpoints are the dense grid `0..=8` — 9
+    /// values, so C(9,2) = 36 nonempty intervals and 36³ = 46,656
+    /// ordered triples, all enumerated. Completeness: a witness for any
+    /// table cell involves 3 intervals = 6 endpoints, so at most 6
+    /// distinct values; every order type (with ties) of 6 endpoints is
+    /// realizable inside a 9-value grid, hence the enumerated table is
+    /// the WHOLE composition table, not a sample of it.
+    fn enumerated_composition_table(points: &[u64]) -> [[u16; 13]; 13] {
+        let mut intervals = Vec::new();
+        for (i, &s) in points.iter().enumerate() {
+            for &e in &points[i + 1..] {
+                intervals.push((s, e));
+            }
+        }
+        let mut table = [[0u16; 13]; 13];
+        for &a in &intervals {
+            for &b in &intervals {
+                let r1 = classify(iv(a), iv(b)) as usize;
+                for &c in &intervals {
+                    let r2 = classify(iv(b), iv(c)) as usize;
+                    let r3 = classify(iv(a), iv(c));
+                    table[r1][r2] |= r3.bit();
+                }
+            }
+        }
+        table
+    }
+
+    /// Composition-table spot laws over the exhaustively enumerated
+    /// table (46,656 triples — the arithmetic on
+    /// [`enumerated_composition_table`]): the identity row/column, the
+    /// hand-provable singleton entries, the full-uncertainty entry, the
+    /// converse anti-homomorphism over all 13 × 13 = 169 cells, and
+    /// `equals ∈ r ∘ r⁻¹` for every basic.
+    #[test]
+    fn exhaustive_composition_table_spot_laws() {
+        let points: Vec<u64> = (0..=8).collect();
+        let table = enumerated_composition_table(&points);
+        let entry = |r1: Basic, r2: Basic| table[r1 as usize][r2 as usize];
+        let singleton = |r: Basic| r.bit();
+
+        // Equals is the two-sided identity: e ∘ r = r ∘ e = {r}.
+        for r in Basic::ALL {
+            assert_eq!(entry(Basic::Equals, r), singleton(r), "e;{r:?}");
+            assert_eq!(entry(r, Basic::Equals), singleton(r), "{r:?};e");
+        }
+        // Hand-provable singleton entries (endpoint-inequality chains).
+        assert_eq!(
+            entry(Basic::Before, Basic::Before),
+            singleton(Basic::Before)
+        );
+        assert_eq!(entry(Basic::After, Basic::After), singleton(Basic::After));
+        assert_eq!(entry(Basic::Meets, Basic::Meets), singleton(Basic::Before));
+        assert_eq!(
+            entry(Basic::During, Basic::During),
+            singleton(Basic::During)
+        );
+        assert_eq!(
+            entry(Basic::Starts, Basic::During),
+            singleton(Basic::During)
+        );
+        assert_eq!(
+            entry(Basic::Finishes, Basic::During),
+            singleton(Basic::During)
+        );
+        // a overlaps b, b overlaps c: a starts first, ends inside b; only
+        // a.end vs c.start is open — before, meets, or overlaps.
+        assert_eq!(
+            entry(Basic::Overlaps, Basic::Overlaps),
+            Basic::Before.bit() | Basic::Meets.bit() | Basic::Overlaps.bit()
+        );
+        // Total uncertainty: before ∘ after constrains a vs c not at all.
+        assert_eq!(
+            AllenMask::new(entry(Basic::Before, Basic::After)).expect("13-bit"),
+            AllenMask::FULL
+        );
+        // The converse anti-homomorphism over every cell:
+        // (r1 ∘ r2)⁻¹ = r2⁻¹ ∘ r1⁻¹.
+        for r1 in Basic::ALL {
+            for r2 in Basic::ALL {
+                let lhs = AllenMask::new(entry(r1, r2)).expect("13-bit").converse();
+                let rhs = AllenMask::new(entry(r2.converse(), r1.converse())).expect("13-bit");
+                assert_eq!(lhs, rhs, "anti-homomorphism at ({r1:?}, {r2:?})");
+            }
+        }
+        // Identity membership: equals ∈ r ∘ r⁻¹ (witness: a = c).
+        for r in Basic::ALL {
+            assert!(
+                entry(r, r.converse()) & Basic::Equals.bit() != 0,
+                "equals ∉ {r:?} ∘ {r:?}⁻¹"
+            );
+        }
+    }
+
+    /// The Miri-lane representative of the composition laws: the same
+    /// enumeration on the 5-value grid `0..=4` (C(5,2) = 10 intervals,
+    /// 10³ = 1,000 triples). The identity and anti-homomorphism laws
+    /// hold on ANY grid-enumerated table (the enumeration is closed
+    /// under triple reversal), so the subset is a sound fast pin; the
+    /// completeness-dependent equalities live in the exhaustive test.
+    #[test]
+    fn representative_composition_laws_on_the_small_grid() {
+        let points: Vec<u64> = (0..=4).collect();
+        let table = enumerated_composition_table(&points);
+        for r in Basic::ALL {
+            assert_eq!(table[Basic::Equals as usize][r as usize], r.bit());
+            assert_eq!(table[r as usize][Basic::Equals as usize], r.bit());
+        }
+        for r1 in Basic::ALL {
+            for r2 in Basic::ALL {
+                let lhs = AllenMask::new(table[r1 as usize][r2 as usize])
+                    .expect("13-bit")
+                    .converse();
+                let rhs = AllenMask::new(table[r2.converse() as usize][r1.converse() as usize])
+                    .expect("13-bit");
+                assert_eq!(lhs, rhs, "anti-homomorphism at ({r1:?}, {r2:?})");
+            }
+        }
     }
 
     /// The composite masks agree with their point-set meanings across the

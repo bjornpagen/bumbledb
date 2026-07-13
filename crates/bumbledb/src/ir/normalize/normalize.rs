@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use super::{
+    AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth,
     lower_literal::{lower_literal, point_word},
     place_comparisons::place_comparisons,
-    AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth,
 };
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::validate::{RuleWitness, ValidatedQuery};
@@ -56,7 +56,7 @@ fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
         .collect();
 
     let (residuals, word_residuals, allen_residuals, duration_residuals) =
-        place_comparisons(rule, &mut occurrences);
+        place_comparisons(rule.classified_comparisons(), &mut occurrences);
 
     // The binding-slot widths — the two-slot interval layout, decided at
     // [`SlotWidth`] and exported here to the plan witness.
@@ -69,21 +69,23 @@ fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
     // (docs/architecture/20-query-ir.md, § normalization step 5) — across
     // every residual kind: whole-value, decomposed word, and Allen mask
     // comparisons.
-    debug_assert!(residuals
-        .iter()
-        .map(|r| (r.lhs, r.rhs))
-        .chain(word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)))
-        .chain(allen_residuals.iter().map(|r| (r.lhs, r.rhs)))
-        .chain(duration_residuals.iter().map(|r| (r.interval, r.scalar)))
-        .all(|(lhs, rhs)| {
-            !occurrences
-                .iter()
-                .filter(|occ| occ.role.participates())
-                .any(|occ| {
-                    occ.vars.iter().any(|(_, v)| *v == lhs)
-                        && occ.vars.iter().any(|(_, v)| *v == rhs)
-                })
-        }));
+    debug_assert!(
+        residuals
+            .iter()
+            .map(|r| (r.lhs, r.rhs))
+            .chain(word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)))
+            .chain(allen_residuals.iter().map(|r| (r.lhs, r.rhs)))
+            .chain(duration_residuals.iter().map(|r| (r.interval, r.scalar)))
+            .all(|(lhs, rhs)| {
+                !occurrences
+                    .iter()
+                    .filter(|occ| occ.role.participates())
+                    .any(|occ| {
+                        occ.vars.iter().any(|(_, v)| *v == lhs)
+                            && occ.vars.iter().any(|(_, v)| *v == rhs)
+                    })
+            })
+    );
 
     // The statically-empty fold (fold.rs), last: with every comparison
     // placed, each participating occurrence's constant filters fold per

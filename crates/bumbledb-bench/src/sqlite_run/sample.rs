@@ -1,9 +1,9 @@
-use bumbledb::schema::ValueType;
 use bumbledb::Value;
+use bumbledb::schema::ValueType;
 
 use crate::naive::ParamValue;
 
-use super::{bind_args, bind_params, PreparedFamily};
+use super::{PreparedFamily, bind_args, bind_params};
 
 /// One timed sample: bind via the normative mapping (interval params as
 /// their two endpoint slots), drain ALL rows with typed reads on every
@@ -38,7 +38,7 @@ fn drain(
     let mut count = 0u64;
     while let Some(row) = rows.next().map_err(|e| format!("step: {e}"))? {
         let mut column = 0usize;
-        for ty in &family.result_types {
+        for ty in &family.signature {
             match ty {
                 ValueType::Bool | ValueType::U64 | ValueType::I64 => {
                     let value = row.get_ref(column).map_err(|e| format!("read: {e}"))?;

@@ -13,7 +13,7 @@
 
 use bumbledb::{Direction, RelationId, Value};
 
-use crate::gen::Rng;
+use crate::corpus_gen::Rng;
 use crate::naive::Violation;
 use crate::querygen::target::{self, ids};
 

@@ -1,14 +1,14 @@
 use super::{Context, ParamKind, RuleTyping, TypeSlot, ValidatedQuery};
 use crate::error::ValidationError;
-use crate::ir::normalize::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
-use crate::ir::{AggOp, FindTerm, ParamId, Query, VarId, MAX_PREDICATE_DEPTH, MAX_RULES};
+use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
+use crate::ir::{AggOp, FindTerm, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, VarId};
 use crate::schema::{Schema, ValueType};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Validates a query against the schema, yielding the sealed witness.
 ///
 /// The program shape first (empty rule set, the rule cap, empty head);
-/// then **DNF distribution** — each rule's predicate trees distribute
+/// then **DNF distribution** — each rule's condition trees distribute
 /// and each disjunct becomes a rule, with the blowup capped at
 /// [`MAX_RULES`] on the structural term count (before materializing)
 /// and duplicates collapsed by normalized-form equality; then each
@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// the query-global param unification (params are one binding surface
 /// across rules; variables never cross them).
 ///
-/// Duplicate and even statically contradictory predicates (`x < 5,
+/// Duplicate and even statically contradictory conditions (`x < 5,
 /// x > 9`) are accepted deliberately: the semantics are exact (an empty
 /// result), and the "write the query you mean" roster rejects only
 /// shapes with no meaning at all (constant and self comparisons) — it
@@ -49,12 +49,12 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     // by depth, so a hostile depth must be a typed rejection here, judged
     // by the iterative `nesting_depth`, never a stack exhaustion there).
     for (rule_idx, rule) in query.rules.iter().enumerate() {
-        let depth = nesting_depth(&rule.predicates);
-        if depth > MAX_PREDICATE_DEPTH {
-            return Err(ValidationError::PredicateNestingTooDeep {
+        let depth = nesting_depth(&rule.conditions);
+        if depth > MAX_CONDITION_DEPTH {
+            return Err(ValidationError::ConditionNestingTooDeep {
                 rule: rule_idx,
                 depth,
-                cap: MAX_PREDICATE_DEPTH,
+                cap: MAX_CONDITION_DEPTH,
             });
         }
     }
@@ -101,18 +101,21 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         });
     }
 
-    let mut head_types: Vec<ValueType> = Vec::new();
+    let mut pinned_row: Vec<ValueType> = Vec::new();
     let mut rules = Vec::with_capacity(lowered.len());
     let mut params = ParamTables::default();
     for (rule_idx, rule) in lowered.iter().enumerate() {
         check_head_alignment(&query.head, rule, rule_idx)?;
         let (typing, ctx) = validate_rule(schema, rule)?;
-        // The positional type row: rule 0's pins the head; every later
-        // rule must agree position by position.
-        let row = head_row(rule, &typing);
+        // Every rule derives the predicate: rule 0's resolved positional
+        // input row pins the head, and every later rule must agree
+        // position by position (the input row, not the signature — a
+        // `CountDistinct` position anchors its *input* type across
+        // rules, though its signature column is U64 regardless).
+        let row = input_row(rule, &typing);
         if rule_idx == 0 {
-            head_types = row;
-        } else if let Some(position) = (0..row.len()).find(|i| row[*i] != head_types[*i]) {
+            pinned_row = row;
+        } else if let Some(position) = (0..row.len()).find(|i| row[*i] != pinned_row[*i]) {
             return Err(ValidationError::HeadTypeMismatch {
                 rule: rule_idx,
                 position,
@@ -122,6 +125,10 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         rules.push(typing);
     }
     params.check_masks_and_density()?;
+
+    // The predicate, derived ONCE — rule 0 speaks for every rule (the
+    // alignment above), and nothing downstream re-derives the signature.
+    let predicate = super::Predicate::derive(&lowered[0], &rules[0]);
 
     let ParamTables {
         param_types,
@@ -135,7 +142,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         .collect();
     Ok(ValidatedQuery {
         lowered,
-        head_types,
+        predicate,
         rules,
         param_types,
         set_params,
@@ -197,7 +204,7 @@ fn validate_rule(
 
     let mut ctx = Context::default();
     ctx.check_atoms(schema, rule)?;
-    ctx.check_comparisons(rule)?;
+    let classified = ctx.check_comparisons(rule)?;
     ctx.check_membership_domains()?;
     // The group key (non-aggregated find variables) is computed once and
     // shared between the find checks and the witness. A measure find's
@@ -214,36 +221,33 @@ fn validate_rule(
         })
         .collect();
     ctx.check_finds(rule, &group_key)?;
-    if ctx.var_slots.len() > crate::plan::planner::MAX_DISTINCT_VARS {
+    if ctx.var_types.len() > crate::plan::planner::MAX_DISTINCT_VARS {
         return Err(ValidationError::TooManyVariables {
-            count: ctx.var_slots.len(),
+            count: ctx.var_types.len(),
         });
     }
 
-    // Every slot is monovalent past `resolve_bivalents` — the typing
-    // carries plain types.
-    let var_types = ctx
-        .var_slots
-        .iter()
-        .map(|(var, slot)| match slot {
-            TypeSlot::Mono(value_type) => (*var, value_type.clone()),
-            TypeSlot::Bivalent(_) => unreachable!("resolve_bivalents ran"),
-        })
-        .collect();
+    // The variable types are already resolved (`resolve_bivalents`
+    // consumed the inference slots into `var_types` during
+    // `check_comparisons`): the typing takes them verbatim.
+    let var_types = ctx.var_types.clone();
     Ok((
         RuleTyping {
             var_types,
             group_key,
+            classified,
         },
         ctx,
     ))
 }
 
-/// One rule's positional type contribution: a variable position carries
-/// the variable's type; an aggregate position its fold input type (the
-/// nullary `Count` is `U64`; an Arg position carries the *carried*
-/// variable's type — the key is rule-internal).
-fn head_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
+/// One rule's positional INPUT contribution to the alignment check: a
+/// variable position carries the variable's type; an aggregate position
+/// its fold input type (the nullary `Count` is `U64`; an Arg position
+/// carries the *carried* variable's type — the key is rule-internal).
+/// Alignment-only — the signature is [`super::Predicate::derive`],
+/// never this row (their one divergence: a `CountDistinct` input).
+fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
     let var_type = |var: &VarId| typing.var_types[var].clone();
     rule.finds
         .iter()

@@ -7,8 +7,8 @@
 //! per-position arm and the generic batch path.
 
 use super::*;
-use crate::exec::colt::SuffixRun;
 use crate::exec::SCAN_HOIST_THRESHOLD;
+use crate::exec::colt::SuffixRun;
 
 /// One relation of `fields` U64 columns f0..fn — the wide-projection
 /// fixture ([`schema`] is binary-only).

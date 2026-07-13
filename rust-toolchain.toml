@@ -1,2 +1,26 @@
+# One toolchain, dated (docs/prd-crucible/01-nightly-pin.md). Pinned
+# 2026-07-13 to nightly-2026-07-12 after verifying the three selection
+# checks:
+#   (a) the workspace compiles on it (edition 2024, all crates);
+#   (b) miri and llvm-tools components install and work on
+#       aarch64-apple-darwin;
+#   (c) cargo-fuzz (0.13.1) accepts it.
+# The pin moves DELIBERATELY, never implicitly: moving it is a PRD-sized
+# action that carries the #[ignore]d microbench re-earn session with it
+# (codegen changes invalidate every pinned margin).
+#
+# Nightly features adopted (each a dividend — it deletes code or guards,
+# never adopted because it exists; docs/prd-crucible/02-nightly-dividend.md
+# carries the refusal ledger):
+#   - try_blocks (crates/bumbledb): kills the immediately-invoked-closure
+#     error idiom — a fallible region is a block, not a fake call.
+#   - portable_simd (crates/bumbledb): the predicate-scan, dense-fold,
+#     and index-gather kernels are one `std::simd` body per shape on
+#     every target — measured at or above the retired hand-NEON twins,
+#     deleting the intrinsic dual and most of the kernel layer's
+#     `unsafe`; the Allen configuration kernel alone stays intrinsic per
+#     docs/prd-crucible/03-portable-simd.md's measured verdict matrix.
 [toolchain]
-channel = "1.96.0"
+channel = "nightly-2026-07-12"
+components = ["miri", "llvm-tools", "rustfmt", "clippy", "rust-src"]
+targets = ["x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]

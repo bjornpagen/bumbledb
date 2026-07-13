@@ -1,8 +1,8 @@
 use super::run::{family_lane, random_lane};
-use super::{Db, Run, VerifyConfig, EMPTY_STORE_RANDOM_CASES, MAX_BUNDLES};
+use super::{Db, EMPTY_STORE_RANDOM_CASES, MAX_BUNDLES, Run, VerifyConfig};
 
 use crate::querygen::target;
-use crate::schema::{schema, Ledger};
+use crate::schema::{Ledger, schema};
 use crate::sqlmap;
 
 /// The empty-store pass: a fresh store pair with the schema loaded and

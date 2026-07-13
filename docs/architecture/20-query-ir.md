@@ -46,12 +46,28 @@ compile-time nominal safety at the app layer — see `10-data-model.md`.)
 
 A query is a **program**: one head and a non-empty list of conjunctive
 **rules** — which is precisely a **non-recursive Datalog program**. The head
-owns the find shape (arity, aggregate ops, and the positional type row —
-computed at validation and pinned in the witness); each rule is a conjunct
-(positive atoms, negated atoms, predicates) whose find terms align against
+owns the find shape (arity, aggregate ops, and the output typing — the
+predicate below, sealed at validation); each rule is a conjunct
+(positive atoms, negated atoms, conditions) whose find terms align against
 the head position by position. The single-rule query is the degenerate case
 and embeds the conjunctive query unchanged (`Query::single`); every
 pre-rules query is a one-rule program.
+
+- **A query defines one anonymous predicate; rules derive it.** The head is
+  its definition, and its typed **signature** is the result-type row: one
+  column per head position, each carrying the type that lands in the buffer
+  (`Count`/`CountDistinct` are U64 whatever they counted; the measure is
+  U64; `Sum`/`Min`/`Max` carry their input's type; `Pack` its interval
+  type; the Arg forms the carried payload's type) together with the fold
+  producing it. It is derived **once**, at validation, and sealed in the
+  witness (`ir/validate`'s `Predicate`); sink construction, result-buffer
+  typing, finalize's all-words decision, and EXPLAIN's header all read that
+  one object — no second derivation of the output row exists anywhere.
+  The fence: the predicate is anonymous and engine-internal, **referenced
+  by nothing** (names live in the host, exactly like relations pre-`as`).
+  The moment something REFERENCES a predicate — a head usable as a body
+  atom — that is the recursion trigger firing: go through the recursion
+  design's ledger, not around it.
 
 - **Denotation: the query denotes the set union of its rules' denotations.**
   Set semantics means there is exactly one union — no bag distinction exists
@@ -62,14 +78,55 @@ pre-rules query is a one-rule program.
 - **Params are query-global**: one binding surface; any rule may reference
   any param, and every rule's anchors must resolve one type per param.
 - Rules are deliberately **one step short of the fixpoint**: a rule's head
-  is never a body atom, so no recursion is expressible. The recursion `OPEN`
-  item (below) gains its landing pad here and is not entered.
+  is never a body atom, so no recursion is expressible. The recursion
+  refusal (next section) gains its landing pad here and is not entered.
+
+## Engine recursion — refused (recorded 2026-07, with its trigger)
+
+**The derivation, three legs.** *No census sighting*: the 2026-07 recursion
+analysis found none — both censused applications' query surfaces collapse
+onto the current IR. *The closure idiom covers the sighted class*: the
+censused hierarchies are depth-bounded, and host-driven semi-naive
+reachability over one ∈-set query — `docs/cookbook.md` recipe 24 (the
+idiom) and recipe 25 (the ledger's subtree rollup, closure composed with
+one `Sum`) — computes their closures in depth-many microsecond-class
+rounds on the engine as it stands. *The constraint-side motivation is
+void*: recursive commit-time judgments (acyclicity, closure-sound rollups)
+fail the acceptance gate categorically — a judgment is accepted only with
+an enforcement plan costing O(log n) per delta-touched fact, and a
+fixpoint judgment's blast radius is the store (`30-dependencies.md` § the
+acceptance gate) — so recursion buys the statement vocabulary nothing.
+
+**The trigger, three clauses** — a real workload where the idiom
+*measurably* fails:
+
+1. **Unbounded or large depth**: the host loop's per-round query cost
+   stops being noise.
+2. **Closure composed into a larger plan**: the reachable set must join
+   further *inside one plan* for performance — the per-hop host round trip
+   is the measured bottleneck.
+3. **Interval-intersection-along-paths** — the chain-window class ("the
+   window over which an entire path holds"): the idiom carries the window
+   in the host's frontier, one intersection per hop, and a workload this
+   clause dominates re-opens theory before engineering.
+
+The execution plan is pre-paid: the full recursion design — IR cut,
+stratification, delta rewrite, transient images, driver, oracles,
+notation — is a paper proof with a seam ledger in
+`docs/reference/recursion-design.md`; a firing trigger goes through that
+ledger, not around it. The rules shape (§ above) is the landing pad,
+deliberately not entered — a query is already a non-recursive Datalog
+program, one step short of the fixpoint — and nothing in this chapter
+assumes the step is never taken. Until a trigger fires, the dogfooding
+period is the census instrument: reachability needs go through the
+cookbook recipes, and the day one fails on a clause above is the day this
+refusal earns its reversal.
 
 ## Semantics
 
 - The logical solution of a **rule** is the **set of distinct bindings of
   the rule's variables** that satisfy every positive atom, every membership
-  binding, every predicate, and **no negated atom** (below); projection
+  binding, every condition, and **no negated atom** (below); projection
   returns the **set** of projected facts, and the query's solution is the
   union of its rules' projections.
 - **Existential variables never multiply projection output.** (Scoped to projection —
@@ -182,13 +239,13 @@ Rule {
     finds:      Vec<FindTerm>,        // one per head position; duplicates rejected
     atoms:      Vec<Atom>,            // ≥1; conjunctive, positive
     negated:    Vec<Atom>,            // anti-join atoms (safety rule above)
-    predicates: Vec<PredicateTree>,   // the list is a conjunction; trees are
+    conditions: Vec<ConditionTree>,   // the list is a conjunction; trees are
                                       //   the INPUT grammar — validation
                                       //   distributes them away (below)
 }
-PredicateTree = Leaf(Comparison)      // the input predicate grammar: any
-              | And(Vec<PredicateTree>)  // boolean combination of positive
-              | Or(Vec<PredicateTree>)   // comparisons — lowered at validation
+ConditionTree = Leaf(Comparison)      // the input condition grammar: any
+              | And(Vec<ConditionTree>)  // boolean combination of positive
+              | Or(Vec<ConditionTree>)   // comparisons — lowered at validation
 HeadTerm   = Var | Aggregate(HeadOp)  // var-free: variables are rule-scoped,
                                       //   so the head names shapes and the
                                       //   rules supply the variables (a
@@ -303,7 +360,7 @@ never grow again, because nothing exists outside the coordinate system.
   `COVERED_BY` (its converse), `DISJOINT` (before ∪ meets ∪ met-by ∪ after,
   `INTERSECTS`' complement).
 - **Vacuity is typed out**: validation rejects the empty mask ("never" —
-  write no query) and the full mask ("always" — write no predicate) with
+  write no query) and the full mask ("always" — write no condition) with
   distinct errors; a mask *param* gets the same two rejections at bind, where
   the value exists.
 - **The mask is paramable**: `MaskTerm::Param` makes the temporal relation a
@@ -318,13 +375,13 @@ never grow again, because nothing exists outside the coordinate system.
 
 **The three-confinement disjunction law** (the set's organizing rule):
 OR is never an execution node — disjunction is
-data in exactly three confinements. *Inside a predicate*: an Allen mask is a
+data in exactly three confinements. *Inside a condition*: an Allen mask is a
 disjunction of basics, evaluated as one classify-and-test. *Inside a
 position*: a `ParamSet` is a disjunction of values, evaluated as one probe
 set. *At the top*: rules (the query shape above) are a disjunction of
 conjunctive queries, evaluated as a set union. The tangled middle — a
 cross-atom OR inside one rule — is refused representation downstream; DNF
-lowering (§ the input predicate grammar, below) recovers it as rules at
+lowering (§ the input condition grammar, below) recovers it as rules at
 the validation boundary.
 
 Constraint-side unification (no semantics change): the pointwise key
@@ -368,7 +425,7 @@ of one comparison, a non-interval variable, and any fold but the three.
   — a same-atom guard always runs before the subtraction, so a guarded
   fact never reaches it. Cross-atom measure comparisons are residuals
   (evaluated where whole-value residuals attach), and the measure in finds
-  and folds evaluates at emit — after every predicate — so guards protect
+  and folds evaluates at emit — after every condition — so guards protect
   those positions unconditionally.
 - **Lowering:** normalization lowers the measure to a two-slot read +
   subtraction feeding the existing word machinery — a constant or same-atom
@@ -380,7 +437,7 @@ of one comparison, a non-interval variable, and any fold but the three.
   scan (dense case NEON per the port-topology law — subtraction is not
   flag-bound; strided/gathered shapes stay scalar until measured, per the
   standing rule).
-- **Selectivity:** a measure comparison is a range predicate over the
+- **Selectivity:** a measure comparison is a range condition over the
   derived duration word; the existing range keep-fraction floor applies
   unmodified.
 - The measure position weakens no proof silently: rule-disjointness treats
@@ -420,14 +477,14 @@ bind (sets are sets). Intern-miss semantics apply per element. This is the `IN` 
 the surveyed workloads (the second-most-used operator in both — 150 and 3 sites),
 admitted as a term because the alternative is N point queries per batch fetch.
 
-## The input predicate grammar and DNF lowering (owned here; runs inside validation)
+## The input condition grammar and DNF lowering (owned here; runs inside validation)
 
-The rule's predicate list admits trees: `PredicateTree = Leaf(Comparison) |
+The rule's condition list admits trees: `ConditionTree = Leaf(Comparison) |
 And(Vec) | Or(Vec)`, the list itself conjunctive — the one place the surface
 accepts a nested OR. The engine never sees it: **DNF of a query is a set of
 rules**, so validation distributes every rule's trees to disjunctive normal
 form and **each disjunct becomes a rule** — atoms and finds cloned, the
-rule's predicates that disjunct's leaves — before any per-rule check runs.
+rule's conditions that disjunct's leaves — before any per-rule check runs.
 This is the outer-join precedent applied to disjunction: a documented
 decomposition, never a node. The refusal it recovers (README refusals, "OR
 tangled mid-rule across atoms"): a cross-atom disjunction poisons filter
@@ -442,8 +499,8 @@ disjoin by writing rules, which is what rules are for.
   `DnfExceedsRules { produced, cap }` — the exponential case is rejected at
   declaration, exactly like guard-width overflow. (A program *written* with
   more than `MAX_RULES` rules is still `TooManyRules`, judged first.)
-- **The nesting cap:** trees deeper than `MAX_PREDICATE_DEPTH` (64) are the
-  typed `PredicateNestingTooDeep`, judged **iteratively** (an explicit work
+- **The nesting cap:** trees deeper than `MAX_CONDITION_DEPTH` (64) are the
+  typed `ConditionNestingTooDeep`, judged **iteratively** (an explicit work
   list) before the count or the distribution runs — those walks recurse by
   depth, so an unguarded hostile depth would be a stack exhaustion, not an
   error (the trust-boundary law, § validation boundary). The cap is generous:
@@ -451,12 +508,12 @@ disjoin by writing rules, which is what rules are for.
   already limits leaves.
 - **Duplicate rules after distribution collapse** — set semantics at the
   representation level, the duplicate-statement machinery's sibling:
-  identical normalized bodies (finds, atoms, negated verbatim; predicate
+  identical normalized bodies (finds, atoms, negated verbatim; condition
   lists as sets — conjunction is idempotent and commutative) keep their
   first occurrence.
 - **The empty combinations keep their algebraic readings**: `And([])` is
   true (no leaves), `Or([])` is false — its rule lowers to zero rules,
-  accepted exactly as statically contradictory predicates are (the semantics
+  accepted exactly as statically contradictory conditions are (the semantics
   are exact); a program whose *every* rule vanishes is the empty union,
   rejected as the empty rule set.
 - **The validated artifact contains no `Or`** — grep-provable: everything
@@ -503,21 +560,24 @@ three; **normalization lowers IR form to paper form**:
    among constants — an empty summary; `Eq` to two distinct constants on
    one slot; an `Eq` constant outside the summary; a membership set empty
    after sentinel-trim, or refuting an `Eq` constant; an `Allen`
-   literal-vs-literal predicate `classify` refutes; a failed
+   literal-vs-literal condition `classify` refutes; a failed
    constant-point-in-constant-interval membership — are a **statically
    empty verdict for the rule**: the rule is marked dead carrying the
-   rendered killing predicate (EXPLAIN prints it), a dead rule inside a
+   rendered killing condition (EXPLAIN prints it), a dead rule inside a
    live program is deleted at prepare and never runs, and a program of
    only dead rules prepares to the `Empty` plan (`40-execution.md`,
-   § access paths). `Ne` and param-bearing predicates never fold (params
+   § access paths). `Ne` and param-bearing conditions never fold (params
    are stage-3; `Ne` prunes nothing statically); interval variables fold
    via their two slot summaries independently — no cross-slot reasoning in
    v0 (the constructor invariant `start < end` is data, not plan
    knowledge); a negated occurrence's contradiction is no verdict (its
    anti-probe just never rejects). Estimator note: a folded summary is ONE
-   range predicate — its keep fraction applies once per slot, never per
+   range condition — its keep fraction applies once per slot, never per
    constituent (`plan/selectivity.rs`; the fold is also the
-   double-counted-range selectivity fix).
+   double-counted-range selectivity fix). The fold is continuously
+   verified semantics-preserving by the rewrites fuzz target
+   (`60-validation.md` § the fuzzing charter — the dual-pipeline
+   differential through the `fold-off` switch).
 
 **Deviation (paper §2):** the paper assumes selections pre-pushed and per-atom variables
 distinct; we accept the richer surface and own the lowering, because there is no
@@ -545,7 +605,7 @@ The law, extended from the dyn write surface's ("ETL input is data, not code",
 normalization, and prepare return `Ok` or a typed error on *arbitrary* input:
 out-of-range ids, duplicate bindings, vacuous masks, MAX-point literals,
 cap-exceeders, hostile nesting. The caps (`MAX_RULES`, the DNF blowup cap,
-`MAX_PREDICATE_DEPTH`, `MAX_OCCURRENCES`, the 128-variable cap) are **boundary
+`MAX_CONDITION_DEPTH`, `MAX_OCCURRENCES`, the 128-variable cap) are **boundary
 guards**, not planner hygiene — the nesting cap in particular exists because the
 tree walks recurse by depth, and its own judge is iterative so the guard is total.
 Enforced mechanically: the adversarial sweep (a property test in the engine's
@@ -562,12 +622,13 @@ program's breadth is bounded here and each rule's width there); and **head
 misalignment** — a rule whose find-term count differs from the head's arity,
 whose term shape (variable vs aggregate-op kind) differs at a position, or
 whose resolved positional type differs from the pinned row (rule 0's
-resolved types pin the head's positional type row in the witness; every
-later rule must agree position by position). Between the program shape and
+resolved input types pin the head's positional row; every later rule must
+agree position by position — that alignment is *how* every rule derives
+the one predicate, whose signature the witness then seals from rule 0). Between the program shape and
 the per-rule roster, the **nesting boundary guard** (trees deeper than
-`MAX_PREDICATE_DEPTH` are the typed `PredicateNestingTooDeep`, judged
+`MAX_CONDITION_DEPTH` are the typed `ConditionNestingTooDeep`, judged
 iteratively before any recursive walk — the trust-boundary law above), then
-**DNF distribution** (§ the input predicate grammar):
+**DNF distribution** (§ the input condition grammar):
 the blowup past `MAX_RULES` is the typed `DnfExceedsRules { produced, cap }`
 on the structural term count, duplicates collapse, and a program whose every
 disjunction is empty is the empty union. Rules then validate **one at a
@@ -608,6 +669,21 @@ occurrences counted, they consume plan-time work — more than 128 distinct
 variables) — enforced here so downstream id widths and bitset sizes are true
 invariants.
 
+**The classified comparison — the fifth sealed finding.** Validation does
+not merely *accept* a comparison: at the exact point the typed rules prove
+it legal, the proof is sealed as a `ClassifiedComparison` — a closed sum
+whose variants are exactly the accepted comparison language (scalar
+var/var and var/const with the operator sealed variable-on-left, the
+`Eq`-only set marker, the `Allen` pair and constant forms with the mask
+sealed field-on-left, both point-containment directions, and the measure
+with its operator sealed measure-on-left; interval `Eq`/`Ne` canonicalize
+to the `EQUALS` mask inside the seal). The witness carries the list per
+rule (`RuleWitness::classified_comparisons`) and normalization's
+placement consumes it with a **total** match — proved once, sealed,
+consumed totally, alongside the witness's typing tables,
+`ResolvableFilter`, `SinkSpec`, and `ParamSpec`. It is pipeline-internal:
+never part of the input IR, never in the public API, never serialized.
+
 ## The renderer — `ir::render`, the read-side syntax
 
 The statement renderer's sibling (`schema/render.rs`): `ir::render::render` prints
@@ -644,8 +720,8 @@ Deterministic, golden-pinned (the calendar union query, the Pack/Duration heads,
 and the closed-reference handles, byte-exact), and **total on plain data**:
 variables render as `v{id}` and params as
 `?{id}` (ids are all the IR carries), unresolvable ids as `relation#N`/`field#N`
-placeholders, and a nested predicate tree functionally (`and(..)`/`or(..)`, depth-
-budgeted at `MAX_PREDICATE_DEPTH`) — malformed queries must render, because the
+placeholders, and a nested condition tree functionally (`and(..)`/`or(..)`, depth-
+budgeted at `MAX_CONDITION_DEPTH`) — malformed queries must render, because the
 renderer's consumers are diagnostics: roster errors print the offending query
 (`Db::render_query` — prepare rejected it, so no prepared handle exists), EXPLAIN's
 report opens with the query it explains (`PreparedQuery::rendered_query` is the
@@ -755,12 +831,3 @@ pin-at-prepare, extended to set cardinality. **Alternative:** re-plan on bind-si
 drift. **Why it lost:** same reason as stats-driven invalidation — an honest trigger
 re-plans constantly and allocates on the hot path. **Reverses if:** the benchmark
 shows a stale-plan regression a re-prepare wouldn't have.
-
-## `OPEN` extensions (designed-for, not built)
-
-**Recursion** = an explicit fixpoint construct, semi-naive, if a real need appears —
-the surveyed workloads precompute their closures and the modeling discipline blesses
-that (`10-data-model.md`). The rules shape is its landing pad, deliberately
-not entered: a query is already a non-recursive Datalog program, one step
-short of the fixpoint — a rule's head is never a body atom. It arrives as a
-new IR node kind; nothing above assumes it never comes.

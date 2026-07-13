@@ -6,13 +6,13 @@
 //! Plain `Vec`s everywhere — no fixed-capacity silent-drop containers
 //! (post-mortem §35: capacity bugs must be impossible, not silent).
 
-use crate::image::view::{Const, FilterPredicate};
 use crate::image::ColumnSpan;
+use crate::image::view::{Const, FilterPredicate};
+use crate::ir::VarId;
 use crate::ir::normalize::{
     AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison, Role,
     SlotWidth,
 };
-use crate::ir::VarId;
 use crate::schema::{FieldId, RelationId};
 
 mod binary2fj;
@@ -28,7 +28,7 @@ mod validate;
 pub use binary2fj::binary2fj;
 pub(crate) use check_selections::check_selections;
 pub use factor::factor;
-pub use provably_disjoint::{provably_disjoint_rules, DisjointWitness};
+pub use provably_disjoint::{DisjointWitness, provably_disjoint_rules};
 pub(crate) use split_filters::split_filters;
 pub use validate::validate;
 
@@ -108,7 +108,7 @@ pub enum PlanError {
 /// One probeable equality: `field == value`, the value constant per
 /// execution (literal word/byte, param slot, param set, or pending
 /// intern — literals and params are the same machine). Selections are
-/// the probe-not-scan half of an occurrence's predicates; `filters`
+/// the probe-not-scan half of an occurrence's conditions; `filters`
 /// keeps the scannable rest (docs/architecture/40-execution.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
@@ -142,7 +142,7 @@ pub struct PlanOccurrence {
     pub occ_id: OccId,
     pub relation: RelationId,
     /// The occurrence's planning state, carried from normalization —
-    /// execution's view-bind and predicate-resolution loops read it to
+    /// execution's view-bind and filter-resolution loops read it to
     /// skip eliminated occurrences, and PRD 12's EXPLAIN reads the
     /// `Eliminated` marks directly.
     pub role: Role,
@@ -206,13 +206,13 @@ pub struct PlanNode {
     pub residuals: Vec<PlacedComparison>,
     // REFUSAL, recorded (the representation audit; do not re-litigate):
     // the three per-node rejection lists below — `word_residuals`,
-    // `anti_probes`, `point_probes` — look like one `RejectionPredicate`
+    // `anti_probes`, `point_probes` — look like one `RejectionFilter`
     // enum begging to exist. The merge is refused: grouped-by-kind IS
     // the representation of the executor's batching law. Word residuals
     // are pure ALU over already-gathered batch words; probes are
     // two-phase batched (phase 1 hashes — ALU; phase 1.5 prefetches;
     // phase 2 issues all bucket loads as independent chains). One
-    // interleaved predicate list would force per-item dispatch exactly
+    // interleaved rejection list would force per-item dispatch exactly
     // where phase-grouped batches now run.
     /// Decomposed point-containment word residuals (cross-atom
     /// `Contains`/membership) evaluated at this node — same placement

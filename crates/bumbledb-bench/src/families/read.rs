@@ -1,11 +1,11 @@
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query,
     Rule, Term, Value, VarId,
 };
 
-use crate::families::{scalar_draw, Draw, Family, Kind};
+use crate::corpus_gen::{self, GenConfig, Rng, Sizes};
+use crate::families::{Draw, Family, Kind, scalar_draw};
 use crate::fixture::var;
-use crate::gen::{self, GenConfig, Rng, Sizes};
 use crate::naive::ParamValue;
 use crate::schema::ids;
 use crate::translate::goldens;
@@ -27,7 +27,7 @@ fn point_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -64,7 +64,7 @@ fn containment_walk_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -122,7 +122,7 @@ fn chain_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
             rhs: param(0),
@@ -132,10 +132,10 @@ fn chain_query() -> Query {
 
 fn chain_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
-    let span = i64::try_from(sizes.postings).expect("fits") * gen::AT_STEP;
+    let span = i64::try_from(sizes.postings).expect("fits") * corpus_gen::AT_STEP;
     // Four suffix edges near the corpus end, selecting ≈2/4/6/8%.
     (1..=4)
-        .map(|k| scalar_draw(vec![Value::I64(gen::AT_BASE + span - span * k / 50)]))
+        .map(|k| scalar_draw(vec![Value::I64(corpus_gen::AT_BASE + span - span * k / 50)]))
         .collect()
 }
 
@@ -153,13 +153,13 @@ fn range_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(2),
                 rhs: param(0),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(2),
                 rhs: param(1),
@@ -170,12 +170,12 @@ fn range_query() -> Query {
 
 fn range_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
-    let span = i64::try_from(sizes.postings).expect("fits") * gen::AT_STEP;
+    let span = i64::try_from(sizes.postings).expect("fits") * corpus_gen::AT_STEP;
     let width = span / 50;
     // Four ≈2%-selectivity windows spread over the timestamp span.
     (0..4)
         .map(|k| {
-            let start = gen::AT_BASE + span * (2 * k + 1) / 16;
+            let start = corpus_gen::AT_BASE + span * (2 * k + 1) / 16;
             scalar_draw(vec![Value::I64(start), Value::I64(start + width)])
         })
         .collect()
@@ -211,7 +211,7 @@ pub(super) fn balance_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -219,7 +219,7 @@ fn balance_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
     // The hot-owning holder: whoever holds hot account 0 (deterministic —
     // the generator is a pure function of (cfg, relation, row)).
-    let account0 = gen::row(cfg, &sizes, ids::ACCOUNT, 0);
+    let account0 = corpus_gen::row(cfg, &sizes, ids::ACCOUNT, 0);
     let hot_holder = account0[usize::from(ids::account::HOLDER.0)].clone();
     let mut rng = Rng::new(cfg.seed ^ 0x0114_0005);
     let mut sets = vec![scalar_draw(vec![hot_holder])];
@@ -262,7 +262,7 @@ fn stats_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -294,7 +294,7 @@ fn string_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -319,7 +319,7 @@ fn string_params(cfg: &GenConfig) -> Vec<Draw> {
 
 /// skew — `Q(p, amount) :- Posting(id = p, amount),
 /// PostingTag(posting = p, tag = ?0)` — the skewed tag join: the
-/// generator routes [`gen::HOT_TAG_PCT`]% of first tags to `Fee`
+/// generator routes [`corpus_gen::HOT_TAG_PCT`]% of first tags to `Fee`
 /// (ordinal 0), so the rotation spans hot and uniform fan-outs.
 fn skew_query() -> Query {
     Query::single(Rule {
@@ -338,7 +338,7 @@ fn skew_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -377,7 +377,7 @@ fn spread_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
             rhs: var(1),
@@ -425,13 +425,13 @@ fn triangle_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![
-            PredicateTree::Leaf(Comparison {
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
                 lhs: var(0),
                 rhs: param(0),
             }),
-            PredicateTree::Leaf(Comparison {
+            ConditionTree::Leaf(Comparison {
                 op: CmpOp::Lt,
                 lhs: var(0),
                 rhs: param(1),
@@ -479,7 +479,7 @@ fn entries_for_account_set_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -523,7 +523,7 @@ fn postings_without_tag_query() -> Query {
             relation: ids::POSTING_TAG,
             bindings: vec![(ids::posting_tag::POSTING, var(0))],
         }],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -561,7 +561,7 @@ fn latest_posting_per_account_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -598,7 +598,7 @@ fn mandate_at_instant_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
@@ -610,7 +610,7 @@ fn mandate_at_instant_params(cfg: &GenConfig) -> Vec<Draw> {
     // plus the account miss.
     let mut sets: Vec<Draw> = (0..3)
         .map(|_| {
-            let posting = gen::row(cfg, &sizes, ids::POSTING, rng.range(sizes.postings));
+            let posting = corpus_gen::row(cfg, &sizes, ids::POSTING, rng.range(sizes.postings));
             scalar_draw(vec![
                 posting[usize::from(ids::posting::ACCOUNT.0)].clone(),
                 posting[usize::from(ids::posting::AT.0)].clone(),
@@ -619,7 +619,7 @@ fn mandate_at_instant_params(cfg: &GenConfig) -> Vec<Draw> {
         .collect();
     sets.push(scalar_draw(vec![
         Value::U64(sizes.accounts + 1_000_000),
-        Value::I64(gen::AT_BASE),
+        Value::I64(corpus_gen::AT_BASE),
     ]));
     sets
 }
@@ -654,7 +654,7 @@ fn mandate_overlap_query() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },
@@ -752,7 +752,11 @@ pub fn all() -> &'static [Family] {
             params: skew_params,
             golden_sql: goldens::SKEW,
             param_policy: "The hot tag (Fee, ~60% of first tags), then the two uniform tags.",
-            indexes: &[("idx_postingtag_tag_posting", "PostingTag", &["tag", "posting"])],
+            indexes: &[(
+                "idx_postingtag_tag_posting",
+                "PostingTag",
+                &["tag", "posting"],
+            )],
         },
         Family {
             name: "spread",
@@ -779,7 +783,11 @@ pub fn all() -> &'static [Family] {
             params: entries_for_account_set_params,
             golden_sql: goldens::IN_THREE,
             param_policy: "Account sets of sizes 1, 3 (hot account 0 included), 8, and 0 — the golden pins the representative set {3, 7, 9}.",
-            indexes: &[("idx_posting_account_entry", "Posting", &["account", "entry"])],
+            indexes: &[(
+                "idx_posting_account_entry",
+                "Posting",
+                &["account", "entry"],
+            )],
         },
         Family {
             name: "postings_without_tag",

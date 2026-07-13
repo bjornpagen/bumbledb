@@ -1,6 +1,6 @@
 use super::plan::CommitPlan;
 use super::*;
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{ValueRef, encode_fact};
 use crate::error::Result;
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,

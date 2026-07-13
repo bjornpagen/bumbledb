@@ -1,4 +1,4 @@
-use crate::exec::sink::{measure, word_to_i64, Acc, AggregateSink, ArgSpec, FoldOp, SinkSpec};
+use crate::exec::sink::{Acc, AggregateSink, ArgSpec, FoldOp, SinkSpec, measure, word_to_i64};
 
 impl AggregateSink {
     /// Folds the full binding currently in `binding_scratch`: the

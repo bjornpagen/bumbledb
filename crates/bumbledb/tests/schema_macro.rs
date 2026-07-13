@@ -463,8 +463,8 @@ mod interval_newtype {
 }
 
 mod selection_literals {
-    use bumbledb::schema::{FieldId, StatementId, StatementView};
     use bumbledb::Value;
+    use bumbledb::schema::{FieldId, StatementId, StatementView};
 
     bumbledb::schema! {
         pub Telemetry;
@@ -580,10 +580,7 @@ mod fixed_bytes_host_type {
                 Ok(())
             })
             .unwrap_err();
-        assert!(matches!(
-            err,
-            bumbledb::Error::FunctionalityViolation { .. }
-        ));
+        assert!(matches!(err, bumbledb::Error::CommitRejected { .. }));
         // encode_read is infallible for bytes<N> (no dictionary miss
         // exists for an inline value).
         db.read(|snap| {
@@ -855,7 +852,7 @@ mod discriminated_union {
             })
             .unwrap_err();
         assert!(
-            matches!(err, bumbledb::Error::ContainmentViolation { .. }),
+            matches!(err, bumbledb::Error::CommitRejected { .. }),
             "{err:?}"
         );
 
@@ -877,8 +874,8 @@ mod invalid_declaration {
     //! macro: a declaration the grammar accepts but the acceptance gate
     //! refuses surfaces as the typed `SchemaError` — no panic path.
 
-    use bumbledb::error::SchemaError;
     use bumbledb::Db;
+    use bumbledb::error::SchemaError;
 
     bumbledb::schema! {
         pub Duplicated;

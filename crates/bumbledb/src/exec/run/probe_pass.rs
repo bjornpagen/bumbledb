@@ -2,8 +2,8 @@
 
 use super::anti_probe::anti_probe_pass;
 use super::{
-    Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, NodeScratch, PipeTables, Sink,
-    Source, ValidatedPlan, PREFETCH_WIDTH_FLOOR,
+    Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, NodeScratch, PREFETCH_WIDTH_FLOOR,
+    PipeTables, Sink, Source, ValidatedPlan,
 };
 
 impl Executor {

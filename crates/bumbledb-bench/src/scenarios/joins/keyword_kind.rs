@@ -1,11 +1,11 @@
 use bumbledb::{
-    Atom, CmpOp, Comparison, FieldId, FindTerm, PredicateTree, Query, Rule, Value, VarId,
+    Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, Query, Rule, Value, VarId,
 };
 
 use super::corpus::s;
 use super::term::{param, var};
-use super::{ids, mix, HOT_KEYWORDS, KEYWORDS};
-use crate::gen::Rng;
+use super::{HOT_KEYWORDS, KEYWORDS, ids, mix};
+use crate::corpus_gen::Rng;
 
 /// j3 — keyword × kind: two interned-string/enum-selective dimensions
 /// pinching a 3-way join from both sides.
@@ -32,7 +32,7 @@ pub(super) fn keyword_kind() -> Query {
             },
         ],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: var(1),
             rhs: param(1),

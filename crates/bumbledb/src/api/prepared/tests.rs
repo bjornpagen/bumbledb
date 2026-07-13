@@ -1,10 +1,10 @@
 use super::*;
 
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{ValueRef, encode_fact};
 use crate::error::Error;
 use crate::image::cache::ImageCache;
 use crate::ir::{
-    Atom, CmpOp, Comparison, FindTerm, PredicateTree, Query, Rule, Term, Value, VarId,
+    Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value, VarId,
 };
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
@@ -117,7 +117,7 @@ fn by_account_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![PredicateTree::Leaf(Comparison {
+        conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(crate::ir::ParamId(1)),
@@ -155,7 +155,7 @@ fn by_memo_query() -> Query {
             ],
         }],
         negated: vec![],
-        predicates: vec![],
+        conditions: vec![],
     })
 }
 
