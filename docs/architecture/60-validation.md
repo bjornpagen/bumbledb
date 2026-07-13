@@ -474,6 +474,31 @@ runner.
   bug.
 - **Trophy ledger**: `fuzz/README.md` — one row per real finding (date,
   target, root cause, the pinning test).
+- **Operations** (docs/prd-crucible/16-ci-firepower.md): `scripts/fuzz.sh`
+  is the firepower launcher — no args runs all five targets time-sliced
+  in libFuzzer fork mode across the machine's 12 cores (the all-cores
+  default IS the default); `fuzz.sh <target> [minutes]` bounds one
+  target; `fuzz.sh --asan <target>` is the sanitizer lane (query carries
+  `-rss_limit_mb=4096` there, the PRD 15 disposition). After every
+  session the launcher minimizes the target's corpus (`cargo fuzz cmin`)
+  and appends one line to `fuzz/SESSIONS.md` — the honest zero
+  ("0 findings in N executions") is a recorded result. **The trophy
+  pipeline:** an artifact that reproduces is minimized, becomes a NAMED
+  `#[test]` in the crate that owns the bug (input inlined or checked
+  into `fuzz/trophies/<target>/`, replayed by `fuzz/tests/replay*.rs`),
+  gets its ledger row, and THEN the artifact is deleted; an artifact
+  that triages environmental (the worked example: the `Lmdb(Io(EINVAL))`
+  storms under concurrent compile load — every artifact replayed clean
+  on a quiet machine) gets its disposition recorded in `SESSIONS.md`,
+  then deleted. Triage is structurally not optional: the launcher
+  REFUSES to start while `fuzz/artifacts` holds any file. CI
+  (`.github/workflows/ci.yml`) runs the check lane (`scripts/check.sh`)
+  and the corpus-replay lane (plain `cargo test` in `fuzz/`) per push,
+  and the Miri lane (`scripts/miri.sh`) on a nightly cron (measured
+  12.5 min locally — over the per-push budget). CI deliberately runs NO
+  benches, NO asm gates, and NO long fuzz sessions: timing and codegen
+  gates are local measurement discipline on the pinned M2 Max, and
+  firepower is the owner's machine (the human work register).
 
 ## Small worlds, Miri, and ASAN — the charter's complement
 

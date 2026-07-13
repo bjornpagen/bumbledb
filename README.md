@@ -326,6 +326,11 @@ by machinery, not judgment:
   session — never implicitly.
 - **Microbench pins**: load-bearing mechanisms carry `#[ignore]`d in-tree
   benchmarks that re-assert their measured margins on demand.
+- **Fuzzed continuously**: five coverage-guided targets over the public API
+  drive the same oracles at full firepower (`scripts/fuzz.sh`, all cores,
+  fork mode), every session on the record in
+  [`fuzz/SESSIONS.md`](fuzz/SESSIONS.md) — including the zero-finding ones —
+  and every checked-in corpus entry replayed deterministically in CI.
 - **Refutation is a result.** A mechanism that measures as a loss is
   reverted, and the record keeps the numbers and the failure mechanism —
   deletion is gated exactly like addition.

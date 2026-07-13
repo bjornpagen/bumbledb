@@ -22,16 +22,39 @@ cargo fuzz run theory -- -runs=100000  # one smoke unit
 | `crash` | 14 | durability under torn commits: an ops prefix plus one victim commit (`corpus_gen::opgen::random_crash_scenario`) replayed in a CHILD process that aborts at a drawn crashpoint (the commit pipeline's named phase boundaries — engine hooks under the `crashpoint` feature, `BUMBLEDB_CRASHPOINT`-armed, compiled to nothing by default; the table in `storage/commit.rs` is the single authority); the parent proves all-or-nothing recovery: reopen, `verify_store`, full contents at the point's expected side (prefix before `mdb_txn_commit`, post after), victim replay landing the post state. The deterministic sweep (`tests/crash.rs`) kills every crashpoint × a small ops-prefix matrix under plain `cargo test`; child spawns cap throughput, so smoke budgets are lower than the in-process targets |
 
 
-## Corpus policy
+## Operations
 
-`corpus/<target>/` is the checked-in seed corpus (small, deterministic
-generator runs); `artifacts/` is gitignored — a crash artifact is triage
-input, never a deliverable. A minimized counterexample (`cargo fuzz
-tmin`) becomes a permanent regression test in the crate that owns the
-bug, and a row here. `trophies/<target>/` holds the checked-in inputs
-of recorded findings; `tests/replay.rs` replays every corpus and trophy
-entry through its runner on plain `cargo test` — the regression-replay
-slot.
+`scripts/fuzz.sh` is the firepower launcher (docs/prd-crucible/
+16-ci-firepower.md): no args runs all five targets time-sliced in
+libFuzzer fork mode across 12 workers; `fuzz.sh <target> [minutes]`
+bounds one target; `fuzz.sh --asan <target>` is the sanitizer lane
+(query carries `-rss_limit_mb=4096` there — the ASAN quarantine
+disposition, docs/prd-crucible/15-exhaustive-miri.md § Results). Every
+session ends with `cargo fuzz cmin` on the target's corpus and one
+summary line appended to `SESSIONS.md` (execs, rate, coverage, corpus
+growth, findings — the honest zero is a recorded result). The launcher
+REFUSES to start while `artifacts/` holds any file: untriaged findings
+block new sessions.
+
+## Corpus policy and the trophy pipeline
+
+`corpus/<target>/` is the checked-in seed corpus, kept lean by the
+launcher's post-session `cargo fuzz cmin`; `artifacts/` is gitignored —
+a crash artifact is triage input, never a deliverable. The pipeline for
+every artifact, enforced by the launcher's dirty-artifacts refusal:
+
+1. **Reproduce and minimize** (`cargo fuzz tmin`).
+2. **Real finding** → a permanent NAMED regression test in the crate
+   that owns the bug (input inlined as bytes, or checked into
+   `trophies/<target>/` where `tests/replay*.rs` replays it on plain
+   `cargo test`), plus a trophy-ledger row below.
+3. **Environmental** → the disposition recorded in `SESSIONS.md` with
+   the replay evidence. Worked example: the `Lmdb(Io(EINVAL))` storms —
+   artifacts appearing in the same wall-second across jobs under a
+   concurrent compile, every one replaying clean on a quiet machine;
+   triaged clean, recorded, deleted.
+4. **The artifact is deleted.** Findings that live in an artifacts
+   directory are not findings, they are homework.
 
 ## Trophy ledger
 
