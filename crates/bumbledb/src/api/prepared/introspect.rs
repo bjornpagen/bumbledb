@@ -100,7 +100,7 @@ impl<S> PreparedQuery<'_, S> {
             let stats = ExecutionStats {
                 rules: vec![RuleStats {
                     nodes: Vec::new(),
-                    // A guard probe is a single-atom query: the chase has
+                    // A guard probe is a single-atom query: the grounding has
                     // nothing to pair and nothing to fold, so no marks
                     // can exist.
                     eliminated: Vec::new(),

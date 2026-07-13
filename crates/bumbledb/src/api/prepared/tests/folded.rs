@@ -1,5 +1,5 @@
-//! The chase-evaluator's execution shape (docs/architecture/
-//! 40-execution.md, § the chase: elimination and evaluation): a folded
+//! The grounding-evaluator's execution shape (docs/architecture/
+//! 40-execution.md, § the ground: elimination and evaluation): a folded
 //! occurrence never builds an image or binds a view, its plan-constant
 //! set rides the param-set selection machinery (and never counts as an
 //! unresolved literal — the PRD 09 latch), EXPLAIN carries the fold

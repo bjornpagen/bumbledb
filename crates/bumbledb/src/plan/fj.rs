@@ -75,8 +75,8 @@ pub enum PlanError {
     /// A subatom references a non-participating occurrence — a negated
     /// occurrence joins no node (the executor reaches it exclusively
     /// through anti-probes, docs/architecture/40-execution.md) and a
-    /// chase-eliminated occurrence joins nothing at all
-    /// (`plan/chase.rs`).
+    /// grounding-eliminated occurrence joins nothing at all
+    /// (`plan/ground.rs`).
     NonParticipatingOccurrenceInNode { node: usize, occ: OccId },
     /// Two subatoms of one node share an occurrence.
     DuplicateOccurrenceInNode { node: usize, occ: OccId },
@@ -135,8 +135,8 @@ pub struct PointProbe {
 /// One occurrence's execution-facing description — every role lives in
 /// the one table ([`OccId`]s are indices): negated occurrences appear in
 /// no subatom and are probed through the nodes' `anti_probes`;
-/// chase-eliminated occurrences appear nowhere at all and their view is
-/// never built (`plan/chase.rs`).
+/// grounding-eliminated occurrences appear nowhere at all and their view is
+/// never built (`plan/ground.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanOccurrence {
     pub occ_id: OccId,
@@ -307,8 +307,8 @@ impl ValidatedPlan {
     }
 
     /// Whether an occurrence is negated — a role read, never a subatom
-    /// search: a chase-eliminated occurrence also appears in no subatom,
-    /// so absence stopped being evidence of negation (`plan/chase.rs`).
+    /// search: a grounding-eliminated occurrence also appears in no subatom,
+    /// so absence stopped being evidence of negation (`plan/ground.rs`).
     #[must_use]
     pub fn is_negated(&self, occ: OccId) -> bool {
         self.occurrences[usize::from(occ.0)].role == Role::Negated

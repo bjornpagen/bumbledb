@@ -2,12 +2,12 @@
 //! two-relation schema with one `==` pair and one pointwise key. Engine
 //! and model must agree on every write verdict (including the violating
 //! statement) and on every one of 20 fixed queries — plus the dual-run
-//! chase differential ([`chase`]).
+//! grounding differential ([`grounding`]).
 
-mod chase;
 mod closed;
 mod contradiction;
 mod fold;
+mod ground;
 mod identity_bytes;
 mod measure;
 mod pack;

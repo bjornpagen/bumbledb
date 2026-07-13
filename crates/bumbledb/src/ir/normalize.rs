@@ -46,8 +46,8 @@ pub struct OccId(pub u16);
 
 /// An occurrence's planning state — one sum, deliberately: a polarity
 /// flag plus an `eliminated: Option<StatementId>` would admit
-/// negated ∧ eliminated, a state the chase's conditions forbid
-/// (`plan/chase.rs`), and index-shifting removal would move every
+/// negated ∧ eliminated, a state the grounding's conditions forbid
+/// (`plan/ground.rs`), and index-shifting removal would move every
 /// [`OccId`] downstream. One occurrence table holds all four states;
 /// occurrence ids never move.
 ///
@@ -56,11 +56,11 @@ pub struct OccId(pub u16);
 /// - `Negated`: joins no plan node; reached exclusively through its
 ///   [`AntiProbe`] descriptor (`docs/architecture/20-query-ir.md`,
 ///   § normalization step 4).
-/// - `Eliminated`: a positive occurrence the chase removed — the mark
+/// - `Eliminated`: a positive occurrence the grounding removed — the mark
 ///   carries the containment statement that justified it and doubles
 ///   as the EXPLAIN record; no separate eliminated-list exists.
-/// - `Folded`: a closed-relation occurrence the chase **evaluated at
-///   prepare** (`plan/chase/evaluate.rs`): its filters ran against the
+/// - `Folded`: a closed-relation occurrence the grounding **evaluated at
+///   prepare** (`plan/ground/evaluate.rs`): its filters ran against the
 ///   sealed extension and the atom's whole contribution became a
 ///   plan-constant membership set on its siblings (or nothing at all,
 ///   for a satisfied guard). Unlike `Eliminated`, a folded occurrence
@@ -76,7 +76,7 @@ pub enum Role {
     Folded(FoldedMark),
 }
 
-/// The evaluator's mark (`plan/chase/evaluate.rs`): the EXPLAIN record
+/// The evaluator's mark (`plan/ground/evaluate.rs`): the EXPLAIN record
 /// of a fold, kept `Copy`-small — the id set itself was attached to the
 /// sibling occurrences' filter lists at fold time and needs no second
 /// home here.
@@ -96,7 +96,7 @@ impl Role {
     /// occurrence joins the plan — enters the DP, appears in subatoms,
     /// binds variables, and counts toward plan validity. Negated
     /// occurrences only reject bindings; eliminated and folded
-    /// occurrences are proven redundant (`plan/chase.rs`). Every
+    /// occurrences are proven redundant (`plan/ground.rs`). Every
     /// planner, stats, and witness iteration routes through this one
     /// match.
     #[must_use]
@@ -104,7 +104,7 @@ impl Role {
         matches!(self, Self::Positive)
     }
 
-    /// Whether the chase discharged this occurrence from execution
+    /// Whether the grounding discharged this occurrence from execution
     /// entirely (eliminated or folded): no statistics read, no view, no
     /// image, no filter resolution, no selection probe — the negative
     /// space of [`Role::participates`] that negated occurrences (which
@@ -309,8 +309,8 @@ pub struct NormalizedQuery {
     /// ([`PlacedDuration`]).
     pub duration_residuals: Vec<PlacedDuration>,
     /// Anti-probe descriptors, one per negated occurrence, in occurrence
-    /// order — minus the ones the chase-evaluator folded away
-    /// (`plan/chase/evaluate.rs` deletes a folded negated occurrence's
+    /// order — minus the ones the grounding-evaluator folded away
+    /// (`plan/ground/evaluate.rs` deletes a folded negated occurrence's
     /// descriptor: the rejection it encoded became a plan-constant
     /// complement membership on the siblings, or provably never fired).
     pub anti_probes: Vec<AntiProbe>,
@@ -322,7 +322,7 @@ pub struct NormalizedQuery {
     /// (e.g. `R: a ∈ [8, 19] ∧ a == 3`), because EXPLAIN must print what
     /// refuted the rule. Two writers, one channel: the normalization
     /// fold (`fold.rs`, mutually unsatisfiable constant conditions) and
-    /// the chase-evaluator (`plan/chase/evaluate.rs`, a closed atom
+    /// the grounding-evaluator (`plan/ground/evaluate.rs`, a closed atom
     /// whose prepare-time evaluation empties — `folded to ∅: …`). A dead
     /// rule is deleted at prepare (`api/prepared/build.rs`); a program
     /// of only dead rules prepares to `Program::Empty`.

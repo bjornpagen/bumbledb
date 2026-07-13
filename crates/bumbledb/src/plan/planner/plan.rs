@@ -6,8 +6,8 @@ use crate::schema::Schema;
 /// occurrence subsets, minimizing the sum of intermediate-result
 /// estimates. Negated occurrences enter no DP state — they never join;
 /// they only shrink results, and the planner treats them as free filters
-/// (docs/architecture/40-execution.md). Chase-eliminated occurrences left
-/// planning entirely (`plan/chase.rs`). Deterministic: ties break toward
+/// (docs/architecture/40-execution.md). Grounding-eliminated occurrences left
+/// planning entirely (`plan/ground.rs`). Deterministic: ties break toward
 /// the smaller trailing occurrence id, independent of `stats` input order.
 ///
 /// # Panics

@@ -57,10 +57,10 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
         "Eq-constant conditions never reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-        // A discharged occurrence (chase-eliminated or chase-folded) is
+        // A discharged occurrence (grounding-eliminated or grounding-folded) is
         // unreachable at execution — no subatom, no anti-probe — so it
         // earns no view and, above all, no image build
-        // (`plan/chase.rs`: skipping this build is the rewrite's
+        // (`plan/ground.rs`: skipping this build is the rewrite's
         // payoff; for a fold, the sealed extension was already read at
         // prepare and nothing remains to bind).
         if occurrence.role.discharged() {

@@ -146,13 +146,13 @@ fn the_coverage_contract_holds_at_a_thousand() {
         // ≥4-interval-find flavor, both drawn per run.
         ("wide_scalar", cov.wide_scalar),
         ("wide_interval", cov.wide_interval),
-        // The chase shapes' structural assertion: both an eliminated
+        // The grounding shapes' structural assertion: both an eliminated
         // (existence walks and both DU `==` directions) and a refused
         // (extra projected target field; missing φ) shape appear per
         // run — the engine-backed verdict test holds the tags honest.
-        ("chase_eliminable", cov.chase_eliminable),
-        ("chase_extra_field", cov.chase_extra_field),
-        ("chase_missing_phi", cov.chase_missing_phi),
+        ("ground_eliminable", cov.ground_eliminable),
+        ("ground_extra_field", cov.ground_extra_field),
+        ("ground_missing_phi", cov.ground_missing_phi),
         ("du_header_falls", cov.du_header_falls),
         ("du_child_falls", cov.du_child_falls),
         // The closed-relation classes (shapes_closed.rs) — restated in
@@ -205,17 +205,17 @@ fn the_coverage_contract_holds_at_a_thousand() {
     );
 }
 
-/// The chase tags are engine-verified: prepared against the target
-/// schema (statements included — the chase runs at prepare, data-free),
+/// The grounding tags are engine-verified: prepared against the target
+/// schema (statements included — the grounding runs at prepare, data-free),
 /// every eliminable variant's profile carries `Role::Eliminated` marks
 /// (the DU directions naming their fallen side) and every near-miss
 /// carries none — the structural assertion that both an eliminated and
 /// a refused shape appear per run, held to the engine's verdict.
 #[test]
-fn chase_shapes_eliminate_and_near_misses_refuse() {
-    use super::ChaseVariant;
+fn grounding_shapes_eliminate_and_near_misses_refuse() {
+    use super::GroundVariant;
     use super::construct::random_query_tagged;
-    let dir = std::env::temp_dir().join("bumbledb-bench-querygen-chase");
+    let dir = std::env::temp_dir().join("bumbledb-bench-querygen-grounding");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let db = bumbledb::Db::create(&dir, target::Target).expect("create");
@@ -223,13 +223,13 @@ fn chase_shapes_eliminate_and_near_misses_refuse() {
     let (mut eliminated, mut refused) = (0u32, 0u32);
     for i in 0..N {
         let (query, _, tags) = random_query_tagged(&mut rng, CFG);
-        let Some(variant) = tags.chase else { continue };
-        let mut prepared = db.prepare(&query).expect("chase shapes validate");
+        let Some(variant) = tags.ground else { continue };
+        let mut prepared = db.prepare(&query).expect("grounding shapes validate");
         let (_, stats) = db
             .read(|snap| snap.profile(&mut prepared, &[]))
-            .expect("chase shapes execute (empty store)");
+            .expect("grounding shapes execute (empty store)");
         match variant {
-            ChaseVariant::Walk => {
+            GroundVariant::Walk => {
                 assert_eq!(
                     stats.rules[0].eliminated.len(),
                     1,
@@ -237,8 +237,8 @@ fn chase_shapes_eliminate_and_near_misses_refuse() {
                 );
                 eliminated += 1;
             }
-            ChaseVariant::DuHeader | ChaseVariant::DuChild => {
-                let fallen = if variant == ChaseVariant::DuHeader {
+            GroundVariant::DuHeader | GroundVariant::DuChild => {
+                let fallen = if variant == GroundVariant::DuHeader {
                     "JournalEntry"
                 } else {
                     "ImportBatch"
@@ -254,7 +254,7 @@ fn chase_shapes_eliminate_and_near_misses_refuse() {
                 );
                 eliminated += 1;
             }
-            ChaseVariant::WalkExtraField | ChaseVariant::DuMissingPhi => {
+            GroundVariant::WalkExtraField | GroundVariant::DuMissingPhi => {
                 assert!(
                     stats.rules[0].eliminated.is_empty(),
                     "near-miss {i} must refuse: {:?}",

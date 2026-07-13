@@ -238,7 +238,7 @@ triggers:
    of two mechanisms.
 3. **Exclusivity** (derived): an id in two child relations would force the parent's
    `kind` to equal two handles; the parent's key on `id` makes that a contradiction,
-   not a rule. Two consumers remain: the checker enforces it and the chase spends
+   not a rule. Two consumers remain: the checker enforces it and the grounding spends
    it. EXPLAIN can also report that rule heads are provably disjoint, but execution
    deliberately does not spend that knowledge; the measured refutation is in
    `40-execution.md` § set semantics.
@@ -328,7 +328,7 @@ continuations are the checker's gap verdict and `Pack`'s coalescing fold
 (`20-query-ir.md`) — the walk lives once, and each caller keeps only its own trust
 checks and its own outcome.
 
-Accepted statements also license planner rewrites: the chase-based occurrence
+Accepted statements also license planner rewrites: the grounding-based occurrence
 elimination (`40-execution.md` § planner) deletes query joins a containment
 already certifies.
 

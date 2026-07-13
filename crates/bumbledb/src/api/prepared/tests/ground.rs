@@ -1,5 +1,5 @@
-//! The chase's result-equality pins (`plan/chase.rs`): the eliminated
-//! plan and the chase-disabled plan execute the same query to identical
+//! The grounding's result-equality pins (`plan/ground.rs`): the eliminated
+//! plan and the grounding-disabled plan execute the same query to identical
 //! result sets, projection and aggregate sinks both — the module doc's
 //! bit-identical claim, exercised end to end.
 
@@ -7,13 +7,13 @@ use super::*;
 
 use crate::ir::AggOp;
 use crate::ir::normalize::Role;
-use crate::plan::chase::with_chase_disabled;
+use crate::plan::ground::with_grounding_disabled;
 use crate::schema::{RelationDescriptor, Side, StatementDescriptor};
 
 /// Posting(id fresh, account u64, amount i64); Account(id fresh,
 /// name str); Posting(account) <= Account(id) — statement 2 after the
 /// two fresh auto-keys.
-fn chase_schema() -> Schema {
+fn ground_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -249,7 +249,7 @@ fn populate_du(env: &Environment, schema: &Schema) {
 }
 
 /// The EXPLAIN golden on the DU fixture
-/// (`docs/architecture/40-execution.md` § the chase):
+/// (`docs/architecture/40-execution.md` § the grounding):
 /// the one-sided walk `Q(rate) :- Det(grading = g, rate),
 /// Grading(id = g, kind == 0)` reports the header's elimination with
 /// the licensing statement rendered in the `schema!` notation — the
@@ -257,7 +257,7 @@ fn populate_du(env: &Environment, schema: &Schema) {
 /// same mark as data.
 #[test]
 fn the_du_fixture_explain_pins_the_eliminated_line() {
-    let dir = TempDir::new("chase-du-golden");
+    let dir = TempDir::new("grounding-du-golden");
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     populate_du(&env, &schema);
@@ -306,12 +306,12 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
     );
 }
 
-/// Eliminated vs chase-disabled execution: identical result sets under
+/// Eliminated vs grounding-disabled execution: identical result sets under
 /// the projection sink and under the aggregate sink.
 #[test]
 fn eliminated_and_disabled_executions_agree_on_both_sinks() {
-    let dir = TempDir::new("chase-differential");
-    let schema = chase_schema();
+    let dir = TempDir::new("grounding-differential");
+    let schema = ground_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     populate(&env, &schema);
     let cache = ImageCache::new(&schema);
@@ -342,9 +342,9 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
     });
 
     for query in [&projection, &aggregate] {
-        let mut chased = prepare(&txn, &cache, &schema, query).expect("prepare");
+        let mut grounded = prepare(&txn, &cache, &schema, query).expect("prepare");
         assert_eq!(
-            plan_roles(&chased, 0),
+            plan_roles(&grounded, 0),
             vec![
                 Role::Positive,
                 Role::Eliminated(crate::schema::StatementId(2))
@@ -352,34 +352,36 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
             "the walk shape eliminates the Account occurrence"
         );
         let mut disabled =
-            with_chase_disabled(|| prepare(&txn, &cache, &schema, query)).expect("prepare");
+            with_grounding_disabled(|| prepare(&txn, &cache, &schema, query)).expect("prepare");
         assert_eq!(
             plan_roles(&disabled, 0),
             vec![Role::Positive, Role::Positive],
             "the off switch keeps both occurrences joining"
         );
-        let with_chase = chased.execute_collect(&txn, &cache, &[]).expect("execute");
+        let with_grounding = grounded
+            .execute_collect(&txn, &cache, &[])
+            .expect("execute");
         let without = disabled
             .execute_collect(&txn, &cache, &[])
             .expect("execute");
         assert_eq!(
-            rows(&with_chase),
+            rows(&with_grounding),
             rows(&without),
             "elimination is result-identical"
         );
-        assert!(!with_chase.is_empty(), "the fixture produces rows");
+        assert!(!with_grounding.is_empty(), "the fixture produces rows");
     }
 }
 
-/// The chase runs per rule, independently: a two-rule union where the
+/// The grounding runs per rule, independently: a two-rule union where the
 /// walk's Account occurrence is containment-implied in rule 0 but
 /// filter-blocked in rule 1 (an extra selection beyond ψ — condition
 /// 2), so the mark stays rule-local, no rule subsumes the other, and
 /// the off switch changes no results.
 #[test]
 fn per_rule_elimination_marks_one_rule_only() {
-    let dir = TempDir::new("chase-per-rule");
-    let schema = chase_schema();
+    let dir = TempDir::new("grounding-per-rule");
+    let schema = ground_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     populate(&env, &schema);
     let cache = ImageCache::new(&schema);
@@ -429,24 +431,24 @@ fn per_rule_elimination_marks_one_rule_only() {
     assert!(stats.subsumed.is_empty(), "no rule was deleted");
 
     let mut disabled =
-        with_chase_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
+        with_grounding_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
     assert_eq!(
         plan_roles(&disabled, 0),
         vec![Role::Positive, Role::Positive],
         "the off switch keeps every occurrence joining"
     );
-    let with_chase = prepared
+    let with_grounding = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     let without = disabled
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(
-        rows(&with_chase),
+        rows(&with_grounding),
         rows(&without),
         "per-rule elimination is result-identical"
     );
-    assert!(!with_chase.is_empty(), "the fixture produces rows");
+    assert!(!with_grounding.is_empty(), "the fixture produces rows");
 }
 
 /// The DNF residue: lowering `(rate > 30 ∨ kind == Det)` over the DU
@@ -457,7 +459,7 @@ fn per_rule_elimination_marks_one_rule_only() {
 /// EXPLAIN names the deletion with the subsuming rule's index.
 #[test]
 fn dnf_residue_subsumption_deletes_the_filtered_rule() {
-    let dir = TempDir::new("chase-subsume");
+    let dir = TempDir::new("grounding-subsume");
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     populate_du(&env, &schema);
@@ -524,7 +526,7 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
     );
 
     let mut disabled =
-        with_chase_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
+        with_grounding_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
     assert_eq!(
         disabled.program.rules().len(),
         2,

@@ -9,7 +9,7 @@
 //! join loops. Output shape is OPEN per the architecture README; this
 //! rendering is plain and stable-ish.
 //!
-//! Chase-eliminated occurrences (`plan/chase.rs`) surface here too, read
+//! Grounding-eliminated occurrences (`plan/ground.rs`) surface here too, read
 //! directly from the plan's `Role::Eliminated` marks — no separate list
 //! exists. The marks' readers are exactly this surface (EXPLAIN and the
 //! structured stats, which render each mark with its relation name and

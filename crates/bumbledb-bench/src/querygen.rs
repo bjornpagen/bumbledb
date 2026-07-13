@@ -30,8 +30,8 @@ pub mod interval_data;
 mod negate;
 mod oracle;
 mod shapes;
-mod shapes_chase;
 mod shapes_closed;
+mod shapes_ground;
 mod shapes_interval;
 mod shapes_rules;
 mod shapes_sink;
@@ -97,7 +97,7 @@ enum Shape {
     /// Arg-restriction: `ArgMax`/`ArgMin` over tie-rich and tie-free
     /// keys, key-projected and multi-carry variants.
     Arg,
-    /// The chase's existence walk (`shapes_chase.rs`): the containment
+    /// The grounding's existence walk (`shapes_ground.rs`): the containment
     /// target joined on its full key with nothing else read from it —
     /// eliminable — plus the extra-projected-field near-miss.
     ExistenceWalk,
@@ -141,11 +141,11 @@ enum ClosedVariant {
     Fold,
 }
 
-/// Which chase-shape variant a query is ([`Shape::ExistenceWalk`] /
+/// Which grounding-shape variant a query is ([`Shape::ExistenceWalk`] /
 /// [`Shape::DuWalk`]) — the generator's intent, which the coverage
 /// contract and the engine-backed structural test hold it to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChaseVariant {
+enum GroundVariant {
     /// Eliminable existence walk (projection or aggregate sink).
     Walk,
     /// Near-miss: one extra projected target field — must refuse.
@@ -209,8 +209,8 @@ struct Builder {
     ladder: [bool; 4],
     /// Whether an `Allen` predicate carries a random (unnamed) mask.
     random_mask: bool,
-    /// Which chase-shape variant this query is, when the shape is one.
-    chase: Option<ChaseVariant>,
+    /// Which grounding-shape variant this query is, when the shape is one.
+    ground: Option<GroundVariant>,
     /// Which closed-relation class this query is, when the shape is one.
     closed: Option<ClosedVariant>,
 }
@@ -228,7 +228,7 @@ impl Builder {
 }
 
 /// Generation facts the query alone cannot reveal (hit-vs-miss and the
-/// boundary polarities are corpus-content properties; the chase variant
+/// boundary polarities are corpus-content properties; the grounding variant
 /// is the generator's intent, engine-verified in the tests).
 #[expect(
     clippy::struct_excessive_bools,
@@ -243,7 +243,7 @@ struct GenTags {
     adjacent_right: bool,
     ladder: [bool; 4],
     random_mask: bool,
-    chase: Option<ChaseVariant>,
+    ground: Option<GroundVariant>,
     rules: Option<RulesVariant>,
     closed: Option<ClosedVariant>,
 }
@@ -312,13 +312,13 @@ pub struct Coverage {
     pub closed_join_selected: u64,
     pub closed_handle_literal: u64,
     pub closed_handle_set: u64,
-    /// The chase variants (`shapes_chase.rs`): eliminable shapes
+    /// The grounding variants (`shapes_ground.rs`): eliminable shapes
     /// (existence walks and both DU `==` directions) vs the near-miss
     /// refusals — the coverage contract asserts both appear per run,
     /// and the engine-backed test holds each tag to its verdict.
-    pub chase_eliminable: u64,
-    pub chase_extra_field: u64,
-    pub chase_missing_phi: u64,
+    pub ground_eliminable: u64,
+    pub ground_extra_field: u64,
+    pub ground_missing_phi: u64,
     pub du_header_falls: u64,
     pub du_child_falls: u64,
     pub gates: u64,

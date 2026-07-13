@@ -103,9 +103,9 @@ stays deferred — five consumers, none free):
 |---|---|---|---|
 | validation typing | the per-rule bivalent anchor fixpoint (`ir/validate.rs`, `validate/context.rs`) | `Idb` anchors resolve against `Predicate.columns` instead of the schema relation; roster items for unknown `PredId` and arity mismatch | ~40 lines |
 | normalize | the occurrence table (`ir/normalize/normalize.rs`) | `Occurrence.relation` → `source`; filters and residuals are slot/word-shaped and indifferent | ~30 lines |
-| chase | elimination + evaluation (`plan/chase.rs`, `plan/chase/evaluate.rs`) | one guard each: both rewrites refuse `Idb` occurrences — statements quantify over stored relations (`30-dependencies.md`) and sealed extensions exist only for closed relations, so elimination has no licensing statement and evaluation no stage-0 rows | ~10 lines |
+| grounding | elimination + evaluation (`plan/ground.rs`, `plan/ground/evaluate.rs`) | one guard each: both rewrites refuse `Idb` occurrences — statements quantify over stored relations (`30-dependencies.md`) and sealed extensions exist only for closed relations, so elimination has no licensing statement and evaluation no stage-0 rows | ~10 lines |
 | view binding | the per-occurrence bind loop (`api/prepared/run_join.rs`, `view_memo.rs`) | `Idb` occurrences take the transient-image bind (§4) instead of `ImageCache::get_or_build` | ~40 lines |
-| statistics | the selectivity ladder (`plan/selectivity.rs`) | `Idb` occurrences pin no row counts and cost on the ladder's floors (§3); the staleness surface already knows the shape — negated and chase-discharged occurrences carry no pin today (`70-api.md` § transactions) | ~30 lines |
+| statistics | the selectivity ladder (`plan/selectivity.rs`) | `Idb` occurrences pin no row counts and cost on the ladder's floors (§3); the staleness surface already knows the shape — negated and grounding-discharged occurrences carry no pin today (`70-api.md` § transactions) | ~30 lines |
 
 ## 2. Stratification
 
@@ -139,7 +139,7 @@ predicates iterate jointly under one round loop (§5).
   project **bound** variables, and the measure is a computation, not a
   binding — value creation in a head exits the theorem (it is §8's
   whole subject). Second, the **error-timing ruling**, inherited from
-  the chase-evaluator's measure refusal (`plan/chase/evaluate.rs`:
+  the grounding-evaluator's measure refusal (`plan/ground/evaluate.rs`:
   a fold must not move the ray error across stages): `MeasureOfRay` is
   the engine's one runtime type error, and inside a fixpoint the round
   at which a ray reaches a recursive head depends on iteration order —
@@ -198,7 +198,7 @@ DeltaVariant  { delta: OccId, plan: ValidatedPlan }
 
 — minted exclusively by that parse and consumed totally by the driver,
 which is `ResolvableFilter`'s discipline exactly
-(`plan/chase/evaluate.rs`: minted by `parse_resolvable`, consumed
+(`plan/ground/evaluate.rs`: minted by `parse_resolvable`, consumed
 totally by `surviving_ids`) and PRD 08's `ClassifiedComparison` law
 (classification carries its proof; no consumer re-derives).
 `PreparedRule` grows one arm — `Recursive(RecursiveRule)` beside
@@ -423,7 +423,7 @@ untouched — the review criterion for the future PRD, written today.
 | # | cut | seam (post-crucible shape) | files | est. diff | invariant preserved |
 |---|---|---|---|---|---|
 | 1 | `Program` wrapper + `PredId` | the pure-data IR; the degenerate-embedding precedent (`Query::single`) | `crates/bumbledb/src/ir.rs` | +90/−10 | the surface ruling (plain owned data, no behavior); degenerate form ≡ today's `Query` |
-| 2 | `AtomSource` one-line sum | `Atom.relation`'s five consumers (§1's table) | `ir.rs`, `ir/validate/context.rs`, `ir/normalize/normalize.rs`, `plan/chase.rs`, `plan/chase/evaluate.rs`, `api/prepared/run_join.rs`, `plan/selectivity.rs` | +150 | occurrence ids never move (`Role`'s law); statements speak only about stored relations, so both chase rewrites refuse `Idb` in one guard |
+| 2 | `AtomSource` one-line sum | `Atom.relation`'s five consumers (§1's table) | `ir.rs`, `ir/validate/context.rs`, `ir/normalize/normalize.rs`, `plan/ground.rs`, `plan/ground/evaluate.rs`, `api/prepared/run_join.rs`, `plan/selectivity.rs` | +150 | occurrence ids never move (`Role`'s law); statements speak only about stored relations, so both grounding rewrites refuse `Idb` in one guard |
 | 3 | per-predicate signature | PRD 04's one derivation (`ir/validate/finds.rs` territory), quantified over predicates | `ir/validate.rs`, `ir/validate/finds.rs` | +60 | one signature, one derivation; the head-alignment rule per predicate; `Predicate` still absent from `ir.rs` |
 | 4 | stratification + safety roster | the validation boundary's iterative-judge convention (the nesting cap's precedent) | new `ir/validate/strata.rs`, `ir/validate.rs`, `error.rs` | +280 | roster exhaustive, no panic from IR data; the four named errors (§2); caps documented at definition |
 | 5 | delta-variant plans | the per-rule prepare pipeline + the selectivity ladder's floors (the param-plan precedent) | `api/prepared/build.rs`, `plan/selectivity.rs`, `plan/planner.rs` | +220 | pin-at-prepare — no round re-plans; the staging law |

@@ -1,5 +1,5 @@
-//! The chase-evaluator: folding stage-zero atoms
-//! (docs/architecture/40-execution.md, § the chase: elimination and
+//! The grounding-evaluator: folding stage-zero atoms
+//! (docs/architecture/40-execution.md, § the ground: elimination and
 //! evaluation).
 //!
 //! A closed relation's extension is sealed at validate — stage-0 data
@@ -47,7 +47,7 @@
 //!   `Eq`-`WordSet` membership filter.
 //! - `|S| == 0`: the rule is statically empty — the fold's rule-death
 //!   channel ([`NormalizedQuery::dead`], rendered `folded to ∅: …`);
-//!   the pipeline runs fold-then-chase, so the evaluator writes the
+//!   the pipeline runs fold then ground, so the evaluator writes the
 //!   verdict itself rather than routing a set back through the fold.
 //! - No live `k` (a pure constant gate, e.g. a nonemptiness check over
 //!   a ψ-subset): `|S| ≥ 1` deletes the atom outright; `|S| == 0` kills
@@ -101,7 +101,7 @@ use crate::schema::{FieldId, IntervalElement, Relation, RelationId, Schema, Valu
 
 use super::var_is_dead;
 
-/// One evaluator step of the chase fixpoint: finds the first foldable
+/// One evaluator step of the grounding loop: finds the first foldable
 /// occurrence, applies its fold (mark + membership attachment, outright
 /// deletion, or the rule-death verdict) and reports whether anything
 /// changed. One action per call — the caller's loop re-runs elimination
@@ -272,7 +272,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     true
 }
 
-// The foldability conditions, one named predicate each (the chase
+// The foldability conditions, one named predicate each (the grounding
 // conditions' naming discipline — `join_covers_full_key`,
 // `target_otherwise_unused`); each unit-tested in isolation (tests.rs).
 

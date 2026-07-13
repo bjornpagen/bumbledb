@@ -11,7 +11,7 @@
 //!   join id (an id-position variable join; any payload variable it
 //!   binds is dead — bound, never projected, never compared).
 //!
-//! Both shapes are their own deliberate dressing (like the chase
+//! Both shapes are their own deliberate dressing (like the grounding
 //! shapes): random predicates or negated probes landing on the closed
 //! atom would blur the class the coverage contract counts.
 

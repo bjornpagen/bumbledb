@@ -62,7 +62,7 @@ impl CountingCounters {
             })
             .collect();
         // The eliminated occurrences, read straight off the plan's
-        // `Role::Eliminated` marks (`plan/chase.rs` — no separate list
+        // `Role::Eliminated` marks (`plan/ground.rs` — no separate list
         // exists).
         let eliminated = plan
             .occurrences()
@@ -80,7 +80,7 @@ impl CountingCounters {
             })
             .collect();
         // The folded occurrences, read straight off the plan's
-        // `Role::Folded` marks (`plan/chase/evaluate.rs` — the
+        // `Role::Folded` marks (`plan/ground/evaluate.rs` — the
         // Eliminated precedent: no separate list exists); the picture
         // renders from the occurrence's retained filter list, and the
         // surviving id-set re-evaluates from the sealed extension (the
@@ -94,22 +94,22 @@ impl CountingCounters {
                     return None;
                 };
                 let relation = schema.relation(occurrence.relation);
-                let parsed = crate::plan::chase::evaluate::parse_resolvable(&occurrence.filters);
+                let parsed = crate::plan::ground::evaluate::parse_resolvable(&occurrence.filters);
                 debug_assert!(parsed.is_some(), "folded occurrences parsed at fold time");
                 let handles = parsed
-                    .map(|filters| crate::plan::chase::evaluate::surviving_ids(relation, &filters))
+                    .map(|filters| crate::plan::ground::evaluate::surviving_ids(relation, &filters))
                     .unwrap_or_default()
                     .into_iter()
                     .map(|id| {
                         let mut handle = String::new();
-                        crate::plan::chase::evaluate::push_handle(&mut handle, relation, id);
+                        crate::plan::ground::evaluate::push_handle(&mut handle, relation, id);
                         handle
                     })
                     .collect();
                 Some(FoldedOccurrence {
                     occurrence: occurrence.occ_id.0,
                     relation: relation.name().to_owned(),
-                    rendered: crate::plan::chase::evaluate::folded_picture(
+                    rendered: crate::plan::ground::evaluate::folded_picture(
                         schema,
                         occurrence.relation,
                         &occurrence.filters,

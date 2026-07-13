@@ -16,11 +16,11 @@ use crate::testutil::TempDir;
 
 mod aggregates;
 mod buffer;
-mod chase;
 mod correctness;
 mod disjoint;
 mod explain;
 mod folded;
+mod ground;
 mod guard;
 mod latch;
 mod measure;

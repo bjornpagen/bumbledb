@@ -22,7 +22,7 @@ pub struct ExecutionStats {
     /// programs and unproven pairs. This is diagnostic knowledge; the
     /// spanning seen-set stays in either case.
     pub disjoint_rules: Option<DisjointRules>,
-    /// Rules the subsumption pass deleted at prepare (`plan/chase.rs`):
+    /// Rules the subsumption pass deleted at prepare (`plan/ground.rs`):
     /// after per-rule elimination the subsuming rule's normalized body
     /// contains the deleted rule's, so the union loses nothing. Indices
     /// are lowered-rule indices (the DNF-distributed program validation
@@ -75,12 +75,12 @@ pub struct DisjointRules {
 pub struct RuleStats {
     /// Per plan node, in node order (empty for guard-probe rules).
     pub nodes: Vec<NodeStats>,
-    /// Occurrences the chase eliminated (`plan/chase.rs`), read straight
+    /// Occurrences the grounding eliminated (`plan/ground.rs`), read straight
     /// off the rule plan's `Role::Eliminated` marks — no separate list
     /// exists in the plan; this surface renders the marks. Empty for
     /// guard probes (single-atom queries have nothing to pair).
     pub eliminated: Vec<EliminatedOccurrence>,
-    /// Occurrences the chase-evaluator folded (`plan/chase/evaluate.rs`),
+    /// Occurrences the grounding-evaluator folded (`plan/ground/evaluate.rs`),
     /// read straight off the rule plan's `Role::Folded` marks exactly as
     /// `eliminated` reads its own. Empty for guard probes.
     pub folded: Vec<FoldedOccurrence>,
@@ -89,7 +89,7 @@ pub struct RuleStats {
     /// is estimated from (pinned rows at prepare), so a drifted plan is
     /// visible in one read of this surface (the pull-based signal is
     /// `PreparedQuery::staleness`). Empty for guard probes (they read
-    /// no statistics); negated and chase-eliminated occurrences earned
+    /// no statistics); negated and grounding-eliminated occurrences earned
     /// no statistics read at prepare and carry no entry.
     pub pinned: Vec<PinnedRows>,
     /// Bindings this rule emitted to the shared sink.
@@ -103,8 +103,8 @@ pub struct RuleStats {
     pub guard: Option<GuardStats>,
 }
 
-/// One chase-eliminated occurrence: never joined, its view never built —
-/// the plan solved a smaller problem (`plan/chase.rs`).
+/// One grounding-eliminated occurrence: never joined, its view never built —
+/// the plan solved a smaller problem (`plan/ground.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EliminatedOccurrence {
     /// The occurrence index (`OccId`) in the normalized occurrence table.
@@ -118,7 +118,7 @@ pub struct EliminatedOccurrence {
     pub rendered: String,
 }
 
-/// One chase-folded occurrence (`plan/chase/evaluate.rs`): a closed
+/// One grounding-folded occurrence (`plan/ground/evaluate.rs`): a closed
 /// atom evaluated against its sealed extension at prepare — never
 /// joined, its view never bound, its image never built; the surviving
 /// id-set rides the siblings' selection machinery as a plan constant.

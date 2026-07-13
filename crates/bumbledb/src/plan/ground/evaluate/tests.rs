@@ -1,5 +1,5 @@
 //! The foldability conditions, positive and negative per condition,
-//! against the honest pipeline (validate → normalize → chase) over a
+//! against the honest pipeline (validate → normalize → grounding) over a
 //! closed-relation fixture theory — plus direct predicate tests where a
 //! condition's refusal shape is easier to pin in isolation.
 
@@ -10,7 +10,7 @@ use crate::ir::validate::validate;
 use crate::ir::{
     Atom, Comparison, ConditionTree, FindTerm, HeadTerm, MaskTerm, Query, Rule, Term, Value,
 };
-use crate::plan::chase::{chase, with_chase_disabled};
+use crate::plan::ground::{ground, with_grounding_disabled};
 use crate::schema::{
     FieldDescriptor, Generation, RelationDescriptor, Row, Schema, SchemaDescriptor, Side,
     StatementDescriptor,
@@ -144,11 +144,11 @@ fn var(id: u16) -> Term {
 }
 
 /// Runs the full honest pipeline over one rule: validate → normalize →
-/// chase (elimination and evaluation in the one fixpoint).
-fn chased(schema: &Schema, query: &Query) -> NormalizedQuery {
+/// grounding (elimination and evaluation in the one fixpoint).
+fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
     let witness = validate(schema, query).expect("valid fixture query");
     let mut normalized = normalize(schema, &witness).remove(0);
-    chase(&mut normalized, schema, &query.rules[0].finds);
+    ground(&mut normalized, schema, &query.rules[0].finds);
     normalized
 }
 
@@ -195,7 +195,7 @@ fn selected_fold_query(rank: u64) -> Query {
 #[test]
 fn a_filtered_closed_atom_folds_to_a_membership_set() {
     let schema = theory();
-    let normalized = chased(&schema, &selected_fold_query(20));
+    let normalized = grounded(&schema, &selected_fold_query(20));
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, folded(2, false)],
@@ -210,14 +210,14 @@ fn a_filtered_closed_atom_folds_to_a_membership_set() {
 }
 
 /// The off switch covers the evaluator too — the dual-run differential's
-/// contract (`with_chase_disabled` bypasses the whole fixpoint).
+/// contract (`with_grounding_disabled` bypasses the whole fixpoint).
 #[test]
 fn the_off_switch_bypasses_the_evaluator() {
     let schema = theory();
     let query = selected_fold_query(20);
     let witness = validate(&schema, &query).expect("valid fixture query");
     let mut normalized = normalize(&schema, &witness).remove(0);
-    with_chase_disabled(|| chase(&mut normalized, &schema, &query.rules[0].finds));
+    with_grounding_disabled(|| ground(&mut normalized, &schema, &query.rules[0].finds));
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
     assert!(attached_sets(&normalized, 0).is_empty());
 }
@@ -236,7 +236,7 @@ fn a_live_payload_variable_blocks_the_fold() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
     assert!(attached_sets(&normalized, 0).is_empty());
 }
@@ -256,7 +256,7 @@ fn a_dead_payload_variable_folds() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(4, false)]);
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0, 1, 2, 3]]);
 }
@@ -278,7 +278,7 @@ fn a_param_filter_blocks_the_fold() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
     assert!(attached_sets(&normalized, 0).is_empty());
 }
@@ -642,7 +642,7 @@ fn a_negated_closed_atom_folds_to_the_complement() {
         )],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(2, true)]);
     assert_eq!(
         attached_sets(&normalized, 0),
@@ -672,7 +672,7 @@ fn a_negated_fold_without_the_domain_guarantee_refuses() {
         )],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Negated]);
     assert!(attached_sets(&normalized, 0).is_empty());
     assert_eq!(normalized.anti_probes.len(), 1, "the probe stays");
@@ -695,7 +695,7 @@ fn a_negated_atom_over_an_empty_set_deletes_and_rejects_nothing() {
         )],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(0, true)]);
     assert!(attached_sets(&normalized, 0).is_empty());
     assert!(normalized.anti_probes.is_empty());
@@ -714,7 +714,7 @@ fn an_empty_complement_kills_the_rule() {
         negated: vec![atom(KIND, &[(0, var(1))])],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(
         normalized.dead.as_deref(),
         Some("folded: !Kind{} rejects every binding"),
@@ -737,7 +737,7 @@ fn a_satisfied_var_less_guard_deletes_outright() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(2, false)]);
     assert!(attached_sets(&normalized, 0).is_empty());
     assert!(normalized.dead.is_none());
@@ -762,7 +762,7 @@ fn a_var_binding_guard_refuses() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
@@ -771,7 +771,7 @@ fn a_var_binding_guard_refuses() {
 #[test]
 fn an_empty_surviving_set_kills_the_rule() {
     let schema = theory();
-    let normalized = chased(&schema, &selected_fold_query(99));
+    let normalized = grounded(&schema, &selected_fold_query(99));
     assert_eq!(
         normalized.dead.as_deref(),
         Some("folded to ∅: Kind{rank == 99}"),
@@ -793,7 +793,7 @@ fn an_unsatisfiable_guard_kills_the_rule() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(
         normalized.dead.as_deref(),
         Some("folded to ∅: Kind{rank == 99}")
@@ -815,14 +815,14 @@ fn a_fold_with_no_membership_home_refuses() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive]);
     assert!(normalized.dead.is_none());
 }
 
 /// Multi-rule programs fold per rule, independently: the same closed
 /// atom folds in the rule where its payload is dead and refuses in the
-/// rule projecting it (no cross-rule state — the chase's per-rule law).
+/// rule projecting it (no cross-rule state — the grounding's per-rule law).
 #[test]
 fn multi_rule_programs_fold_per_rule_independently() {
     let schema = theory();
@@ -851,7 +851,7 @@ fn multi_rule_programs_fold_per_rule_independently() {
     let witness = validate(&schema, &query).expect("valid fixture query");
     let mut rules = normalize(&schema, &witness);
     for (idx, rule) in rules.iter_mut().enumerate() {
-        chase(rule, &schema, &witness.rule(idx).rule().finds);
+        ground(rule, &schema, &witness.rule(idx).rule().finds);
     }
     assert_eq!(roles(&rules[0]), vec![Role::Positive, folded(2, false)]);
     assert_eq!(attached_sets(&rules[0], 0), vec![vec![1, 2]]);
@@ -880,7 +880,7 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &membership);
+    let normalized = grounded(&schema, &membership);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(1, false)]);
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0]]);
 
@@ -902,7 +902,7 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
             )),
         })],
     });
-    let normalized = chased(&schema, &allen);
+    let normalized = grounded(&schema, &allen);
     assert_eq!(roles(&normalized), vec![Role::Positive, folded(1, false)]);
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0]]);
 }
@@ -930,7 +930,7 @@ fn a_second_closed_atom_folds_over_the_first_folds_set() {
             rhs: Term::Literal(Value::U64(20)),
         })],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, folded(2, false), folded(2, false)],

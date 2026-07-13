@@ -130,12 +130,12 @@ pub use interval::Interval;
 /// crate can only reach through a feature, never through `cfg(test)`.
 #[cfg(feature = "fold-off")]
 pub use ir::normalize::with_fold_disabled;
-/// The chase's test-support off switch (`plan/chase.rs`): reachable only
-/// under the `chase-off` feature, which the bench crate's dual-run
+/// The grounding's test-support off switch (`plan/ground.rs`): reachable only
+/// under the `ground-off` feature, which the bench crate's dual-run
 /// differential unit tests (as a dev-dependency) and the fuzz crate's
 /// `rewrites` dual-pipeline differential enable.
-#[cfg(feature = "chase-off")]
-pub use plan::chase::with_chase_disabled;
+#[cfg(feature = "ground-off")]
+pub use plan::ground::with_grounding_disabled;
 /// The crashpoint table (`storage/commit.rs`): the commit pipeline's
 /// named phase boundaries with their expected recovery sides, reachable
 /// only under the `crashpoint` fuzz-oracle feature. The detached fuzz

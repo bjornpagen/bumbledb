@@ -62,10 +62,10 @@ documents themselves describe **only the current reality**.
   non-prefix guard lookups and low-cardinality-leading range scans; interval
   stabbing needs the coverage-walk shape instead (`40-execution.md`). *Trigger:
   latency budget violation on a range/interval family.*
-- **Chase interval-pair elimination**: pointwise coverage proves that covering facts
+- **Grounding interval-pair elimination**: pointwise coverage proves that covering facts
   exist, not that an interval pair is equal and joinable, so interval-typed statement
-  positions refuse chase elimination. *Trigger: a census-style query that would
-  benefit from interval-pair elimination (`40-execution.md` § the chase).*
+  positions refuse grounding elimination. *Trigger: a census-style query that would
+  benefit from interval-pair elimination (`40-execution.md` § the grounding).*
 - **Dictionary GC**: interned values are never reclaimed — including ids no
   committed fact ever referenced (a no-op insert's interns flush with any
   state-changing commit; accepted leak, `10-data-model.md`). The trigger profile

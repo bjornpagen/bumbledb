@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
-use crate::querygen::{ChaseVariant, ClosedVariant, Coverage, GenTags, RulesVariant, Shape};
+use crate::querygen::{ClosedVariant, Coverage, GenTags, GroundVariant, RulesVariant, Shape};
 
 /// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
 /// all six types, order operators over the two integer types only,
@@ -271,22 +271,22 @@ impl Coverage {
         }
     }
 
-    /// The chase-variant tallies (`shapes_chase.rs`): eliminable shapes
+    /// The grounding-variant tallies (`shapes_ground.rs`): eliminable shapes
     /// (existence walks and both DU `==` directions) vs the two
     /// near-miss refusal classes.
-    fn record_chase(&mut self, chase: Option<ChaseVariant>) {
-        match chase {
-            Some(ChaseVariant::Walk) => self.chase_eliminable += 1,
-            Some(ChaseVariant::DuHeader) => {
-                self.chase_eliminable += 1;
+    fn record_ground(&mut self, ground: Option<GroundVariant>) {
+        match ground {
+            Some(GroundVariant::Walk) => self.ground_eliminable += 1,
+            Some(GroundVariant::DuHeader) => {
+                self.ground_eliminable += 1;
                 self.du_header_falls += 1;
             }
-            Some(ChaseVariant::DuChild) => {
-                self.chase_eliminable += 1;
+            Some(GroundVariant::DuChild) => {
+                self.ground_eliminable += 1;
                 self.du_child_falls += 1;
             }
-            Some(ChaseVariant::WalkExtraField) => self.chase_extra_field += 1,
-            Some(ChaseVariant::DuMissingPhi) => self.chase_missing_phi += 1,
+            Some(GroundVariant::WalkExtraField) => self.ground_extra_field += 1,
+            Some(GroundVariant::DuMissingPhi) => self.ground_missing_phi += 1,
             None => {}
         }
     }
@@ -555,7 +555,7 @@ impl Coverage {
 
     fn record(&mut self, query: &Query, shape: Shape, tags: GenTags) {
         self.record_shape(shape);
-        self.record_chase(tags.chase);
+        self.record_ground(tags.ground);
         self.record_closed(tags.closed);
         self.record_rules(query, tags.rules);
         self.misses += u64::from(tags.miss);

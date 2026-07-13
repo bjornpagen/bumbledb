@@ -18,7 +18,7 @@ inputs fixed there — the ladder the comptime pass implemented end to end:
    (`CompiledCheck`), statements into closed relations compile to their member
    word-sets (`Resolved::ClosedContainment` — the enforcement plan IS the answer
    set), the fingerprint pins it all.
-3. **Prepare**: normalization, the chase (elimination and evaluation — closed
+3. **Prepare**: normalization, the grounding (elimination and evaluation — closed
    atoms fold against their sealed extensions into plan-constant handle sets),
    subsumption, the DP, and the statistics pin. A prepared plan is the theory's
    judgment of the query, not the data's.
@@ -349,14 +349,17 @@ and stays a non-goal.
 
 ## Planner
 
-**The chase: elimination and evaluation.** Placement: after normalization,
+**Grounding: elimination and evaluation.** This is not dependency-theory
+fresh-witness repair: it creates no values and repairs no database. The pass
+GROUNDS sealed atoms by evaluating their fixed finite extensions at plan time,
+the Datalog term. Placement: after normalization,
 before statistics and the DP, **per rule and independently** — a union's rules
-are independent conjunctive bodies, so the chase distributes over them with no
+are independent conjunctive bodies, so the grounding distributes over them with no
 cross-rule state and no new theory, and a rule shrinking below its cover
 requirements re-validates like any rule — one fixpoint over the occurrence
-table's `Role` sum (`plan/chase.rs`) running two rewrites that expose each
+table's `Role` sum (`plan/ground.rs`) running two rewrites that expose each
 other: **elimination** marks provably redundant positive occurrences
-`Role::Eliminated(statement)`, and **evaluation** (`plan/chase/evaluate.rs`)
+`Role::Eliminated(statement)`, and **evaluation** (`plan/ground/evaluate.rs`)
 marks prepare-evaluable closed-relation occurrences `Role::Folded` — marks,
 never removals, so occurrence ids never move. Elimination removes atoms that
 statements prove redundant; evaluation removes atoms whose extension is
@@ -364,7 +367,7 @@ stage-0-known by *running them at prepare*: `Kind(id: k, mastered == true)` is
 not a join to plan — it is a three-element id-set computed before the DP ever
 sees the query, residual cost zero. Both rewrites are continuously verified
 semantics-preserving by the rewrites fuzz target (`60-validation.md` § the
-fuzzing charter — the dual-pipeline differential through the `chase-off`
+fuzzing charter — the dual-pipeline differential through the `ground-off`
 switch).
 
 *Elimination.* An accepted containment
@@ -468,12 +471,12 @@ EXPLAIN reports folds beside eliminations, off the `Role::Folded` marks — the
 surviving set as **handles**, the vocabulary's names (the handle set IS the
 payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated:
 `folded: !Kind{…} → {…} rejected`); the differential off-switch
-(`with_chase_disabled`) covers the evaluator inside the same fixpoint, and the
+(`with_grounding_disabled`) covers the evaluator inside the same fixpoint, and the
 dual-run corpus pins byte-identical results — the fold is never semantic.
 The normalization fold's narrower `with_fold_disabled` switch is compiled under
 `cfg(any(test, feature = "fold-off"))` — the engine unit suites and, through the
 revived `fold-off` fuzz-oracle feature, the fuzz crate's rewrites dual-pipeline
-differential reach it; the bench differential deliberately uses the chase switch
+differential reach it; the bench differential deliberately uses the grounding switch
 because that switch covers the evaluator in the same fixpoint.
 
 **Rule subsumption, the restricted witness.** After elimination, if one rule's
@@ -485,7 +488,7 @@ mapping) and the subsumed rule is **deleted** at prepare: classical UCQ
 minimization, restricted to the cheap witness the DNF path actually produces
 (a lowered `(φ ∨ true-by-elimination)` pair whose second disjunct's filter
 rode the eliminated occurrence). The check is normalized-form containment
-(`plan/chase.rs::subsume`), O(rules²) at prepare with rules ≤ 16, and nothing
+(`plan/ground.rs::subsume`), O(rules²) at prepare with rules ≤ 16, and nothing
 recursive. **Refused, the general form:** full CQ-homomorphism minimization is
 NP-hard, so the witness never searches variable mappings — `VarId`s must
 already agree, which is exactly what DNF-cloned rules provide. Deleting a rule
@@ -637,7 +640,7 @@ so no fixed-width scratch and no eligibility branch exist to cap them. Short
 
 **COLT force is single-pass with chunked child lists:** forcing pushes each offset into
 its key's child list, chunked (64 offsets per arena chunk, chained by chunk — bounded
-pointer-chase, independent loads within a chunk), rather than the paper's growable
+bounded pointer traversal, independent loads within a chunk), rather than the paper's growable
 per-key vectors or a two-pass contiguous layout (which decodes and hashes every row
 twice). **Deviation:** the paper's leaves are plain vectors; ours are
 chunked. **Reverses if:** a force+iterate microbenchmark shows two-pass-contiguous
@@ -726,7 +729,7 @@ runtime branch, no hot-loop cost), and the EXPLAIN entry point instantiates the
 counting implementation and **executes the query** (ANALYZE semantics), reporting **per
 rule** the plan, per-node estimated vs actual cardinalities, residual and anti-probe
 selectivity, cover-choice histograms (choices aggregated per node, not per entry),
-and the chase's eliminated occurrences — read straight off the plan's
+and the grounding's eliminated occurrences — read straight off the plan's
 `Role::Eliminated` marks, each rendered with its licensing statement through
 `schema/render.rs` (e.g. `eliminated: Grading via Grading(id | kind == Det) ==
 Det(grading)`) — plus the **head-level union accounting**: per rule, bindings

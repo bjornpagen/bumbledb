@@ -409,7 +409,7 @@ fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
 
 #[test]
 fn the_off_switch_keeps_constituents_and_verdicts_away() {
-    // The fold-preservation differential's switch (the chase-off
+    // The fold-preservation differential's switch (the ground-off
     // precedent): the same contradictory query lowers verbatim.
     let schema = schema();
     let query = range_query(vec![

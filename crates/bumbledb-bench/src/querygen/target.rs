@@ -16,12 +16,12 @@
 //! (the bytes<N> exerciser — extref is a keyed adversarial digest and
 //! the tags cover the pad-boundary widths 7/8/9/16/63/64 — and the
 //! U64-element interval lane; `Mandate.active` is the I64-element
-//! lane) — plus, for the chase shapes (`shapes_chase.rs`),
+//! lane) — plus, for the grounding shapes (`shapes_ground.rs`),
 //! the ledger's containment statements and one discriminated-union pair
 //! `JournalEntry(id | source == Import) == ImportBatch(entry)`, so the
 //! randomized lane exercises the occurrence elimination and its
 //! refusals against corpora that satisfy the statements by
-//! construction (`docs/architecture/40-execution.md` § the chase) —
+//! construction (`docs/architecture/40-execution.md` § the grounding) —
 //! plus the closed-relation write surface (PRD 06): `Currency` carries
 //! a payload column (`minor_units`), `CurrencyBacking` is the small
 //! keyed relation the domain quantification `Currency(id) <=
@@ -171,7 +171,7 @@ fn closed(name: &str, handles: &[&str]) -> RelationDescriptor {
 }
 
 /// The target ledger, sealed — relations for the query grammar's typing
-/// walk, and the statements the chase shapes need: the ledger's nine
+/// walk, and the statements the grounding shapes need: the ledger's nine
 /// containments plus the discriminated-union pair
 /// `JournalEntry(id | source == Import) == ImportBatch(entry)` (written
 /// as its two containments; `ImportBatch(entry) -> ImportBatch` is the

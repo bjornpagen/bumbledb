@@ -316,7 +316,7 @@ fn the_empty_program_builds_no_image_and_binds_no_view() {
 }
 
 /// Fold-preservation: randomized single-slot filter sets, folded vs
-/// unfolded (the `with_fold_disabled` switch — the chase-off precedent)
+/// unfolded (the `with_fold_disabled` switch — the ground-off precedent)
 /// over one fixture corpus, identical results. Folding is conjunction
 /// reassociation over one slot's total order — set-preserving by
 /// construction; this pins it against the executor.

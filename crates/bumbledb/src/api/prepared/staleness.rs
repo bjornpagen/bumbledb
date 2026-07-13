@@ -18,7 +18,7 @@ use crate::storage::read;
 /// [`PreparedQuery::staleness`] compares and the stats surface renders
 /// ("estimated from (pinned rows at prepare)"). Cold data: written once
 /// at build, read only by the diagnostic surfaces, never by execution.
-/// Participating occurrences only — negated and chase-eliminated
+/// Participating occurrences only — negated and grounding-eliminated
 /// occurrences enter no DP state and earn no statistics read at prepare
 /// (`build.rs`), so they carry no pin: absence is the honest record.
 #[derive(Debug, Clone, Copy)]

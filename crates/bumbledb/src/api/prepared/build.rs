@@ -48,12 +48,12 @@ pub(crate) fn prepare<'s, S>(
         normalize(schema, &witness)
     };
 
-    // The disjointness proof runs pre-chase (the rewrite never changes
+    // The disjointness proof runs pre-grounding (the rewrite never changes
     // the denotation, so the proof stands), and pre-deletion: pairwise
     // over a superset holds over whichever rules survive below.
     let disjoint_rules = disjointness(&witness, &normalized, schema);
 
-    let (survivors, subsumed) = chase_program(normalized, &witness, schema);
+    let (survivors, subsumed) = ground_program(normalized, &witness, schema);
 
     // The predicate the query defines, sealed at validation (the ONE
     // signature derivation) — it exists even when every rule below dies,
@@ -181,7 +181,7 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
 /// the latch (the templates the latch rewrites are Free Join plan
 /// arrays). Discharged occurrences count nothing: an eliminated one
 /// carries no conditions, and a folded one's retained filters are
-/// plan-constant by the fold's own conditions (`plan/chase/evaluate.rs`)
+/// plan-constant by the fold's own conditions (`plan/ground/evaluate.rs`)
 /// and never resolved — a fold must not block the fully-latched fast
 /// path.
 fn pending_literals(rule: &PreparedRule) -> u32 {
@@ -249,7 +249,7 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
     params
 }
 
-/// The theory's program rewrite (`plan/chase.rs`): the
+/// The theory's program rewrite (`plan/ground.rs`): the
 /// elimination-and-evaluation fixpoint per rule, independently — after
 /// normalization and before statistics and the DP
 /// (docs/architecture/40-execution.md planner placement), with no
@@ -265,7 +265,7 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
 /// modulo eliminated filters is deleted — the union loses nothing.
 /// Returns the surviving rules with their lowered-rule indices plus
 /// the deletion record (the EXPLAIN surface).
-fn chase_program(
+fn ground_program(
     mut normalized: Vec<NormalizedQuery>,
     witness: &crate::ir::validate::ValidatedQuery,
     schema: &Schema,
@@ -276,11 +276,11 @@ fn chase_program(
     for (rule_idx, normalized_rule) in normalized.iter_mut().enumerate() {
         // A statically-empty rule (ir/normalize/fold.rs) is deleted at
         // prepare — nothing to rewrite; the subsumption pass skips it
-        // symmetrically (`plan/chase.rs`).
+        // symmetrically (`plan/ground.rs`).
         if normalized_rule.dead.is_some() {
             continue;
         }
-        crate::plan::chase::chase(
+        crate::plan::ground::ground(
             normalized_rule,
             schema,
             &witness.rule(rule_idx).rule().finds,
@@ -290,7 +290,7 @@ fn chase_program(
         .map(|idx| witness.rule(idx).rule().finds.as_slice())
         .collect();
     let subsumed: Vec<crate::api::stats::SubsumedRule> =
-        crate::plan::chase::subsume(&normalized, &finds)
+        crate::plan::ground::subsume(&normalized, &finds)
             .into_iter()
             .map(|deletion| crate::api::stats::SubsumedRule {
                 rule: u16::try_from(deletion.rule).expect("rule count fits u16"),
@@ -307,7 +307,7 @@ fn chase_program(
 
 /// The per-rule pipeline tail: classify → statistics → DP → lowering →
 /// plan validation — the conjunctive query's pipeline, with zero
-/// changes, over one already-chased rule. Returns the rule's prepared
+/// changes, over one already-grounded rule. Returns the rule's prepared
 /// artifact; result types are the query's predicate ([`super::Predicate`]),
 /// never re-derived here.
 fn prepare_rule(
@@ -342,7 +342,7 @@ fn prepare_rule(
     // resident-image distinct counts (peek only: prepare never
     // builds an image for statistics), documented bounds and floors.
     // Participating occurrences only: negated occurrences enter no
-    // DP state and chase-eliminated occurrences left planning
+    // DP state and grounding-eliminated occurrences left planning
     // entirely, so neither earns a statistics read — and, by the
     // same token, neither earns a pin.
     let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
@@ -450,8 +450,8 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
         // marks a set-bound level, probed once per element with the
         // survivor union (docs/architecture/40-execution.md, § selection
         // levels; set-ness is a plan fact, never per-execution data). A
-        // plan-constant `WordSet` (the chase-evaluator's fold,
-        // `plan/chase/evaluate.rs`) is the same level shape with the
+        // plan-constant `WordSet` (the grounding-evaluator's fold,
+        // `plan/ground/evaluate.rs`) is the same level shape with the
         // elements already resolved — one machinery, two producers.
         let selections: Vec<crate::exec::colt::SelectionLevel> = occurrence
             .selections
@@ -617,8 +617,8 @@ fn guard_find_table(
 
 /// The rule-disjointness proof (docs/architecture/40-execution.md § set
 /// semantics) — retained as diagnostic knowledge for EXPLAIN, run over the
-/// whole program before the pipeline goes per-rule (the chase rewrites
-/// occurrences but never the denotation, so the pre-chase proof stands).
+/// whole program before the pipeline goes per-rule (the grounding rewrites
+/// occurrences but never the denotation, so the pre-grounding proof stands).
 /// Single-rule programs have no pair to prove.
 fn disjointness(
     witness: &crate::ir::validate::ValidatedQuery,

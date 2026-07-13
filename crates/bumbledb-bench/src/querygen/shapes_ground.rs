@@ -1,4 +1,4 @@
-//! The chase shapes (`docs/architecture/40-execution.md` § the chase;
+//! The grounding shapes (`docs/architecture/40-execution.md` § the grounding;
 //! `60-validation.md` generator contract): deliberately eliminable join
 //! geometry — the existence walk (the containment target joined on its
 //! full key with nothing else read from it) and the discriminated-union
@@ -15,7 +15,7 @@ use bumbledb::{AggOp, FieldId, FindTerm, RelationId, Term, Value};
 
 use crate::corpus_gen::Rng;
 use crate::querygen::target::{SOURCE_IMPORT, ids};
-use crate::querygen::{Builder, ChaseVariant};
+use crate::querygen::{Builder, GroundVariant};
 
 /// The containment walks the existence shape rotates over: (source
 /// relation, reference field, source payload field, target relation,
@@ -101,7 +101,7 @@ pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
             b.find_var(payload);
             let extra = b.bind_var(target, extra_field);
             b.find_var(extra);
-            b.chase = Some(ChaseVariant::WalkExtraField);
+            b.ground = Some(GroundVariant::WalkExtraField);
         }
         // The aggregate sink over the eliminable walk: fold per join
         // key, the payload bound but unprojected.
@@ -111,11 +111,11 @@ pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
                 op: AggOp::Count,
                 over: None,
             });
-            b.chase = Some(ChaseVariant::Walk);
+            b.ground = Some(GroundVariant::Walk);
         }
         _ => {
             b.find_var(payload);
-            b.chase = Some(ChaseVariant::Walk);
+            b.ground = Some(GroundVariant::Walk);
         }
     }
 }
@@ -125,7 +125,7 @@ pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
 /// header falls (child-to-header direction), the child falls
 /// (header-to-child direction), or the missing-φ near-miss (the header
 /// occurrence without `source == Import` — its facts are not all in
-/// σφ, so the chase must refuse).
+/// σφ, so the grounding must refuse).
 pub(super) fn du_walk(b: &mut Builder, rng: &mut Rng) {
     let import = Term::Literal(Value::U64(SOURCE_IMPORT));
     match rng.range(3) {
@@ -137,7 +137,7 @@ pub(super) fn du_walk(b: &mut Builder, rng: &mut Rng) {
             let header = b.add_atom(ids::JOURNAL_ENTRY);
             b.bind(header, ids::journal_entry::ID, Term::Var(join));
             b.bind(header, ids::journal_entry::SOURCE, import);
-            b.chase = Some(ChaseVariant::DuHeader);
+            b.ground = Some(GroundVariant::DuHeader);
         }
         variant => {
             let header = b.add_atom(ids::JOURNAL_ENTRY);
@@ -146,9 +146,9 @@ pub(super) fn du_walk(b: &mut Builder, rng: &mut Rng) {
             b.find_var(payload);
             if variant == 1 {
                 b.bind(header, ids::journal_entry::SOURCE, import);
-                b.chase = Some(ChaseVariant::DuChild);
+                b.ground = Some(GroundVariant::DuChild);
             } else {
-                b.chase = Some(ChaseVariant::DuMissingPhi);
+                b.ground = Some(GroundVariant::DuMissingPhi);
             }
             let child = b.add_atom(ids::IMPORT_BATCH);
             b.bind(child, ids::import_batch::ENTRY, Term::Var(join));

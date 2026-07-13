@@ -292,12 +292,12 @@ pub(super) fn resolve_filters(
     latched: &mut u32,
 ) -> Result<bool> {
     for (occ_idx, occurrence) in plan.occurrences_mut().iter_mut().enumerate() {
-        // A discharged occurrence (chase-eliminated or chase-folded)
+        // A discharged occurrence (grounding-eliminated or grounding-folded)
         // resolves nothing: an eliminated occurrence's lists are empty,
         // and a folded occurrence's retained filter list is EXPLAIN's
         // picture only — plan-constant by the fold's own conditions,
         // never evaluated, so its slots stay empty and never count
-        // toward the latch (`plan/chase/evaluate.rs`).
+        // toward the latch (`plan/ground/evaluate.rs`).
         if occurrence.role.discharged() {
             debug_assert!(occurrence.selections.is_empty());
             continue;
@@ -392,8 +392,8 @@ fn resolve_selection_into(
             };
             out.extend_from_slice(words);
         }
-        // A plan-constant set (the chase-evaluator's fold —
-        // `plan/chase/evaluate.rs`): pre-resolved at prepare, copied
+        // A plan-constant set (the grounding-evaluator's fold —
+        // `plan/ground/evaluate.rs`): pre-resolved at prepare, copied
         // through verbatim; nothing to look up, nothing pending, and it
         // never counts as an unresolved literal (the latch's fast path
         // stays reachable). Never empty: |S| == 0 killed the rule.
@@ -470,7 +470,7 @@ fn resolve_filter_into(
                     write_word_set_value(dst, words);
                     return Ok(true);
                 }
-                // A plan-constant set (the chase-evaluator's fold):
+                // A plan-constant set (the grounding-evaluator's fold):
                 // pre-resolved at prepare — copy through into the
                 // slot's pooled `WordSet` exactly like a bound param
                 // set, with no per-execution work and no latch traffic.

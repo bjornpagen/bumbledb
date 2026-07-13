@@ -46,8 +46,8 @@ use crate::schema::{FieldId, IntervalElement, Relation, Schema, ValueType};
 
 #[cfg(any(test, feature = "fold-off"))]
 thread_local! {
-    /// The test-only off switch (the chase-off-switch precedent,
-    /// `plan/chase.rs`): the fold-preservation differential runs the
+    /// The test-only off switch (the ground-off-switch precedent,
+    /// `plan/ground.rs`): the fold-preservation differential runs the
     /// same query folded and unfolded. Reachable from this crate's own
     /// tests and — through the `fold-off` fuzz-oracle feature, enabled
     /// only by the detached fuzz crate's `rewrites` dual-pipeline
@@ -144,8 +144,8 @@ impl RangeSummary {
     }
 }
 
-// The contradiction rules, one function each (the chase conditions'
-// naming discipline, `plan/chase.rs`) — every one judged on constants
+// The contradiction rules, one function each (the grounding conditions'
+// naming discipline, `plan/ground.rs`) — every one judged on constants
 // only, each a statically-empty verdict for the rule.
 
 /// Rule (a): the folded order filters admit no word.

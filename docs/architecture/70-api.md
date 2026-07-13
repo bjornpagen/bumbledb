@@ -208,7 +208,7 @@ Both are emission; the grammar is untouched.
   separate drift from estimation shape. Hosts may compare this raw signal across
   generations using workload-specific evidence. Same
   foreign-snapshot guard as execution; it allocates — a diagnostic surface, never a
-  warm-path call. Negated and chase-eliminated occurrences earn no statistics read
+  warm-path call. Negated and grounding-eliminated occurrences earn no statistics read
   at prepare and so carry no pin; guard probes pin nothing. The stats/EXPLAIN
   surface (`Snapshot::profile`) carries the same pin record per occurrence —
   "estimated from (pinned rows at prepare)" — so a drifted plan is visible in one

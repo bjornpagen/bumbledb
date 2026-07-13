@@ -221,7 +221,7 @@ units under a host newtype; floats never persist.
   polices (`HolderId` ≠ `AccountId` at compile time). The engine itself
   stays structural — a type is an encoding, and names live in the host.
 - `fresh` — a *generation* attribute: the engine mints fresh existential
-  witnesses (dependency theory's fresh values, the chase's own move), and
+  witnesses (dependency theory's fresh-existential repair move), and
   the key theorem `R(f) -> R` materializes automatically — a generator
   whose outputs could collide would not be a generator, so the statement is
   a consequence, not a choice. `u64` only.

@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 /// statements), so distinct facts imply distinct bindings and the
 /// aggregate sink may skip its seen-set. Only participating occurrences
 /// are quantified: negated occurrences bind nothing (they only reject)
-/// and chase-eliminated occurrences contribute no facts at all
-/// (`plan/chase.rs`), so neither can break the proof.
+/// and grounding-eliminated occurrences contribute no facts at all
+/// (`plan/ground.rs`), so neither can break the proof.
 ///
 /// Two guards keep the proof honest:
 /// - **Pointwise keys**: coverage requires the interval field bound **by

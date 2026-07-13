@@ -49,7 +49,7 @@ impl fmt::Display for Report<'_> {
                 None => writeln!(f, "disjoint_rules: unproven")?,
             }
         }
-        // The subsumption record (`plan/chase.rs`): rules deleted at
+        // The subsumption record (`plan/ground.rs`): rules deleted at
         // prepare with the subsuming rule's index — lowered-rule
         // indices; the per-rule sections above are the survivors.
         for subsumed in &self.stats.subsumed {
@@ -108,7 +108,7 @@ fn fmt_free_join(
         )?;
         // The pin record: what this occurrence's estimates derive from
         // (absent for occurrences that earned no statistics read —
-        // negated, chase-eliminated).
+        // negated, grounding-eliminated).
         if let Some(pin) = stats
             .pinned
             .iter()
@@ -125,7 +125,7 @@ fn fmt_free_join(
             }
         }
     }
-    // The chase's marks (`plan/chase.rs`): occurrences the
+    // The grounding's marks (`plan/ground.rs`): occurrences the
     // plan never joined, with the licensing statement.
     for eliminated in &stats.eliminated {
         writeln!(
@@ -134,7 +134,7 @@ fn fmt_free_join(
             eliminated.relation, eliminated.rendered,
         )?;
     }
-    // The evaluator's marks (`plan/chase/evaluate.rs`): closed atoms
+    // The evaluator's marks (`plan/ground/evaluate.rs`): closed atoms
     // evaluated at prepare — the filters and the surviving handle set
     // (the vocabulary's names, the set IS the payload); a negated
     // fold's attached set is the complement, and the named handles are

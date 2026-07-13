@@ -332,7 +332,7 @@ impl ValidatedQuery {
     }
 
     /// One rule's slice of the witness — the unit the per-rule pipeline
-    /// (normalize → chase → plan) consumes.
+    /// (normalize → grounding → plan) consumes.
     ///
     /// # Panics
     ///

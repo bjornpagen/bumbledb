@@ -60,8 +60,8 @@ use crate::schema::{Enforcement, FieldDescriptor, FieldId, Relation, RelationId,
 /// construction: `(relation, field)` → the closed relation whose row ids
 /// the field's words are. A schema walk over declared containments whose
 /// target is a closed relation's id and whose source projection is that
-/// single field — the same inference the chase's complement fold runs
-/// (`plan/chase/evaluate.rs::containment_into_id`) — plus each closed
+/// single field — the same inference the grounding's complement fold runs
+/// (`plan/ground/evaluate.rs::containment_into_id`) — plus each closed
 /// relation's own id field, which maps to itself.
 struct ClosedRefs(BTreeMap<(RelationId, FieldId), RelationId>);
 

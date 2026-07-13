@@ -450,7 +450,7 @@ runner.
   (`corpus_gen::irgen`) under the validation-totality oracle and
   prepare/execute determinism. `rewrites` — the dual-pipeline
   differential: every query × draw executed through the rewritten
-  pipeline and the rewrite-free one (the `chase-off`/`fold-off`
+  pipeline and the rewrite-free one (the `ground-off`/`fold-off`
   thread-local switches, one build — cargo refuses a dual-build
   dependency on one package), demanding identical result sets: the
   rewrite layers continuously proven semantics-preserving, never
@@ -632,7 +632,7 @@ untraced timing tables decide gates.**
 
 The sharper slide bound (measured): the unfenced closing stamp slides by
 **min(remaining payload latency, scheduler drain)** — occupancy is only
-the ceiling. On a latency-bound span (a pointer chase mid-flight at the
+the ceiling. On a latency-bound span (a dependent pointer load mid-flight at the
 stamp) the slide reaches −99.6% of the span; on throughput-bound spans
 it stays in the ≤ ~50 ns drain regime. `CNTVCTSS_EL0` closes hold ±7%
 everywhere. The health rule: **attribution claims under ~1 µs require

@@ -1,5 +1,5 @@
 //! The rewrites target: the dual-pipeline differential — the same query
-//! through the rewritten (chase + fold) and rewrite-free pipelines must
+//! through the rewritten (grounding + fold) and rewrite-free pipelines must
 //! produce identical result sets. Thin by charter; the runner lives in
 //! the shared harness.
 

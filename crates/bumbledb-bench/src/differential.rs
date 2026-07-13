@@ -245,8 +245,8 @@ pub(crate) fn naive_write_from(
 }
 
 /// One query through the engine as a [`Rows`] verdict — shared with the
-/// dual-run chase differential (`tests/chase.rs`), which compares
-/// chase-on, chase-off, and model rows three ways.
+/// dual-run grounding differential (`tests/ground.rs`), which compares
+/// grounding-on, ground-off, and model rows three ways.
 pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) -> Rows {
     let mut prepared = db.prepare(query).expect("differential queries validate");
     let args = crate::families::param_args(params);

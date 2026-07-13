@@ -204,8 +204,9 @@ exists to stop telling.
 
 A field is `(name, type, generation)` where `generation ∈ {None, Fresh}`. Generation
 is a **storage behavior, not a type**, and the name is the mechanism's own: minting an
-id is generating a **fresh existential witness** — exactly what the chase does when a
-statement demands a value that does not exist. Postgres's word for this was the last
+id is generating a **fresh existential witness** — exactly what dependency-theory
+repair does when a statement demands a value that does not exist. Postgres's word
+for this was the last
 SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
 
 - A `Fresh` field must be `U64`. The database mints its values: monotonic per

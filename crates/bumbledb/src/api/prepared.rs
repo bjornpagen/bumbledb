@@ -177,7 +177,7 @@ pub struct PreparedQuery<'s, S> {
     /// does not spend this proof; see the measured refutation in
     /// `docs/architecture/40-execution.md`.
     disjoint_rules: Option<crate::plan::fj::DisjointWitness>,
-    /// The subsumption record (`plan/chase.rs`): rules deleted at
+    /// The subsumption record (`plan/ground.rs`): rules deleted at
     /// prepare, each with its subsuming rule, in lowered-rule indices —
     /// `rules` below holds only the survivors, in order. Readers:
     /// EXPLAIN and the structured stats.

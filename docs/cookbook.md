@@ -201,7 +201,7 @@ bumbledb::schema! {
     // renderer prints them back — the round trip runs on names:
     //   (t) | Ticket(id: t, priority == Urgent);
     // A query atom over the vocabulary itself folds at prepare; the join
-    // has zero runtime existence (40-execution.md § the chase).
+    // has zero runtime existence (40-execution.md § the grounding).
     // The boundary law: intrinsic meaning goes here (changing it is a new
     // theory); policy that drifts without a rebuild is an ordinary
     // relation — a vocabulary is never written, only declared.

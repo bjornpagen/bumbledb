@@ -9,10 +9,10 @@ trace = []
 # Test-support: global-allocator counting for the zero-warm-allocation
 # gate. Never enabled in production builds.
 alloc-counter = []
-# Test-support: reaches the chase's thread-local off switch
-# (`plan/chase.rs`) from the bench crate's dual-run differential unit
+# Test-support: reaches the grounding's thread-local off switch
+# (`plan/ground.rs`) from the bench crate's dual-run differential unit
 # tests. Enabled only as a bench dev-dependency; no runtime mode ships.
-chase-off = []
+ground-off = []
 # Fuzz-oracle infrastructure: reaches the statically-empty fold's
 # thread-local off switch (`ir/normalize/fold.rs`) from outside the
 # engine. History, recorded honestly: deleted as dead configuration

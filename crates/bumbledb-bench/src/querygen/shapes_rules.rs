@@ -15,7 +15,7 @@
 //!
 //! Rules bind literals only (no params): variables are rule-scoped and
 //! restart per arm; the head aligns positionally by construction. Like
-//! the chase shapes, these are their own deliberate dressing — a random
+//! the grounding shapes, these are their own deliberate dressing — a random
 //! predicate landing on one arm would not break anything, but the
 //! variants' bands are the point, so nothing is appended.
 

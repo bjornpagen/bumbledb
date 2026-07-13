@@ -1,8 +1,8 @@
-//! The dual-run fold differential (PRD 07; the chase.rs dual-run
-//! precedent): the chase-evaluator's folds — positive membership,
+//! The dual-run fold differential (PRD 07; the grounding.rs dual-run
+//! precedent): the grounding-evaluator's folds — positive membership,
 //! payload-dead, ψ-selected, the |S| == 0 rule death, and the negated
 //! COMPLEMENT fold — run through the engine twice (rewrite on and off
-//! via `with_chase_disabled`, which covers the evaluator inside the
+//! via `with_grounding_disabled`, which covers the evaluator inside the
 //! same fixpoint) and three-way compare with the naive model, across
 //! randomized corpus draws. The profile surface proves the runs are not
 //! vacuously equal: the fold-on plan carries `Role::Folded` marks, the
@@ -18,7 +18,7 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     AggOp, CmpOp, Comparison, ConditionTree, Db, FindTerm, Query, RelationId, Rule, Term, Value,
-    VarId, with_chase_disabled,
+    VarId, with_grounding_disabled,
 };
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
@@ -140,13 +140,13 @@ fn folded(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::FoldedOccur
 /// result set — with the marks asserted so neither equality is vacuous.
 fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, marks: usize, tag: &str) {
     let on = engine_query(db, query, &[]);
-    let off = with_chase_disabled(|| engine_query(db, query, &[]));
+    let off = with_grounding_disabled(|| engine_query(db, query, &[]));
     let model = Rows::Ok(naive.query(query, &[]).expect("the model executes"));
     assert_eq!(on, off, "folded and unfolded disagree ({tag})");
     assert_eq!(on, model, "engine and model disagree ({tag})");
     assert_eq!(folded(db, query).len(), marks, "fold marks ({tag})");
     assert!(
-        with_chase_disabled(|| folded(db, query)).is_empty(),
+        with_grounding_disabled(|| folded(db, query)).is_empty(),
         "the off switch keeps every occurrence joining ({tag})"
     );
 }
@@ -356,7 +356,7 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
                 params[usize::from(param.0)] = ParamValue::Set(values.clone());
             }
             let on = engine_query(&db, &query, &params);
-            let off = with_chase_disabled(|| engine_query(&db, &query, &params));
+            let off = with_grounding_disabled(|| engine_query(&db, &query, &params));
             let model = match naive.query(&query, &params) {
                 Ok(rows) => Rows::Ok(rows),
                 Err(QueryError::Overflow { .. }) => Rows::Overflow,

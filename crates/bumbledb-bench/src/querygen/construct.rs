@@ -4,8 +4,8 @@ use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::dress::dress;
 use crate::querygen::negate::negate;
 use crate::querygen::shapes::{aggregate, chain, guard, self_join, star};
-use crate::querygen::shapes_chase::{du_walk, existence_walk};
 use crate::querygen::shapes_closed::{closed_fold, closed_join};
+use crate::querygen::shapes_ground::{du_walk, existence_walk};
 use crate::querygen::shapes_interval::{boundary, interval_join, measure, membership};
 use crate::querygen::shapes_rules::rules;
 use crate::querygen::shapes_sink::{arg, count_distinct};
@@ -62,11 +62,11 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::ClosedFold => closed_fold(&mut b, rng),
         Shape::Rules => unreachable!("multi-rule programs assemble their own query"),
     }
-    // The chase and closed shapes are their own deliberate dressing: a
+    // The grounding and closed shapes are their own deliberate dressing: a
     // random predicate or negated probe landing on the target atom
     // would flip an eliminable shape to a refusal (or blur the counted
     // closed class) nondeterministically, and the coverage contract
-    // asserts each variant per run (shapes_chase.rs, shapes_closed.rs).
+    // asserts each variant per run (shapes_ground.rs, shapes_closed.rs).
     if !matches!(
         shape,
         Shape::ExistenceWalk | Shape::DuWalk | Shape::ClosedJoin | Shape::ClosedFold
@@ -86,7 +86,7 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
         // Multi-rule programs bypass the single-rule Builder: variables
         // are rule-scoped, so each arm carries its own scope and the
         // shape assembles the `Query` itself (dressing and negation are
-        // deliberately withheld, like the chase shapes — the variants'
+        // deliberately withheld, like the grounding shapes — the variants'
         // bands are the point).
         let (query, variant) = rules(rng, &domains);
         let tags = GenTags {
@@ -104,7 +104,7 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
         adjacent_right: b.adjacent_right,
         ladder: b.ladder,
         random_mask: b.random_mask,
-        chase: b.chase,
+        ground: b.ground,
         rules: None,
         closed: b.closed,
     };

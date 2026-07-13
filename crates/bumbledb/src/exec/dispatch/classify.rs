@@ -28,7 +28,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     debug_assert!(
         occurrence.role.participates(),
         "validated: at least one positive atom, positives order first, and \
-         the chase cannot eliminate a sourceless single occurrence"
+         the grounding cannot eliminate a sourceless single occurrence"
     );
     if !normalized.residuals.is_empty()
         || !normalized.word_residuals.is_empty()
@@ -52,7 +52,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     // Decision: a `ParamSet`-bound field disqualifies the fast path in v0
     // — k guard gets would be correct, but the selection-level path
     // already serves sets (revisit trigger: a measured k-get win). A
-    // plan-constant `WordSet` (the chase-evaluator's attachment) refuses
+    // plan-constant `WordSet` (the grounding-evaluator's attachment) refuses
     // identically — one set rule, both producers; unreachable from the
     // real pipeline (attachments imply a sibling occurrence, so the
     // table is never single-atom), guarded for hand-built queries. A

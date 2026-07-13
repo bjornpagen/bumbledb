@@ -25,6 +25,9 @@
 # memory-error lane over the FFI seam. Both lanes run fork mode with
 # -ignore_ooms=0 -ignore_crashes=0: any finding stops the session —
 # findings are for triaging, not for counting while the fuzzer runs on.
+# The rewrites target's one binary gets the grounding bypass through the
+# `ground-off` feature declared by `fuzz/Cargo.toml`; the launcher never
+# builds a second engine copy.
 #
 # Corpus discipline (built in, not optional):
 #   * REFUSES to start while fuzz/artifacts holds ANY file — an

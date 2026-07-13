@@ -45,9 +45,9 @@ fn is_point_filter(filter: &FilterPredicate) -> bool {
 /// occurrence's subatom var-lists in node order (§3.3); a negated
 /// occurrence's single probe level — all its variables in binding (slot)
 /// order, exactly the shape of a fully-hoisted positive lookup; a
-/// chase-eliminated occurrence's empty schema — no level is ever forced
+/// grounding-eliminated occurrence's empty schema — no level is ever forced
 /// or probed, and its selections and filters are likewise empty so the
-/// bind and view paths have nothing to resolve (`plan/chase.rs`). Key
+/// bind and view paths have nothing to resolve (`plan/ground.rs`). Key
 /// widths per level: the sum of the level's variables' slot widths (an
 /// interval join variable is one variable with a two-word key). Spans:
 /// the relation's field→column map, built once per witness.
@@ -109,12 +109,12 @@ fn build_occurrences(
             // A selection's miss contract — "the whole conjunctive query
             // is empty" — holds for positive occurrences only; an empty
             // negated view just means the anti-probe never rejects. A
-            // chase-eliminated occurrence carries nothing: its filters
+            // grounding-eliminated occurrence carries nothing: its filters
             // are implied by the containment and the key, so nothing is
-            // resolved, probed, or scanned for it (`plan/chase.rs`). A
-            // chase-FOLDED occurrence keeps its filter list but empties
+            // resolved, probed, or scanned for it (`plan/ground.rs`). A
+            // grounding-FOLDED occurrence keeps its filter list but empties
             // its selections: the filters are EXPLAIN's fold picture
-            // (`plan/chase/evaluate.rs::folded_picture`) — never
+            // (`plan/ground/evaluate.rs::folded_picture`) — never
             // resolved, probed, or scanned (`Role::discharged`, read by
             // every execution-side loop).
             let view_filters: Vec<FilterPredicate> = occurrence
