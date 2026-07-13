@@ -353,14 +353,11 @@ pub fn validate(
     debug_assert!(check_selections(&occurrences).is_ok());
 
     let distinct_bindings = provably_distinct(normalized, schema);
-    let skip_free = nodes.iter().all(|n| n.sink_relevant);
-
     Ok(ValidatedPlan {
         occurrences,
         nodes,
         slots,
         distinct_bindings,
-        skip_free,
         estimates,
     })
 }

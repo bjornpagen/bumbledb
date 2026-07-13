@@ -28,7 +28,6 @@ fn pipelined_d2_cancels_one_origin_and_spares_the_rest() {
     // Sink vars: x only.
     let sinks: BTreeSet<VarId> = [VarId(0)].into();
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
-    assert!(!plan.skip_free(), "the D2 shape");
     for batch in [1usize, 2, 128] {
         let mut executor = Executor::with_batch_size(&plan, batch);
         let mut colts = colts_for(&plan, &views);

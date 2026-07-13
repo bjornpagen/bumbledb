@@ -212,20 +212,6 @@ impl<S> PreparedQuery<'_, S> {
         }
     }
 
-    /// Whether every join rule's plan nodes all bind sink-relevant
-    /// variables — the pipelined executor's eligibility, per rule (D2 is
-    /// per-rule; a skip never crosses rules). `None` when no rule joins
-    /// at all (guard probes run no join).
-    #[must_use]
-    pub fn skip_free(&self) -> Option<bool> {
-        let mut joins = self.rules.iter().filter_map(|rule| match &rule.plan {
-            ExecPlan::FreeJoin(plan) => Some(plan.skip_free()),
-            ExecPlan::GuardProbe(_) | ExecPlan::Empty => None,
-        });
-        let first = joins.next()?;
-        Some(joins.fold(first, |all, one| all && one))
-    }
-
     /// Whether the aggregate sink's binding seen-set is elided
     /// (40-execution) — the regime observable for the batch-fold fast
     /// path. Per-query-shape: a single-rule program elides under its

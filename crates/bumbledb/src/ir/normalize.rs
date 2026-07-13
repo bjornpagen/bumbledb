@@ -28,7 +28,7 @@ mod normalize;
 mod place_comparisons;
 
 pub use dnf::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
-#[cfg(any(test, feature = "fold-off"))]
+#[cfg(test)]
 pub use fold::with_fold_disabled;
 pub(crate) use fold::{decoded_interval, decoded_scalar, render_const};
 pub(crate) use lower_literal::{fixed_bytes_const, lower_literal};

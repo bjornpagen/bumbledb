@@ -1,13 +1,12 @@
 use super::*;
 
-/// The pipelined executor — dispatched exactly
-/// for skip-free plans with middle nodes — matches the recursive
-/// executor and the nested-loop oracle bit for bit, across batch
+/// The pipelined executor matches the nested-loop oracle bit for bit
+/// across both all-variable and projected shapes, across batch
 /// sizes that stress fill boundaries (pending exactly at, one under,
 /// and far over the batch), multi-batch expansions with resume
 /// tokens, empty covers, and duplicate-heavy skew.
 #[test]
-fn pipelined_executor_matches_recursive_and_oracle() {
+fn pipelined_executor_matches_oracle() {
     let _dir = TempDir::new("run-pipeline-equiv");
     let schema = schema(3);
     // Chain shape with heavy fanout at every step; sizes cross the
@@ -41,9 +40,6 @@ fn pipelined_executor_matches_recursive_and_oracle() {
         );
         let sinks = all_vars(&normalized);
         let pipe_plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
-        assert!(pipe_plan.skip_free(), "all-vars projections are skip-free");
-        let rec_plan = planned(&normalized, &schema, &[0, 1, 2]);
-        assert!(!rec_plan.skip_free());
 
         let mut expected = BTreeSet::new();
         for (rx, ry) in &r {
@@ -84,7 +80,7 @@ fn pipelined_executor_matches_recursive_and_oracle() {
     }
 }
 
-/// Counter-proven batching: a triangle-shaped skip-free plan
+/// Counter-proven batching: a triangle-shaped plan
 /// whose middle node used to probe once per parent now probes in
 /// cross-parent batches with mean length well above the gate.
 #[test]
@@ -141,7 +137,6 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
     );
     let sinks = all_vars(&normalized);
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
-    assert!(plan.skip_free());
     let mut executor = Executor::new(&plan);
     assert!(executor.pipe.is_some());
     let mut colts = colts_for(&plan, &views);

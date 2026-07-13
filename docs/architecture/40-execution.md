@@ -447,6 +447,9 @@ payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated
 `folded: !Kind{…} → {…} rejected`); the differential off-switch
 (`with_chase_disabled`) covers the evaluator inside the same fixpoint, and the
 dual-run corpus pins byte-identical results — the fold is never semantic.
+The normalization fold's narrower `with_fold_disabled` switch is compiled only
+under `cfg(test)` for its engine unit suites; the bench differential deliberately
+uses the chase switch because that switch covers the evaluator in the same fixpoint.
 
 **Rule subsumption, the restricted witness.** After elimination, if one rule's
 normalized body equals a sibling's *modulo the filters elimination removed* —

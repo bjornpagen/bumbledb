@@ -434,7 +434,7 @@ omits later commits). Backup = quiesced file copy (`50-storage.md`).
 
 Two feature-gated surfaces, both compiling to nothing under default features
 (`00-product.md`: no always-on instrumentation in release paths): the `alloc-counter`
-feature registers the counting allocator (events + bytes + live/peak, the gate's and
+feature registers the counting allocator (events + bytes + current live bytes, the gate's and
 the benchmark's memory truth), and the `trace` feature enables `bumbledb::obs` —
 explicit per-thread capture of nanosecond spans and point events over every prepare/
 execute/commit phase, drained by tooling into Chrome-trace artifacts. Always

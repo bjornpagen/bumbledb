@@ -19,9 +19,7 @@
 //! `dealloc_bytes += old_size` — bytes answer "how much").
 //!
 //! Window vs absolute: [`reset`] zeroes the four window counters
-//! (events + bytes); `live_bytes` and `peak_live_bytes` are absolute
-//! process-lifetime values ([`reset_peak`] rebases the peak to the current
-//! live).
+//! (events + bytes); `live_bytes` is an absolute process-lifetime value.
 //!
 //! Sanctioned allocation windows, documented per the protocol: the first
 //! execution after prepare (COLT pools, sink maps, and view buffers grow
@@ -42,23 +40,6 @@ static DEALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
 static DEALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
 static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
-static PEAK_LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
-
-fn add_live(bytes: u64) {
-    let live = LIVE_BYTES.fetch_add(bytes, Ordering::Relaxed) + bytes;
-    // Publish a new peak; a lost race means another thread published a
-    // higher (or equally fresh) value — retry until ours is not higher.
-    loop {
-        let peak = PEAK_LIVE_BYTES.load(Ordering::Relaxed);
-        if live <= peak
-            || PEAK_LIVE_BYTES
-                .compare_exchange_weak(peak, live, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-        {
-            break;
-        }
-    }
-}
 
 /// The wrapping allocator, registered as the global allocator whenever the
 /// `alloc-counter` feature is on.
@@ -71,7 +52,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         let bytes = layout.size() as u64;
         ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
-        add_live(bytes);
+        LIVE_BYTES.fetch_add(bytes, Ordering::Relaxed);
         // SAFETY: forwarded contract.
         unsafe { System.alloc(layout) }
     }
@@ -94,7 +75,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         ALLOC_BYTES.fetch_add(new, Ordering::Relaxed);
         DEALLOC_BYTES.fetch_add(old, Ordering::Relaxed);
         // Live moves by the delta: add the new footprint, drop the old.
-        add_live(new);
+        LIVE_BYTES.fetch_add(new, Ordering::Relaxed);
         LIVE_BYTES.fetch_sub(old, Ordering::Relaxed);
         // SAFETY: forwarded contract.
         unsafe { System.realloc(ptr, layout, new_size) }
@@ -117,9 +98,6 @@ pub struct AllocSnapshot {
     pub dealloc_bytes: u64,
     /// Absolute live heap bytes right now.
     pub live_bytes: u64,
-    /// Absolute peak of `live_bytes` since process start (or the last
-    /// [`reset_peak`]).
-    pub peak_live_bytes: u64,
 }
 
 /// Reads every counter at once.
@@ -131,23 +109,16 @@ pub fn snapshot() -> AllocSnapshot {
         alloc_bytes: ALLOC_BYTES.load(Ordering::Relaxed),
         dealloc_bytes: DEALLOC_BYTES.load(Ordering::Relaxed),
         live_bytes: LIVE_BYTES.load(Ordering::Relaxed),
-        peak_live_bytes: PEAK_LIVE_BYTES.load(Ordering::Relaxed),
     }
 }
 
 /// Zeroes the window counters (events and bytes) — the start of a measured
-/// window. Live and peak are absolute and unaffected.
+/// window. Live bytes are absolute and unaffected.
 pub fn reset() {
     ALLOCATIONS.store(0, Ordering::Relaxed);
     DEALLOCATIONS.store(0, Ordering::Relaxed);
     ALLOC_BYTES.store(0, Ordering::Relaxed);
     DEALLOC_BYTES.store(0, Ordering::Relaxed);
-}
-
-/// Rebases the peak to the current live footprint (the start of a
-/// peak-observation window).
-pub fn reset_peak() {
-    PEAK_LIVE_BYTES.store(LIVE_BYTES.load(Ordering::Relaxed), Ordering::Relaxed);
 }
 
 /// Allocation events (including reallocations) since the last [`reset`].
@@ -195,20 +166,6 @@ mod tests {
         assert!(
             after.live_bytes <= mid.live_bytes.saturating_sub(4 * MIB),
             "live falls back after the free"
-        );
-    }
-
-    #[test]
-    fn peak_observes_a_transient_spike() {
-        let _guard = EXCLUSIVE.lock().expect("exclusive");
-        reset_peak();
-        let baseline = snapshot().peak_live_bytes;
-        let big: Vec<u8> = Vec::with_capacity(16 * MIB as usize);
-        drop(big);
-        let peak = snapshot().peak_live_bytes;
-        assert!(
-            peak >= baseline + 8 * MIB,
-            "the 16 MiB spike must be visible in the peak: {baseline} -> {peak}"
         );
     }
 

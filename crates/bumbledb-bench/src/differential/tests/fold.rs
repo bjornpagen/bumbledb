@@ -6,7 +6,7 @@
 //! same fixpoint) and three-way compare with the naive model, across
 //! randomized corpus draws. The profile surface proves the runs are not
 //! vacuously equal: the fold-on plan carries `Role::Folded` marks, the
-//! fold-off plan none. A randomized generator slice over the target
+//! unfolded plan none. A randomized generator slice over the target
 //! theory (PRD 06's fold-shaped family among every other shape) closes
 //! the loop broad-spectrum.
 
@@ -156,13 +156,13 @@ fn folded(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::FoldedOccur
     stats.rules.swap_remove(0).folded
 }
 
-/// The dual run: fold-on, fold-off, and the model must produce one
+/// The dual run: folded, unfolded, and the model must produce one
 /// result set — with the marks asserted so neither equality is vacuous.
 fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, marks: usize, tag: &str) {
     let on = engine_query(db, query, &[]);
     let off = with_chase_disabled(|| engine_query(db, query, &[]));
     let model = Rows::Ok(naive.query(query, &[]).expect("the model executes"));
-    assert_eq!(on, off, "fold-on and fold-off disagree ({tag})");
+    assert_eq!(on, off, "folded and unfolded disagree ({tag})");
     assert_eq!(on, model, "engine and model disagree ({tag})");
     assert_eq!(folded(db, query).len(), marks, "fold marks ({tag})");
     assert!(
@@ -304,7 +304,7 @@ fn the_fold_family_agrees_three_ways_across_randomized_draws() {
         // one field, intersecting at the sibling's selection levels.
         three_way(&db, &naive, &double_closed(), 2, "double closed");
         // |S| == 0, positive: the rule dies at prepare on the fold-on
-        // side and scans to nothing on the fold-off side — no marks (a
+        // side and scans to nothing on the unfolded side — no marks (a
         // dead rule plans nothing), same empty result three ways.
         three_way(&db, &naive, &selected(99), 0, "S = ∅ (dead rule)");
         // |S| == 0, negated: the anti-probe never rejects — the atom
@@ -388,7 +388,7 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
                 Err(QueryError::Overflow { .. }) => Rows::Overflow,
                 Err(QueryError::MeasureOfRay) => Rows::MeasureOfRay,
             };
-            assert_eq!(on, off, "fold-on and fold-off disagree: {query:?}");
+            assert_eq!(on, off, "folded and unfolded disagree: {query:?}");
             assert_eq!(on, model, "engine and model disagree: {query:?}");
             compared += 1;
         }

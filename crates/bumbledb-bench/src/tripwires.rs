@@ -29,44 +29,6 @@ mod tests {
         (dir, db)
     }
 
-    /// The plan-shape assertions the doc's perf decisions require
-    /// (docs/architecture/60-validation.md):
-    /// - `point` takes the guard fast path (`skip_free()` is `None`
-    ///   exactly for guard plans);
-    /// - the **membership families do NOT take the guard fast path** —
-    ///   a membership binding is never a whole-key point probe, even
-    ///   where the atom binds the pointwise key's scalar prefix;
-    /// - the param-set family plans a real join too (set bindings ride
-    ///   the selection machinery, not the guard).
-    #[test]
-    fn guard_fast_path_is_taken_exactly_where_documented() {
-        let dir = std::env::temp_dir().join("bumbledb-tripwires-guard");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        let db = Db::create(&dir, Ledger).expect("create");
-        let plan_kind = |name: &str| {
-            let family = families::all()
-                .iter()
-                .find(|f| f.name == name)
-                .expect("registered");
-            let prepared = db.prepare(&(family.query)()).expect("prepares");
-            prepared.skip_free()
-        };
-        assert_eq!(plan_kind("point"), None, "point is the guard probe");
-        for membership in ["mandate_at_instant", "mandate_overlap"] {
-            assert!(
-                plan_kind(membership).is_some(),
-                "{membership} must NOT take the guard fast path"
-            );
-        }
-        assert!(
-            plan_kind("entries_for_account_set").is_some(),
-            "the param-set family joins through selections, not the guard"
-        );
-        drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     /// The selection machinery engages for the param-set family
     /// (docs/architecture/40-execution.md § selection levels — param
     /// sets ride the selection trie): warm executions emit
@@ -123,9 +85,6 @@ mod tests {
     ///   proof fails here by name;
     /// - `claim_hours` binds the claim key (`source`), so the fold's
     ///   distinct-bindings elision engages (the `balance` regime);
-    /// - `busy_scan` is the O(n) scan family — never a guard probe
-    ///   (`skip_free()` is `Some`); its cost profile is the
-    ///   range-accelerator trigger's evidence, not a plan accident.
     #[test]
     fn calendar_family_regimes_are_pinned() {
         use crate::calendar::{families as cal, Scheduling};
@@ -147,10 +106,6 @@ mod tests {
         assert!(
             prepared("claim_hours").distinct_bindings(),
             "the source binding covers the claim key — the fold elides its seen set"
-        );
-        assert!(
-            prepared("busy_scan").skip_free().is_some(),
-            "busy_scan is the O(n) scan, never a guard probe"
         );
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);

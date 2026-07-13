@@ -3,7 +3,7 @@
 //! rule whose constant predicates are mutually unsatisfiable dies at
 //! prepare; a program of only dead rules prepares to `ExecPlan::Empty`
 //! — params bind first (errors surface), then nothing runs. The fold's
-//! set-preservation rides the fold-off differential below.
+//! set-preservation rides the folded/unfolded differential below.
 
 use super::*;
 use crate::allen::AllenMask;
