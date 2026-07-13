@@ -6,7 +6,7 @@
 //! aggregate sink's batch path, all behind scalar-identical signatures.
 //!
 //! **The portable/intrinsic split is measured, not stylistic**
-//! (docs/prd-crucible/03-portable-simd.md carries the verdict matrix and
+//! (the crucible packet (git ecec1dc3) carries the verdict matrix and
 //! its arbitrating evidence). The predicate scans (`filter`), the dense
 //! folds (`fold`), and the index gathers (`gather`) are `std::simd`
 //! bodies compiled on every target — the portable forms measured at or

@@ -1,4 +1,4 @@
-//! The crash target's deterministic lane (docs/prd-crucible/14-fuzz-crash.md):
+//! The crash target's deterministic lane (the crucible packet (git ecec1dc3)):
 //! the crashpoint sweep — every named commit-pipeline point × the small
 //! ops-prefix matrix, each combination killed and recovered at least
 //! once under plain `cargo test`, never left to fuzzer luck — plus the

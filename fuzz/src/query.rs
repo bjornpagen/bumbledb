@@ -1,4 +1,4 @@
-//! The query target (docs/prd-crucible/13): three-way parity per
+//! The query target (the crucible packet (git ecec1dc3)): three-way parity per
 //! iteration. The valid arm draws a querygen query (valid **by
 //! construction**) over a cached Tiny world and compares the prepared
 //! engine, the naive model, and — where the shape is expressible — the

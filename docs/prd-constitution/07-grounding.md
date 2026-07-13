@@ -48,7 +48,7 @@ where the literature has a word.)
   introduced: "not the dependency-theory chase — no fresh values, no
   repair; the pass GROUNDS the sealed atoms: it evaluates them over
   their fixed finite extensions at plan time, the Datalog term."
-- NOT renamed: `docs/prd-crucible/` and `docs/prd-constitution/`
+- NOT renamed: `docs/prd-constitution/`
   packet files (campaign ledgers record history verbatim — exempt, as
   in the crucible battery exemptions).
 

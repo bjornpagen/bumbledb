@@ -30,7 +30,7 @@ echo "==> allocation gate (release): steady-state + escalating high-water"
 cargo test --features alloc-counter --test alloc_gate --release -- --test-threads=1
 
 # The fold-off fuzz-oracle feature is load-bearing for the fuzz crate's
-# rewrites dual-pipeline differential (docs/prd-crucible/13): the engine
+# rewrites dual-pipeline differential (the crucible packet (git ecec1dc3)): the engine
 # suite must stay green with the off switch compiled in.
 echo "==> bumbledb with the fold-off fuzz-oracle feature (tests)"
 cargo test -p bumbledb --features fold-off

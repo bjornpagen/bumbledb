@@ -1,4 +1,4 @@
-//! The rewrites target (docs/prd-crucible/13): the dual-PIPELINE
+//! The rewrites target (the crucible packet (git ecec1dc3)): the dual-PIPELINE
 //! differential. "Rewrites are semantics-preserving" — the chase
 //! (occurrence elimination + prepare-time folding) and the statically-
 //! empty condition fold are where "looks right" and "is right" diverge

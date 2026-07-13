@@ -1,4 +1,4 @@
-# The CI spine (docs/prd-crucible/16-ci-firepower.md). Three lanes on
+# The CI spine (the crucible packet (git ecec1dc3)). Three lanes on
 # macos arm64 (macos-latest is M-series): the workspace gate and the
 # corpus-replay lane per push; the Miri lane on a nightly cron.
 #

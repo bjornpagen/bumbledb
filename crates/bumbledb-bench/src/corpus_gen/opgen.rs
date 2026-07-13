@@ -1,5 +1,5 @@
 //! The op-stream arm (docs/architecture/60-validation.md § the fuzzing
-//! charter; docs/prd-crucible/12-fuzz-ops.md): "a legal interaction with
+//! charter; the crucible packet (git ecec1dc3)): "a legal interaction with
 //! a bumbledb store" reified as a generated op sequence — the flagship
 //! lifecycle fuzz target's generation half. The runner (the `ops` lane
 //! in the detached `fuzz/` crate) replays the sequence against the live
@@ -85,7 +85,7 @@ pub fn random_scenario(rng: &mut Rng) -> OpScenario {
     OpScenario { queries, ops }
 }
 
-/// One generated crash scenario (docs/prd-crucible/14-fuzz-crash.md):
+/// One generated crash scenario (the crucible packet (git ecec1dc3)):
 /// an ops prefix of commit-shaped deltas (each one write transaction)
 /// and ONE victim commit — the commit the crash harness kills at a
 /// drawn crashpoint. The generator draws shapes only; which crashpoints

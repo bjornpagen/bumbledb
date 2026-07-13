@@ -14,9 +14,9 @@ libfuzzer-sys = "0.4"
 # refuses a second renamed dependency on the same package ("depends on
 # crate `bumbledb v0.1.0` multiple times with different names"), so one
 # build carries both features and the runner flips the runtime switches
-# per pipeline (docs/prd-crucible/13-fuzz-query-rewrites.md, Results).
+# per pipeline (the crucible packet (git ecec1dc3), Results).
 # crashpoint: the commit pipeline's named abort hooks for the `crash`
-# target (docs/prd-crucible/14-fuzz-crash.md). One build carries the
+# target (the crucible packet (git ecec1dc3)). One build carries the
 # feature for EVERY target here (cargo unifies features across this
 # crate's one bumbledb) — safe because the hooks are inert without the
 # BUMBLEDB_CRASHPOINT env var, which only the crash child ever sets.
@@ -59,6 +59,6 @@ test = false
 doc = false
 bench = false
 
-# Detached from the workspace on purpose (docs/prd-crucible/11-fuzz-theory.md):
+# Detached from the workspace on purpose (the crucible packet (git ecec1dc3)):
 # the workspace gates never build fuzz artifacts; `cargo fuzz` builds here.
 [workspace]

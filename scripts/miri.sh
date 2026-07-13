@@ -1,5 +1,5 @@
 #!/bin/sh
-# The Miri lane (docs/prd-crucible/15-exhaustive-miri.md): the PURE
+# The Miri lane (the crucible packet (git ecec1dc3)): the PURE
 # modules' unit tests interpreted under Miri, natively
 # (aarch64-apple-darwin) AND cross-interpreted against
 # x86_64-unknown-linux-gnu — Miri interprets foreign targets, so the
@@ -45,7 +45,7 @@
 #     exhaustive enumerations (8,192 masks x 784 pairs; 834 x 269
 #     bitset cells; the all-pairs encoding domains) are proven by
 #     native `cargo test`; under the interpreter their representative_*
-#     subsets run instead (docs/prd-crucible/15-exhaustive-miri.md).
+#     subsets run instead (the crucible packet (git ecec1dc3)).
 #   * the five wordmap SCALE contracts (false_tag_rate_stays,
 #     a_single_multiply_hash, probe_steps_stay_near_one,
 #     iteration_is_dense_and_insertion_ordered,

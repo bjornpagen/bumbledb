@@ -1,7 +1,7 @@
 # fuzz sessions — the campaign log
 
 One line per session per target, appended by `scripts/fuzz.sh` (the
-firepower launcher, docs/prd-crucible/16-ci-firepower.md). The honest
+firepower launcher; crucible packet, git ecec1dc3). The honest
 zero is the point: "0 findings in N executions over M minutes" is a
 recorded result, not an absence. Real findings become trophy-ledger
 rows in `fuzz/README.md` and named regression tests; environmental
@@ -31,7 +31,7 @@ then and are dashed where unknown.
   accounting across the largest seed corpus, NOT an engine leak (live
   heap at kill: 41 MB); the input replays clean alone (10.5 s under
   ASAN defaults; 1.31 s at `-s none`). Dispositioned in
-  docs/prd-crucible/15-exhaustive-miri.md § Results; the launcher
+  the crucible packet § Results (git ecec1dc3); the launcher
   carries `-rss_limit_mb=4096` for query's ASAN mode. Deleted.
 - **2026-07-13, morning crash session:** four `slow-unit` artifacts;
   each replays in 21–65 ms on a quiet machine — child-spawn latency

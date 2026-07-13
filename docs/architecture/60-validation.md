@@ -474,7 +474,7 @@ runner.
   bug.
 - **Trophy ledger**: `fuzz/README.md` — one row per real finding (date,
   target, root cause, the pinning test).
-- **Operations** (docs/prd-crucible/16-ci-firepower.md): `scripts/fuzz.sh`
+- **Operations** (crucible packet, git ecec1dc3): `scripts/fuzz.sh`
   is the firepower launcher — no args runs all five targets time-sliced
   in libFuzzer fork mode across the machine's 12 cores (the all-cores
   default IS the default); `fuzz.sh <target> [minutes]` bounds one
@@ -504,7 +504,7 @@ runner.
 
 Where a domain is finite and small, random exploration is strictly worse than
 exhaustive enumeration: enumerate it once and close the question forever
-(docs/prd-crucible/15-exhaustive-miri.md). Three small worlds are enumerated as
+(crucible packet, git ecec1dc3). Three small worlds are enumerated as
 plain `#[test]`s, each carrying its domain-size arithmetic in a comment — the
 loop bound is the claim, never a sample — and are therefore **never fuzzed**
 (a fuzz iteration inside an exhaustively closed domain is spent evidence):

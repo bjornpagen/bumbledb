@@ -1,6 +1,6 @@
 //! The reference twins — the differential oracle the property tests
 //! compare every kernel against, bit for bit. Deliberately SCALAR for
-//! every shape whose live kernel is `std::simd` (docs/prd-crucible/
+//! every shape whose live kernel is `std::simd` (the crucible packet (git ecec1dc3)
 //! 03-portable-simd.md, Q1×Q2 resolution: one body cannot be its own
 //! oracle, so where the kernel adopted the portable lane form, the twin
 //! keeps the definitional scalar form — the differential's independence

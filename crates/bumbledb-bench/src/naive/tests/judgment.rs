@@ -1063,7 +1063,7 @@ mod target_side {
 // ---------- the multi-violation citation set ----------
 //
 // One delta breaking SEVERAL statements at once (the ops fuzz target's
-// first finding, docs/prd-crucible/12-fuzz-ops.md § conflict — resolved
+// first finding, the crucible packet (git ecec1dc3) § conflict — resolved
 // by representation): a rejection IS the complete violation set, sorted
 // by materialized statement order, on both oracles. The model's
 // `violations` and `apply`'s rejection are one derivation.

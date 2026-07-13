@@ -1,6 +1,6 @@
 //! Exhaustive boundary suite for [`closed_member`] — the closed-target
 //! membership judgment over its `[u64; 4]` bitset
-//! (docs/prd-crucible/15-exhaustive-miri.md, suite 2): every in-range
+//! (the crucible packet (git ecec1dc3), suite 2): every in-range
 //! index against a structured pattern family, judged against a naive
 //! bit walk that shares none of `closed_member`'s word/shift arithmetic.
 

@@ -243,7 +243,7 @@ impl NaiveDb {
     /// violations preempt the containment judgment — the containment
     /// probes are defined over the keyed final state.
     ///
-    /// The `ops` fuzz oracle (docs/prd-crucible/12-fuzz-ops.md) compares
+    /// The `ops` fuzz oracle (the crucible packet (git ecec1dc3)) compares
     /// this set against the engine's sealed `Violations` by STRICT
     /// EQUALITY, order included.
     #[must_use]

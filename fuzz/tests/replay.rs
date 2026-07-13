@@ -1,4 +1,4 @@
-//! The regression-replay slot (docs/prd-crucible/12-fuzz-ops.md): every
+//! The regression-replay slot (the crucible packet (git ecec1dc3)): every
 //! checked-in seed-corpus entry — and any minimized trophy that lands
 //! beside them — replays through its runner under plain `cargo test`,
 //! so a pinned finding never regresses silently. Empty trophy shelves

@@ -1,5 +1,5 @@
 #!/bin/sh
-# The firepower launcher (docs/prd-crucible/16-ci-firepower.md; the
+# The firepower launcher (the crucible packet (git ecec1dc3); the
 # fuzzing charter, docs/architecture/60-validation.md § operations).
 # The machine is an M2 Max, 12 cores; the all-cores default IS the
 # default, not a flag.
@@ -15,7 +15,7 @@
 #                                      -rss_limit_mb=4096 (ASAN quarantine
 #                                      accounting across the largest
 #                                      corpus, dispositioned in
-#                                      docs/prd-crucible/15-exhaustive-miri.md
+#                                      the crucible packet (git ecec1dc3)
 #                                      § Results — a resource knob, not a
 #                                      suppression)
 #
@@ -82,7 +82,7 @@ for TARGET in $TARGETS; do
     LOG="$(mktemp -t "fuzz-$TARGET")"
 
     # Per-target libFuzzer knobs. Fork mode verified on this darwin host
-    # with cargo-fuzz 0.13.1 (docs/prd-crucible/16-ci-firepower.md
+    # with cargo-fuzz 0.13.1 (the crucible packet (git ecec1dc3)
     # § Results); the -jobs/-workers fallback recorded there was NOT
     # needed.
     RSS=""

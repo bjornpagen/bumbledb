@@ -70,12 +70,12 @@
 //! cargo test --workspace
 //! ```
 
-// Nightly dividend (docs/prd-crucible/02-nightly-dividend.md): `try`
+// Nightly dividend (the crucible packet (git ecec1dc3)): `try`
 // blocks replace the immediately-invoked-closure error idiom — the
 // block states "this region fails as a unit" without a fake function
 // call.
 #![feature(try_blocks)]
-// Nightly dividend (docs/prd-crucible/03-portable-simd.md): the
+// Nightly dividend (the crucible packet (git ecec1dc3)): the
 // predicate-scan, dense-fold, and index-gather kernels are `std::simd`
 // bodies on every target — measured at or above the retired hand-NEON
 // twins, deleting the intrinsic dual and most of the kernel layer's
@@ -126,7 +126,7 @@ pub use interval::Interval;
 /// recorded honestly: deleted as dead configuration 2026-07-12 (nothing
 /// in-workspace consumed it), revived 2026-07-13 with a named consumer —
 /// the detached fuzz crate's `rewrites` dual-pipeline differential
-/// (docs/prd-crucible/13-fuzz-query-rewrites.md), which an external
+/// (the crucible packet (git ecec1dc3)), which an external
 /// crate can only reach through a feature, never through `cfg(test)`.
 #[cfg(feature = "fold-off")]
 pub use ir::normalize::with_fold_disabled;
@@ -139,7 +139,7 @@ pub use plan::chase::with_chase_disabled;
 /// The crashpoint table (`storage/commit.rs`): the commit pipeline's
 /// named phase boundaries with their expected recovery sides, reachable
 /// only under the `crashpoint` fuzz-oracle feature. The detached fuzz
-/// crate's `crash` target (docs/prd-crucible/14-fuzz-crash.md) consumes
+/// crate's `crash` target (the crucible packet (git ecec1dc3)) consumes
 /// the table as its single authority — the harness draws points from it
 /// and judges recovery by its sides, so the engine's claimed atomicity
 /// structure and the adversary's expectations are one value.

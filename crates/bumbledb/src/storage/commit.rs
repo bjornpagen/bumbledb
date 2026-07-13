@@ -44,7 +44,7 @@ mod tests;
 pub use apply::apply;
 pub use write::commit;
 
-/// A crashpoint's expected recovery side (docs/prd-crucible/14-fuzz-crash.md):
+/// A crashpoint's expected recovery side (the crucible packet (git ecec1dc3)):
 /// which committed state a store killed at that point must reopen to.
 /// The boundary is `mdb_txn_commit` — LMDB's single durability point.
 #[cfg(feature = "crashpoint")]

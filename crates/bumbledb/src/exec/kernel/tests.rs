@@ -572,7 +572,7 @@ fn scalar_codes(a_s: &[u64], a_e: &[u64], b_s: &[u64], b_e: &[u64]) -> Vec<u8> {
 /// Exhaustive: EVERY Allen mask × EVERY interval configuration class —
 /// the vectorized configuration kernel pipeline (code batch, then the
 /// broadcast-mask filter batch) agrees with the scalar classifier on
-/// every cell (docs/prd-crucible/15-exhaustive-miri.md).
+/// every cell (the crucible packet (git ecec1dc3)).
 ///
 /// Domain arithmetic — both axes are total, not sampled:
 ///   masks: a mask is a 13-bit word, so the space is 2¹³ = 8,192 masks;

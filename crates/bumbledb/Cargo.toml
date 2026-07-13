@@ -18,14 +18,14 @@ chase-off = []
 # engine. History, recorded honestly: deleted as dead configuration
 # 2026-07-12 (936ede5 — nothing in-workspace consumed it), revived
 # 2026-07-13 with a named consumer: the detached fuzz crate's `rewrites`
-# dual-pipeline differential (docs/prd-crucible/13-fuzz-query-rewrites.md)
+# dual-pipeline differential (the crucible packet (git ecec1dc3))
 # — an external crate cannot reach `cfg(test)`. No runtime mode ships.
 fold-off = []
 # Fuzz-oracle infrastructure: the crashpoint hooks — the commit
 # pipeline's named phase boundaries (`storage/commit.rs`, the table)
 # consult `BUMBLEDB_CRASHPOINT` and abort the process on match, for the
 # detached fuzz crate's `crash` target
-# (docs/prd-crucible/14-fuzz-crash.md). Off (the default) the hook macro
+# (the crucible packet (git ecec1dc3)). Off (the default) the hook macro
 # expands to nothing; on, the hooks are still inert unless the
 # environment variable is set. No runtime mode ships.
 crashpoint = []

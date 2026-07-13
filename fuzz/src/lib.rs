@@ -70,7 +70,7 @@ pub fn theory(data: &[u8]) {
 }
 
 /// The ops runner — the flagship lifecycle target
-/// (docs/prd-crucible/12-fuzz-ops.md): fuzzer bytes → one generated op
+/// (the crucible packet (git ecec1dc3)): fuzzer bytes → one generated op
 /// sequence over the querygen target theory (`corpus_gen::opgen`, Tiny
 /// scale) → the live engine with the naive model in lockstep, the
 /// two-oracle discipline extended over TIME.
@@ -102,7 +102,7 @@ pub fn theory(data: &[u8]) {
 ///    (mapped to typed identities by [`differential::cited`]) must
 ///    equal [`NaiveDb::apply`]'s rejection exactly. The campaign's
 ///    first ops finding (the multi-violation citation gap,
-///    docs/prd-crucible/12-fuzz-ops.md § conflict) is resolved by this
+///    the crucible packet (git ecec1dc3) § conflict) is resolved by this
 ///    representation — the interim set-membership oracle collapsed
 ///    back to equality per its reactivation clause, and the pinned
 ///    trophy now replays the ORDER end-to-end.

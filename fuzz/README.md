@@ -1,7 +1,7 @@
 # fuzz — the fire
 
 The generative fuzzing crate (docs/architecture/60-validation.md § the
-fuzzing charter; docs/prd-crucible/11-fuzz-theory.md). Detached from the
+fuzzing charter; crucible packet, git ecec1dc3). Detached from the
 workspace on purpose: workspace gates never build fuzz artifacts. Build
 and run through `cargo fuzz` from the repo root; the pinned toolchain
 (`rust-toolchain.toml`) owns every command.
@@ -24,12 +24,11 @@ cargo fuzz run theory -- -runs=100000  # one smoke unit
 
 ## Operations
 
-`scripts/fuzz.sh` is the firepower launcher (docs/prd-crucible/
-16-ci-firepower.md): no args runs all five targets time-sliced in
+`scripts/fuzz.sh` is the firepower launcher (crucible packet, git ecec1dc3): no args runs all five targets time-sliced in
 libFuzzer fork mode across 12 workers; `fuzz.sh <target> [minutes]`
 bounds one target; `fuzz.sh --asan <target>` is the sanitizer lane
 (query carries `-rss_limit_mb=4096` there — the ASAN quarantine
-disposition, docs/prd-crucible/15-exhaustive-miri.md § Results). Every
+disposition, crucible packet § Results, git ecec1dc3). Every
 session ends with `cargo fuzz cmin` on the target's corpus and one
 summary line appended to `SESSIONS.md` (execs, rate, coverage, corpus
 growth, findings — the honest zero is a recorded result). The launcher
@@ -63,5 +62,5 @@ root cause, the regression test that now owns it.
 
 | date | target | root cause | pinned by |
 | --- | --- | --- | --- |
-| 2026-07-13 | `ops` | multi-violation commits cite different statements on the two oracles: the engine convicts per affected tuple (`commit/judgment.rs` target checks), the model per statement id — a contract gap (`30-dependencies.md` pins citation identity, not the tie among simultaneous violations); no state effect. Ruled, not fixed: oracle 1 accepts any citation from the model's COMPLETE violation set (`NaiveDb::violations`), nothing outside it (docs/prd-crucible/12-fuzz-ops.md § conflict) | `trophies/ops/multi-violation-citation-order` via `tests/replay.rs`; `naive/tests/judgment.rs::citation_set` |
+| 2026-07-13 | `ops` | multi-violation commits cite different statements on the two oracles: the engine convicts per affected tuple (`commit/judgment.rs` target checks), the model per statement id — a contract gap (`30-dependencies.md` pins citation identity, not the tie among simultaneous violations); no state effect. Ruled, not fixed: oracle 1 accepts any citation from the model's COMPLETE violation set (`NaiveDb::violations`), nothing outside it (crucible ops PRD § conflict, git ecec1dc3) | `trophies/ops/multi-violation-citation-order` via `tests/replay.rs`; `naive/tests/judgment.rs::citation_set` |
 | 2026-07-13 | `ops` | generator hang, not engine: `querygen::shapes_interval::random_mask` rejection-sampled the vacuous EMPTY/FULL masks — non-terminating on the entropy seam's constant zero tail (`Rng::Bytes` exhaustion, PRD 10's exhaustion-is-legal contract). Fixed by total repair (EMPTY gains a bit, FULL drops one), loop-free; `contradict::contradiction_query` recorded as the same latent class, currently unreachable from fuzzer bytes | `shapes_interval::tests::random_mask_is_total_on_constant_streams` |

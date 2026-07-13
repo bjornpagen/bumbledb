@@ -408,7 +408,7 @@ fn interval_decode_rejects_start_at_or_beyond_end() {
 }
 
 // ---------------------------------------------------------------------
-// The exhaustive order-preservation suite (docs/prd-crucible/
+// The exhaustive order-preservation suite (the crucible packet (git ecec1dc3)
 // 15-exhaustive-miri.md, suite 3): for each of the six value types, the
 // canonical encoding preserves the value order over an exhaustive small
 // domain — every ordered pair checked (which pins injectivity too:

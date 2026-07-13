@@ -1,5 +1,5 @@
 //! The predicate-scan kernels, one `std::simd` body per shape on every
-//! target (docs/prd-crucible/03-portable-simd.md, Q2 — ADOPT, measured:
+//! target (the crucible packet (git ecec1dc3), Q2 — ADOPT, measured:
 //! the portable bodies beat the retired hand-NEON twins 1.03–1.5× on
 //! the reference host, delete the intrinsic dual and its `unsafe`, and
 //! are Miri-interpretable). The 128-bit width (2 × u64 / 16 × u8) is

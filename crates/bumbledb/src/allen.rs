@@ -437,7 +437,7 @@ mod tests {
     }
 
     /// The converse involution over the FULL mask space, with the domain
-    /// size asserted as a counted loop bound (docs/prd-crucible/
+    /// size asserted as a counted loop bound (the crucible packet (git ecec1dc3)
     /// 15-exhaustive-miri.md: the loop bound is the claim).
     ///
     /// Domain arithmetic: a mask is a 13-bit word, so the whole space is

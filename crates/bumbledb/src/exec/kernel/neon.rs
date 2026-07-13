@@ -1,5 +1,5 @@
 //! The hand-NEON residue: the configuration kernel trio, the kernels
-//! the portable_simd experiment REFUSED (docs/prd-crucible/
+//! the portable_simd experiment REFUSED (the crucible packet (git ecec1dc3)
 //! 03-portable-simd.md — the verdict matrix records the arbitrating
 //! evidence; the filter/fold/gather kernels adopted `std::simd` and
 //! left this module).

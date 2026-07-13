@@ -6,7 +6,7 @@
 // directly (dense survivor runs — no index loads at all).
 //
 // The `_idx` kernels are `std::simd` gathers on every target
-// (docs/prd-crucible/03-portable-simd.md, Q2 — ADOPT, measured: min/max
+// (the crucible packet (git ecec1dc3), Q2 — ADOPT, measured: min/max
 // ~9% faster than the retired scalar-unrolled bodies, sums at parity
 // via the same carry-count trick as the dense fold; three `unsafe`
 // blocks and their bounds obligations deleted — `gather_or_default`

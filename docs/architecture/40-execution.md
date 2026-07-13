@@ -586,7 +586,7 @@ finalization), gather kernels (position-indexed column reads), and
 software-prefetch passes (`prfm`) between probe phase 1 and phase 2.
 
 **The portable/intrinsic split is measured, not stylistic**
-(docs/prd-crucible/03-portable-simd.md's verdict matrix is the record):
+(the verdict matrix is the record — crucible packet, git history at ecec1dc3):
 the predicate scans, dense folds, and index gathers are `std::simd`
 bodies compiled on every target — each measured at or above its retired
 hand-NEON twin on the reference host (filters 1.03–1.5× faster, folds

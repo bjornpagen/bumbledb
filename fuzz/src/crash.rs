@@ -1,4 +1,4 @@
-//! The crash target (docs/prd-crucible/14-fuzz-crash.md): durability
+//! The crash target (the crucible packet (git ecec1dc3)): durability
 //! under torn commits. The engine's commit pipeline carries NAMED phase
 //! boundaries under the `crashpoint` feature ([`bumbledb::CRASHPOINTS`]
 //! — the table in `storage/commit.rs` is the single authority); this

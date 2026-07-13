@@ -1,6 +1,6 @@
 #!/bin/sh
 # Stand-in C compiler for the Miri lane's cross-interpretation pass
-# (scripts/miri.sh, docs/prd-crucible/15-exhaustive-miri.md).
+# (scripts/miri.sh, the crucible packet (git ecec1dc3)).
 #
 # Why it exists: `cargo miri test --target x86_64-unknown-linux-gnu`
 # still runs every build script natively, and lmdb-master-sys's build

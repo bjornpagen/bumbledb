@@ -1,4 +1,4 @@
-//! The query lanes' shared world (docs/prd-crucible/13): the querygen
+//! The query lanes' shared world (the crucible packet (git ecec1dc3)): the querygen
 //! target theory at `Scale::Tiny`, loaded once per (thread, seed) into
 //! the three stores the parity oracles compare — the engine, the naive
 //! model, and the `SQLite` mirror. The corpus is deterministic in its
