@@ -203,17 +203,17 @@ fn the_closed_write_classes_agree_with_the_engine() {
     for case in &cases {
         assert_eq!(
             naive.apply(&case_delta(case)),
-            Err(case.expected),
+            Err(vec![case.expected]),
             "{:?} must abort with its hand-derived violation",
             case.kind
         );
     }
     assert_eq!(
         naive.apply(&strand),
-        Err(Violation::Containment {
+        Err(vec![Violation::Containment {
             statement: target::CURRENCY_BACKED,
             direction: Direction::TargetRequired,
-        }),
+        }]),
         "the domain quantification judges the stranded axiom target-side"
     );
 }

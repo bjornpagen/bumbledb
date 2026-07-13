@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::error::Error;
+use crate::error::{Error, Violation};
 use crate::schema::{FieldId, RelationId};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
@@ -32,11 +32,14 @@ fn scalar_key_conflict_in_one_delta_aborts_with_the_statement_id() {
     assert!(
         matches!(
             &err,
-            Error::FunctionalityViolation {
-                statement: KEYED_KEY,
-                incumbent: None,
-                fact,
-            } if **fact == a[..] || **fact == b[..]
+            Error::CommitRejected { violations } if matches!(
+                violations.as_slice(),
+                [Violation::Functionality {
+                    statement: KEYED_KEY,
+                    incumbent: None,
+                    fact,
+                }] if **fact == a[..] || **fact == b[..]
+            )
         ),
         "{err:?}"
     );
@@ -60,11 +63,14 @@ fn scalar_key_conflict_across_deltas_aborts_with_the_statement_id() {
     assert!(
         matches!(
             &err,
-            Error::FunctionalityViolation {
-                statement: KEYED_KEY,
-                incumbent: None,
-                fact,
-            } if **fact == contender[..]
+            Error::CommitRejected { violations } if matches!(
+                violations.as_slice(),
+                [Violation::Functionality {
+                    statement: KEYED_KEY,
+                    incumbent: None,
+                    fact,
+                }] if **fact == contender[..]
+            )
         ),
         "{err:?}"
     );

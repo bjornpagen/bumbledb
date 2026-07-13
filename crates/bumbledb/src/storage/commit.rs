@@ -10,9 +10,14 @@
 //! Because every delete lands before any insert and the insert set is
 //! deduplicated by construction, a `U` conflict during inserts is a genuine
 //! functionality violation; user operation order inside the transaction is
-//! semantically irrelevant. Phase 3 — the judgment phase (`judgment`) —
+//! semantically irrelevant. A conflict is *recorded*, not thrown: phase 2
+//! completes scan-complete and the commit rejects with the COMPLETE set of
+//! violated key statements ([`crate::error::Violations`]) — and key
+//! violations preempt phase 3, because the containment probes are defined
+//! over the keyed final state. Phase 3 — the judgment phase (`judgment`) —
 //! proves every containment against the final state, consuming the plan's
-//! source-probe list and disestablished-guard check sets.
+//! source-probe list and disestablished-guard check sets, equally
+//! scan-complete.
 
 use std::collections::BTreeMap;
 
@@ -143,12 +148,15 @@ pub struct CommitReport {
 }
 
 /// Working state threaded through phases 1-2: the transaction, the row-id
-/// plumbing, and one key scratch — no derivation state; the plan owns it.
+/// plumbing, one key scratch — no derivation state; the plan owns it —
+/// and the key-violation collector (recorded conflicts, sealed into the
+/// complete rejection set after phase 2).
 struct Applier<'env> {
     txn: WriteTxn<'env>,
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
     row_id_next: BTreeMap<RelationId, u64>,
     key: KeyBuf,
+    violations: Vec<crate::error::Violation>,
 }
 
 /// Decodes one stored `M`/`U` row-id value (applier and judgment share

@@ -622,15 +622,15 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
     // label itself to the normative target-side classification, on the
     // Booking(ref) <= Marker(id) statement.
     for delta in [redundant, cancelled] {
-        let violation = naive
+        let violations = naive
             .apply(&delta)
             .expect_err("the stranded booking aborts");
         assert_eq!(
-            violation,
-            Violation::Containment {
+            violations,
+            vec![Violation::Containment {
                 statement: StatementId(3),
                 direction: Direction::TargetRequired,
-            }
+            }]
         );
     }
 }

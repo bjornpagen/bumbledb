@@ -95,16 +95,17 @@ pub fn theory(data: &[u8]) {
 ///
 /// Five oracles, beyond the standing no-panic totality:
 /// 1. **Verdict parity** per commit — accept/reject matches the naive
-///    judgment, the violated statement's typed identity included
-///    (statement id and containment direction). Where one delta
-///    violates SEVERAL statements at once the citation order is
-///    unpinned (the campaign's first ops finding — the multi-violation
-///    citation ruling, docs/prd-crucible/12-fuzz-ops.md § conflict):
-///    the engine cites per affected tuple, the model per statement id,
-///    so the oracle requires the engine's citation to be a member of
-///    the model's COMPLETE violation set ([`NaiveDb::violations`]) —
-///    any citation from the set is legal, anything outside it is a
-///    finding, and the single-violation case degenerates to equality.
+///    judgment by STRICT EQUALITY of the COMPLETE violation sets,
+///    order included: a rejection IS the sealed set (every violated
+///    statement, cited once per direction, in materialized statement
+///    order) on both sides, so the engine's `CommitRejected` payload
+///    (mapped to typed identities by [`differential::cited`]) must
+///    equal [`NaiveDb::apply`]'s rejection exactly. The campaign's
+///    first ops finding (the multi-violation citation gap,
+///    docs/prd-crucible/12-fuzz-ops.md § conflict) is resolved by this
+///    representation — the interim set-membership oracle collapsed
+///    back to equality per its reactivation clause, and the pinned
+///    trophy now replays the ORDER end-to-end.
 /// 2. **Query parity** per execution — set-semantic result equality,
 ///    the differential's comparator ([`Rows`]).
 /// 3. **Reopen equivalence** — after every reopen, every ordinary
@@ -164,35 +165,19 @@ fn epoch(db: &Db<target::Target>, naive: &mut NaiveDb, scenario: &OpScenario, op
             FuzzOp::Commit => {
                 let delta = std::mem::take(&mut pending);
                 // Oracle 1: one write judged on both sides — verdict
-                // and violator, typed. On a multi-violation delta the
-                // engine's citation must be IN the model's complete set
-                // (the multi-violation citation ruling); plain equality
-                // otherwise.
+                // and the COMPLETE violation set, compared by strict
+                // equality (order included): both sides derive the same
+                // sealed total object, so any difference — membership,
+                // multiplicity, or order — is a finding.
                 let engine = engine_write(db, &delta);
                 let model = match naive.apply(&delta) {
                     Ok(()) => WriteVerdict::Committed,
-                    Err(violation) => WriteVerdict::Aborted(violation),
+                    Err(violations) => WriteVerdict::Aborted(violations),
                 };
-                let rejected = match (&engine, &model) {
-                    (WriteVerdict::Committed, WriteVerdict::Committed) => false,
-                    (WriteVerdict::Aborted(cited), WriteVerdict::Aborted(first)) => {
-                        if cited != first {
-                            let set = naive.violations(&delta);
-                            assert!(
-                                set.contains(cited),
-                                "the engine cited {cited:?}; the model's complete violation \
-                                 set is {set:?} (its first: {first:?})"
-                            );
-                        }
-                        true
-                    }
-                    (_, _) => {
-                        panic!("commit verdict divergence: engine {engine:?}, model {model:?}")
-                    }
-                };
+                assert_eq!(engine, model, "commit verdict divergence");
                 // Oracle 4: green after every commit, either verdict.
                 assert_green(db, "commit");
-                if rejected {
+                if matches!(engine, WriteVerdict::Aborted(_)) {
                     // Oracle 5: a judged rejection changed nothing.
                     assert_contents(db, naive, "rejected commit");
                 }
@@ -243,9 +228,10 @@ fn epoch(db: &Db<target::Target>, naive: &mut NaiveDb, scenario: &OpScenario, op
 
 /// One delta through the engine's write path — deletes then inserts,
 /// the same order [`NaiveDb::apply`] replays, mapped to the shared
-/// [`WriteVerdict`]. The three judgment refusals are the legal aborts;
-/// every other variant is named — never a catch-all — and is a finding
-/// on this path.
+/// [`WriteVerdict`]: the rejection's sealed violation set carries over
+/// whole ([`bumbledb_bench::differential::cited`]). The two judgment
+/// refusals are the legal aborts; every other variant is named — never
+/// a catch-all — and is a finding on this path.
 fn engine_write(db: &Db<target::Target>, delta: &Delta) -> WriteVerdict {
     use bumbledb_bench::naive::Violation;
     let outcome = db.write(|tx| {
@@ -259,19 +245,11 @@ fn engine_write(db: &Db<target::Target>, delta: &Delta) -> WriteVerdict {
     });
     match outcome {
         Ok(()) => WriteVerdict::Committed,
-        Err(Error::FunctionalityViolation { statement, .. }) => {
-            WriteVerdict::Aborted(Violation::Functionality { statement })
+        Err(Error::CommitRejected { violations }) => {
+            WriteVerdict::Aborted(bumbledb_bench::differential::cited(&violations))
         }
-        Err(Error::ContainmentViolation {
-            statement,
-            direction,
-            ..
-        }) => WriteVerdict::Aborted(Violation::Containment {
-            statement,
-            direction,
-        }),
         Err(Error::ClosedRelationWrite { relation }) => {
-            WriteVerdict::Aborted(Violation::ClosedRelationWrite { relation })
+            WriteVerdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
         }
         Err(
             other @ (Error::Schema(_)
@@ -350,8 +328,7 @@ fn query_refusal(err: Error) -> Rows {
         | Error::ReadersFull { .. }
         | Error::Validation(_)
         | Error::FactShape(_)
-        | Error::FunctionalityViolation { .. }
-        | Error::ContainmentViolation { .. }
+        | Error::CommitRejected { .. }
         | Error::FreshExhausted { .. }
         | Error::ClosedRelationWrite { .. }
         | Error::GenerationMoved { .. }
@@ -519,8 +496,7 @@ fn schema_rejection(err: Error) -> (&'static str, SchemaError) {
         | Error::ReadersFull { .. }
         | Error::Validation(_)
         | Error::FactShape(_)
-        | Error::FunctionalityViolation { .. }
-        | Error::ContainmentViolation { .. }
+        | Error::CommitRejected { .. }
         | Error::FreshExhausted { .. }
         | Error::ClosedRelationWrite { .. }
         | Error::GenerationMoved { .. }

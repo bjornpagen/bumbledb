@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::error::Result;
+use crate::error::{Error, Result, Violations};
 use crate::obs;
 use crate::storage::env::Environment;
 use crate::storage::keys::MAX_KEY;
@@ -18,9 +18,12 @@ use super::{Applied, Applier};
 ///
 /// # Errors
 ///
-/// `FunctionalityViolation` when two live facts claim one key — the same
-/// guard (scalar) or overlapping intervals in one scalar-prefix group
-/// (pointwise); `Lmdb` on storage failure; `Corruption` on base state
+/// `CommitRejected` when two live facts claim one key — the same guard
+/// (scalar) or overlapping intervals in one scalar-prefix group
+/// (pointwise) — carrying the COMPLETE set of violated key statements:
+/// conflicts record and phase 2 finishes the scan before the rejection
+/// seals (`docs/architecture/30-dependencies.md` § judged on final
+/// states). `Lmdb` on storage failure; `Corruption` on base state
 /// disagreeing with what the plan proved. On any error the transaction is
 /// dropped — nothing persists.
 pub fn apply<'env>(plan: &CommitPlan<'_>, env: &'env Environment) -> Result<Applied<'env>> {
@@ -30,6 +33,7 @@ pub fn apply<'env>(plan: &CommitPlan<'_>, env: &'env Environment) -> Result<Appl
         data: env.data(),
         row_id_next: BTreeMap::new(),
         key: [0; MAX_KEY],
+        violations: Vec::new(),
     };
 
     {
@@ -45,6 +49,13 @@ pub fn apply<'env>(plan: &CommitPlan<'_>, env: &'env Environment) -> Result<Appl
             applier.insert_fact(op)?;
         }
         span.set_args(plan.inserts.len() as u64, 0);
+    }
+
+    // Key violations preempt the judgment phase: the containment probes
+    // are defined over the keyed final state, which this apply failed to
+    // produce — the rejection is every violated key statement, sealed.
+    if let Some(violations) = Violations::seal(applier.violations) {
+        return Err(Error::CommitRejected { violations });
     }
 
     Ok(Applied {

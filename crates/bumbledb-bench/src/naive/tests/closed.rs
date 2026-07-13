@@ -151,7 +151,7 @@ fn closed_writes_are_refused_typed() {
     ] {
         assert_eq!(
             db.apply(&delta),
-            Err(Violation::ClosedRelationWrite { relation: SEVERITY }),
+            Err(vec![Violation::ClosedRelationWrite { relation: SEVERITY }]),
         );
         assert_eq!(db, before, "a refusal must not apply");
     }
@@ -185,10 +185,10 @@ fn the_psi_subset_judges_from_the_extension() {
         } else {
             assert_eq!(
                 verdict,
-                Err(Violation::Containment {
+                Err(vec![Violation::Containment {
                     statement: ESCALATION_SEVERITY,
                     direction: Direction::SourceUnsatisfied,
-                }),
+                }]),
                 "escalation {id} is outside ψ"
             );
         }
@@ -198,10 +198,10 @@ fn the_psi_subset_judges_from_the_extension() {
     let mut db = NaiveDb::new(&descriptor);
     assert_eq!(
         db.apply(&insert(ESCALATION, vec![Value::U64(300)])),
-        Err(Violation::Containment {
+        Err(vec![Violation::Containment {
             statement: ESCALATION_SEVERITY,
             direction: Direction::SourceUnsatisfied,
-        }),
+        }]),
     );
     // The plain reference admits exactly the extension's ids.
     for (id, expected) in [(2u64, true), (3u64, false)] {
@@ -215,10 +215,10 @@ fn the_psi_subset_judges_from_the_extension() {
         if let Err(violation) = verdict {
             assert_eq!(
                 violation,
-                Violation::Containment {
+                vec![Violation::Containment {
                     statement: ALERT_SEVERITY,
                     direction: Direction::SourceUnsatisfied,
-                }
+                }]
             );
         }
     }
@@ -241,10 +241,10 @@ fn domain_quantification_judges_target_side() {
             deletes: vec![(HANDLER, vec![Value::U64(2), Value::U64(10)])],
             inserts: vec![],
         }),
-        Err(Violation::Containment {
+        Err(vec![Violation::Containment {
             statement: SEVERITY_HANDLED,
             direction: Direction::TargetRequired,
-        }),
+        }]),
     );
     assert_eq!(db, before, "the abort must not apply");
 

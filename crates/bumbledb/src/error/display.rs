@@ -11,7 +11,37 @@ use std::fmt;
 
 use crate::schema::{Schema, SchemaDescriptor, StatementId, render};
 
-use super::{CorruptionError, Direction, Error, FactShapeError, SchemaError, ValidationError};
+use super::{
+    CorruptionError, Direction, Error, FactShapeError, SchemaError, ValidationError, Violation,
+};
+
+impl fmt::Display for Violation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Functionality { statement, .. } => write!(
+                f,
+                "statement {}: functionality violated — two live facts claim one key",
+                statement.0
+            ),
+            Self::Containment {
+                statement,
+                direction,
+                ..
+            } => match direction {
+                Direction::SourceUnsatisfied => write!(
+                    f,
+                    "statement {}: containment violated — an inserted source fact has no target",
+                    statement.0
+                ),
+                Direction::TargetRequired => write!(
+                    f,
+                    "statement {}: containment violated — a deleted target key is still required",
+                    statement.0
+                ),
+            },
+        }
+    }
+}
 
 impl fmt::Display for FactShapeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -628,27 +658,18 @@ impl fmt::Display for Error {
             Self::Schema(err) => write!(f, "schema declaration: {err}"),
             Self::Validation(err) => write!(f, "query validation: {err}"),
             Self::FactShape(err) => write!(f, "dynamic fact: {err}"),
-            Self::FunctionalityViolation { statement, .. } => write!(
-                f,
-                "statement {}: functionality violated — two live facts claim one key",
-                statement.0
-            ),
-            Self::ContainmentViolation {
-                statement,
-                direction,
-                ..
-            } => match direction {
-                Direction::SourceUnsatisfied => write!(
-                    f,
-                    "statement {}: containment violated — an inserted source fact has no target",
-                    statement.0
-                ),
-                Direction::TargetRequired => write!(
-                    f,
-                    "statement {}: containment violated — a deleted target key is still required",
-                    statement.0
-                ),
-            },
+            Self::CommitRejected { violations } => {
+                // Compiler-style: every violated statement, in
+                // materialized statement order — the complete set.
+                write!(f, "commit rejected: ")?;
+                for (index, violation) in violations.as_slice().iter().enumerate() {
+                    if index > 0 {
+                        write!(f, "; ")?;
+                    }
+                    write!(f, "{violation}")?;
+                }
+                Ok(())
+            }
             Self::FreshExhausted { relation, field } => write!(
                 f,
                 "fresh sequence exhausted (relation {}, field {})",
@@ -765,12 +786,13 @@ impl fmt::Display for Error {
 }
 
 impl Error {
-    /// Pairs the error with the schema it speaks about: the violation
-    /// variants (`FunctionalityViolation`/`ContainmentViolation`) `Display`
-    /// with their statement rendered back in the `schema!` algebra
-    /// notation; every other variant renders as its plain `Display`.
-    /// Formatting allocates — `Display` is never the hot path; the error
-    /// payload itself stays ids and fact bytes.
+    /// Pairs the error with the schema it speaks about: a rejected
+    /// commit (`CommitRejected`) `Display`s its complete violation set
+    /// with every cited statement rendered back in the `schema!` algebra
+    /// notation, in materialized statement order; every other variant
+    /// renders as its plain `Display`. Formatting allocates — `Display`
+    /// is never the hot path; the error payload itself stays ids and
+    /// fact bytes.
     #[must_use]
     pub fn display_with<'a>(&'a self, schema: &'a Schema) -> impl fmt::Display + 'a {
         DisplayWith {
@@ -789,27 +811,31 @@ struct DisplayWith<'a> {
 impl fmt::Display for DisplayWith<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.error {
-            Error::FunctionalityViolation { statement, .. } => write!(
-                f,
-                "functionality violated: `{}` — two live facts claim one key",
-                render::render(self.schema, *statement)
-            ),
-            Error::ContainmentViolation {
-                statement,
-                direction,
-                ..
-            } => {
-                let rendered = render::render(self.schema, *statement);
-                match direction {
-                    Direction::SourceUnsatisfied => write!(
-                        f,
-                        "containment violated (source side): `{rendered}` — an inserted source fact has no target"
-                    ),
-                    Direction::TargetRequired => write!(
-                        f,
-                        "containment violated (target side): `{rendered}` — a deleted target key is still required"
-                    ),
+            Error::CommitRejected { violations } => {
+                write!(f, "commit rejected: ")?;
+                for (index, violation) in violations.as_slice().iter().enumerate() {
+                    if index > 0 {
+                        write!(f, "; ")?;
+                    }
+                    let rendered = render::render(self.schema, violation.statement());
+                    match violation {
+                        Violation::Functionality { .. } => write!(
+                            f,
+                            "functionality violated: `{rendered}` — two live facts claim one key"
+                        )?,
+                        Violation::Containment { direction, .. } => match direction {
+                            Direction::SourceUnsatisfied => write!(
+                                f,
+                                "containment violated (source side): `{rendered}` — an inserted source fact has no target"
+                            )?,
+                            Direction::TargetRequired => write!(
+                                f,
+                                "containment violated (target side): `{rendered}` — a deleted target key is still required"
+                            )?,
+                        },
+                    }
                 }
+                Ok(())
             }
             other => write!(f, "{other}"),
         }

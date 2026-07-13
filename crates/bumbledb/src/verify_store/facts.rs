@@ -9,7 +9,7 @@
 //! against the dictionary next-id counter.
 
 use crate::encoding::{TypeDesc, fact_hash, field_bytes};
-use crate::error::{Direction, Error, Result};
+use crate::error::{Direction, Error, Result, Violation, Violations};
 use crate::schema::{Enforcement, RelationId};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
@@ -200,16 +200,22 @@ fn check_outgoing(
             });
         }
         match judged {
-            Err(Error::ContainmentViolation {
-                statement,
-                direction,
-                fact,
-            }) => {
-                s.push(StoreFinding::JudgmentViolation {
-                    statement,
-                    direction,
-                    fact,
-                });
+            Err(Error::CommitRejected { violations }) => {
+                for violation in violations {
+                    let Violation::Containment {
+                        statement,
+                        direction,
+                        fact,
+                    } = violation
+                    else {
+                        unreachable!("the judgment probes cite containments only");
+                    };
+                    s.push(StoreFinding::JudgmentViolation {
+                        statement,
+                        direction,
+                        fact,
+                    });
+                }
             }
             // A corruption inside the probe (a guard row id resolving to
             // no fact, a malformed key width) is a namespace desync the
@@ -288,24 +294,34 @@ fn check_extension_sources(
                         if crate::schema::closed_member(members, id) {
                             Ok(())
                         } else {
-                            Err(Error::ContainmentViolation {
-                                statement: sid,
-                                direction: Direction::TargetRequired,
-                                fact: row.fact.clone(),
+                            Err(Error::CommitRejected {
+                                violations: Violations::one(Violation::Containment {
+                                    statement: sid,
+                                    direction: Direction::TargetRequired,
+                                    fact: row.fact.clone(),
+                                }),
                             })
                         }
                     }
                 };
                 match judged {
-                    Err(Error::ContainmentViolation {
-                        statement,
-                        direction,
-                        fact,
-                    }) => s.push(StoreFinding::JudgmentViolation {
-                        statement,
-                        direction,
-                        fact,
-                    }),
+                    Err(Error::CommitRejected { violations }) => {
+                        for violation in violations {
+                            let Violation::Containment {
+                                statement,
+                                direction,
+                                fact,
+                            } = violation
+                            else {
+                                unreachable!("the judgment probes cite containments only");
+                            };
+                            s.push(StoreFinding::JudgmentViolation {
+                                statement,
+                                direction,
+                                fact,
+                            });
+                        }
+                    }
                     Ok(()) | Err(Error::Corruption(_)) => {}
                     Err(other) => return Err(other),
                 }

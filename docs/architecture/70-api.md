@@ -266,10 +266,11 @@ Both are emission; the grammar is untouched.
   order is the blessed mutation idiom — a host-side `replace()` helper is optional
   sugar, not an engine operation (closed decision).
 - **Dependencies are judged at commit against the final state**
-  (`30-dependencies.md`): `FunctionalityViolation`/`ContainmentViolation` errors
-  surface from the commit, not from the offending call site, carrying the statement
-  id (renderable back to the algebra through the schema), the judgment direction for
-  `==` statements, and the offending fact's bytes. The whole transaction aborts.
+  (`30-dependencies.md`): the `CommitRejected` error surfaces from the commit, not
+  from the offending call site, carrying the COMPLETE violation set — every violated
+  statement, cited once (per direction for a containment), in materialized statement
+  order — each citation with the statement id (renderable back to the algebra
+  through the schema) and the offending fact's bytes. The whole transaction aborts.
 
 ## Conditional writes — the generation witness
 
@@ -396,8 +397,8 @@ proposition the commit checks in one integer compare.
 - **Runtime query errors:** `Overflow` (aggregate range check), `Corruption` (hard
   error, never a skip — `50-storage.md`). They abort the query; the read transaction
   remains usable.
-- **Write errors:** `FunctionalityViolation`, `ContainmentViolation` (both raised at
-  commit, against the final state, carrying statement ids), `GenerationMoved`
+- **Write errors:** `CommitRejected` (raised at commit, against the final state,
+  carrying the complete violation set in statement order), `GenerationMoved`
   (the witness compare, § conditional writes — carrying the two generations),
   `ForeignSnapshot` (a witness of another database), `FreshExhausted`,
   `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write transaction — and

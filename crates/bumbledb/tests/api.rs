@@ -418,6 +418,10 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one protocol: the three rejection shapes through one store
 fn statement_violations_surface_from_commit_through_the_public_api() {
     let dir = common::TempDir::new("api-violations");
     let db = Db::create(dir.path(), Ledger).expect("create");
@@ -447,17 +451,20 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
             Ok(())
         })
         .unwrap_err();
-    let bumbledb::Error::FunctionalityViolation {
-        statement,
-        ref fact,
-        ..
-    } = err
+    let bumbledb::Error::CommitRejected { ref violations } = err else {
+        panic!("expected CommitRejected, got {err}");
+    };
+    let [
+        bumbledb::Violation::Functionality {
+            statement, fact, ..
+        },
+    ] = violations.as_slice()
     else {
-        panic!("expected FunctionalityViolation, got {err}");
+        panic!("expected one key citation, got {violations:?}");
     };
     // Materialized order: Holder.id's fresh auto-key, Account.id's
     // fresh auto-key, then the declared containment.
-    assert_eq!(statement, StatementId(1));
+    assert_eq!(*statement, StatementId(1));
     assert!(!fact.is_empty());
     // The rendered diagnostic cites the statement in the algebra.
     let rendered = format!("{}", err.display_with(&ledger_schema()));
@@ -480,12 +487,15 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         })
         .unwrap_err();
     assert!(matches!(
-        err,
-        bumbledb::Error::ContainmentViolation {
-            statement: StatementId(2),
-            direction: Direction::SourceUnsatisfied,
-            ..
-        }
+        &err,
+        bumbledb::Error::CommitRejected { violations } if matches!(
+            violations.as_slice(),
+            [bumbledb::Violation::Containment {
+                statement: StatementId(2),
+                direction: Direction::SourceUnsatisfied,
+                ..
+            }]
+        )
     ));
     let rendered = format!("{}", err.display_with(&ledger_schema()));
     assert!(
@@ -512,15 +522,18 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
             })
         })
         .unwrap_err();
-    let bumbledb::Error::ContainmentViolation {
-        direction,
-        ref fact,
-        ..
-    } = err
-    else {
-        panic!("expected ContainmentViolation, got {err}");
+    let bumbledb::Error::CommitRejected { ref violations } = err else {
+        panic!("expected CommitRejected, got {err}");
     };
-    assert_eq!(direction, Direction::TargetRequired);
+    let [
+        bumbledb::Violation::Containment {
+            direction, fact, ..
+        },
+    ] = violations.as_slice()
+    else {
+        panic!("expected one containment citation, got {violations:?}");
+    };
+    assert_eq!(*direction, Direction::TargetRequired);
     assert!(
         !fact.is_empty(),
         "the requiring source is named by its fact"

@@ -9,6 +9,16 @@
 //! against the final `U` state. LMDB write transactions read their own
 //! writes, so both sides see exactly the state the commit would persist.
 //!
+//! Both sides are **scan-complete**: a violation is recorded into the
+//! caller's collector and the scan continues — the reject path runs
+//! exactly the checks the accept path runs, and the rejection carries
+//! the COMPLETE violation set, sealed sorted and deduplicated
+//! ([`crate::error::Violations`]; `30-dependencies.md` § judged on
+//! final states). The two sides partition the source facts: an inserted
+//! source is judged source-side only — the target scan skips survivors
+//! this commit inserted, so one statement is never convicted twice
+//! through one fact.
+//!
 //! Also home of the selection machinery the plan derivation gates its
 //! `R`-edges with: literals encode once per commit into [`Selections`]
 //! (never per fact), and [`satisfies`] is a straight byte compare of
@@ -31,7 +41,7 @@ use heed::{AnyTls, RoTxn};
 use super::plan::CommitPlan;
 use super::{decode_row_id, fact_by_row};
 use crate::encoding::{FactLayout, encode_u64, field_bytes};
-use crate::error::{CorruptionError, Direction, Error, Result};
+use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
@@ -152,6 +162,21 @@ pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes:
     }
 }
 
+/// Folds one probe's outcome into the collector: a judged violation is
+/// recorded and the scan continues (the reject path is scan-complete);
+/// every other error — corruption, storage — propagates and aborts the
+/// judgment outright.
+fn collect(outcome: Result<()>, violations: &mut Vec<Violation>) -> Result<()> {
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(Error::CommitRejected { violations: found }) => {
+            violations.extend(found);
+            Ok(())
+        }
+        Err(other) => Err(other),
+    }
+}
+
 /// The source-side judgment: for each insert op's edges — exactly the
 /// facts this commit added that satisfy a containment's source selection,
 /// by the plan derivation over the net-disposition delta, so a redundant
@@ -161,11 +186,13 @@ pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes:
 /// only the probe *results* are read here. Closed-target containments
 /// probe nothing: the compiled member set answers in one AND and one
 /// test, and an out-of-range word is simply a miss
-/// (`docs/architecture/30-dependencies.md`).
+/// (`docs/architecture/30-dependencies.md`). Violations accumulate into
+/// `violations`; the caller seals the complete set.
 pub(super) fn check_source(
     txn: &WriteTxn<'_>,
     schema: &Schema,
     plan: &CommitPlan<'_>,
+    violations: &mut Vec<Violation>,
 ) -> Result<()> {
     let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
     let mut probes = 0u64;
@@ -182,11 +209,12 @@ pub(super) fn check_source(
                 fact_bytes: op.fact,
                 direction: Direction::SourceUnsatisfied,
             };
-            if edge.coverage {
-                checker.check_coverage(&probe)?;
+            let outcome = if edge.coverage {
+                checker.check_coverage(&probe)
             } else {
-                checker.check_scalar(&probe)?;
-            }
+                checker.check_scalar(&probe)
+            };
+            collect(outcome, violations)?;
         }
         for membership in &op.memberships {
             let statement = schema.containment(membership.containment);
@@ -194,7 +222,7 @@ pub(super) fn check_source(
                 continue;
             };
             if !crate::schema::closed_member(members, membership.id) {
-                return Err(Error::ContainmentViolation {
+                violations.push(Violation::Containment {
                     statement: statement.id,
                     direction: Direction::SourceUnsatisfied,
                     fact: op.fact.into(),
@@ -229,6 +257,12 @@ pub(super) fn check_source(
 /// `R` entry, because phase 1 removed its outgoing edges — so a survivor
 /// is always live in the final state, no disposition re-check is needed,
 /// and its `F` row must exist (a miss is corruption, never a race).
+///
+/// A survivor *inserted this commit* is skipped: the sides partition the
+/// final state's sources — inserted facts are the source side's work
+/// (their own probes judge the same missing tuple), and the target side
+/// convicts through pre-existing survivors only, so the complete set
+/// cites each statement once per genuinely violated direction.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -237,11 +271,20 @@ pub(super) fn check_target(
     txn: &WriteTxn<'_>,
     schema: &Schema,
     plan: &CommitPlan<'_>,
+    violations: &mut Vec<Violation>,
 ) -> Result<()> {
     let data = txn.env().data();
     let mut span = obs::span(obs::names::JUDGMENT_TARGET, obs::Category::Commit);
     let mut scanned = 0u64;
     let mut key: KeyBuf = [0; MAX_KEY];
+    // Sources inserted this commit, by canonical bytes (identity =
+    // bytes, `10-data-model.md`) — the survivor partition's membership
+    // test.
+    let inserted: BTreeSet<(RelationId, &[u8])> = plan
+        .inserts
+        .iter()
+        .map(|op| (op.relation, op.fact))
+        .collect();
     // Affected sources of interval statements, deduped before any walk:
     // the element is the full surviving `R` key — statement ‖ prefix
     // group ‖ source interval ‖ source identity — so several
@@ -321,13 +364,15 @@ pub(super) fn check_target(
                 // Domain quantification: a constant source writes no `R`
                 // edges — the surviving sources ARE the sealed
                 // extension's φ-rows, scanned directly (≤256 rows, the
-                // delete path). Any axiom projecting to the
-                // disestablished tuple is a stranded source outright
+                // delete path; an axiom is never an inserted fact, so
+                // the survivor partition is trivial here). Any axiom
+                // projecting to the disestablished tuple is a stranded
+                // source outright
                 // (`docs/architecture/30-dependencies.md`).
                 if let Some(row) =
                     closed_source_survivor(schema, plan, dependent.containment, guard)
                 {
-                    return Err(Error::ContainmentViolation {
+                    violations.push(Violation::Containment {
                         statement: sid,
                         direction: Direction::TargetRequired,
                         fact: row,
@@ -335,21 +380,31 @@ pub(super) fn check_target(
                 }
             } else {
                 // Scalar form: any surviving entry under the exact key
-                // bytes is a stranded source.
+                // bytes is a stranded source — the first PRE-EXISTING
+                // one is the witness (an inserted survivor is the
+                // source side's work; its own probe missed the same
+                // tuple).
                 let p_len = keys::reverse_prefix(&mut key, sid, guard);
-                let survivor = data
-                    .get_greater_than_or_equal_to(txn.raw(), &key[..p_len])?
-                    .filter(|(k, _)| k.starts_with(&key[..p_len]));
-                if let Some((r_key, _)) = survivor {
+                let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
+                    (Bound::Included(&key[..p_len]), Bound::Unbounded);
+                for entry in data.range(txn.raw(), &bounds)? {
+                    let (r_key, _) = entry?;
+                    if !r_key.starts_with(&key[..p_len]) {
+                        break;
+                    }
                     let (_, _, source_rel, source_row) = keys::parse_reverse_key(r_key).ok_or(
                         Error::Corruption(CorruptionError::MalformedValue("R key shape")),
                     )?;
                     let fact = fact_by_row(data, txn.raw(), source_rel, source_row)?;
-                    return Err(Error::ContainmentViolation {
+                    if inserted.contains(&(source_rel, fact)) {
+                        continue;
+                    }
+                    violations.push(Violation::Containment {
                         statement: sid,
                         direction: Direction::TargetRequired,
                         fact: fact.into(),
                     });
+                    break;
                 }
             }
         }
@@ -381,6 +436,12 @@ pub(super) fn check_target(
             )));
         };
         let fact_bytes = fact_by_row(data, txn.raw(), source_rel, source_row)?;
+        if inserted.contains(&(source_rel, fact_bytes)) {
+            // The survivor partition again: an inserted source's
+            // coverage demand is the source side's probe, not a
+            // target-side conviction.
+            continue;
+        }
         let probe = Probe {
             statement: sid,
             target_relation: statement.target.relation,
@@ -390,7 +451,7 @@ pub(super) fn check_target(
             fact_bytes,
             direction: Direction::TargetRequired,
         };
-        checker.check_coverage(&probe)?;
+        collect(checker.check_coverage(&probe), violations)?;
     }
     span.set_args(scanned, 0);
     span.end();
@@ -481,14 +542,18 @@ pub(crate) struct Probe<'a> {
 }
 
 impl Probe<'_> {
-    /// The aborting error: the judgment speaks about sources, so the
-    /// payload is the source fact — the inserted fact whose target is
-    /// missing, or the survivor whose required target was disestablished.
+    /// The convicting error — one probe, one violation, carried as the
+    /// singleton sealed set (callers collect and re-seal the union). The
+    /// judgment speaks about sources, so the payload is the source fact:
+    /// the inserted fact whose target is missing, or the survivor whose
+    /// required target was disestablished.
     fn unsatisfied(&self) -> Error {
-        Error::ContainmentViolation {
-            statement: self.statement,
-            direction: self.direction,
-            fact: self.fact_bytes.into(),
+        Error::CommitRejected {
+            violations: Violations::one(Violation::Containment {
+                statement: self.statement,
+                direction: self.direction,
+                fact: self.fact_bytes.into(),
+            }),
         }
     }
 }

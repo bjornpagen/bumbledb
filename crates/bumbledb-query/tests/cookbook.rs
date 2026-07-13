@@ -869,7 +869,7 @@ fn r08_sub_vocabulary_violating_insert_aborts() {
         })
         .unwrap_err();
     assert!(
-        matches!(err, bumbledb::Error::ContainmentViolation { .. }),
+        matches!(err, bumbledb::Error::CommitRejected { .. }),
         "a non-paging escalation violates the ψ-selected containment: {err:?}"
     );
 }

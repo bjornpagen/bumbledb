@@ -430,9 +430,9 @@ runner.
   delete, and mixed batches; commit; rollback; prepared execution with
   live params; re-prepare; view read; reopen from disk; `verify_store`)
   against the live engine with the naive model in lockstep, under five
-  oracles — commit-verdict parity with the typed violator (any citation
-  from the model's complete violation set where one delta breaks
-  several statements), set-semantic query parity, reopen equivalence
+  oracles — commit-verdict parity by strict equality of the COMPLETE
+  violation sets, order included (a rejection IS the sealed set on both
+  sides — `30-dependencies.md`), set-semantic query parity, reopen equivalence
   over full relation contents, `verify_store` green after every commit
   and reopen, and rejected-commits-change-nothing. `query` — three-way parity per iteration over a
   cached Tiny target corpus: querygen's valid-by-construction arm

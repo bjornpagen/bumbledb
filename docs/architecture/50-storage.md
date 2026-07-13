@@ -163,15 +163,19 @@ variant agreement.
 2. **Inserts**: per inserted fact — `F` put (row_id from the in-memory high-water),
    `M` put, `U` puts, `R` puts (per containment statement whose selection the fact
    satisfies). Because every delete has already landed and the insert-set is
-   deduplicated, a scalar `U` put conflict here **is** a functionality violation →
-   typed error, whole transaction aborts. For a **pointwise FD** (interval-carrying
-   guard), the put cannot conflict on exact bytes alone; the insert additionally
-   runs the **ordered-neighbor probe** — cursor-seek to (scalar prefix, start):
+   deduplicated, a scalar `U` put conflict here **is** a functionality violation —
+   recorded into the commit's violation collector (the conflicting put is skipped;
+   the incumbent keeps the guard) and the phase finishes scan-complete, so the
+   rejection after step 2 carries the COMPLETE set of violated key statements
+   (`30-dependencies.md` § judged on final states) and preempts step 3; the whole
+   transaction aborts. For a **pointwise FD** (interval-carrying guard), the put
+   cannot conflict on exact bytes alone; the insert additionally runs the
+   **ordered-neighbor probe** — cursor-seek to (scalar prefix, start):
    predecessor in the same prefix group with `end > start`, or successor with
-   `start < end`, is the violation. Two probes, O(log n), same B-tree. Deletes and
-   inserts both check what they touch: a live `M` entry whose `F` row or `U` guard
-   is missing is the membership-desync corruption, a hard error — never silently
-   scrubbed.
+   `start < end`, is the violation, recorded identically. Two probes, O(log n),
+   same B-tree. Deletes and inserts both check what they touch: a live `M` entry
+   whose `F` row or `U` guard is missing is the membership-desync corruption, a
+   hard error — never silently scrubbed.
 3. **Judgment phase** (final-state probes; LMDB write txns read their own writes) —
    one checker, statement-driven, restricted to delta-touched bindings:
    - **Containment, source side:** every inserted fact satisfying a statement's
@@ -189,8 +193,11 @@ variant agreement.
      re-established in step 2 probes its statements' `R` prefixes for surviving
      source entries; for interval positions the deleted-or-shrunk window's `R`
      range is walked and each surviving source is re-checked for coverage against
-     the final target state. A surviving requirer → typed error naming the *source*
-     fact by its bytes. **Re-establishment is per statement, ψ-qualified:** for a
+     the final target state. Survivors *inserted this commit* are skipped — the two
+     sides partition the final state's sources (`30-dependencies.md` § judged on
+     final states): an inserted source's own probe already judged the same tuple
+     source-side. A surviving pre-existing requirer → violation recorded, naming
+     the *source* fact by its bytes. **Re-establishment is per statement, ψ-qualified:** for a
      dependent statement with a nonempty target selection, a re-landed guard tuple
      counts as re-established only if the establishing fact satisfies that
      statement's ψ (one `F` get per re-established tuple per ψ-carrying dependent;

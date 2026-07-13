@@ -7,7 +7,7 @@
 
 use super::*;
 
-use crate::error::Error;
+use crate::error::{Error, Violation};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
@@ -59,13 +59,18 @@ fn cross_delta(name: &str, first: &[u8], second: &[u8]) -> crate::error::Result<
 /// either fact may be the incumbent — assert the pair, not the roles.
 fn assert_in_delta_violation(result: crate::error::Result<()>, a: &[u8], b: &[u8]) {
     let err = result.unwrap_err();
-    let Error::FunctionalityViolation {
-        statement,
-        fact,
-        incumbent,
-    } = &err
+    let Error::CommitRejected { violations } = &err else {
+        panic!("expected a rejected commit, got {err:?}");
+    };
+    let [
+        Violation::Functionality {
+            statement,
+            fact,
+            incumbent,
+        },
+    ] = violations.as_slice()
     else {
-        panic!("expected a functionality violation, got {err:?}");
+        panic!("expected one key citation, got {violations:?}");
     };
     assert_eq!(*statement, BOOKING_KEY);
     let incumbent = incumbent
@@ -81,13 +86,18 @@ fn assert_in_delta_violation(result: crate::error::Result<()>, a: &[u8], b: &[u8
 /// fact the offender — the roles are deterministic.
 fn assert_cross_delta_violation(result: crate::error::Result<()>, first: &[u8], second: &[u8]) {
     let err = result.unwrap_err();
-    let Error::FunctionalityViolation {
-        statement,
-        fact,
-        incumbent,
-    } = &err
+    let Error::CommitRejected { violations } = &err else {
+        panic!("expected a rejected commit, got {err:?}");
+    };
+    let [
+        Violation::Functionality {
+            statement,
+            fact,
+            incumbent,
+        },
+    ] = violations.as_slice()
     else {
-        panic!("expected a functionality violation, got {err:?}");
+        panic!("expected one key citation, got {violations:?}");
     };
     assert_eq!(*statement, BOOKING_KEY);
     assert_eq!(**fact, *second);

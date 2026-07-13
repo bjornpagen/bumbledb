@@ -54,6 +54,9 @@ struct Case {
     base: Facts,
     deletes: Facts,
     inserts: Facts,
+    /// The expected verdict — every fixture here is single-violation by
+    /// construction, so the rejection is the singleton set (the runner
+    /// wraps it); the multi-violation sets live in [`citation_set`].
     verdict: Result<(), Violation>,
 }
 
@@ -64,13 +67,18 @@ fn run(schema: &SchemaDescriptor, cases: Vec<Case>) {
             deletes: vec![],
             inserts: case.base.clone(),
         })
-        .unwrap_or_else(|violation| panic!("{}: base commit refused: {violation:?}", case.name));
+        .unwrap_or_else(|violations| panic!("{}: base commit refused: {violations:?}", case.name));
         let before = db.clone();
         let got = db.apply(&Delta {
             deletes: case.deletes.clone(),
             inserts: case.inserts.clone(),
         });
-        assert_eq!(got, case.verdict, "{}", case.name);
+        assert_eq!(
+            got,
+            case.verdict.map_err(|violation| vec![violation]),
+            "{}",
+            case.name
+        );
         if got.is_err() {
             assert_eq!(db, before, "{}: an abort must not apply", case.name);
         }
@@ -1055,11 +1063,10 @@ mod target_side {
 // ---------- the multi-violation citation set ----------
 //
 // One delta breaking SEVERAL statements at once (the ops fuzz target's
-// first finding, docs/prd-crucible/12-fuzz-ops.md § conflict): the
-// citation ORDER among simultaneous violations is unpinned — the engine
-// cites per affected tuple, the model per statement id — so the model
-// exposes the COMPLETE set (`violations`), whose head is `apply`'s
-// verdict, one derivation.
+// first finding, docs/prd-crucible/12-fuzz-ops.md § conflict — resolved
+// by representation): a rejection IS the complete violation set, sorted
+// by materialized statement order, on both oracles. The model's
+// `violations` and `apply`'s rejection are one derivation.
 mod citation_set {
     use super::*;
 
@@ -1123,15 +1130,18 @@ mod citation_set {
             vec![target_required(0), target_required(1)],
             "both broken statements, statement order — regardless of delete order"
         );
-        // `apply`'s verdict is the set's head: one derivation.
-        assert_eq!(db.clone().apply(&both), Err(target_required(0)));
+        // `apply`'s rejection IS the complete set: one derivation.
+        assert_eq!(
+            db.clone().apply(&both),
+            Err(vec![target_required(0), target_required(1)])
+        );
         // A single-violation delta degenerates to the singleton set.
         let one = Delta {
             deletes: vec![(P2, vec![Value::U64(0)])],
             inserts: vec![],
         };
         assert_eq!(db.violations(&one), vec![target_required(1)]);
-        assert_eq!(db.apply(&one), Err(target_required(1)));
+        assert_eq!(db.apply(&one), Err(vec![target_required(1)]));
         // A committing delta has the empty set.
         let clean = Delta {
             deletes: vec![

@@ -1,6 +1,8 @@
 //! The comparison runner: one op stream replayed against the engine and
 //! the naive model, asserting per write the same verdict and the same
-//! violating statement, and per query set-equal results
+//! COMPLETE violation set — strict equality, order included; both sides
+//! derive the sealed sorted citation list, so a multi-violation delta
+//! compares whole — and per query set-equal results
 //! (`docs/architecture/60-validation.md` § the two oracles). The verify
 //! command's naive lane (`verify::run_naive`) feeds [`run`] the corpus
 //! op streams.
@@ -33,21 +35,23 @@ pub enum Op {
     },
 }
 
-/// One write's outcome, on either side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One write's outcome, on either side: committed, or aborted with the
+/// COMPLETE violation set (sorted, deduplicated — the same total object
+/// on both sides, compared whole).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     Committed,
-    Aborted(Violation),
+    Aborted(Vec<Violation>),
 }
 
 /// One conditional write's outcome, on either side: [`Verdict`] plus the
 /// witness refusal with its payload — compared whole, so verdict *and*
 /// generations must agree (error parity including typed identity, the
 /// direction-divergence lesson applied from birth).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConditionalVerdict {
     Committed,
-    Aborted(Violation),
+    Aborted(Vec<Violation>),
     Moved { witnessed: u64, current: u64 },
 }
 
@@ -103,7 +107,7 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
                 let engine = engine_write(db, delta);
                 let model = match naive.apply(delta) {
                     Ok(()) => Verdict::Committed,
-                    Err(violation) => Verdict::Aborted(violation),
+                    Err(violations) => Verdict::Aborted(violations),
                 };
                 if engine != model {
                     return Err(Divergence::Write {
@@ -138,6 +142,33 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
     Ok(summary)
 }
 
+/// The engine's sealed violation set as the model's citation values —
+/// the typed identities every oracle compares (witness fact bytes are
+/// engine-side detail the model never derives). The engine's set is
+/// sorted and deduplicated by construction, so the mapped list is
+/// directly comparable to [`NaiveDb::violations`]' — same sort key,
+/// same total object.
+#[must_use]
+pub fn cited(violations: &bumbledb::Violations) -> Vec<Violation> {
+    violations
+        .as_slice()
+        .iter()
+        .map(|violation| match violation {
+            bumbledb::Violation::Functionality { statement, .. } => Violation::Functionality {
+                statement: *statement,
+            },
+            bumbledb::Violation::Containment {
+                statement,
+                direction,
+                ..
+            } => Violation::Containment {
+                statement: *statement,
+                direction: *direction,
+            },
+        })
+        .collect()
+}
+
 /// One delta through the engine's write path: deletes then inserts (the
 /// same order [`NaiveDb::apply`] uses, so no-op cancellation agrees).
 fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
@@ -152,19 +183,9 @@ fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
     });
     match outcome {
         Ok(()) => Verdict::Committed,
-        Err(Error::FunctionalityViolation { statement, .. }) => {
-            Verdict::Aborted(Violation::Functionality { statement })
-        }
-        Err(Error::ContainmentViolation {
-            statement,
-            direction,
-            ..
-        }) => Verdict::Aborted(Violation::Containment {
-            statement,
-            direction,
-        }),
+        Err(Error::CommitRejected { violations }) => Verdict::Aborted(cited(&violations)),
         Err(Error::ClosedRelationWrite { relation }) => {
-            Verdict::Aborted(Violation::ClosedRelationWrite { relation })
+            Verdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
         }
         Err(other) => panic!("engine refused a differential write: {other:?}"),
     }
@@ -195,19 +216,11 @@ pub(crate) fn engine_write_from<S>(
         Err(Error::GenerationMoved { witnessed, current }) => {
             ConditionalVerdict::Moved { witnessed, current }
         }
-        Err(Error::FunctionalityViolation { statement, .. }) => {
-            ConditionalVerdict::Aborted(Violation::Functionality { statement })
+        Err(Error::CommitRejected { violations }) => {
+            ConditionalVerdict::Aborted(cited(&violations))
         }
-        Err(Error::ContainmentViolation {
-            statement,
-            direction,
-            ..
-        }) => ConditionalVerdict::Aborted(Violation::Containment {
-            statement,
-            direction,
-        }),
         Err(Error::ClosedRelationWrite { relation }) => {
-            ConditionalVerdict::Aborted(Violation::ClosedRelationWrite { relation })
+            ConditionalVerdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
         }
         Err(other) => panic!("engine refused a differential conditional write: {other:?}"),
     }
@@ -226,7 +239,7 @@ pub(crate) fn naive_write_from(
         Err(ConditionalAbort::Moved { witnessed, current }) => {
             ConditionalVerdict::Moved { witnessed, current }
         }
-        Err(ConditionalAbort::Violation(violation)) => ConditionalVerdict::Aborted(violation),
+        Err(ConditionalAbort::Violations(violations)) => ConditionalVerdict::Aborted(violations),
     }
 }
 

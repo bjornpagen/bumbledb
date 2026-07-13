@@ -71,13 +71,22 @@ pub struct Delta {
     pub inserts: Vec<(RelationId, Vec<Value>)>,
 }
 
-/// A refused write, identified exactly as the engine's commit errors
-/// identify it: a statement the final state fails (the statement id,
-/// plus the direction for a containment), or a delta operation naming a
-/// closed relation — ground axioms are not data, and the refusal is
-/// typed identically on both oracles (verdict parity including the
-/// typed identity, the direction-divergence lesson applied at birth).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One citation of a refused write, identified exactly as the engine's
+/// commit errors identify it: a statement the final state fails (the
+/// statement id, plus the direction for a containment), or a delta
+/// operation naming a closed relation — ground axioms are not data, and
+/// the refusal is typed identically on both oracles (verdict parity
+/// including the typed identity, the direction-divergence lesson
+/// applied at birth). A rejection is the COMPLETE `Vec<Violation>` —
+/// every violated statement, once, in `Ord` order (statement id
+/// ascending, source before target within one statement) — the same
+/// total object as the engine's sealed `Violations`.
+///
+/// `Ord` is derived: rejections never mix variants (key violations
+/// preempt containment ones; a closed-relation refusal happens before
+/// any judgment), so within one rejection the derived order IS
+/// materialized statement order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Violation {
     Functionality {
         statement: StatementId,
@@ -94,15 +103,16 @@ pub enum Violation {
 }
 
 /// A conditional write's abort cause ([`NaiveDb::apply_from`]): the
-/// witness compare failed, or the final state fails a statement — the
-/// model twin of the engine's `GenerationMoved` / commit violations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// witness compare failed, or the final state fails the judgment — the
+/// model twin of the engine's `GenerationMoved` / `CommitRejected`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConditionalAbort {
     /// The witnessed generation is no longer current (payload: the two
     /// generations, exactly the engine's error payload).
     Moved { witnessed: u64, current: u64 },
-    /// The witness held; the judgment aborted.
-    Violation(Violation),
+    /// The witness held; the judgment aborted with the complete
+    /// violation set.
+    Violations(Vec<Violation>),
 }
 
 impl NaiveDb {
@@ -192,34 +202,25 @@ impl NaiveDb {
                 current: self.generation,
             });
         }
-        self.apply(delta).map_err(ConditionalAbort::Violation)
+        self.apply(delta).map_err(ConditionalAbort::Violations)
     }
 
     /// Applies a write delta: remove the deletes, insert the inserts, then
-    /// judge **every statement over the full final state**. Any violation
-    /// returns without applying — the caller compares verdict and violator
-    /// against the engine's commit result.
+    /// judge the statements over the full final state. Any violation
+    /// returns without applying — the caller compares verdict and
+    /// citation set against the engine's commit result.
     ///
     /// # Errors
     ///
-    /// [`Violation::ClosedRelationWrite`] for the first delta operation
-    /// (deletes, then inserts — the replay order) naming a closed
-    /// relation, refused before anything applies; otherwise the first
-    /// violated statement, in the engine's phase order (functionality
-    /// during inserts, then containment source side, then containment
-    /// target side).
-    pub fn apply(&mut self, delta: &Delta) -> Result<(), Violation> {
-        for (relation, _) in delta.deletes.iter().chain(&delta.inserts) {
-            if self.extensions[relation.0 as usize].is_some() {
-                return Err(Violation::ClosedRelationWrite {
-                    relation: *relation,
-                });
-            }
+    /// The rejection IS [`NaiveDb::violations`]' complete set — one
+    /// derivation, the same total object the engine's `CommitRejected`
+    /// carries. Nonempty by construction.
+    pub fn apply(&mut self, delta: &Delta) -> Result<(), Vec<Violation>> {
+        let violations = self.violations(delta);
+        if !violations.is_empty() {
+            return Err(violations);
         }
-        let (next, inserted) = self.staged(delta);
-        if let Some(violation) = self.judge(&next, &inserted).into_iter().next() {
-            return Err(violation);
-        }
+        let (next, _) = self.staged(delta);
         // State-changing commits only advance the generation — a no-op
         // delta (deletes of absent facts, re-inserts of present ones)
         // leaves it alone, exactly as the engine's tx id does.
@@ -231,15 +232,20 @@ impl NaiveDb {
     }
 
     /// The COMPLETE violation set of one delta against the committed
-    /// state, in [`NaiveDb::apply`]'s phase order and deduplicated —
-    /// `apply`'s verdict is exactly this list's head, one derivation.
+    /// state — [`NaiveDb::apply`]'s rejection is exactly this list, one
+    /// derivation: every violated statement, cited once (per direction
+    /// for a containment), sorted ascending (materialized statement
+    /// order; source before target within one statement), deduplicated.
+    /// Preemption mirrors the phase structure the engine pins
+    /// (`docs/architecture/30-dependencies.md` § judged on final
+    /// states): a delta op naming a closed relation is refused before
+    /// any judgment (the singleton set), and key (functionality)
+    /// violations preempt the containment judgment — the containment
+    /// probes are defined over the keyed final state.
     ///
-    /// The consumer is the multi-violation citation ruling
-    /// (docs/prd-crucible/12-fuzz-ops.md § conflict): where a single
-    /// delta violates several statements at once, the engine cites the
-    /// first it *discovers* (per affected tuple), the model the first in
-    /// statement order — an unpinned tie. The `ops` fuzz oracle accepts
-    /// any citation drawn from this set, and nothing outside it.
+    /// The `ops` fuzz oracle (docs/prd-crucible/12-fuzz-ops.md) compares
+    /// this set against the engine's sealed `Violations` by STRICT
+    /// EQUALITY, order included.
     #[must_use]
     pub fn violations(&self, delta: &Delta) -> Vec<Violation> {
         for (relation, _) in delta.deletes.iter().chain(&delta.inserts) {
@@ -274,13 +280,17 @@ impl NaiveDb {
     }
 
     /// Judges every statement against a candidate final state, mirroring
-    /// the engine's phase order at statement granularity (so the
-    /// differential runner can compare violators, not just verdicts):
-    /// functionality per inserted fact, then containment source-side per
-    /// inserted fact, then containment target-side over surviving facts.
-    /// Returns the COMPLETE deduplicated violation list in that phase
-    /// order — the head is `apply`'s verdict, the whole list is the
-    /// citation set [`NaiveDb::violations`] exposes.
+    /// the engine's phase structure at statement granularity (so the
+    /// differential runners can compare complete citation sets, not just
+    /// verdicts): functionality per inserted fact — and if any key
+    /// statement fails, that IS the rejection (the containment judgment
+    /// is defined over the keyed final state, so the engine never
+    /// reaches it) — otherwise containment source-side per inserted
+    /// fact, then containment target-side over pre-existing surviving
+    /// facts. Returns the COMPLETE violation list, sorted ascending
+    /// (materialized statement order; source before target within one
+    /// statement) and deduplicated — the whole list is `apply`'s
+    /// rejection and [`NaiveDb::violations`]' value.
     /// A **closed source** (domain quantification) needs no case of its
     /// own: its "surviving facts" are the seeded extension tuples, φ is
     /// the same [`satisfies_selection`] value comparison, and the
@@ -288,11 +298,6 @@ impl NaiveDb {
     /// mutable target — the A-side tuples ARE φ over the extension.
     fn judge(&self, state: &[BTreeSet<Tuple>], inserted: &[BTreeSet<Tuple>]) -> Vec<Violation> {
         let mut found: Vec<Violation> = Vec::new();
-        let mut cite = |violation: Violation| {
-            if !found.contains(&violation) {
-                found.push(violation);
-            }
-        };
         for (rel, facts) in inserted.iter().enumerate() {
             for fact in facts {
                 for (sid, statement) in self.statements.iter().enumerate() {
@@ -306,12 +311,17 @@ impl NaiveDb {
                     if relation.0 as usize == rel
                         && self.functionality_violated(state, *relation, projection, fact)
                     {
-                        cite(Violation::Functionality {
+                        found.push(Violation::Functionality {
                             statement: statement_id(sid),
                         });
                     }
                 }
             }
+        }
+        if !found.is_empty() {
+            // Key violations preempt the containment judgment — the
+            // rejection is the complete set of violated key statements.
+            return sealed(found);
         }
         for (rel, facts) in inserted.iter().enumerate() {
             for fact in facts {
@@ -323,7 +333,7 @@ impl NaiveDb {
                         && satisfies_selection(fact, &source.selection)
                         && !self.contained(state, source, target, fact)
                     {
-                        cite(Violation::Containment {
+                        found.push(Violation::Containment {
                             statement: statement_id(sid),
                             direction: Direction::SourceUnsatisfied,
                         });
@@ -337,7 +347,12 @@ impl NaiveDb {
             };
             for fact in &state[source.relation.0 as usize] {
                 if inserted[source.relation.0 as usize].contains(fact) {
-                    continue; // an inserted source was pass-two work
+                    // An inserted source was pass-two work — the sides
+                    // partition the final state's sources, so one
+                    // statement is never convicted twice through one
+                    // fact (the engine's target scan skips inserted
+                    // survivors identically).
+                    continue;
                 }
                 // The target side judges what the delta BROKE: an
                 // instance that held before and fails after. This is the
@@ -355,14 +370,14 @@ impl NaiveDb {
                     && self.contained(&self.relations, source, target, fact)
                     && !self.contained(state, source, target, fact)
                 {
-                    cite(Violation::Containment {
+                    found.push(Violation::Containment {
                         statement: statement_id(sid),
                         direction: Direction::TargetRequired,
                     });
                 }
             }
         }
-        found
+        sealed(found)
     }
 
     /// Does inserting `fact` leave two distinct facts agreeing on the
@@ -515,4 +530,13 @@ fn satisfies_selection(fact: &Tuple, selection: &[(bumbledb::FieldId, Value)]) -
 
 fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
+}
+
+/// Seals a raw citation list: sorted (materialized statement order,
+/// source before target within one statement — the derived `Ord`) and
+/// deduplicated. The model twin of the engine's `Violations::seal`.
+fn sealed(mut found: Vec<Violation>) -> Vec<Violation> {
+    found.sort_unstable();
+    found.dedup();
+    found
 }

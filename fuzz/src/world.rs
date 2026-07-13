@@ -241,8 +241,7 @@ fn runtime_refusal(err: Error) -> Rows {
         | Error::ReadersFull { .. }
         | Error::Validation(_)
         | Error::FactShape(_)
-        | Error::FunctionalityViolation { .. }
-        | Error::ContainmentViolation { .. }
+        | Error::CommitRejected { .. }
         | Error::FreshExhausted { .. }
         | Error::ClosedRelationWrite { .. }
         | Error::GenerationMoved { .. }

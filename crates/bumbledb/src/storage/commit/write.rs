@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::error::{CorruptionError, Error, Result};
+use crate::error::{CorruptionError, Error, Result, Violations};
 use crate::obs;
 use crate::schema::RelationId;
 use crate::storage::delta::WriteDelta;
@@ -67,12 +67,14 @@ pub(super) fn commit_bounded<T>(mut attempt: impl FnMut() -> Result<T>) -> Resul
 ///
 /// # Errors
 ///
-/// `FunctionalityViolation` on a key statement violated by the final
-/// state; `ContainmentViolation` on a containment statement the final
-/// state violates — a source left without its target, or a deleted
-/// target key a surviving source still requires; `CommitSync` on a
-/// durability-boundary failure that survived the bounded retry;
-/// `Lmdb`/`Corruption` on storage failure.
+/// `CommitRejected` on a final state violating the theory, carrying the
+/// COMPLETE violation set in materialized statement order: every
+/// violated key statement (phase 2, which preempts the judgment), or
+/// every violated containment statement — a source left without its
+/// target, or a deleted target key a surviving source still requires
+/// (`docs/architecture/30-dependencies.md` § judged on final states).
+/// `CommitSync` on a durability-boundary failure that survived the
+/// bounded retry; `Lmdb`/`Corruption` on storage failure.
 ///
 /// # Panics
 ///
@@ -128,8 +130,14 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         // write transaction (LMDB write txns read their own writes) — the
         // containment source side over the plan's probe list, then the
         // target side over the plan's disestablished-guard check sets.
-        judgment::check_source(&txn, schema, &plan)?;
-        judgment::check_target(&txn, schema, &plan)?;
+        // Both sides are scan-complete collectors; the rejection is the
+        // sealed COMPLETE violation set, never its first member.
+        let mut violations = Vec::new();
+        judgment::check_source(&txn, schema, &plan, &mut violations)?;
+        judgment::check_target(&txn, schema, &plan, &mut violations)?;
+        if let Some(violations) = Violations::seal(violations) {
+            return Err(Error::CommitRejected { violations });
+        }
 
         // Phase 4: counters — row counts, row-id high-waters, fresh
         // sequences, pending dictionary entries and the dictionary

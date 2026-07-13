@@ -131,14 +131,14 @@ pub enum StoreFinding {
     /// A containment statement globally violated by the committed state:
     /// a live source fact inside φ whose target tuple is absent (scalar
     /// probe miss) or whose interval is not jointly covered (coverage-walk
-    /// gap). Same payload as [`Error::ContainmentViolation`], as a
-    /// finding. The direction is always [`Direction::TargetRequired`]: a
-    /// committed store has no just-inserted facts, so every offline
-    /// violation is a standing source whose required target is missing —
-    /// the naive model's own convention
-    /// (`docs/architecture/60-validation.md`).
+    /// gap). Same payload as [`Violation::Containment`], as a finding —
+    /// per fact, so the report is already the complete citation set. The
+    /// direction is always [`Direction::TargetRequired`]: a committed
+    /// store has no just-inserted facts, so every offline violation is a
+    /// standing source whose required target is missing — the naive
+    /// model's own convention (`docs/architecture/60-validation.md`).
     ///
-    /// [`Error::ContainmentViolation`]: crate::error::Error::ContainmentViolation
+    /// [`Violation::Containment`]: crate::error::Violation::Containment
     JudgmentViolation {
         statement: StatementId,
         direction: Direction,

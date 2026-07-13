@@ -309,31 +309,20 @@ fn verify_recovery(store: &Path, case: &CrashScenario, side: CrashpointSide, out
     assert_audit(&db, expected, "crash recovery");
     // Oracle 3: all-or-nothing — full contents at the expected side.
     assert_contents(&db, expected, "crash recovery");
-    // Oracle 4: the victim replays — same verdict discipline as the ops
-    // target (the multi-violation citation ruling), landing the model's
+    // Oracle 4: the victim replays — same strict verdict discipline as
+    // the ops target (a rejection IS the complete violation set, so the
+    // sealed sets compare whole, order included), landing the model's
     // post state.
     let mut replay_model = expected.clone();
-    let citations = replay_model.violations(&case.victim);
     let model_replay = match replay_model.apply(&case.victim) {
         Ok(()) => WriteVerdict::Committed,
-        Err(violation) => WriteVerdict::Aborted(violation),
+        Err(violations) => WriteVerdict::Aborted(violations),
     };
     let engine_replay = engine_write(&db, &case.victim);
-    match (&engine_replay, &model_replay) {
-        (WriteVerdict::Committed, WriteVerdict::Committed) => {}
-        (WriteVerdict::Aborted(cited), WriteVerdict::Aborted(first)) => {
-            if cited != first {
-                assert!(
-                    citations.contains(cited),
-                    "the replay cited {cited:?}; the model's complete violation set is \
-                     {citations:?} (its first: {first:?})"
-                );
-            }
-        }
-        (_, _) => panic!(
-            "victim replay verdict divergence: engine {engine_replay:?}, model {model_replay:?}"
-        ),
-    }
+    assert_eq!(
+        engine_replay, model_replay,
+        "victim replay verdict divergence"
+    );
     assert_audit(&db, &replay_model, "the victim replay");
     assert_contents(&db, &replay_model, "the victim replay");
 }

@@ -5,7 +5,7 @@
 //! behavior-preserving by test, not by hope.
 
 use crate::encoding::ValueRef;
-use crate::error::{Direction, Error, Result};
+use crate::error::{Direction, Error, Result, Violation};
 use crate::schema::{
     CompiledCheck, ContainmentId, FieldId, KeyId, RelationDescriptor, RelationId, Schema,
     SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
@@ -155,17 +155,22 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
     // In-σ source without its target: the violation names the statement.
     let flagged = transfer(&schema, 9, true);
     let result = apply_delta(&env, &schema, &[], &[(TRANSFER, flagged.clone())]);
-    let Err(Error::ContainmentViolation {
-        statement,
-        direction,
-        fact: violating,
-    }) = result
-    else {
-        panic!("expected a containment violation");
+    let Err(Error::CommitRejected { violations }) = result else {
+        panic!("expected a rejected commit");
     };
-    assert_eq!(statement, TRANSFER_ACCOUNT);
-    assert_eq!(direction, Direction::SourceUnsatisfied);
-    assert_eq!(*violating, *flagged);
+    let [
+        Violation::Containment {
+            statement,
+            direction,
+            fact: violating,
+        },
+    ] = violations.as_slice()
+    else {
+        panic!("expected one containment citation, got {violations:?}");
+    };
+    assert_eq!(*statement, TRANSFER_ACCOUNT);
+    assert_eq!(*direction, Direction::SourceUnsatisfied);
+    assert_eq!(**violating, *flagged);
 
     // Out-of-σ source: no edge, no probe, commits against the empty store.
     apply_delta(

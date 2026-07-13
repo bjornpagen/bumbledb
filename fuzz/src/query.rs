@@ -178,8 +178,7 @@ fn judge(db: &Db<target::Target>, query: &Query) -> Verdict {
             | Error::Lmdb(_)
             | Error::ReadersFull { .. }
             | Error::FactShape(_)
-            | Error::FunctionalityViolation { .. }
-            | Error::ContainmentViolation { .. }
+            | Error::CommitRejected { .. }
             | Error::FreshExhausted { .. }
             | Error::ClosedRelationWrite { .. }
             | Error::GenerationMoved { .. }

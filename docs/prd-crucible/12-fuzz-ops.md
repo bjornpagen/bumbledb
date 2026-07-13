@@ -99,6 +99,29 @@ single-violation deltas). Reactivation: if the engine lane pins a
 deterministic citation, collapse the oracle back to equality; the
 trophy input then pins that order.
 
+**Superseded by representation, 2026-07-13** (owner-directed engine
+refactor, this commit): the reactivation clause fired — not by pinning
+a tie-break, but by removing the tie. A rejection now IS the complete
+violation set: `Error::CommitRejected` carries the sealed `Violations`
+(nonempty, deduplicated per citation, sorted by materialized statement
+order — source before target within one statement), collected
+scan-complete in both the applier's key phase and the judgment's two
+containment sides; key violations preempt the containment judgment (the
+probes are defined over the keyed final state), and the two containment
+directions partition the source facts (inserted facts source-side,
+pre-existing survivors target-side). `30-dependencies.md` § judged on
+final states pins the total contract. `NaiveDb::apply`'s rejection is
+`NaiveDb::violations` whole — one derivation, same sort key — and this
+oracle collapsed back to STRICT EQUALITY of the complete sets, order
+included; the set-membership interim comparison is deleted. The pinned
+trophy (`fuzz/trophies/ops/multi-violation-citation-order`) now replays
+the order end-to-end: its input must reject citing the complete set
+`[Containment(12, TargetRequired), Containment(13, TargetRequired),
+Containment(18, TargetRequired)]` identically on both oracles — the
+scan-complete collection surfaced a THIRD simultaneous violation
+(statement 18) the original two-way symptom never showed, which is the
+representation argument in one line.
+
 ## Results (2026-07-13, executed)
 
 - **Generator:** `corpus_gen::opgen` — `random_scenario` over the

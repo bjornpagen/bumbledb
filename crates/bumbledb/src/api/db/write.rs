@@ -42,8 +42,9 @@ impl<S> Db<S> {
     ///
     /// # Errors
     ///
-    /// `f`'s error, or commit-time `FunctionalityViolation` /
-    /// `ContainmentViolation` / `FreshExhausted` / `Lmdb` / `Io`.
+    /// `f`'s error, or commit-time `CommitRejected` (the complete
+    /// violation set, in materialized statement order) /
+    /// `FreshExhausted` / `Lmdb` / `Io`.
     ///
     /// # Panics
     ///
