@@ -574,7 +574,10 @@ three; **normalization lowers IR form to paper form**:
    anti-probe just never rejects). Estimator note: a folded summary is ONE
    range condition — its keep fraction applies once per slot, never per
    constituent (`plan/selectivity.rs`; the fold is also the
-   double-counted-range selectivity fix).
+   double-counted-range selectivity fix). The fold is continuously
+   verified semantics-preserving by the rewrites fuzz target
+   (`60-validation.md` § the fuzzing charter — the dual-pipeline
+   differential through the `fold-off` switch).
 
 **Deviation (paper §2):** the paper assumes selections pre-pushed and per-atom variables
 distinct; we accept the richer surface and own the lowering, because there is no

@@ -425,8 +425,20 @@ runner.
 - **Targets** (one entry point each): `theory` — schema acceptance over
   the random-descriptor arm (`corpus_gen::theorygen`): structurally-free
   descriptors, deliberately-invalid shapes alongside valid ones, judged
-  by `Db::create`. Later targets extend the roster: `ops` (the op-stream
-  flagship), `query` + `rewrites`, `crash`.
+  by `Db::create`. `query` — three-way parity per iteration over a
+  cached Tiny target corpus: querygen's valid-by-construction arm
+  compared across the prepared engine, the naive model, and the `SQLite`
+  lane where the ψ-subset mapping expresses the shape (drops counted and
+  logged, never silent), plus a hostile structurally-free-IR arm
+  (`corpus_gen::irgen`) under the validation-totality oracle and
+  prepare/execute determinism. `rewrites` — the dual-pipeline
+  differential: every query × draw executed through the rewritten
+  pipeline and the rewrite-free one (the `chase-off`/`fold-off`
+  thread-local switches, one build — cargo refuses a dual-build
+  dependency on one package), demanding identical result sets: the
+  rewrite layers continuously proven semantics-preserving, never
+  assumed. Later targets extend the roster: `ops` (the op-stream
+  flagship), `crash`.
 - **Oracle discipline** (every iteration, all of them): *no-panic
   totality* — hostile input yields `Ok` or a typed error, any
   panic/abort is a finding by definition; *typed rejection* — every

@@ -9,6 +9,10 @@
 //! engine error enums, so a future variant addition is a compile error
 //! here: the matcher is itself a census instrument.
 
+pub mod query;
+pub mod rewrites;
+pub(crate) mod world;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -172,12 +176,13 @@ fn schema_variant(rejection: &SchemaError) -> &'static str {
 
 /// A per-iteration LMDB store directory under the system temp root:
 /// created fresh, removed on drop — Tiny-scale stores keep this cheap.
-struct StoreDir(PathBuf);
+/// (The query/rewrites worlds hold one for the process lifetime.)
+pub(crate) struct StoreDir(PathBuf);
 
 static STORE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 impl StoreDir {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let seq = STORE_SEQ.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!("bumbledb-fuzz-{}-{seq}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
@@ -185,7 +190,7 @@ impl StoreDir {
         Self(path)
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.0
     }
 }

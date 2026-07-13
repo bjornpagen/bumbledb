@@ -9,12 +9,33 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-bumbledb = { path = "../crates/bumbledb" }
+# chase-off + fold-off: the rewrite passes' thread-local off switches,
+# for the `rewrites` dual-pipeline differential. NOT a dual build: cargo
+# refuses a second renamed dependency on the same package ("depends on
+# crate `bumbledb v0.1.0` multiple times with different names"), so one
+# build carries both features and the runner flips the runtime switches
+# per pipeline (docs/prd-crucible/13-fuzz-query-rewrites.md, Results).
+bumbledb = { path = "../crates/bumbledb", features = ["chase-off", "fold-off"] }
 bumbledb-bench = { path = "../crates/bumbledb-bench" }
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [[bin]]
 name = "theory"
 path = "fuzz_targets/theory.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "query"
+path = "fuzz_targets/query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rewrites"
+path = "fuzz_targets/rewrites.rs"
 test = false
 doc = false
 bench = false

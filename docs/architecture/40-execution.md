@@ -362,7 +362,10 @@ never removals, so occurrence ids never move. Elimination removes atoms that
 statements prove redundant; evaluation removes atoms whose extension is
 stage-0-known by *running them at prepare*: `Kind(id: k, mastered == true)` is
 not a join to plan — it is a three-element id-set computed before the DP ever
-sees the query, residual cost zero.
+sees the query, residual cost zero. Both rewrites are continuously verified
+semantics-preserving by the rewrites fuzz target (`60-validation.md` § the
+fuzzing charter — the dual-pipeline differential through the `chase-off`
+switch).
 
 *Elimination.* An accepted containment
 `A(X | φ) <= B(Y | ψ)` makes the query's join of `A` to `B` on X→Y redundant
@@ -467,9 +470,11 @@ payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated
 `folded: !Kind{…} → {…} rejected`); the differential off-switch
 (`with_chase_disabled`) covers the evaluator inside the same fixpoint, and the
 dual-run corpus pins byte-identical results — the fold is never semantic.
-The normalization fold's narrower `with_fold_disabled` switch is compiled only
-under `cfg(test)` for its engine unit suites; the bench differential deliberately
-uses the chase switch because that switch covers the evaluator in the same fixpoint.
+The normalization fold's narrower `with_fold_disabled` switch is compiled under
+`cfg(any(test, feature = "fold-off"))` — the engine unit suites and, through the
+revived `fold-off` fuzz-oracle feature, the fuzz crate's rewrites dual-pipeline
+differential reach it; the bench differential deliberately uses the chase switch
+because that switch covers the evaluator in the same fixpoint.
 
 **Rule subsumption, the restricted witness.** After elimination, if one rule's
 normalized body equals a sibling's *modulo the filters elimination removed* —

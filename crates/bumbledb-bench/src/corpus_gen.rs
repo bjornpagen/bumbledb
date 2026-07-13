@@ -13,6 +13,7 @@
 
 mod corpus_digest;
 mod digest_hex;
+pub mod irgen;
 mod mandate;
 mod range_window;
 pub mod rng;

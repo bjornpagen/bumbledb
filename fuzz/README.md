@@ -16,8 +16,10 @@ cargo fuzz run theory -- -runs=100000  # one smoke unit
 | target | PRD | drives |
 | --- | --- | --- |
 | `theory` | 11 | schema acceptance: random `SchemaDescriptor` (valid and deliberately-invalid shapes) → `Db::create` judgment, under the no-panic / typed-rejection / determinism+reopen+`verify_store` oracles |
+| `query` | 13 | three-way parity over a cached Tiny target corpus: querygen's valid arm compared across the prepared engine, the naive model, and the `SQLite` lane where expressible (ψ-subset drops counted, never silent) with prepare/execute determinism; plus the hostile structurally-free-IR arm (`corpus_gen::irgen`) under the validation-totality oracle (typed rejection, TOTAL `ValidationError` census, deterministic verdicts) |
+| `rewrites` | 13 | the dual-pipeline differential: every query × draw executed through the rewritten pipeline (chase + statically-empty fold on) and the rewrite-free one (the `chase-off`/`fold-off` thread-local switches — ONE build; cargo refuses a dual-build dependency on one package), demanding identical result sets; non-vacuity tallied off the profile surface |
 
-Later PRDs add `ops` (12), `query` + `rewrites` (13), `crash` (14).
+Later PRDs add `ops` (12) and `crash` (14).
 
 ## Corpus policy
 
