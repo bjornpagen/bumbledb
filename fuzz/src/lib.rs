@@ -9,6 +9,7 @@
 //! engine error enums, so a future variant addition is a compile error
 //! here: the matcher is itself a census instrument.
 
+pub mod crash;
 pub mod query;
 pub mod rewrites;
 pub(crate) mod world;

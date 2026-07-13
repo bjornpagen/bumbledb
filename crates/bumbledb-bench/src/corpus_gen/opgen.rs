@@ -85,6 +85,114 @@ pub fn random_scenario(rng: &mut Rng) -> OpScenario {
     OpScenario { queries, ops }
 }
 
+/// One generated crash scenario (docs/prd-crucible/14-fuzz-crash.md):
+/// an ops prefix of commit-shaped deltas (each one write transaction)
+/// and ONE victim commit — the commit the crash harness kills at a
+/// drawn crashpoint. The generator draws shapes only; which crashpoints
+/// the victim actually reaches is the engine's business (a delta with
+/// no inserts never lies on the insert-path hooks — the runner's
+/// clean-exit arm owns that case).
+#[derive(Debug, Clone)]
+pub struct CrashScenario {
+    pub prefix: Vec<Delta>,
+    pub victim: Delta,
+}
+
+/// A crash scenario from one entropy stream, Tiny-bounded: the seed
+/// world as the opening prefix commit (real state on both sides), 0–2
+/// further mixed commits, then an insert-leaning victim (the
+/// namespace-write hooks lie on the insert path).
+pub fn random_crash_scenario(rng: &mut Rng) -> CrashScenario {
+    let cfg = GenConfig {
+        seed: rng.u64(),
+        scale: Scale::Tiny,
+    };
+    let world = world(rng);
+    let mut prefix = vec![seed_world(cfg, &world)];
+    for _ in 0..rng.range(3) {
+        prefix.push(batch(rng, cfg, &world, Kind::Mixed));
+    }
+    let kind = if rng.chance(1, 4) {
+        Kind::Mixed
+    } else {
+        Kind::Inserts
+    };
+    let victim = batch(rng, cfg, &world, kind);
+    CrashScenario { prefix, victim }
+}
+
+/// The deterministic crash-sweep matrix's cell count — the small
+/// ops-prefix matrix every crashpoint is killed against at least once
+/// (the sweep in `fuzz/tests/crash.rs`), never left to fuzzer luck.
+pub const CRASH_MATRIX_CELLS: usize = 3;
+
+/// One deterministic sweep cell: a fixed ops prefix and a victim commit
+/// CONSTRUCTED to lie on every crashpoint's path — accepted by the
+/// judgment (the co-located test pins it against the naive model) and
+/// touching every namespace family (inserts with guards and edges,
+/// deletes, moved row counts). The victims are whole-world replacements:
+/// delete one complete seed world, insert another — the final state is
+/// exactly the incoming seed world, valid by construction.
+///
+/// # Panics
+///
+/// On a cell index at or beyond [`CRASH_MATRIX_CELLS`].
+#[must_use]
+pub fn crash_matrix_scenario(cell: usize) -> CrashScenario {
+    let a = matrix_world_seed(0);
+    let b = matrix_world_seed(1);
+    let c = matrix_world_seed(2);
+    match cell {
+        0 => CrashScenario {
+            prefix: vec![],
+            victim: a,
+        },
+        1 => CrashScenario {
+            victim: replace(&a, b),
+            prefix: vec![a],
+        },
+        2 => CrashScenario {
+            victim: replace(&b, c),
+            prefix: vec![a.clone(), replace(&a, b)],
+        },
+        _ => panic!("crash matrix cell {cell} out of range"),
+    }
+}
+
+/// The sweep's fixed world ladder: strictly growing domains (every axis
+/// differs between steps, so a whole-world replacement always moves at
+/// least one row count — the `mid-write-s` hook's path) with per-step
+/// seeds (so replaced rows genuinely differ, never a no-op delta).
+fn matrix_world_seed(step: u64) -> Delta {
+    let accounts = 2 + step;
+    let world = Domains {
+        postings: 8 + 3 * step,
+        entries: 4 + 2 * step,
+        accounts,
+        holders: 1 + step,
+        instruments: 2 + step,
+        orgs: 2 + step,
+        mandates: accounts * interval_data::PER_GROUP,
+        transfers: 3 + step,
+        posting_tags: 8 + 3 * step,
+    };
+    let cfg = GenConfig {
+        seed: 0x14CA_5C4D ^ step.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+        scale: Scale::Tiny,
+    };
+    seed_world(cfg, &world)
+}
+
+/// A whole-world replacement delta: delete every fact of one seed
+/// world, insert every fact of another — judged against the final
+/// state, which is exactly the incoming world.
+fn replace(from: &Delta, to: Delta) -> Delta {
+    Delta {
+        deletes: from.inserts.clone(),
+        inserts: to.inserts,
+    }
+}
+
 /// One drawn step — the weighted alphabet. Every verb is reachable
 /// (the co-located coverage test pins it); commits outweigh the rest so
 /// staged batches actually reach the judgment.
@@ -306,8 +414,12 @@ fn index(rng: &mut Rng, n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{FuzzOp, random_scenario};
+    use super::{
+        CRASH_MATRIX_CELLS, FuzzOp, crash_matrix_scenario, random_crash_scenario, random_scenario,
+    };
     use crate::corpus_gen::Rng;
+    use crate::naive::NaiveDb;
+    use crate::querygen::target;
 
     fn verb(op: &FuzzOp) -> &'static str {
         match op {
@@ -384,6 +496,72 @@ mod tests {
         ];
         for verb in all {
             assert!(seen.contains(verb), "verb {verb} never drawn in 256 seeds");
+        }
+    }
+
+    /// The crash arm is deterministic in its entropy, and its victim is
+    /// never empty (an empty victim is the no-op commit — off every
+    /// crashpoint's path by the empty-delta gate).
+    #[test]
+    fn the_same_bytes_yield_the_same_crash_scenario() {
+        let bytes: Vec<u8> = (1..=256u64)
+            .flat_map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15).to_le_bytes())
+            .collect();
+        let first = format!("{:?}", random_crash_scenario(&mut Rng::from_bytes(&bytes)));
+        assert_eq!(
+            first,
+            format!("{:?}", random_crash_scenario(&mut Rng::from_bytes(&bytes))),
+            "same bytes, same crash scenario"
+        );
+        for seed in 0..64u64 {
+            let scenario = random_crash_scenario(&mut Rng::new(seed));
+            assert!(
+                !scenario.victim.deletes.is_empty() || !scenario.victim.inserts.is_empty(),
+                "seed {seed}: an empty victim commit"
+            );
+            assert!(
+                !scenario.prefix.is_empty(),
+                "the seed world opens the prefix"
+            );
+        }
+    }
+
+    /// The sweep matrix's contract, pinned against the naive model:
+    /// every cell's prefix commits are accepted, and every cell's victim
+    /// is accepted AND state-changing (the generation moves) — so all
+    /// ten crashpoints lie on the victim's path, deterministically,
+    /// never by fuzzer luck. Cells past 0 also exercise both delta
+    /// directions.
+    #[test]
+    fn every_crash_matrix_victim_is_accepted_and_state_changing() {
+        for cell in 0..CRASH_MATRIX_CELLS {
+            let scenario = crash_matrix_scenario(cell);
+            let mut model = NaiveDb::new(&target::descriptor());
+            for (i, delta) in scenario.prefix.iter().enumerate() {
+                assert!(
+                    model.apply(delta).is_ok(),
+                    "cell {cell}: prefix commit {i} rejected"
+                );
+            }
+            let before = model.generation();
+            assert!(
+                model.apply(&scenario.victim).is_ok(),
+                "cell {cell}: the victim commit is rejected"
+            );
+            assert!(
+                model.generation() > before,
+                "cell {cell}: the victim commit changed nothing"
+            );
+            assert!(
+                !scenario.victim.inserts.is_empty(),
+                "cell {cell}: the victim has no inserts (the F/M/U/R hooks are on the insert path)"
+            );
+            if cell > 0 {
+                assert!(
+                    !scenario.victim.deletes.is_empty(),
+                    "cell {cell}: a replacement victim must delete"
+                );
+            }
         }
     }
 }

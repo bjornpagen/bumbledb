@@ -122,6 +122,15 @@ pub use ir::normalize::with_fold_disabled;
 /// `rewrites` dual-pipeline differential enable.
 #[cfg(feature = "chase-off")]
 pub use plan::chase::with_chase_disabled;
+/// The crashpoint table (`storage/commit.rs`): the commit pipeline's
+/// named phase boundaries with their expected recovery sides, reachable
+/// only under the `crashpoint` fuzz-oracle feature. The detached fuzz
+/// crate's `crash` target (docs/prd-crucible/14-fuzz-crash.md) consumes
+/// the table as its single authority — the harness draws points from it
+/// and judges recovery by its sides, so the engine's claimed atomicity
+/// structure and the adversary's expectations are one value.
+#[cfg(feature = "crashpoint")]
+pub use storage::commit::{CRASHPOINTS, CrashpointSide};
 /// The storage format version (`storage/env.rs`), public so
 /// store-shaped derived identities (the bench corpus cache, stamps) can
 /// key on it: a format bump must regenerate every store-derived

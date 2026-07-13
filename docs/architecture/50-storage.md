@@ -220,9 +220,45 @@ variant agreement.
 
 User operation order inside the closure is therefore semantically irrelevant; the
 delete-before-insert trap and reference-insertion-ordering are unrepresentable. Crash
-consistency is LMDB atomicity — *tested* (crash/reopen family, `60-validation.md`).
-Dictionary entries are never removed (accepted leak; the delete path never *adds*
-one either — a never-interned value proves its fact absent).
+consistency is LMDB atomicity — *tested* (the kill-during-commit crash/reopen family,
+`60-validation.md`, plus the crashpoint table below, exercised adversarially by the
+`crash` fuzz target). Dictionary entries are never removed (accepted leak; the delete
+path never *adds* one either — a never-interned value proves its fact absent).
+
+**Crashpoints: the named atomicity structure.** Under the `crashpoint` feature (off
+by default; the hook macro expands to nothing without it, and the compiled hooks are
+inert unless `BUMBLEDB_CRASHPOINT` is set) every phase boundary above is NAMED, and a
+process whose environment names one aborts there — a real unclean death, no unwinding
+cleanup. The table (`storage/commit.rs`, the code authority the fuzz harness consumes)
+IS the claimed atomicity structure, reviewable in one grep of the hook macro's call
+sites, and the recovery claim it makes is proven per point by the `crash` fuzz target
+and its deterministic sweep (`60-validation.md` § the fuzzing charter): the store
+reopens, `verify_store` is green, full contents equal the pre-victim state at every
+point before `mdb_txn_commit` and the post-commit state after it (all-or-nothing —
+there is no third observable outcome), and re-running the torn commit lands its post
+state. We do not fault-inject the filesystem — LMDB owns that layer; we kill
+ourselves between logical phases.
+
+| crashpoint | where | recovery |
+| --- | --- | --- |
+| `after-staging` | staging over, before plan derivation | prefix |
+| `mid-write-m` | phase 2, after a fact's `M` put | prefix |
+| `mid-write-f` | phase 2, after a fact's `F` put | prefix |
+| `mid-write-u` | phase 2, after a `U` guard put | prefix |
+| `mid-write-r` | phase 2, after an `R` edge put | prefix |
+| `before-judgment` | phases 1–2 applied, before phase 3 | prefix |
+| `mid-write-s` | phase 4, after an `S` row-count put | prefix |
+| `after-judgment` | phases 3–4 done, before `mdb_txn_commit` | prefix |
+| `after-commit` | `mdb_txn_commit` returned, before the memo update | post |
+| `after-memo-update` | after the image-cache eviction and commit-seq bump | post |
+
+The counters-only no-op commit is deliberately outside the table: it never changes
+query-visible state, and its crash story is the existing kill test. The one
+recovery-side nuance, recorded: a prefix-side death during the very *first* commit
+recovers to the empty store, which the offline sweeper flags for unsatisfied domain
+quantifications by design (`30-dependencies.md` — closed-source statements are
+violated until their backings land); the crash oracle compares that case's findings
+against a fresh store's, exactly.
 
 Two write-side asymmetries, recorded as decisions rather than left as surprises:
 **R-delete verification** — deleting a fact deletes its `R` entries without

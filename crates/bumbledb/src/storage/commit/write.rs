@@ -8,7 +8,7 @@ use crate::storage::env::{Environment, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 
 use super::plan::plan_commit;
-use super::{Applied, CommitReport, apply, judgment};
+use super::{Applied, CommitReport, apply, crashpoint, judgment};
 
 /// The bound on [`commit_bounded`]'s retries of the transient
 /// commit-sync class — a decision, not a knob. With the 10 ms-doubling
@@ -104,6 +104,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         });
     }
 
+    crashpoint!("after-staging");
     let mut commit_span = obs::span(obs::names::COMMIT, obs::Category::Commit);
     // The plan: every derivable key byte and check set, computed as a
     // pure function of (delta, schema) before the write lock. Selection
@@ -121,6 +122,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             mut txn,
             row_id_next,
         } = apply(&plan, env)?;
+        crashpoint!("before-judgment");
 
         // Phase 3, the judgment phase: final-state probes inside this same
         // write transaction (LMDB write txns read their own writes) — the
@@ -143,6 +145,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         // commit.
         let new_generation = txn.generation()? + 1;
         txn.put_generation(new_generation)?;
+        crashpoint!("after-judgment");
 
         // Phase 5: LMDB commit (fsync per environment defaults) — the
         // fsync-bound number, isolated.
@@ -150,6 +153,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
             txn.commit()?;
         }
+        crashpoint!("after-commit");
         Ok(CommitReport {
             changed: true,
             new_generation,
@@ -215,6 +219,7 @@ fn flush_counters(
                 "S row count underflow",
             )))?;
         data.put(txn.raw_mut(), &key[..len], updated.to_le_bytes().as_slice())?;
+        crashpoint!("mid-write-s");
     }
     for (rel, next) in row_id_next {
         let len = keys::stat_key(&mut key, *rel, StatKind::RowIdHighWater);

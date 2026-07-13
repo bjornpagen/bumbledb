@@ -4,7 +4,7 @@ use super::{BULK_CHUNK, BulkLoadError, Db, Snapshot, WriteTx, WriterThreadReset}
 use crate::error::{Error, Result};
 use crate::ir::Value;
 use crate::schema::RelationId;
-use crate::storage::commit::commit;
+use crate::storage::commit::{commit, crashpoint};
 use crate::storage::delta::WriteDelta;
 
 /// A per-thread key, distinct process-wide (never 0). `ThreadId`
@@ -162,6 +162,7 @@ impl<S> Db<S> {
             // Invalidate any snapshot parked mid-write by a concurrent
             // reader: the next read must begin fresh.
             self.commit_seq.fetch_add(1, Ordering::Release);
+            crashpoint!("after-memo-update");
         }
         Ok(out)
     }

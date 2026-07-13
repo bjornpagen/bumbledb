@@ -77,3 +77,59 @@ the claimed atomicity structure, reviewable in one grep.
 The storage chapter gains the crashpoint table (the named atomicity
 structure) and the recovery claim it proves; the fuzzing charter gains
 the crash target's line.
+
+## Results (2026-07-13)
+
+**Landed.** The `crashpoint` feature (`crates/bumbledb/Cargo.toml`, not
+in default features), the hook macro + table + `crashpoint_hit` in
+`storage/commit.rs`, ten call sites — `grep -rn "crashpoint!"
+crates/bumbledb/src` returns exactly the table's rows: `after-staging`,
+`before-judgment`, `after-judgment`, `after-commit`, `mid-write-s`
+(`commit/write.rs`), `mid-write-m/f/u/r` (`commit/applier.rs`,
+insert path), `after-memo-update` (`api/db/write.rs`). Off, the macro
+expands to nothing; the table is `pub` (`bumbledb::CRASHPOINTS`) so the
+harness consumes the engine's own claim. Generation lives in
+`corpus_gen::opgen` (`random_crash_scenario`, `crash_matrix_scenario` —
+whole-world-replacement victims, pinned accepted + state-changing
+against the naive model in co-located tests); the runner in
+`fuzz/src/crash.rs`, the sweep + corpus replay in `fuzz/tests/crash.rs`.
+
+- **Feature unification, noted as directed:** `fuzz/Cargo.toml` enables
+  `crashpoint` for the ONE bumbledb build every target shares (the
+  chase-off/fold-off precedent). Safe: the hooks are inert without
+  `BUMBLEDB_CRASHPOINT`, which only the crash child ever sets — and only
+  between its prefix and its victim commit (prefix commits never trip).
+- **Child re-entry mechanics, recorded:** under `cargo fuzz` the child
+  is the fuzz binary in single-input mode with `-handle_abrt=0` (raw
+  death, no child artifacts); under `cargo test` it is the ignored
+  `crash_child` test body (the `crates/bumbledb/tests/crash.rs`
+  precedent). One wrinkle found and fixed in the harness: libFuzzer
+  tests the callback with an EMPTY input once at startup, so the child
+  reads its bytes from an env-pointed file under a once-guard instead of
+  trusting `data` (otherwise the probe pre-creates the store and the
+  real pass dies `AlreadyInitialized`). Classification is the marker
+  line the hook prints before aborting — an abort without it (a child
+  panic) is a finding.
+- **Deterministic sweep:** all 10 crashpoints × 3 prefix cells (first
+  commit ever; one committed world; two commits deep), every combination
+  REQUIRED to abort (clean exit fails the sweep) and recover per its
+  side, plus victim replay — green, ~3 s under plain `cargo test`.
+- **One semantics ruling, recorded (not a bug):** a prefix-side death
+  during the very first commit recovers to the EMPTY store, which
+  `verify_store` flags for unsatisfied domain quantifications by design
+  (closed-source statements hold only once their backings land — the
+  naive model documents the same division of authority). The oracle
+  compares that case's findings against a fresh store's, exactly;
+  every non-empty expected state asserts plain green.
+- **Smoke:** `cargo fuzz run crash -- -runs=10000 -fork=2` — 10,213
+  iterations, finding-free (0 oom/timeout/crash, exit 0), ~9–10 exec/s
+  aggregate (child spawn + LMDB-fsync commit rounds per iteration
+  dominate; contended with concurrent fuzz sessions), 1393 s ≈ 23 min
+  wall. The recorded rate is the budget's justification: crash stays a
+  lower-`-runs` target than the in-process lanes.
+- **Zero default-build impact:** `scripts/check-asm.sh` on a fresh
+  default-features release build — all gates green, no new failures
+  (the pre-recorded `position_matches` false positive did not
+  reproduce on this build; zero failures total). `cargo test -p
+  bumbledb` (default features) green; fmt + `clippy --workspace
+  --all-targets -- -D warnings` green.

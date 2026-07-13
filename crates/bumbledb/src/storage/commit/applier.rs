@@ -3,7 +3,7 @@ use crate::schema::{RelationId, StatementId};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 
 use super::plan::FactOp;
-use super::{Applier, decode_row_id, fact_by_row};
+use super::{Applier, crashpoint, decode_row_id, fact_by_row};
 
 impl Applier<'_> {
     /// Phase-1 step: removes one fact's F/M/U/R entries, every key byte
@@ -78,9 +78,11 @@ impl Applier<'_> {
             &self.key[..m_len],
             row_id.to_le_bytes().as_slice(),
         )?;
+        crashpoint!("mid-write-m");
         let f_len = keys::fact_key(&mut self.key, rel, row_id);
         self.data
             .put(self.txn.raw_mut(), &self.key[..f_len], op.fact)?;
+        crashpoint!("mid-write-f");
 
         for guard in &op.guards {
             let u_len = keys::guard_key(&mut self.key, rel, guard.statement, &guard.guard);
@@ -108,6 +110,7 @@ impl Applier<'_> {
                 &self.key[..u_len],
                 row_id.to_le_bytes().as_slice(),
             )?;
+            crashpoint!("mid-write-u");
             if guard.pointwise {
                 // The exact put cannot detect overlap — only equality —
                 // so a pointwise key additionally probes its ordered
@@ -119,6 +122,7 @@ impl Applier<'_> {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
+            crashpoint!("mid-write-r");
         }
         Ok(())
     }

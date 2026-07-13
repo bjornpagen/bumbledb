@@ -15,7 +15,12 @@ libfuzzer-sys = "0.4"
 # crate `bumbledb v0.1.0` multiple times with different names"), so one
 # build carries both features and the runner flips the runtime switches
 # per pipeline (docs/prd-crucible/13-fuzz-query-rewrites.md, Results).
-bumbledb = { path = "../crates/bumbledb", features = ["chase-off", "fold-off"] }
+# crashpoint: the commit pipeline's named abort hooks for the `crash`
+# target (docs/prd-crucible/14-fuzz-crash.md). One build carries the
+# feature for EVERY target here (cargo unifies features across this
+# crate's one bumbledb) — safe because the hooks are inert without the
+# BUMBLEDB_CRASHPOINT env var, which only the crash child ever sets.
+bumbledb = { path = "../crates/bumbledb", features = ["chase-off", "fold-off", "crashpoint"] }
 bumbledb-bench = { path = "../crates/bumbledb-bench" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
@@ -43,6 +48,13 @@ bench = false
 [[bin]]
 name = "rewrites"
 path = "fuzz_targets/rewrites.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crash"
+path = "fuzz_targets/crash.rs"
 test = false
 doc = false
 bench = false

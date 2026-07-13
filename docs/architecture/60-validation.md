@@ -446,7 +446,18 @@ runner.
   thread-local switches, one build — cargo refuses a dual-build
   dependency on one package), demanding identical result sets: the
   rewrite layers continuously proven semantics-preserving, never
-  assumed. Later targets extend the roster: `crash`.
+  assumed. `crash` — durability under torn commits: an ops prefix plus
+  one victim commit, replayed in a CHILD process that aborts at a drawn
+  crashpoint (the commit pipeline's named phase boundaries,
+  `50-storage.md` § crashpoints — engine hooks under the `crashpoint`
+  feature, env-var-armed, compiled to nothing by default); the parent
+  autopsies the corpse: reopen succeeds, `verify_store` green, full
+  contents equal the naive model at the point's expected side (prefix
+  before `mdb_txn_commit`, post after — all-or-nothing), and the victim
+  commit replays to the post state. A deterministic sweep
+  (`fuzz/tests/crash.rs`) kills every crashpoint × a small ops-prefix
+  matrix under plain `cargo test`; the fuzzer explores prefixes and
+  victims around them.
 - **Oracle discipline** (every iteration, all of them): *no-panic
   totality* — hostile input yields `Ok` or a typed error, any
   panic/abort is a finding by definition; *typed rejection* — every
@@ -547,8 +558,9 @@ the hot parameter; gates cite p95 where that matters.
 ## What we deliberately do not have
 
 Line-count gates. PRD-map checks. Banned-identifier greps. Coverage percentages.
-Allocation budget *tables*. Failpoint matrices (the crash/reopen family above replaces
-them with fewer, sharper tests). Trigger-emulated constraints in the oracle. The gate
+Allocation budget *tables*. Filesystem fault injection (LMDB owns that layer; the
+crashpoint table and the crash/reopen family kill the process between logical phases
+instead — fewer, sharper tests). Trigger-emulated constraints in the oracle. The gate
 surface is: `cargo fmt` / `clippy -D warnings` / `cargo test`, the two oracles, the
 differential suite, the allocation boolean, and the EXPLAIN family. A gate earns its
 place by catching a real bug class.
