@@ -10,8 +10,13 @@
 //! aside — the token stream never carries them): editing either copy
 //! without the other fails `doc_blocks_match_the_compiled_copies`.
 
+use std::collections::BTreeSet;
+
+use bumbledb::ir::Value;
 use bumbledb::ir::render::render;
-use bumbledb::{Db, Query, Schema, Theory};
+use bumbledb::{
+    Db, ParamArg, PreparedQuery, Query, ResultBuffer, ResultValue, Schema, Snapshot, Theory,
+};
 use bumbledb_query::query;
 
 const COOKBOOK: &str = include_str!("../../../docs/cookbook.md");
@@ -424,6 +429,34 @@ recipe!(r23, Gravestones, {
     Usage(meter, used) -> Usage;
 });
 
+recipe!(r24, Closure, {
+    pub Closure;
+
+    relation Node   { id: u64 as NodeId, fresh, name: str }
+    relation Parent { child: u64 as NodeId, parent: u64 as NodeId }
+
+    Parent(child) -> Parent;
+    Parent(child)  <= Node(id);
+    Parent(parent) <= Node(id);
+});
+
+recipe!(r25, Accounts, {
+    pub Accounts;
+
+    relation Account { id: u64 as AccountId, fresh, name: str }
+    relation AccountParent { child: u64 as AccountId, parent: u64 as AccountId }
+    relation Posting {
+        id: u64 as PostingId, fresh,
+        account: u64 as AccountId,
+        minor: i64,
+    }
+
+    AccountParent(child) -> AccountParent;
+    AccountParent(child)  <= Account(id);
+    AccountParent(parent) <= Account(id);
+    Posting(account) <= Account(id);
+});
+
 /// The roster, exhaustively — one entry per doc recipe, in doc order.
 struct Recipe {
     title: &'static str,
@@ -431,7 +464,7 @@ struct Recipe {
     validate: fn() -> Result<Schema, bumbledb::error::SchemaError>,
 }
 
-const ROSTER: [Recipe; 23] = [
+const ROSTER: [Recipe; 25] = [
     Recipe {
         title: "The minimal interval schema",
         source: r01::SOURCE,
@@ -547,6 +580,16 @@ const ROSTER: [Recipe; 23] = [
         source: r23::SOURCE,
         validate: r23::validate,
     },
+    Recipe {
+        title: "The closure idiom",
+        source: r24::SOURCE,
+        validate: r24::validate,
+    },
+    Recipe {
+        title: "The chart of accounts",
+        source: r25::SOURCE,
+        validate: r25::validate,
+    },
 ];
 
 /// Comments and whitespace out; what remains is exactly what the token
@@ -604,7 +647,7 @@ fn the_doc_roster_is_exactly_this_roster() {
         "doc recipes and test entries must correspond one-to-one"
     );
     for (i, ((n, title), recipe)) in headings.iter().zip(ROSTER.iter()).enumerate() {
-        assert_eq!(*n, i + 1, "recipe numbering is 1..=23 in order");
+        assert_eq!(*n, i + 1, "recipe numbering is 1..=25 in order");
         assert_eq!(title, recipe.title, "recipe {} title", i + 1);
     }
 }
@@ -829,4 +872,166 @@ fn r08_sub_vocabulary_violating_insert_aborts() {
         matches!(err, bumbledb::Error::ContainmentViolation { .. }),
         "a non-paging escalation violates the ψ-selected containment: {err:?}"
     );
+}
+
+/// Recipes 24–25's loop, compiled — the doc's pseudocode as a host
+/// function: `frontier = {root}; seen = {root}`, each round binds the
+/// frontier as the ∈-set param, subtracts `seen`, and stops on an empty
+/// delta. Host-driven semi-naive reachability, verbatim.
+fn reachable<S>(
+    snap: &Snapshot<'_, S>,
+    children: &mut PreparedQuery<'_, S>,
+    root: u64,
+) -> bumbledb::Result<BTreeSet<u64>> {
+    let mut seen = BTreeSet::from([root]);
+    let mut frontier = vec![root];
+    let mut out = ResultBuffer::new();
+    loop {
+        let params: Vec<Value> = frontier.iter().map(|&n| Value::U64(n)).collect();
+        snap.execute_args(children, &[ParamArg::Set(&params)], &mut out)?;
+        frontier.clear();
+        for row in 0..out.len() {
+            let ResultValue::U64(child) = out.get(row, 0) else {
+                panic!("the frontier query finds one u64 column");
+            };
+            if seen.insert(child) {
+                frontier.push(child);
+            }
+        }
+        if frontier.is_empty() {
+            return Ok(seen);
+        }
+    }
+}
+
+/// Recipe 24: the closure idiom — the loop above over a three-level
+/// tree, asserting the exact reachable set (the stray root excluded,
+/// an interior node reaching exactly its own subtree).
+#[test]
+fn r24_closure_idiom_reaches_the_exact_set() {
+    use r24::{Closure, Node, NodeId, Parent};
+    let dir = TempDir::new("r24-closure");
+    let db = Db::create(dir.path(), Closure).expect("create the Closure store");
+    let ids = db
+        .write(|tx| {
+            let mut ids: Vec<NodeId> = Vec::new();
+            for name in ["root", "a", "b", "c", "d", "e", "stray"] {
+                let id: NodeId = tx.alloc()?;
+                tx.insert(&Node { id, name })?;
+                ids.push(id);
+            }
+            // Three levels: root → {a, b}, a → {c, d}, b → {e};
+            // `stray` is a second root the closure must never reach.
+            for (child, parent) in [(1usize, 0usize), (2, 0), (3, 1), (4, 1), (5, 2)] {
+                tx.insert(&Parent {
+                    child: ids[child],
+                    parent: ids[parent],
+                })?;
+            }
+            Ok(ids)
+        })
+        .expect("seed the tree");
+
+    let children = query!(r24::Closure {
+        (c) | Parent(child: c, parent in ?frontier);
+    });
+    let mut prepared = db.prepare(&children).expect("prepare the frontier query");
+    db.read(|snap| {
+        let from_root = reachable(snap, &mut prepared, ids[0].0)?;
+        let whole_tree: BTreeSet<u64> = ids[..6].iter().map(|id| id.0).collect();
+        assert_eq!(
+            from_root, whole_tree,
+            "the root reaches the whole tree and never the stray"
+        );
+        let from_a = reachable(snap, &mut prepared, ids[1].0)?;
+        let a_subtree: BTreeSet<u64> = BTreeSet::from([ids[1].0, ids[3].0, ids[4].0]);
+        assert_eq!(
+            from_a, a_subtree,
+            "an interior node reaches exactly its own subtree"
+        );
+        Ok(())
+    })
+    .expect("the closure loop reaches its fixpoint");
+}
+
+/// Recipe 25: the chart of accounts — the closure idiom composed with
+/// one `Sum` over the accumulated ∈-set; the hand-computed subtree
+/// rollup over a three-level hierarchy with postings.
+#[test]
+fn r25_subtree_rollup_matches_the_hand_computed_sum() {
+    use r25::{Account, AccountId, AccountParent, Accounts, Posting, PostingId};
+    let dir = TempDir::new("r25-accounts");
+    let db = Db::create(dir.path(), Accounts).expect("create the Accounts store");
+    let ids = db
+        .write(|tx| {
+            let mut ids: Vec<AccountId> = Vec::new();
+            for name in ["assets", "cash", "receivables", "checking", "savings"] {
+                let id: AccountId = tx.alloc()?;
+                tx.insert(&Account { id, name })?;
+                ids.push(id);
+            }
+            // Three levels: assets → {cash, receivables}, cash → {checking, savings}.
+            for (child, parent) in [(1usize, 0usize), (2, 0), (3, 1), (4, 1)] {
+                tx.insert(&AccountParent {
+                    child: ids[child],
+                    parent: ids[parent],
+                })?;
+            }
+            // Postings — the two equal 700s to checking are distinct facts
+            // (the fresh id keeps both bindings; recipe 19's discipline).
+            for (account, minor) in [
+                (3usize, 5_000i64),
+                (3, 700),
+                (3, 700),
+                (4, 30),
+                (1, 2),
+                (2, 9_999),
+                (0, 1),
+            ] {
+                let id: PostingId = tx.alloc()?;
+                tx.insert(&Posting {
+                    id,
+                    account: ids[account],
+                    minor,
+                })?;
+            }
+            Ok(ids)
+        })
+        .expect("seed the hierarchy and its postings");
+
+    let children = query!(r25::Accounts {
+        (c) | AccountParent(child: c, parent in ?frontier);
+    });
+    let rollup = query!(r25::Accounts {
+        (total: Sum(minor)) | Posting(id, account in ?subtree, minor);
+    });
+    let mut frontier_q = db.prepare(&children).expect("prepare the frontier query");
+    let mut rollup_q = db.prepare(&rollup).expect("prepare the rollup");
+    let sum_over = |snap: &Snapshot<'_, Accounts>,
+                    rollup_q: &mut PreparedQuery<'_, Accounts>,
+                    subtree: &BTreeSet<u64>|
+     -> bumbledb::Result<i64> {
+        let set: Vec<Value> = subtree.iter().map(|&a| Value::U64(a)).collect();
+        let mut out = ResultBuffer::new();
+        snap.execute_args(rollup_q, &[ParamArg::Set(&set)], &mut out)?;
+        assert_eq!(out.len(), 1, "one all-aggregate row");
+        let ResultValue::I64(total) = out.get(0, 0) else {
+            panic!("the rollup sums an i64 column");
+        };
+        Ok(total)
+    };
+    db.read(|snap| {
+        // The cash subtree: {cash, checking, savings} — closure, then one Sum.
+        let cash_subtree = reachable(snap, &mut frontier_q, ids[1].0)?;
+        let expected: BTreeSet<u64> = BTreeSet::from([ids[1].0, ids[3].0, ids[4].0]);
+        assert_eq!(cash_subtree, expected, "the cash subtree, exactly");
+        // Hand-computed: checking 5000 + 700 + 700, savings 30, cash 2 = 6432;
+        // receivables' 9999 and the assets root's own 1 are outside.
+        assert_eq!(sum_over(snap, &mut rollup_q, &cash_subtree)?, 6_432);
+        // The whole-tree rollup from the root: 6432 + 9999 + 1 = 16432.
+        let all = reachable(snap, &mut frontier_q, ids[0].0)?;
+        assert_eq!(sum_over(snap, &mut rollup_q, &all)?, 16_432);
+        Ok(())
+    })
+    .expect("the rollup composes the closure with one Sum");
 }

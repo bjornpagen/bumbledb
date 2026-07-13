@@ -78,8 +78,49 @@ pre-rules query is a one-rule program.
 - **Params are query-global**: one binding surface; any rule may reference
   any param, and every rule's anchors must resolve one type per param.
 - Rules are deliberately **one step short of the fixpoint**: a rule's head
-  is never a body atom, so no recursion is expressible. The recursion `OPEN`
-  item (below) gains its landing pad here and is not entered.
+  is never a body atom, so no recursion is expressible. The recursion
+  refusal (next section) gains its landing pad here and is not entered.
+
+## Engine recursion — refused (recorded 2026-07, with its trigger)
+
+**The derivation, three legs.** *No census sighting*: the 2026-07 recursion
+analysis found none — both censused applications' query surfaces collapse
+onto the current IR. *The closure idiom covers the sighted class*: the
+censused hierarchies are depth-bounded, and host-driven semi-naive
+reachability over one ∈-set query — `docs/cookbook.md` recipe 24 (the
+idiom) and recipe 25 (the ledger's subtree rollup, closure composed with
+one `Sum`) — computes their closures in depth-many microsecond-class
+rounds on the engine as it stands. *The constraint-side motivation is
+void*: recursive commit-time judgments (acyclicity, closure-sound rollups)
+fail the acceptance gate categorically — a judgment is accepted only with
+an enforcement plan costing O(log n) per delta-touched fact, and a
+fixpoint judgment's blast radius is the store (`30-dependencies.md` § the
+acceptance gate) — so recursion buys the statement vocabulary nothing.
+
+**The trigger, three clauses** — a real workload where the idiom
+*measurably* fails:
+
+1. **Unbounded or large depth**: the host loop's per-round query cost
+   stops being noise.
+2. **Closure composed into a larger plan**: the reachable set must join
+   further *inside one plan* for performance — the per-hop host round trip
+   is the measured bottleneck.
+3. **Interval-intersection-along-paths** — the chain-window class ("the
+   window over which an entire path holds"): the idiom carries the window
+   in the host's frontier, one intersection per hop, and a workload this
+   clause dominates re-opens theory before engineering.
+
+The execution plan is pre-paid: the full recursion design — IR cut,
+stratification, delta rewrite, transient images, driver, oracles,
+notation — is a paper proof with a seam ledger in
+`docs/reference/recursion-design.md`; a firing trigger goes through that
+ledger, not around it. The rules shape (§ above) is the landing pad,
+deliberately not entered — a query is already a non-recursive Datalog
+program, one step short of the fixpoint — and nothing in this chapter
+assumes the step is never taken. Until a trigger fires, the dogfooding
+period is the census instrument: reachability needs go through the
+cookbook recipes, and the day one fails on a clause above is the day this
+refusal earns its reversal.
 
 ## Semantics
 
@@ -772,12 +813,3 @@ pin-at-prepare, extended to set cardinality. **Alternative:** re-plan on bind-si
 drift. **Why it lost:** same reason as stats-driven invalidation — an honest trigger
 re-plans constantly and allocates on the hot path. **Reverses if:** the benchmark
 shows a stale-plan regression a re-prepare wouldn't have.
-
-## `OPEN` extensions (designed-for, not built)
-
-**Recursion** = an explicit fixpoint construct, semi-naive, if a real need appears —
-the surveyed workloads precompute their closures and the modeling discipline blesses
-that (`10-data-model.md`). The rules shape is its landing pad, deliberately
-not entered: a query is already a non-recursive Datalog program, one step
-short of the fixpoint — a rule's head is never a body atom. It arrives as a
-new IR node kind; nothing above assumes it never comes.

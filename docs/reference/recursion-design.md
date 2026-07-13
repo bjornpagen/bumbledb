@@ -43,7 +43,7 @@ working alternative; its three clauses map onto this paper as:
 
 A query is already a non-recursive Datalog program — one head, a rule
 list, one step short of the fixpoint because a rule's head is never a
-body atom (`20-query-ir.md` § the query shape; the `OPEN` extension
+body atom (`20-query-ir.md` § the query shape; the recursion refusal
 names this exact landing pad). The cut takes that step and nothing
 else:
 
