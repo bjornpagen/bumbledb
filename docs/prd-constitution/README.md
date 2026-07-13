@@ -24,18 +24,19 @@ Phase B — soundness by representation (the P0s)
 - `03-coverage-evidence.md` — `Enforcement::Probe { coverage: bool }`
   splits into `ScalarProbe` / `IntervalCoverage { DisjointGuardProof }`;
   the coverage sweep consumes proof, not prose.
-- `04-member-set.md` — `MemberSet` + `RowIndex` replace the raw
+- `04-member-set.md` — `MemberSet` + `AxiomIndex` replace the raw
   `[u64; 4]` + free-function membership.
 - `05-generation-id.md` — `GenerationId` + `CommitSeq` newtypes over
   the bare `u64`s.
 
 Phase C — one word, one meaning (the vocabulary sweep)
 - `06-point-in.md` — `CmpOp::Contains` → `CmpOp::PointIn`.
-- `07-closed-fold.md` — `plan/chase` → `plan/closed_fold`; the
-  `chase-off` feature → `closed-fold-off`; the docs stop implying the
-  dependency-theory chase.
-- `08-key-index.md` — the storage `guard` vocabulary → `key_index`;
-  raw guard bytes → `KeyImage`; `GuardRule`/`GuardPlan` → the
+- `07-grounding.md` — `plan/chase` → `plan/ground`; the `chase-off`
+  feature → `ground-off`; the pass is named what it is in the Datalog
+  literature: grounding the sealed atoms.
+- `08-determinant.md` — the storage `guard` vocabulary → the
+  `determinant` family (the FD's left side, materialized); raw guard
+  bytes → `DeterminantImage`; `GuardRule`/`GuardPlan` → the
   `KeyProbe` family.
 - `09-measure.md` — `Term::Duration`/`FindTerm::Duration` →
   `Measure` in the IR; `Duration` stays the surface keyword.
@@ -51,11 +52,12 @@ Phase D — the public meaning made honest
   correspondence; the reverse-key rejection lock.
 - `13-denotation.md` — the normative denotational contract completed
   in `20-query-ir.md` (matching equation, three equality levels,
-  tuple-level dedup, glossary).
+  answer-level dedup, the fact/answer/tuple glossary) + the answer
+  vocabulary cutover in the API surface.
 - `14-diagnostics.md` — `NoMatchingTargetKey` carries the available
   keys; redundant-superkey warning; unresolved-literal visibility;
   negated-binder lock tests.
-- `15-explain-contract.md` — EXPLAIN goes from "stable-ish" to a
+- `15-explain-contract.md` — plan introspection goes from "stable-ish"
   versioned deterministic contract with goldens.
 - `16-arg-grammar.md` — `ArgMax`/`ArgMin` enter the `query!` grammar;
   the render/parse asymmetry dies.
@@ -81,9 +83,30 @@ Dependency spine: 01 first (the docs PRDs cite its table). Phase B in
 order 02 → 03 (03 consumes 02's types in evidence structs), 04/05 free.
 Phase C after Phase B (avoid double-churn in the same files); 07 and 08
 are the big sweeps and run solo. Phase D after Phase C (docs cite final
-names). 18 last, always.
+names). 23 last, always. (Numbering note: 18 is deliberately vacant —
+the census moved from 18 to 23 when Phase E landed; nothing is
+missing.)
 
 ## Policies
+
+0. **The language law (final pass, 2026-07-13).** Whenever a concept
+   has a dependency-theory or Datalog name, that name wins — hard
+   cutover, no SQL vernacular. The binding table:
+   | concept | the word | banned alternatives |
+   |---|---|---|
+   | left side of an FD | **determinant** | key index, guard, index entry |
+   | `R(X) -> R` declaration | **functionality** (a functional dependency; a key when it determines the whole fact) | constraint, unique |
+   | `A(X\|φ) <= B(Y\|ψ)` | **containment** (inclusion dependency over selected projected views) | foreign key |
+   | query output tuple | **answer** | row, result row, record |
+   | stored tuple | **fact** | row |
+   | closed-relation element | **ground axiom** | row (except "roster row" in ledgers) |
+   | replacing sealed atoms by their finite extensions | **grounding** | chase, closed fold, join elimination |
+   | negation soundness | **range restriction / safety** | scoping |
+   | finite value universe | **active domain** | — |
+   "Row" survives only where it names a physical artifact (row stride)
+   or an external system's concept (SQLite rows in the differential).
+   PRD prose, code identifiers, diagnostics, and docs all obey; the
+   census (PRD 23) audits the table.
 
 1. **The fingerprint does not move.** `schema/fingerprint.rs` hashes
    declared statements and structural types only — sealed enforcement
@@ -179,9 +202,13 @@ additions became PRDs 19–22 and the amendments noted in PRDs 03, 05,
 10, 11, 12, 16, 17. Refusals joined the ledger above.
 
 - A1 → PRD 02 (UpperBound/point-newtype sub-items refused, above).
-- A2 → PRDs 06/07/08/10 + 13's glossary; `Functionality → Key`
-  descriptor rename APPROVED into PRD 10; `ViewContainment` and
-  binder-split refused (above).
+- A2 → PRDs 06/07/08/10 + 13's glossary; the brief's `Functionality →
+  Key` descriptor rename was briefly approved and then REVERSED by the
+  language law (2026-07-13 final pass): `Functionality` IS the
+  dependency-theory word and stays at the declaration layer; the sealed
+  layer's `KeyStatement`/`KeyId` also stays (key is equally academic —
+  Codd/Fagin vocabulary); diagnostics say "functionality (functional
+  dependency)". `ViewContainment` and binder-split refused (above).
 - A3 → SUPERSEDED (witness pipeline); canonical-form refused with
   trigger.
 - A4 → PRD 03; `FieldSet`/`Projection` carriers APPROVED into PRD 03.

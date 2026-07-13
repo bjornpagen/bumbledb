@@ -9,7 +9,7 @@ source changes expected (any engine limit the sweep exposes is a
 policy-5 finding).
 **Authority:** brief B1, approved: the theory says containment and
 keyed equality work uniformly at every projection arity and scalar-type
-mix up to the encoded-width bound (`MAX_KEY_IMAGE_WIDTH`); the
+mix up to the encoded-width bound (`MAX_DETERMINANT_WIDTH`); the
 generators currently exercise a narrow habitual band, so uniformity is
 a claim with a coverage hole. This is completion of an existing general
 mechanism's VERIFICATION, not new semantics.

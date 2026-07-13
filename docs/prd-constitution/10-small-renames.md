@@ -14,7 +14,7 @@ mechanical and none interacts.
 diagnostics (a small unrepresentable-state upgrade: the generic
 `IllegalComparison` stops covering four distinguishable causes).
 
-## Context (decided shape) — five cuts
+## Context (decided shape) — four cuts
 
 1. **pitch → stride.** `image/pitch.rs` → `image/stride.rs`;
    `PitchPadder` → `StridePadder`; `PAD_MIN_PITCH` → `PAD_MIN_STRIDE`;
@@ -32,18 +32,7 @@ diagnostics (a small unrepresentable-state upgrade: the generic
    counter-capacity exhaustion, not arithmetic overflow; the display
    string follows ("origin capacity exceeded"). `OverflowKind::
    Aggregate` untouched (that one IS arithmetic).
-4. **Functionality → Key at the declaration layer (brief A2,
-   approved).** `StatementDescriptor::Functionality` →
-   `StatementDescriptor::Key` (schema.rs:220 and the two
-   materialization sites :335/:352), `DuplicateFunctionality` →
-   `DuplicateKey`, macro lowering follows, display strings say "key"
-   with the theory gloss once per chapter ("a key — a functional
-   dependency `R(X) -> R`"). This aligns the declaration layer with
-   the sealed layer, which already says `KeyStatement`/`KeyId`. The
-   docs KEEP "functional dependency" as the theory name on first
-   use; grep-zero is on the IDENTIFIERS only, not the prose word
-   "functionality" in theory context (each survivor listed).
-5. **Typed order refusals.** `screen_order_operand` grows two arms:
+4. **Typed order refusals.** `screen_order_operand` grows two arms:
    `ValidationError::OrderComparisonOnString { index }` and
    `OrderComparisonOnBool { index }` (siblings of the existing
    `OrderComparisonOnInterval`/`OnFixedBytes`), replacing the
@@ -69,8 +58,6 @@ first), not by leaving both.
   `grep -rn "image/distinct\|DistinctCounter" crates` → zero;
   `grep -rn "OverflowKind::Origins\b" crates` → zero.
 - `[shape]` `grep -n "OrderComparisonOnString\|OrderComparisonOnBool" crates/bumbledb/src/error.rs` → both present.
-- `[shape]` `grep -rn "StatementDescriptor::Functionality\|DuplicateFunctionality" crates` → zero; fingerprint pin green (the
-  fingerprint hashes a form TAG, not the variant name — assert).
 - `[test]` str-order and bool-order rejection locks green (dedicated
   variants asserted); pitch/stride tests green with unchanged measured
   values; full suite green.

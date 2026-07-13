@@ -18,27 +18,28 @@ membership rule becomes a method contract.
 
 ```rust
 /// A closed relation's compiled member set: one bit per sealed
-/// extension row, in sealed extension order. Out-of-range indices are
+/// ground axiom, in sealed extension order. Out-of-range indices are
 /// simply absent — the query-surface rule, now a method contract.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MemberSet { words: [u64; 4] }
 
-/// Index of a row in a sealed closed extension (≤ 256 rows by the
-/// existing extension bound).
+/// Index of a ground axiom in a sealed closed extension (≤ 256 by the
+/// existing extension bound). The language law: closed elements are
+/// ground axioms, not rows.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RowIndex(pub(crate) u16);
+pub(crate) struct AxiomIndex(pub(crate) u16);
 
 impl MemberSet {
-    pub(crate) fn contains(&self, idx: RowIndex) -> bool { … }
-    pub(crate) fn insert(&mut self, idx: RowIndex) { … }
+    pub(crate) fn contains(&self, idx: AxiomIndex) -> bool { … }
+    pub(crate) fn insert(&mut self, idx: AxiomIndex) { … }
 }
 ```
 
 - `Enforcement::Closed { members: MemberSet }`.
 - `closed_member(&[u64;4], u64)` is DELETED; the four call sites move
-  to `members.contains(RowIndex(..))`. Where today's callers pass a
-  `u64` id, the conversion to `RowIndex` happens at the boundary that
-  KNOWS the id is a row index (the closed-image lookup) — a caller
+  to `members.contains(AxiomIndex(..))`. Where today's callers pass a
+  `u64` id, the conversion to `AxiomIndex` happens at the boundary that
+  KNOWS the id is an axiom index (the closed-image lookup) — a caller
   holding an arbitrary u64 must go through a fallible narrowing that
   encodes the absent-when-out-of-range rule.
 - The 256 bound: `insert` on an index ≥ 256 is unreachable by

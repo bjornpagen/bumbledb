@@ -1,7 +1,7 @@
 # PRD 22 — The verifier matrix: one corruption fixture per rebuilt claim
 
 **Depends on:** 08 (verify_store files carry final names).
-**Modules:** `crates/bumbledb/src/verify_store/` (facts, key_index,
+**Modules:** `crates/bumbledb/src/verify_store/` (facts, determinants,
 containment/reverse-edge, coverage, closed-image, fingerprint passes —
 enumerate what exists), its test suite, possibly small additions to
 the fixture harness (raw-byte write access for tests, following the

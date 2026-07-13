@@ -1,4 +1,4 @@
-# PRD 15 — The EXPLAIN contract: "stable-ish" becomes a versioned promise
+# PRD 15 — The introspection contract: "stable-ish" becomes a versioned promise
 
 **Depends on:** 07, 08, 14 (every rename that touches EXPLAIN strings
 has landed; the goldens pin the FINAL vocabulary once).
@@ -17,9 +17,12 @@ and goldens.
 
 ## Context (decided shape)
 
-1. **The version tag.** EXPLAIN output begins with one line:
-   `explain v1` (and `into_stats`' structured form carries
-   `explain_version: 1`). The rule, stated in the module header
+1. **The version tag.** The introspection report begins with one
+   line: `introspection v1` (and `into_stats`' structured form
+   carries `introspection_version: 1`). The language law applies:
+   "EXPLAIN" survives only as the colloquial gloss in docs ("plan
+   introspection — EXPLAIN, colloquially"); the artifact, its version
+   line, and identifiers say introspection. The rule, stated in the module header
    replacing "stable-ish": within one version, byte-identical output
    for identical (schema fingerprint, canonical query, param types,
    feature set); ANY change to content or ordering bumps the version.

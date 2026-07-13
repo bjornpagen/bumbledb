@@ -15,12 +15,19 @@ dated evidence.
 1. **Vocabulary battery** — all dead tokens grep-zero across `crates/
    fuzz/ scripts/ docs/` (packet ledger files exempt): `CmpOp::Contains`,
    `ContainsVarVar`, `ContainsVarPoint`, `chase` (case-insensitive),
-   `chase-off`, `guard` (domain sense — idiom survivors re-verified
-   against PRD 08's list), `pitch`, `DistinctCounter`,
+   `chase-off`, `closed_fold`, `key_index`, `KeyImage`, `guard` (domain
+   sense — idiom survivors re-verified against PRD 08's list),
+   `pitch`, `DistinctCounter`,
    `OverflowKind::Origins`, `Term::Duration`, `AggregateDuration`,
    `closed_member`, `coverage: bool`, `Enforcement::Probe`,
-   `stable-ish`, `"tiling"` in cookbook outside the recorded survivors,
-   `StatementDescriptor::Functionality`, `DuplicateFunctionality`.
+   `stable-ish`, `"tiling"` in cookbook outside the recorded survivors.
+   REMOVED from the dead list by the language law:
+   `StatementDescriptor::Functionality` and `DuplicateFunctionality`
+   LIVE (the theory word stays; verify both still exist). NEW battery:
+   the language-law table (README policy 0) — grep each banned
+   alternative in its concept's domain (answer-vocabulary: `Rows`
+   as the public answer carrier; "result row"/"row" for query output
+   in docs; "foreign key" outside SQLite-differential context).
 2. **Representation battery** — `debug_assert` in encoding/encode.rs =
    0; `DisjointGuardProof` construction sites = 1; `DistinctWitness`
    mint sites = 1; `MemberSet` the only `[u64;4]` in schema.rs;
@@ -44,7 +51,7 @@ dated evidence.
 
 ## The terminal gate
 
-`scripts/check.sh` exit 0 (including the renamed `closed-fold-off`
+`scripts/check.sh` exit 0 (including the renamed `ground-off`
 matrix line); `scripts/check-asm.sh` exit 0 on a fresh release build;
 `cargo test` in fuzz/ exit 0 (replay + sweep suites); the corpus digest
 pin and the fingerprint pin byte-untouched across the whole campaign
