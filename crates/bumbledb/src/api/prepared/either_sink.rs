@@ -19,7 +19,7 @@ impl EitherSink {
     /// untouched.
     pub(super) fn aim(&mut self, finds: &[FindSpec], slot_count: usize) {
         match self {
-            Self::Projection(sink) => sink.aim(finds),
+            Self::Projection(sink) => sink.aim(finds, slot_count),
             Self::Aggregate(sink) => sink.aim(finds, slot_count),
         }
     }

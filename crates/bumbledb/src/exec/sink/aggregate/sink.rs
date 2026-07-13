@@ -1,7 +1,7 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::kernel;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, Sink};
-use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FindSpec, FoldOp};
+use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FoldOp, SinkSpec};
 use crate::image::ColumnView;
 
 impl Sink for AggregateSink {
@@ -39,7 +39,7 @@ impl Sink for AggregateSink {
         }
         self.scan_sources.clear();
         for find in &self.finds {
-            let FindSpec::Agg { over_slot, .. } = find else {
+            let SinkSpec::Agg { over_slot, .. } = find else {
                 continue;
             };
             let source = over_slot.and_then(|slot| scan.key_slots.iter().position(|k| *k == slot));
@@ -59,7 +59,7 @@ impl Sink for AggregateSink {
         // bindings are constant for this node entry).
         self.acc_scratch.clear();
         for find in &self.finds {
-            if let FindSpec::Agg { op, signed, .. } = find {
+            if let SinkSpec::Agg { op, signed, .. } = find {
                 self.acc_scratch.push(match (op, signed) {
                     (FoldOp::Sum, true) => Acc::SumSigned(0),
                     (FoldOp::Sum, false) => Acc::SumUnsigned(0),
@@ -83,7 +83,7 @@ impl Sink for AggregateSink {
         self.scan_count += run.len() as u64;
         let mut cursor = 0;
         for find in &self.finds {
-            let FindSpec::Agg { op, .. } = find else {
+            let SinkSpec::Agg { op, .. } = find else {
                 continue;
             };
             let source = self.scan_sources[cursor];
@@ -133,7 +133,7 @@ impl Sink for AggregateSink {
         // Finish the outer-sourced and Count partials.
         let mut cursor = 0;
         for find in &self.finds {
-            let FindSpec::Agg { op, over_slot, .. } = find else {
+            let SinkSpec::Agg { op, over_slot, .. } = find else {
                 continue;
             };
             let source = self.scan_sources[cursor];

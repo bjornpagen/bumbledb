@@ -99,6 +99,32 @@ pub enum FindSpec {
     Pack { slot: usize },
 }
 
+/// What a sink executes after construction parsed [`FindSpec`]. Measures
+/// have already become derived scratch words, so the symbolic
+/// `Duration`/`AggDuration` shapes cannot reach any execution consumer.
+/// Minted only by `aggregate::parse_finds`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SinkSpec {
+    /// A projected/group-key slot span.
+    Var { slot: usize, width: usize },
+    /// A fold over a slot span (`over_slot: None` for nullary Count).
+    Agg {
+        op: FoldOp,
+        over_slot: Option<usize>,
+        over_width: usize,
+        signed: bool,
+    },
+    /// An Arg-restriction carry and its shared extreme key.
+    Arg {
+        slot: usize,
+        width: usize,
+        key_slot: usize,
+        max: bool,
+    },
+    /// A coalescing interval claim.
+    Pack { slot: usize },
+}
+
 /// A fold aggregate's operator, execution-side: exactly the ops that fold
 /// into an [`Acc`] — the Arg ops are not folds (they restrict the binding
 /// set; [`FindSpec::Arg`]) and are unrepresentable here.
@@ -139,42 +165,50 @@ pub enum ProjSource {
     Measure { start: usize },
 }
 
-impl ProjSource {
-    /// The plain slot — the measure-free fast paths' accessor (they run
-    /// only when the sink projects no measure).
-    fn plain_slot(self) -> usize {
-        match self {
-            Self::Slot(slot) => slot,
-            Self::Measure { .. } => unreachable!("measure sinks take the per-row paths"),
-        }
-    }
+/// Projection execution is either all direct slots (the fast paths) or
+/// includes a computed measure (the ray-checking paths). The sum removes
+/// the former `has_measures` flag + per-source assertion agreement.
+#[derive(Debug)]
+enum ProjectionSources {
+    Plain(Vec<usize>),
+    Measured(Vec<ProjSource>),
 }
 
 /// Expands find specs into projected word sources, find-**word** order:
 /// an interval find contributes its two consecutive slots (the
 /// `SlotWidth` layout), a measure find one computed word.
-pub(crate) fn sources_of(finds: &[FindSpec]) -> Vec<ProjSource> {
+fn sources_of(finds: &[SinkSpec], measures: &[(usize, usize)]) -> ProjectionSources {
     let mut sources = Vec::new();
-    extend_sources(finds, &mut sources);
-    sources
+    extend_sources(finds, measures, &mut sources);
+    if measures.is_empty() {
+        ProjectionSources::Plain(
+            sources
+                .into_iter()
+                .filter_map(|source| match source {
+                    ProjSource::Slot(slot) => Some(slot),
+                    ProjSource::Measure { .. } => None,
+                })
+                .collect(),
+        )
+    } else {
+        ProjectionSources::Measured(sources)
+    }
 }
 
 /// [`sources_of`]'s in-place body — the rule loop's re-aim path rebuilds
 /// into retained capacity (the warm allocation contract).
-fn extend_sources(finds: &[FindSpec], out: &mut Vec<ProjSource>) {
+fn extend_sources(finds: &[SinkSpec], measures: &[(usize, usize)], out: &mut Vec<ProjSource>) {
     out.clear();
     for spec in finds {
         match spec {
-            FindSpec::Var { slot, width } => {
-                out.extend((*slot..slot + width).map(ProjSource::Slot));
+            SinkSpec::Var { slot, width } => {
+                if let Some((_, start)) = measures.iter().find(|(derived, _)| derived == slot) {
+                    out.push(ProjSource::Measure { start: *start });
+                } else {
+                    out.extend((*slot..slot + width).map(ProjSource::Slot));
+                }
             }
-            FindSpec::Duration { slot } => out.push(ProjSource::Measure { start: *slot }),
-            FindSpec::Agg { .. }
-            | FindSpec::AggDuration { .. }
-            | FindSpec::Arg { .. }
-            | FindSpec::Pack { .. } => {
-                unreachable!("projection sinks project plain variables and measures")
-            }
+            SinkSpec::Agg { .. } | SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => {}
         }
     }
 }
@@ -195,15 +229,18 @@ enum MeasuredSource {
 /// nothing projection-relevant (D2 — legal for this sink only).
 #[derive(Debug)]
 pub struct ProjectionSink {
+    /// Parsed, measure-free head specs. Kept for allocation-silent
+    /// re-aiming across rules; emit paths consume `sources` below.
+    finds: Vec<SinkSpec>,
+    /// Derived measure word → original interval start slot, minted with
+    /// `finds` by the constructor parse.
+    measures: Vec<(usize, usize)>,
     /// The projected word sources in find-**word** order: an interval
     /// find contributes its two consecutive slots (the `SlotWidth` layout,
     /// expanded by the constructor's caller from the plan's layout map);
     /// a measure find contributes ONE computed word
     /// ([`ProjSource::Measure`]).
-    sources: Vec<ProjSource>,
-    /// Whether any source is a measure — the per-row measure paths'
-    /// gate; the measure-free fast paths are untouched when false.
-    has_measures: bool,
+    sources: ProjectionSources,
     /// The measure poison: the first ray the projection reached
     /// (`end == MAX` has no finite measure) — surfaced after the run as
     /// the typed [`crate::Error::MeasureOfRay`].
@@ -264,16 +301,16 @@ struct ArgSpec {
 /// signaled by mistake would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
-    /// The find specs in **derived-slot form**: the constructor rewrites
-    /// every measure spec onto a derived binding-scratch word —
+    /// The measure-free sink specs in **derived-slot form**: construction
+    /// parses every measure onto a derived binding-scratch word —
     /// `Duration { slot }` becomes `Var { slot: derived, width: 1 }` and
     /// `AggDuration { op, slot }` becomes an unsigned
     /// `Agg { over_slot: derived }` — so group keys, dedup keys, folds,
     /// and finalize consume plain words with zero measure awareness. The
     /// representation move: the measure gets a word in the sink's row,
     /// not a branch in its folds.
-    finds: Vec<FindSpec>,
-    /// The measure table behind the rewrite: (derived scratch word,
+    finds: Vec<SinkSpec>,
+    /// The measure table minted by that parse: (derived scratch word,
     /// interval variable's first slot) — computed once per row landing
     /// in `binding_scratch` (`fold_scratch_row`), ray-checked
     /// (`end == MAX` poisons [`Self::ray`]). Non-empty forces the

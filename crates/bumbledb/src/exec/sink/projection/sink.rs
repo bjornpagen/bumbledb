@@ -1,15 +1,15 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, LeafSource, Sink};
-use crate::exec::sink::ProjectionSink;
+use crate::exec::sink::{ProjectionSink, ProjectionSources};
 use crate::image::ColumnView;
 
 impl Sink for ProjectionSink {
     fn emit(&mut self, bindings: &Bindings) -> Flow {
-        if self.has_measures {
+        let ProjectionSources::Plain(sources) = &self.sources else {
             return self.emit_measured(bindings);
-        }
-        for (i, source) in self.sources.iter().enumerate() {
-            self.scratch[i] = bindings.get(source.plain_slot());
+        };
+        for (i, source) in sources.iter().enumerate() {
+            self.scratch[i] = bindings.get(*source);
         }
         self.seen.insert(&self.scratch);
         // The doc's first-emit signal (40-execution D2): once a projected
@@ -24,21 +24,21 @@ impl Sink for ProjectionSink {
     }
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
-        if self.has_measures {
+        let ProjectionSources::Plain(sources) = &self.sources else {
             return self.emit_batch_measured(batch, stop_on_skip);
-        }
+        };
         // Sources resolved at batch entry (per-slot, not per-row); the
         // outer values refresh per batch (bindings vary per parent), the
         // row loop touches only the varying key words and the seen-set.
-        for (i, source) in self.sources.iter().enumerate() {
-            self.batch_sources[i] = match batch.source_of(source.plain_slot()) {
+        for (i, source) in sources.iter().enumerate() {
+            self.batch_sources[i] = match batch.source_of(*source) {
                 LeafSource::Key(word) => Some(word),
                 LeafSource::Outer => None,
             };
         }
-        for (i, source) in self.sources.iter().enumerate() {
+        for (i, source) in sources.iter().enumerate() {
             if self.batch_sources[i].is_none() {
-                self.scratch[i] = batch.bindings.get(source.plain_slot());
+                self.scratch[i] = batch.bindings.get(*source);
             }
         }
         // Direct per-row insert — NO hash-ahead pipeline (measured):
@@ -78,16 +78,15 @@ impl Sink for ProjectionSink {
     /// that could skip (D2 leaves stay on the batch path), so every
     /// position inserts.
     fn begin_scan(&mut self, scan: &LeafScan<'_>) -> bool {
-        if self.has_measures {
+        let ProjectionSources::Plain(sources) = &self.sources else {
             return self.begin_scan_measured(scan);
+        };
+        for (i, slot) in sources.iter().enumerate() {
+            self.batch_sources[i] = scan.key_slots.iter().position(|k| k == slot);
         }
-        for (i, source) in self.sources.iter().enumerate() {
-            let slot = source.plain_slot();
-            self.batch_sources[i] = scan.key_slots.iter().position(|k| *k == slot);
-        }
-        for (i, source) in self.sources.iter().enumerate() {
+        for (i, slot) in sources.iter().enumerate() {
             if self.batch_sources[i].is_none() {
-                self.scratch[i] = scan.bindings.get(source.plain_slot());
+                self.scratch[i] = scan.bindings.get(*slot);
             }
         }
         self.scan_count = 0;
@@ -95,7 +94,7 @@ impl Sink for ProjectionSink {
     }
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
-        if self.has_measures {
+        if matches!(self.sources, ProjectionSources::Measured(_)) {
             return self.scan_run_measured(scan, run);
         }
         self.scan_count += run.len() as u64;

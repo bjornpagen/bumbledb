@@ -1,15 +1,15 @@
-use crate::exec::sink::{measure, word_to_i64, Acc, AggregateSink, ArgSpec, FindSpec, FoldOp};
+use crate::exec::sink::{measure, word_to_i64, Acc, AggregateSink, ArgSpec, FoldOp, SinkSpec};
 
 impl AggregateSink {
     /// Folds the full binding currently in `binding_scratch`: the
-    /// measure words first (the derived-slot rewrite's one computation
+    /// measure words first (the derived-slot parse's one computation
     /// site — a ray poisons the sink and the row is dropped), then dedup
     /// (unless elided), group resolution, accumulator update. The
     /// per-row paths land here — the scratch row is the one
     /// representation.
     pub(super) fn fold_scratch_row(&mut self) {
         // The measure computation: two-slot read, ray test, one exact
-        // subtraction into the derived word (see `FindSpec::Duration`).
+        // subtraction into the parsed spec's derived word.
         // A poisoned sink folds nothing more — the execution's answer is
         // the typed `MeasureOfRay`, and the error path owes no speed.
         if self.ray.is_some() {
@@ -65,7 +65,7 @@ impl AggregateSink {
 
         let mut acc_cursor = 0;
         for find in &self.finds {
-            let FindSpec::Agg {
+            let SinkSpec::Agg {
                 op,
                 over_slot,
                 over_width,
@@ -136,7 +136,7 @@ impl AggregateSink {
         // carried values come from the same binding).
         self.carry_scratch.clear();
         for find in &self.finds {
-            if let FindSpec::Arg { slot, width, .. } = find {
+            if let SinkSpec::Arg { slot, width, .. } = find {
                 self.carry_scratch
                     .extend_from_slice(&self.binding_scratch[*slot..slot + width]);
             }

@@ -702,7 +702,7 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
             },
         ]
     };
-    let mut sink = AggregateSink::with_capacity_hint(spec(0, 1), 2, false, true, 0);
+    let mut sink = AggregateSink::with_capacity_hint(&spec(0, 1), 2, false, true, 0);
     sink.reset(); // once per execution, never per rule
 
     // Rule A: (g = 7, x = 100) and (g = 7, x = 250).

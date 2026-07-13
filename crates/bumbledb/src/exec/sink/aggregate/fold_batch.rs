@@ -1,5 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FindSpec, FoldOp};
+use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FoldOp, SinkSpec};
 
 impl AggregateSink {
     /// The per-row batch arm: outer slots prefilled once, leaf key slots
@@ -82,7 +82,7 @@ impl AggregateSink {
         let count = survivors.len() as u64;
         let mut cursor = 0;
         for find in &self.finds {
-            let FindSpec::Agg {
+            let SinkSpec::Agg {
                 op,
                 over_slot,
                 signed,

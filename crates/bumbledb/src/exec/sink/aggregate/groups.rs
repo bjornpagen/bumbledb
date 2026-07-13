@@ -1,5 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{Acc, AggregateSink, FindSpec, FoldOp};
+use crate::exec::sink::{Acc, AggregateSink, FoldOp, SinkSpec};
 use crate::exec::wordmap::WordMap;
 
 /// Loads a group key, span-wise (the `SlotWidth` layout): each group
@@ -60,7 +60,7 @@ impl AggregateSink {
             for i in 0..self.finds.len() {
                 let find = self.finds[i];
                 match find {
-                    FindSpec::Agg { op, signed, .. } => {
+                    SinkSpec::Agg { op, signed, .. } => {
                         let acc = match (op, signed) {
                             (FoldOp::Sum, true) => Acc::SumSigned(0),
                             (FoldOp::Sum, false) => Acc::SumUnsigned(0),
@@ -73,10 +73,7 @@ impl AggregateSink {
                         };
                         self.accs.push(acc);
                     }
-                    FindSpec::Var { .. } | FindSpec::Arg { .. } | FindSpec::Pack { .. } => {}
-                    FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
-                        unreachable!("the constructor's rewrite ran")
-                    }
+                    SinkSpec::Var { .. } | SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => {}
                 }
             }
             if self.arg.is_some() {
@@ -93,8 +90,8 @@ impl AggregateSink {
     /// (group, `CountDistinct` find), so a reused map's arity always equals
     /// the find's span width (the map's own insert-time arity assert
     /// backs this).
-    fn alloc_value_set(&mut self, find: FindSpec) -> usize {
-        let FindSpec::Agg {
+    fn alloc_value_set(&mut self, find: SinkSpec) -> usize {
+        let SinkSpec::Agg {
             over_slot,
             over_width,
             ..

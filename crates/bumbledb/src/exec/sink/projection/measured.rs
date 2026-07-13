@@ -9,7 +9,7 @@
 
 use crate::exec::colt::SuffixRun;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, LeafSource};
-use crate::exec::sink::{measure, MeasuredSource, ProjSource, ProjectionSink};
+use crate::exec::sink::{measure, MeasuredSource, ProjSource, ProjectionSink, ProjectionSources};
 use crate::image::ColumnView;
 
 impl ProjectionSink {
@@ -18,7 +18,10 @@ impl ProjectionSink {
         if self.ray.is_some() {
             return Flow::Continue;
         }
-        for (i, source) in self.sources.iter().enumerate() {
+        let ProjectionSources::Measured(sources) = &self.sources else {
+            return Flow::Continue;
+        };
+        for (i, source) in sources.iter().enumerate() {
             self.scratch[i] = match *source {
                 ProjSource::Slot(slot) => bindings.get(slot),
                 ProjSource::Measure { start } => {
@@ -46,7 +49,10 @@ impl ProjectionSink {
         outer: impl Fn(usize) -> u64,
     ) -> Result<(), ()> {
         self.measured_sources.clear();
-        for (i, source) in self.sources.iter().enumerate() {
+        let ProjectionSources::Measured(sources) = &self.sources else {
+            return Ok(());
+        };
+        for (i, source) in sources.iter().enumerate() {
             let resolved = match *source {
                 ProjSource::Slot(slot) => {
                     if let Some(word) = key_of(slot) {

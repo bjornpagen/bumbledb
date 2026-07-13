@@ -1,5 +1,5 @@
 use crate::error::{Error, OverflowKind, Result};
-use crate::exec::sink::{i64_to_word, Acc, AggregateSink, FindSpec};
+use crate::exec::sink::{i64_to_word, Acc, AggregateSink, SinkSpec};
 use crate::interval::sweep::{sweep, Continuation};
 
 impl AggregateSink {
@@ -54,19 +54,16 @@ impl AggregateSink {
             let mut acc_cursor = 0;
             for (find_idx, find) in self.finds.iter().enumerate() {
                 match find {
-                    FindSpec::Var { width, .. } => {
+                    SinkSpec::Var { width, .. } => {
                         row_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
                         key_cursor += width;
                     }
-                    FindSpec::Agg { .. } => {
+                    SinkSpec::Agg { .. } => {
                         row_scratch.push(self.finalize_acc(accs[acc_cursor], find_idx)?);
                         acc_cursor += 1;
                     }
-                    FindSpec::Arg { .. } | FindSpec::Pack { .. } => {
+                    SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => {
                         unreachable!("validated: relation-shaped terms and folds never mix")
-                    }
-                    FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
-                        unreachable!("the constructor's rewrite ran")
                     }
                 }
             }
@@ -93,7 +90,7 @@ impl AggregateSink {
         /// The emit continuation: consumed segments need nothing; a
         /// maximal run is one result row.
         struct PackEmit<'a, F> {
-            finds: &'a [FindSpec],
+            finds: &'a [SinkSpec],
             key: &'a [u64],
             row_scratch: &'a mut Vec<u64>,
             emit: &'a mut F,
@@ -111,20 +108,17 @@ impl AggregateSink {
                 let mut key_cursor = 0;
                 for find in self.finds {
                     match find {
-                        FindSpec::Var { width, .. } => {
+                        SinkSpec::Var { width, .. } => {
                             self.row_scratch
                                 .extend_from_slice(&self.key[key_cursor..key_cursor + width]);
                             key_cursor += width;
                         }
-                        FindSpec::Pack { .. } => {
+                        SinkSpec::Pack { .. } => {
                             self.row_scratch.push(start);
                             self.row_scratch.push(frontier);
                         }
-                        FindSpec::Agg { .. } | FindSpec::Arg { .. } => {
+                        SinkSpec::Agg { .. } | SinkSpec::Arg { .. } => {
                             unreachable!("validated: Pack mixes with no other aggregate")
-                        }
-                        FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
-                            unreachable!("the constructor's rewrite ran")
                         }
                     }
                 }
@@ -164,20 +158,17 @@ impl AggregateSink {
             let mut carry_cursor = 0;
             for find in &self.finds {
                 match find {
-                    FindSpec::Var { width, .. } => {
+                    SinkSpec::Var { width, .. } => {
                         row_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
                         key_cursor += width;
                     }
-                    FindSpec::Arg { width, .. } => {
+                    SinkSpec::Arg { width, .. } => {
                         row_scratch
                             .extend_from_slice(&carry_row[carry_cursor..carry_cursor + width]);
                         carry_cursor += width;
                     }
-                    FindSpec::Agg { .. } | FindSpec::Pack { .. } => {
+                    SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => {
                         unreachable!("validated: Arg terms mix with no other aggregate")
-                    }
-                    FindSpec::Duration { .. } | FindSpec::AggDuration { .. } => {
-                        unreachable!("the constructor's rewrite ran")
                     }
                 }
             }

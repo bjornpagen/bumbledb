@@ -374,7 +374,9 @@ of one comparison, a non-interval variable, and any fold but the three.
   subtraction feeding the existing word machinery — a constant or same-atom
   comparison becomes an occurrence filter, a cross-atom comparison a
   measure residual, and the sink positions a derived word in the sink's row
-  representation. The one new executor shape is the fused gather+subtract
+  representation. At sink construction, symbolic measure finds parse into a
+  measure-free execution vocabulary; no sink consumer re-checks whether that
+  lowering happened. The one new executor shape is the fused gather+subtract
   scan (dense case NEON per the port-topology law — subtraction is not
   flag-bound; strided/gathered shapes stay scalar until measured, per the
   standing rule).

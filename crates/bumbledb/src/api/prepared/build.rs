@@ -707,17 +707,10 @@ fn make_sink(
         // interval find contributes its two consecutive slots and a
         // measure find one computed word, so the projection sink's rows
         // are word rows the finalize pass re-assembles by find type.
-        EitherSink::Projection(ProjectionSink::with_capacity_hint(
-            crate::exec::sink::sources_of(finds),
-            hint,
-        ))
+        EitherSink::Projection(ProjectionSink::with_capacity_hint(finds, slot_count, hint))
     } else {
         EitherSink::Aggregate(Box::new(AggregateSink::with_capacity_hint(
-            finds.to_vec(),
-            slot_count,
-            distinct,
-            union,
-            hint,
+            finds, slot_count, distinct, union, hint,
         )))
     }
 }
