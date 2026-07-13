@@ -1,6 +1,6 @@
-# PRD 18 — Census close: the constitution is counted
+# PRD 23 — Census close: the constitution is counted
 
-**Depends on:** 01–17 all landed. Terminal, always last.
+**Depends on:** 01–22 all landed. Terminal, always last.
 **Modules:** read-mostly across `crates/`, `fuzz/`, `scripts/`,
 `docs/`; write access to this packet's ledger files and the
 architecture amendment stragglers.
@@ -19,7 +19,8 @@ dated evidence.
    against PRD 08's list), `pitch`, `DistinctCounter`,
    `OverflowKind::Origins`, `Term::Duration`, `AggregateDuration`,
    `closed_member`, `coverage: bool`, `Enforcement::Probe`,
-   `stable-ish`, `"tiling"` in cookbook outside the recorded survivors.
+   `stable-ish`, `"tiling"` in cookbook outside the recorded survivors,
+   `StatementDescriptor::Functionality`, `DuplicateFunctionality`.
 2. **Representation battery** — `debug_assert` in encoding/encode.rs =
    0; `DisjointGuardProof` construction sites = 1; `DistinctWitness`
    mint sites = 1; `MemberSet` the only `[u64;4]` in schema.rs;
@@ -35,7 +36,7 @@ dated evidence.
    `assert!`, `debug_assert!`, `.expect(`) per file vs the crucible
    PRD-09 floor (121 non-test `unreachable!`); every delta attributed
    to a PRD by mechanism; any RISE explained or fixed.
-5. **Doc-amendment checklist** — every amendment promised by 01–17
+5. **Doc-amendment checklist** — every amendment promised by 01–22
    verified present by grep (one row each).
 6. **Refusal-ledger verification** — each README refusal still holds
    (no `partitions` sugar, no ScalarValue, no Rule→Clause, flat error

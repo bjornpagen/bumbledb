@@ -44,6 +44,16 @@ pub(crate) struct CommitSeq(u64);
   derive it on `GenerationId` only).
 - On-disk bytes unchanged: the newtype encodes/decodes through the same
   u64 word.
+- **`FinalStateView` (brief A11, approved):** the commit judgment's
+  input becomes a named seam. Today judgment reads base + delta through
+  ad-hoc plumbing that IS final-state by construction; the decided
+  shape names it — a `FinalStateView<'_>` borrowing (base snapshot,
+  delta) that is the ONLY type `judge`/the check plans accept. This
+  makes "dependencies judge one transaction final state, never
+  operation order" a signature instead of a doc sentence, and
+  forecloses any future per-operation judgment path. Zero behavior
+  change: the existing judgment tests (including the citation-set
+  suite) pass byte-identical.
 
 ## Technical direction
 

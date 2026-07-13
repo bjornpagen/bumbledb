@@ -42,6 +42,11 @@ acceptance gate's reverse half gets its missing lock.
    test asserts the citation identifies the reverse half (statement
    identity, using the violations/citation machinery), pinned for a
    composite (2-field) projection as well as the singleton case.
+   (Brief A6, approved:) plus an arity-sweep acceptance lock — 3-field
+   composite equality with reordered target-key declaration order
+   (exercising `key_permutation`) and mixed scalar types validates and
+   enforces; unprojected-payload difference stays legal (positive
+   witness).
 4. **Lowering pin** (only if none exists after search): the macro
    lowers `L == R` to exactly `[L <= R, R <= L]` adjacent statements —
    a golden on the emitted descriptor order, protecting the mirror

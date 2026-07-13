@@ -56,6 +56,15 @@ pub(crate) struct DisjointGuardProof(());
 - The token is deliberately NOT serialized, NOT fingerprinted (the
   fingerprint excludes enforcement data — fingerprint.rs:9-16 — and
   this PRD must keep it that way).
+- **`FieldSet` and `Projection` carriers (brief A4, approved):** the
+  ad-hoc `field_set()` sorted-vec helper (validate.rs:197) becomes a
+  `FieldSet` newtype whose constructor sorts and rejects duplicates —
+  canonical identity by construction — and the exact-match rule
+  (validate.rs:699) compares `FieldSet == FieldSet`. A `Projection`
+  carrier pairs the statement-order fields with their canonical set
+  (validation compares sets; execution keeps statement order for the
+  permutation). Both live in the schema-validation layer; neither is
+  serialized; the fingerprint reads declared statements as before.
 
 ## Technical direction
 

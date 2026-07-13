@@ -62,9 +62,20 @@ Phase D — the public meaning made honest
 - `17-distinct-witness.md` — `provably_distinct` returns a typed
   witness, not a `bool` (the `DisjointWitness` precedent).
 
-Phase E — terminal
-- `18-census-close.md` — grep batteries, refusal-ledger verification,
-  fingerprint pin check, full gate cash-out.
+Phase E — completion of the general mechanisms (from the Lean-alignment
+brief, audited 2026-07-13; see the brief reconciliation below)
+- `19-arity-coverage.md` — the containment/equality generators sweep
+  every legal projection arity and type mix.
+- `20-maintenance-protocol.md` — derived-relation maintenance and
+  conditional-write witnesses: the protocol documented and locked.
+- `21-cookbook-epistemics.md` — every recipe carries its epistemic
+  label; claims no stronger than their proofs.
+- `22-verifier-matrix.md` — one corruption fixture per semantic index
+  the offline verifier claims to rebuild.
+
+Phase F — terminal
+- `23-census-close.md` — grep batteries, refusal-ledger verification,
+  fingerprint pin check, full gate cash-out. Always last.
 
 Dependency spine: 01 first (the docs PRDs cite its table). Phase B in
 order 02 → 03 (03 consumes 02's types in evidence structs), 04/05 free.
@@ -131,6 +142,72 @@ names). 18 last, always.
   container religion.
 - **Surface grammar renames (`->` → `key by`, `<=` → `contained_in`)
   — REFUSED.** The symbols stay; the docs name the concepts.
+- **`UpperBound::{Finite, Unbounded}` + point newtypes (brief A1) —
+  REFUSED.** The recorded stance stands: `[s, MAX)` over the point
+  domain IS `[s, ∞)`; the ray is a value, not a mode, and every kernel
+  is uniform because of it. The Lean bridge needs non-emptiness, which
+  the `Interval` constructor supplies (PRD 02). A second representation
+  of the same fact adds state.
+- **`Query<Phase>` type ceremony + canonical normalized form (brief
+  A3) — REFUSED, trigger recorded.** The witness pipeline already
+  denies the planner unvalidated input. Canonical IR form gains a
+  consumer only when a plan cache keys on IR — that is the trigger.
+- **`ViewContainment` / `VarName`+`BinderId` renames (brief A2, part)
+  — REFUSED/SUPERSEDED.** "Containment" stops colliding once PointIn
+  lands; `VarId` is already the resolved binder and raw names already
+  live only in the macro layer.
+- **`ClosedFoldEvidence` ceremony (brief B2) — SUPERSEDED.** The
+  dual-pipeline rewrites fuzz target IS the continuous differential
+  proof that folding preserves denotation; introspect already renders
+  the folded picture.
+- **Recursion, C0–C5 — DEFERRED under the standing census-law
+  refusal.** No sighting has fired the recorded trigger
+  (20-query-ir.md § engine recursion — refused). The brief's ordering
+  is ADOPTED into the trigger record: when it fires, the Lean
+  fixed-point development (C0: immediate-consequence operator,
+  monotonicity, finite stabilization, LFP, order-independence) precedes
+  any Rust work, then the design paper's seam ledger executes. No
+  reachability operator, ever.
+- **D1–D5 (implication/countermodels, general TGDs/EGDs, predicate
+  algebra, query-defined relations) — LATER**, per the brief's own
+  gating: each is a theory-version decision after Phases A–C.
+
+## Brief reconciliation (the Lean-alignment brief, audited 2026-07-13)
+
+Item-by-item verdicts against this packet and current main. APPROVED
+additions became PRDs 19–22 and the amendments noted in PRDs 03, 05,
+10, 11, 12, 16, 17. Refusals joined the ledger above.
+
+- A1 → PRD 02 (UpperBound/point-newtype sub-items refused, above).
+- A2 → PRDs 06/07/08/10 + 13's glossary; `Functionality → Key`
+  descriptor rename APPROVED into PRD 10; `ViewContainment` and
+  binder-split refused (above).
+- A3 → SUPERSEDED (witness pipeline); canonical-form refused with
+  trigger.
+- A4 → PRD 03; `FieldSet`/`Projection` carriers APPROVED into PRD 03.
+- A5 → PRD 14 (diagnostics already carry available keys; subset-key
+  mention included).
+- A6 → PRD 12; arity ≥3 composite locks APPROVED into PRD 12.
+- A7 → PRDs 03+11; adjacency + composite-prefix locks APPROVED into
+  PRD 11.
+- A8 → SUPERSEDED + PRD 14's hostile locks.
+- A9 → PRD 17 + existing DisjointWitness.
+- A10 → SUPERSEDED (contracts documented, checked, exhaustively
+  enumerated) + PRDs 13/16.
+- A11 → PRD 05; `FinalStateView` seam APPROVED into PRD 05.
+- A12 → PRD 15 + standing fingerprint law; container sweep refused.
+- B1 → APPROVED, new PRD 19.
+- B2 → SUPERSEDED (dual-pipeline fuzz differential; refusal above).
+- B3+B4 → APPROVED merged, new PRD 20 (write/write_from already encode
+  the witness classes in signatures — the PRD documents, classifies,
+  and locks; no unsafe overload survives unlabelled).
+- B5 → APPROVED as PRD 17 amendment (the bool-licensed-rewrite sweep).
+- B6 → APPROVED, new PRD 22 (fixture-per-index matrix).
+- B7 → APPROVED as PRD 16 amendment (the full capability matrix).
+- B8 → APPROVED, new PRD 21.
+- C0–C5 → DEFERRED under the census-law refusal (ledger above; the
+  C0-before-Rust ordering adopted into the trigger record).
+- D1–D5 → LATER (ledger above).
 
 ## Reconciliation ledger (audit claim × current-main verdict)
 

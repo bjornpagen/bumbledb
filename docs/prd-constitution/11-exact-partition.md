@@ -55,7 +55,11 @@ become exactly as strong as the theorems.
      (the audit's decisive pair: source `[0,10)` / target `[0,20)`
      REJECTED here, ACCEPTED under the one-way recipe — both pinned);
    - the one-way overhang-acceptance pin (recipe 16's semantics,
-     asserted so the correction can never silently strengthen it).
+     asserted so the correction can never silently strengthen it);
+   - (brief A7, approved) the adjacency pin — a pointwise key accepts
+     touching segments `[0,2)`,`[2,5)` (half-open law) — and a
+     composite-scalar-prefix partition case (two-field prefix + the
+     interval), proving the idiom is arity-general.
 4. `30-dependencies.md` § coverage: one added paragraph stating the
    direction law and the exact-partition conjunction, citing the
    recipe and the table row. The refusal ledger note: `partitions`

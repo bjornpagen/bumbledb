@@ -43,6 +43,17 @@ pub(crate) struct DistinctWitness(());
   optimization in 40-execution) is untouched — different elision;
   this PRD's doc amendment cross-references the two so nobody
   conflates them again.
+- **The bool-licensed-rewrite sweep (brief B5, approved):** after the
+  witness lands, sweep the plan/prepare layers for any OTHER
+  semantics-bearing decision still licensed by a bare `bool` or
+  unwitnessed flag (grep `-> bool` + boolean struct fields consumed by
+  plan construction; judge each: semantics-bearing → witness it or
+  record a refusal with reason; heuristic-only → leave, list). The
+  sweep's table lands in this file's Results — the criterion is that
+  every elision/eliding rewrite names its evidence type, completing
+  the proof-carrying-optimizer claim with what already exists
+  (DisjointWitness, the sealed ResolvableFilter/latch specs, KeyProbe
+  rules, and this PRD's DistinctWitness).
 
 ## Technical direction
 

@@ -38,6 +38,13 @@ aggregate surface.
 - The PRD-04-era signature table already carries Arg rows — unchanged;
   if the macro exposure reveals a typing hole the table missed, policy
   5.
+- **The capability matrix (brief B7, approved):** this PRD closes with
+  the full parity table — every semantic operation × {macro grammar,
+  IR, validator, renderer, planner, executor} — recorded in this file's
+  Results section. Every row is either accepted-everywhere (with its
+  round-trip test named) or refused-at-the-earliest-phase (with its
+  typed error named). Any asymmetry the matrix surfaces beyond the Arg
+  forms is a policy-5 record + its own fix in this PRD if mechanical.
 
 ## Technical direction
 
