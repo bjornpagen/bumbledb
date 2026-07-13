@@ -480,6 +480,10 @@ relation, in declaration order), then the declared statements in declaration
 order — a deterministic function of the declaration, so statement ids remain pinned
 by the fingerprint without being hashed separately. Relation and field ids are plain
 declaration order; statement ids are materialized order, schema-global.
+`StatementId` remains that fingerprint identity after validation. `KeyId` and
+`ContainmentId` are different, validation-minted witnesses into the sealed schema's
+homogeneous arenas; they are derived from the accepted declaration, never enter the
+canonical bytes, and are never substituted for `StatementId` in storage or errors.
 Stated consequence, accepted: **adding a ground axiom to a closed relation changes
 the fingerprint — a full ETL rebuild.** Closed domains are closed.
 

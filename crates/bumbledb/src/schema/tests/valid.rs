@@ -6,16 +6,16 @@ fn valid_schema_constructs_with_statement_indices() {
     let holder = schema.relation(RelationId(0));
     // The fresh fields auto-materialized ordinary, visible Functionality
     // statements; the declared Containment follows them.
-    assert_eq!(holder.keys(), &[StatementId(0)]);
+    assert_eq!(holder.keys(), &[KeyId(0)]);
     assert_eq!(holder.outgoing(), &[]);
     // ...and Holder's key is the declared Containment's resolved target —
     // the target-side reverse-edge check set.
-    assert_eq!(schema.dependents(StatementId(0)), &[StatementId(2)]);
+    assert_eq!(schema.dependents(KeyId(0)), &[ContainmentId(0)]);
 
     let account = schema.relation(RelationId(1));
-    assert_eq!(account.keys(), &[StatementId(1)]);
-    assert_eq!(account.outgoing(), &[StatementId(2)]);
-    assert_eq!(schema.dependents(StatementId(1)), &[]);
+    assert_eq!(account.keys(), &[KeyId(1)]);
+    assert_eq!(account.outgoing(), &[ContainmentId(0)]);
+    assert_eq!(schema.dependents(KeyId(1)), &[]);
     // Layout: id 8 + holder 8 + status 8, dense.
     assert_eq!(account.layout().fact_width(), 24);
 }
@@ -57,15 +57,66 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
             },
         ]
     );
-    // The sealed schema holds the same list; StatementId = index into it.
+    // The sealed schema preserves the same materialized identity spine.
     let schema = decl.validate().expect("valid schema");
-    let sealed: Vec<&StatementDescriptor> =
-        schema.statements().iter().map(|s| &s.descriptor).collect();
-    assert_eq!(sealed, materialized.iter().collect::<Vec<_>>());
+    for (index, descriptor) in materialized.iter().enumerate() {
+        let id = StatementId(u16::try_from(index).expect("small fixture"));
+        match (schema.statement(id), descriptor) {
+            (
+                StatementView::Key(sealed),
+                StatementDescriptor::Functionality {
+                    relation,
+                    projection,
+                },
+            ) => {
+                assert_eq!(sealed.relation, *relation);
+                assert_eq!(sealed.projection, *projection);
+            }
+            (
+                StatementView::Containment(sealed),
+                StatementDescriptor::Containment { source, target },
+            ) => {
+                assert_eq!(sealed.source, *source);
+                assert_eq!(sealed.target, *target);
+            }
+            _ => panic!("materialized descriptor and typed arena disagree"),
+        }
+    }
+    assert_eq!(schema.relation(RelationId(1)).keys(), &[KeyId(1), KeyId(2)]);
+}
+
+#[test]
+fn statement_order_preserves_materialized_identity() {
+    let schema = ledger_slice().validate().expect("valid schema");
+    for index in 0..3 {
+        let id = StatementId(index);
+        assert_eq!(schema.statement(id).id(), id);
+        assert_eq!(
+            schema.statement_checked(id).map(StatementView::id),
+            Some(id)
+        );
+    }
+    assert!(schema.statement_checked(StatementId(3)).is_none());
+}
+
+#[test]
+fn dependents_are_typed_total_witnesses() {
+    let schema = ledger_slice().validate().expect("valid schema");
+    let key = schema.relation(RelationId(0)).keys()[0];
+    assert_eq!(schema.key(key).id, StatementId(0));
     assert_eq!(
-        schema.relation(RelationId(1)).keys(),
-        &[StatementId(1), StatementId(3)]
+        schema.key_checked(key).map(|statement| statement.id),
+        Some(StatementId(0))
     );
+    for dependent in schema.dependents(key) {
+        assert_eq!(schema.containment(*dependent).id, StatementId(2));
+        assert_eq!(
+            schema
+                .containment_checked(*dependent)
+                .map(|statement| statement.id),
+            Some(StatementId(2))
+        );
+    }
 }
 
 #[test]
@@ -86,7 +137,7 @@ fn nullary_relation_constructs() {
 /// The `docs/architecture/30-dependencies.md` example schema — Holder /
 /// Account / `SavingsTerms` with its three declared statements (`==` lowered
 /// to two mirrored Containments) plus the fresh auto-keys — validates,
-/// with every statement's `Resolved` exact. The mirrored pair (ids 3 and 4)
+/// with every typed statement's enforcement exact. The mirrored pair (ids 3 and 4)
 /// pins independent per-direction resolution, and id 3 resolves a key
 /// declared *after* it (forward reference).
 #[test]
@@ -149,48 +200,43 @@ fn example_schema_resolves_exactly() {
     .validate()
     .expect("the 30-dependencies example schema is valid");
 
-    let resolved: Vec<&Resolved> = schema.statements().iter().map(|s| &s.resolved).collect();
-    let scalar_key = Resolved::Functionality { pointwise: false };
-    let probe = |target_key: u16| Resolved::Containment {
-        target_key: StatementId(target_key),
+    assert!(schema.keys().iter().all(|key| !key.pointwise));
+    let probe = |target_key: u16| Enforcement::Probe {
+        target_key: KeyId(target_key),
         key_permutation: Box::new([0]),
         coverage: false,
     };
     assert_eq!(
-        resolved,
+        schema
+            .containments()
+            .iter()
+            .map(|statement| &statement.enforcement)
+            .collect::<Vec<_>>(),
         vec![
-            &scalar_key, // id 0: Holder(id), fresh auto-key
-            &scalar_key, // id 1: Account(id), fresh auto-key
-            &probe(0),   // id 2: Account(holder) <= Holder(id)
-            &probe(5),   // id 3: Account(id | Savings) <= SavingsTerms(account)
-            &probe(1),   // id 4: SavingsTerms(account) <= Account(id | Savings)
-            &scalar_key, // id 5: SavingsTerms(account) -> SavingsTerms
+            &probe(0), // id 2: Account(holder) <= Holder(id)
+            &probe(2), // id 3: Account(id | Savings) <= SavingsTerms(account)
+            &probe(1), // id 4: SavingsTerms(account) <= Account(id | Savings)
         ]
     );
 
     // The sealed `==` pairing: the lowered pair links symmetrically;
-    // every FD and the one-way containment (id 2) carry `None`.
-    let mirrors: Vec<Option<StatementId>> = schema.statements().iter().map(|s| s.mirror).collect();
+    // The one-way containment (id 2) carries `None`; keys have no mirror
+    // field at all.
+    let mirrors: Vec<Option<StatementId>> = schema
+        .containments()
+        .iter()
+        .map(|statement| statement.mirror)
+        .collect();
     assert_eq!(
         mirrors,
-        vec![
-            None,
-            None,
-            None,
-            Some(StatementId(4)),
-            Some(StatementId(3)),
-            None
-        ]
+        vec![None, Some(StatementId(4)), Some(StatementId(3)),]
     );
 
     // The target_key -> dependents reverse index (the target-side
     // reverse-edge check set).
-    assert_eq!(schema.dependents(StatementId(0)), &[StatementId(2)]);
-    assert_eq!(schema.dependents(StatementId(1)), &[StatementId(4)]);
-    assert_eq!(schema.dependents(StatementId(5)), &[StatementId(3)]);
-    for id in [2, 3, 4] {
-        assert_eq!(schema.dependents(StatementId(id)), &[]);
-    }
+    assert_eq!(schema.dependents(KeyId(0)), &[ContainmentId(0)]);
+    assert_eq!(schema.dependents(KeyId(1)), &[ContainmentId(2)]);
+    assert_eq!(schema.dependents(KeyId(2)), &[ContainmentId(1)]);
 }
 
 /// Pointwise resolution: an interval key records its interval position, and
@@ -224,19 +270,16 @@ fn pointwise_key_and_containment_resolve() {
     .validate()
     .expect("pointwise key and coverage containment are valid");
 
+    assert_eq!(schema.key(KeyId(0)).pointwise, true);
     assert_eq!(
-        schema.statement(StatementId(0)).resolved,
-        Resolved::Functionality { pointwise: true }
-    );
-    assert_eq!(
-        schema.statement(StatementId(1)).resolved,
-        Resolved::Containment {
-            target_key: StatementId(0),
+        schema.containment(ContainmentId(0)).enforcement,
+        Enforcement::Probe {
+            target_key: KeyId(0),
             key_permutation: Box::new([0, 1]),
             coverage: true
         }
     );
-    assert_eq!(schema.dependents(StatementId(0)), &[StatementId(1)]);
+    assert_eq!(schema.dependents(KeyId(0)), &[ContainmentId(0)]);
 }
 
 /// The target projection may be any permutation of the key: the recorded
@@ -269,9 +312,9 @@ fn permuted_target_projection_resolves_with_permutation() {
     .expect("a permuted target projection resolves");
 
     assert_eq!(
-        schema.statement(StatementId(1)).resolved,
-        Resolved::Containment {
-            target_key: StatementId(0),
+        schema.containment(ContainmentId(0)).enforcement,
+        Enforcement::Probe {
+            target_key: KeyId(0),
             key_permutation: Box::new([1, 0]),
             coverage: false
         }
@@ -324,7 +367,7 @@ fn a_closed_relation_seals_pre_encoded_ground_axioms() {
     assert_eq!(rows[0].fact, fact(0, 2));
     assert_eq!(rows[1].fact, fact(1, 2));
     // The closed auto-key materialized: `Currency(id) -> Currency`.
-    assert_eq!(relation.keys(), &[StatementId(0)]);
+    assert_eq!(relation.keys(), &[KeyId(0)]);
 }
 
 /// The materialization-order pin, closed arm: ALL fresh auto-FDs first,
@@ -369,19 +412,19 @@ fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
     // no permutation: Currency's two rows, both unselected survivors
     // (`docs/architecture/30-dependencies.md`).
     assert_eq!(
-        schema.statement(StatementId(2)).resolved,
-        Resolved::ClosedContainment {
+        schema.containment(ContainmentId(0)).enforcement,
+        Enforcement::Closed {
             members: [0b11, 0, 0, 0]
         }
     );
     // No dependents ride the closed auto-key: the target side is vacuous
     // by construction (axioms never delete), so no R traffic exists for
     // the statement class.
-    assert_eq!(schema.dependents(StatementId(1)), &[]);
+    assert_eq!(schema.dependents(KeyId(1)), &[]);
 }
 
 /// PRD 04's validate-time criterion: the member set is computed at
-/// validate — construct the schema, read `Resolved` directly, assert
+/// validate — construct the schema, read `Enforcement` directly, assert
 /// bits, no Db anywhere. ψ (`pages == true`) selects the sub-vocabulary
 /// {Med, High} = rows 1 and 2 = 0b110.
 #[test]
@@ -415,8 +458,8 @@ fn a_psi_selected_closed_containment_compiles_its_member_set() {
     let schema = decl.validate().expect("valid");
     // Statement 0 is Severity's closed auto-key; 1 the declared statement.
     assert_eq!(
-        schema.statement(StatementId(1)).resolved,
-        Resolved::ClosedContainment {
+        schema.containment(ContainmentId(0)).enforcement,
+        Enforcement::Closed {
             members: [0b110, 0, 0, 0]
         }
     );

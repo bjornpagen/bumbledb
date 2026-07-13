@@ -143,6 +143,15 @@ This is the simplicity doctrine applied to invariants: generality of representat
 discipline of acceptance — an accepted statement is a *measured promise*, exactly
 like an accepted optimization (`00-product.md`).
 
+The sealed representation is a sum with homogeneous key and containment arenas.
+Validation is the only mint for `KeyId` and `ContainmentId`: a key witness resolves
+totally to a key statement, a containment witness resolves totally to a containment
+statement, and reverse dependents carry containment witnesses indexed by a key
+witness. The global `StatementId` order survives as a separate sum-typed spine for
+fingerprint identity, storage, diagnostics, and rendering. Downstream code consumes
+the typed arm directly — the witness carries the proof, so no descriptor/enforcement
+variant agreement remains to assert.
+
 ## Pointwise lifting (the interval semantics, derived)
 
 Both judgments read interval positions through the denotation

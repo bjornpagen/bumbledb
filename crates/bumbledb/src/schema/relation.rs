@@ -1,6 +1,6 @@
 //! Field, layout, and statement-index accessors on a validated relation.
 
-use super::{FactLayout, FieldDescriptor, FieldId, Relation, SealedRow, StatementId};
+use super::{ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, Relation, SealedRow};
 
 impl Relation {
     #[must_use]
@@ -43,13 +43,13 @@ impl Relation {
     /// `Functionality` statements on this relation (auto-materialized and
     /// declared alike), in materialized order.
     #[must_use]
-    pub fn keys(&self) -> &[StatementId] {
+    pub fn keys(&self) -> &[KeyId] {
         &self.keys
     }
 
     /// `Containment` statements whose source is this relation.
     #[must_use]
-    pub fn outgoing(&self) -> &[StatementId] {
+    pub fn outgoing(&self) -> &[ContainmentId] {
         &self.outgoing
     }
 }

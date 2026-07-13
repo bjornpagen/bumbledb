@@ -4,8 +4,8 @@
 //! Field checks first, then the statement roster and acceptance gate of
 //! `docs/architecture/30-dependencies.md` — exhaustive, one distinct
 //! [`SchemaError`] per roster line (the variant doc comments carry the
-//! citations). Every accepted statement leaves with its [`Resolved`]
-//! enforcement plan computed; downstream trusts it without re-checking.
+//! citations). Every accepted statement leaves as a typed arena witness;
+//! downstream trusts its shape without re-checking.
 //!
 //! The roster's "FD with selection" and "non-key FD form" lines have no
 //! checks here: [`StatementDescriptor::Functionality`] carries neither a
@@ -13,9 +13,10 @@
 //! rejected.
 
 use super::{
-    closed_member, value_matches, CompiledCheck, CompiledSides, FactLayout, FieldDescriptor,
-    FieldId, Generation, Relation, RelationDescriptor, RelationId, Resolved, Schema,
-    SchemaDescriptor, Side, Statement, StatementDescriptor, StatementId, ValueMismatch, ValueType,
+    closed_member, value_matches, CompiledCheck, CompiledSides, ContainmentId,
+    ContainmentStatement, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId,
+    KeyStatement, Relation, RelationDescriptor, RelationId, Schema, SchemaDescriptor, Side,
+    StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
 };
 use crate::encoding::field_bytes;
 use crate::error::SchemaError;
@@ -53,21 +54,71 @@ impl SchemaDescriptor {
             }
         }
 
-        // The statement roster, in materialized order. Duplicate checks
-        // look backward (earlier statements are already validated);
-        // containment target-key resolution looks at the whole list (a key
-        // may be declared after the containment that probes it).
+        // The statement roster becomes three sealed structures in this one
+        // materialized-order pass: two homogeneous typed arenas and the
+        // StatementId spine selecting between them. Duplicate checks look
+        // backward; containment target-key resolution sees the immutable
+        // descriptor list, so a key may still be declared after its probe.
         let mut normalized: Vec<StatementDescriptor> = Vec::with_capacity(descriptors.len());
-        let mut resolutions: Vec<Resolved> = Vec::with_capacity(descriptors.len());
+        let key_count = descriptors
+            .iter()
+            .filter(|descriptor| matches!(descriptor, StatementDescriptor::Functionality { .. }))
+            .count();
+        let containment_count = descriptors.len() - key_count;
+        let mut keys = Vec::with_capacity(key_count);
+        let mut containments = Vec::with_capacity(containment_count);
+        let mut order = Vec::with_capacity(descriptors.len());
+        let mut relation_keys: Vec<Vec<KeyId>> = vec![Vec::new(); relations.len()];
+        let mut relation_outgoing: Vec<Vec<ContainmentId>> = vec![Vec::new(); relations.len()];
+        let mut dependents: Vec<Vec<ContainmentId>> = vec![Vec::new(); key_count];
+
         for (idx, descriptor) in descriptors.iter().enumerate() {
             let id = statement_id(idx);
-            let resolved = match descriptor {
+            let sealed = match descriptor {
                 StatementDescriptor::Functionality {
                     relation,
                     projection,
-                } => validate_functionality(id, *relation, projection, &relations, &descriptors)?,
+                } => {
+                    let pointwise = validate_functionality(
+                        id,
+                        *relation,
+                        projection,
+                        &relations,
+                        &descriptors,
+                    )?;
+                    let key_id =
+                        KeyId(u16::try_from(keys.len()).expect("statement count fits u16"));
+                    relation_keys[relation.0 as usize].push(key_id);
+                    keys.push(KeyStatement {
+                        id,
+                        relation: *relation,
+                        projection: projection.clone(),
+                        pointwise,
+                    });
+                    StatementRef::Key(key_id)
+                }
                 StatementDescriptor::Containment { source, target } => {
-                    validate_containment(id, source, target, &relations, &descriptors)?
+                    let enforcement =
+                        validate_containment(id, source, target, &relations, &descriptors)?;
+                    let containment_id = ContainmentId(
+                        u16::try_from(containments.len()).expect("statement count fits u16"),
+                    );
+                    if let Enforcement::Probe { target_key, .. } = &enforcement {
+                        dependents[usize::from(target_key.0)].push(containment_id);
+                    }
+                    relation_outgoing[source.relation.0 as usize].push(containment_id);
+                    containments.push(ContainmentStatement {
+                        id,
+                        source: source.clone(),
+                        target: target.clone(),
+                        enforcement,
+                        checks: CompiledSides {
+                            source: compiled_checks(&source.selection),
+                            target: compiled_checks(&target.selection),
+                        },
+                        mirror: mirror_of(&descriptors, idx),
+                    });
+                    StatementRef::Containment(containment_id)
                 }
             };
             // Roster "duplicate statements": identical descriptors after
@@ -82,71 +133,23 @@ impl SchemaDescriptor {
                 });
             }
             normalized.push(norm);
-            resolutions.push(resolved);
+            order.push(sealed);
         }
 
-        // Per-relation statement indices, derived from the materialized
-        // list — safe to index now, every relation id is validated.
-        let mut keys: Vec<Vec<StatementId>> = vec![Vec::new(); relations.len()];
-        let mut outgoing: Vec<Vec<StatementId>> = vec![Vec::new(); relations.len()];
-        for (idx, descriptor) in descriptors.iter().enumerate() {
-            let id = statement_id(idx);
-            match descriptor {
-                StatementDescriptor::Functionality { relation, .. } => {
-                    keys[relation.0 as usize].push(id);
-                }
-                StatementDescriptor::Containment { source, .. } => {
-                    outgoing[source.relation.0 as usize].push(id);
-                }
-            }
-        }
-        for ((relation, keys), outgoing) in relations.iter_mut().zip(keys).zip(outgoing) {
+        for ((relation, keys), outgoing) in relations
+            .iter_mut()
+            .zip(relation_keys)
+            .zip(relation_outgoing)
+        {
             relation.keys = keys.into_boxed_slice();
             relation.outgoing = outgoing.into_boxed_slice();
         }
 
-        // `target_key -> dependents`: the target-side reverse-edge check
-        // set (`docs/architecture/30-dependencies.md` § enforcement).
-        let mut dependents: Vec<Vec<StatementId>> = vec![Vec::new(); resolutions.len()];
-        for (idx, resolved) in resolutions.iter().enumerate() {
-            if let Resolved::Containment { target_key, .. } = resolved {
-                dependents[usize::from(target_key.0)].push(statement_id(idx));
-            }
-        }
-
-        // The `==` pairing, sealed as a fact of the declaration
-        // ([`Statement::mirror`]): n² over ≤ 2¹⁶ statements, in practice
-        // tens — computed once here, read everywhere after.
-        let mirrors: Vec<Option<StatementId>> = (0..descriptors.len())
-            .map(|idx| mirror_of(&descriptors, idx))
-            .collect();
-
-        // σ literals compile once, here — the commit path consumes sealed
-        // bytes and resolves only interned text (the staging law).
-        let statements = descriptors
-            .into_iter()
-            .zip(resolutions)
-            .zip(mirrors)
-            .map(|((descriptor, resolved), mirror)| {
-                let checks = match &descriptor {
-                    StatementDescriptor::Containment { source, target } => Some(CompiledSides {
-                        source: compiled_checks(&source.selection),
-                        target: compiled_checks(&target.selection),
-                    }),
-                    StatementDescriptor::Functionality { .. } => None,
-                };
-                Statement {
-                    descriptor,
-                    resolved,
-                    checks,
-                    mirror,
-                }
-            })
-            .collect();
-
         Ok(Schema {
             relations: relations.into_boxed_slice(),
-            statements,
+            keys: keys.into_boxed_slice(),
+            containments: containments.into_boxed_slice(),
+            order: order.into_boxed_slice(),
             dependents: dependents.into_iter().map(Vec::into_boxed_slice).collect(),
         })
     }
@@ -236,14 +239,14 @@ fn normalize(descriptor: &StatementDescriptor) -> StatementDescriptor {
 }
 
 /// Roster "FD …" lines: `R(X) -> R` under the acceptance gate. Returns the
-/// key's [`Resolved::Functionality`] (its interval position, if pointwise).
+/// whether the key is pointwise (its interval position stays local here).
 fn validate_functionality(
     id: StatementId,
     relation_id: RelationId,
     projection: &[FieldId],
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
-) -> Result<Resolved, SchemaError> {
+) -> Result<bool, SchemaError> {
     let relation = known_relation(id, relation_id, relations)?;
     validate_projection(id, relation_id, projection, relation)?;
 
@@ -349,9 +352,7 @@ fn validate_functionality(
         }
     }
 
-    Ok(Resolved::Functionality {
-        pointwise: interval_position.is_some(),
-    })
+    Ok(interval_position.is_some())
 }
 
 /// Roster "IND …" lines: `A(X | φ) <= B(Y | ψ)` under the acceptance gate.
@@ -363,7 +364,7 @@ fn validate_containment(
     target: &Side,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
-) -> Result<Resolved, SchemaError> {
+) -> Result<Enforcement, SchemaError> {
     validate_side_shape(id, source, relations)?;
     validate_side_shape(id, target, relations)?;
 
@@ -428,7 +429,7 @@ fn validate_containment(
     // source extension's φ-rows must all sit inside the compiled member
     // set (a closed source under an *ordinary* target stays commit-judged:
     // the target can shrink).
-    if let (Resolved::ClosedContainment { members }, Some(rows)) = (
+    if let (Enforcement::Closed { members }, Some(rows)) = (
         &resolved,
         relations[source.relation.0 as usize].extension.as_deref(),
     ) {
@@ -456,8 +457,8 @@ fn validate_containment(
 /// literal whose encoding is a pure function of the value; `str` literals
 /// stay [`CompiledCheck::Interned`] (their word is per-database dictionary
 /// state, resolved at commit). The one compile walk — the sealed
-/// [`Statement::checks`] and the closed-extension evaluations below both
-/// consume it.
+/// [`ContainmentStatement::checks`] and the closed-extension evaluations
+/// below both consume it.
 fn compiled_checks(selection: &[(FieldId, Value)]) -> Box<[CompiledCheck]> {
     selection
         .iter()
@@ -481,16 +482,15 @@ fn compiled_checks(selection: &[(FieldId, Value)]) -> Box<[CompiledCheck]> {
 }
 
 /// σ over one sealed row: one byte compare per selected field. Total over
-/// `Encoded` only — closed relations refuse `str` columns, so a closed
-/// side's compiled checks never carry `Interned`.
+/// Closed relations refuse `str` columns, so the `Interned` arm is absent
+/// for a validated closed side. Keeping the evaluator total makes malformed
+/// internal data fail the predicate instead of opening a panic path.
 fn sealed_satisfies(checks: &[CompiledCheck], layout: &FactLayout, fact: &[u8]) -> bool {
     checks.iter().all(|check| match check {
         CompiledCheck::Encoded { field, bytes } => {
             field_bytes(fact, layout, usize::from(field.0)) == &bytes[..]
         }
-        CompiledCheck::Interned { .. } => {
-            unreachable!("closed relations refuse str columns")
-        }
+        CompiledCheck::Interned { .. } => false,
     })
 }
 
@@ -651,7 +651,7 @@ fn resolve_target_key(
     target: &Side,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
-) -> Result<Resolved, SchemaError> {
+) -> Result<Enforcement, SchemaError> {
     let target_relation = &relations[target.relation.0 as usize];
 
     // The compiled-subset branch (`docs/architecture/30-dependencies.md`):
@@ -675,7 +675,7 @@ fn resolve_target_key(
                 members[idx / 64] |= 1 << (idx % 64);
             }
         }
-        return Ok(Resolved::ClosedContainment { members });
+        return Ok(Enforcement::Closed { members });
     }
 
     let target_fields = &target_relation.fields;
@@ -693,21 +693,24 @@ fn resolve_target_key(
     let interval_position = positions.first().copied();
 
     let want = field_set(&target.projection);
-    let found = descriptors.iter().enumerate().find(|(_, descriptor)| {
-        if let StatementDescriptor::Functionality {
-            relation,
-            projection,
-        } = descriptor
-        {
-            *relation == target.relation && field_set(projection) == want
-        } else {
-            false
-        }
-    });
+    let found = descriptors
+        .iter()
+        .enumerate()
+        .find_map(|(index, descriptor)| match descriptor {
+            StatementDescriptor::Functionality {
+                relation,
+                projection,
+            } if *relation == target.relation && field_set(projection) == want => {
+                Some((index, projection.as_ref()))
+            }
+            StatementDescriptor::Functionality { .. } | StatementDescriptor::Containment { .. } => {
+                None
+            }
+        });
 
     // Roster "IND whose target projection matches no key of the target
     // (or, with an interval position, no pointwise key carrying it)".
-    let Some((key_idx, key)) = found else {
+    let Some((key_idx, key_projection)) = found else {
         return Err(if interval_position.is_some() {
             SchemaError::NoPointwiseTargetKey {
                 statement: id,
@@ -725,13 +728,6 @@ fn resolve_target_key(
     // gate's "key carries its interval" demand is discharged by
     // construction, not re-checked.
 
-    let StatementDescriptor::Functionality {
-        projection: key_projection,
-        ..
-    } = key
-    else {
-        unreachable!("resolution matched a Functionality");
-    };
     let key_permutation = target
         .projection
         .iter()
@@ -744,8 +740,20 @@ fn resolve_target_key(
         })
         .collect();
 
-    Ok(Resolved::Containment {
-        target_key: statement_id(key_idx),
+    let target_key = KeyId(
+        u16::try_from(
+            descriptors[..key_idx]
+                .iter()
+                .filter(|descriptor| {
+                    matches!(descriptor, StatementDescriptor::Functionality { .. })
+                })
+                .count(),
+        )
+        .expect("statement count fits u16"),
+    );
+
+    Ok(Enforcement::Probe {
+        target_key,
         key_permutation,
         coverage: interval_position.is_some(),
     })
@@ -909,8 +917,9 @@ fn validate_extension(
                     row: row_idx,
                     field: field_id,
                 },
-                // `str` columns are refused above, so Utf8 is
-                // unreachable — kept total, not clever.
+                // `str` columns are refused above, so Utf8 cannot arise;
+                // the match stays total and maps malformed internal data
+                // to the ordinary type-mismatch error.
                 ValueMismatch::Type | ValueMismatch::Utf8 => {
                     SchemaError::ExtensionValueTypeMismatch {
                         relation: rel_id,

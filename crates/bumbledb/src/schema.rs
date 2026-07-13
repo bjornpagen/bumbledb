@@ -37,6 +37,14 @@ pub struct FieldId(pub u16);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StatementId(pub u16);
 
+/// Witness index into [`Schema::keys`] — minted only by validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct KeyId(pub(crate) u16);
+
+/// Witness index into [`Schema::containments`] — minted only by validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ContainmentId(pub(crate) u16);
+
 /// The element domain of an Interval: closed to the two orderable scalars.
 /// A flat enum, deliberately — no `Interval(Box<ValueType>)` recursion, so
 /// illegal elements are unrepresentable rather than rejected.
@@ -352,45 +360,21 @@ impl SchemaDescriptor {
     }
 }
 
-/// The enforcement-plan data validation attaches to an accepted statement
-/// (computed by the acceptance gate, `docs/architecture/30-dependencies.md`).
-/// Stage-1-fixed judgments live here as constants — the commit path reads
-/// flags and sealed bytes, never re-derives them (the staging law; the
-/// interval *position* itself is a validate-time concern and is not
-/// carried).
+/// The enforcement plan of a sealed containment. Keys carry their one
+/// enforcement flag directly on [`KeyStatement`], so variant agreement is
+/// represented by the type rather than re-checked by every consumer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Resolved {
-    Functionality {
-        /// The key carries an interval (necessarily final position): the
-        /// exact `U` put cannot detect overlap, so inserts additionally
-        /// run the ordered-neighbor probe.
-        pointwise: bool,
-    },
-    Containment {
-        /// The `Functionality` statement probed on the target.
-        target_key: StatementId,
-        /// Statement projection order -> target key order.
+pub(crate) enum Enforcement {
+    /// Probe an ordinary target key. `key_permutation` maps statement
+    /// projection order to target-key order; `coverage` selects the interval
+    /// coverage walk instead of a scalar get.
+    Probe {
+        target_key: KeyId,
         key_permutation: Box<[u16]>,
-        /// An interval position is shared by both sides: the source probe
-        /// is the coverage walk, not the scalar get.
         coverage: bool,
     },
-    /// A containment whose target relation is **closed**: the target side
-    /// is stage-1-known, so the enforcement plan is not a probe strategy —
-    /// it is **the answer set itself**, compiled at validate
-    /// (`docs/architecture/30-dependencies.md` § enforcement). No target
-    /// key, no permutation, no guard: the target projection is the
-    /// synthetic id, and ψ has already been applied to the sealed
-    /// extension.
-    ClosedContainment {
-        /// The surviving row ids as a 256-bit set — the
-        /// [`MAX_EXTENSION_ROWS`] cap exists exactly to fix this width.
-        /// Source-side judgment is one AND and one test
-        /// ([`closed_member`]); the target side is vacuous by
-        /// construction (axioms never delete), so no `R` reverse edges
-        /// exist for this statement class.
-        members: [u64; 4],
-    },
+    /// A closed target's stage-1-known answer set.
+    Closed { members: [u64; 4] },
 }
 
 /// Whether `id` is inside a compiled member set — the whole judgment of a
@@ -429,16 +413,31 @@ pub(crate) struct CompiledSides {
     pub(crate) target: Box<[CompiledCheck]>,
 }
 
-/// One sealed statement: the descriptor plus its resolved enforcement data
-/// and its `==` pairing.
+/// One sealed key statement: `R(X) -> R` with its enforcement flag.
 #[derive(Debug)]
-pub struct Statement {
-    pub descriptor: StatementDescriptor,
-    pub resolved: Resolved,
-    /// Both sides' σ literals, compiled once at validate ([`CompiledCheck`]);
-    /// `None` for `Functionality` (FDs carry no selection — the shape is
-    /// unrepresentable).
-    pub(crate) checks: Option<CompiledSides>,
+pub struct KeyStatement {
+    /// Materialized-order identity. It is fingerprint-pinned and embedded in
+    /// storage keys and errors; it is never an arena index.
+    pub id: StatementId,
+    pub relation: RelationId,
+    pub projection: Box<[FieldId]>,
+    /// The key carries an interval (necessarily in final position), so its
+    /// enforcement uses an ordered-neighbor probe.
+    pub pointwise: bool,
+}
+
+/// One sealed containment: its declaration, enforcement proof, compiled
+/// selections, and optional `==` partner.
+#[derive(Debug)]
+pub struct ContainmentStatement {
+    /// Materialized-order identity. It is not an arena index.
+    pub id: StatementId,
+    pub source: Side,
+    pub target: Side,
+    pub(crate) enforcement: Enforcement,
+    /// Both sides' σ literals, compiled once at validate. This is total:
+    /// keys cannot reach a containment value.
+    pub(crate) checks: CompiledSides,
     /// The `==` partner: the containment whose sides are exactly this
     /// statement's sides swapped, anywhere in the materialized list —
     /// `==` lowers to two containments and the pairing is a fact of the
@@ -453,21 +452,30 @@ pub struct Statement {
     pub mirror: Option<StatementId>,
 }
 
-impl Statement {
-    /// The projection of a key (`Functionality`) statement — the guard
-    /// tuple's field order (readers: the commit applier's guard
-    /// derivation, `Db::verify_store`'s re-derivation).
-    ///
-    /// # Panics
-    ///
-    /// On a `Containment` — callers hold ids from [`Relation::keys`],
-    /// which the validated schema fills with `Functionality` statements.
+/// The global materialized-order spine: a [`StatementId`] selects one typed
+/// arena and one slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatementRef {
+    Key(KeyId),
+    Containment(ContainmentId),
+}
+
+/// A borrowed sealed statement for display and other order-preserving walks.
+/// Consumers that already hold a typed id use the total arena accessors.
+#[derive(Debug, Clone, Copy)]
+pub enum StatementView<'schema> {
+    Key(&'schema KeyStatement),
+    Containment(&'schema ContainmentStatement),
+}
+
+impl StatementView<'_> {
+    /// The fingerprint-pinned materialized identity of either statement arm.
     #[must_use]
-    pub(crate) fn key_projection(&self) -> &[FieldId] {
-        let StatementDescriptor::Functionality { projection, .. } = &self.descriptor else {
-            unreachable!("validated schema: relation keys are Functionality statements")
-        };
-        projection
+    pub const fn id(self) -> StatementId {
+        match self {
+            Self::Key(statement) => statement.id,
+            Self::Containment(statement) => statement.id,
+        }
     }
 }
 
@@ -496,9 +504,9 @@ pub struct Relation {
     /// § closed relations).
     extension: Option<Box<[SealedRow]>>,
     /// `Functionality` statements on this relation, in materialized order.
-    keys: Box<[StatementId]>,
+    keys: Box<[KeyId]>,
     /// `Containment` statements whose source is this relation.
-    outgoing: Box<[StatementId]>,
+    outgoing: Box<[ContainmentId]>,
 }
 
 /// The sealed schema witness. Unconstructible except through
@@ -506,14 +514,13 @@ pub struct Relation {
 #[derive(Debug)]
 pub struct Schema {
     relations: Box<[Relation]>,
-    /// The materialized statement list; [`StatementId`] indexes it.
-    statements: Box<[Statement]>,
-    /// `target_key -> dependents`: per statement, the `Containment`
-    /// statements whose resolved [`Resolved::Containment::target_key`] is
-    /// that statement — the target-side reverse-edge check set
-    /// (`docs/architecture/30-dependencies.md` § enforcement). Empty for
-    /// every non-key statement. [`StatementId`] indexes it.
-    dependents: Box<[Box<[StatementId]>]>,
+    /// Homogeneous typed arenas. Only validation mints their witness ids.
+    keys: Box<[KeyStatement]>,
+    containments: Box<[ContainmentStatement]>,
+    /// The materialized statement list; [`StatementId`] indexes this spine.
+    order: Box<[StatementRef]>,
+    /// `target_key -> dependents`, indexed by [`KeyId`].
+    dependents: Box<[Box<[ContainmentId]>]>,
 }
 
 impl Schema {
@@ -567,20 +574,67 @@ impl Schema {
         Ok(FreshField { relation, field })
     }
 
-    /// The sealed statements, in materialized order.
+    /// All sealed keys, in typed-arena order.
     #[must_use]
-    pub fn statements(&self) -> &[Statement] {
-        &self.statements
+    pub fn keys(&self) -> &[KeyStatement] {
+        &self.keys
     }
 
-    /// The statement for a validated id.
-    ///
-    /// # Panics
-    ///
-    /// On an out-of-range id — internal callers only.
+    /// All sealed containments, in typed-arena order.
     #[must_use]
-    pub fn statement(&self, id: StatementId) -> &Statement {
-        &self.statements[usize::from(id.0)]
+    pub fn containments(&self) -> &[ContainmentStatement] {
+        &self.containments
+    }
+
+    /// A key selected by its validation-minted witness.
+    #[must_use]
+    pub fn key(&self, id: KeyId) -> &KeyStatement {
+        &self.keys[usize::from(id.0)]
+    }
+
+    /// The bounds-checked sibling of [`Schema::key`] for ids arriving as
+    /// dynamic data.
+    #[must_use]
+    pub fn key_checked(&self, id: KeyId) -> Option<&KeyStatement> {
+        self.keys.get(usize::from(id.0))
+    }
+
+    /// A containment selected by its validation-minted witness.
+    #[must_use]
+    pub fn containment(&self, id: ContainmentId) -> &ContainmentStatement {
+        &self.containments[usize::from(id.0)]
+    }
+
+    /// The bounds-checked sibling of [`Schema::containment`] for ids arriving
+    /// as dynamic data.
+    #[must_use]
+    pub fn containment_checked(&self, id: ContainmentId) -> Option<&ContainmentStatement> {
+        self.containments.get(usize::from(id.0))
+    }
+
+    /// Resolve a materialized-order identity through the typed arena spine.
+    #[must_use]
+    pub fn statement(&self, id: StatementId) -> StatementView<'_> {
+        match self.order[usize::from(id.0)] {
+            StatementRef::Key(key) => StatementView::Key(self.key(key)),
+            StatementRef::Containment(containment) => {
+                StatementView::Containment(self.containment(containment))
+            }
+        }
+    }
+
+    /// The bounds-checked sibling of [`Schema::statement`].
+    #[must_use]
+    pub fn statement_checked(&self, id: StatementId) -> Option<StatementView<'_>> {
+        self.order
+            .get(usize::from(id.0))
+            .copied()
+            .map(|statement| match statement {
+                StatementRef::Key(key) => StatementView::Key(self.key(key)),
+                StatementRef::Containment(containment) => {
+                    StatementView::Containment(self.containment(containment))
+                }
+            })
     }
 
     /// The `Containment` statements whose resolved target key is `id` —
@@ -593,26 +647,13 @@ impl Schema {
     ///
     /// On an out-of-range id — internal callers only.
     #[must_use]
-    pub fn dependents(&self, id: StatementId) -> &[StatementId] {
+    pub fn dependents(&self, id: KeyId) -> &[ContainmentId] {
         &self.dependents[usize::from(id.0)]
     }
 
-    /// The projection of a key statement — the one place an id from
-    /// [`Relation::keys`] is unpacked to its field list (guard byte
-    /// order, coverage checks, the planner's key var sets).
-    ///
-    /// # Panics
-    ///
-    /// On a programmer-invariant violation: an id naming a non-key
-    /// statement — `Relation::keys()` indexes `Functionality` statements
-    /// only.
+    /// The bounds-checked sibling of [`Schema::dependents`].
     #[must_use]
-    pub fn key_projection(&self, id: StatementId) -> &[FieldId] {
-        match &self.statement(id).descriptor {
-            StatementDescriptor::Functionality { projection, .. } => projection,
-            StatementDescriptor::Containment { .. } => {
-                unreachable!("Relation::keys() indexes Functionality statements")
-            }
-        }
+    pub fn dependents_checked(&self, id: KeyId) -> Option<&[ContainmentId]> {
+        self.dependents.get(usize::from(id.0)).map(AsRef::as_ref)
     }
 }
