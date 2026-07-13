@@ -19,6 +19,24 @@ when the world contradicts it, the fix is to find WHICH premise broke —
 not to quietly re-pin. The candidate premises are enumerable and each is
 testable in a unit fixture.
 
+## Execution result — P3
+
+The diagnosis selected P3. The committed toy cycle uses three edge
+relations, exact resident distinct counts, and a three-row closed vocabulary.
+With the full `(x, y, z)` head its per-node estimate/actual pairs are
+`24/24, 192/192, 576/192`: the closing two-variable probe uses its best
+one-column fanout (3) where the true pair fanout is 1. With the benchmark-like
+narrow `x` head the pairs are `24/24, 192/24, 576/24`, and 21 of 24 emissions
+are absorbed: D2 legitimately stops existential work, so the report ratio is
+not a pure cardinality-error bound. The closed-domain rung is applied (P1 is
+not defective), and the fixture contains no range (P2 is excluded).
+
+The 2026-07-12 scale-S record is now classed and population-named: the worst
+profiled acyclic read family is `conflict_free` at 691.2×; the cyclic class's
+only member, `triangle`, is 4761.9×. The unsupported universal 4× reprepare
+convention was deleted from both the API doc and code commentary; the raw
+staleness ratio remains host-policy input without a universal cutoff.
+
 ## Context (decided shape)
 
 The estimate path (read before writing anything): per-node fanout =

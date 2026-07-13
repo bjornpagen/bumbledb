@@ -176,8 +176,10 @@ pub struct NodeStats {
     pub batch_entries: u64,
     /// The planner's estimate for this step.
     pub estimate: u64,
-    /// The measured cardinality after this node (entries of the next
-    /// node, or sink emits for the last).
+    /// The executed cardinality after this node (entries of the next
+    /// node, or sink emits for the last). D2 cancellation may deliberately
+    /// stop before enumerating the denotation's full binding set, so this
+    /// is an execution-work actual, not always a cardinality oracle.
     pub actual: u64,
     /// Per subatom, in subatom order.
     pub covers: Vec<CoverStats>,

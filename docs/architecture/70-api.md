@@ -202,9 +202,11 @@ Both are emission; the grammar is untouched.
   get each, ≤ 20 by the roster cap), each ratio
   `max(live, pinned) / max(1, min(live, pinned))` so shrink and growth both read as
   drift ≥ 1, plus the max. Pull-based and engine-policy-free: the engine never calls
-  it and holds no thresholds — the host owns policy (`00-product.md`). Convention,
-  not contract: re-prepare at max ratio ≥ 4× (the worst measured est/actual on a
-  fresh plan is 3.3×, so 4× separates plan drift from estimation noise). Same
+  it and holds no thresholds — the host owns policy (`00-product.md`). There is no
+  universal reprepare ratio: the 2026-07-12 estimator diagnosis found fresh-plan
+  execution-work ratios vary by query class up to 4761.9×, so a fixed cutoff cannot
+  separate drift from estimation shape. Hosts may compare this raw signal across
+  generations using workload-specific evidence. Same
   foreign-snapshot guard as execution; it allocates — a diagnostic surface, never a
   warm-path call. Negated and chase-eliminated occurrences earn no statistics read
   at prepare and so carry no pin; guard probes pin nothing. The stats/EXPLAIN

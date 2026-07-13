@@ -781,5 +781,24 @@ Prepare-time statistics live in `plan/selectivity.rs` (the distinct ladder:
 key-exact, resident-image exact via `ImageCache::peek` — prepare never
 builds — schema bounds, documented floors) and the DP's join steps multiply
 per-binding fanout `rows / distinct(join field)` with key coverage pinning
-fanout to 1 (measured worst est/actual across the ledger families: ≤ 3.3×,
-against five orders of magnitude for naive row-product estimation).
+fanout to 1.
+
+**Estimator record (2026-07-12, scale-S read-family reports):** the observed
+EXPLAIN estimate/executed-actual factor is classed by query hypergraph, not
+presented as one estimator-accuracy bound. Among profiled acyclic ledger and
+calendar families the worst was 691.2× (`conflict_free`); the cyclic class was
+4761.9× (`triangle`, its only member). The derivation is the three regenerated
+scale-S reports at the repository's 2026-07-12 family roster. These numbers are
+execution-work ratios: a node's `actual` is the next executed-node entry count,
+or final sink emissions, after legal D2 cancellation. They are therefore not
+pure denotation-cardinality error. The fixture
+`cyclic_estimate_diagnosis_is_p3_not_a_domain_or_range_defect` separates the
+premises: with exact resident distincts and a three-row closed domain, a toy
+cycle's full-head estimates/actuals are `24/24, 192/192, 576/192` (P3's closing
+two-variable independence error); its narrow projected head executes
+`24/24, 192/24, 576/24`, with 21 emissions absorbed, because D2 stops existential
+work. The closed-domain rung is applied correctly (P1), and no range exists in
+the fixture (P2). Cyclic estimates are not governed by a fixed factor: they
+order the exhaustive DP while the WCOJ execution bounds the chosen plan's
+damage, and neither estimates nor their error affect correctness. No histograms
+or new tuning rung are earned by this diagnosis.

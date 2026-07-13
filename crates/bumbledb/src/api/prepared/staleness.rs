@@ -72,10 +72,11 @@ impl<S> PreparedQuery<'_, S> {
     /// pinned))`, so shrink and growth both read as drift ≥ 1.
     ///
     /// The engine never calls this and no threshold exists in code —
-    /// the host owns policy (docs/architecture/00-product.md). As a
-    /// convention, not a contract: re-prepare at `max_ratio >= 4.0`
-    /// (the worst measured est/actual on a fresh plan is 3.3×, so 4×
-    /// separates plan drift from estimation noise).
+    /// the host owns policy (docs/architecture/00-product.md). There is
+    /// deliberately no universal reprepare ratio: fresh-plan
+    /// estimate/executed-work error varies by query class, so a fixed
+    /// cutoff cannot distinguish drift from plan shape. Hosts compare
+    /// this raw signal across generations using workload-specific evidence.
     ///
     /// This call allocates (the per-occurrence report) and is a
     /// diagnostic surface, not a warm-path call — keep it outside
@@ -146,7 +147,7 @@ mod tests {
     use super::drift_ratio;
 
     #[test]
-    fn the_ratio_convention_reads_shrink_and_growth_symmetrically() {
+    fn the_ratio_reads_shrink_and_growth_symmetrically() {
         assert!((drift_ratio(100, 400) - 4.0).abs() < f64::EPSILON, "growth");
         assert!((drift_ratio(400, 100) - 4.0).abs() < f64::EPSILON, "shrink");
         assert!((drift_ratio(7, 7) - 1.0).abs() < f64::EPSILON, "no drift");

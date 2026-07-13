@@ -680,4 +680,210 @@ mod tests {
             .rows;
         assert_eq!(est, 1);
     }
+
+    const CYCLE_VOCAB: RelationId = RelationId(0);
+    const CYCLE_A: RelationId = RelationId(1);
+    const CYCLE_B: RelationId = RelationId(2);
+    const CYCLE_C: RelationId = RelationId(3);
+
+    fn cyclic_schema() -> Schema {
+        use crate::schema::Row;
+
+        let field = |name: &str| FieldDescriptor {
+            name: name.into(),
+            value_type: ValueType::U64,
+            generation: Generation::None,
+        };
+        let side = |relation: RelationId, projection: &[u16]| Side {
+            relation,
+            projection: projection.iter().copied().map(FieldId).collect(),
+            selection: Box::new([]),
+        };
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: Some(Box::new([
+                        Row {
+                            handle: "X0".into(),
+                            values: Box::new([]),
+                        },
+                        Row {
+                            handle: "X1".into(),
+                            values: Box::new([]),
+                        },
+                        Row {
+                            handle: "X2".into(),
+                            values: Box::new([]),
+                        },
+                    ])),
+                    name: "X".into(),
+                    fields: vec![],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "A".into(),
+                    fields: vec![field("x"), field("y")],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "B".into(),
+                    fields: vec![field("y"), field("z")],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "C".into(),
+                    fields: vec![field("z"), field("x")],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Containment {
+                    source: side(CYCLE_A, &[0]),
+                    target: side(CYCLE_VOCAB, &[0]),
+                },
+                StatementDescriptor::Containment {
+                    source: side(CYCLE_C, &[1]),
+                    target: side(CYCLE_VOCAB, &[0]),
+                },
+            ],
+        }
+        .validate()
+        .expect("valid cyclic fixture")
+    }
+
+    fn populate_cycle(env: &Environment, schema: &Schema) {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(schema);
+        {
+            let mut insert = |relation: RelationId, values: &[u64]| {
+                let values: Vec<ValueRef> = values.iter().copied().map(ValueRef::U64).collect();
+                let mut bytes = Vec::new();
+                encode_fact(&values, schema.relation(relation).layout(), &mut bytes);
+                delta.insert(&view, relation, &bytes).expect("insert");
+            };
+            for x in 0..3 {
+                for y in 0..8 {
+                    insert(CYCLE_A, &[x, y]);
+                }
+            }
+            for y in 0..8 {
+                for z in 0..8 {
+                    insert(CYCLE_B, &[y, z]);
+                }
+            }
+            for z in 0..8 {
+                for x in 0..3 {
+                    insert(CYCLE_C, &[z, x]);
+                }
+            }
+        }
+        drop(view);
+        commit(delta, env).expect("commit");
+    }
+
+    fn cyclic_query(finds: Vec<crate::ir::FindTerm>) -> crate::ir::Query {
+        use crate::ir::{Atom, Query, Rule, Term, VarId};
+
+        Query::single(Rule {
+            finds,
+            atoms: vec![
+                Atom {
+                    relation: CYCLE_A,
+                    bindings: vec![
+                        (FieldId(0), Term::Var(VarId(0))),
+                        (FieldId(1), Term::Var(VarId(1))),
+                    ],
+                },
+                Atom {
+                    relation: CYCLE_B,
+                    bindings: vec![
+                        (FieldId(0), Term::Var(VarId(1))),
+                        (FieldId(1), Term::Var(VarId(2))),
+                    ],
+                },
+                Atom {
+                    relation: CYCLE_C,
+                    bindings: vec![
+                        (FieldId(0), Term::Var(VarId(2))),
+                        (FieldId(1), Term::Var(VarId(0))),
+                    ],
+                },
+            ],
+            negated: vec![],
+            predicates: vec![],
+        })
+    }
+
+    fn cyclic_profile(
+        txn: &ReadTxn<'_>,
+        cache: &ImageCache,
+        schema: &Schema,
+        finds: Vec<crate::ir::FindTerm>,
+    ) -> crate::api::stats::ExecutionStats {
+        use crate::api::prepared::{prepare, PreparedQuery};
+
+        let mut prepared: PreparedQuery<'_, ()> =
+            prepare(txn, cache, schema, &cyclic_query(finds)).expect("prepare cycle");
+        prepared.profile(txn, cache, &[]).expect("profile cycle").1
+    }
+
+    /// P3 diagnosis: a three-edge cycle with exact resident distincts and a
+    /// three-row closed vocabulary on `x`. The full head shows the inherent
+    /// independence error at the closing two-variable probe; the narrow head
+    /// additionally shows that EXPLAIN's final-node `actual` is emitted set
+    /// witnesses after D2 cancellation, not the cycle's full binding count.
+    /// P1 is pinned by the closed-domain fanout, and P2 is absent by
+    /// construction (there are no range predicates).
+    #[test]
+    fn cyclic_estimate_diagnosis_is_p3_not_a_domain_or_range_defect() {
+        use crate::ir::{FindTerm, VarId};
+
+        let dir = TempDir::new("selectivity-p3-cycle");
+        let schema = cyclic_schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        populate_cycle(&env, &schema);
+        let cache = ImageCache::new(&schema);
+        let txn = env.read_txn().expect("txn");
+        for relation in [CYCLE_A, CYCLE_B, CYCLE_C] {
+            cache
+                .get_or_build(&txn, &schema, relation)
+                .expect("resident exact distincts");
+        }
+
+        let full_stats = cyclic_profile(
+            &txn,
+            &cache,
+            &schema,
+            vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Var(VarId(1)),
+                FindTerm::Var(VarId(2)),
+            ],
+        );
+        let full_pairs: Vec<_> = full_stats.rules[0]
+            .nodes
+            .iter()
+            .map(|node| (node.estimate, node.actual))
+            .collect();
+        assert_eq!(
+            full_pairs,
+            vec![(24, 24), (192, 192), (576, 192)],
+            "P3 cyclic-join independence: the closing two-variable probe uses its best one-column fanout 3 instead of pair fanout 1; P1's three-row closed domain is applied and P2 is absent"
+        );
+
+        let narrow_stats = cyclic_profile(&txn, &cache, &schema, vec![FindTerm::Var(VarId(0))]);
+        let narrow_pairs: Vec<_> = narrow_stats.rules[0]
+            .nodes
+            .iter()
+            .map(|node| (node.estimate, node.actual))
+            .collect();
+        assert_eq!(
+            narrow_pairs,
+            vec![(24, 24), (192, 24), (576, 24)],
+            "P3 report population: D2 emits one set witness per root origin, so final est/actual is not a cardinality-accuracy bound"
+        );
+        assert_eq!(
+            narrow_stats.rules[0].absorbed, 21,
+            "24 emits collapse to 3 x rows"
+        );
+    }
 }
