@@ -1,9 +1,9 @@
 use bumbledb::{CmpOp, Comparison, FieldId, RelationId, Term, Value};
 
-use crate::gen::{GenConfig, Rng};
+use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::dress_posting::dress_posting;
-use crate::querygen::target::{self, ids, Domains};
-use crate::querygen::{interval_data, Builder, DRESS_PCT};
+use crate::querygen::target::{self, Domains, ids};
+use crate::querygen::{Builder, DRESS_PCT, interval_data};
 
 /// Any of the six word-comparison operators, uniformly — applied ONLY
 /// to the two integer types by its callers (the order-op legality

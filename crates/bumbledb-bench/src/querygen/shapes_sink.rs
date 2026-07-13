@@ -5,9 +5,9 @@
 
 use bumbledb::{AggOp, FindTerm, Term};
 
-use crate::gen::Rng;
-use crate::querygen::target::ids;
+use crate::corpus_gen::Rng;
 use crate::querygen::Builder;
+use crate::querygen::target::ids;
 
 /// One `CountDistinct` per query, its input variable drawn to cover
 /// every structural type across a batch: u64, i64, bool, string,

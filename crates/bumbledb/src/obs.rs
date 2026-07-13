@@ -273,7 +273,7 @@ pub mod fastclock;
 
 #[cfg(feature = "trace")]
 mod imp {
-    use super::{fastclock, Category, TraceEvent};
+    use super::{Category, TraceEvent, fastclock};
     use std::cell::RefCell;
     use std::sync::OnceLock;
 

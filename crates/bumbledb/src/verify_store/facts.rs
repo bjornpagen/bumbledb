@@ -8,13 +8,13 @@
 //! no second scan) and collects the referenced intern ids, checking each
 //! against the dictionary next-id counter.
 
-use crate::encoding::{fact_hash, field_bytes, TypeDesc};
+use crate::encoding::{TypeDesc, fact_hash, field_bytes};
 use crate::error::{Direction, Error, Result};
 use crate::schema::{Enforcement, RelationId};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 
-use super::{namespace, StoreFinding, Sweep};
+use super::{StoreFinding, Sweep, namespace};
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;

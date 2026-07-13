@@ -8,7 +8,7 @@ use crate::schema::{FieldId, IntervalElement, Schema, ValueType};
 /// variable type — the shared [`crate::schema::value_matches`] check, so a
 /// non-UTF-8 `String` literal is a type mismatch here exactly as it is at
 /// bind time and on the dynamic write path.
-use crate::schema::{value_matches as literal_matches, ValueMismatch as LiteralMismatch};
+use crate::schema::{ValueMismatch as LiteralMismatch, value_matches as literal_matches};
 
 /// The scalar type of an interval's element domain.
 fn element_type(element: IntervalElement) -> ValueType {
@@ -432,10 +432,10 @@ impl Context {
             // A comparison of a variable with itself is constant-valued —
             // the "write the query you mean" rule applies exactly as it
             // does to literal-vs-literal.
-            if let (Term::Var(l), Term::Var(r)) = (lhs, rhs) {
-                if l == r {
-                    return Err(ValidationError::SelfComparison { index });
-                }
+            if let (Term::Var(l), Term::Var(r)) = (lhs, rhs)
+                && l == r
+            {
+                return Err(ValidationError::SelfComparison { index });
             }
             // The measure's comparison discipline (20-query-ir, § the
             // measure): one `Duration` side at most, and only under the

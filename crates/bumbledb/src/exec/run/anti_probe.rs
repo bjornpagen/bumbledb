@@ -16,7 +16,7 @@
 //! (`docs/architecture/50-storage.md` § commit step 3). The sharing is
 //! the semantic and the compaction machinery, not a common function.
 
-use super::{word_base, AntiProbeSpec, Colt, Counters, JoinPhase, Source, PREFETCH_WIDTH_FLOOR};
+use super::{AntiProbeSpec, Colt, Counters, JoinPhase, PREFETCH_WIDTH_FLOOR, Source, word_base};
 
 /// Evaluates one node's anti-probes over the current survivor set,
 /// compacting rejected bindings away. Batched exactly like the sibling
@@ -37,8 +37,8 @@ use super::{word_base, AntiProbeSpec, Colt, Counters, JoinPhase, Source, PREFETC
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // one pass, three probe forms (gate,
-   // keyless membership, keyed) — the
-   // invariants read in order
+// keyless membership, keyed) — the
+// invariants read in order
 pub(super) fn anti_probe_pass<C: Counters>(
     specs: &[AntiProbeSpec],
     node_idx: usize,

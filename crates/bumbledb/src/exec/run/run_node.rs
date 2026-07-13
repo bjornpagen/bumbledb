@@ -2,8 +2,8 @@
 
 use super::anti_probe::anti_probe_pass;
 use super::{
-    better_cover, BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase,
-    KeyCount, LeafBatch, Sink, Source, ValidatedPlan, PREFETCH_WIDTH_FLOOR,
+    BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, KeyCount, LeafBatch,
+    PREFETCH_WIDTH_FLOOR, Sink, Source, ValidatedPlan, better_cover,
 };
 
 impl Executor {
@@ -11,7 +11,7 @@ impl Executor {
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
     )] // the one hot loop; splitting it would
-       // scatter the batch invariants the comments walk through in order
+    // scatter the batch invariants the comments walk through in order
     pub(super) fn run_node<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -32,11 +32,10 @@ impl Executor {
         // The leaf fast paths: pinned-row elision and
         // the scan-fold pushdown. A `None` decline falls through to the
         // generic batch machinery with no counters fired.
-        if self.leaf_single {
-            if let Some(flow) = self.run_leaf_fast(plan, node_idx, colts, bindings, sink, counters)
-            {
-                return flow;
-            }
+        if self.leaf_single
+            && let Some(flow) = self.run_leaf_fast(plan, node_idx, colts, bindings, sink, counters)
+        {
+            return flow;
         }
         counters.node_entry(node_idx);
 

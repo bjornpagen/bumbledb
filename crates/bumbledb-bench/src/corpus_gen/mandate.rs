@@ -1,6 +1,6 @@
 use bumbledb::Interval;
 
-use crate::gen::{mix, Rng, Sizes, AT_BASE, AT_STEP};
+use crate::corpus_gen::{AT_BASE, AT_STEP, Rng, Sizes, mix};
 use crate::schema::ids;
 
 /// Segments per account — every account carries exactly this many, so

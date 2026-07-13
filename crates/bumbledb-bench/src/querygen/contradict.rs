@@ -7,7 +7,7 @@
 
 use bumbledb::{CmpOp, Comparison, FieldId, PredicateTree, Query, RelationId, Rule, Term, Value};
 
-use crate::gen::{GenConfig, Rng};
+use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::target::ids;
 
 /// A generated query whose EVERY rule carries a constant contradiction

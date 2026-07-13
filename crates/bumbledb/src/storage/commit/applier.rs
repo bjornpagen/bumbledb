@@ -1,9 +1,9 @@
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::{RelationId, StatementId};
-use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
+use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 
 use super::plan::FactOp;
-use super::{decode_row_id, fact_by_row, Applier};
+use super::{Applier, decode_row_id, fact_by_row};
 
 impl Applier<'_> {
     /// Phase-1 step: removes one fact's F/M/U/R entries, every key byte
@@ -152,34 +152,33 @@ impl Applier<'_> {
         let end = &inserted[u_len - 8..u_len];
 
         let mut incumbent_row: Option<u64> = None;
-        if let Some((pk, pv)) = self.data.get_lower_than(self.txn.raw(), inserted)? {
-            if pk.starts_with(prefix) {
-                // Same statement, same guard width: a prefix-sharing key
-                // of any other length is corrupt data, a hard error.
-                if pk.len() != u_len {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "U guard key length",
-                    )));
-                }
-                // Predecessor `[ps, pe)`: violation iff `pe > s`.
-                if &pk[u_len - 8..] > start {
-                    incumbent_row = Some(decode_row_id(pv)?);
-                }
+        if let Some((pk, pv)) = self.data.get_lower_than(self.txn.raw(), inserted)?
+            && pk.starts_with(prefix)
+        {
+            // Same statement, same guard width: a prefix-sharing key
+            // of any other length is corrupt data, a hard error.
+            if pk.len() != u_len {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "U guard key length",
+                )));
+            }
+            // Predecessor `[ps, pe)`: violation iff `pe > s`.
+            if &pk[u_len - 8..] > start {
+                incumbent_row = Some(decode_row_id(pv)?);
             }
         }
-        if incumbent_row.is_none() {
-            if let Some((nk, nv)) = self.data.get_greater_than(self.txn.raw(), inserted)? {
-                if nk.starts_with(prefix) {
-                    if nk.len() != u_len {
-                        return Err(Error::Corruption(CorruptionError::MalformedValue(
-                            "U guard key length",
-                        )));
-                    }
-                    // Successor `[ns, ne)`: violation iff `ns < e`.
-                    if &nk[u_len - 16..u_len - 8] < end {
-                        incumbent_row = Some(decode_row_id(nv)?);
-                    }
-                }
+        if incumbent_row.is_none()
+            && let Some((nk, nv)) = self.data.get_greater_than(self.txn.raw(), inserted)?
+            && nk.starts_with(prefix)
+        {
+            if nk.len() != u_len {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "U guard key length",
+                )));
+            }
+            // Successor `[ns, ne)`: violation iff `ns < e`.
+            if &nk[u_len - 16..u_len - 8] < end {
+                incumbent_row = Some(decode_row_id(nv)?);
             }
         }
         let Some(row) = incumbent_row else {

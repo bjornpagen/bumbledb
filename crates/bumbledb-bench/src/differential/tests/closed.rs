@@ -11,12 +11,12 @@
 
 use bumbledb::{Db, Direction, Value};
 
-use crate::differential::{run, Op};
-use crate::fixture::{string, TempDir};
-use crate::gen::{GenConfig, Rng, Scale};
+use crate::corpus_gen::{GenConfig, Rng, Scale};
+use crate::differential::{Op, run};
+use crate::fixture::{TempDir, string};
 use crate::naive::{Delta, NaiveDb, ParamValue, Violation};
 use crate::querygen::target::{self, ids};
-use crate::querygen::writes::{closed_write_cases, ClosedWriteCase, ClosedWriteKind};
+use crate::querygen::writes::{ClosedWriteCase, ClosedWriteKind, closed_write_cases};
 use crate::querygen::{params_for, random_query};
 
 const CFG: GenConfig = GenConfig {

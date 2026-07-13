@@ -7,8 +7,8 @@
 //! fields, no histograms, no magic selectivity constants (the post-mortem's
 //! central engine finding, §30).
 
-use crate::ir::normalize::OccId;
 use crate::ir::VarId;
+use crate::ir::normalize::OccId;
 
 mod densify;
 mod estimate;

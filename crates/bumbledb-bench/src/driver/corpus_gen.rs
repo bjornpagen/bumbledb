@@ -6,7 +6,7 @@ use crate::schema::Ledger;
 use crate::{corpus, verify};
 
 use super::corpus::gen_config;
-use super::{ensure_corpus, CASES_FILE};
+use super::{CASES_FILE, ensure_corpus};
 
 /// `gen`.
 ///
@@ -38,7 +38,7 @@ pub fn cmd_verify(corpus: &CorpusArgs, cases: u32) -> Result<i32, String> {
         Connection::open(&paths.cal_oracle).map_err(|e| format!("open calendar oracle: {e}"))?;
     corpus::configure_sqlite(&cal_conn).map_err(|e| format!("configure calendar oracle: {e}"))?;
     let vcfg = verify::VerifyConfig {
-        gen: cfg,
+        corpus_gen: cfg,
         random_cases: cases,
         out_dir: paths.root.clone(),
     };

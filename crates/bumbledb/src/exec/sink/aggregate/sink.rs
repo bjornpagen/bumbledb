@@ -1,7 +1,7 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::kernel;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, Sink};
-use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FoldOp, SinkSpec};
+use crate::exec::sink::{Acc, AggregateSink, FoldOp, SinkSpec, word_to_i64};
 use crate::image::ColumnView;
 
 impl Sink for AggregateSink {

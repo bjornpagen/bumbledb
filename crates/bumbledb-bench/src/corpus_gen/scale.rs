@@ -1,4 +1,4 @@
-use crate::gen::Scale;
+use crate::corpus_gen::Scale;
 
 impl Scale {
     #[must_use]

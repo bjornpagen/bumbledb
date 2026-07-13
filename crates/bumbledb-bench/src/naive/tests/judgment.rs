@@ -311,8 +311,8 @@ fn scalar_key_conflicts() {
 
 mod source_side {
     use super::{
-        field, interval, run, selected, side, source_unsatisfied, Case, FieldId,
-        RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, Value, ValueType,
+        Case, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor,
+        Value, ValueType, field, interval, run, selected, side, source_unsatisfied,
     };
 
     const PARENT: RelationId = RelationId(0);
@@ -702,8 +702,8 @@ mod source_side {
 
 mod target_side {
     use super::{
-        field, interval, run, selected, side, target_required, Case, FieldId, RelationDescriptor,
-        RelationId, SchemaDescriptor, StatementDescriptor, Value, ValueType,
+        Case, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor,
+        Value, ValueType, field, interval, run, selected, side, target_required,
     };
 
     const TARGET2: RelationId = RelationId(0);

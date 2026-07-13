@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::schema::RelationId;
 use crate::storage::keys;
 
-use super::{namespace, StoreFinding, Sweep};
+use super::{StoreFinding, Sweep, namespace};
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;

@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 
 use super::read_meta::read_u64;
-use super::{WriteTxn, META_DICT_NEXT_ID, META_TX_ID};
+use super::{META_DICT_NEXT_ID, META_TX_ID, WriteTxn};
 
 impl WriteTxn<'_> {
     /// Commits (fsync per LMDB defaults). The write path's one durability

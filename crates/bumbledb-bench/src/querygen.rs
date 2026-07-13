@@ -43,7 +43,7 @@ pub mod writes;
 pub use construct::random_query;
 pub use contradict::contradiction_query;
 pub use coverage::{cmp_cell_legal, coverage};
-pub use oracle::{params_for, ParamDraw};
+pub use oracle::{ParamDraw, params_for};
 
 /// The shape grammar's weights (drawn by range over the sum). The five
 /// original join shapes keep their proportions; the redesign's surface

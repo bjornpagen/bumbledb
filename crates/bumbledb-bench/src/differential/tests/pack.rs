@@ -13,8 +13,8 @@
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{AggOp, Atom, Db, FieldId, FindTerm, Query, RelationId, Rule, Term, Value, VarId};
 
-use crate::differential::{run, Op};
-use crate::fixture::{field, TempDir};
+use crate::differential::{Op, run};
+use crate::fixture::{TempDir, field};
 use crate::naive::{Delta, NaiveDb, Tuple};
 
 /// Busy(id u64, person u64, slot interval<u64>);

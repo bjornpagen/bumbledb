@@ -10,9 +10,9 @@ use bumbledb::{
     Value, VarId,
 };
 
-use super::{mix, Scenario, ScenarioQuery};
+use super::{Scenario, ScenarioQuery, mix};
+use crate::corpus_gen::Rng;
 use crate::fixture::var;
-use crate::gen::Rng;
 
 bumbledb::schema! {
     pub Olap;

@@ -1,5 +1,5 @@
 use super::Db;
-use crate::api::prepared::{prepare, PreparedQuery};
+use crate::api::prepared::{PreparedQuery, prepare};
 use crate::error::Result;
 use crate::ir::Query;
 

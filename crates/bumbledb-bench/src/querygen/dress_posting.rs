@@ -1,9 +1,9 @@
 use bumbledb::{CmpOp, Comparison, Term, Value};
 
-use crate::gen::Rng;
-use crate::querygen::dress::{at_window, eq_ne, i64_dress, string_cmp, u64_dress};
-use crate::querygen::target::{ids, Domains, AMOUNT_LEVELS, AMOUNT_STEP};
+use crate::corpus_gen::Rng;
 use crate::querygen::Builder;
+use crate::querygen::dress::{at_window, eq_ne, i64_dress, string_cmp, u64_dress};
+use crate::querygen::target::{AMOUNT_LEVELS, AMOUNT_STEP, Domains, ids};
 
 /// One dressing predicate on a Posting atom.
 pub(super) fn dress_posting(b: &mut Builder, rng: &mut Rng, atom: usize, domains: &Domains) {

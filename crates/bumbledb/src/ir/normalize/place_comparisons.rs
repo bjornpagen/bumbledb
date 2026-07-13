@@ -1,7 +1,7 @@
 use super::{
-    lower_literal::{lower_literal, point_word},
     IntervalWord, Occurrence, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
     VarWord,
+    lower_literal::{lower_literal, point_word},
 };
 use crate::allen::AllenMask;
 use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};

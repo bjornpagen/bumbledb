@@ -34,8 +34,8 @@ use std::sync::OnceLock;
 use bumbledb::schema::{IntervalElement, RelationDescriptor, Row, SchemaDescriptor, ValueType};
 use bumbledb::{Schema, Value};
 
+use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::fixture::{field, fresh};
-use crate::gen::{GenConfig, Rng, Scale};
 use crate::querygen::interval_data;
 
 /// Relation and field ids by name — declaration order is the id order,

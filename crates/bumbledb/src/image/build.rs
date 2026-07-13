@@ -14,7 +14,7 @@ use crate::storage::read;
 
 use super::decode::{decode_fact, decode_plan, fill_columns};
 use super::{
-    column_spans, Column, ColumnSpan, ColumnWidth, PitchPadder, RelationImage, LINE, SET_STRIDE,
+    Column, ColumnSpan, ColumnWidth, LINE, PitchPadder, RelationImage, SET_STRIDE, column_spans,
 };
 
 /// Checked slab lengths (in words and bytes) for the stored row count.

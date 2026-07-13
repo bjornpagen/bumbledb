@@ -43,8 +43,7 @@ pub fn fold_sum_biased_i64_idx(
     // Four independent accumulators: the adds race down separate
     // dependency chains while the OoO window overlaps the gathers.
     let mut acc = [0i128; 4];
-    let chunks = indices.chunks_exact(4);
-    let tail = chunks.remainder();
+    let (chunks, tail) = indices.as_chunks::<4>();
     for chunk in chunks {
         for (lane, &idx) in chunk.iter().enumerate() {
             // SAFETY: debug-asserted above; indices are image/batch
@@ -69,8 +68,7 @@ pub fn fold_sum_biased_i64_idx(
 pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &[u32]) -> u128 {
     debug_assert_idx_bounds(values, stride, offset, indices);
     let mut acc = [0u128; 4];
-    let chunks = indices.chunks_exact(4);
-    let tail = chunks.remainder();
+    let (chunks, tail) = indices.as_chunks::<4>();
     for chunk in chunks {
         for (lane, &idx) in chunk.iter().enumerate() {
             // SAFETY: as in `fold_sum_biased_i64_idx`.
@@ -108,8 +106,7 @@ pub fn fold_min_max_u64_idx(
     debug_assert_idx_bounds(values, stride, offset, indices);
     let mut mins = [u64::MAX; 4];
     let mut maxs = [u64::MIN; 4];
-    let chunks = indices.chunks_exact(4);
-    let tail = chunks.remainder();
+    let (chunks, tail) = indices.as_chunks::<4>();
     for chunk in chunks {
         for (lane, &idx) in chunk.iter().enumerate() {
             // SAFETY: as in `fold_sum_biased_i64_idx`.

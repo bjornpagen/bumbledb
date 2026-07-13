@@ -20,7 +20,7 @@ pub use crate::value::Value;
 /// predicate grammar ([`PredicateTree`]) into Or-free rules; validation
 /// runs it, and it is exported so the differential suite can prove it
 /// against the naive model's direct tree evaluation.
-pub use normalize::{distribute, LoweredRule};
+pub use normalize::{LoweredRule, distribute};
 
 /// The rule-count cap: a query is a program of at most this many rules,
 /// rejected at validation (`ValidationError::TooManyRules`). Counted

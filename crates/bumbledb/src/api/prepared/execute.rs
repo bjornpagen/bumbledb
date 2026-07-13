@@ -275,11 +275,13 @@ impl<S> PreparedQuery<'_, S> {
     /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery.
     fn execute_guard_direct(&mut self, txn: &ReadTxn<'_>, out: &mut ResultBuffer) -> Result<()> {
-        let [PreparedRule::Guard(GuardRule {
-            plan: guard,
-            guard_finds: Some(guard_finds),
-            ..
-        })] = self.program.rules()
+        let [
+            PreparedRule::Guard(GuardRule {
+                plan: guard,
+                guard_finds: Some(guard_finds),
+                ..
+            }),
+        ] = self.program.rules()
         else {
             return Ok(());
         };

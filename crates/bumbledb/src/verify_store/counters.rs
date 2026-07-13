@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::schema::RelationId;
 use crate::storage::keys::{self, StatKind};
 
-use super::{namespace, StoreFinding, Sweep};
+use super::{StoreFinding, Sweep, namespace};
 
 const ROW_COUNT: u8 = StatKind::RowCount as u8;
 const HIGH_WATER: u8 = StatKind::RowIdHighWater as u8;
@@ -50,14 +50,14 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 }
             }
             HIGH_WATER => {
-                if let Some(tally) = s.tallies.get(&rel) {
-                    if stored <= tally.max_row_id {
-                        s.push(StoreFinding::RowIdHighWaterLow {
-                            relation: rel,
-                            stored,
-                            max_row_id: tally.max_row_id,
-                        });
-                    }
+                if let Some(tally) = s.tallies.get(&rel)
+                    && stored <= tally.max_row_id
+                {
+                    s.push(StoreFinding::RowIdHighWaterLow {
+                        relation: rel,
+                        stored,
+                        max_row_id: tally.max_row_id,
+                    });
                 }
             }
             _ => s.malformed(key, "S stat kind"),

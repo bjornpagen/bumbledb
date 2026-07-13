@@ -17,7 +17,7 @@
 //! written length — no oversized zeroing (post-mortem §25), and key types
 //! never derive `Ord` (LMDB byte order is the only order).
 
-use crate::encoding::{field_bytes, FactLayout};
+use crate::encoding::{FactLayout, field_bytes};
 use crate::schema::{FieldId, RelationId, StatementId};
 
 /// LMDB's default key-size ceiling; every encoded key fits.
@@ -285,7 +285,7 @@ pub fn permuted_guard_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encoding::{encode_fact, encode_interval_u64, encode_u64, TypeDesc, ValueRef};
+    use crate::encoding::{TypeDesc, ValueRef, encode_fact, encode_interval_u64, encode_u64};
     use crate::schema::IntervalElement;
 
     #[test]

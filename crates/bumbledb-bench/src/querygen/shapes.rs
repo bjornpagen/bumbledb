@@ -1,6 +1,6 @@
 use bumbledb::{AggOp, CmpOp, Comparison, FieldId, FindTerm, RelationId, Term, VarId};
 
-use crate::gen::Rng;
+use crate::corpus_gen::Rng;
 use crate::querygen::target::ids;
 use crate::querygen::{Builder, REPEAT_VAR_PCT};
 

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use bumbledb::Db;
 
-use crate::gen::GenConfig;
+use crate::corpus_gen::GenConfig;
 use crate::schema::Ledger;
 use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebench};
 

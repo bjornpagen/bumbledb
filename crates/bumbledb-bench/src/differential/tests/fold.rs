@@ -17,13 +17,13 @@ use bumbledb::schema::{
     StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    with_chase_disabled, AggOp, CmpOp, Comparison, Db, FindTerm, PredicateTree, Query, RelationId,
-    Rule, Term, Value, VarId,
+    AggOp, CmpOp, Comparison, Db, FindTerm, PredicateTree, Query, RelationId, Rule, Term, Value,
+    VarId, with_chase_disabled,
 };
 
-use crate::differential::{engine_query, Rows};
-use crate::fixture::{atom, field, var, TempDir};
-use crate::gen::{GenConfig, Rng, Scale};
+use crate::corpus_gen::{GenConfig, Rng, Scale};
+use crate::differential::{Rows, engine_query};
+use crate::fixture::{TempDir, atom, field, var};
 use crate::naive::query::{ParamValue, QueryError};
 use crate::naive::{Delta, NaiveDb};
 use crate::querygen::target;

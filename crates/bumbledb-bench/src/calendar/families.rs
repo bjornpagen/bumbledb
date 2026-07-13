@@ -17,11 +17,11 @@ use bumbledb::{
     Rule, Term, Value, VarId,
 };
 
-use crate::calendar::gen::{created_at, CalSizes, CAL_BASE, CAL_HORIZON, HOUR};
-use crate::calendar::{ids, ARM_BUSY, RSVP_ACCEPTED, RSVP_DECLINED, RSVP_TENTATIVE};
-use crate::families::{scalar_draw, Draw, FamilyIndex, Kind};
+use crate::calendar::corpus_gen::{CAL_BASE, CAL_HORIZON, CalSizes, HOUR, created_at};
+use crate::calendar::{ARM_BUSY, RSVP_ACCEPTED, RSVP_DECLINED, RSVP_TENTATIVE, ids};
+use crate::corpus_gen::GenConfig;
+use crate::families::{Draw, FamilyIndex, Kind, scalar_draw};
 use crate::fixture::var;
-use crate::gen::GenConfig;
 use crate::translate::{ParamSlot, Translated};
 
 fn param(id: u16) -> Term {
@@ -471,7 +471,11 @@ pub fn all() -> &'static [CalFamily] {
             golden_sql: BUSY_SCAN,
             hand_param_slots: None,
             param_policy: "3 ~1.6%-of-span windows spread over the active span + 1 pre-epoch miss.",
-            indexes: &[("idx_claim_arm_span", "Claim", &["arm", "span_start", "span_end"])],
+            indexes: &[(
+                "idx_claim_arm_span",
+                "Claim",
+                &["arm", "span_start", "span_end"],
+            )],
         },
         CalFamily {
             name: "meets_chain",
@@ -480,8 +484,7 @@ pub fn all() -> &'static [CalFamily] {
             params: meets_chain_params,
             golden_sql: MEETS_CHAIN,
             hand_param_slots: None,
-            param_policy:
-                "The Zipf-head person, a mid person, person 63 under a quarter window, + 1 person miss.",
+            param_policy: "The Zipf-head person, a mid person, person 63 under a quarter window, + 1 person miss.",
             indexes: &[],
         },
         CalFamily {
@@ -515,8 +518,7 @@ pub fn all() -> &'static [CalFamily] {
             params: conflict_free_params,
             golden_sql: CONFLICT_FREE,
             hand_param_slots: None,
-            param_policy:
-                "3 (account, event-creation instant) pairs + 1 account miss; instants scatter over the active span.",
+            param_policy: "3 (account, event-creation instant) pairs + 1 account miss; instants scatter over the active span.",
             indexes: &[("idx_event_created", "Event", &["created_at"])],
         },
         CalFamily {
@@ -526,8 +528,7 @@ pub fn all() -> &'static [CalFamily] {
             params: free_busy_params,
             golden_sql: FREE_BUSY,
             hand_param_slots: Some(FREE_BUSY_SLOTS),
-            param_policy:
-                "The head account wide + narrow, a mid account wide, + 1 miss (translator-unpaired: hand coalesce).",
+            param_policy: "The head account wide + narrow, a mid account wide, + 1 miss (translator-unpaired: hand coalesce).",
             indexes: &[],
         },
         CalFamily {
@@ -538,7 +539,11 @@ pub fn all() -> &'static [CalFamily] {
             golden_sql: CLAIM_HOURS,
             hand_param_slots: None,
             param_policy: "No params — the ray-guarded full measure fold; one empty draw.",
-            indexes: &[("idx_claim_arm_span", "Claim", &["arm", "span_start", "span_end"])],
+            indexes: &[(
+                "idx_claim_arm_span",
+                "Claim",
+                &["arm", "span_start", "span_end"],
+            )],
         },
     ]
 }
@@ -622,9 +627,9 @@ pub const RANDOM_DRAWS: u32 = 4;
 ///
 /// Never in practice: draw arithmetic stays far inside `i64`.
 #[must_use]
-pub fn random_draw(name: &str, rng: &mut crate::gen::Rng, cfg: &GenConfig) -> Option<Draw> {
+pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig) -> Option<Draw> {
     let sizes = CalSizes::of(cfg.scale);
-    let window = |rng: &mut crate::gen::Rng, max_width: i64| {
+    let window = |rng: &mut crate::corpus_gen::Rng, max_width: i64| {
         let span = u64::try_from(ACTIVE_SPAN + 2 * HOUR).expect("positive");
         let start = CAL_BASE - HOUR + i64::try_from(rng.range(span)).expect("fits");
         let width = 1 + i64::try_from(rng.range(u64::try_from(max_width).expect("positive")))

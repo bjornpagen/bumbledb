@@ -2,11 +2,11 @@ use super::{Db, Run, VerifyConfig};
 
 use bumbledb::{Atom, FieldId, FindTerm, Interval, Query, RelationId, Rule, Term, Value, VarId};
 
+use crate::corpus_gen::{self, MANDATE_SEGMENTS, Sizes, mandate_segments};
 use crate::differential::{self, Op};
-use crate::families::{self, scalar_draw, Draw};
-use crate::gen::{self, mandate_segments, Sizes, MANDATE_SEGMENTS};
+use crate::families::{self, Draw, scalar_draw};
 use crate::naive::{Delta, NaiveDb, ParamValue};
-use crate::schema::{ids, Ledger};
+use crate::schema::{Ledger, ids};
 
 /// The unit-scale corpus of the naive lane: small enough for the
 /// brute-force model's nested loops, large enough that every family's
@@ -53,16 +53,18 @@ fn closed_join_query() -> Query {
 /// The insert stream as write deltas, chunked — every chunk judged over
 /// the full final state on both sides.
 fn load_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
-    let cfg = gen::GenConfig {
+    let cfg = corpus_gen::GenConfig {
         seed,
-        scale: gen::Scale::S, // unused: rows take explicit unit sizes
+        scale: corpus_gen::Scale::S, // unused: rows take explicit unit sizes
     };
     let mut ops = Vec::new();
     for rel in 0..ids::RELATIONS {
         let rel = RelationId(rel);
         let mut delta = Delta::default();
         for i in 0..sizes.rows(rel) {
-            delta.inserts.push((rel, gen::row(&cfg, sizes, rel, i)));
+            delta
+                .inserts
+                .push((rel, corpus_gen::row(&cfg, sizes, rel, i)));
             if delta.inserts.len() == 32 {
                 ops.push(Op::Write(std::mem::take(&mut delta)));
             }
@@ -84,9 +86,9 @@ fn load_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
 /// compiled-subset miss — the same containment violation as any
 /// dangling reference).
 fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
-    let cfg = gen::GenConfig {
+    let cfg = corpus_gen::GenConfig {
         seed,
-        scale: gen::Scale::S,
+        scale: corpus_gen::Scale::S,
     };
     let segment = mandate_segments(seed, sizes, 0)[0];
     let overlap = Interval::<i64>::new(segment.start, segment.start + 1).expect("nonempty");
@@ -102,7 +104,7 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                     Value::U64(sizes.accounts + 3),
                     Value::U64(0),
                     Value::I64(1),
-                    Value::I64(gen::AT_BASE),
+                    Value::I64(corpus_gen::AT_BASE),
                 ],
             )],
         }),
@@ -133,7 +135,7 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
         // Deleting account 0 strands its postings and mandates: the
         // target-required direction.
         Op::Write(Delta {
-            deletes: vec![(ids::ACCOUNT, gen::row(&cfg, sizes, ids::ACCOUNT, 0))],
+            deletes: vec![(ids::ACCOUNT, corpus_gen::row(&cfg, sizes, ids::ACCOUNT, 0))],
             inserts: vec![],
         }),
         // The net-disposition pattern class: a committed posting
@@ -143,13 +145,13 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
         // oracles, Direction included.
         Op::Write({
             let posting = (0..sizes.postings)
-                .map(|i| gen::row(&cfg, sizes, ids::POSTING, i))
+                .map(|i| corpus_gen::row(&cfg, sizes, ids::POSTING, i))
                 .find(|row| row[usize::from(ids::posting::ACCOUNT.0)] == Value::U64(0))
                 .expect("some posting references account 0");
             Delta {
                 deletes: vec![
                     (ids::POSTING, posting.clone()),
-                    (ids::ACCOUNT, gen::row(&cfg, sizes, ids::ACCOUNT, 0)),
+                    (ids::ACCOUNT, corpus_gen::row(&cfg, sizes, ids::ACCOUNT, 0)),
                 ],
                 inserts: vec![(ids::POSTING, posting)],
             }
@@ -181,18 +183,18 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
 /// One in-domain draw per family at unit scale (the S-scale rotations
 /// are mostly misses here; these make the joins produce witnesses).
 fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
-    let cfg = gen::GenConfig {
+    let cfg = corpus_gen::GenConfig {
         seed,
-        scale: gen::Scale::S,
+        scale: corpus_gen::Scale::S,
     };
-    let span = i64::try_from(sizes.postings).expect("fits") * gen::AT_STEP;
+    let span = i64::try_from(sizes.postings).expect("fits") * corpus_gen::AT_STEP;
     match name {
         "point" => scalar_draw(vec![Value::U64(3)]),
         "containment_walk" | "postings_without_tag" | "skew" => scalar_draw(vec![Value::U64(0)]),
-        "chain" => scalar_draw(vec![Value::I64(gen::AT_BASE)]),
+        "chain" => scalar_draw(vec![Value::I64(corpus_gen::AT_BASE)]),
         "range" => scalar_draw(vec![
-            Value::I64(gen::AT_BASE + span / 4),
-            Value::I64(gen::AT_BASE + span / 2),
+            Value::I64(corpus_gen::AT_BASE + span / 4),
+            Value::I64(corpus_gen::AT_BASE + span / 2),
         ]),
         // orgs and holders both have >1 unit-scale id 1.
         "balance" | "mandate_overlap" => scalar_draw(vec![Value::U64(1)]),
@@ -205,7 +207,7 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
             Value::U64(5),
         ])],
         "mandate_at_instant" => {
-            let posting = gen::row(&cfg, sizes, ids::POSTING, 7);
+            let posting = corpus_gen::row(&cfg, sizes, ids::POSTING, 7);
             scalar_draw(vec![
                 posting[usize::from(ids::posting::ACCOUNT.0)].clone(),
                 posting[usize::from(ids::posting::AT.0)].clone(),
@@ -233,8 +235,8 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
 /// On tool-level invariant violations — never on a disagreement.
 pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let sizes = unit_sizes();
-    let mut ops = load_ops(cfg.gen.seed, &sizes);
-    ops.extend(violating_ops(cfg.gen.seed, &sizes));
+    let mut ops = load_ops(cfg.corpus_gen.seed, &sizes);
+    ops.extend(violating_ops(cfg.corpus_gen.seed, &sizes));
     ops.push(Op::Query {
         query: closed_join_query(),
         params: vec![],
@@ -243,16 +245,16 @@ pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
         let query = (family.query)();
         ops.push(Op::Query {
             query: query.clone(),
-            params: unit_draw(family.name, cfg.gen.seed, &sizes),
+            params: unit_draw(family.name, cfg.corpus_gen.seed, &sizes),
         });
-        for params in (family.params)(&cfg.gen) {
+        for params in (family.params)(&cfg.corpus_gen) {
             ops.push(Op::Query {
                 query: query.clone(),
                 params,
             });
         }
     }
-    let (algebra, naive_only) = super::run_algebra::algebra_ops(cfg.gen.seed, &sizes);
+    let (algebra, naive_only) = super::run_algebra::algebra_ops(cfg.corpus_gen.seed, &sizes);
     ops.extend(algebra);
     eprintln!(
         "verify: {naive_only} naive-only cases (Pack — SQLite-inexpressible by \

@@ -30,9 +30,9 @@ use heed::{AnyTls, RoTxn};
 
 use super::plan::CommitPlan;
 use super::{decode_row_id, fact_by_row};
-use crate::encoding::{encode_u64, field_bytes, FactLayout};
+use crate::encoding::{FactLayout, encode_u64, field_bytes};
 use crate::error::{CorruptionError, Direction, Error, Result};
-use crate::interval::sweep::{sweep, Continuation};
+use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
     CompiledCheck, ContainmentId, Enforcement, FieldId, KeyId, RelationId, Schema, StatementId,

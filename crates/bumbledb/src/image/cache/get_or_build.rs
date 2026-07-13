@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use crate::error::Result;
-use crate::image::{build, synthesize_closed, RelationImage};
+use crate::image::{RelationImage, build, synthesize_closed};
 use crate::schema::{RelationId, Schema};
 use crate::storage::env::ReadTxn;
 

@@ -4,8 +4,8 @@ use bumbledb::{
 
 use super::corpus::s;
 use super::term::{param, var};
-use super::{ids, mix, HOT_KEYWORDS, KEYWORDS};
-use crate::gen::Rng;
+use super::{HOT_KEYWORDS, KEYWORDS, ids, mix};
+use crate::corpus_gen::Rng;
 
 /// j3 — keyword × kind: two interned-string/enum-selective dimensions
 /// pinching a 3-way join from both sides.

@@ -1,4 +1,4 @@
-use super::{WordMap, WINDOW};
+use super::{WINDOW, WordMap};
 
 impl<V: Copy> WordMap<V> {
     /// Empties the map, retaining capacity (the zero-alloc reuse path).

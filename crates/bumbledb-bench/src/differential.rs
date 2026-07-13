@@ -15,9 +15,9 @@ use std::collections::BTreeSet;
 use bumbledb::Snapshot;
 use bumbledb::{Db, Error, Query, ResultValue, Value};
 
-use crate::naive::query::{ParamValue, QueryError};
 #[cfg(test)]
 use crate::naive::ConditionalAbort;
+use crate::naive::query::{ParamValue, QueryError};
 use crate::naive::{Delta, NaiveDb, Tuple, Violation};
 
 #[cfg(test)]

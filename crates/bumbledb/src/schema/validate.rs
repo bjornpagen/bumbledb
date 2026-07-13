@@ -13,10 +13,10 @@
 //! rejected.
 
 use super::{
-    closed_member, value_matches, CompiledCheck, CompiledSides, ContainmentId,
-    ContainmentStatement, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId,
-    KeyStatement, Relation, RelationDescriptor, RelationId, Schema, SchemaDescriptor, Side,
-    StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
+    CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement, Enforcement, FactLayout,
+    FieldDescriptor, FieldId, Generation, KeyId, KeyStatement, Relation, RelationDescriptor,
+    RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor, StatementId, StatementRef,
+    ValueMismatch, ValueType, closed_member, value_matches,
 };
 use crate::encoding::field_bytes;
 use crate::error::SchemaError;
@@ -263,14 +263,14 @@ fn validate_functionality(
         });
     }
     let interval_position = positions.first().copied();
-    if let Some(pos) = interval_position {
-        if pos != projection.len() - 1 {
-            return Err(SchemaError::FunctionalityIntervalNotLast {
-                statement: id,
-                relation: relation_id,
-                field: projection[pos],
-            });
-        }
+    if let Some(pos) = interval_position
+        && pos != projection.len() - 1
+    {
+        return Err(SchemaError::FunctionalityIntervalNotLast {
+            statement: id,
+            relation: relation_id,
+            field: projection[pos],
+        });
     }
 
     // Roster "duplicate statements", FD form: one field *set* per relation
@@ -283,13 +283,13 @@ fn validate_functionality(
             relation: r,
             projection: p,
         } = earlier
+            && *r == relation_id
+            && field_set(p) == this_set
         {
-            if *r == relation_id && field_set(p) == this_set {
-                return Err(SchemaError::DuplicateFunctionality {
-                    statement: id,
-                    earlier: statement_id(idx),
-                });
-            }
+            return Err(SchemaError::DuplicateFunctionality {
+                statement: id,
+                earlier: statement_id(idx),
+            });
         }
     }
 

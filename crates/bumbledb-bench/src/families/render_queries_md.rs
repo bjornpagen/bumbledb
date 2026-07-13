@@ -1,5 +1,5 @@
-use crate::families::{all, digest, Kind};
-use crate::gen;
+use crate::corpus_gen;
+use crate::families::{Kind, all, digest};
 
 /// The human-readable versioned query list: IR + SQL + param policy per
 /// family (emitted into the repo as QUERIES.md).
@@ -11,7 +11,7 @@ pub fn render_queries_md() -> String {
     let _ = writeln!(
         out,
         "Family-list digest: `{}`.\n",
-        gen::digest_hex(&digest())
+        corpus_gen::digest_hex(&digest())
     );
     for family in all() {
         section(
@@ -27,7 +27,7 @@ pub fn render_queries_md() -> String {
     let _ = writeln!(
         out,
         "Family-list digest: `{}`.\n",
-        gen::digest_hex(&crate::calendar::families::digest())
+        corpus_gen::digest_hex(&crate::calendar::families::digest())
     );
     for family in crate::calendar::families::all() {
         section(

@@ -1,7 +1,7 @@
 use super::{Context, ParamKind, RuleTyping, TypeSlot, ValidatedQuery};
 use crate::error::ValidationError;
-use crate::ir::normalize::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
-use crate::ir::{AggOp, FindTerm, ParamId, Query, VarId, MAX_PREDICATE_DEPTH, MAX_RULES};
+use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
+use crate::ir::{AggOp, FindTerm, MAX_PREDICATE_DEPTH, MAX_RULES, ParamId, Query, VarId};
 use crate::schema::{Schema, ValueType};
 use std::collections::{BTreeMap, BTreeSet};
 

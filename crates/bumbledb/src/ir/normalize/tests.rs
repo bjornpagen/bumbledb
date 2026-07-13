@@ -1,7 +1,7 @@
 use super::lower_literal::lower_literal;
 use super::*;
 use crate::allen::AllenMask;
-use crate::encoding::{encode_fact, encode_i64, ValueRef};
+use crate::encoding::{ValueRef, encode_fact, encode_i64};
 use crate::image::view::{Const, MaskConst, ResolvedWordSource};
 use crate::ir::validate::validate;
 use crate::ir::{

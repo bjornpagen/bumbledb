@@ -23,9 +23,9 @@ use bumbledb::{
     AggOp, Atom, CmpOp, Comparison, FindTerm, PredicateTree, Query, Rule, Term, Value, VarId,
 };
 
-use crate::gen::Rng;
-use crate::querygen::target::{self, ids, Domains};
+use crate::corpus_gen::Rng;
 use crate::querygen::RulesVariant;
+use crate::querygen::target::{self, Domains, ids};
 
 /// One multi-rule query and its variant tag.
 pub(super) fn rules(rng: &mut Rng, domains: &Domains) -> (Query, RulesVariant) {

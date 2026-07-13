@@ -463,8 +463,8 @@ mod interval_newtype {
 }
 
 mod selection_literals {
-    use bumbledb::schema::{FieldId, StatementId, StatementView};
     use bumbledb::Value;
+    use bumbledb::schema::{FieldId, StatementId, StatementView};
 
     bumbledb::schema! {
         pub Telemetry;
@@ -877,8 +877,8 @@ mod invalid_declaration {
     //! macro: a declaration the grammar accepts but the acceptance gate
     //! refuses surfaces as the typed `SchemaError` — no panic path.
 
-    use bumbledb::error::SchemaError;
     use bumbledb::Db;
+    use bumbledb::error::SchemaError;
 
     bumbledb::schema! {
         pub Duplicated;

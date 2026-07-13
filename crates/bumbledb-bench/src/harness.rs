@@ -4,8 +4,8 @@
 //! from here — the harness owns time, never queries (runners pass
 //! closures over their own prepared statements).
 
-use bumbledb::obs::TraceEvent;
 use bumbledb::Value;
+use bumbledb::obs::TraceEvent;
 
 mod cold;
 mod measure;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::encoding::{encode_fact, encode_u64, ValueRef};
+use crate::encoding::{ValueRef, encode_fact, encode_u64};
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,

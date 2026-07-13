@@ -1,4 +1,4 @@
-use crate::gen::{Sizes, AT_BASE, AT_STEP};
+use crate::corpus_gen::{AT_BASE, AT_STEP, Sizes};
 
 /// The range family's `[start, end)` window over posting timestamps —
 /// ≈2% of the corpus by construction.

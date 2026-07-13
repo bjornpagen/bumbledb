@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::allen::AllenMask;
-use crate::ir::normalize::{normalize, NormalizedQuery};
+use crate::ir::normalize::{NormalizedQuery, normalize};
 use crate::ir::validate::validate;
 use crate::ir::{
     Atom, Comparison, FindTerm, HeadTerm, MaskTerm, PredicateTree, Query, Rule, Term, Value,

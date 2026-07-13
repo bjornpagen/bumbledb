@@ -6,9 +6,9 @@
 
 use bumbledb::{Atom, Db, FindTerm, Query, Rule, Term, Value, VarId};
 
-use crate::differential::{engine_query, run, Op};
-use crate::fixture::{string, TempDir};
-use crate::gen::{GenConfig, Rng, Scale};
+use crate::corpus_gen::{GenConfig, Rng, Scale};
+use crate::differential::{Op, engine_query, run};
+use crate::fixture::{TempDir, string};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb};
 use crate::querygen::target::{self, ids};

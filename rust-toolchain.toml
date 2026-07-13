@@ -1,2 +1,14 @@
+# One toolchain, dated (docs/prd-crucible/01-nightly-pin.md). Pinned
+# 2026-07-13 to nightly-2026-07-12 after verifying the three selection
+# checks:
+#   (a) the workspace compiles on it (edition 2024, all crates);
+#   (b) miri and llvm-tools components install and work on
+#       aarch64-apple-darwin;
+#   (c) cargo-fuzz (0.13.1) accepts it.
+# The pin moves DELIBERATELY, never implicitly: moving it is a PRD-sized
+# action that carries the #[ignore]d microbench re-earn session with it
+# (codegen changes invalidate every pinned margin).
 [toolchain]
-channel = "1.96.0"
+channel = "nightly-2026-07-12"
+components = ["miri", "llvm-tools", "rustfmt", "clippy", "rust-src"]
+targets = ["x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]

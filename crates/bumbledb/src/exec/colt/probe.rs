@@ -1,6 +1,6 @@
 #[cfg(test)]
 use super::hash_words;
-use super::{ctrl_tag, eq_byte_mask, unpack_child, zero_byte_mask, Colt, Cursor, Map, Slot};
+use super::{Colt, Cursor, Map, Slot, ctrl_tag, eq_byte_mask, unpack_child, zero_byte_mask};
 
 impl Colt {
     /// Probes for `key` at `cursor`'s level, forcing the node if needed.

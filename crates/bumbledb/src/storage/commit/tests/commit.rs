@@ -5,7 +5,7 @@ use crate::schema::{FieldId, RelationId};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
-use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
+use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 use crate::testutil::TempDir;
 
 // ---------- 50-storage § Write path: full commit ----------
@@ -286,12 +286,16 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
     // must write nothing at all.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert!(!delta
-        .insert(&view, TARGET, &target_fact(&schema, 5))
-        .expect("insert"));
-    assert!(!delta
-        .delete(&view, TARGET, &target_fact(&schema, 9))
-        .expect("delete"));
+    assert!(
+        !delta
+            .insert(&view, TARGET, &target_fact(&schema, 5))
+            .expect("insert")
+    );
+    assert!(
+        !delta
+            .delete(&view, TARGET, &target_fact(&schema, 9))
+            .expect("delete")
+    );
     drop(view);
     let report = commit(delta, &env).expect("commit");
     assert!(!report.changed);

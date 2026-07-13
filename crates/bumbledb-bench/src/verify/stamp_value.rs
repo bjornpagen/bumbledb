@@ -1,6 +1,6 @@
-use super::{binary_fingerprint, VerifyConfig};
+use super::{VerifyConfig, binary_fingerprint};
 
-use crate::{families, gen};
+use crate::{corpus_gen, families};
 
 /// The stamp value for a config: hex blake3 over the running binary's
 /// fingerprint, the corpus digest (both theories — the calendar rows
@@ -17,10 +17,10 @@ pub fn stamp_value(cfg: &VerifyConfig) -> String {
 pub(super) fn stamp_value_with(cfg: &VerifyConfig, fingerprint: &[u8; 32]) -> String {
     let mut digest = bumbledb::digest::Digest::new();
     digest.update(fingerprint);
-    digest.update(&gen::corpus_digest(cfg.gen));
+    digest.update(&corpus_gen::corpus_digest(cfg.corpus_gen));
     digest.update(&families::digest());
     digest.update(&crate::calendar::families::digest());
     digest.update(&cfg.random_cases.to_le_bytes());
-    digest.update(&cfg.gen.seed.to_le_bytes());
-    gen::digest_hex(&digest.finalize())
+    digest.update(&cfg.corpus_gen.seed.to_le_bytes());
+    corpus_gen::digest_hex(&digest.finalize())
 }

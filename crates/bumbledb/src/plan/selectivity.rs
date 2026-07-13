@@ -7,11 +7,11 @@
 //! and runtime cover choice (docs/architecture/40-execution.md) carries the load-bearing
 //! decisions either way.
 
+use crate::image::ColumnWidth;
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
-use crate::image::ColumnWidth;
-use crate::ir::normalize::Occurrence;
 use crate::ir::CmpOp;
+use crate::ir::normalize::Occurrence;
 use crate::plan::fj::split_filters;
 use crate::plan::planner::OccStats;
 use crate::schema::{FieldId, Schema};
@@ -282,7 +282,7 @@ fn distinct_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encoding::{encode_fact, ValueRef};
+    use crate::encoding::{ValueRef, encode_fact};
     use crate::image::view::Const;
     use crate::ir::normalize::{OccId, Role};
     use crate::schema::{
@@ -817,7 +817,7 @@ mod tests {
         schema: &Schema,
         finds: Vec<crate::ir::FindTerm>,
     ) -> crate::api::stats::ExecutionStats {
-        use crate::api::prepared::{prepare, PreparedQuery};
+        use crate::api::prepared::{PreparedQuery, prepare};
 
         let mut prepared: PreparedQuery<'_, ()> =
             prepare(txn, cache, schema, &cyclic_query(finds)).expect("prepare cycle");

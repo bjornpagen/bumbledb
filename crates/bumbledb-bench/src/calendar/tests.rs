@@ -1,9 +1,9 @@
 use bumbledb::{Db, Interval, ResultBuffer};
 
-use crate::calendar::gen::{chain, work_chain, CalSizes, CAL_BASE, CAL_HORIZON};
-use crate::calendar::{corpus, families, ids, schema, Scheduling};
+use crate::calendar::corpus_gen::{CAL_BASE, CAL_HORIZON, CalSizes, chain, work_chain};
+use crate::calendar::{Scheduling, corpus, families, ids, schema};
+use crate::corpus_gen::{GenConfig, Scale};
 use crate::families::{param_args, set_bindings};
-use crate::gen::{GenConfig, Scale};
 use crate::translate::translate;
 
 const CFG: GenConfig = GenConfig {

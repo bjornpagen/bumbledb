@@ -1,7 +1,7 @@
 //! The pitch-padding placement mechanism for [`PitchPadder`]
 //! (measured).
 
-use super::{PitchPadder, LINE, PAD_MIN_PITCH, PAD_TOLERANCE, SET_STRIDE};
+use super::{LINE, PAD_MIN_PITCH, PAD_TOLERANCE, PitchPadder, SET_STRIDE};
 
 impl PitchPadder {
     pub(super) fn new() -> Self {

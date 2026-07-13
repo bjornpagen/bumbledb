@@ -2,8 +2,8 @@ use super::densify::densify;
 use super::estimate::estimate;
 use super::*;
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::ir::CmpOp as ViewCmp;
+use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
     SchemaDescriptor, StatementDescriptor, ValueType,

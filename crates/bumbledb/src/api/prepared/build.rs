@@ -1,18 +1,18 @@
 use super::{
     AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, GuardRule,
-    OccurrencePin, PreparedQuery, PreparedRule, Program, ProjectionSink, ResolveMemo, Schema,
-    ValueType, ViewMemo, PARKED_SLOTS,
+    OccurrencePin, PARKED_SLOTS, PreparedQuery, PreparedRule, Program, ProjectionSink, ResolveMemo,
+    Schema, ValueType, ViewMemo,
 };
 
 use crate::error::Result;
 use crate::exec::dispatch::classify;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
-use crate::ir::normalize::{normalize, NormalizedQuery};
-use crate::ir::validate::{validate, RuleWitness};
+use crate::ir::normalize::{NormalizedQuery, normalize};
+use crate::ir::validate::{RuleWitness, validate};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
-use crate::plan::fj::{binary2fj, factor, provably_disjoint_rules, DisjointWitness};
+use crate::plan::fj::{DisjointWitness, binary2fj, factor, provably_disjoint_rules};
 use crate::plan::planner::plan as plan_order;
 use crate::storage::env::ReadTxn;
 use crate::storage::read;

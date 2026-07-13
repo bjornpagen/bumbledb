@@ -18,11 +18,11 @@
 //! sweep both exercises the roster's rejections and drives *valid*
 //! queries deep into the planner.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FieldId, FindTerm, MaskTerm, ParamId,
-    PredicateTree, Query, RelationId, Rule, Term, Value, VarId, MAX_PREDICATE_DEPTH, MAX_RULES,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FieldId, FindTerm, MAX_PREDICATE_DEPTH,
+    MAX_RULES, MaskTerm, ParamId, PredicateTree, Query, RelationId, Rule, Term, Value, VarId,
 };
 
 mod common;
@@ -541,10 +541,10 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         }
         // A random term swapped into a random binding.
         _ => {
-            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
-                if let Some((_, term_slot)) = atom.bindings.first_mut() {
-                    *term_slot = term(rng);
-                }
+            if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut())
+                && let Some((_, term_slot)) = atom.bindings.first_mut()
+            {
+                *term_slot = term(rng);
             }
         }
     }

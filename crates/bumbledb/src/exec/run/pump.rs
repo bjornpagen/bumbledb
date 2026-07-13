@@ -1,8 +1,8 @@
 //! The single in-order pass over a middle node's pending entries.
 
 use super::{
-    better_cover, BatchToken, Bindings, Colt, Counters, Executor, KeyCount, PipeTables, Sink,
-    ValidatedPlan,
+    BatchToken, Bindings, Colt, Counters, Executor, KeyCount, PipeTables, Sink, ValidatedPlan,
+    better_cover,
 };
 
 impl Executor {
@@ -90,23 +90,24 @@ impl Executor {
             let cover_level = tables.entry_level[node_idx][cover_occ];
             // Word-level batch arity (the SlotWidth layout).
             let cur_arity = self.slot_map[node_idx][cover_sub].len();
-            if let Some((open_sub, open_arity, _, _)) = group {
-                if open_sub != cover_sub && fill > 0 {
-                    self.probe_pass(
-                        tables,
-                        plan,
-                        node_idx,
-                        open_sub,
-                        open_arity,
-                        fill,
-                        &mut scratch,
-                        colts,
-                        bindings,
-                        sink,
-                        counters,
-                    );
-                    fill = 0;
-                }
+            if let Some((open_sub, open_arity, _, _)) = group
+                && open_sub != cover_sub
+                && fill > 0
+            {
+                self.probe_pass(
+                    tables,
+                    plan,
+                    node_idx,
+                    open_sub,
+                    open_arity,
+                    fill,
+                    &mut scratch,
+                    colts,
+                    bindings,
+                    sink,
+                    counters,
+                );
+                fill = 0;
             }
             group = Some((cover_sub, cur_arity, cover_occ, cover_level));
             let cover_cursor = match tables.carried_col[node_idx][cover_occ] {
@@ -157,22 +158,22 @@ impl Executor {
                 }
             }
         }
-        if fill > 0 {
-            if let Some((open_sub, open_arity, _, _)) = group {
-                self.probe_pass(
-                    tables,
-                    plan,
-                    node_idx,
-                    open_sub,
-                    open_arity,
-                    fill,
-                    &mut scratch,
-                    colts,
-                    bindings,
-                    sink,
-                    counters,
-                );
-            }
+        if fill > 0
+            && let Some((open_sub, open_arity, _, _)) = group
+        {
+            self.probe_pass(
+                tables,
+                plan,
+                node_idx,
+                open_sub,
+                open_arity,
+                fill,
+                &mut scratch,
+                colts,
+                bindings,
+                sink,
+                counters,
+            );
         }
         scratch.pending_len = 0;
         scratch.pending_bindings.clear();

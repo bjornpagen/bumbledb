@@ -1,4 +1,4 @@
-use crate::gen::Rng;
+use crate::corpus_gen::Rng;
 
 impl Rng {
     #[must_use]

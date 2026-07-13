@@ -23,7 +23,7 @@ use crate::schema::{ContainmentId, Enforcement, KeyId, RelationId, Schema, State
 use crate::storage::delta::WriteDelta;
 use crate::storage::keys;
 
-use super::judgment::{satisfies, SelectionCheck, Selections};
+use super::judgment::{SelectionCheck, Selections, satisfies};
 
 /// One commit's derivable bookkeeping, borrowed from the delta's arena.
 pub(crate) struct CommitPlan<'d> {

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::{to_json, to_markdown, RunReport};
+use super::{RunReport, to_json, to_markdown};
 
 use crate::families;
 

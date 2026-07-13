@@ -1,6 +1,6 @@
 use crate::exec::sink::aggregate::{parse_finds, parse_finds_into};
 use crate::exec::sink::{
-    extend_sources, sources_of, FindSpec, ProjectionSink, ProjectionSources, SinkSpec,
+    FindSpec, ProjectionSink, ProjectionSources, SinkSpec, extend_sources, sources_of,
 };
 use crate::exec::wordmap::WordMap;
 

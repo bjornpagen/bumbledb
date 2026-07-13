@@ -15,8 +15,8 @@ use bumbledb::{
     Value, VarId,
 };
 
-use crate::differential::{run, Op};
-use crate::fixture::{field, var, TempDir};
+use crate::differential::{Op, run};
+use crate::fixture::{TempDir, field, var};
 use crate::naive::{Delta, NaiveDb};
 
 const BLOB: RelationId = RelationId(0);

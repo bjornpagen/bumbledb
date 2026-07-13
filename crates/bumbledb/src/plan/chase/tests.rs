@@ -1,8 +1,8 @@
 use super::*;
-use crate::ir::normalize::{normalize, NormalizedQuery, OccId};
+use crate::ir::normalize::{NormalizedQuery, OccId, normalize};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, PredicateTree, Query, Rule, Term, Value};
-use crate::plan::planner::{plan, OccStats};
+use crate::plan::planner::{OccStats, plan};
 use crate::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
     SchemaDescriptor, StatementDescriptor, ValueType,

@@ -133,7 +133,7 @@ fn the_table_render_is_golden() {
 #[cfg(feature = "obs")]
 #[test]
 fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
-    use crate::gen::{GenConfig, Scale};
+    use crate::corpus_gen::{GenConfig, Scale};
     use crate::harness::Rotation;
 
     let dir = std::env::temp_dir().join("bumbledb-bench-trace-out");

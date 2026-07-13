@@ -428,9 +428,9 @@ struct ViewMemo {
     clippy::large_enum_variant,
     reason = "boxing the hot sink would add indirection to every emit"
 )] // Projection stays unboxed: it is
-   // the hot variant (per-item emit paths reach through it), one prepared
-   // query holds exactly one sink, and the pipeline scratch rows
-   // that tripped the lint are the working set itself.
+// the hot variant (per-item emit paths reach through it), one prepared
+// query holds exactly one sink, and the pipeline scratch rows
+// that tripped the lint are the working set itself.
 enum EitherSink {
     Projection(ProjectionSink),
     /// Boxed: the batch-fold scratch grew the sink past the

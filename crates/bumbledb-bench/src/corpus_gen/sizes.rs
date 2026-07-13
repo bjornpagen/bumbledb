@@ -1,6 +1,6 @@
 use bumbledb::RelationId;
 
-use crate::gen::{Scale, Sizes, MANDATE_SEGMENTS};
+use crate::corpus_gen::{MANDATE_SEGMENTS, Scale, Sizes};
 use crate::schema::ids;
 
 impl Sizes {
@@ -44,7 +44,7 @@ impl Sizes {
     }
 
     /// The hot-account set: the first `max(1, accounts/1000)` account ids
-    /// receive [`crate::gen::HOT_SHARE_PCT`]% of postings.
+    /// receive [`crate::corpus_gen::HOT_SHARE_PCT`]% of postings.
     #[must_use]
     pub fn hot_accounts(&self) -> u64 {
         (self.accounts / 1000).max(1)

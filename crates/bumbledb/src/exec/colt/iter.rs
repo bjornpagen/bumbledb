@@ -1,6 +1,6 @@
 use super::{
-    unpack_child, BatchToken, Colt, Cursor, NodeRef, NodeState, Positions, Slot, View,
-    DENSE_TOKEN_TAG, STALE_TOKEN,
+    BatchToken, Colt, Cursor, DENSE_TOKEN_TAG, NodeRef, NodeState, Positions, STALE_TOKEN, Slot,
+    View, unpack_child,
 };
 
 impl Colt {

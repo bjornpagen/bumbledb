@@ -1,4 +1,4 @@
-use crate::encoding::{field_bytes, TypeDesc};
+use crate::encoding::{TypeDesc, field_bytes};
 use crate::schema::{FieldId, RelationId, Schema};
 
 /// One field's value sliced straight out of canonical fact bytes, in

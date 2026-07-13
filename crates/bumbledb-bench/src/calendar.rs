@@ -32,8 +32,8 @@
 //! ledger's `Posting.at` role.
 
 pub mod corpus;
+pub mod corpus_gen;
 pub mod families;
-pub mod gen;
 #[cfg(test)]
 mod tests;
 

@@ -24,7 +24,7 @@ mod tests;
 
 pub use corpus_digest::corpus_digest;
 pub use digest_hex::digest_hex;
-pub use mandate::{mandate_segments, Segment, MANDATE_SEGMENTS};
+pub use mandate::{MANDATE_SEGMENTS, Segment, mandate_segments};
 pub use range_window::range_window;
 pub use row::{relation_rows, row};
 

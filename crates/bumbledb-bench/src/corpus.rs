@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use bumbledb::{Db, RelationId, Value};
 use rusqlite::Connection;
 
-use crate::gen::{relation_rows, GenConfig, Sizes};
-use crate::schema::{ids, schema, Ledger};
+use crate::corpus_gen::{GenConfig, Sizes, relation_rows};
+use crate::schema::{Ledger, ids, schema};
 use crate::sqlmap;
 
 /// One load's outcome.
@@ -224,10 +224,10 @@ pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
     // 100 seeded sample postings, fetched from SQLite by id, compared to
     // the generator's row (bumbledb equality to the generator is already
     // covered transitively by counts + set semantics + the verify layer).
-    let mut rng = crate::gen::Rng::new(cfg.seed ^ 0xA5A5);
+    let mut rng = crate::corpus_gen::Rng::new(cfg.seed ^ 0xA5A5);
     for _ in 0..100 {
         let i = rng.range(sizes.postings);
-        let expected = crate::gen::row(&cfg, &sizes, ids::POSTING, i);
+        let expected = crate::corpus_gen::row(&cfg, &sizes, ids::POSTING, i);
         let relation = schema.relation(ids::POSTING);
         let got: Vec<Value> = conn
             .query_row(
@@ -253,7 +253,7 @@ pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gen::Scale;
+    use crate::corpus_gen::Scale;
 
     fn scratch(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("bumbledb-bench-{tag}"));

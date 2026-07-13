@@ -17,10 +17,10 @@ use std::time::Instant;
 use bumbledb::{Db, RelationId, Value};
 use rusqlite::Connection;
 
-use crate::calendar::gen::{du_cluster_rows, relation_rows_sized, CalSizes};
-use crate::calendar::{ids, schema, Scheduling};
-use crate::corpus::{configure_sqlite, insert_rows, LoadStats};
-use crate::gen::GenConfig;
+use crate::calendar::corpus_gen::{CalSizes, du_cluster_rows, relation_rows_sized};
+use crate::calendar::{Scheduling, ids, schema};
+use crate::corpus::{LoadStats, configure_sqlite, insert_rows};
+use crate::corpus_gen::GenConfig;
 use crate::sqlmap;
 
 /// The engine load order minus the `==` cluster: every containment's
@@ -191,7 +191,7 @@ pub fn assert_loaded_equal(db: &Db<Scheduling>, conn: &Connection, cfg: GenConfi
     // 100 seeded sample events, fetched from SQLite by id, compared to
     // the generator's row (engine equality to the generator is covered
     // transitively by counts + set semantics + the verify layer).
-    let mut rng = crate::gen::Rng::new(cfg.seed ^ 0xCA1E);
+    let mut rng = crate::corpus_gen::Rng::new(cfg.seed ^ 0xCA1E);
     let events: Vec<Vec<Value>> = relation_rows_sized(cfg, sizes, ids::EVENT).collect();
     let relation = schema.relation(ids::EVENT);
     for _ in 0..100 {

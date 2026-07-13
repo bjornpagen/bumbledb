@@ -246,10 +246,10 @@ impl NaiveDb {
         let mut scalar_anchored = vec![false; var_count];
         for atom in &rule.atoms {
             for (field, term) in &atom.bindings {
-                if let Term::Var(var) = term {
-                    if !self.atom_field_is_interval(atom, *field) {
-                        scalar_anchored[usize::from(var.0)] = true;
-                    }
+                if let Term::Var(var) = term
+                    && !self.atom_field_is_interval(atom, *field)
+                {
+                    scalar_anchored[usize::from(var.0)] = true;
                 }
             }
         }
@@ -618,10 +618,8 @@ fn admit(
 /// element-typed constant on an interval field is point membership;
 /// everything else is value equality.
 fn constrains(fact_value: &Value, field_is_interval: bool, term_value: &Value) -> bool {
-    if field_is_interval {
-        if let Some(t) = point(term_value) {
-            return contains_point(endpoints(fact_value), t);
-        }
+    if field_is_interval && let Some(t) = point(term_value) {
+        return contains_point(endpoints(fact_value), t);
     }
     term_value == fact_value
 }
@@ -906,11 +904,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 .map(|binding| &binding.0[key_var])
                 .max_by(|a, b| {
                     let ordering = cmp_value(a, b);
-                    if is_max {
-                        ordering
-                    } else {
-                        ordering.reverse()
-                    }
+                    if is_max { ordering } else { ordering.reverse() }
                 })
                 .expect("groups are nonempty by construction");
             for binding in group {

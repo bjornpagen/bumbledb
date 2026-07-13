@@ -1,4 +1,4 @@
-use super::super::{normalize, OccId, Role};
+use super::super::{OccId, Role, normalize};
 use super::*;
 use crate::encoding::encode_i64;
 use crate::ir::validate::validate;

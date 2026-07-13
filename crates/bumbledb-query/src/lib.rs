@@ -720,7 +720,7 @@ fn parse_cmp_op(tokens: &mut Tokens) -> Parse<&'static str> {
             return fail(
                 other.span(),
                 format!("query!: expected a comparison, found `{other}`"),
-            )
+            );
         }
         None => return fail(Span::call_site(), "query!: expected a comparison"),
     };
@@ -749,7 +749,7 @@ fn parse_cmp_op(tokens: &mut Tokens) -> Parse<&'static str> {
             return fail(
                 span,
                 format!("query!: `{first}` is not a comparison operator"),
-            )
+            );
         }
     };
     Ok(op)
@@ -863,13 +863,13 @@ fn parse_clause(tokens: &mut Tokens) -> Parse<Clause> {
             return fail(
                 other.span(),
                 format!("query!: expected `|` (*such that*) after the head, found `{other}`"),
-            )
+            );
         }
         None => {
             return fail(
                 head_span,
                 "query!: expected `|` (*such that*) after the head",
-            )
+            );
         }
     }
     let mut items = Vec::new();
@@ -1288,13 +1288,13 @@ fn expand(input: TokenStream) -> Parse<String> {
                 return fail(
                     other.span(),
                     "query!: the shape is `query!(Theory { clauses })`",
-                )
+                );
             }
             None => {
                 return fail(
                     Span::call_site(),
                     "query!: the shape is `query!(Theory { clauses })`",
-                )
+                );
             }
         }
     }

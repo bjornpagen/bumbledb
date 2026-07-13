@@ -4,7 +4,7 @@
 //! error (`docs/architecture/20-query-ir.md`, the rules shape).
 
 use super::*;
-use crate::ir::{CmpOp, Comparison, HeadTerm, ParamId, Rule, Value, MAX_RULES};
+use crate::ir::{CmpOp, Comparison, HeadTerm, MAX_RULES, ParamId, Rule, Value};
 
 /// A one-atom rule projecting Posting.account (U64) as `Var(var)`.
 fn account_rule(var: u16) -> Rule {

@@ -13,11 +13,11 @@
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType};
 use bumbledb::{Db, Error, FieldId, RelationId, Value};
 
-use super::{schema, BOOKING, MARKER};
+use super::{BOOKING, MARKER, schema};
 use crate::differential::{
-    engine_write, engine_write_from, naive_write_from, ConditionalVerdict, Verdict,
+    ConditionalVerdict, Verdict, engine_write, engine_write_from, naive_write_from,
 };
-use crate::fixture::{field, TempDir};
+use crate::fixture::{TempDir, field};
 use crate::naive::{Delta, NaiveDb};
 
 /// One consistent Booking+Marker pair insert.

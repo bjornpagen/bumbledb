@@ -4,7 +4,7 @@
 //! exists anywhere in this module: synthesis is pure.
 
 use crate::encoding::{encode_bool, encode_interval_u64, encode_u64};
-use crate::image::{synthesize_closed, ColumnWidth};
+use crate::image::{ColumnWidth, synthesize_closed};
 use crate::ir::Value;
 use crate::schema::{IntervalElement, Row};
 

@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{ValueRef, encode_fact};
 use crate::error::Error;
 use crate::image::cache::ImageCache;
 use crate::ir::{

@@ -1,4 +1,4 @@
-use super::{ctrl_tag, eq_byte_mask, zero_byte_mask, WordMap, WINDOW};
+use super::{WINDOW, WordMap, ctrl_tag, eq_byte_mask, zero_byte_mask};
 
 impl<V: Copy> WordMap<V> {
     /// Whether the stored key at `slot` equals `key` — a manual word
@@ -64,7 +64,7 @@ impl<V: Copy> WordMap<V> {
             let matches = eq_byte_mask(window, wanted);
             let mut candidates = empties | matches;
             while candidates != 0 {
-                let bit = candidates & candidates.wrapping_neg();
+                let bit = candidates.isolate_lowest_one();
                 let offset = (bit.trailing_zeros() as usize) >> 3;
                 let slot = (idx + offset) & mask;
                 if empties & bit != 0 {

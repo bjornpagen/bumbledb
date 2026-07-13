@@ -28,12 +28,12 @@
 //! passed on rerun there, eliminating the capability branch), leaving
 //! the transient-under-pressure class.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bumbledb::{Db, Value};
 
-use crate::schema::{ids, Ledger};
+use crate::schema::{Ledger, ids};
 
 /// Facts per iteration: two full bulk chunks plus a remainder, so every
 /// iteration crosses three chunk-commit boundaries — the observed

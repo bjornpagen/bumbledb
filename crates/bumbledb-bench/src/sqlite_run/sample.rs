@@ -1,9 +1,9 @@
-use bumbledb::schema::ValueType;
 use bumbledb::Value;
+use bumbledb::schema::ValueType;
 
 use crate::naive::ParamValue;
 
-use super::{bind_args, bind_params, PreparedFamily};
+use super::{PreparedFamily, bind_args, bind_params};
 
 /// One timed sample: bind via the normative mapping (interval params as
 /// their two endpoint slots), drain ALL rows with typed reads on every

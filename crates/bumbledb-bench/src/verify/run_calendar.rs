@@ -14,10 +14,12 @@ use super::{Case, Db, Run, VerifyConfig};
 
 use bumbledb::{RelationId, Value};
 
-use crate::calendar::gen::{chain, du_cluster_rows, relation_rows_sized, CalSizes, CAL_BASE, HOUR};
-use crate::calendar::{families, ids, Scheduling, ARM_BUSY, RSVP_ACCEPTED};
+use crate::calendar::corpus_gen::{
+    CAL_BASE, CalSizes, HOUR, chain, du_cluster_rows, relation_rows_sized,
+};
+use crate::calendar::{ARM_BUSY, RSVP_ACCEPTED, Scheduling, families, ids};
+use crate::corpus_gen::Rng;
 use crate::differential::{self, Op};
-use crate::gen::Rng;
 use crate::naive::{Delta, NaiveDb};
 
 /// The calendar family lane: every family × (its fixed rotation, plus
@@ -31,13 +33,13 @@ pub(super) fn calendar_lane(
     label: &str,
     randomized: bool,
 ) {
-    let mut rng = Rng::new(cfg.gen.seed ^ 0x0116_0001);
+    let mut rng = Rng::new(cfg.corpus_gen.seed ^ 0x0116_0001);
     'families: for family in families::all() {
         let query = (family.query)();
-        let mut draws = (family.params)(&cfg.gen);
+        let mut draws = (family.params)(&cfg.corpus_gen);
         if randomized {
             for _ in 0..families::RANDOM_DRAWS {
-                if let Some(draw) = families::random_draw(family.name, &mut rng, &cfg.gen) {
+                if let Some(draw) = families::random_draw(family.name, &mut rng, &cfg.corpus_gen) {
                     draws.push(draw);
                 }
             }
@@ -65,7 +67,7 @@ pub(super) fn calendar_case_count(cfg: &VerifyConfig) -> u64 {
     families::all()
         .iter()
         .map(|family| {
-            let fixed = (family.params)(&cfg.gen).len() as u64;
+            let fixed = (family.params)(&cfg.corpus_gen).len() as u64;
             let random = if matches!(family.name, "rsvp_union" | "claim_hours") {
                 0
             } else {
@@ -80,14 +82,14 @@ pub(super) fn calendar_case_count(cfg: &VerifyConfig) -> u64 {
 pub(super) fn calendar_fixed_count(cfg: &VerifyConfig) -> u64 {
     families::all()
         .iter()
-        .map(|family| (family.params)(&cfg.gen).len() as u64)
+        .map(|family| (family.params)(&cfg.corpus_gen).len() as u64)
         .sum()
 }
 
 /// The engine loader's order and joint `==` cluster, as differential
 /// write deltas — every chunk judged over the full final state on both
 /// sides ([`crate::calendar::corpus`] is the loader twin).
-fn load_ops(cfg: crate::gen::GenConfig, sizes: CalSizes) -> Vec<Op> {
+fn load_ops(cfg: crate::corpus_gen::GenConfig, sizes: CalSizes) -> Vec<Op> {
     const ORDER: [RelationId; 7] = [
         ids::ACCOUNT,
         ids::PERSON,
@@ -197,7 +199,7 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                             Value::U64(0),
                             Value::IntervalI64(CAL_BASE - 2 * HOUR, CAL_BASE - HOUR),
                             Value::I64(CAL_BASE),
-                            crate::calendar::gen::event_hash(seed, sizes.events),
+                            crate::calendar::corpus_gen::event_hash(seed, sizes.events),
                         ],
                     ),
                     (
@@ -259,15 +261,15 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
 /// On tool-level invariant violations — never on a disagreement.
 pub(super) fn run_calendar_naive<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let sizes = CalSizes::unit();
-    let mut ops = load_ops(cfg.gen, sizes);
-    ops.extend(violating_ops(cfg.gen.seed, &sizes));
+    let mut ops = load_ops(cfg.corpus_gen, sizes);
+    ops.extend(violating_ops(cfg.corpus_gen.seed, &sizes));
     for family in families::all() {
         let query = (family.query)();
         ops.push(Op::Query {
             query: query.clone(),
-            params: families::unit_draw(family.name, cfg.gen.seed, &sizes),
+            params: families::unit_draw(family.name, cfg.corpus_gen.seed, &sizes),
         });
-        for params in (family.params)(&cfg.gen) {
+        for params in (family.params)(&cfg.corpus_gen) {
             ops.push(Op::Query {
                 query: query.clone(),
                 params,

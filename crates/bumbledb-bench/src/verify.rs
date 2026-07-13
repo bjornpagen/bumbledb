@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use bumbledb::Db;
 
-use crate::gen::GenConfig;
+use crate::corpus_gen::GenConfig;
 
 mod binary_fingerprint;
 mod check;
@@ -42,7 +42,7 @@ pub use stamp_value::stamp_value;
 /// it at user data).
 #[derive(Debug, Clone)]
 pub struct VerifyConfig {
-    pub gen: GenConfig,
+    pub corpus_gen: GenConfig,
     pub random_cases: u32,
     pub out_dir: PathBuf,
 }

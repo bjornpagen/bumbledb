@@ -30,7 +30,7 @@ mod lower_literal;
 mod normalize;
 mod place_comparisons;
 
-pub use dnf::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
+pub use dnf::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 #[cfg(test)]
 pub use fold::with_fold_disabled;
 pub(crate) use fold::{decoded_interval, decoded_scalar, render_const};

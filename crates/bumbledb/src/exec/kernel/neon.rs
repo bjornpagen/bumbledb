@@ -1,6 +1,6 @@
 use std::arch::aarch64::{
-    uint64x2_t, vandq_u64, vceqq_u64, vceqq_u8, vcgeq_u64, vcgtq_u64, vcleq_u64, vdupq_n_u64,
-    vdupq_n_u8, vgetq_lane_u64, vld1q_u64, vld1q_u8, vorrq_u64, vst1q_u8, vsubq_u64,
+    uint64x2_t, vandq_u64, vceqq_u8, vceqq_u64, vcgeq_u64, vcgtq_u64, vcleq_u64, vdupq_n_u8,
+    vdupq_n_u64, vgetq_lane_u64, vld1q_u8, vld1q_u64, vorrq_u64, vst1q_u8, vsubq_u64,
 };
 
 pub(super) fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
@@ -8,12 +8,12 @@ pub(super) fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
     out.resize(start + col.len(), 0);
     let mut write = start;
     // SAFETY: every vld1q_u64 reads exactly two u64s from within
-    // `chunks_exact(2)` of `col`; unaligned loads are legal for vld1q.
+    // `as_chunks::<2>()` of `col`; unaligned loads are legal for vld1q.
     unsafe {
         let needle = vdupq_n_u64(value);
-        let chunks = col.chunks_exact(2);
-        let tail_start = col.len() - chunks.remainder().len();
-        for (chunk_idx, chunk) in chunks.enumerate() {
+        let (chunks, tail) = col.as_chunks::<2>();
+        let tail_start = col.len() - tail.len();
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
             let lanes = vld1q_u64(chunk.as_ptr());
             let mask = vceqq_u64(lanes, needle);
             let base = u32::try_from(chunk_idx * 2).expect("positions fit u32");
@@ -38,9 +38,9 @@ pub(super) fn filter_range_u64(col: &[u64], lo: u64, hi: u64, out: &mut Vec<u32>
     unsafe {
         let lo_v = vdupq_n_u64(lo);
         let hi_v = vdupq_n_u64(hi);
-        let chunks = col.chunks_exact(2);
-        let tail_start = col.len() - chunks.remainder().len();
-        for (chunk_idx, chunk) in chunks.enumerate() {
+        let (chunks, tail) = col.as_chunks::<2>();
+        let tail_start = col.len() - tail.len();
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
             let lanes = vld1q_u64(chunk.as_ptr());
             let ge = vcgeq_u64(lanes, lo_v);
             let le = vcleq_u64(lanes, hi_v);
@@ -85,12 +85,12 @@ unsafe fn filter_pair_u64(
     out.resize(base + starts.len(), 0);
     let mut write = base;
     // SAFETY (caller's contract): every vld1q_u64 reads exactly two u64s
-    // from within `chunks_exact(2)` of equal-length columns; unaligned
+    // from within `as_chunks::<2>()` of equal-length columns; unaligned
     // loads are legal for vld1q.
     unsafe {
-        let chunks = starts.chunks_exact(2);
-        let tail_start = starts.len() - chunks.remainder().len();
-        for (chunk_idx, chunk) in chunks.enumerate() {
+        let (chunks, rest) = starts.as_chunks::<2>();
+        let tail_start = starts.len() - rest.len();
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
             let s = vld1q_u64(chunk.as_ptr());
             let e = vld1q_u64(ends.as_ptr().add(chunk_idx * 2));
             let m = mask(s, e);
@@ -125,15 +125,15 @@ pub(super) fn filter_duration_range_u64(
     out.resize(base + starts.len(), 0);
     let mut write = base;
     // SAFETY: every vld1q_u64 reads exactly two u64s from within
-    // `chunks_exact(2)` of equal-length columns; unaligned loads are
+    // `as_chunks::<2>()` of equal-length columns; unaligned loads are
     // legal for vld1q.
     unsafe {
         let lo_v = vdupq_n_u64(lo);
         let hi_v = vdupq_n_u64(hi);
         let inf = vdupq_n_u64(u64::MAX);
-        let chunks = starts.chunks_exact(2);
-        let tail_start = starts.len() - chunks.remainder().len();
-        for (chunk_idx, chunk) in chunks.enumerate() {
+        let (chunks, tail) = starts.as_chunks::<2>();
+        let tail_start = starts.len() - tail.len();
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
             let s = vld1q_u64(chunk.as_ptr());
             let e = vld1q_u64(ends.as_ptr().add(chunk_idx * 2));
             let ray = vceqq_u64(e, inf);
@@ -440,7 +440,7 @@ pub(super) fn allen_code_batch_const_neon(
 pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
     let n = codes.len();
     debug_assert!(n >= 16, "the dispatch owns the small-batch fallback");
-    debug_assert!(keep.len() == n);
+    debug_assert_eq!(keep.len(), n);
     // The broadcast mask table: byte c is code c's keep bit (1/0);
     // indices 13..=15 are unreachable codes and keep nothing. The
     // expansion is a fixed 13-step shift-and-mask — fully unrolled,
@@ -492,13 +492,12 @@ pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [
 /// rows/ns at L1).
 pub(super) fn fold_sum_u64_dense(values: &[u64]) -> u128 {
     // SAFETY: every vld1q_u64 reads exactly two u64s from within
-    // `chunks_exact(8)` of `values`.
+    // `as_chunks::<8>()` of `values`.
     unsafe {
         use std::arch::aarch64::{vaddq_u64, vcgtq_u64, vsubq_u64};
         let mut lows = [vdupq_n_u64(0); 4];
         let mut carries = [vdupq_n_u64(0); 4];
-        let chunks = values.chunks_exact(8);
-        let tail = chunks.remainder();
+        let (chunks, tail) = values.as_chunks::<8>();
         for chunk in chunks {
             for lane in 0..4 {
                 let v = vld1q_u64(chunk.as_ptr().add(lane * 2));
@@ -540,13 +539,12 @@ pub(super) fn fold_min_max_u64_dense(values: &[u64]) -> (u64, u64) {
     let mut min_scalar = u64::MAX;
     let mut max_scalar = u64::MIN;
     // SAFETY: every vld1q_u64 reads exactly two u64s from within
-    // `chunks_exact(8)` of `values`.
+    // `as_chunks::<8>()` of `values`.
     unsafe {
         use std::arch::aarch64::{vbslq_u64, vcgtq_u64};
         let mut mins = [vdupq_n_u64(u64::MAX); 4];
         let mut maxs = [vdupq_n_u64(u64::MIN); 4];
-        let chunks = values.chunks_exact(8);
-        let tail = chunks.remainder();
+        let (chunks, tail) = values.as_chunks::<8>();
         for chunk in chunks {
             for lane in 0..4 {
                 let v = vld1q_u64(chunk.as_ptr().add(lane * 2));
@@ -575,13 +573,13 @@ pub(super) fn filter_eq_u8(col: &[u8], value: u8, out: &mut Vec<u32>) {
     out.resize(start + col.len(), 0);
     let mut write = start;
     // SAFETY: every vld1q_u8 reads exactly sixteen bytes from within
-    // `chunks_exact(16)`; the mask store writes a stack array.
+    // `as_chunks::<16>()`; the mask store writes a stack array.
     unsafe {
         let needle = vdupq_n_u8(value);
-        let chunks = col.chunks_exact(16);
-        let tail_start = col.len() - chunks.remainder().len();
+        let (chunks, tail) = col.as_chunks::<16>();
+        let tail_start = col.len() - tail.len();
         let mut mask_bytes = [0u8; 16];
-        for (chunk_idx, chunk) in chunks.enumerate() {
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
             let lanes = vld1q_u8(chunk.as_ptr());
             let mask = vceqq_u8(lanes, needle);
             vst1q_u8(mask_bytes.as_mut_ptr(), mask);

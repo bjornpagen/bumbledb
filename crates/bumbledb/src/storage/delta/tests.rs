@@ -1,5 +1,5 @@
 use super::*;
-use crate::encoding::{encode_fact, encode_u64, ValueRef};
+use crate::encoding::{ValueRef, encode_fact, encode_u64};
 use crate::error::Error;
 use crate::schema::{
     FieldDescriptor, Generation, KeyId, RelationDescriptor, SchemaDescriptor, ValueType,
@@ -168,9 +168,11 @@ fn explicit_value_above_mark_advances_generated_successors() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert!(delta
-        .insert(&view, R, &fact(&schema, 50, 1))
-        .expect("insert"));
+    assert!(
+        delta
+            .insert(&view, R, &fact(&schema, 50, 1))
+            .expect("insert")
+    );
     assert_eq!(delta.alloc(&view, R, ID).expect("alloc"), 51);
 }
 
@@ -246,10 +248,12 @@ fn resolve_never_mints_and_sees_both_id_sources() {
     }
     let view = env.read_txn().expect("txn");
     let fresh = WriteDelta::new(&schema);
-    assert!(fresh
-        .resolve_str(&view, "committed")
-        .expect("resolve")
-        .is_some());
+    assert!(
+        fresh
+            .resolve_str(&view, "committed")
+            .expect("resolve")
+            .is_some()
+    );
     assert_eq!(fresh.dict_next(), None);
 }
 
@@ -325,9 +329,11 @@ fn guard_map_mirrors_the_fact_dispositions() {
     // A no-op operation records nothing: deleting an absent fact must
     // not shadow another fact's live key tuple.
     let mut idle = WriteDelta::new(&schema);
-    assert!(!idle
-        .delete(&view, R, &fact(&schema, 9, 900))
-        .expect("delete"));
+    assert!(
+        !idle
+            .delete(&view, R, &fact(&schema, 9, 900))
+            .expect("delete")
+    );
     assert_eq!(idle.guard_overlay(KEY, &encode_u64(9)), None);
 }
 

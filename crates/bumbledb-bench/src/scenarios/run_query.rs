@@ -1,5 +1,5 @@
-use bumbledb::schema::ValueType;
 use bumbledb::ResultBuffer;
+use bumbledb::schema::ValueType;
 
 use super::{QueryReport, Scenario, ScenarioQuery, Stores};
 use crate::compare;

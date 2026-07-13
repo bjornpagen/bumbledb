@@ -102,7 +102,7 @@ pub fn from_sqlite(
                     return Err(format!(
                         "column {}: mask values are not results",
                         column - 1
-                    ))
+                    ));
                 }
             });
         }

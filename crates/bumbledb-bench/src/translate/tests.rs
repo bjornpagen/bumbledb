@@ -2,10 +2,10 @@ use std::sync::OnceLock;
 
 use super::*;
 use crate::fixture::{field, fresh, var};
-use bumbledb::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Rule, Term};
-use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
 use bumbledb::AggOp;
 use bumbledb::AllenMask;
+use bumbledb::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Rule, Term};
+use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
 
 /// Relation and field ids for the test ledger below — declaration order
 /// is the id order, no magic numbers in query constructions.

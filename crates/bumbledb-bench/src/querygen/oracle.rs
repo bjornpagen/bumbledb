@@ -8,9 +8,9 @@
 use bumbledb::schema::{IntervalElement, ValueType};
 use bumbledb::{FieldId, ParamId, Query, RelationId, Term, Value};
 
-use crate::gen::{GenConfig, Rng};
-use crate::querygen::target::{self, ids, Domains, AMOUNT_LEVELS, AMOUNT_STEP};
-use crate::querygen::{dress, interval_data, DrawKind, PARAM_DRAWS};
+use crate::corpus_gen::{GenConfig, Rng};
+use crate::querygen::target::{self, AMOUNT_LEVELS, AMOUNT_STEP, Domains, ids};
+use crate::querygen::{DrawKind, PARAM_DRAWS, dress, interval_data};
 
 /// The large set size: one past the executor's batch width (128), so a
 /// single set spans a full batch plus a straggler lane.
@@ -95,10 +95,10 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
         let mut var_anchor = std::collections::HashMap::new();
         for atom in &rule.atoms {
             for (field, term) in &atom.bindings {
-                if let Term::Var(var) = term {
-                    if !is_interval(atom.relation, *field) {
-                        var_anchor.entry(*var).or_insert((atom.relation, *field));
-                    }
+                if let Term::Var(var) = term
+                    && !is_interval(atom.relation, *field)
+                {
+                    var_anchor.entry(*var).or_insert((atom.relation, *field));
                 }
             }
         }

@@ -1,6 +1,6 @@
-use super::{OccInfo, OccStats, MAX_DISTINCT_VARS};
-use crate::ir::normalize::Occurrence;
+use super::{MAX_DISTINCT_VARS, OccInfo, OccStats};
 use crate::ir::VarId;
+use crate::ir::normalize::Occurrence;
 use crate::schema::Schema;
 
 /// Densifies the participating occurrences into bitset form, resolving stats

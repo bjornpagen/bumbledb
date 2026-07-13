@@ -1,8 +1,8 @@
 use bumbledb::{RelationId, Value};
 
-use crate::gen::{
-    mandate_segments, mix, GenConfig, Rng, Sizes, AT_BASE, AT_STEP, HOT_SHARE_PCT, HOT_TAG_PCT,
-    MANDATE_SEGMENTS, TAG_VARIANTS,
+use crate::corpus_gen::{
+    AT_BASE, AT_STEP, GenConfig, HOT_SHARE_PCT, HOT_TAG_PCT, MANDATE_SEGMENTS, Rng, Sizes,
+    TAG_VARIANTS, mandate_segments, mix,
 };
 use crate::schema::ids;
 
@@ -68,11 +68,7 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
             let amount = {
                 let magnitude = 1 + rng.range(5_000_000);
                 let signed = i64::try_from(magnitude).expect("fits");
-                if rng.chance(1, 2) {
-                    signed
-                } else {
-                    -signed
-                }
+                if rng.chance(1, 2) { signed } else { -signed }
             };
             let at = AT_BASE
                 + i64::try_from(i).expect("fits") * AT_STEP

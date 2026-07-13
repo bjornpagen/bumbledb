@@ -6,13 +6,13 @@
 //! Plain `Vec`s everywhere — no fixed-capacity silent-drop containers
 //! (post-mortem §35: capacity bugs must be impossible, not silent).
 
-use crate::image::view::{Const, FilterPredicate};
 use crate::image::ColumnSpan;
+use crate::image::view::{Const, FilterPredicate};
+use crate::ir::VarId;
 use crate::ir::normalize::{
     AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison, Role,
     SlotWidth,
 };
-use crate::ir::VarId;
 use crate::schema::{FieldId, RelationId};
 
 mod binary2fj;
@@ -28,7 +28,7 @@ mod validate;
 pub use binary2fj::binary2fj;
 pub(crate) use check_selections::check_selections;
 pub use factor::factor;
-pub use provably_disjoint::{provably_disjoint_rules, DisjointWitness};
+pub use provably_disjoint::{DisjointWitness, provably_disjoint_rules};
 pub(crate) use split_filters::split_filters;
 pub use validate::validate;
 

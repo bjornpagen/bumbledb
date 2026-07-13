@@ -5,8 +5,8 @@
 
 use super::*;
 
-use crate::ir::normalize::Role;
 use crate::ir::AggOp;
+use crate::ir::normalize::Role;
 use crate::plan::chase::with_chase_disabled;
 use crate::schema::{RelationDescriptor, Side, StatementDescriptor};
 

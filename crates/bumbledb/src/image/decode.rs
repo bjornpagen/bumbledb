@@ -1,7 +1,7 @@
 //! Per-fact decode: the hoisted per-column decode plan
 //! and the scan loop that fills the structure-of-arrays slabs through it.
 
-use crate::encoding::{decode_bool, TypeDesc};
+use crate::encoding::{TypeDesc, decode_bool};
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::{RelationId, Schema};
 use crate::storage::env::ReadTxn;

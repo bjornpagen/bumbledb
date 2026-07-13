@@ -96,7 +96,7 @@ pub(crate) mod storage;
 mod value;
 mod verify_store;
 
-pub use allen::{classify, AllenMask, Basic};
+pub use allen::{AllenMask, Basic, classify};
 pub use api::db::{BulkLoadError, Db, Fact, Fresh, FreshKeyed, Snapshot, WriteTx};
 pub use api::prepared::{
     BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
@@ -121,8 +121,8 @@ pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{
-    AggOp, Atom, CmpOp, Comparison, FindTerm, HeadOp, HeadTerm, MaskTerm, ParamId, PredicateTree,
-    Query, Rule, Term, Value, VarId, MAX_PREDICATE_DEPTH, MAX_RULES,
+    AggOp, Atom, CmpOp, Comparison, FindTerm, HeadOp, HeadTerm, MAX_PREDICATE_DEPTH, MAX_RULES,
+    MaskTerm, ParamId, PredicateTree, Query, Rule, Term, Value, VarId,
 };
 pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
 pub use verify_store::{StoreFinding, StoreReport};

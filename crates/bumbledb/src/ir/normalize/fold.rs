@@ -277,10 +277,10 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
             return Some(order_filters_picture(relation, *field, &occurrence.filters));
         }
         // Rule (c): the pinned Eq constant lies outside it.
-        if let Some(Const::Word(eq_word)) = eqs.get(field) {
-            if eq_outside_range(*eq_word, summary) {
-                return Some(eq_outside_picture(relation, *field, summary, *eq_word));
-            }
+        if let Some(Const::Word(eq_word)) = eqs.get(field)
+            && eq_outside_range(*eq_word, summary)
+        {
+            return Some(eq_outside_picture(relation, *field, summary, *eq_word));
         }
     }
 
@@ -315,10 +315,9 @@ fn interval_contradictions(
             other: Const::Interval { start, end },
             mask: MaskConst::Mask(mask),
         } = filter
+            && *mask == AllenMask::EQUALS
         {
-            if *mask == AllenMask::EQUALS {
-                interval_pins.entry(*field).or_insert((*start, *end));
-            }
+            interval_pins.entry(*field).or_insert((*start, *end));
         }
     }
     for filter in filters {
@@ -333,16 +332,16 @@ fn interval_contradictions(
                 other: Const::Interval { start, end },
                 mask: MaskConst::Mask(mask),
             } => {
-                if let Some(pin) = interval_pins.get(field) {
-                    if allen_refuted(*pin, *mask, (*start, *end)) {
-                        return Some(field_allen_picture(
-                            relation,
-                            *field,
-                            *pin,
-                            *mask,
-                            (*start, *end),
-                        ));
-                    }
+                if let Some(pin) = interval_pins.get(field)
+                    && allen_refuted(*pin, *mask, (*start, *end))
+                {
+                    return Some(field_allen_picture(
+                        relation,
+                        *field,
+                        *pin,
+                        *mask,
+                        (*start, *end),
+                    ));
                 }
             }
             // Rule (e), field-vs-field: both sides pinned.
@@ -352,12 +351,11 @@ fn interval_contradictions(
                 mask: MaskConst::Mask(mask),
             } => {
                 if let (Some(lhs), Some(rhs)) = (interval_pins.get(left), interval_pins.get(right))
+                    && allen_refuted(*lhs, *mask, *rhs)
                 {
-                    if allen_refuted(*lhs, *mask, *rhs) {
-                        return Some(fields_allen_picture(
-                            relation, *left, *lhs, *mask, *right, *rhs,
-                        ));
-                    }
+                    return Some(fields_allen_picture(
+                        relation, *left, *lhs, *mask, *right, *rhs,
+                    ));
                 }
             }
             // Rule (f): a constant point against the pinned interval.
@@ -365,10 +363,10 @@ fn interval_contradictions(
                 field,
                 point: ResolvedWordSource::Word(point),
             } => {
-                if let Some(pin) = interval_pins.get(field) {
-                    if point_outside(*pin, *point) {
-                        return Some(point_in_picture(relation, *field, *pin, *point));
-                    }
+                if let Some(pin) = interval_pins.get(field)
+                    && point_outside(*pin, *point)
+                {
+                    return Some(point_in_picture(relation, *field, *pin, *point));
                 }
             }
             // Rule (f), reversed: the pinned scalar against the constant
@@ -377,15 +375,15 @@ fn interval_contradictions(
                 field,
                 outer: Const::Interval { start, end },
             } => {
-                if let Some(Const::Word(point)) = eqs.get(field) {
-                    if point_outside((*start, *end), *point) {
-                        return Some(field_within_picture(
-                            relation,
-                            *field,
-                            *point,
-                            (*start, *end),
-                        ));
-                    }
+                if let Some(Const::Word(point)) = eqs.get(field)
+                    && point_outside((*start, *end), *point)
+                {
+                    return Some(field_within_picture(
+                        relation,
+                        *field,
+                        *point,
+                        (*start, *end),
+                    ));
                 }
             }
             _ => {}

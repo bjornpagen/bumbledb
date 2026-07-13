@@ -30,7 +30,7 @@
 //! warm execution is a bug.
 
 #![allow(unsafe_code)] // GlobalAlloc is an unsafe trait; this module only
-                       // delegates to the system allocator and counts.
+// delegates to the system allocator and counts.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};

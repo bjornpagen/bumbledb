@@ -1,4 +1,4 @@
-use super::{fact_operand, guard_probe_fact, FactOperand, GuardPlan};
+use super::{FactOperand, GuardPlan, fact_operand, guard_probe_fact};
 use crate::error::Result;
 use crate::exec::run::{Bindings, Sink};
 use crate::image::view::Const;
@@ -21,8 +21,8 @@ use crate::storage::env::ReadTxn;
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
 )] // the prepared query's split borrows,
-   // exactly like `run_join`'s — bundling
-   // would only rename the same eight things
+// exactly like `run_join`'s — bundling
+// would only rename the same eight things
 pub fn execute_guard<S: Sink, C: crate::exec::run::Counters>(
     plan: &GuardPlan,
     txn: &ReadTxn<'_>,

@@ -1,8 +1,8 @@
 use super::*;
-use crate::gen::{GenConfig, Scale};
+use crate::corpus_gen::{GenConfig, Scale};
 use crate::translate::translate;
 use crate::writebench::non_posting_relations;
-use crate::{corpus, families, gen, sqlmap};
+use crate::{corpus, corpus_gen, families, sqlmap};
 use rusqlite::Connection;
 
 const CFG: GenConfig = GenConfig {
@@ -148,7 +148,7 @@ fn write_mirrors_run_with_sane_direction() {
 fn bulk_mirror_reports_positive_throughput() {
     let dir = scratch("bulk");
     let m = bulk(CFG, &dir).expect("bulk");
-    let sizes = gen::Sizes::of(CFG.scale);
+    let sizes = corpus_gen::Sizes::of(CFG.scale);
     assert_eq!(m.work, (sizes.postings + sizes.posting_tags) * 8);
     assert!(m.stats.min > 0);
     let _ = std::fs::remove_dir_all(&dir);

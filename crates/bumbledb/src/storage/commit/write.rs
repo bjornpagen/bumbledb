@@ -5,10 +5,10 @@ use crate::obs;
 use crate::schema::RelationId;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, WriteTxn};
-use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
+use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 
 use super::plan::plan_commit;
-use super::{apply, judgment, Applied, CommitReport};
+use super::{Applied, CommitReport, apply, judgment};
 
 /// The bound on [`commit_bounded`]'s retries of the transient
 /// commit-sync class — a decision, not a knob. With the 10 ms-doubling

@@ -9,7 +9,7 @@ use bumbledb::schema::{Generation, IntervalElement, ValueType};
 use bumbledb::{AggOp, Atom, Basic, CmpOp, FindTerm, MaskTerm, Query, Term, VarId};
 use std::collections::{HashMap, HashSet};
 
-use crate::gen::{GenConfig, Rng};
+use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
 use crate::querygen::{ChaseVariant, ClosedVariant, Coverage, GenTags, RulesVariant, Shape};
@@ -179,10 +179,10 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
             if !matches!(field_type(atom, *field), ValueType::Interval { .. }) {
                 continue;
             }
-            if let Term::Var(var) = term {
-                if !matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) {
-                    needs.insert(index);
-                }
+            if let Term::Var(var) = term
+                && !matches!(t.var_types.get(var), Some(ValueType::Interval { .. }))
+            {
+                needs.insert(index);
             }
         }
     }
@@ -492,10 +492,10 @@ impl Coverage {
                         // in the SQL-paired grammar here.
                         AggOp::Pack => {}
                     }
-                    if let Some(var) = over {
-                        if matches!(t.var_types.get(var), Some(ValueType::U64)) {
-                            self.agg_u64 += 1;
-                        }
+                    if let Some(var) = over
+                        && matches!(t.var_types.get(var), Some(ValueType::U64))
+                    {
+                        self.agg_u64 += 1;
                     }
                 }
                 // The measure positions: one projected word / one fold

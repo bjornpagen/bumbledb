@@ -7,7 +7,7 @@
 //! scalar target, a pointwise target with selected and unselected
 //! coverage statements, and a selected source.
 
-use crate::encoding::{encode_u64, ValueRef};
+use crate::encoding::{ValueRef, encode_u64};
 use crate::error::{Direction, Error, Result};
 use crate::schema::{
     FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementDescriptor,

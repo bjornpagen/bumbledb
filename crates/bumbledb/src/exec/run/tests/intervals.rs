@@ -8,8 +8,8 @@
 use super::*;
 use crate::allen::AllenMask;
 use crate::image::view::{FilterPredicate, ResolvedWordSource};
-use crate::ir::normalize::{IntervalWord, PlacedAllen, PlacedWordComparison, SlotWidth, VarWord};
 use crate::ir::MaskTerm;
+use crate::ir::normalize::{IntervalWord, PlacedAllen, PlacedWordComparison, SlotWidth, VarWord};
 use crate::schema::ValueType;
 
 /// Two relations of shape R(tag u64, during Interval<u64>).

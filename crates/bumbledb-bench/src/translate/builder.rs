@@ -46,7 +46,7 @@ fn sql_literal(value: &Value) -> Result<String, String> {
             hex
         }
         Value::IntervalU64(..) | Value::IntervalI64(..) => {
-            return Err("interval literal in a scalar position".to_owned())
+            return Err("interval literal in a scalar position".to_owned());
         }
         Value::AllenMask(_) => return Err("mask value in a scalar position".to_owned()),
     })
@@ -428,15 +428,15 @@ impl Builder<'_> {
 
     pub(super) fn comparison(&mut self, comparison: &Comparison) -> Result<(), String> {
         // Eq against a set: "any element" — the literal IN form.
-        if matches!(comparison.op, CmpOp::Eq) {
-            if let Some((param, other)) = set_side(comparison) {
-                let Rendered::One(column) = self.render_term(other)? else {
-                    return Err(format!("param set {} compared to an interval", param.0));
-                };
-                let rendered = self.in_list(&column, param)?;
-                self.predicates.push(rendered);
-                return Ok(());
-            }
+        if matches!(comparison.op, CmpOp::Eq)
+            && let Some((param, other)) = set_side(comparison)
+        {
+            let Rendered::One(column) = self.render_term(other)? else {
+                return Err(format!("param set {} compared to an interval", param.0));
+            };
+            let rendered = self.in_list(&column, param)?;
+            self.predicates.push(rendered);
+            return Ok(());
         }
         let lhs = self.render_term(&comparison.lhs)?;
         let rhs = self.render_term(&comparison.rhs)?;

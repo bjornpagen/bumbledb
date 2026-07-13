@@ -13,8 +13,8 @@ use bumbledb::{
     Query, RelationId, Rule, Term, Value, VarId,
 };
 
-use crate::differential::{run, Op};
-use crate::fixture::{atom, field, var, TempDir};
+use crate::differential::{Op, run};
+use crate::fixture::{TempDir, atom, field, var};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb};
 

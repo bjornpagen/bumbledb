@@ -1,5 +1,5 @@
 use super::{
-    pack_child, unpack_child, Chunk, Colt, NodeRef, NodeState, Positions, Slot, CHUNK_LEN,
+    CHUNK_LEN, Chunk, Colt, NodeRef, NodeState, Positions, Slot, pack_child, unpack_child,
 };
 
 impl Colt {

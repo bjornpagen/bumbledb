@@ -1,4 +1,4 @@
-use super::{ctrl_tag, hash_words, zero_byte_mask, Colt, Map};
+use super::{Colt, Map, ctrl_tag, hash_words, zero_byte_mask};
 
 impl Colt {
     /// Rehash-doubles a map mid-force: fresh slot/key/dense ranges at

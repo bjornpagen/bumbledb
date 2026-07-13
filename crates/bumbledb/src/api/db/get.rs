@@ -6,7 +6,7 @@
 //! guard gets: no images, no plans, no snapshot.
 
 use super::encode_dyn::shape_mismatch;
-use super::{plumbing, Fact, Fresh, FreshKeyed, WriteTx};
+use super::{Fact, Fresh, FreshKeyed, WriteTx, plumbing};
 use crate::encoding::{
     encode_bool, encode_i64, encode_interval_i64, encode_interval_u64, encode_u64,
 };

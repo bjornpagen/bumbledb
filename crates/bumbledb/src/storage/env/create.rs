@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 use heed::types::Bytes;
 
 use crate::error::{Error, Result};
-use crate::schema::fingerprint::fingerprint;
 use crate::schema::Schema;
+use crate::schema::fingerprint::fingerprint;
 
 use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;
@@ -45,10 +45,10 @@ impl Environment {
         // rather than move in. A half-created bumbledb store (crash
         // between directory creation and the meta commit) has an empty
         // root and still proceeds.
-        if let Some(root) = env.open_database::<Bytes, Bytes>(&wtxn, None)? {
-            if !root.is_empty(&wtxn)? {
-                return Err(Error::AlreadyInitialized);
-            }
+        if let Some(root) = env.open_database::<Bytes, Bytes>(&wtxn, None)?
+            && !root.is_empty(&wtxn)?
+        {
+            return Err(Error::AlreadyInitialized);
         }
         let meta = env.create_database(&mut wtxn, Some("_meta"))?;
         let data = env.create_database(&mut wtxn, Some("_data"))?;

@@ -51,10 +51,10 @@ fn random_mask(rng: &mut Rng) -> AllenMask {
     }
 }
 
-use crate::gen::{GenConfig, Rng};
-use crate::querygen::interval_data;
-use crate::querygen::target::{self, ids, Domains};
+use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::Builder;
+use crate::querygen::interval_data;
+use crate::querygen::target::{self, Domains, ids};
 
 /// The collision-group pool query literals draw from — small enough
 /// that every drawn group exists at every scale.

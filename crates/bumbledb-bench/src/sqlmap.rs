@@ -665,13 +665,15 @@ mod tests {
         assert!(from_sql_value(&rusqlite::types::Value::Integer(-1), &ValueType::U64).is_err());
         assert!(from_sql_value(&rusqlite::types::Value::Integer(9), &ValueType::Bool).is_err());
         // An interval type never decodes from one column.
-        assert!(from_sql_value(
-            &rusqlite::types::Value::Integer(0),
-            &ValueType::Interval {
-                element: IntervalElement::I64
-            }
-        )
-        .is_err());
+        assert!(
+            from_sql_value(
+                &rusqlite::types::Value::Integer(0),
+                &ValueType::Interval {
+                    element: IntervalElement::I64
+                }
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -698,12 +700,14 @@ mod tests {
         assert!(
             interval_from_sql(&Sql::Integer(-1), &Sql::Integer(4), IntervalElement::U64).is_err()
         );
-        assert!(interval_from_sql(
-            &Sql::Text("3".to_owned()),
-            &Sql::Integer(4),
-            IntervalElement::I64
-        )
-        .is_err());
+        assert!(
+            interval_from_sql(
+                &Sql::Text("3".to_owned()),
+                &Sql::Integer(4),
+                IntervalElement::I64
+            )
+            .is_err()
+        );
     }
 
     /// The boundary round trip: interval facts inserted through the DDL

@@ -1,6 +1,6 @@
 use bumbledb::{RelationId, Value};
 
-use crate::gen::{relation_rows, GenConfig};
+use crate::corpus_gen::{GenConfig, relation_rows};
 use crate::schema::ids;
 
 /// Canonical bytes of one value, for the corpus digest (length-prefixed
@@ -69,7 +69,7 @@ pub fn corpus_digest(cfg: GenConfig) -> [u8; 32] {
         let rel = RelationId(rel);
         digest.update(b"cal");
         digest.update(&rel.0.to_le_bytes());
-        for row in crate::calendar::gen::relation_rows(cfg, rel) {
+        for row in crate::calendar::corpus_gen::relation_rows(cfg, rel) {
             for value in &row {
                 value_bytes(&mut digest, value);
             }

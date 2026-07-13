@@ -72,11 +72,11 @@ where
     // there; with no window the first segment opens it.
     let mut run: Option<(W, W)> = window.map(|(s, _)| (s, s));
     loop {
-        if let (Some((_, frontier)), Some((_, e))) = (run, window) {
-            if frontier >= e {
-                // Window covered: success, the rest of the input is moot.
-                return Ok(());
-            }
+        if let (Some((_, frontier)), Some((_, e))) = (run, window)
+            && frontier >= e
+        {
+            // Window covered: success, the rest of the input is moot.
+            return Ok(());
         }
         let Some(item) = segments.next() else {
             // Exhaustion: the open run is maximal. Under a window this
@@ -112,7 +112,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{sweep, Continuation};
+    use super::{Continuation, sweep};
 
     /// A deterministic LCG (Knuth's MMIX line) so the property sweeps
     /// are reproducible; draws discard the weak low half.

@@ -13,11 +13,11 @@ use bumbledb::schema::{
     FieldId, RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    with_chase_disabled, AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId, with_chase_disabled,
 };
 
-use crate::differential::{engine_query, Rows};
-use crate::fixture::{atom, field, fresh, side, var, TempDir};
+use crate::differential::{Rows, engine_query};
+use crate::fixture::{TempDir, atom, field, fresh, side, var};
 use crate::naive::{Delta, NaiveDb};
 
 /// One store pair over a fixture: the engine store and the model,

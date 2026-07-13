@@ -25,7 +25,7 @@
 use bumbledb::{Interval, RelationId, Value};
 
 use crate::calendar::ids;
-use crate::gen::{GenConfig, Rng, Scale};
+use crate::corpus_gen::{GenConfig, Rng, Scale};
 
 /// The corpus epoch (seconds-scale i64 instants).
 pub const CAL_BASE: i64 = 1_700_000_000;
@@ -184,7 +184,7 @@ pub struct CalSegment {
 #[must_use]
 pub fn chain(seed: u64, sizes: &CalSizes, person: u64) -> Vec<CalSegment> {
     let n = sizes.segments_of(person);
-    let mut rng = Rng::new(crate::gen::mix(seed, ids::CLAIM, person));
+    let mut rng = Rng::new(crate::corpus_gen::mix(seed, ids::CLAIM, person));
     let mut segments = Vec::with_capacity(usize::try_from(n).expect("fits"));
     let mut cursor = CAL_BASE + i64::try_from(rng.range(4 * HOUR as u64)).expect("fits");
     for k in 0..n {
@@ -222,7 +222,7 @@ pub fn chain(seed: u64, sizes: &CalSizes, person: u64) -> Vec<CalSegment> {
 /// Never in practice: cut arithmetic stays far inside `i64`.
 #[must_use]
 pub fn work_chain(seed: u64, person: u64) -> [(i64, i64); WORK_SEGMENTS] {
-    let mut rng = Rng::new(crate::gen::mix(seed, ids::WORK_HOURS, person));
+    let mut rng = Rng::new(crate::corpus_gen::mix(seed, ids::WORK_HOURS, person));
     let mut cut = |floor: i64| floor + 1 + i64::try_from(rng.range(10_000_000)).expect("fits");
     let c1 = cut(CAL_BASE);
     let c2 = cut(c1);
@@ -244,7 +244,7 @@ pub fn work_chain(seed: u64, person: u64) -> [(i64, i64); WORK_SEGMENTS] {
 /// Never in practice: the scatter stays far inside `i64`.
 #[must_use]
 pub fn created_at(seed: u64, event: u64) -> i64 {
-    let word = crate::gen::mix(seed, ids::EVENT, event);
+    let word = crate::corpus_gen::mix(seed, ids::EVENT, event);
     CAL_BASE + i64::try_from(word % 22_000_000).expect("fits")
 }
 
@@ -254,7 +254,9 @@ pub fn created_at(seed: u64, event: u64) -> i64 {
 pub fn event_hash(seed: u64, event: u64) -> Value {
     let mut raw = Vec::with_capacity(32);
     for lane in 0..4u64 {
-        raw.extend_from_slice(&crate::gen::mix(seed ^ lane, ids::EVENT, event).to_le_bytes());
+        raw.extend_from_slice(
+            &crate::corpus_gen::mix(seed ^ lane, ids::EVENT, event).to_le_bytes(),
+        );
     }
     Value::FixedBytes(raw.into())
 }

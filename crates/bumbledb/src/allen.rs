@@ -288,7 +288,7 @@ pub(crate) fn classify_bounds<T: Ord>(a_start: &T, a_end: &T, b_start: &T, b_end
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, AllenMask, Basic};
+    use super::{AllenMask, Basic, classify};
     use crate::interval::Interval;
 
     /// A splitmix64 step — the repo's no-dependency randomness.

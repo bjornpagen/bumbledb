@@ -1,7 +1,7 @@
 use super::bench::{obs_missing, stamp_refusal};
 use super::*;
 use crate::cli::{BenchArgs, CorpusArgs};
-use crate::gen::Scale;
+use crate::corpus_gen::Scale;
 
 fn scratch(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-bench-driver-{tag}"));

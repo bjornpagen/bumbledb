@@ -28,12 +28,12 @@ use bumbledb::{
     Rule, Term, Value, VarId,
 };
 
+use crate::corpus_gen::{AT_BASE, AT_STEP, Rng, Sizes};
 use crate::differential::Op;
 use crate::fixture::var;
-use crate::gen::{Rng, Sizes, AT_BASE, AT_STEP};
 use crate::naive::query::dnf_width;
 use crate::schema::ids;
-use crate::translate::{sqlite_expressible, Inexpressible, LaneCase};
+use crate::translate::{Inexpressible, LaneCase, sqlite_expressible};
 use crate::verify::Run;
 
 fn leaf(op: CmpOp, lhs: Term, rhs: Term) -> PredicateTree {

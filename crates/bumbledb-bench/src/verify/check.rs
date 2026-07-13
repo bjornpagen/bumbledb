@@ -1,7 +1,7 @@
-use super::{Case, Run, MAX_BUNDLES};
+use super::{Case, MAX_BUNDLES, Run};
 
-use bumbledb::schema::ValueType;
 use bumbledb::ResultBuffer;
+use bumbledb::schema::ValueType;
 
 use crate::compare;
 use crate::families::param_args;

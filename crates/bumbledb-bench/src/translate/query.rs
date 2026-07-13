@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bumbledb::ir::{FindTerm, Rule};
 use bumbledb::{AggOp, ParamId, Query, Schema, Value, VarId};
 
-use super::{types, Builder, ParamSlot, Translated, VarCols};
+use super::{Builder, ParamSlot, Translated, VarCols, types};
 
 /// Translates one validated-shape query over the given schema. `sets`
 /// carries the bound element list of every set param: set params render
@@ -168,7 +168,7 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
                     cols.push(format!("({end} - {start})"));
                 }
                 Some(VarCols::Scalar(_)) => {
-                    return Err(format!("Duration over scalar variable {}", var.0))
+                    return Err(format!("Duration over scalar variable {}", var.0));
                 }
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
@@ -484,7 +484,7 @@ fn arg_sql(
                 outer.extend(var_names(b, carry, "d.")?);
             }
             FindTerm::AggregateDuration { .. } => {
-                return Err("Arg terms and measure folds never mix".to_owned())
+                return Err("Arg terms and measure folds never mix".to_owned());
             }
         }
     }

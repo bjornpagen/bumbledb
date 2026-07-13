@@ -154,9 +154,11 @@ mod tests {
         assert!(iv.is_ray());
         assert!(!Interval::<u64>::new(7, 9).expect("bounded").is_ray());
         // `new` admits the ray end directly — `ray` is a name, not a mode.
-        assert!(Interval::<i64>::new(0, i64::MAX)
-            .expect("ray by new")
-            .is_ray());
+        assert!(
+            Interval::<i64>::new(0, i64::MAX)
+                .expect("ray by new")
+                .is_ray()
+        );
         // MAX is not a point: a ray starting at the ceiling is empty.
         assert!(Interval::<u64>::ray(u64::MAX).is_none());
         assert!(Interval::<i64>::ray(i64::MAX).is_none());

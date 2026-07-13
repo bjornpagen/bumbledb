@@ -22,8 +22,8 @@ use bumbledb::{
     PredicateTree, Query, RelationId, Rule, Term, Value, VarId,
 };
 
-use crate::differential::{run, Op, Summary};
-use crate::fixture::{atom, field, var, TempDir};
+use crate::differential::{Op, Summary, run};
+use crate::fixture::{TempDir, atom, field, var};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb};
 
@@ -103,7 +103,7 @@ const MARKER: RelationId = RelationId(1);
 
 /// splitmix64, local by design: the 200-op stream's exact content is
 /// this test's identity (the assertions pin its verdict mix), so it is
-/// not deduplicated into `gen::Rng`.
+/// not deduplicated into `corpus_gen::Rng`.
 struct Rng(u64);
 
 impl Rng {

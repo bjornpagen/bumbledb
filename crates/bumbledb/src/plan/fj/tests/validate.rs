@@ -163,9 +163,11 @@ fn root_only_anti_probes_attach_to_the_root() {
         .map(|p| p.occurrence)
         .collect();
     assert_eq!(root_probes, vec![OccId(3), OccId(4)]);
-    assert!(validated.nodes()[1..]
-        .iter()
-        .all(|n| n.anti_probes.is_empty()));
+    assert!(
+        validated.nodes()[1..]
+            .iter()
+            .all(|n| n.anti_probes.is_empty())
+    );
 }
 
 /// A negated occurrence's trie schema is its single probe level: all

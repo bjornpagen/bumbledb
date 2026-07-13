@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-use crate::gen::{GenConfig, Rng, Sizes};
+use crate::corpus_gen::{GenConfig, Rng, Sizes};
 use crate::harness::{self, Measurement};
 use crate::schema::PostingId;
 use crate::writebench::{prepared_posting, write_protocol};

@@ -320,6 +320,10 @@ by machinery, not judgment:
   gate, not a code review.
 - **Checked lint exceptions**: suppressions are `#[expect]` claims with a
   reason, so an exception that stops being necessary fails the gate itself.
+- **One pinned toolchain**: `rust-toolchain.toml` names one dated nightly
+  (edition 2024, every gate and the fuzzer on the same compiler); the pin
+  moves deliberately — a PRD-sized action carrying the microbench re-earn
+  session — never implicitly.
 - **Microbench pins**: load-bearing mechanisms carry `#[ignore]`d in-tree
   benchmarks that re-assert their measured margins on demand.
 - **Refutation is a result.** A mechanism that measures as a loss is

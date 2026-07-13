@@ -1,10 +1,10 @@
 use bumbledb::{Db, Query, ResultBuffer};
 
 use crate::calendar;
-use crate::families::{has_sets, param_args, scalar_values, set_bindings, Draw, Kind};
+use crate::families::{Draw, Kind, has_sets, param_args, scalar_values, set_bindings};
 use crate::harness::{self, Modes, Rotation};
 use crate::schema::schema;
-use crate::translate::{translate, Translated};
+use crate::translate::{Translated, translate};
 use crate::{clockproxy, families, report, sqlite_run, trace_out};
 
 use super::BenchRun;

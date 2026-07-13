@@ -77,10 +77,11 @@ impl ClosedRefs {
             let target_closed = schema
                 .relation_checked(target.relation)
                 .is_some_and(Relation::is_closed);
-            if target_closed && target.projection.as_ref() == [FieldId(0)] {
-                if let [field] = source.projection.as_ref() {
-                    map.insert((source.relation, *field), target.relation);
-                }
+            if target_closed
+                && target.projection.as_ref() == [FieldId(0)]
+                && let [field] = source.projection.as_ref()
+            {
+                map.insert((source.relation, *field), target.relation);
             }
         }
         for (index, relation) in schema.relations().iter().enumerate() {

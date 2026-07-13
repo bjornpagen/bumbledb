@@ -1,7 +1,7 @@
 use bumbledb::Value;
 
-use super::{ids, mix, COMPANIES, HOT_KEYWORDS, HOT_PEOPLE, KEYWORDS, KINDS, MOVIES, PEOPLE};
-use crate::gen::Rng;
+use super::{COMPANIES, HOT_KEYWORDS, HOT_PEOPLE, KEYWORDS, KINDS, MOVIES, PEOPLE, ids, mix};
+use crate::corpus_gen::Rng;
 
 pub(super) fn s(text: String) -> Value {
     Value::String(text.into_bytes().into())

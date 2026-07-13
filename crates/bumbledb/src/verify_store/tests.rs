@@ -5,13 +5,13 @@
 //! `storage::keys` (never a second slicer).
 
 use super::*;
-use crate::encoding::{encode_fact, encode_interval_u64, encode_u64, fact_hash, ValueRef};
+use crate::encoding::{ValueRef, encode_fact, encode_interval_u64, encode_u64, fact_hash};
 use crate::error::Direction;
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
     Side, StatementDescriptor, ValueType,
 };
-use crate::storage::keys::{key, StatKind};
+use crate::storage::keys::{StatKind, key};
 use crate::testutil::TempDir;
 use crate::value::Value;
 

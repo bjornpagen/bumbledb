@@ -1,6 +1,6 @@
-use super::{fact, populated, schema, R};
+use super::{R, fact, populated, schema};
 use crate::encoding::encode_i64;
-use crate::image::{build, LINE, SET_STRIDE};
+use crate::image::{LINE, SET_STRIDE, build};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;

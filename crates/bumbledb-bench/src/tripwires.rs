@@ -10,8 +10,8 @@
 #[cfg(test)]
 mod tests {
     use crate::corpus;
+    use crate::corpus_gen::{GenConfig, Scale, Sizes};
     use crate::families::{self, has_sets, param_args, scalar_values};
-    use crate::gen::{GenConfig, Scale, Sizes};
     use crate::schema::Ledger;
     use bumbledb::Db;
 
@@ -83,7 +83,7 @@ mod tests {
     ///   distinct-bindings elision engages (the `balance` regime);
     #[test]
     fn calendar_family_regimes_are_pinned() {
-        use crate::calendar::{families as cal, Scheduling};
+        use crate::calendar::{Scheduling, families as cal};
         let dir = std::env::temp_dir().join("bumbledb-tripwires-calendar");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");

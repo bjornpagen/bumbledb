@@ -1,4 +1,4 @@
-use super::{graph, joins, olap, points, Scenario};
+use super::{Scenario, graph, joins, olap, points};
 
 /// The registry, in report order.
 #[must_use]

@@ -1,6 +1,6 @@
 use std::sync::PoisonError;
 
-use super::{BulkLoadError, Db, Snapshot, WriteTx, WriterThreadReset, BULK_CHUNK};
+use super::{BULK_CHUNK, BulkLoadError, Db, Snapshot, WriteTx, WriterThreadReset};
 use crate::error::{Error, Result};
 use crate::ir::Value;
 use crate::schema::RelationId;

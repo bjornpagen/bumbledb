@@ -1,12 +1,12 @@
 use bumbledb::schema::ValueType;
 use rusqlite::Connection;
 
-use crate::gen::{GenConfig, Sizes};
+use crate::corpus_gen::{GenConfig, Sizes};
 use crate::harness::{self, Measurement};
 use crate::schema::schema;
 use crate::writebench::write_protocol;
 
-use super::{sample_args, PreparedFamily};
+use super::{PreparedFamily, sample_args};
 
 /// `cold_containment_walk` on `SQLite`: the identical cold protocol — a write
 /// commit (the org touch, mirroring `harness::org_touch`) before every

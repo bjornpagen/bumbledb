@@ -9,12 +9,12 @@ use std::collections::BTreeSet;
 
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    ir, Atom, CmpOp, Comparison, FieldId, FindTerm, PredicateTree, Query, RelationId, Rule, Term,
-    Value, VarId,
+    Atom, CmpOp, Comparison, FieldId, FindTerm, PredicateTree, Query, RelationId, Rule, Term,
+    Value, VarId, ir,
 };
 
+use crate::corpus_gen::Rng;
 use crate::fixture::field;
-use crate::gen::Rng;
 use crate::naive::{Delta, NaiveDb, Tuple};
 
 /// One relation is enough: the property is about predicates, not joins —

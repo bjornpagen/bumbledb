@@ -1,4 +1,4 @@
-use super::{geomean, QueryReport};
+use super::{QueryReport, geomean};
 use crate::harness::Protocol;
 
 #[expect(

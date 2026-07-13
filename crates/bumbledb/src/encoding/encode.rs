@@ -1,6 +1,6 @@
 //! The encode side: canonical per-type encoders and the fact encoder.
 
-use super::{fixed_bytes_words, FactLayout, IntervalElement, TypeDesc, ValueRef, I64_SIGN_BIT};
+use super::{FactLayout, I64_SIGN_BIT, IntervalElement, TypeDesc, ValueRef, fixed_bytes_words};
 use crate::value::Value;
 
 /// Encodes a Bool as its canonical single byte.

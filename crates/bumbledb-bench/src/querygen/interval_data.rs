@@ -12,7 +12,7 @@
 //! (sentinel ends excepted), so distinct groups never overlap — the
 //! collision structure is entirely within a group's scalar prefix.
 
-use crate::gen::Rng;
+use crate::corpus_gen::Rng;
 
 /// Intervals per collision group.
 pub const PER_GROUP: u64 = 4;

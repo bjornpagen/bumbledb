@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use crate::schema::{render, Schema, SchemaDescriptor, StatementId};
+use crate::schema::{Schema, SchemaDescriptor, StatementId, render};
 
 use super::{CorruptionError, Direction, Error, FactShapeError, SchemaError, ValidationError};
 
@@ -276,7 +276,10 @@ impl fmt::Display for SchemaError {
                 "statement {}: statement {} already keys this field set",
                 s.0, earlier.0
             ),
-            Self::GuardKeyTooWide { statement: s, width } => write!(
+            Self::GuardKeyTooWide {
+                statement: s,
+                width,
+            } => write!(
                 f,
                 "statement {}: {width}-byte guard key exceeds the key-size ceiling",
                 s.0

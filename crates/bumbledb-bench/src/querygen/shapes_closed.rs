@@ -17,7 +17,7 @@
 
 use bumbledb::{AggOp, FieldId, FindTerm, RelationId, Term, Value};
 
-use crate::gen::Rng;
+use crate::corpus_gen::Rng;
 use crate::querygen::target::ids;
 use crate::querygen::{Builder, ClosedVariant};
 

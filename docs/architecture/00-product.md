@@ -206,6 +206,18 @@ plan space is strictly larger for one kernel's complexity, and exploring that sp
 the stated point of the project. **Reverses if:** the ledger benchmark shows the FJ
 kernel measurably slower than a plain hash join on the same plans.
 
+**Decision: one pinned nightly toolchain, edition 2024.** `rust-toolchain.toml`
+names one dated nightly (`nightly-2026-07-12`; the comment block records the
+selection checks). **Alternative (refused):** a stable pin with a nightly split
+for the fuzz targets — a dual toolchain is a dual truth: two codegens, two sets
+of measured margins, two CI stories. **Why one nightly:** cargo-fuzz needs
+nightly anyway; a single dated pin keeps reproducibility while deleting the
+split before it exists, and nightly features are adopted only as dividends —
+where they delete code, never because they exist. **The deliberate-move rule:**
+the pin moves only as an explicit PRD-sized action that carries the `#[ignore]`d
+microbench re-earn session with it (codegen changes invalidate every pinned
+margin); it never floats and never moves implicitly.
+
 ## Dependencies (crates)
 
 The engine crates (`bumbledb`, `bumbledb-macros`) depend on exactly `heed` and

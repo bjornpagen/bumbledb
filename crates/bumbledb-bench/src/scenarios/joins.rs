@@ -6,7 +6,7 @@
 //! OR, no outer joins; selectivity comes from closed vocabularies,
 //! ranges, and interned-string points instead).
 
-use super::{mix, Scenario, ScenarioQuery};
+use super::{Scenario, ScenarioQuery, mix};
 
 mod corpus;
 mod costars;

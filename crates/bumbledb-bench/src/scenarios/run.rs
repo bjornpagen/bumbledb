@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::load::load;
 use super::run_query::run_query;
-use super::{all, render, QueryReport};
+use super::{QueryReport, all, render};
 use crate::harness::Protocol;
 
 /// Runs every scenario (or the selected subset): load, gate, time,
@@ -20,10 +20,10 @@ pub fn run(
 ) -> Result<(String, Vec<QueryReport>), String> {
     let mut reports = Vec::new();
     for scenario in all() {
-        if let Some(only) = only {
-            if !only.iter().any(|n| n == scenario.name) {
-                continue;
-            }
+        if let Some(only) = only
+            && !only.iter().any(|n| n == scenario.name)
+        {
+            continue;
         }
         let stores = load(dir, &scenario, seed)?;
         for sq in (scenario.queries)() {

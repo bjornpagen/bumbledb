@@ -11,7 +11,7 @@ use bumbledb::schema::render;
 use bumbledb::{Db, Schema, StatementId, StoreFinding, StoreReport};
 
 use crate::cli::CorpusArgs;
-use crate::schema::{schema, Ledger};
+use crate::schema::{Ledger, schema};
 
 use super::corpus::gen_config;
 use super::corpus_paths;

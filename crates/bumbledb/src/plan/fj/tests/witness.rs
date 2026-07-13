@@ -7,7 +7,7 @@ use crate::image::{ColumnSpan, ColumnWidth};
 use crate::ir::normalize::normalize;
 use crate::ir::validate::validate as validate_ir;
 use crate::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Query, Rule, Term};
-use crate::plan::planner::{plan, OccStats};
+use crate::plan::planner::{OccStats, plan};
 use crate::schema::IntervalElement;
 use std::collections::BTreeSet;
 

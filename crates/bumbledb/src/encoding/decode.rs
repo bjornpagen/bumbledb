@@ -1,7 +1,7 @@
 //! The decode side: canonical per-type decoders, field slicing, and the
 //! corruption-checked field decoder.
 
-use super::{FactLayout, FixedBytesValue, IntervalElement, TypeDesc, ValueRef, I64_SIGN_BIT};
+use super::{FactLayout, FixedBytesValue, I64_SIGN_BIT, IntervalElement, TypeDesc, ValueRef};
 use crate::error::CorruptionError;
 
 /// Decodes a canonical Bool byte.

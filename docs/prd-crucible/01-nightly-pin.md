@@ -77,6 +77,37 @@ two CI stories. One pinned nightly deletes the split before it exists.
 - `[shape]` The commit body reports the informal microbench delta and
   names the re-earn session as pending human work.
 
+## Recorded conflicts (policy 5, 2026-07-13)
+
+1. **The asm gate misfires on v0 mangling, not on codegen.**
+   `nightly-2026-07-12` defaults to v0 symbol mangling (1.96 used
+   legacy). The outlined recursive `Colt::any_position<closure>` —
+   called from `probe_pass`/`run_node` on BOTH toolchains, 12 identical
+   `bl` sites in the 1.96 binary (verified by building HEAD pre-port at
+   1.96.0 and disassembling) — was named `…12any_position17h…` under
+   legacy mangling and is named
+   `…any_positionNCNvB2_20any_position_matches0…` under v0. The gate's
+   forbidden class `position_matches` now matches the *name* of the
+   same machine code that always passed. The probe loop is unchanged;
+   the per-element probe class carries no new calls. Per direction 3
+   the gate is NOT edited here; `check-asm.sh` exits 1 on the new
+   binary until the re-earn session rules how the forbidden patterns
+   are re-expressed against v0/demangled names. This blocks PRD 01's
+   asm-gate criterion pending that ruling.
+2. **Two S-scale gate tests hang on a pre-existing liveness bug.**
+   `driver::tests::the_full_sequence_runs_at_s` and
+   `verify::tests::a_full_verify_at_s_succeeds` loop forever in the
+   executor (pump/probe_pass ↔ AggregateSink dedup on one seeded
+   random query). Reproduced identically on the unported stable binary
+   (2.5 h hang), so the port is not the cause; a parallel lane owns the
+   root-cause. `check.sh`'s stages were run individually: fmt --check,
+   workspace clippy `-D warnings`, `cargo test --workspace` minus the
+   two hung tests (0 failures), doc tests, the release alloc gate, the
+   bench obs clippy + harness/trace_out/tripwires lanes — all exit 0;
+   the cross check took the script's honest-skip branch (no cross C
+   compiler on this host). The full unfiltered script re-runs when the
+   liveness fix lands, at latest with PRD 09's reconciliation.
+
 ## Doc amendments (rule 5)
 
 `00-product.md` (toolchain posture: one pinned nightly, the

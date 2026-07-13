@@ -1,9 +1,9 @@
 //! Executor construction and the per-execution entry point.
 
 use super::{
-    AntiProbeSpec, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
+    AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
     PipeTables, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
-    PointProbeSpec, Sink, ValidatedPlan, BATCH,
+    PointProbeSpec, Sink, ValidatedPlan,
 };
 
 /// The membership-filter column/slot table shared by both probe kinds:
@@ -104,7 +104,7 @@ impl Executor {
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
     )] // table construction, one table at a
-       // time — splitting scatters the shapes
+    // time — splitting scatters the shapes
     pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(
             batch > 0,

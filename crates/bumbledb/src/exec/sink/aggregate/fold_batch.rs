@@ -1,5 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FoldOp, SinkSpec};
+use crate::exec::sink::{Acc, AggregateSink, FoldOp, SinkSpec, word_to_i64};
 
 impl AggregateSink {
     /// The per-row batch arm: outer slots prefilled once, leaf key slots

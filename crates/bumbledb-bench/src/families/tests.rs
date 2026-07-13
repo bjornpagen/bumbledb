@@ -2,7 +2,7 @@ use super::digest::digest_over;
 use super::read::balance_query;
 use super::*;
 
-use crate::gen::{GenConfig, Scale, Sizes};
+use crate::corpus_gen::{GenConfig, Scale, Sizes};
 use crate::naive::ParamValue;
 use crate::schema::{ids, schema};
 use crate::translate::translate;

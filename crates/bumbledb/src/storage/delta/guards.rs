@@ -43,10 +43,9 @@ impl WriteDelta<'_> {
                 // keeps `new` whichever ran last.
                 if let Some(GuardDisposition::Present(existing)) =
                     per_key.get(self.guard_scratch.as_slice())
+                    && self.arena.get(*existing) != fact_bytes
                 {
-                    if self.arena.get(*existing) != fact_bytes {
-                        continue;
-                    }
+                    continue;
                 }
                 GuardDisposition::Absent
             };

@@ -2,9 +2,9 @@
 //! columns (start, end) — no 16-byte column kind — and inverted halves are
 //! corruption, aborting the build.
 
-use crate::encoding::{encode_fact, encode_i64, ValueRef};
+use crate::encoding::{ValueRef, encode_fact, encode_i64};
 use crate::error::{CorruptionError, Error};
-use crate::image::{build, ColumnSpan, ColumnWidth};
+use crate::image::{ColumnSpan, ColumnWidth, build};
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
     SchemaDescriptor, ValueType,
