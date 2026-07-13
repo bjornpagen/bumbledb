@@ -29,9 +29,13 @@ pub use range_window::range_window;
 pub use rng::Rng;
 pub use row::{relation_rows, row};
 
-/// Corpus scale points (docs/architecture/60-validation.md: 10⁵–10⁷).
+/// Corpus scale points (docs/architecture/60-validation.md: 10⁵–10⁷),
+/// plus `Tiny` — the fuzz-iteration point: sized so one full
+/// build-store → ops → oracles pass is milliseconds, first-class under
+/// the same invariants ([`Sizes::of`] owns the ladder's size table).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scale {
+    Tiny,
     S,
     M,
     L,

@@ -336,6 +336,18 @@ time the emulation, not the engine.
   Empty relations are covered by the verify run's **empty-store pass**: every
   family plus a seeded randomized slice runs against a zero-row store pair each
   verify — every gate false, every scan empty, every aggregate folding nothing.
+- **The entropy seam** (`corpus_gen::rng`): every generator draw goes through
+  one closed sum — `Rng::Seeded` (the bench/differential arm, the seeded
+  stream above) and `Rng::Bytes` (the fuzzer arm: draws consume a fuzzer's
+  byte string; exhaustion falls back to a deterministic zero tail, never a
+  panic) — two sources, one generation path, with the corpus digest pinning
+  the seeded arm byte-identically across the seam. The fuzz lanes generate at
+  `Scale::Tiny`, the scale ladder's fuzz-iteration point (ledger: 1 024
+  postings / 32 instruments / 8 orgs; calendar: 32 persons with 16-segment
+  max chains — everything else derives as at S/M/L), sized so a full
+  build-store → ops → oracles iteration is milliseconds; Tiny is a
+  first-class scale under the same by-construction invariants, not a
+  special-cased path.
 - **The algebra oracle rows in every verify run** (the naive lane's extension):
   multi-rule programs replayed engine-vs-naive, the naive model evaluating rules
   **directly** — the union of per-rule binding sets from the definition, sharing

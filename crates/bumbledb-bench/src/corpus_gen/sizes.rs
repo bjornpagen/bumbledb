@@ -4,21 +4,31 @@ use crate::corpus_gen::{MANDATE_SEGMENTS, Scale, Sizes};
 use crate::schema::ids;
 
 impl Sizes {
+    /// The scale ladder's size table — postings, instruments, and orgs
+    /// per point; everything else derives. `Tiny` is the fuzz-iteration
+    /// point: a full build-store → ops → oracles pass in milliseconds.
+    ///
+    /// | scale | postings   | instruments | orgs |
+    /// |-------|------------|-------------|------|
+    /// | Tiny  | 1 024      | 32          | 8    |
+    /// | S     | 100 000    | 512         | 64   |
+    /// | M     | 1 000 000  | 512         | 64   |
+    /// | L     | 10 000 000 | 512         | 64   |
     #[must_use]
     pub fn of(scale: Scale) -> Self {
-        let postings: u64 = match scale {
-            Scale::S => 100_000,
-            Scale::M => 1_000_000,
-            Scale::L => 10_000_000,
+        let (postings, instruments, orgs): (u64, u64, u64) = match scale {
+            Scale::Tiny => (1_024, 32, 8),
+            Scale::S => (100_000, 512, 64),
+            Scale::M => (1_000_000, 512, 64),
+            Scale::L => (10_000_000, 512, 64),
         };
         let accounts = postings / 200;
-        let orgs = 64;
         Self {
             postings,
             entries: postings / 2,
             accounts,
             holders: (accounts / 4).max(1),
-            instruments: 512,
+            instruments,
             orgs,
             org_parents: orgs - 1,
             posting_tags: postings,

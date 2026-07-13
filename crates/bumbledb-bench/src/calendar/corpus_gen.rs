@@ -67,15 +67,18 @@ pub struct CalSizes {
 }
 
 impl CalSizes {
-    /// The standard scale points (the ledger's 10⁵–10⁷ fact band).
+    /// The standard scale points (the ledger's 10⁵–10⁷ fact band),
+    /// plus `Tiny` — the fuzz-iteration point (32 persons, 16-segment
+    /// max chains), mirroring the ledger ladder's table.
     #[must_use]
     pub fn of(scale: Scale) -> Self {
-        let persons = match scale {
-            Scale::S => 2_000,
-            Scale::M => 20_000,
-            Scale::L => 200_000,
+        let (persons, max_segments, min_segments) = match scale {
+            Scale::Tiny => (32, 16, 2),
+            Scale::S => (2_000, 512, 16),
+            Scale::M => (20_000, 512, 16),
+            Scale::L => (200_000, 512, 16),
         };
-        Self::derive(persons, 512, 16)
+        Self::derive(persons, max_segments, min_segments)
     }
 
     /// The naive lane's unit corpus: small enough for brute-force

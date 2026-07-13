@@ -534,12 +534,15 @@ pub struct Domains {
 }
 
 impl Domains {
+    /// Mirrors the corpus scale ladder's size table
+    /// ([`crate::corpus_gen::Sizes::of`]), `Tiny` included.
     #[must_use]
     pub fn of(scale: Scale) -> Self {
-        let postings: u64 = match scale {
-            Scale::S => 100_000,
-            Scale::M => 1_000_000,
-            Scale::L => 10_000_000,
+        let (postings, instruments, orgs): (u64, u64, u64) = match scale {
+            Scale::Tiny => (1_024, 32, 8),
+            Scale::S => (100_000, 512, 64),
+            Scale::M => (1_000_000, 512, 64),
+            Scale::L => (10_000_000, 512, 64),
         };
         let accounts = postings / 200;
         Self {
@@ -547,8 +550,8 @@ impl Domains {
             entries: postings / 2,
             accounts,
             holders: (accounts / 4).max(1),
-            instruments: 512,
-            orgs: 64,
+            instruments,
+            orgs,
             mandates: accounts * interval_data::PER_GROUP,
             transfers: postings / 2,
             posting_tags: postings,
