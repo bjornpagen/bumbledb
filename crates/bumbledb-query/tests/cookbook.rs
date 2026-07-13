@@ -1078,6 +1078,9 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
 /// the three laws: identity, mint catch-up, judgment under v2.
 #[test]
 fn r26_migration_is_etl() {
+    // The transform's one decision: v1 amounts are in force since the
+    // migration epoch — a ray.
+    const EPOCH: i64 = 0;
     let dir_v1 = TempDir::new("r26-v1");
     let dir_v2 = TempDir::new("r26-v2");
 
@@ -1100,9 +1103,7 @@ fn r26_migration_is_etl() {
         .expect("seed the v1 store");
 
     // Export under ONE snapshot (one generation — a consistent instant);
-    // the transform appends the ray: the old amount, in force since the
-    // migration epoch.
-    const EPOCH: i64 = 0;
+    // the transform appends the ray.
     let (employees, salaries) = v1
         .read(|snap| {
             let employees: Vec<Vec<Value>> = snap
