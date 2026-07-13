@@ -13,6 +13,15 @@ alloc-counter = []
 # (`plan/chase.rs`) from the bench crate's dual-run differential unit
 # tests. Enabled only as a bench dev-dependency; no runtime mode ships.
 chase-off = []
+# Fuzz-oracle infrastructure: reaches the statically-empty fold's
+# thread-local off switch (`ir/normalize/fold.rs`) from outside the
+# engine. History, recorded honestly: deleted as dead configuration
+# 2026-07-12 (936ede5 — nothing in-workspace consumed it), revived
+# 2026-07-13 with a named consumer: the detached fuzz crate's `rewrites`
+# dual-pipeline differential (docs/prd-crucible/13-fuzz-query-rewrites.md)
+# — an external crate cannot reach `cfg(test)`. No runtime mode ships.
+fold-off = []
+
 [dependencies]
 blake3 = "1"
 bumbledb-macros = { path = "../bumbledb-macros" }

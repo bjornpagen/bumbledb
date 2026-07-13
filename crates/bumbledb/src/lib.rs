@@ -107,9 +107,19 @@ pub use api::stats::{
 };
 pub use error::{Direction, Error, OverflowKind, Result};
 pub use interval::Interval;
+/// The statically-empty fold's off switch (`ir/normalize/fold.rs`):
+/// reachable only under the `fold-off` fuzz-oracle feature. History,
+/// recorded honestly: deleted as dead configuration 2026-07-12 (nothing
+/// in-workspace consumed it), revived 2026-07-13 with a named consumer —
+/// the detached fuzz crate's `rewrites` dual-pipeline differential
+/// (docs/prd-crucible/13-fuzz-query-rewrites.md), which an external
+/// crate can only reach through a feature, never through `cfg(test)`.
+#[cfg(feature = "fold-off")]
+pub use ir::normalize::with_fold_disabled;
 /// The chase's test-support off switch (`plan/chase.rs`): reachable only
-/// under the `chase-off` feature, which only the bench crate's dual-run
-/// differential unit tests enable (as a dev-dependency).
+/// under the `chase-off` feature, which the bench crate's dual-run
+/// differential unit tests (as a dev-dependency) and the fuzz crate's
+/// `rewrites` dual-pipeline differential enable.
 #[cfg(feature = "chase-off")]
 pub use plan::chase::with_chase_disabled;
 /// The storage format version (`storage/env.rs`), public so

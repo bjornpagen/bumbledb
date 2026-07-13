@@ -29,6 +29,12 @@ echo "==> allocation gate (release): steady-state + escalating high-water"
 # flag keeps even an accidental second test from turning it flaky.
 cargo test --features alloc-counter --test alloc_gate --release -- --test-threads=1
 
+# The fold-off fuzz-oracle feature is load-bearing for the fuzz crate's
+# rewrites dual-pipeline differential (docs/prd-crucible/13): the engine
+# suite must stay green with the off switch compiled in.
+echo "==> bumbledb with the fold-off fuzz-oracle feature (tests)"
+cargo test -p bumbledb --features fold-off
+
 # The bench crate must build and lint with the engine's observability on
 # (docs/architecture/60-validation.md); the harness tests run under both configs.
 echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"

@@ -44,12 +44,14 @@ use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, Value};
 use crate::schema::{FieldId, IntervalElement, Relation, Schema, ValueType};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fold-off"))]
 thread_local! {
     /// The test-only off switch (the chase-off-switch precedent,
     /// `plan/chase.rs`): the fold-preservation differential runs the
     /// same query folded and unfolded. Reachable from this crate's own
-    /// tests only; no production or benchmark build can see it, and no
+    /// tests and — through the `fold-off` fuzz-oracle feature, enabled
+    /// only by the detached fuzz crate's `rewrites` dual-pipeline
+    /// differential — from nowhere a production build can see: no
     /// runtime mode ships.
     /// Thread-local because the test harness runs tests concurrently.
     static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -57,7 +59,7 @@ thread_local! {
 
 /// Runs `f` with the fold bypassed on this thread — the fold-preservation
 /// differential's off switch. Restores on unwind.
-#[cfg(test)]
+#[cfg(any(test, feature = "fold-off"))]
 pub fn with_fold_disabled<T>(f: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
@@ -74,7 +76,7 @@ pub fn with_fold_disabled<T>(f: impl FnOnce() -> T) -> T {
 /// the first contradiction's rendered picture — the rule's
 /// statically-empty verdict ([`super::NormalizedQuery::dead`]).
 pub(super) fn fold(schema: &Schema, occurrences: &mut [Occurrence]) -> Option<String> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "fold-off"))]
     if DISABLED.with(std::cell::Cell::get) {
         return None;
     }
