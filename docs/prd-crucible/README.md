@@ -87,6 +87,29 @@ entry point), *trophy* (a minimized counterexample, permanently a test),
    refusal in PRD 03's ledger. Every adopted feature is named in
    `rust-toolchain.toml`'s comment block so the pin's reason survives.
 
+## Execution conflict resolutions (2026-07-13)
+
+The baseline audit at `eba32a5` found four wording conflicts. These
+resolutions are authoritative for the ordered packet:
+
+1. **The dated pin owns every command.** Once PRD 01 lands, unqualified
+   `cargo`, `rustc`, `rustfmt`, `clippy`, `miri`, and `cargo fuzz`
+   commands resolve through `rust-toolchain.toml`. A floating
+   `+nightly` qualifier would bypass the dated pin and is therefore
+   forbidden; the two leaf-PRD examples have been corrected.
+2. **The workspace gate and asm gate remain separate programs.** PRD 01
+   does not change `scripts/check.sh`'s logic. Its criterion means both
+   `scripts/check.sh` and `scripts/check-asm.sh` exit zero; the latter is
+   run after building its release binary. It is not silently folded
+   into the workspace gate.
+3. **PRD 07 is a two-document, zero-code change.** Its design paper is
+   new and `20-query-ir.md` gains the required pointer. The former
+   one-file wording contradicted its own amendment duty and is fixed.
+4. **The generator rename is decided once.** PRD 01 renames the reserved
+   `gen` module to `corpus_gen`; every later path and consumer, including
+   PRD 10's entropy seam, uses `corpus_gen`. No raw-identifier spelling
+   or second rename is permitted.
+
 ## The PRDs
 
 Phase A — one toolchain (strictly ordered 01 → 02 → 03):

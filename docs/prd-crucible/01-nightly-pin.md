@@ -32,9 +32,9 @@ two CI stories. One pinned nightly deletes the split before it exists.
   own scope and its `// SAFETY:` comment moves adjacent), RPIT lifetime
   capture rules (check `impl Iterator` returns in colt/iter, sweep,
   scan), `gen` becoming a reserved keyword (the bench crate has a `gen`
-  module — rename to `r#gen` is FORBIDDEN as inelegance; rename the
-  module to `corpus_gen` or fold per PRD 10's touch of the same files;
-  decide at execution and record), match ergonomics changes, and
+  module — rename to `r#gen` is FORBIDDEN as inelegance; the packet
+  audit decided `corpus_gen`, which PRD 10 names as its later seam),
+  match ergonomics changes, and
   `static_mut_refs` (expected: none — no static muts exist).
 - `cargo fmt`/`clippy` move to the nightly versions — expect new lints;
   fix them, never blanket-allow (each new suppression follows the
@@ -52,14 +52,15 @@ two CI stories. One pinned nightly deletes the split before it exists.
 1. Land the pin + editions in one motion; `cargo build --workspace` is
    the worklist. Fix breakage per the known-surface list above, then
    whatever else surfaces — every fix direct, no bridging attributes.
-2. Run the full gate suite. Diff the clippy lint set: new fires get real
+2. Run the full workspace gate suite, then the separate asm gate. Diff
+   the clippy lint set: new fires get real
    fixes or `#[expect(…, reason)]` with the reason argued.
 3. Run `check-asm.sh` and the `#[ignore]`d microbenches once,
    informally, to size the codegen delta for the register's re-earn
    session (do not update any pinned numbers here — measurement is human
    work; just report what moved in the commit body).
-4. The `gen`-keyword resolution: pick the rename, apply it everywhere
-   (module path, imports, docs), record the choice.
+4. The `gen`-keyword resolution: rename the module to `corpus_gen` and
+   apply it everywhere (module path, imports, docs).
 
 ## Passing criteria
 
@@ -70,9 +71,9 @@ two CI stories. One pinned nightly deletes the split before it exists.
 - `[shape]` Zero new `#[allow]`; every new suppression is `#[expect]`
   with a reason; `unsafe fn` bodies contain explicit `unsafe {}` scopes
   with adjacent SAFETY comments.
-- `[gate]` `scripts/check.sh` exit 0 on the nightly pin — including the
-  asm gates unmodified (or a recorded conflict per direction 3, which
-  BLOCKS this PRD until ruled).
+- `[gate]` `scripts/check.sh` and `scripts/check-asm.sh` each exit 0 on
+  the nightly pin; the asm gates remain unmodified (or a recorded
+  conflict per direction 3, which BLOCKS this PRD until ruled).
 - `[shape]` The commit body reports the informal microbench delta and
   names the re-earn session as pending human work.
 

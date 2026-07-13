@@ -75,8 +75,8 @@ PRD 06's refusal (each trigger clause → the ledger rows it activates).
   with all nine sections and the ledger table complete (no TBD cells);
   its header states it specifies an unbuilt feature and is subordinate
   to the architecture chapters.
-- `[shape]` Zero code changes in this PRD (`git diff --stat` shows the
-  one file).
+- `[shape]` Zero code changes in this PRD (`git diff --stat` shows only
+  the new design paper and `20-query-ir.md`'s required pointer).
 - `[shape]` `20-query-ir.md`'s refusal record gains the pointer to the
   paper (one line).
 - `[gate]` N/A beyond drift protection.

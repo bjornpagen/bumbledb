@@ -57,7 +57,7 @@ skeleton right here.
 3. Exhaustive error matching: write the verdict matcher as a total
    `match` on the error enum so a future variant addition is a compile
    error in the fuzz crate — the matcher is itself a census instrument.
-4. Smoke it: `cargo +nightly fuzz run theory -- -runs=100000` locally
+4. Smoke it: `cargo fuzz run theory -- -runs=100000` locally
    must complete finding-free before the PRD closes (a real bug found
    instead is a BETTER outcome: file it, fix it in a standalone commit,
    record the trophy in the README ledger).
@@ -65,7 +65,7 @@ skeleton right here.
 ## Passing criteria
 
 - `[shape]` `fuzz/` crate exists, detached from the workspace
-  (`cargo check` at repo root does not build it; `cargo +nightly fuzz
+  (`cargo check` at repo root does not build it; `cargo fuzz
   check` builds all declared targets).
 - `[shape]` The verdict matcher is a total match — zero `_ =>` arms
   over engine error enums in `fuzz/src`.

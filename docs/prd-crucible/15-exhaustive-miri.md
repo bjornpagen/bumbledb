@@ -41,7 +41,7 @@ cross `heed`. The lane is the PURE modules: encodings, kernels
 (reference/portable bodies; NEON intrinsics are non-interpretable —
 the scalar/portable twins run instead, which is exactly why PRD 03's Q1
 matters), SWAR, condition folding, Allen algebra, bitset subsets. A
-`scripts/miri.sh` runs the enumerated test list (`cargo +nightly miri
+`scripts/miri.sh` runs the enumerated test list (`cargo miri
 test -p bumbledb <filters>`) on aarch64 AND cross-interpreted
 `--target x86_64-unknown-linux-gnu` (Miri interprets foreign targets —
 this catches endianness/width assumptions in the scalar kernels for
