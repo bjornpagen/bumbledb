@@ -279,56 +279,347 @@ fn a_param_filter_blocks_the_fold() {
     assert!(attached_sets(&normalized, 0).is_empty());
 }
 
-/// Condition 2, in isolation: the resolvability predicate admits the
-/// constant shapes and refuses params, param sets, param masks, and the
-/// measure kinds.
+/// Condition 2 as an exhaustive parser matrix: every filter kind and
+/// every symbolic sub-vocabulary either narrows to its exact typed form
+/// or refuses. In particular, the old gate's admitted-but-unevaluable
+/// pairings (set inequality and non-word order) refuse here.
 #[test]
-fn prepare_resolvability_admits_constants_and_refuses_stage_three() {
-    let eq = |value: Const| FilterPredicate::Compare {
-        field: FieldId(1),
-        op: CmpOp::Eq,
-        value,
-    };
-    assert!(filters_prepare_resolvable(&[
-        eq(Const::Word(7)),
-        eq(Const::WordSet(vec![1, 2])),
+fn resolvable_parser_is_total_over_the_filter_vocabulary() {
+    assert_word_and_field_compares_parse();
+    assert_wide_compares_parse();
+    assert_structured_filters_parse();
+    assert_compare_refusals();
+    assert_other_refusals();
+}
+
+fn assert_parse(filter: FilterPredicate, expected: Option<ResolvableFilter>) {
+    assert_eq!(parse_resolvable(&[filter]), expected.map(|one| vec![one]));
+}
+
+fn assert_word_and_field_compares_parse() {
+    let f = FieldId(1);
+    for op in [
+        CmpOp::Eq,
+        CmpOp::Ne,
+        CmpOp::Lt,
+        CmpOp::Le,
+        CmpOp::Gt,
+        CmpOp::Ge,
+    ] {
+        assert_parse(
+            FilterPredicate::Compare {
+                field: f,
+                op,
+                value: Const::Word(7),
+            },
+            Some(ResolvableFilter::WordCompare {
+                field: f,
+                op,
+                word: 7,
+            }),
+        );
+        assert_parse(
+            FilterPredicate::FieldsCompare {
+                left: FieldId(0),
+                right: f,
+                op,
+            },
+            Some(ResolvableFilter::FieldsCompare {
+                left: FieldId(0),
+                right: f,
+                op,
+            }),
+        );
+    }
+}
+
+fn assert_wide_compares_parse() {
+    let f = FieldId(1);
+    for op in [CmpOp::Eq, CmpOp::Ne] {
+        assert_parse(
+            FilterPredicate::Compare {
+                field: f,
+                op,
+                value: Const::Byte(1),
+            },
+            Some(ResolvableFilter::WordCompare {
+                field: f,
+                op,
+                word: 1,
+            }),
+        );
+        let words = Box::new([3u64, 5]);
+        let bytes: Box<[u8]> = words.iter().flat_map(|word| word.to_be_bytes()).collect();
+        assert_parse(
+            FilterPredicate::Compare {
+                field: f,
+                op,
+                value: Const::Words(words),
+            },
+            Some(ResolvableFilter::BytesCompare {
+                field: f,
+                bytes,
+                equal: op == CmpOp::Eq,
+            }),
+        );
+        let mut interval_bytes = Vec::new();
+        interval_bytes.extend_from_slice(&2u64.to_be_bytes());
+        interval_bytes.extend_from_slice(&9u64.to_be_bytes());
+        assert_parse(
+            FilterPredicate::Compare {
+                field: f,
+                op,
+                value: Const::Interval { start: 2, end: 9 },
+            },
+            Some(ResolvableFilter::BytesCompare {
+                field: f,
+                bytes: interval_bytes.into_boxed_slice(),
+                equal: op == CmpOp::Eq,
+            }),
+        );
+    }
+    assert_parse(
         FilterPredicate::Compare {
-            field: FieldId(1),
-            op: CmpOp::Ge,
-            value: Const::Word(3),
+            field: f,
+            op: CmpOp::Eq,
+            value: Const::WordSet(vec![1, 2]),
         },
+        Some(ResolvableFilter::WordSetEq {
+            field: f,
+            words: Box::new([1, 2]),
+        }),
+    );
+}
+
+fn assert_structured_filters_parse() {
+    let f = FieldId(1);
+    assert_parse(
         FilterPredicate::PointIn {
-            field: FieldId(1),
+            field: f,
             point: ResolvedWordSource::Word(4),
         },
-        FilterPredicate::FieldAllen {
-            field: FieldId(1),
-            other: Const::Interval { start: 1, end: 2 },
+        Some(ResolvableFilter::PointIn { field: f, point: 4 }),
+    );
+    assert_parse(
+        FilterPredicate::FieldsContainPoint {
+            interval: f,
+            point: FieldId(2),
+        },
+        Some(ResolvableFilter::FieldsContainPoint {
+            interval: f,
+            point: FieldId(2),
+        }),
+    );
+    assert_parse(
+        FilterPredicate::FieldWithin {
+            field: f,
+            outer: Const::Interval { start: 2, end: 9 },
+        },
+        Some(ResolvableFilter::Within {
+            field: f,
+            start: 2,
+            end: 9,
+        }),
+    );
+    assert_parse(
+        FilterPredicate::FieldsAllen {
+            left: f,
+            right: FieldId(2),
             mask: MaskConst::Mask(AllenMask::BEFORE),
         },
-    ]));
-    assert!(!filters_prepare_resolvable(&[eq(Const::Param(
-        crate::ir::ParamId(0)
-    ))]));
-    assert!(!filters_prepare_resolvable(&[eq(Const::ParamSet(
-        crate::ir::ParamId(0)
-    ))]));
-    assert!(!filters_prepare_resolvable(&[
+        Some(ResolvableFilter::FieldsAllen {
+            left: f,
+            right: FieldId(2),
+            mask: AllenMask::BEFORE,
+        }),
+    );
+    assert_parse(
         FilterPredicate::FieldAllen {
-            field: FieldId(1),
-            other: Const::Interval { start: 1, end: 2 },
+            field: f,
+            other: Const::Interval { start: 2, end: 9 },
+            mask: MaskConst::Mask(AllenMask::BEFORE),
+        },
+        Some(ResolvableFilter::Allen {
+            field: f,
+            other: (2, 9),
+            mask: AllenMask::BEFORE,
+        }),
+    );
+}
+
+fn assert_compare_refusals() {
+    let f = FieldId(1);
+    let allen_op = CmpOp::Allen {
+        mask: MaskTerm::Literal(AllenMask::BEFORE),
+    };
+    for filter in [
+        FilterPredicate::Compare {
+            field: f,
+            op: CmpOp::Ne,
+            value: Const::WordSet(vec![1, 2]),
+        },
+        FilterPredicate::Compare {
+            field: f,
+            op: CmpOp::Lt,
+            value: Const::Byte(1),
+        },
+        FilterPredicate::Compare {
+            field: f,
+            op: CmpOp::Lt,
+            value: Const::Words(Box::new([1, 2])),
+        },
+        FilterPredicate::Compare {
+            field: f,
+            op: CmpOp::Lt,
+            value: Const::Interval { start: 2, end: 9 },
+        },
+        FilterPredicate::Compare {
+            field: f,
+            op: CmpOp::Eq,
+            value: Const::Param(crate::ir::ParamId(0)),
+        },
+        FilterPredicate::Compare {
+            field: f,
+            op: CmpOp::Eq,
+            value: Const::ParamSet(crate::ir::ParamId(0)),
+        },
+        FilterPredicate::Compare {
+            field: f,
+            op: CmpOp::Eq,
+            value: Const::PendingIntern {
+                bytes: Box::from(&b"x"[..]),
+            },
+        },
+        FilterPredicate::Compare {
+            field: f,
+            op: allen_op,
+            value: Const::Word(1),
+        },
+        FilterPredicate::Compare {
+            field: f,
+            op: CmpOp::Contains,
+            value: Const::Word(1),
+        },
+        FilterPredicate::FieldsCompare {
+            left: f,
+            right: FieldId(2),
+            op: allen_op,
+        },
+    ] {
+        assert_parse(filter, None);
+    }
+}
+
+fn assert_other_refusals() {
+    let f = FieldId(1);
+    for filter in [
+        FilterPredicate::PointIn {
+            field: f,
+            point: ResolvedWordSource::Param(crate::ir::ParamId(0)),
+        },
+        FilterPredicate::PointIn {
+            field: f,
+            point: ResolvedWordSource::Var(VarId(0)),
+        },
+        FilterPredicate::AnyPointIn {
+            field: f,
+            set: Const::ParamSet(crate::ir::ParamId(0)),
+        },
+        FilterPredicate::FieldsAllen {
+            left: f,
+            right: FieldId(2),
             mask: MaskConst::Param(crate::ir::ParamId(0)),
-        }
-    ]));
-    // The measure kinds refuse: their ray error is per-execution, and a
-    // prepare-time evaluation would move it (module doc).
-    assert!(!filters_prepare_resolvable(&[
+        },
+        FilterPredicate::FieldsAllen {
+            left: f,
+            right: FieldId(2),
+            mask: MaskConst::ConversedParam(crate::ir::ParamId(0)),
+        },
+        FilterPredicate::FieldAllen {
+            field: f,
+            other: Const::Param(crate::ir::ParamId(0)),
+            mask: MaskConst::Mask(AllenMask::BEFORE),
+        },
+        FilterPredicate::FieldAllen {
+            field: f,
+            other: Const::Interval { start: 2, end: 9 },
+            mask: MaskConst::Param(crate::ir::ParamId(0)),
+        },
+        FilterPredicate::FieldWithin {
+            field: f,
+            outer: Const::Param(crate::ir::ParamId(0)),
+        },
         FilterPredicate::DurationCompare {
-            field: FieldId(1),
+            field: f,
             op: CmpOp::Ge,
             value: Const::Word(2),
-        }
-    ]));
+        },
+        FilterPredicate::DurationFieldsCompare {
+            interval: f,
+            op: CmpOp::Ge,
+            scalar: FieldId(2),
+        },
+    ] {
+        assert_parse(filter, None);
+    }
+}
+
+/// The parsed evaluator preserves the pre-parser id-set pins over the
+/// sealed fixture extensions: scalar equality/range/set and interval
+/// membership/Allen all select exactly the established rows.
+#[test]
+fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
+    let schema = theory();
+    let cases = [
+        (
+            RelationId(KIND),
+            vec![FilterPredicate::Compare {
+                field: FieldId(1),
+                op: CmpOp::Eq,
+                value: Const::Word(20),
+            }],
+            vec![1, 2],
+        ),
+        (
+            RelationId(KIND),
+            vec![FilterPredicate::Compare {
+                field: FieldId(1),
+                op: CmpOp::Ge,
+                value: Const::Word(20),
+            }],
+            vec![1, 2, 3],
+        ),
+        (
+            RelationId(KIND),
+            vec![FilterPredicate::Compare {
+                field: FieldId(0),
+                op: CmpOp::Eq,
+                value: Const::WordSet(vec![0, 3]),
+            }],
+            vec![0, 3],
+        ),
+        (
+            RelationId(CAL),
+            vec![FilterPredicate::PointIn {
+                field: FieldId(1),
+                point: ResolvedWordSource::Word(3),
+            }],
+            vec![0],
+        ),
+        (
+            RelationId(CAL),
+            vec![FilterPredicate::FieldAllen {
+                field: FieldId(1),
+                other: Const::Interval { start: 6, end: 8 },
+                mask: MaskConst::Mask(AllenMask::BEFORE),
+            }],
+            vec![0],
+        ),
+    ];
+    for (relation, original, expected) in cases {
+        let parsed = parse_resolvable(&original).expect("fixture filters parse");
+        assert_eq!(surviving_ids(schema.relation(relation), &parsed), expected);
+    }
 }
 
 /// Direction 4 — a negated closed atom with `k` bound positively folds

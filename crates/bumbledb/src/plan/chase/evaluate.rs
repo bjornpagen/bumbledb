@@ -31,7 +31,7 @@
 //!    vocabulary-join cost above noise.
 //! 2. `C` carries only Eq/range/Allen/membership filters over its own
 //!    columns with prepare-resolvable constants
-//!    ([`filters_prepare_resolvable`]). A param-bearing filter REFUSES
+//!    ([`parse_resolvable`]). A param-bearing filter REFUSES
 //!    the fold in v0 (a bind-time fold variant is refused, recorded;
 //!    trigger: a measured win in the calendar-family profile); measure
 //!    filters refuse too (their ray error is raised per execution — a
@@ -56,6 +56,12 @@
 //!   binding set is over ALL query variables — 40-execution, D2), so a
 //!   var-binding guard is REFUSED, recorded; trigger: a measured
 //!   projection-sink-only win.
+//!
+//! The fold mark remains `Copy`, so it cannot carry the parsed filter
+//! set. EXPLAIN reparses the retained original filters on its cold path;
+//! a failed reparse maps to an empty handle list after a debug assertion,
+//! never to a production panic. The rendered picture always uses those
+//! originals so diagnostics preserve the user's spelling.
 //!
 //! # Negated closed atoms — the complement fold, direction pinned
 //!
@@ -130,9 +136,9 @@ fn fold_positive(
     if relation.extension().is_none() {
         return false; // ordinary relations have no stage-0 rows
     }
-    if !filters_prepare_resolvable(&occurrence.filters) {
+    let Some(filters) = parse_resolvable(&occurrence.filters) else {
         return false; // condition 2 refusal (params, measures)
-    }
+    };
     if payload_escapes(normalized, c_idx, output_vars) {
         return false; // condition 1 refusal: the payload projection keeps its join
     }
@@ -168,7 +174,7 @@ fn fold_positive(
         }
         Vec::new()
     };
-    let survivors = surviving_ids(relation, &normalized.occurrences[c_idx].filters);
+    let survivors = surviving_ids(relation, &filters);
     if survivors.is_empty() {
         // The rule-death channel (module doc): σ over the sealed rows
         // is empty, so the atom — and with it the conjunction — denotes
@@ -200,10 +206,10 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     let Some(rows) = relation.extension() else {
         return false;
     };
-    if !filters_prepare_resolvable(&occurrence.filters) {
+    let Some(filters) = parse_resolvable(&occurrence.filters) else {
         return false;
-    }
-    let survivors = surviving_ids(relation, &occurrence.filters);
+    };
+    let survivors = surviving_ids(relation, &filters);
     if survivors.is_empty() {
         // No fact can ever match the probe's filters: the anti-probe
         // never rejects, whatever the bindings — the atom deletes
@@ -308,40 +314,178 @@ pub(super) fn join_id_var(
         .filter(|var| !var_is_dead(normalized, c_idx, *var, output_vars))
 }
 
-/// **Condition 2** — every filter is a prepare-evaluable constant
-/// shape: Eq/range compares, same-fact compares, membership
-/// compositions, and literal-mask `Allen` kinds. Param-bearing shapes
-/// (`Param`/`ParamSet`/param masks/param points) are stage-3 values a
-/// stage-2 pass must not judge — the bind-time fold variant is REFUSED
-/// v0, recorded (trigger: a measured calendar-family win). `str`
-/// literals (`PendingIntern`) cannot type against a closed relation
-/// (closed relations refuse `str` columns — `schema/validate.rs`) and
-/// refuse defensively. Measure kinds refuse: their ray error is a
-/// per-execution error, not a prepare error (module doc).
-pub(super) fn filters_prepare_resolvable(filters: &[FilterPredicate]) -> bool {
-    filters.iter().all(|filter| match filter {
-        FilterPredicate::Compare { value, .. } => matches!(
-            value,
-            Const::Word(_)
-                | Const::Byte(_)
-                | Const::Words(_)
-                | Const::Interval { .. }
-                | Const::WordSet(_)
-        ),
-        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsContainPoint { .. } => true,
-        FilterPredicate::PointIn { point, .. } => matches!(point, ResolvedWordSource::Word(_)),
-        FilterPredicate::FieldsAllen { mask, .. } => matches!(mask, MaskConst::Mask(_)),
-        FilterPredicate::FieldAllen { other, mask, .. } => {
-            matches!(other, Const::Interval { .. }) && matches!(mask, MaskConst::Mask(_))
+/// A closed atom's filter, proven prepare-resolvable: constants only,
+/// over the sealed extension's column words. Minted exclusively by
+/// [`parse_resolvable`]; [`surviving_ids`] consumes it totally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ResolvableFilter {
+    /// Eq/Ne/Lt/Le/Gt/Ge against one encoded word (scalar columns).
+    WordCompare {
+        field: FieldId,
+        op: CmpOp,
+        word: u64,
+    },
+    /// Eq/Ne against a canonical multi-word value.
+    BytesCompare {
+        field: FieldId,
+        bytes: Box<[u8]>,
+        equal: bool,
+    },
+    /// Eq against a plan-constant word set (attached memberships).
+    WordSetEq { field: FieldId, words: Box<[u64]> },
+    /// A same-row comparison between two fields. The parser admits only
+    /// the six ordinary comparison operators.
+    FieldsCompare {
+        left: FieldId,
+        right: FieldId,
+        op: CmpOp,
+    },
+    /// A constant point inside the column's interval.
+    PointIn { field: FieldId, point: u64 },
+    /// A same-row point field inside an interval field.
+    FieldsContainPoint { interval: FieldId, point: FieldId },
+    /// The column's interval within a constant outer interval.
+    Within {
+        field: FieldId,
+        start: u64,
+        end: u64,
+    },
+    /// Literal-mask Allen between two interval fields on the row.
+    FieldsAllen {
+        left: FieldId,
+        right: FieldId,
+        mask: crate::allen::AllenMask,
+    },
+    /// Literal-mask Allen between the column and a constant interval.
+    Allen {
+        field: FieldId,
+        other: (u64, u64),
+        mask: crate::allen::AllenMask,
+    },
+}
+
+/// **Condition 2 as a parser** — returns exactly the prepare-evaluable
+/// vocabulary proved for every filter, or `None` without partial output.
+///
+/// Param-bearing shapes (`Param`/`ParamSet`/param masks/param points) are
+/// stage-3 values a stage-2 pass must not judge — the bind-time fold
+/// variant is REFUSED v0, recorded (trigger: a measured calendar-family
+/// win). `str` literals (`PendingIntern`) cannot type against a closed
+/// relation (closed relations refuse `str` columns —
+/// `schema/validate.rs`) and refuse defensively. `AnyPointIn`'s set is a
+/// bind-time `ParamSet` marker (stage-3). The measure kinds refuse: their
+/// ray error is per-execution, not a prepare error (module doc).
+///
+/// The old boolean gate admitted malformed operator/constant pairings
+/// (set inequality and order against non-word constants) that its
+/// evaluator could not consume. They now refuse here; valid normalized
+/// filters are unchanged, and the parser-totality test pins the boundary.
+pub(crate) fn parse_resolvable(filters: &[FilterPredicate]) -> Option<Vec<ResolvableFilter>> {
+    filters.iter().map(parse_filter).collect()
+}
+
+fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
+    let ordinary = |op: CmpOp| {
+        matches!(
+            op,
+            CmpOp::Eq | CmpOp::Ne | CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge
+        )
+    };
+    match filter {
+        FilterPredicate::Compare { field, op, value } => match (op, value) {
+            (CmpOp::Eq, Const::WordSet(words)) => Some(ResolvableFilter::WordSetEq {
+                field: *field,
+                words: words.clone().into_boxed_slice(),
+            }),
+            (CmpOp::Eq | CmpOp::Ne, Const::Words(words)) => Some(ResolvableFilter::BytesCompare {
+                field: *field,
+                bytes: words.iter().flat_map(|word| word.to_be_bytes()).collect(),
+                equal: matches!(op, CmpOp::Eq),
+            }),
+            (CmpOp::Eq | CmpOp::Ne, Const::Interval { start, end }) => {
+                let mut bytes = Vec::with_capacity(16);
+                bytes.extend_from_slice(&start.to_be_bytes());
+                bytes.extend_from_slice(&end.to_be_bytes());
+                Some(ResolvableFilter::BytesCompare {
+                    field: *field,
+                    bytes: bytes.into_boxed_slice(),
+                    equal: matches!(op, CmpOp::Eq),
+                })
+            }
+            (op, Const::Word(word)) if ordinary(*op) => Some(ResolvableFilter::WordCompare {
+                field: *field,
+                op: *op,
+                word: *word,
+            }),
+            (CmpOp::Eq | CmpOp::Ne, Const::Byte(byte)) => Some(ResolvableFilter::WordCompare {
+                field: *field,
+                op: *op,
+                word: u64::from(*byte),
+            }),
+            // Params, pending interns, set inequality, order over
+            // multi-word/byte values, and the already-lowered interval
+            // operators all refuse.
+            _ => None,
+        },
+        FilterPredicate::FieldsCompare { left, right, op } if ordinary(*op) => {
+            Some(ResolvableFilter::FieldsCompare {
+                left: *left,
+                right: *right,
+                op: *op,
+            })
         }
-        FilterPredicate::FieldWithin { outer, .. } => matches!(outer, Const::Interval { .. }),
-        // `AnyPointIn`'s set is a bind-time `ParamSet` marker (stage-3),
-        // and the measure kinds' ray error is per-execution (module
-        // doc) — all three refuse.
-        FilterPredicate::AnyPointIn { .. }
+        FilterPredicate::PointIn {
+            field,
+            point: ResolvedWordSource::Word(point),
+        } => Some(ResolvableFilter::PointIn {
+            field: *field,
+            point: *point,
+        }),
+        FilterPredicate::FieldsContainPoint { interval, point } => {
+            Some(ResolvableFilter::FieldsContainPoint {
+                interval: *interval,
+                point: *point,
+            })
+        }
+        FilterPredicate::FieldWithin {
+            field,
+            outer: Const::Interval { start, end },
+        } => Some(ResolvableFilter::Within {
+            field: *field,
+            start: *start,
+            end: *end,
+        }),
+        FilterPredicate::FieldsAllen {
+            left,
+            right,
+            mask: MaskConst::Mask(mask),
+        } => Some(ResolvableFilter::FieldsAllen {
+            left: *left,
+            right: *right,
+            mask: *mask,
+        }),
+        FilterPredicate::FieldAllen {
+            field,
+            other: Const::Interval { start, end },
+            mask: MaskConst::Mask(mask),
+        } => Some(ResolvableFilter::Allen {
+            field: *field,
+            other: (*start, *end),
+            mask: *mask,
+        }),
+        // Param points/masks/intervals, `AnyPointIn`'s stage-3 set, and
+        // measure filters refuse for the staging/error-timing reasons
+        // above. The unmatched `FieldsCompare` arm is Allen/Contains,
+        // which normalization lowers to fixed filter shapes.
+        FilterPredicate::FieldsCompare { .. }
+        | FilterPredicate::PointIn { .. }
+        | FilterPredicate::AnyPointIn { .. }
+        | FilterPredicate::FieldsAllen { .. }
+        | FilterPredicate::FieldAllen { .. }
+        | FilterPredicate::FieldWithin { .. }
         | FilterPredicate::DurationCompare { .. }
-        | FilterPredicate::DurationFieldsCompare { .. } => false,
-    })
+        | FilterPredicate::DurationFieldsCompare { .. } => None,
+    }
 }
 
 /// The participating occurrences (other than `c_idx`) binding `var`,
@@ -429,11 +573,11 @@ fn containment_into_id(
 /// rows, as the ascending surviving row-id list (row id = declaration
 /// index — `schema.rs`, `SealedRow`). n ≤ 256 rows through the scalar
 /// comparison paths — encoded-word compares, the scalar `Allen`
-/// classify, never a batch kernel. Callers hold
-/// [`filters_prepare_resolvable`]; unresolvable shapes are unreachable.
+/// classify, never a batch kernel. Its narrowed input was minted by
+/// [`parse_resolvable`], so evaluation is total over the vocabulary.
 /// Crate-visible for the EXPLAIN surface (`exec/explain/into_stats.rs`),
 /// which re-runs the σ to name the surviving handles.
-pub(crate) fn surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Vec<u64> {
+pub(crate) fn surviving_ids(relation: &Relation, filters: &[ResolvableFilter]) -> Vec<u64> {
     let layout = relation.layout();
     relation
         .extension()
@@ -453,11 +597,12 @@ pub(crate) fn surviving_ids(relation: &Relation, filters: &[FilterPredicate]) ->
 /// order-preserving maps of their values (u64 identity, I64 sign-flip,
 /// interval endpoints pairwise — `docs/architecture/50-storage.md`), so
 /// word comparison IS value comparison; Eq/Ne over any shape is
-/// canonical-byte equality.
+/// canonical-byte equality. Every match arm is over a parsed shape; no
+/// symbolic or measure form reaches this function.
 fn row_satisfies(
     layout: &crate::encoding::FactLayout,
     fact: &[u8],
-    filter: &FilterPredicate,
+    filter: &ResolvableFilter,
 ) -> bool {
     let bytes = |field: FieldId| field_bytes(fact, layout, usize::from(field.0));
     let word = |field: FieldId| field_word(layout, fact, field);
@@ -466,70 +611,53 @@ fn row_satisfies(
         (be_word(&b[..8]), be_word(&b[8..16]))
     };
     match filter {
-        FilterPredicate::Compare { field, op, value } => match op {
-            CmpOp::Eq => match value {
-                Const::WordSet(words) => words.binary_search(&word(*field)).is_ok(),
-                _ => bytes(*field) == const_bytes(value),
-            },
-            CmpOp::Ne => bytes(*field) != const_bytes(value),
-            CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
-                let Const::Word(bound) = value else {
-                    unreachable!("validated: order operators compare u64/i64 words")
-                };
-                order_holds(*op, word(*field), *bound)
-            }
-            CmpOp::Allen { .. } | CmpOp::Contains => {
-                unreachable!("interval predicates lower to their fixed shapes")
-            }
-        },
-        FilterPredicate::FieldsCompare { left, right, op } => match op {
+        ResolvableFilter::WordCompare {
+            field,
+            op,
+            word: bound,
+        } => op.compare(&word(*field), bound),
+        ResolvableFilter::BytesCompare {
+            field,
+            bytes: bound,
+            equal,
+        } => (bytes(*field) == bound.as_ref()) == *equal,
+        ResolvableFilter::WordSetEq { field, words } => words.binary_search(&word(*field)).is_ok(),
+        ResolvableFilter::FieldsCompare { left, right, op } => match op {
             CmpOp::Eq => bytes(*left) == bytes(*right),
             CmpOp::Ne => bytes(*left) != bytes(*right),
             CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
-                order_holds(*op, word(*left), word(*right))
+                op.compare(&word(*left), &word(*right))
             }
-            CmpOp::Allen { .. } | CmpOp::Contains => {
-                unreachable!("same-atom interval predicates lower to their fixed shapes")
-            }
+            // The parser never constructs these; returning false keeps
+            // the consumer total even if this crate-visible enum gains
+            // another constructor in the future.
+            CmpOp::Allen { .. } | CmpOp::Contains => false,
         },
-        FilterPredicate::PointIn { field, point } => {
-            let ResolvedWordSource::Word(point) = point else {
-                unreachable!("filters_prepare_resolvable admits literal points only")
-            };
+        ResolvableFilter::PointIn { field, point } => {
             let (start, end) = pair(*field);
             start <= *point && *point < end
         }
-        FilterPredicate::FieldsContainPoint { interval, point } => {
+        ResolvableFilter::FieldsContainPoint { interval, point } => {
             let (start, end) = pair(*interval);
             let p = word(*point);
             start <= p && p < end
         }
-        FilterPredicate::FieldWithin { field, outer } => {
-            let Const::Interval { start, end } = outer else {
-                unreachable!("filters_prepare_resolvable admits interval constants only")
-            };
+        ResolvableFilter::Within { field, start, end } => {
             let f = word(*field);
             *start <= f && f < *end
         }
-        FilterPredicate::FieldsAllen { left, right, mask } => {
-            let MaskConst::Mask(mask) = mask else {
-                unreachable!("filters_prepare_resolvable admits literal masks only")
-            };
+        ResolvableFilter::FieldsAllen { left, right, mask } => {
             let (ls, le) = pair(*left);
             let (rs, re) = pair(*right);
             mask.contains(classify_bounds(&ls, &le, &rs, &re))
         }
-        FilterPredicate::FieldAllen { field, other, mask } => {
-            let (MaskConst::Mask(mask), Const::Interval { start, end }) = (mask, other) else {
-                unreachable!("filters_prepare_resolvable admits literal masks and intervals only")
-            };
+        ResolvableFilter::Allen {
+            field,
+            other: (start, end),
+            mask,
+        } => {
             let (fs, fe) = pair(*field);
             mask.contains(classify_bounds(&fs, &fe, start, end))
-        }
-        FilterPredicate::AnyPointIn { .. }
-        | FilterPredicate::DurationCompare { .. }
-        | FilterPredicate::DurationFieldsCompare { .. } => {
-            unreachable!("filters_prepare_resolvable refused these shapes")
         }
     }
 }
@@ -541,43 +669,12 @@ fn field_word(layout: &crate::encoding::FactLayout, fact: &[u8], field: FieldId)
     match bytes.len() {
         1 => u64::from(bytes[0]),
         8 => be_word(bytes),
-        _ => unreachable!("word reads address scalar columns"),
+        _ => unreachable!("parsed word filters address validated scalar columns"),
     }
 }
 
 fn be_word(bytes: &[u8]) -> u64 {
     u64::from_be_bytes(bytes.try_into().expect("8-byte slice"))
-}
-
-/// A constant's canonical bytes — exactly what the sealed row stores
-/// for a value-equal fact (`Const` docs: column form IS the canonical
-/// encoding, word-padded where the fact is).
-fn const_bytes(value: &Const) -> Vec<u8> {
-    match value {
-        Const::Word(word) => word.to_be_bytes().to_vec(),
-        Const::Byte(byte) => vec![*byte],
-        Const::Words(words) => words.iter().flat_map(|w| w.to_be_bytes()).collect(),
-        Const::Interval { start, end } => {
-            let mut out = start.to_be_bytes().to_vec();
-            out.extend_from_slice(&end.to_be_bytes());
-            out
-        }
-        Const::WordSet(_) | Const::Param(_) | Const::ParamSet(_) | Const::PendingIntern { .. } => {
-            unreachable!("callers matched the resolvable scalar shapes")
-        }
-    }
-}
-
-/// Which order comparison holds between two encoded words (both
-/// encodings are order-preserving onto u64 — one unsigned domain).
-fn order_holds(op: CmpOp, lhs: u64, rhs: u64) -> bool {
-    match op {
-        CmpOp::Lt => lhs < rhs,
-        CmpOp::Le => lhs <= rhs,
-        CmpOp::Gt => lhs > rhs,
-        CmpOp::Ge => lhs >= rhs,
-        _ => unreachable!("callers matched order operators"),
-    }
 }
 
 /// Attaches the plan-constant membership to every binder: one
@@ -676,7 +773,8 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
         }
         FilterPredicate::PointIn { field, point } => {
             let ResolvedWordSource::Word(point) = point else {
-                unreachable!("folded filters are prepare-resolved")
+                render_unparsed_filter(out, filter);
+                return;
             };
             literal(
                 out,
@@ -692,7 +790,8 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
         }
         FilterPredicate::FieldWithin { field, outer } => {
             let Const::Interval { start, end } = outer else {
-                unreachable!("folded filters are prepare-resolved")
+                render_unparsed_filter(out, filter);
+                return;
             };
             out.push_str(name(field));
             out.push_str(" in ");
@@ -706,7 +805,8 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
         }
         FilterPredicate::FieldsAllen { left, right, mask } => {
             let MaskConst::Mask(mask) = mask else {
-                unreachable!("folded filters are prepare-resolved")
+                render_unparsed_filter(out, filter);
+                return;
             };
             out.push_str("Allen(");
             out.push_str(name(left));
@@ -718,7 +818,8 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
             let (MaskConst::Mask(mask), Const::Interval { start, end }) = (mask, other) else {
-                unreachable!("folded filters are prepare-resolved")
+                render_unparsed_filter(out, filter);
+                return;
             };
             out.push_str("Allen(");
             out.push_str(name(field));
@@ -734,9 +835,17 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
         FilterPredicate::AnyPointIn { .. }
         | FilterPredicate::DurationCompare { .. }
         | FilterPredicate::DurationFieldsCompare { .. } => {
-            unreachable!("folded filters are prepare-resolved")
+            render_unparsed_filter(out, filter);
         }
     }
+}
+
+/// Defensive diagnostic fallback for an original filter that no longer
+/// parses. Folded marks prove this unreachable in ordinary construction,
+/// but diagnostic rendering stays total over the public filter sum.
+fn render_unparsed_filter(out: &mut String, filter: &FilterPredicate) {
+    use std::fmt::Write as _;
+    let _ = write!(out, "{filter:?}");
 }
 
 /// One row id at a closed relation's own id position, as its handle —
@@ -773,9 +882,8 @@ fn op_symbol(op: CmpOp) -> &'static str {
         CmpOp::Le => " <= ",
         CmpOp::Gt => " > ",
         CmpOp::Ge => " >= ",
-        CmpOp::Allen { .. } | CmpOp::Contains => {
-            unreachable!("interval predicates lower to their fixed shapes")
-        }
+        CmpOp::Allen { .. } => " Allen ",
+        CmpOp::Contains => " contains ",
     }
 }
 

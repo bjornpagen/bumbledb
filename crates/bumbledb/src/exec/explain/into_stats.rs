@@ -94,15 +94,18 @@ impl CountingCounters {
                     return None;
                 };
                 let relation = schema.relation(occurrence.relation);
-                let handles =
-                    crate::plan::chase::evaluate::surviving_ids(relation, &occurrence.filters)
-                        .into_iter()
-                        .map(|id| {
-                            let mut handle = String::new();
-                            crate::plan::chase::evaluate::push_handle(&mut handle, relation, id);
-                            handle
-                        })
-                        .collect();
+                let parsed = crate::plan::chase::evaluate::parse_resolvable(&occurrence.filters);
+                debug_assert!(parsed.is_some(), "folded occurrences parsed at fold time");
+                let handles = parsed
+                    .map(|filters| crate::plan::chase::evaluate::surviving_ids(relation, &filters))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|id| {
+                        let mut handle = String::new();
+                        crate::plan::chase::evaluate::push_handle(&mut handle, relation, id);
+                        handle
+                    })
+                    .collect();
                 Some(FoldedOccurrence {
                     occurrence: occurrence.occ_id.0,
                     relation: relation.name().to_owned(),

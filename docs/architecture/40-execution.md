@@ -397,8 +397,10 @@ to join against its virtual image, which is L1-resident and always correct):
    at-most-one live variable must be bound at `C`'s **id position**
    `FieldId(0)` — the join variable `k` — and some other participating
    occurrence must bind `k` (the membership set needs a home).
-2. `C` carries only Eq/range/Allen/membership filters over its own columns
-   with prepare-resolvable constants. A param-bearing filter REFUSES the fold
+2. `C`'s filters parse completely into the prepare-resolvable
+   Eq/range/Allen/membership vocabulary over its own columns; the parser
+   returns that narrowed vocabulary and the evaluator is total over it. A
+   param-bearing filter REFUSES the fold
    in v0 (the bind-time fold alternative is recorded; trigger: a measured win in
    the calendar-family profile); measure filters refuse too — their ray error
    is a per-execution error, and evaluation would move it to prepare.
