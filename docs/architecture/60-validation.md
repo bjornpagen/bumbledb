@@ -475,6 +475,61 @@ runner.
 - **Trophy ledger**: `fuzz/README.md` — one row per real finding (date,
   target, root cause, the pinning test).
 
+## Small worlds, Miri, and ASAN — the charter's complement
+
+Where a domain is finite and small, random exploration is strictly worse than
+exhaustive enumeration: enumerate it once and close the question forever
+(docs/prd-crucible/15-exhaustive-miri.md). Three small worlds are enumerated as
+plain `#[test]`s, each carrying its domain-size arithmetic in a comment — the
+loop bound is the claim, never a sample — and are therefore **never fuzzed**
+(a fuzz iteration inside an exhaustively closed domain is spent evidence):
+
+- **The Allen mask space** (`exec/kernel/tests.rs`, `allen.rs` tests): all
+  2¹³ = 8,192 masks × all 784 configuration classes (every ordered pair of
+  nonempty intervals over an 8-value endpoint set, which realizes every
+  4-endpoint order type, rays and unsigned extremes included) — the vectorized
+  configuration kernel agrees with the scalar classifier on every cell; the
+  converse involution over the full mask space; and composition-table spot
+  laws over the exhaustively enumerated 13 × 13 table (46,656 triples on a
+  9-value grid — a witness needs at most 6 distinct endpoints, so the
+  enumerated table is the whole table, not a sample).
+- **The closed-target bitset** (`schema/tests/closed_member.rs`): every
+  in-range id 0..=255 plus the out-of-range probes × 834 structured `[u64; 4]`
+  patterns — the prefix and suffix families (covering empty, all-set, and the
+  63/64, 127/128, 191/192 word boundaries), every singleton, and random fill —
+  judged against a naive bit walk sharing none of the word/shift arithmetic.
+- **Encoding order preservation** (`encoding/tests.rs`): per value type, the
+  canonical encoding preserves value order over an exhaustive small domain,
+  all ordered pairs checked (order preservation and injectivity at once):
+  i64 and u64 at byte granularity across the sign boundary (derived 677- and
+  605-value domains), interval endpoint-pair order on dense grids (rays and
+  extremes included, both element types), `bytes<N>` prefix laws over all 84
+  NUL-free strings of length ≤ 3, Bool's whole 2-value domain, and the str
+  intern-id word (id order only — string-value order stays refused,
+  `10-data-model.md`).
+
+**The Miri lane** (`scripts/miri.sh`) covers the one axis neither oracle nor
+fuzzer sees: undefined behavior that happens to produce right answers today.
+Its scope is the honest FFI boundary — LMDB is foreign code Miri cannot
+cross, so every Db-touching test is out (each exclusion is commented with its
+reason in the script). The lane interprets the pure modules — encodings, the
+portable `std::simd` kernels and their scalar twins, the SWAR probe
+primitives, condition folding, the Allen algebra and scalar classifier, the
+closed-member bitset, the wordmap — on the native target AND cross-interpreted
+`--target x86_64-unknown-linux-gnu`, which checks endianness and width
+assumptions in the scalar kernels for free. The hand-NEON Allen kernel is
+non-interpretable (intrinsics, the same wall as FFI): natively its batch tests
+are skipped; the cross pass runs them through the scalar reference dispatch,
+so the whole Allen kernel surface is interpreted on one target or the other.
+
+**The ASAN lane** covers what Miri cannot reach: the FFI boundary itself.
+Every fuzz target runs under `cargo fuzz run <target> -s address` — LMDB map
+handling, the unsafe key-slice reads at the heed seam, the crash target's
+child-process autopsies — with zero suppressions (a suppression is a conflict
+block, not a shrug). PRD 15 proved every target clean for 1k iterations; the
+long-exploration sessions of the human work register inherit the flag through
+the PRD 16 orchestrator.
+
 ## Golden set
 
 Hand-written queries with hand-verified expected results over a fixed dataset — the

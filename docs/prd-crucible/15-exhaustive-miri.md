@@ -87,3 +87,99 @@ any suppression is a conflict block, not a shrug).
 The testing/measurement doc: the "small worlds" section (what is
 enumerated exhaustively and therefore never fuzzed), the Miri lane's
 honest scope, and the ASAN lane's coverage claim.
+
+## Results (2026-07-13, executed at 6c8af0c + this change)
+
+**Exhaustive suites — all landed green against current behavior with
+zero engine edits (no trophies from enumeration).** The three suites
+are 13 plain `#[test]`s totalling 0.46 s natively; nothing needed
+`#[ignore]`. Every test carries its domain-size arithmetic; the counted
+domains are asserted in the tests themselves.
+
+1. *Allen* — `exec::kernel::tests::
+   exhaustive_all_8192_masks_times_all_configuration_classes`: all
+   2¹³ = 8,192 masks (loop bound counted and asserted) × 784
+   configuration-class pairs (C(8,2)² over the endpoint set
+   {0,1,2,3,4,MAX−2,MAX−1,MAX} — every 4-endpoint order type, rays and
+   unsigned extremes included; all 13 basics asserted present) =
+   6,422,528 cells: the vectorized code+filter kernel pipeline agrees
+   with the scalar classifier on every one. `allen::tests::
+   exhaustive_converse_involution_over_all_8192_masks` walks the full
+   mask space (count asserted 8,192). `allen::tests::
+   exhaustive_composition_table_spot_laws` enumerates the whole 13 × 13
+   composition table from 46,656 interval triples on the 0..=8 grid
+   (complete: a witness needs ≤ 6 distinct endpoints) and pins the
+   identity row/column, the hand-provable singletons (b;b, a;a, m;m,
+   d;d, s;d, f;d), o;o = {b,m,o}, b;bi = FULL, the converse
+   anti-homomorphism over all 169 cells, and e ∈ r;r⁻¹.
+2. *closed_member* — `schema::tests::closed_member::
+   exhaustive_closed_member_matches_the_naive_bit_walk`: 834 patterns
+   (257 prefixes covering empty/all-set/63-64/127-128/191-192, 257
+   suffix complements, 256 singletons, 64 splitmix words) × 269 ids
+   (all 256 in-range + 13 out-of-range probes) = 224,346 cells
+   (count asserted) against a naive (word, bit)-coordinate walk.
+3. *Encoding order preservation* — all ordered pairs per type (order
+   AND injectivity): Bool 2² = 4; i64 677² = 458,329 (byte-granularity
+   domain across the sign boundary, size asserted); u64 605² = 366,025;
+   str intern-id word 278² = 77,284 (id order only — value order stays
+   refused); bytes<N> 84² = 7,056 over all NUL-free strings of length
+   ≤ 3 (prefix law included, with the NUL/pad-collision boundary pinned
+   explicitly); interval u64 276² = 76,176 and i64 300² = 90,000 grid
+   pairs (rays and element extremes included).
+
+**Miri lane** — `scripts/miri.sh`, green on aarch64-apple-darwin AND
+cross-interpreted x86_64-unknown-linux-gnu; **zero UB findings**. Every
+exclusion is commented in the script with its reason: LMDB/heed test
+fixtures are FFI (out), the hand-NEON Allen kernel is non-interpretable
+intrinsics (skipped natively, RUN on the cross pass through the scalar
+reference dispatch, so the whole Allen kernel surface is interpreted on
+one target), the `exhaustive_` enumerations and five wordmap scale
+contracts are budget skips whose logic runs through representative
+subsets (the wordmap differential itself scales to 256 ops/round under
+`cfg!(miri)`; natively unchanged at 2,000). Two infrastructure facts
+recorded: (a) `cargo miri setup` builds the sysroot on first use;
+(b) the cross pass needs `scripts/miri-cross-cc.sh` — lmdb-master-sys's
+build script compiles LMDB's C for the requested target and this host
+has no linux cross toolchain, so a host-arch stand-in compile satisfies
+the build graph (under Miri the staticlib is never linked and the lane
+never calls into LMDB by construction; the shim carries the rationale).
+
+**ASAN lane** — `cargo fuzz run <target> -s address -- -runs=1000`,
+strictly sequential, **zero AddressSanitizer reports, zero
+suppressions** (corpus replay counts as runs, so targets with > 1k
+seeds run their whole corpus):
+
+| target | runs completed | outcome |
+| --- | --- | --- |
+| theory | 1,000 | clean (1 s) |
+| ops | 3,381 (full 3,379-seed corpus) | clean (54 s, peak RSS 177 MB) |
+| query | 4,738 (full 3,329-seed corpus) | clean at `-rss_limit_mb=4096` (693 s, peak RSS 3,339 MB) — see below |
+| rewrites | 4,858 (full 4,835-seed corpus) | clean (37 s, peak RSS 619 MB) |
+| crash | 1,000 | clean (64 s) |
+
+*The one flag, dispositioned:* query's first session died at
+libFuzzer's **default** `-rss_limit_mb=2048` (`out-of-memory (used:
+2050Mb; limit: 2048Mb)`) during seed-corpus replay. Autopsy: live heap
+at the kill was 41 MB; 231 MB sat in ASAN's quarantine across 2.56 M
+chunks with 13.7 M cumulative chunk records; every top holder is a
+libFuzzer-internal frame; the flagged input replays clean alone under
+default limits (10.5 s). This is ASAN quarantine/metadata accounting
+across the largest-corpus target (the only one carrying bundled
+SQLite's uninstrumented-but-interposed C), not an engine leak. The
+recorded remedy is a libFuzzer *resource* knob — `-rss_limit_mb=4096`
+for this target under ASAN — no error was suppressed, no suppression
+file exists, no engine code changed. PRD 16's orchestrator should carry
+that flag for query's ASAN mode.
+
+**Gates:** `cargo test -p bumbledb` green (796 lib tests + integration
+suites, 0 failed); `cargo clippy --workspace --all-targets -- -D
+warnings` green; `cargo fmt --all --check` green; `scripts/miri.sh`
+green on both targets. Fingerprint surface untouched (tests, scripts,
+and docs only; the one non-test source line is a `cfg!(miri)` op-count
+scale inside an existing wordmap test module).
+
+**Trophies: none.** All three enumerations pinned current behavior on
+the first run; Miri found no UB in the pure modules on either target;
+ASAN found no memory error in any target. The campaign's two
+infrastructure walls (the linux cross-CC gap, the query ASAN RSS
+accounting) are recorded above with their dispositions.

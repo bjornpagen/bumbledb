@@ -111,6 +111,12 @@ fn zero_arity_keys_share_one_group() {
 /// reference IS the portable implementation of record.
 #[test]
 fn differential_against_the_reference_model() {
+    // The Miri lane (scripts/miri.sh) interprets this differential;
+    // 2,000 ops × 7 arities × 3 rounds is ~16 interpreter-minutes for
+    // code paths the first few hundred ops already cover (growth from
+    // both hint shapes included), so the interpreted run scales down.
+    // Native runs keep the full sweep.
+    let ops_per_round: u64 = if cfg!(miri) { 256 } else { 2_000 };
     let mut rng = 0x2468_ACE0_1357_9BDFu64;
     let mut next = move || {
         rng = rng
@@ -127,7 +133,7 @@ fn differential_against_the_reference_model() {
             };
             let mut model: HashMap<Vec<u64>, u64> = HashMap::new();
             let mut order: Vec<Vec<u64>> = Vec::new();
-            for op in 0..2_000u64 {
+            for op in 0..ops_per_round {
                 // Adversarial low-entropy keys: many collisions and
                 // duplicate inserts; occasional extreme words.
                 let key: Vec<u64> = (0..arity)

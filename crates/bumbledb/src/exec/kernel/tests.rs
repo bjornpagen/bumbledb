@@ -536,6 +536,131 @@ fn allen_filter_columns_match_the_scalar_survivors_bit_for_bit() {
     }
 }
 
+/// All ordered pairs of nonempty intervals over an endpoint set: the
+/// configuration-class corpus of the exhaustive mask suite.
+fn interval_pairs_over(points: &[u64]) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>) {
+    let mut intervals = Vec::new();
+    for (i, &s) in points.iter().enumerate() {
+        for &e in &points[i + 1..] {
+            intervals.push((s, e));
+        }
+    }
+    let (mut a_s, mut a_e, mut b_s, mut b_e) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for &(x_s, x_e) in &intervals {
+        for &(y_s, y_e) in &intervals {
+            a_s.push(x_s);
+            a_e.push(x_e);
+            b_s.push(y_s);
+            b_e.push(y_e);
+        }
+    }
+    (a_s, a_e, b_s, b_e)
+}
+
+/// The scalar classifier's code per pair — the oracle column of the
+/// exhaustive suite.
+fn scalar_codes(a_s: &[u64], a_e: &[u64], b_s: &[u64], b_e: &[u64]) -> Vec<u8> {
+    (0..a_s.len())
+        .map(|i| {
+            let a = crate::interval::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
+            let b = crate::interval::Interval::<u64>::new(b_s[i], b_e[i]).expect("nonempty");
+            crate::allen::classify(a, b) as u8
+        })
+        .collect()
+}
+
+/// Exhaustive: EVERY Allen mask × EVERY interval configuration class —
+/// the vectorized configuration kernel pipeline (code batch, then the
+/// broadcast-mask filter batch) agrees with the scalar classifier on
+/// every cell (docs/prd-crucible/15-exhaustive-miri.md).
+///
+/// Domain arithmetic — both axes are total, not sampled:
+///   masks: a mask is a 13-bit word, so the space is 2¹³ = 8,192 masks;
+///     the loop bound is counted and asserted below.
+///   pairs: all ordered pairs of nonempty intervals over the 8-value
+///     endpoint set {0, 1, 2, 3, 4, MAX−2, MAX−1, MAX} — C(8,2) = 28
+///     intervals (rays included: end == MAX is the point-domain law),
+///     28² = 784 pairs. A pair has 4 endpoints, so any configuration
+///     class (endpoint order type with ties) needs at most 4 distinct
+///     values; the 8-value set realizes every class, at both the small
+///     and the unsigned-extreme end — all 13 basics occur (asserted).
+/// Cells: 8,192 × 784 = 6,422,528, every one checked.
+#[test]
+fn exhaustive_all_8192_masks_times_all_configuration_classes() {
+    use crate::allen::AllenMask;
+    const MAX: u64 = u64::MAX;
+    let points = [0u64, 1, 2, 3, 4, MAX - 2, MAX - 1, MAX];
+    let (a_s, a_e, b_s, b_e) = interval_pairs_over(&points);
+    assert_eq!(a_s.len(), 784, "C(8,2)² = 28² ordered pairs");
+
+    // The vectorized code kernel vs the scalar classifier, per pair.
+    let mut codes = Vec::new();
+    allen_code_batch(&a_s, &a_e, &b_s, &b_e, &mut codes);
+    let scalar = scalar_codes(&a_s, &a_e, &b_s, &b_e);
+    assert_eq!(codes, scalar, "configuration codes match the classifier");
+    // Every configuration class is present in the corpus.
+    for basic in crate::allen::Basic::ALL {
+        assert!(
+            scalar.contains(&(basic as u8)),
+            "class {basic:?} missing from the corpus"
+        );
+    }
+
+    let mut visited = 0u32;
+    let mut keep = Vec::new();
+    for bits in 0..=0x1FFF_u16 {
+        let mask = AllenMask::new(bits).expect("13-bit range");
+        allen_filter_batch(&codes, mask, &mut keep);
+        for (i, &code) in scalar.iter().enumerate() {
+            assert_eq!(
+                keep[i] != 0,
+                mask.bits() & (1 << code) != 0,
+                "cell (mask {bits:#06x}, pair {i})"
+            );
+        }
+        visited += 1;
+    }
+    assert_eq!(visited, 8_192, "the full 2^13 mask space was enumerated");
+}
+
+/// The Miri-lane representative of the exhaustive mask suite: the same
+/// pipeline over the 4-value endpoint grid (C(4,2) = 6 intervals, 36
+/// pairs) × the 13 singletons, the workload composites, and 16 stride-
+/// sampled masks. Runs everywhere the dispatch is interpretable (the
+/// scalar/portable twins under Miri; the NEON path natively).
+#[test]
+fn allen_representative_masks_agree_with_the_scalar_classifier() {
+    use crate::allen::{AllenMask, Basic};
+    let points = [0u64, 1, 3, u64::MAX];
+    let (a_s, a_e, b_s, b_e) = interval_pairs_over(&points);
+    assert_eq!(a_s.len(), 36);
+    let mut codes = Vec::new();
+    allen_code_batch(&a_s, &a_e, &b_s, &b_e, &mut codes);
+    let scalar = scalar_codes(&a_s, &a_e, &b_s, &b_e);
+    assert_eq!(codes, scalar);
+
+    let mut masks: Vec<AllenMask> = Basic::ALL
+        .iter()
+        .map(|b| AllenMask::new(b.bit()).expect("singleton"))
+        .collect();
+    masks.extend([
+        AllenMask::INTERSECTS,
+        AllenMask::COVERS,
+        AllenMask::COVERED_BY,
+        AllenMask::DISJOINT,
+        AllenMask::EMPTY,
+        AllenMask::FULL,
+    ]);
+    masks.extend((0..16).map(|i| AllenMask::new(i * 0x0111).expect("13-bit")));
+    let mut keep = Vec::new();
+    for mask in masks {
+        allen_filter_batch(&codes, mask, &mut keep);
+        for (i, &code) in scalar.iter().enumerate() {
+            assert_eq!(keep[i] != 0, mask.bits() & (1 << code) != 0);
+        }
+    }
+}
+
 #[test]
 fn compaction_keeps_exactly_the_masked_items_in_order() {
     // Empty and full survivor sets, plus a mixed mask.
