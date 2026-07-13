@@ -52,6 +52,35 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 
+/// The one state dependency judgment may inspect. Phases 1–2 have
+/// already applied the plan to this LMDB write transaction, whose
+/// read-your-writes view is therefore exactly `base + delta` in final
+/// set semantics; operation order is no longer representable here.
+pub(super) struct FinalStateView<'state, 'env, 'delta> {
+    txn: &'state WriteTxn<'env>,
+    schema: &'state Schema,
+    plan: &'state CommitPlan<'delta>,
+}
+
+impl<'state, 'env, 'delta> FinalStateView<'state, 'env, 'delta> {
+    pub(super) fn new(
+        txn: &'state WriteTxn<'env>,
+        schema: &'state Schema,
+        plan: &'state CommitPlan<'delta>,
+    ) -> Self {
+        Self { txn, schema, plan }
+    }
+}
+
+/// Judges both containment directions against one named final state and
+/// seals the complete violation set.
+pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Option<Violations>> {
+    let mut violations = Vec::new();
+    check_source(view, &mut violations)?;
+    check_target(view, &mut violations)?;
+    Ok(Violations::seal(violations))
+}
+
 /// One side's selection σ, its literals pre-encoded for byte comparison.
 pub(crate) enum SelectionCheck {
     /// σ is empty: every fact satisfies.
@@ -189,11 +218,10 @@ fn collect(outcome: Result<()>, violations: &mut Vec<Violation>) -> Result<()> {
 /// (`docs/architecture/30-dependencies.md`). Violations accumulate into
 /// `violations`; the caller seals the complete set.
 pub(super) fn check_source(
-    txn: &WriteTxn<'_>,
-    schema: &Schema,
-    plan: &CommitPlan<'_>,
+    view: &FinalStateView<'_, '_, '_>,
     violations: &mut Vec<Violation>,
 ) -> Result<()> {
+    let FinalStateView { txn, schema, plan } = view;
     let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
     let mut probes = 0u64;
     let mut span = obs::span(obs::names::JUDGMENT_SOURCE, obs::Category::Commit);
@@ -280,11 +308,10 @@ pub(super) fn check_source(
     reason = "the linear table or protocol is clearer kept together"
 )] // the target-side judgment, one phase per block
 pub(super) fn check_target(
-    txn: &WriteTxn<'_>,
-    schema: &Schema,
-    plan: &CommitPlan<'_>,
+    view: &FinalStateView<'_, '_, '_>,
     violations: &mut Vec<Violation>,
 ) -> Result<()> {
+    let FinalStateView { txn, schema, plan } = view;
     let data = txn.env().data();
     let mut span = obs::span(obs::names::JUDGMENT_TARGET, obs::Category::Commit);
     let mut scanned = 0u64;

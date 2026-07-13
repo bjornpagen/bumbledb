@@ -100,7 +100,7 @@ fn generation_is_zero_on_fresh_database() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let rtxn = env.read_txn().expect("read txn");
-    assert_eq!(rtxn.generation().expect("generation"), 0);
+    assert_eq!(rtxn.generation().expect("generation").value(), 0);
 }
 
 /// The reader-slot cap is a mechanism, not a promise: >126 concurrent

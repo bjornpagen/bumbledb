@@ -118,7 +118,7 @@ fn a_miss_stays_live_and_latches_after_interning() {
     // Something interned it since: the miss becomes a hit — monotone,
     // one way, never the reverse.
     insert_postings(&env, &schema, &[(2, 8, "carol", 30)]);
-    cache.evict_older_than(2);
+    cache.evict_older_than(crate::GenerationId::from_storage(2));
     let txn = env.read_txn().expect("txn");
     prepared
         .execute(&txn, &cache, &[], &mut out)

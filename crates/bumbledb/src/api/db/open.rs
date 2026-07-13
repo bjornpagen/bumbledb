@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use super::Db;
+use super::{CommitSeq, Db};
 use crate::error::Result;
 use crate::image::cache::ImageCache;
 use crate::schema::{Schema, Theory};
@@ -44,7 +44,7 @@ impl<S: Theory> Db<S> {
             writer: Mutex::new(()),
             writer_thread: std::sync::atomic::AtomicU64::new(0),
             read_cache: Mutex::new(None),
-            commit_seq: std::sync::atomic::AtomicU64::new(0),
+            commit_seq: std::sync::atomic::AtomicU64::new(CommitSeq::INITIAL.atomic_word()),
             schema,
             marker: std::marker::PhantomData,
         }

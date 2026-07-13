@@ -98,9 +98,9 @@ fn delete_and_reinsert_of_a_committed_fact_commits_as_an_empty_delta() {
     assert!(delta.is_empty());
     let report = commit(delta, &env).expect("commit");
     assert!(!report.changed);
-    assert_eq!(report.new_generation, 1);
+    assert_eq!(report.new_generation.value(), 1);
     let rtxn = env.read_txn().expect("txn");
-    assert_eq!(rtxn.generation().expect("generation"), 1);
+    assert_eq!(rtxn.generation().expect("generation").value(), 1);
 }
 
 #[test]
@@ -123,9 +123,9 @@ fn insert_and_delete_of_an_absent_fact_commits_as_an_empty_delta() {
     assert!(delta.is_empty());
     let report = commit(delta, &env).expect("commit");
     assert!(!report.changed);
-    assert_eq!(report.new_generation, 1);
+    assert_eq!(report.new_generation.value(), 1);
     let rtxn = env.read_txn().expect("txn");
-    assert_eq!(rtxn.generation().expect("generation"), 1);
+    assert_eq!(rtxn.generation().expect("generation").value(), 1);
 }
 
 #[test]
@@ -137,7 +137,7 @@ fn tx_id_advances_once_per_state_changing_commit_only() {
     commit_facts(&env, &schema, &[(TARGET, f.clone())]);
     {
         let rtxn = env.read_txn().expect("txn");
-        assert_eq!(rtxn.generation().expect("generation"), 1);
+        assert_eq!(rtxn.generation().expect("generation").value(), 1);
     }
 
     // All-no-op delta: re-inserting an existing fact records nothing.
@@ -147,16 +147,16 @@ fn tx_id_advances_once_per_state_changing_commit_only() {
     drop(view);
     let report = commit(delta, &env).expect("commit");
     assert!(!report.changed);
-    assert_eq!(report.new_generation, 1);
+    assert_eq!(report.new_generation.value(), 1);
     {
         let rtxn = env.read_txn().expect("txn");
-        assert_eq!(rtxn.generation().expect("generation"), 1);
+        assert_eq!(rtxn.generation().expect("generation").value(), 1);
     }
 
     // A second state-changing commit bumps exactly once.
     commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 6))]);
     let rtxn = env.read_txn().expect("txn");
-    assert_eq!(rtxn.generation().expect("generation"), 2);
+    assert_eq!(rtxn.generation().expect("generation").value(), 2);
 }
 
 #[test]
@@ -243,10 +243,10 @@ fn a_noop_commit_flushes_escaped_fresh_ids_and_nothing_else() {
     drop(view);
     let report = commit(delta, &env).expect("commit");
     assert!(!report.changed);
-    assert_eq!(report.new_generation, 1);
+    assert_eq!(report.new_generation.value(), 1);
 
     let rtxn = env.read_txn().expect("txn");
-    assert_eq!(rtxn.generation().expect("generation"), 1, "no bump");
+    assert_eq!(rtxn.generation().expect("generation").value(), 1, "no bump");
     // The escaped fresh ids persisted: a later delta continues past them.
     let mut fresh = WriteDelta::new(&schema);
     assert_eq!(fresh.alloc(&rtxn, TARGET, FieldId(0)).expect("alloc"), 8);
@@ -308,7 +308,7 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
 
     let rtxn = env.read_txn().expect("txn");
     assert_eq!(
-        rtxn.generation().expect("generation"),
+        rtxn.generation().expect("generation").value(),
         1,
         "the storage tx id did not advance"
     );

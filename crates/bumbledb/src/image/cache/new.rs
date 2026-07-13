@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use crate::schema::Schema;
+use crate::storage::env::GenerationId;
 
 #[cfg(feature = "trace")]
 use super::stats;
@@ -30,7 +31,7 @@ impl ImageCache {
         Self {
             inner: Mutex::new(CacheInner {
                 map: HashMap::new(),
-                newest: 0,
+                newest: GenerationId::initial(),
             }),
             closed_slots,
             closed: (0..count).map(|_| OnceLock::new()).collect(),

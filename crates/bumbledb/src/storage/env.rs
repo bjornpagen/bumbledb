@@ -39,6 +39,47 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 /// no migration path exists — ETL is the story.
 pub const FORMAT_VERSION: u32 = 2;
 
+/// The persisted storage transaction id: the generation a snapshot
+/// witnessed and a state-changing commit advances. This is not the
+/// process-local reader-cache sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct GenerationId(u64);
+
+impl GenerationId {
+    /// The numeric id, for diagnostics and external observability.
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+
+    /// Decodes the persisted `_meta` word at the storage boundary.
+    pub(crate) const fn from_storage(word: u64) -> Self {
+        Self(word)
+    }
+
+    /// Encodes the id back to the persisted `_meta` word.
+    pub(crate) const fn storage_word(self) -> u64 {
+        self.0
+    }
+
+    /// The generation of a newly created store.
+    pub(crate) const fn initial() -> Self {
+        Self(0)
+    }
+
+    /// The next persisted generation after a state-changing commit.
+    pub(crate) const fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+impl std::fmt::Display for GenerationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Fixed map size: comfortably above the 1 GB scale axiom, allocated
 /// sparsely by the OS. Not configurable — path-only public surface.
 const MAP_SIZE: usize = 4 << 30;
@@ -107,7 +148,7 @@ pub struct ReadTxn<'env> {
     /// Snapshot-constant by definition (the tx id is read *inside* this
     /// snapshot), so one `_meta` get serves every `generation()` caller —
     /// the cache asks once per occurrence per execution otherwise.
-    generation: std::cell::OnceCell<u64>,
+    generation: std::cell::OnceCell<GenerationId>,
 }
 
 impl ReadTxn<'_> {

@@ -49,7 +49,7 @@ fn prepared_world(tag: &str) -> (TempDir, Db<SchemaDescriptor>, NaiveDb) {
     let seed = pair(0, (1, 4), 3);
     assert_eq!(engine_write(&db, &seed), Verdict::Committed);
     naive.apply(&seed).expect("the seed pair commits");
-    assert_eq!(db.generation().expect("generation"), 1);
+    assert_eq!(db.generation().expect("generation").value(), 1);
     assert_eq!(naive.generation(), 1);
     (dir, db, naive)
 }
@@ -88,10 +88,8 @@ fn the_interleaved_second_sequence_aborts_with_the_payload() {
         assert!(
             matches!(
                 raw,
-                Error::GenerationMoved {
-                    witnessed: 1,
-                    current: 2,
-                }
+                Error::GenerationMoved { witnessed, current }
+                    if witnessed.value() == 1 && current.value() == 2
             ),
             "expected GenerationMoved {{ 1, 2 }}: {raw:?}"
         );
@@ -101,7 +99,7 @@ fn the_interleaved_second_sequence_aborts_with_the_payload() {
 
     // The aborted delta dropped whole: the second pair never landed.
     assert_eq!(naive.relation(MARKER).len(), 2);
-    assert_eq!(db.generation().expect("generation"), 2);
+    assert_eq!(db.generation().expect("generation").value(), 2);
 }
 
 /// Scenario (b): a no-op commit (a delete of an absent fact — the delta
@@ -120,7 +118,7 @@ fn a_noop_commit_between_read_and_write_does_not_abort() {
         };
         assert_eq!(engine_write(&db, &noop), Verdict::Committed);
         naive.apply(&noop).expect("a no-op delete commits");
-        assert_eq!(db.generation().expect("generation"), 1, "no bump");
+        assert_eq!(db.generation().expect("generation").value(), 1, "no bump");
         assert_eq!(naive.generation(), 1, "no bump");
         // The witness holds: state-changing generations only.
         let engine = engine_write_from(&db, witness, &follow);
@@ -153,7 +151,11 @@ fn a_foreign_snapshot_is_rejected_typed() {
             Ok(())
         })
         .expect("read");
-    assert_eq!(db.generation().expect("generation"), 0, "nothing happened");
+    assert_eq!(
+        db.generation().expect("generation").value(),
+        0,
+        "nothing happened"
+    );
 }
 
 /// Scenario (d): `write_from` on a fresh witness with no intervening

@@ -26,7 +26,7 @@ use heed::{AnyTls, Database, RoTxn};
 
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::RelationId;
-use crate::storage::env::WriteTxn;
+use crate::storage::env::{GenerationId, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 
 mod applier;
@@ -144,7 +144,7 @@ pub struct Applied<'env> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitReport {
     pub changed: bool,
-    pub new_generation: u64,
+    pub new_generation: GenerationId,
 }
 
 /// Working state threaded through phases 1-2: the transaction, the row-id

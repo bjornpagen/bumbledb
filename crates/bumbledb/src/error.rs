@@ -912,9 +912,9 @@ pub enum Error {
     /// § conditional writes).
     GenerationMoved {
         /// The witness snapshot's generation.
-        witnessed: u64,
+        witnessed: crate::storage::env::GenerationId,
         /// The current committed generation.
-        current: u64,
+        current: crate::storage::env::GenerationId,
     },
     /// The commit's durability boundary failed: `mdb_txn_commit` surfaced
     /// a raw OS errno from its write/sync path — on macOS the data-page

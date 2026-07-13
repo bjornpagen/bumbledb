@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::error::{CorruptionError, Error, Result, Violations};
+use crate::error::{CorruptionError, Error, Result};
 use crate::obs;
 use crate::schema::RelationId;
 use crate::storage::delta::WriteDelta;
@@ -132,10 +132,8 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         // target side over the plan's disestablished-guard check sets.
         // Both sides are scan-complete collectors; the rejection is the
         // sealed COMPLETE violation set, never its first member.
-        let mut violations = Vec::new();
-        judgment::check_source(&txn, schema, &plan, &mut violations)?;
-        judgment::check_target(&txn, schema, &plan, &mut violations)?;
-        if let Some(violations) = Violations::seal(violations) {
+        let final_state = judgment::FinalStateView::new(&txn, schema, &plan);
+        if let Some(violations) = judgment::judge(&final_state)? {
             return Err(Error::CommitRejected { violations });
         }
 
@@ -151,7 +149,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
 
         // The storage tx id advances exactly once per state-changing
         // commit.
-        let new_generation = txn.generation()? + 1;
+        let new_generation = txn.generation()?.next();
         txn.put_generation(new_generation)?;
         crashpoint!("after-judgment");
 

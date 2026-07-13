@@ -1,4 +1,4 @@
-use super::{Bindings, EitherSink, Executor, FilterPredicate, Schema, ViewMemo};
+use super::{Bindings, EitherSink, Executor, FilterPredicate, Schema, ViewGeneration, ViewMemo};
 
 use crate::error::Result;
 use crate::image::cache::ImageCache;
@@ -66,14 +66,12 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
         if occurrence.role.discharged() {
             continue;
         }
-        // A closed relation's view binds at the sentinel generation: its
-        // image is synthesized from the theory, so no commit can stale it
-        // — the memo stays warm across generations forever, and the
-        // stale-reaping pass never touches it (the sentinel is maximal).
+        // A closed relation's view binds to the theory identity rather
+        // than a fabricated storage generation, so no commit can stale it.
         let generation = if schema.relation(occurrence.relation).is_closed() {
-            super::view_memo::GENERATION_CLOSED
+            ViewGeneration::Closed
         } else {
-            txn_generation
+            ViewGeneration::Storage(txn_generation)
         };
         // Warm fast path: an active or parked binding for this exact
         // (generation, resolved residual filters) pair — the COLT's view

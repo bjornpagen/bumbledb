@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::image::RelationImage;
 use crate::schema::RelationId;
+use crate::storage::env::GenerationId;
 
 mod evict_older_than;
 mod get_or_build;
@@ -32,11 +33,11 @@ mod keys;
 mod tests;
 
 struct CacheInner {
-    map: HashMap<(RelationId, u64), Arc<RelationImage>>,
+    map: HashMap<(RelationId, GenerationId), Arc<RelationImage>>,
     /// The newest generation the cache has been evicted to. A reader below
     /// this builds query-locally without inserting (accepted — writes are
     /// bursty and rare).
-    newest: u64,
+    newest: GenerationId,
 }
 
 /// The cross-transaction image cache, shared by reader threads. The mutex

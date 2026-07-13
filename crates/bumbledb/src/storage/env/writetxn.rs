@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 
 use super::read_meta::read_u64;
-use super::{META_DICT_NEXT_ID, META_TX_ID, WriteTxn};
+use super::{GenerationId, META_DICT_NEXT_ID, META_TX_ID, WriteTxn};
 
 impl WriteTxn<'_> {
     /// Commits (fsync per LMDB defaults). The write path's one durability
@@ -26,11 +26,11 @@ impl WriteTxn<'_> {
 
     /// Advances the storage tx id (reader: the 40-storage doc's commit step 4; the id
     /// advances iff the delta changed logical state).
-    pub(crate) fn put_generation(&mut self, generation: u64) -> Result<()> {
+    pub(crate) fn put_generation(&mut self, generation: GenerationId) -> Result<()> {
         self.env.meta.put(
             &mut self.txn,
             META_TX_ID,
-            generation.to_le_bytes().as_slice(),
+            generation.storage_word().to_le_bytes().as_slice(),
         )?;
         Ok(())
     }
@@ -59,7 +59,7 @@ impl WriteTxn<'_> {
     /// # Errors
     ///
     /// `Corruption(MetaMissing)` if the tx-id key is absent or malformed.
-    pub fn generation(&self) -> Result<u64> {
-        read_u64(&self.env.meta, &self.txn, META_TX_ID)
+    pub fn generation(&self) -> Result<GenerationId> {
+        read_u64(&self.env.meta, &self.txn, META_TX_ID).map(GenerationId::from_storage)
     }
 }

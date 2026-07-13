@@ -150,6 +150,7 @@ pub use storage::commit::{CRASHPOINTS, CrashpointSide};
 /// key on it: a format bump must regenerate every store-derived
 /// artifact, never reuse one.
 pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
+pub use storage::env::GenerationId;
 // The IR vocabulary a host needs to build a `Query`, and the id types that
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.

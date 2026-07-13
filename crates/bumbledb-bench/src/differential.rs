@@ -213,9 +213,10 @@ pub(crate) fn engine_write_from<S>(
     });
     match outcome {
         Ok(()) => ConditionalVerdict::Committed,
-        Err(Error::GenerationMoved { witnessed, current }) => {
-            ConditionalVerdict::Moved { witnessed, current }
-        }
+        Err(Error::GenerationMoved { witnessed, current }) => ConditionalVerdict::Moved {
+            witnessed: witnessed.value(),
+            current: current.value(),
+        },
         Err(Error::CommitRejected { violations }) => {
             ConditionalVerdict::Aborted(cited(&violations))
         }

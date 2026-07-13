@@ -173,7 +173,7 @@ fn kill_during_counters_only_commit_leaves_q_consistent() {
             .expect("scan after crash");
         assert_eq!(count, 0, "round {round}: alloc-only child wrote a fact");
         assert_eq!(
-            db.generation().expect("generation"),
+            db.generation().expect("generation").value(),
             0,
             "round {round}: a counters-only commit moved the generation"
         );

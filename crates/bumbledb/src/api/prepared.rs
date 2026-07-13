@@ -392,7 +392,7 @@ const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 /// Parked bindings always carry a real generation: only executed
 /// bindings park (prepare leaves every slot empty).
 struct ParkedView {
-    generation: u64,
+    generation: ViewGeneration,
     filters: Vec<FilterPredicate>,
     colt: Colt,
     last_used: u64,
@@ -411,7 +411,7 @@ struct ViewMemo {
     colts: Vec<Colt>,
     /// The active binding's generation, per occurrence (`None` =
     /// unbound).
-    generation: Vec<Option<u64>>,
+    generation: Vec<Option<ViewGeneration>>,
     /// The active binding's resolved residual filters, per occurrence.
     filters: Vec<Vec<FilterPredicate>>,
     /// Parked bindings, [`PARKED_SLOTS`] per occurrence, empty at
@@ -423,6 +423,15 @@ struct ViewMemo {
     spare_buffers: Vec<Vec<u32>>,
     /// The LRU clock, ticked once per execution.
     tick: u64,
+}
+
+/// The immutable identity of one executable view. Closed relations are
+/// keyed by the theory itself rather than by fabricating a storage
+/// generation sentinel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ViewGeneration {
+    Storage(crate::GenerationId),
+    Closed,
 }
 
 /// The two sink shapes behind one monomorphized dispatch (an enum, not

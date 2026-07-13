@@ -274,6 +274,12 @@ Both are emission; the grammar is untouched.
 
 ## Conditional writes — the generation witness
 
+The persisted clock is the nominal public `GenerationId`, including the
+`Db::generation` diagnostic accessor and both `GenerationMoved` fields; it is
+never a bare integer in the engine API. The parked-reader cache uses a separate,
+crate-private `CommitSeq` clock that resets at process open. The two clocks have
+different lifetimes and cannot be compared or converted into one another.
+
 The writer mutex serializes write *transactions*, not read-compute-write
 *sequences*: query-driven writes — update-where-predicate, insert-select,
 everything SQL spells with data-modifying CTEs — must read on a snapshot first,

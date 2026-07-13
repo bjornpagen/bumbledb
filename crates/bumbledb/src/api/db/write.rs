@@ -1,6 +1,6 @@
 use std::sync::PoisonError;
 
-use super::{BULK_CHUNK, BulkLoadError, Db, Snapshot, WriteTx, WriterThreadReset};
+use super::{BULK_CHUNK, BulkLoadError, CommitSeq, Db, Snapshot, WriteTx, WriterThreadReset};
 use crate::error::{Error, Result};
 use crate::ir::Value;
 use crate::schema::RelationId;
@@ -105,7 +105,7 @@ impl<S> Db<S> {
     /// the critical section, cold on the success path.
     fn write_witnessed<R>(
         &self,
-        witnessed: Option<u64>,
+        witnessed: Option<crate::GenerationId>,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
     ) -> Result<R> {
         use std::sync::atomic::Ordering;
@@ -162,7 +162,7 @@ impl<S> Db<S> {
             self.cache.evict_older_than(report.new_generation);
             // Invalidate any snapshot parked mid-write by a concurrent
             // reader: the next read must begin fresh.
-            self.commit_seq.fetch_add(1, Ordering::Release);
+            CommitSeq::advance(&self.commit_seq, Ordering::Release);
             crashpoint!("after-memo-update");
         }
         Ok(out)

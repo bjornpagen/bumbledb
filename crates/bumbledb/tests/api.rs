@@ -712,7 +712,7 @@ fn disk_size_and_generation_report_store_state() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let empty = db.disk_size().expect("size");
     assert!(empty > 0, "a fresh environment still has pages");
-    assert_eq!(db.generation().expect("gen"), 0);
+    assert_eq!(db.generation().expect("gen").value(), 0);
 
     db.write(|tx| {
         for _ in 0..10_000u64 {
@@ -727,7 +727,7 @@ fn disk_size_and_generation_report_store_state() {
     .expect("bulk write");
     let grown = db.disk_size().expect("size");
     assert!(grown > empty, "10k facts grow the file: {empty} -> {grown}");
-    assert_eq!(db.generation().expect("gen"), 1);
+    assert_eq!(db.generation().expect("gen").value(), 1);
 }
 
 /// The magnitude-first cover choice (docs/architecture/40-execution.md), end to end: the
@@ -908,8 +908,12 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
         })
         .expect("seed one distinct fact pair");
     }
-    assert_eq!(db_a.generation().expect("gen a"), 1);
-    assert_eq!(db_b.generation().expect("gen b"), 1, "both clocks read 1");
+    assert_eq!(db_a.generation().expect("gen a").value(), 1);
+    assert_eq!(
+        db_b.generation().expect("gen b").value(),
+        1,
+        "both clocks read 1"
+    );
 
     let mut prepared = db_a.prepare(&join_query()).expect("prepare on A");
     db_a.read(|snap| {
@@ -1195,9 +1199,14 @@ fn escaped_fresh_ids_survive_noop_commits() {
 
     // Neither no-op moved the generation: Q marks are write-path
     // bookkeeping, not query-visible state.
-    assert_eq!(generation_after_a, 0, "a bare alloc is not a state change");
     assert_eq!(
-        generation_after_c, 1,
+        generation_after_a.value(),
+        0,
+        "a bare alloc is not a state change"
+    );
+    assert_eq!(
+        generation_after_c.value(),
+        1,
         "a nets-to-nothing write is not a state change"
     );
 }
