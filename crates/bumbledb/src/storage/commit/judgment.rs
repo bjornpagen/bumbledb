@@ -35,7 +35,8 @@ use crate::error::{CorruptionError, Direction, Error, Result};
 use crate::interval::sweep::{sweep, Continuation};
 use crate::obs;
 use crate::schema::{
-    CompiledCheck, FieldId, RelationId, Resolved, Schema, StatementDescriptor, StatementId,
+    CompiledCheck, ContainmentId, Enforcement, FieldId, KeyId, RelationId, Schema, StatementId,
+    StatementView,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -69,8 +70,8 @@ type InternResolver<'a> = dyn FnMut(&[u8]) -> Result<Option<u64>> + 'a;
 /// per commit — the commit-local scratch that keeps literal encoding out
 /// of the per-fact loops.
 pub(crate) struct Selections {
-    /// Indexed by [`StatementId`]; `None` for non-containment statements.
-    checks: Box<[Option<SideChecks>]>,
+    /// Dense by [`ContainmentId`]; every slot is a containment by type.
+    checks: Box<[SideChecks]>,
 }
 
 impl Selections {
@@ -96,32 +97,21 @@ impl Selections {
     /// The shared constructor over an [`InternResolver`].
     fn encode_with(schema: &Schema, resolve: &mut InternResolver<'_>) -> Result<Self> {
         let checks = schema
-            .statements()
+            .containments()
             .iter()
             .map(|statement| {
-                let Some(sides) = &statement.checks else {
-                    return Ok(None);
-                };
-                Ok(Some(SideChecks {
-                    source: resolve_checks(&sides.source, resolve)?,
-                    target: resolve_checks(&sides.target, resolve)?,
-                }))
+                Ok(SideChecks {
+                    source: resolve_checks(&statement.checks.source, resolve)?,
+                    target: resolve_checks(&statement.checks.target, resolve)?,
+                })
             })
             .collect::<Result<Box<[_]>>>()?;
         Ok(Self { checks })
     }
 
-    /// The checks of a containment statement.
-    ///
-    /// # Panics
-    ///
-    /// On a non-containment id — programmer invariant: callers hand ids
-    /// from a relation's `outgoing` index or a key's `dependents` set,
-    /// which the validated schema fills with `Containment` statements only.
-    pub(crate) fn containment(&self, id: StatementId) -> &SideChecks {
-        self.checks[usize::from(id.0)]
-            .as_ref()
-            .expect("validated schema: outgoing ids name Containment statements")
+    /// The checks of a validation-minted containment witness.
+    pub(crate) fn containment(&self, id: ContainmentId) -> &SideChecks {
+        &self.checks[usize::from(id.0)]
     }
 }
 
@@ -187,7 +177,7 @@ pub(super) fn check_source(
                 statement: edge.statement,
                 target_relation: edge.target_relation,
                 target_key: edge.target_key,
-                target_check: &plan.selections.containment(edge.statement).target,
+                target_check: &plan.selections.containment(edge.containment).target,
                 key_bytes: &edge.key_bytes,
                 fact_bytes: op.fact,
                 direction: Direction::SourceUnsatisfied,
@@ -199,14 +189,13 @@ pub(super) fn check_source(
             }
         }
         for membership in &op.memberships {
-            let Resolved::ClosedContainment { members } =
-                &schema.statement(membership.statement).resolved
-            else {
-                unreachable!("plan memberships name ClosedContainment statements")
+            let statement = schema.containment(membership.containment);
+            let Enforcement::Closed { members } = &statement.enforcement else {
+                continue;
             };
             if !crate::schema::closed_member(members, membership.id) {
                 return Err(Error::ContainmentViolation {
-                    statement: membership.statement,
+                    statement: statement.id,
                     direction: Direction::SourceUnsatisfied,
                     fact: op.fact.into(),
                 });
@@ -258,36 +247,31 @@ pub(super) fn check_target(
     // group ‖ source interval ‖ source identity — so several
     // disestablished segments of one (statement, prefix-group) collapse
     // to one coverage walk per source.
-    let mut affected: BTreeSet<Vec<u8>> = BTreeSet::new();
+    let mut affected: BTreeSet<(ContainmentId, Vec<u8>)> = BTreeSet::new();
     for check in &plan.target_checks {
         let guard = &check.guard;
+        let key_statement = schema.key(check.key);
         // The establishing fact of a re-landed guard, fetched at most
         // once per tuple and shared by every ψ-carrying dependent.
         let mut establisher: Option<&[u8]> = None;
         let mut counted = false;
         for dependent in &check.dependents {
-            let sid = dependent.statement;
-            // Closed-target statements have no dependents: their target
-            // never shrinks (axioms don't delete), so no key statement
-            // ever lists them — the dependents map is built from
-            // `Resolved::Containment` alone.
-            debug_assert!(
-                matches!(
-                    &schema.statement(sid).resolved,
-                    Resolved::Containment { .. }
-                ),
-                "no dependent entry names a closed-target statement"
-            );
+            let statement = schema.containment(dependent.containment);
+            let sid = statement.id;
             if dependent.psi_qualified {
                 let fact = if let Some(fact) = establisher {
                     fact
                 } else {
-                    let fact = establishing_fact(data, txn, check.relation, check.key, guard)?;
+                    let fact = establishing_fact(data, txn, schema, check.key, guard)?;
                     establisher = Some(fact);
                     fact
                 };
-                let target_check = &plan.selections.containment(sid).target;
-                if satisfies(target_check, schema.relation(check.relation).layout(), fact) {
+                let target_check = &plan.selections.containment(dependent.containment).target;
+                if satisfies(
+                    target_check,
+                    schema.relation(key_statement.relation).layout(),
+                    fact,
+                ) {
                     continue;
                 }
             }
@@ -330,20 +314,19 @@ pub(super) fn check_target(
                     let ss = &key_bytes[key_bytes.len() - 16..key_bytes.len() - 8];
                     let se = &key_bytes[key_bytes.len() - 8..];
                     if ss < te && ts < se {
-                        affected.insert(k.to_vec());
+                        affected.insert((dependent.containment, k.to_vec()));
                     }
                 }
-            } else if schema
-                .relation(containment_source(schema, sid).relation)
-                .is_closed()
-            {
+            } else if schema.relation(statement.source.relation).is_closed() {
                 // Domain quantification: a constant source writes no `R`
                 // edges — the surviving sources ARE the sealed
                 // extension's φ-rows, scanned directly (≤256 rows, the
                 // delete path). Any axiom projecting to the
                 // disestablished tuple is a stranded source outright
                 // (`docs/architecture/30-dependencies.md`).
-                if let Some(row) = closed_source_survivor(schema, plan, sid, guard) {
+                if let Some(row) =
+                    closed_source_survivor(schema, plan, dependent.containment, guard)
+                {
                     return Err(Error::ContainmentViolation {
                         statement: sid,
                         direction: Direction::TargetRequired,
@@ -373,22 +356,35 @@ pub(super) fn check_target(
     }
     // The deduped walks, each against the final `U` state.
     let mut checker = Checker::new(txn.raw(), data, schema);
-    for r_key in &affected {
-        let (sid, key_bytes, source_rel, source_row) =
-            keys::parse_reverse_key(r_key).expect("affected set holds parsed R keys");
-        let statement = schema.statement(sid);
-        let StatementDescriptor::Containment { target, .. } = &statement.descriptor else {
-            unreachable!("validated schema: dependents name Containment statements")
+    for (containment_id, r_key) in &affected {
+        let Some((sid, key_bytes, source_rel, source_row)) = keys::parse_reverse_key(r_key) else {
+            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                "R key shape",
+            )));
         };
-        let Resolved::Containment { target_key, .. } = &statement.resolved else {
-            unreachable!("validated schema: Containment resolves as Containment")
+        let Some(StatementView::Containment(stored_statement)) = schema.statement_checked(sid)
+        else {
+            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                "R key statement",
+            )));
+        };
+        let statement = schema.containment(*containment_id);
+        if stored_statement.id != statement.id {
+            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                "R key statement",
+            )));
+        }
+        let Enforcement::Probe { target_key, .. } = &statement.enforcement else {
+            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                "R key statement",
+            )));
         };
         let fact_bytes = fact_by_row(data, txn.raw(), source_rel, source_row)?;
         let probe = Probe {
             statement: sid,
-            target_relation: target.relation,
+            target_relation: statement.target.relation,
             target_key: *target_key,
-            target_check: &plan.selections.containment(sid).target,
+            target_check: &plan.selections.containment(*containment_id).target,
             key_bytes,
             fact_bytes,
             direction: Direction::TargetRequired,
@@ -407,33 +403,19 @@ pub(super) fn check_target(
 fn establishing_fact<'t>(
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
     txn: &'t WriteTxn<'_>,
-    relation: RelationId,
-    key: StatementId,
+    schema: &Schema,
+    key: KeyId,
     guard: &[u8],
 ) -> Result<&'t [u8]> {
+    let statement = schema.key(key);
     let mut buf: KeyBuf = [0; MAX_KEY];
-    let u_len = keys::guard_key(&mut buf, relation, key, guard);
+    let u_len = keys::guard_key(&mut buf, statement.relation, statement.id, guard);
     let value = data
         .get(txn.raw(), &buf[..u_len])?
         .ok_or(Error::Corruption(CorruptionError::MalformedValue(
             "re-established U guard",
         )))?;
-    fact_by_row(data, txn.raw(), relation, decode_row_id(value)?)
-}
-
-/// The source side of a containment statement — the target-side
-/// judgment's survivor-authority switch (a constant source has no `R`
-/// edges to probe).
-///
-/// # Panics
-///
-/// On a non-containment id — callers hand ids from a key's `dependents`
-/// set, which the validated schema fills with `Containment` statements.
-fn containment_source(schema: &Schema, sid: StatementId) -> &crate::schema::Side {
-    let StatementDescriptor::Containment { source, .. } = &schema.statement(sid).descriptor else {
-        unreachable!("validated schema: dependents name Containment statements")
-    };
-    source
+    fact_by_row(data, txn.raw(), statement.relation, decode_row_id(value)?)
 }
 
 /// The first sealed source axiom inside φ projecting to the
@@ -444,21 +426,22 @@ fn containment_source(schema: &Schema, sid: StatementId) -> &crate::schema::Side
 fn closed_source_survivor(
     schema: &Schema,
     plan: &CommitPlan<'_>,
-    sid: StatementId,
+    containment_id: ContainmentId,
     guard: &[u8],
 ) -> Option<Box<[u8]>> {
-    let source = containment_source(schema, sid);
-    let Resolved::Containment {
-        key_permutation, ..
-    } = &schema.statement(sid).resolved
-    else {
-        unreachable!("validated schema: dependents name Containment statements")
+    let statement = schema.containment(containment_id);
+    let source = &statement.source;
+    let key_permutation = match &statement.enforcement {
+        Enforcement::Probe {
+            key_permutation, ..
+        } => key_permutation,
+        Enforcement::Closed { .. } => return None,
     };
     let relation = schema.relation(source.relation);
     let layout = relation.layout();
-    let phi = &plan.selections.containment(sid).source;
+    let phi = &plan.selections.containment(containment_id).source;
     let mut derived = Vec::with_capacity(guard.len());
-    for row in relation.extension().expect("caller checked closedness") {
+    for row in relation.extension()? {
         if !satisfies(phi, layout, &row.fact) {
             continue;
         }
@@ -486,7 +469,7 @@ pub(crate) struct Probe<'a> {
     pub(crate) statement: StatementId,
     pub(crate) target_relation: RelationId,
     /// The `Functionality` statement whose `U` guard is probed.
-    pub(crate) target_key: StatementId,
+    pub(crate) target_key: KeyId,
     pub(crate) target_check: &'a SelectionCheck,
     /// The source fact's projection, already in target guard order.
     pub(crate) key_bytes: &'a [u8],
@@ -539,10 +522,11 @@ impl<'a> Checker<'a> {
     /// is the violation; a hit with a nonempty target selection
     /// additionally checks the found fact against σ (one `F` get).
     pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
+        let target_key = self.schema.key(probe.target_key);
         let u_len = keys::guard_key(
             &mut self.key,
             probe.target_relation,
-            probe.target_key,
+            target_key.id,
             probe.key_bytes,
         );
         let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
@@ -570,6 +554,7 @@ impl<'a> Checker<'a> {
     /// is the shared segment sweep ([`crate::interval::sweep`]), driven
     /// through [`GapAt`].
     pub(crate) fn check_coverage(&mut self, probe: &Probe<'_>) -> Result<()> {
+        let target_key = self.schema.key(probe.target_key);
         // The scratch holds the full guard key
         // `U | rel | stmt | prefix | s | e` (the acceptance gate puts the
         // interval last, so its 16 bytes are the tail). Only slices of it
@@ -578,7 +563,7 @@ impl<'a> Checker<'a> {
         let full_len = keys::guard_key(
             &mut self.key,
             probe.target_relation,
-            probe.target_key,
+            target_key.id,
             probe.key_bytes,
         );
         let group_len = full_len - 16;

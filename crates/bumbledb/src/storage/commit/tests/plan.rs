@@ -12,8 +12,8 @@
 
 use crate::encoding::{encode_interval_u64, encode_u64, ValueRef};
 use crate::schema::{
-    FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementDescriptor,
-    StatementId, ValueType,
+    ContainmentId, FieldId, KeyId, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
+    StatementDescriptor, StatementId, ValueType,
 };
 use crate::storage::commit::plan::{CommitPlan, EdgeOp, FactOp, GuardOp};
 use crate::storage::delta::WriteDelta;
@@ -47,6 +47,14 @@ const STAY_ROOM: StatementId = StatementId(8);
 const TOTALITY: StatementId = StatementId(9);
 const ARM: StatementId = StatementId(10);
 const LINK_COMBO: StatementId = StatementId(11);
+
+const fn key_id(statement: StatementId) -> KeyId {
+    KeyId(statement.0)
+}
+
+const fn containment_id(statement: StatementId) -> ContainmentId {
+    ContainmentId(statement.0 - 5)
+}
 
 /// Account(id, active, note; key id) with three dependents — Transfer <=
 /// Account(id | active == true) (ψ-carrying), Grant <= Account(id) and
@@ -272,10 +280,11 @@ fn assert_edge(
     statement: StatementId,
     key_bytes: &[u8],
     target_relation: RelationId,
-    target_key: StatementId,
+    target_key: KeyId,
     coverage: bool,
 ) {
     assert_eq!(edge.statement, statement);
+    assert_eq!(edge.containment, containment_id(statement));
     assert_eq!(&*edge.key_bytes, key_bytes, "permuted key bytes");
     assert_eq!(edge.target_relation, target_relation);
     assert_eq!(edge.target_key, target_key);
@@ -345,7 +354,7 @@ fn source_selection_gates_the_edges() {
         REPORT_ACCOUNT,
         &encode_u64(5),
         ACCOUNT,
-        ACCOUNT_KEY,
+        key_id(ACCOUNT_KEY),
         false,
     );
     // Outside σ: no edge, so no R put and no source probe — by absence.
@@ -371,11 +380,18 @@ fn pair_statements_edge_their_own_directions() {
     let [edge] = &*op_for(&plan.inserts, PARENT, &p).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, TOTALITY, &encode_u64(4), CHILD, CHILD_KEY, false);
+    assert_edge(
+        edge,
+        TOTALITY,
+        &encode_u64(4),
+        CHILD,
+        key_id(CHILD_KEY),
+        false,
+    );
     let [edge] = &*op_for(&plan.inserts, CHILD, &c).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, ARM, &encode_u64(4), PARENT, PARENT_KEY, false);
+    assert_edge(edge, ARM, &encode_u64(4), PARENT, key_id(PARENT_KEY), false);
 }
 
 #[test]
@@ -396,7 +412,7 @@ fn edge_key_bytes_land_in_target_key_order() {
     let [edge] = &*op_for(&plan.inserts, LINK, &l).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, LINK_COMBO, &expected, COMBO, COMBO_KEY, false);
+    assert_edge(edge, LINK_COMBO, &expected, COMBO, key_id(COMBO_KEY), false);
 }
 
 #[test]
@@ -414,7 +430,7 @@ fn interval_edges_are_marked_for_the_coverage_walk() {
     let [edge] = &*op_for(&plan.inserts, STAY, &s).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, STAY_ROOM, &expected, ROOM, ROOM_KEY, true);
+    assert_edge(edge, STAY_ROOM, &expected, ROOM, key_id(ROOM_KEY), true);
 }
 
 #[test]
@@ -439,7 +455,7 @@ fn delete_ops_carry_the_byte_symmetric_edges() {
         REPORT_ACCOUNT,
         &encode_u64(5),
         ACCOUNT,
-        ACCOUNT_KEY,
+        key_id(ACCOUNT_KEY),
         false,
     );
     // Report has no keys, so nothing was disestablished.
@@ -461,15 +477,21 @@ fn disestablished_tuple_expands_per_dependent_statement() {
     let [check] = &*plan.target_checks else {
         panic!("one disestablished tuple");
     };
-    assert_eq!(check.key, ACCOUNT_KEY);
-    assert_eq!(check.relation, ACCOUNT);
+    assert_eq!(check.key, key_id(ACCOUNT_KEY));
+    assert_eq!(schema.key(check.key).relation, ACCOUNT);
     assert_eq!(&*check.guard, encode_u64(9).as_slice());
     // Not re-established: every dependent checks unconditionally, in
     // materialized order.
     let statements: Vec<_> = check
         .dependents
         .iter()
-        .map(|d| (d.statement, d.coverage, d.psi_qualified))
+        .map(|d| {
+            (
+                schema.containment(d.containment).id,
+                d.coverage,
+                d.psi_qualified,
+            )
+        })
         .collect();
     assert_eq!(
         statements,
@@ -499,12 +521,15 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
     let [check] = &*plan.target_checks else {
         panic!("one disestablished tuple");
     };
-    assert_eq!(check.key, ACCOUNT_KEY);
+    assert_eq!(check.key, key_id(ACCOUNT_KEY));
     assert_eq!(&*check.guard, encode_u64(9).as_slice());
     let [dependent] = &*check.dependents else {
         panic!("only the ψ-carrying dependent survives");
     };
-    assert_eq!(dependent.statement, TRANSFER_ACCOUNT);
+    assert_eq!(
+        schema.containment(dependent.containment).id,
+        TRANSFER_ACCOUNT
+    );
     assert!(dependent.psi_qualified);
 }
 
@@ -521,8 +546,8 @@ fn pointwise_tuple_keeps_its_interval_tail_and_coverage_marker() {
     let [check] = &*plan.target_checks else {
         panic!("one disestablished tuple");
     };
-    assert_eq!(check.key, ROOM_KEY);
-    assert_eq!(check.relation, ROOM);
+    assert_eq!(check.key, key_id(ROOM_KEY));
+    assert_eq!(schema.key(check.key).relation, ROOM);
     let mut guard = Vec::new();
     guard.extend_from_slice(&encode_u64(3));
     guard.extend_from_slice(&encode_interval_u64(10, 20));
@@ -530,7 +555,7 @@ fn pointwise_tuple_keeps_its_interval_tail_and_coverage_marker() {
     let [dependent] = &*check.dependents else {
         panic!("one dependent");
     };
-    assert_eq!(dependent.statement, STAY_ROOM);
+    assert_eq!(schema.containment(dependent.containment).id, STAY_ROOM);
     assert!(dependent.coverage);
     assert!(!dependent.psi_qualified);
 }

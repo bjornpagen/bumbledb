@@ -86,6 +86,11 @@ facts, never interned, so the key hash carries no type tag: forward
   their σ, so the arm-validity and totality directions of a `==` each get exactly
   the edges they need. Bidirectional statements are two statement ids, symmetric
   entries.
+- The `statement` component of every `U` and `R` key is always the
+  fingerprint-pinned `StatementId`. Validation-minted `KeyId` and
+  `ContainmentId` witnesses exist only in the sealed in-memory schema and never
+  enter storage bytes; the commit plan derives the persisted id from the typed
+  statement at the key-construction boundary.
 - Key-component widths: `relation_id` u32, `field_id` u16, statement id u16, `row_id`
   u64 — all big-endian; ids assigned by declaration/materialized order and pinned by
   the fingerprint.
@@ -143,6 +148,13 @@ query machinery to the write path. **Nothing touches an LMDB data page until com
 **Commit applies the delta in one canonical order** — this is what makes dependency
 enforcement commit-time final-state judgment (`30-dependencies.md`) with plain eager
 mechanics:
+
+The derivation and judgment phases consume validation's witnesses directly:
+relation key walks resolve `KeyId` to key projection and pointwise flag, while
+outgoing and dependent walks resolve `ContainmentId` to sides, compiled checks, and
+the enforcement sum. Persisted keys and typed errors still take each witness's
+embedded `StatementId`; no commit path reconstructs or asserts descriptor/enforcement
+variant agreement.
 
 1. **Deletes**: per deleted fact — `M` get → row_id → delete `F`, `M`, its `U` entries
    (guard keys re-derived by slicing projected fields out of `fact_bytes` — never a

@@ -295,7 +295,7 @@ fn deleting_a_containment_targeted_key_records_its_guard() {
     let [check] = &*plan.target_checks else {
         panic!("one disestablished tuple");
     };
-    assert_eq!(check.key, TARGET_KEY);
+    assert_eq!(check.key, crate::schema::KeyId(0));
     assert_eq!(&*check.guard, encode_u64(5).as_slice());
 }
 

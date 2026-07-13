@@ -1,7 +1,9 @@
 use super::*;
 use crate::encoding::{encode_fact, encode_u64, ValueRef};
 use crate::error::Error;
-use crate::schema::{FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType};
+use crate::schema::{
+    FieldDescriptor, Generation, KeyId, RelationDescriptor, SchemaDescriptor, ValueType,
+};
 use crate::storage::env::Environment;
 use crate::storage::keys;
 use crate::testutil::TempDir;
@@ -288,8 +290,8 @@ fn dirty_fresh_marks_are_exactly_the_advanced_sequences() {
 
 #[test]
 fn guard_map_mirrors_the_fact_dispositions() {
-    // The fresh auto-key on `id` is StatementId(0) (materialized first).
-    const KEY: StatementId = StatementId(0);
+    // The fresh auto-key on `id` is the first typed key witness.
+    const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-guard-map");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -333,7 +335,7 @@ fn guard_map_mirrors_the_fact_dispositions() {
 fn deleting_the_old_fact_never_erases_the_new_facts_guard_record() {
     // `delete(old); insert(new)` is blessed in either order — a point
     // read of the shared key tuple must see `new` whichever ran last.
-    const KEY: StatementId = StatementId(0);
+    const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-guard-order");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");

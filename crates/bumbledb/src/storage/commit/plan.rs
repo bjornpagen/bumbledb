@@ -19,7 +19,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::schema::{RelationId, Resolved, Schema, StatementDescriptor, StatementId};
+use crate::schema::{ContainmentId, Enforcement, KeyId, RelationId, Schema, StatementId};
 use crate::storage::delta::WriteDelta;
 use crate::storage::keys;
 
@@ -77,8 +77,9 @@ pub(crate) struct GuardOp {
 /// whole input. The id is the referencing field's decoded word — already
 /// in hand during the derivation, never re-sliced at judgment.
 pub(crate) struct MembershipOp {
-    /// The `Containment` statement (resolved [`Resolved::ClosedContainment`]).
-    pub(crate) statement: StatementId,
+    /// The validation-minted containment witness; the fingerprint identity
+    /// is derived only when constructing an error.
+    pub(crate) containment: ContainmentId,
     /// The referencing field's word — a row id into the target's sealed
     /// extension when the fact is legal; out of range is simply a miss.
     pub(crate) id: u64,
@@ -87,6 +88,8 @@ pub(crate) struct MembershipOp {
 /// One containment edge of one fact: the `R` key material and, on the
 /// insert side, the source-probe input.
 pub(crate) struct EdgeOp {
+    /// The typed containment used for sealed selections and enforcement.
+    pub(crate) containment: ContainmentId,
     /// The `Containment` statement.
     pub(crate) statement: StatementId,
     /// The source projection laid down in the target key's guard order
@@ -95,7 +98,7 @@ pub(crate) struct EdgeOp {
     pub(crate) key_bytes: Box<[u8]>,
     pub(crate) target_relation: RelationId,
     /// The `Functionality` statement whose `U` guard the source probes.
-    pub(crate) target_key: StatementId,
+    pub(crate) target_key: KeyId,
     /// Interval-position statement: the source probe is the coverage
     /// walk, not the scalar get.
     pub(crate) coverage: bool,
@@ -105,9 +108,7 @@ pub(crate) struct EdgeOp {
 /// re-check it (`deleted − inserted`, per statement).
 pub(crate) struct GuardCheck {
     /// The key (`Functionality`) statement whose tuple left.
-    pub(crate) key: StatementId,
-    /// The relation that statement guards (the ψ establisher lookup).
-    pub(crate) relation: RelationId,
+    pub(crate) key: KeyId,
     /// The tuple's guard bytes (interval keys carry the 16-byte tail).
     pub(crate) guard: Box<[u8]>,
     /// The dependent containments still owed a check, in materialized
@@ -118,8 +119,8 @@ pub(crate) struct GuardCheck {
 
 /// One dependent statement's entry in a [`GuardCheck`].
 pub(crate) struct DependentCheck {
-    /// The `Containment` statement.
-    pub(crate) statement: StatementId,
+    /// The validation-minted containment witness.
+    pub(crate) containment: ContainmentId,
     /// Interval-position statement: survivors re-run the coverage walk.
     pub(crate) coverage: bool,
     /// The tuple's exact bytes re-land in phase 2 and this dependent
@@ -141,8 +142,8 @@ pub(crate) fn plan_commit<'d>(
 ) -> CommitPlan<'d> {
     // Guard tuples of key statements some containment depends on — the
     // inputs of the target-side check set (`deleted − inserted`).
-    let mut deleted_guards: BTreeSet<(StatementId, Box<[u8]>)> = BTreeSet::new();
-    let mut inserted_guards: BTreeSet<(StatementId, Box<[u8]>)> = BTreeSet::new();
+    let mut deleted_guards: BTreeSet<(KeyId, Box<[u8]>)> = BTreeSet::new();
+    let mut inserted_guards: BTreeSet<(KeyId, Box<[u8]>)> = BTreeSet::new();
     let mut scratch = Vec::new();
     let deletes = delta
         .deletes()
@@ -188,7 +189,7 @@ fn fact_op<'d>(
     selections: &Selections,
     rel: RelationId,
     fact: &'d [u8],
-    dependent_guards: &mut BTreeSet<(StatementId, Box<[u8]>)>,
+    dependent_guards: &mut BTreeSet<(KeyId, Box<[u8]>)>,
     scratch: &mut Vec<u8>,
 ) -> FactOp<'d> {
     // Every F/M/U/R key byte originates from this derivation — the
@@ -199,23 +200,20 @@ fn fact_op<'d>(
     let guards = relation
         .keys()
         .iter()
-        .map(|&sid| {
-            let statement = schema.statement(sid);
-            let Resolved::Functionality { pointwise } = &statement.resolved else {
-                unreachable!("validated schema: relation keys resolve as Functionality")
-            };
+        .map(|&key_id| {
+            let statement = schema.key(key_id);
             // Guard keys derived by slicing projected fields out of
             // fact_bytes — never a scan; interval fields slice as their
             // whole 16 bytes.
-            keys::guard_bytes(layout, statement.key_projection(), fact, scratch);
+            keys::guard_bytes(layout, &statement.projection, fact, scratch);
             let guard: Box<[u8]> = scratch.as_slice().into();
-            if !schema.dependents(sid).is_empty() {
-                dependent_guards.insert((sid, guard.clone()));
+            if !schema.dependents(key_id).is_empty() {
+                dependent_guards.insert((key_id, guard.clone()));
             }
             GuardOp {
-                statement: sid,
+                statement: statement.id,
                 guard,
-                pointwise: *pointwise,
+                pointwise: statement.pointwise,
             }
         })
         .collect();
@@ -229,45 +227,43 @@ fn fact_op<'d>(
     // its entire enforcement plan.
     let mut edges = Vec::new();
     let mut memberships = Vec::new();
-    for &sid in relation.outgoing() {
-        let statement = schema.statement(sid);
-        let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
-            unreachable!("validated schema: outgoing ids name Containment statements")
-        };
-        if !satisfies(&selections.containment(sid).source, layout, fact) {
+    for &containment_id in relation.outgoing() {
+        let statement = schema.containment(containment_id);
+        if !satisfies(&selections.containment(containment_id).source, layout, fact) {
             continue;
         }
-        match &statement.resolved {
-            Resolved::Containment {
+        match &statement.enforcement {
+            Enforcement::Probe {
                 target_key,
                 key_permutation,
                 coverage,
             } => {
                 keys::permuted_guard_bytes(
                     layout,
-                    &source.projection,
+                    &statement.source.projection,
                     key_permutation,
                     fact,
                     scratch,
                 );
                 edges.push(EdgeOp {
-                    statement: sid,
+                    containment: containment_id,
+                    statement: statement.id,
                     key_bytes: scratch.as_slice().into(),
-                    target_relation: target.relation,
+                    target_relation: statement.target.relation,
                     target_key: *target_key,
                     coverage: *coverage,
                 });
             }
-            Resolved::ClosedContainment { .. } => {
-                let word =
-                    crate::encoding::field_bytes(fact, layout, usize::from(source.projection[0].0));
+            Enforcement::Closed { .. } => {
+                let word = crate::encoding::field_bytes(
+                    fact,
+                    layout,
+                    usize::from(statement.source.projection[0].0),
+                );
                 memberships.push(MembershipOp {
-                    statement: sid,
+                    containment: containment_id,
                     id: u64::from_be_bytes(word.try_into().expect("u64 field is 8 bytes")),
                 });
-            }
-            Resolved::Functionality { .. } => {
-                unreachable!("validated schema: outgoing ids resolve as containments")
             }
         }
     }
@@ -291,8 +287,8 @@ fn fact_op<'d>(
 fn target_checks(
     schema: &Schema,
     selections: &Selections,
-    deleted_guards: BTreeSet<(StatementId, Box<[u8]>)>,
-    inserted_guards: &BTreeSet<(StatementId, Box<[u8]>)>,
+    deleted_guards: BTreeSet<(KeyId, Box<[u8]>)>,
+    inserted_guards: &BTreeSet<(KeyId, Box<[u8]>)>,
 ) -> Box<[GuardCheck]> {
     deleted_guards
         .into_iter()
@@ -302,13 +298,14 @@ fn target_checks(
             let dependents: Box<[DependentCheck]> = schema
                 .dependents(key)
                 .iter()
-                .filter_map(|&sid| {
-                    let Resolved::Containment { coverage, .. } = &schema.statement(sid).resolved
-                    else {
-                        unreachable!("validated schema: dependents name Containment statements")
+                .filter_map(|&containment_id| {
+                    let statement = schema.containment(containment_id);
+                    let coverage = match &statement.enforcement {
+                        Enforcement::Probe { coverage, .. } => *coverage,
+                        Enforcement::Closed { .. } => return None,
                     };
                     let psi_qualified = if reestablished {
-                        match &selections.containment(sid).target {
+                        match &selections.containment(containment_id).target {
                             SelectionCheck::Empty => return None,
                             SelectionCheck::Never => false,
                             SelectionCheck::Compare(_) => true,
@@ -317,8 +314,8 @@ fn target_checks(
                         false
                     };
                     Some(DependentCheck {
-                        statement: sid,
-                        coverage: *coverage,
+                        containment: containment_id,
+                        coverage,
                         psi_qualified,
                     })
                 })
@@ -328,19 +325,9 @@ fn target_checks(
             }
             Some(GuardCheck {
                 key,
-                relation: key_relation(schema, key),
                 guard,
                 dependents,
             })
         })
         .collect()
-}
-
-/// The relation a key (`Functionality`) statement guards.
-fn key_relation(schema: &Schema, key: StatementId) -> RelationId {
-    let StatementDescriptor::Functionality { relation, .. } = &schema.statement(key).descriptor
-    else {
-        unreachable!("validated schema: guard-set ids name Functionality statements")
-    };
-    *relation
 }

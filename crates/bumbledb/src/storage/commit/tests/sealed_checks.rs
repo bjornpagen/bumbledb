@@ -7,8 +7,8 @@
 use crate::encoding::ValueRef;
 use crate::error::{Direction, Error, Result};
 use crate::schema::{
-    CompiledCheck, FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    StatementDescriptor, StatementId, ValueType,
+    CompiledCheck, ContainmentId, FieldId, KeyId, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
 };
 use crate::storage::commit::judgment::{SelectionCheck, Selections};
 use crate::storage::delta::WriteDelta;
@@ -26,6 +26,8 @@ const REPORT: RelationId = RelationId(2);
 const ACCOUNT_KEY: StatementId = StatementId(0);
 const TRANSFER_ACCOUNT: StatementId = StatementId(1);
 const REPORT_ACCOUNT: StatementId = StatementId(2);
+const TRANSFER_ACCOUNT_ID: ContainmentId = ContainmentId(0);
+const REPORT_ACCOUNT_ID: ContainmentId = ContainmentId(1);
 
 /// Account(id; key id) — Transfer(account | flagged == true) <=
 /// Account(id) carries a sealable bool σ; Report(account | note ==
@@ -97,11 +99,7 @@ fn transfer(schema: &Schema, account: u64, flagged: bool) -> Vec<u8> {
 #[test]
 fn sigma_literals_seal_at_validate() {
     let schema = schema();
-    let bool_sigma = schema
-        .statement(TRANSFER_ACCOUNT)
-        .checks
-        .as_ref()
-        .expect("containment");
+    let bool_sigma = &schema.containment(TRANSFER_ACCOUNT_ID).checks;
     assert_eq!(
         bool_sigma.source.as_ref(),
         &[CompiledCheck::Encoded {
@@ -110,11 +108,7 @@ fn sigma_literals_seal_at_validate() {
         }]
     );
     assert!(bool_sigma.target.is_empty());
-    let str_sigma = schema
-        .statement(REPORT_ACCOUNT)
-        .checks
-        .as_ref()
-        .expect("containment");
+    let str_sigma = &schema.containment(REPORT_ACCOUNT_ID).checks;
     assert_eq!(
         str_sigma.source.as_ref(),
         &[CompiledCheck::Interned {
@@ -122,7 +116,7 @@ fn sigma_literals_seal_at_validate() {
             text: "urgent".into(),
         }]
     );
-    assert!(schema.statement(ACCOUNT_KEY).checks.is_none());
+    assert_eq!(schema.key(KeyId(0)).id, ACCOUNT_KEY);
 }
 
 /// The `Interned`-miss path still yields `Never`: with "urgent" never
@@ -137,15 +131,15 @@ fn an_uninterned_sigma_literal_resolves_to_never() {
     let delta = WriteDelta::new(&schema);
     let selections = Selections::encode(&delta, &view).expect("encode");
     assert!(matches!(
-        selections.containment(REPORT_ACCOUNT).source,
+        selections.containment(REPORT_ACCOUNT_ID).source,
         SelectionCheck::Never
     ));
     assert!(matches!(
-        selections.containment(TRANSFER_ACCOUNT).source,
+        selections.containment(TRANSFER_ACCOUNT_ID).source,
         SelectionCheck::Compare(_)
     ));
     assert!(matches!(
-        selections.containment(TRANSFER_ACCOUNT).target,
+        selections.containment(TRANSFER_ACCOUNT_ID).target,
         SelectionCheck::Empty
     ));
 }

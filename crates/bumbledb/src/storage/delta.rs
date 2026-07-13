@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 
 use crate::arena::{Arena, ArenaSlice};
-use crate::schema::{FieldId, RelationId, Schema, StatementId};
+use crate::schema::{FieldId, KeyId, RelationId, Schema};
 
 mod accessors;
 mod alloc;
@@ -98,12 +98,12 @@ pub struct WriteDelta<'s> {
     /// (`docs/architecture/50-storage.md` § `WriteTx` point reads). Guard
     /// bytes are derived by the one shared slicer
     /// ([`crate::storage::keys::guard_bytes`]), exactly as commit derives
-    /// them. No relation id in the key: statement ids are schema-global
-    /// and a `Functionality` statement determines its relation. Nested so
+    /// them. No relation id in the key: the validation-minted key witness
+    /// determines its relation. Nested so
     /// the probe borrows: `guard_overlay` looks guard bytes up as
     /// `&[u8]`, never boxing a key copy (the typed point read is
     /// host-allocation-free — PRD 22's gate).
-    guards: BTreeMap<StatementId, BTreeMap<Box<[u8]>, GuardDisposition>>,
+    guards: BTreeMap<KeyId, BTreeMap<Box<[u8]>, GuardDisposition>>,
     /// Scratch for guard derivation, reused across `insert`/`delete` calls
     /// (the write path may allocate, but not per key statement per fact).
     guard_scratch: Vec<u8>,

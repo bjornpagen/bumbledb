@@ -1,5 +1,5 @@
 use crate::arena::ArenaSlice;
-use crate::schema::{RelationId, StatementId};
+use crate::schema::{KeyId, RelationId};
 use crate::storage::keys;
 
 use super::{GuardDisposition, GuardOverlay, WriteDelta};
@@ -23,14 +23,15 @@ impl WriteDelta<'_> {
         establishes: Option<ArenaSlice>,
     ) {
         let relation = self.schema.relation(rel);
-        for &statement in relation.keys() {
+        for &key_id in relation.keys() {
+            let statement = self.schema.key(key_id);
             keys::guard_bytes(
                 relation.layout(),
-                self.schema.key_projection(statement),
+                &statement.projection,
                 fact_bytes,
                 &mut self.guard_scratch,
             );
-            let per_key = self.guards.entry(statement).or_default();
+            let per_key = self.guards.entry(key_id).or_default();
             let disposition = if let Some(slice) = establishes {
                 GuardDisposition::Present(slice)
             } else {
@@ -62,7 +63,7 @@ impl WriteDelta<'_> {
     /// nested map, so a typed point read touches no allocator (the
     /// borrowed-struct gate pins this).
     #[must_use]
-    pub fn guard_overlay(&self, key: StatementId, guard: &[u8]) -> Option<GuardOverlay<'_>> {
+    pub fn guard_overlay(&self, key: KeyId, guard: &[u8]) -> Option<GuardOverlay<'_>> {
         self.guards
             .get(&key)?
             .get(guard)

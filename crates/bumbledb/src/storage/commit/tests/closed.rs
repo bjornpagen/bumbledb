@@ -8,8 +8,8 @@
 use crate::encoding::ValueRef;
 use crate::error::{Direction, Error, Result};
 use crate::schema::{
-    FieldId, RelationDescriptor, RelationId, Row, Schema, SchemaDescriptor, StatementDescriptor,
-    StatementId, ValueType,
+    ContainmentId, Enforcement, FieldId, KeyId, RelationDescriptor, RelationId, Row, Schema,
+    SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
 };
 use crate::storage::env::Environment;
 use crate::storage::keys;
@@ -311,10 +311,10 @@ fn replacing_a_handler_in_one_commit_commits() {
 #[test]
 fn the_domain_statement_resolved_the_handler_key() {
     let schema = schema();
-    let crate::schema::Resolved::Containment { target_key, .. } =
-        &schema.statement(SEVERITY_HANDLED).resolved
+    let Enforcement::Probe { target_key, .. } = &schema.containment(ContainmentId(2)).enforcement
     else {
         panic!("domain quantification resolves against the ordinary target key");
     };
-    assert_eq!(*target_key, HANDLER_KEY);
+    assert_eq!(*target_key, KeyId(1));
+    assert_eq!(schema.key(*target_key).id, HANDLER_KEY);
 }
