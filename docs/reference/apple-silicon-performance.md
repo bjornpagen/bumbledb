@@ -1,5 +1,12 @@
 # Apple Silicon Performance Characteristics — Research Notes
 
+> **Staleness ruling (2026-07-13, PRD 09 of the crucible campaign):** this document
+> predates the 2026-07 repository reset. Its chapter citations (`30-execution.md`,
+> `40-storage.md`, and any other pre-reset numbering) refer to the pre-reset tree at
+> `1b65ae8^`, not the current `docs/architecture/` chapters. Reference documents are
+> records of what was true when written and are not silently renumbered; current
+> measurement doctrine lives in the architecture chapters.
+
 Reference research document (owner: Bjorn Pagen). This is the hardware model behind the
 performance decisions in `docs/architecture/00-product.md` and `30-execution.md`.
 
