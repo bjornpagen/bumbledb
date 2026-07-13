@@ -75,6 +75,14 @@
 // block states "this region fails as a unit" without a fake function
 // call.
 #![feature(try_blocks)]
+// Nightly dividend (docs/prd-crucible/03-portable-simd.md): the
+// predicate-scan, dense-fold, and index-gather kernels are `std::simd`
+// bodies on every target — measured at or above the retired hand-NEON
+// twins, deleting the intrinsic dual and most of the kernel layer's
+// `unsafe`, and Miri-interpretable for the UB lane (PRD 15). The Allen
+// configuration kernel alone stays intrinsic per that PRD's measured
+// verdict matrix.
+#![feature(portable_simd)]
 
 // 64-bit only (docs/architecture/00-product.md): `usize` is 8 bytes everywhere
 // and no design decision accommodates narrower platforms. Building for a

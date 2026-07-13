@@ -568,7 +568,7 @@ extra line per miss, and on L2-hot always-hit paths the 2.5× instruction bill
 is retire-bound loss. The bucket-of-8 SWAR group walk is
 the shipped shape. **No indirect
 dispatch exists in the hot path**: sinks, counters, and kernels are monomorphized
-generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) is confined to the
+generics, never `dyn`. Explicit SIMD (128-bit = 2×u64) is confined to the
 sanctioned kernel shapes:
 fixed-width predicate scans (interval membership included — two-word
 compares over the start/end column pair, no new width), **the
@@ -583,15 +583,34 @@ on the release disassembly), survivor compaction,
 fold/accumulate kernels (Sum/Min/Max/Count over batch columns, strided or
 gathered — Sum semantics unchanged: i128 accumulation, one range check at
 finalization), gather kernels (position-indexed column reads), and
-software-prefetch passes (`prfm`) between probe phase 1 and phase 2. Fold kernels
+software-prefetch passes (`prfm`) between probe phase 1 and phase 2.
+
+**The portable/intrinsic split is measured, not stylistic**
+(docs/prd-crucible/03-portable-simd.md's verdict matrix is the record):
+the predicate scans, dense folds, and index gathers are `std::simd`
+bodies compiled on every target — each measured at or above its retired
+hand-NEON twin on the reference host (filters 1.03–1.5× faster, folds
+and gathered sums at parity, gathered min/max ~1.1×), deleting the
+intrinsic dual and most of the kernel layer's `unsafe`, and
+Miri-interpretable. The Allen configuration kernel alone keeps hand
+NEON intrinsics: its 64-byte `tbl4` signature table has no `std::simd`
+primitive (the 4×`swizzle_dyn` emulation measured +8% instructions per
+pair), and the flag-free asm gates forbid the bounds-check `cmp` that
+safe portable code would reintroduce. The scalar SWAR group walk and
+the scalar cursor-write compaction stay scalar — they are already
+portable, GPR-resident, and `std::simd` offers no compress primitive.
+
+Fold kernels
 follow the **port-topology law** (measured): every flag-writing scalar op
 (`adds/adcs/cmp/csel`) is confined to 3 of the reference core's 6 integer ALUs, so
 exact scalar summation caps at ~2.8 flag-µops/cycle while NEON escapes the triad
 and rides the 3×16 B load ports — dense exact sums measured 8.8 vs 4.0–4.6 rows/ns
-at L1 (carry-counted u128 via `vcgtq_u64`), min/max 2.65× at every tier, with DRAM
+at L1 (carry-counted u128 compare lanes), min/max 2.65× at every tier, with DRAM
 converging all parallel kernels (~7.5 rows/ns single-core). Dense (stride-1) folds
-therefore take NEON unconditionally; strided and gathered folds stay scalar until
-measured (latency×MLP-bound — a different law). Deep-OoO scalar remains the shape
+therefore take the lane form unconditionally; strided folds stay scalar until
+measured (latency×MLP-bound — a different law), and the index gathers took the
+portable lane form when it measured at or above the scalar-unrolled bodies
+(PRD 03's matrix). Deep-OoO scalar remains the shape
 for irregular control flow —
 the law is about reductions, not loops in general (`00-product.md` machine
 model; unsafe policy there too). Columns are 128-byte-aligned SoA

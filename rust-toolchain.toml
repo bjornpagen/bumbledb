@@ -14,6 +14,12 @@
 # carries the refusal ledger):
 #   - try_blocks (crates/bumbledb): kills the immediately-invoked-closure
 #     error idiom — a fallible region is a block, not a fake call.
+#   - portable_simd (crates/bumbledb): the predicate-scan, dense-fold,
+#     and index-gather kernels are one `std::simd` body per shape on
+#     every target — measured at or above the retired hand-NEON twins,
+#     deleting the intrinsic dual and most of the kernel layer's
+#     `unsafe`; the Allen configuration kernel alone stays intrinsic per
+#     docs/prd-crucible/03-portable-simd.md's measured verdict matrix.
 [toolchain]
 channel = "nightly-2026-07-12"
 components = ["miri", "llvm-tools", "rustfmt", "clippy", "rust-src"]
