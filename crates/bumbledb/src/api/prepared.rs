@@ -197,18 +197,10 @@ pub struct PreparedQuery<'s, S> {
     /// Per head position: the result type (identical across rules — the
     /// head's positional alignment pins it at validation).
     column_types: Vec<ValueType>,
-    /// Dense per-param expected shapes (validation rejects id gaps). A
-    /// set param's entry carries its **element** type.
-    param_types: Vec<ParamShape>,
-    /// Dense per-param set-ness (`Term::ParamSet` anchors — a `ParamId`
-    /// is scalar or set, never both; validation enforced it).
-    param_is_set: Vec<bool>,
-    /// Dense per-param point-ness: element-typed at an interval position
-    /// (membership binding or `Contains` operand), so the bound value is
-    /// a point and the domain ceiling is rejected — points are
-    /// `MIN ..= MAX−1`; `MAX` is the ray's ∞ (the point-domain law,
-    /// `docs/architecture/10-data-model.md`).
-    param_is_point: Vec<bool>,
+    /// Dense per-param bind contracts (validation rejects id gaps): one
+    /// sum carries scalar/set/mask shape, element type, and point-domain
+    /// status without parallel flags.
+    params: Vec<ParamSpec>,
     /// Bind-time resolved constants, reused across executions — pooled
     /// storage: a set param's slot holds a [`Const::WordSet`] whose `Vec`
     /// is rebound in place (sorted, deduplicated words; capacity
@@ -369,14 +361,18 @@ impl PreparedRule {
 /// [`PreparedQuery`]'s phantom payload: `!Sync` scratch pinned to `S`.
 type PreparedMarker<S> = (std::cell::Cell<()>, fn() -> S);
 
-/// What one param slot expects at bind: a data-model value of a type, or
-/// an Allen mask (`Allen` mask positions — a mask is not a data-model
-/// type, so it is not a [`ValueType`]; making the slot a two-variant sum
-/// keeps the untyped placeholder unrepresentable).
+/// One param slot's complete bind-time contract — dense by `ParamId`,
+/// sealed at prepare from validation's recording.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ParamShape {
-    Value(ValueType),
-    AllenMask,
+enum ParamSpec {
+    /// A scalar slot. `point` marks an element-typed interval position,
+    /// whose domain ceiling is not a point.
+    Scalar { ty: ValueType, point: bool },
+    /// A set slot. `elem` is the element type, and `point` applies to
+    /// each element.
+    Set { elem: ValueType, point: bool },
+    /// An Allen mask: neither a data-model value nor a set/point.
+    Mask,
 }
 
 /// How many (generation, resolved residual filters) bindings each

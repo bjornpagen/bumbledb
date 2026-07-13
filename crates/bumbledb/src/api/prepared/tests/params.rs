@@ -259,6 +259,11 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
         prepared.execute(&txn, &cache, &[BindValue::U64(7)], &mut out),
         Err(Error::AllenMaskParamExpected { param }) if param.0 == 0
     ));
+    let mask_set = [Value::AllenMask(AllenMask::BEFORE)];
+    assert!(matches!(
+        prepared.execute_collect_args(&txn, &cache, &[ParamArg::Set(&mask_set)]),
+        Err(Error::ParamScalarExpected { param }) if param.0 == 0
+    ));
 }
 
 /// A cross-atom `Allen` with a param mask rides the executor's mask

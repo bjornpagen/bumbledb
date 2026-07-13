@@ -377,7 +377,9 @@ proposition the commit checks in one integer compare.
   owned — IR literals are long-lived query data), **param sets as slices** of owned
   `Value`s (a set is long-lived host data re-bound by reference; deduplicated at
   bind; the documented small-set planning assumption is `20-query-ir.md`'s); count
-  and structural types checked at bind time.
+  and structural types checked at bind time. Each prepared param slot carries one
+  sealed spec: scalar/set shape, point-domain status, and mask-ness are structure,
+  never parallel flags.
 
 ## Errors (taxonomy skeleton)
 

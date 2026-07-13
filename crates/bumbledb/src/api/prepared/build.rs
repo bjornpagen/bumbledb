@@ -86,7 +86,7 @@ pub(crate) fn prepare<'s, S>(
     // one live rule has no pair left to prove (the stats surface's
     // single-rule contract; pairwise over a superset held regardless).
     let disjoint_rules = (rules.len() > 1).then_some(disjoint_rules).flatten();
-    let (param_types, param_is_set, param_is_point) = param_tables(&witness);
+    let params = param_specs(&witness);
 
     // The one sink configuration — head-owned shape (projection vs
     // aggregate, arity, distinctness), built aimed at rule 0's layout
@@ -139,9 +139,7 @@ pub(crate) fn prepare<'s, S>(
         dead,
         program,
         column_types,
-        param_types,
-        param_is_set,
-        param_is_point,
+        params,
         resolved_params: Vec::new(),
         unresolved_literals,
         missed_params: Vec::new(),
@@ -239,37 +237,40 @@ fn pending_literals(rule: &PreparedRule) -> u32 {
         .sum()
 }
 
-/// Dense param typing for bind-time checks (validation rejected gaps —
-/// jointly across value and mask params, across all rules — so the
-/// id-ordered merge is positional): per param, its expected shape,
-/// set-ness, and point-ness. A set param records its element type plus
-/// the set-ness bit — bind expects a slice for it. The point-ness bit
-/// marks element-typed params at interval positions: bind rejects their
-/// domain ceiling (the point-domain law). Mask params (`Allen` mask
-/// positions) are absent from the witness's value typing and fill their
-/// slots with the mask shape.
-fn param_tables(
-    witness: &crate::ir::validate::ValidatedQuery,
-) -> (Vec<super::ParamShape>, Vec<bool>, Vec<bool>) {
+/// Dense bind contracts (validation rejected gaps jointly across value
+/// and mask params, across all rules). A value param becomes exactly one
+/// scalar/set variant carrying its point-domain bit; a mask becomes the
+/// typeless mask variant.
+fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::ParamSpec> {
     let value_types: std::collections::BTreeMap<crate::ir::ParamId, &ValueType> =
         witness.param_types().collect();
     let param_count = value_types.len() + witness.mask_params().len();
-    let mut param_types = Vec::with_capacity(param_count);
-    let mut param_is_set = Vec::with_capacity(param_count);
-    let mut param_is_point = Vec::with_capacity(param_count);
+    let mut params = Vec::with_capacity(param_count);
     for idx in 0..param_count {
         let id = crate::ir::ParamId(u16::try_from(idx).expect("param ids fit u16"));
-        param_types.push(value_types.get(&id).map_or_else(
+        let point = witness.point_params().contains(&id);
+        let spec = value_types.get(&id).map_or_else(
             || {
                 debug_assert!(witness.mask_params().contains(&id), "dense param ids");
-                super::ParamShape::AllenMask
+                super::ParamSpec::Mask
             },
-            |ty| super::ParamShape::Value((*ty).clone()),
-        ));
-        param_is_set.push(witness.set_params().contains(&id));
-        param_is_point.push(witness.point_params().contains(&id));
+            |ty| {
+                if witness.set_params().contains(&id) {
+                    super::ParamSpec::Set {
+                        elem: (*ty).clone(),
+                        point,
+                    }
+                } else {
+                    super::ParamSpec::Scalar {
+                        ty: (*ty).clone(),
+                        point,
+                    }
+                }
+            },
+        );
+        params.push(spec);
     }
-    (param_types, param_is_set, param_is_point)
+    params
 }
 
 /// The theory's program rewrite (`plan/chase.rs`): the

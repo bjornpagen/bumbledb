@@ -1,5 +1,5 @@
 use super::{
-    BindValue, Const, Executor, FilterPredicate, ParamArg, ParamShape, PreparedQuery, PreparedRule,
+    BindValue, Const, Executor, FilterPredicate, ParamArg, ParamSpec, PreparedQuery, PreparedRule,
     ValueType,
 };
 
@@ -78,9 +78,9 @@ impl<S> PreparedQuery<'_, S> {
     /// their capacity — and a set slot its `WordSet` `Vec` — across
     /// executions).
     fn begin_bind(&mut self, supplied: usize) -> Result<()> {
-        if supplied != self.param_types.len() {
+        if supplied != self.params.len() {
             return Err(Error::ParamCountMismatch {
-                expected: self.param_types.len(),
+                expected: self.params.len(),
                 supplied,
             });
         }
@@ -100,14 +100,12 @@ impl<S> PreparedQuery<'_, S> {
         value: BindValue<'_>,
     ) -> Result<()> {
         let param = param_id(idx);
-        if self.param_is_set[idx] {
-            return Err(Error::ParamSetExpected { param });
-        }
-        let expected = match &self.param_types[idx] {
+        match &self.params[idx] {
+            ParamSpec::Set { .. } => Err(Error::ParamSetExpected { param }),
             // A mask slot: the vacuity rules land here, where the value
             // exists — the bind-time sibling of validation's literal-mask
             // rejections. Resolves to the mask's bits as a word.
-            ParamShape::AllenMask => {
+            ParamSpec::Mask => {
                 let BindValue::AllenMask(mask) = value else {
                     return Err(Error::AllenMaskParamExpected { param });
                 };
@@ -119,27 +117,26 @@ impl<S> PreparedQuery<'_, S> {
                 }
                 self.resolved_params[idx] = Const::Word(u64::from(mask.bits()));
                 self.missed_params[idx] = false;
-                return Ok(());
+                Ok(())
             }
-            ParamShape::Value(expected) => expected,
-        };
-        let Some((resolved, missed)) = convert_scalar(txn, value, expected)? else {
-            return Err(Error::ParamTypeMismatch {
-                param,
-                expected: expected.clone(),
-            });
-        };
-        // The point-domain law: a point-position param bound to its
-        // domain ceiling can be inside no interval — rejected typed,
-        // never silently unmatchable. Both element encodings put the
-        // ceiling at the all-ones word (I64 is sign-flipped), and a point
-        // param is numeric, so the word is never a sentinel intern id.
-        if self.param_is_point[idx] && matches!(resolved, Const::Word(u64::MAX)) {
-            return Err(Error::PointParamAtCeiling { param });
+            ParamSpec::Scalar { ty, point } => {
+                let Some((resolved, missed)) = convert_scalar(txn, value, ty)? else {
+                    return Err(Error::ParamTypeMismatch {
+                        param,
+                        expected: ty.clone(),
+                    });
+                };
+                // The point-domain law: a point-position param bound to
+                // its domain ceiling can be inside no interval. Both
+                // element encodings put the ceiling at the all-ones word.
+                if *point && matches!(resolved, Const::Word(u64::MAX)) {
+                    return Err(Error::PointParamAtCeiling { param });
+                }
+                self.resolved_params[idx] = resolved;
+                self.missed_params[idx] = missed;
+                Ok(())
+            }
         }
-        self.resolved_params[idx] = resolved;
-        self.missed_params[idx] = missed;
-        Ok(())
     }
 
     /// Binds one set slot in place, deduplicating into the slot's pooled
@@ -149,11 +146,11 @@ impl<S> PreparedQuery<'_, S> {
     /// sets).
     fn bind_set_slot(&mut self, txn: &ReadTxn<'_>, idx: usize, values: &[Value]) -> Result<()> {
         let param = param_id(idx);
-        if !self.param_is_set[idx] {
-            return Err(Error::ParamScalarExpected { param });
-        }
-        let ParamShape::Value(expected) = &self.param_types[idx] else {
-            unreachable!("validated: a mask param is never a set")
+        let (expected, point) = match &self.params[idx] {
+            ParamSpec::Set { elem, point } => (elem, *point),
+            ParamSpec::Scalar { .. } | ParamSpec::Mask => {
+                return Err(Error::ParamScalarExpected { param });
+            }
         };
         // One element's column-word span — width fixed by the anchored
         // element type.
@@ -190,7 +187,7 @@ impl<S> PreparedQuery<'_, S> {
             // (see `bind_scalar_slot` — the word compare is exact for
             // both element encodings, and point sets are numeric, hence
             // one word wide).
-            if self.param_is_point[idx] && words.last() == Some(&u64::MAX) {
+            if point && words.last() == Some(&u64::MAX) {
                 words.clear();
                 self.resolved_params[idx] = Const::WordSet(words);
                 return Err(Error::PointParamAtCeiling { param });

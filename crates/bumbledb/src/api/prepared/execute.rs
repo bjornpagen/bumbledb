@@ -193,7 +193,7 @@ impl<S> PreparedQuery<'_, S> {
         // params of any shape means the resolved tables were written
         // once and are final — `resolve_predicates` is skipped entirely
         // (one cold branch; the latch only removes work).
-        let fast_eligible = self.unresolved_literals == 0 && self.param_types.is_empty();
+        let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
         let mut latched = 0u32;
         let Program::Rules(rules) = &mut self.program else {
             return Ok(false);
