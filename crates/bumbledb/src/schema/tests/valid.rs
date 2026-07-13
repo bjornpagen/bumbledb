@@ -201,10 +201,9 @@ fn example_schema_resolves_exactly() {
     .expect("the 30-dependencies example schema is valid");
 
     assert!(schema.keys().iter().all(|key| !key.pointwise));
-    let probe = |target_key: u16| Enforcement::Probe {
+    let probe = |target_key: u16| Enforcement::ScalarProbe {
         target_key: KeyId(target_key),
         key_permutation: Box::new([0]),
-        coverage: false,
     };
     assert_eq!(
         schema
@@ -271,14 +270,14 @@ fn pointwise_key_and_containment_resolve() {
     .expect("pointwise key and coverage containment are valid");
 
     assert!(schema.key(KeyId(0)).pointwise);
-    assert_eq!(
+    assert!(matches!(
         schema.containment(ContainmentId(0)).enforcement,
-        Enforcement::Probe {
+        Enforcement::IntervalCoverage {
             target_key: KeyId(0),
-            key_permutation: Box::new([0, 1]),
-            coverage: true
-        }
-    );
+            ref key_permutation,
+            ..
+        } if **key_permutation == [0, 1]
+    ));
     assert_eq!(schema.dependents(KeyId(0)), &[ContainmentId(0)]);
 }
 
@@ -313,10 +312,9 @@ fn permuted_target_projection_resolves_with_permutation() {
 
     assert_eq!(
         schema.containment(ContainmentId(0)).enforcement,
-        Enforcement::Probe {
+        Enforcement::ScalarProbe {
             target_key: KeyId(0),
             key_permutation: Box::new([1, 0]),
-            coverage: false
         }
     );
 }

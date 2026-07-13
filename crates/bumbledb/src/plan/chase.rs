@@ -165,13 +165,7 @@ fn removable(
     support: &[Option<usize>],
 ) -> Option<(usize, usize, StatementId)> {
     for statement in schema.containments() {
-        if !matches!(
-            statement.enforcement,
-            Enforcement::Probe {
-                coverage: false,
-                ..
-            }
-        ) {
+        if !matches!(statement.enforcement, Enforcement::ScalarProbe { .. }) {
             continue; // condition 4
         }
         let source = &statement.source;
@@ -305,10 +299,9 @@ fn variables_join_or_dead(
 }
 
 /// **Condition 4** — interval refusal (v0): no paired position is
-/// interval-typed. The gate's resolution seals the coverage flag
-/// (`Enforcement::Probe::coverage` — an accepted containment with an
-/// interval position always resolves it, 30-dependencies acceptance
-/// gate), so `coverage: false` *is* the condition. Pointwise coverage is
+/// interval-typed. The gate seals scalar and interval enforcement as
+/// distinct variants, so [`Enforcement::ScalarProbe`] is the condition.
+/// Pointwise coverage is
 /// not 1:1 fact-to-fact; the OPEN sub-question rides the doc amendment
 /// (trigger: a census query that would benefit).
 /// Whether `var` is dead outside occurrence `b_idx`: not an output

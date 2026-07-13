@@ -31,7 +31,10 @@
 //! shared across every statement): each fact inside a source selection φ
 //! probes the target through the commit path's own scalar probe and
 //! coverage walk ([`judgment`]'s `Checker` — one definition, never a
-//! sweeper copy), and a miss is [`StoreFinding::JudgmentViolation`].
+//! sweeper copy). The U pass independently re-derives pointwise
+//! disjointness from stored bytes, while the shared coverage call still
+//! consumes the schema's validator-minted `DisjointGuardProof`; a miss is
+//! [`StoreFinding::JudgmentViolation`].
 //!
 //! Findings are data, not errors: a desynced store returns `Ok` with a
 //! populated report and the *caller* decides fatality. `Err` is

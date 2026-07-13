@@ -13,10 +13,10 @@
 //! rejected.
 
 use super::{
-    CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement, Enforcement, FactLayout,
-    FieldDescriptor, FieldId, Generation, KeyId, KeyStatement, Relation, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor, StatementId, StatementRef,
-    ValueMismatch, ValueType, closed_member, value_matches,
+    CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement, DisjointGuardProof,
+    Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId, KeyStatement, Relation,
+    RelationDescriptor, RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor,
+    StatementId, StatementRef, ValueMismatch, ValueType, closed_member, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::SchemaError;
@@ -79,7 +79,7 @@ impl SchemaDescriptor {
                     relation,
                     projection,
                 } => {
-                    let pointwise = validate_functionality(
+                    let evidence = validate_functionality(
                         id,
                         *relation,
                         projection,
@@ -93,7 +93,7 @@ impl SchemaDescriptor {
                         id,
                         relation: *relation,
                         projection: projection.clone(),
-                        pointwise,
+                        pointwise: matches!(evidence, FunctionalityEvidence::Pointwise(_)),
                     });
                     StatementRef::Key(key_id)
                 }
@@ -103,7 +103,7 @@ impl SchemaDescriptor {
                     let containment_id = ContainmentId(
                         u16::try_from(containments.len()).expect("statement count fits u16"),
                     );
-                    if let Enforcement::Probe { target_key, .. } = &enforcement {
+                    if let Some(target_key) = enforcement.target_key() {
                         dependents[usize::from(target_key.0)].push(containment_id);
                     }
                     relation_outgoing[source.relation.0 as usize].push(containment_id);
@@ -192,12 +192,46 @@ fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
 }
 
-/// A projection as its sorted field set — FD identity is the field *set*
-/// (the duplicate-FD rule and target-key resolution both match on it).
-fn field_set(projection: &[FieldId]) -> Vec<FieldId> {
-    let mut set = projection.to_vec();
-    set.sort_unstable();
-    set
+/// Canonical projection identity. Construction sorts once and refuses
+/// duplicates, so equality cannot accidentally compare written order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FieldSet(Box<[FieldId]>);
+
+impl FieldSet {
+    fn new(fields: &[FieldId]) -> Result<Self, FieldId> {
+        let mut canonical = fields.to_vec();
+        canonical.sort_unstable();
+        if let Some(duplicate) = canonical
+            .windows(2)
+            .find_map(|pair| (pair[0] == pair[1]).then_some(pair[0]))
+        {
+            return Err(duplicate);
+        }
+        Ok(Self(canonical.into_boxed_slice()))
+    }
+}
+
+/// A validated projection carries both statement order (execution and key
+/// permutation) and its canonical set (identity and key resolution).
+struct Projection<'a> {
+    ordered: &'a [FieldId],
+    fields: FieldSet,
+}
+
+impl Projection<'_> {
+    fn ordered(&self) -> &[FieldId] {
+        self.ordered
+    }
+
+    fn fields(&self) -> &FieldSet {
+        &self.fields
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FunctionalityEvidence {
+    Scalar,
+    Pointwise(DisjointGuardProof),
 }
 
 /// The projection positions holding interval-typed fields — the one scan
@@ -239,37 +273,37 @@ fn normalize(descriptor: &StatementDescriptor) -> StatementDescriptor {
 }
 
 /// Roster "FD …" lines: `R(X) -> R` under the acceptance gate. Returns the
-/// whether the key is pointwise (its interval position stays local here).
+/// sealed scalar shape or the proof minted by the accepted pointwise arm.
 fn validate_functionality(
     id: StatementId,
     relation_id: RelationId,
     projection: &[FieldId],
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
-) -> Result<bool, SchemaError> {
+) -> Result<FunctionalityEvidence, SchemaError> {
     let relation = known_relation(id, relation_id, relations)?;
-    validate_projection(id, relation_id, projection, relation)?;
+    let projection = validate_projection(id, relation_id, projection, relation)?;
 
     // Roster ">1 interval position" and "interval not in final position":
     // the neighbor probe needs the scalar prefix as its group; two interval
     // positions would be 2-D exclusion, which the ordered guard cannot
     // answer.
-    let positions = interval_positions(&relation.fields, projection);
+    let positions = interval_positions(&relation.fields, projection.ordered());
     if positions.len() > 1 {
         return Err(SchemaError::FunctionalityMultipleIntervals {
             statement: id,
             relation: relation_id,
-            field: projection[positions[1]],
+            field: projection.ordered()[positions[1]],
         });
     }
     let interval_position = positions.first().copied();
     if let Some(pos) = interval_position
-        && pos != projection.len() - 1
+        && pos != projection.ordered().len() - 1
     {
         return Err(SchemaError::FunctionalityIntervalNotLast {
             statement: id,
             relation: relation_id,
-            field: projection[pos],
+            field: projection.ordered()[pos],
         });
     }
 
@@ -277,14 +311,14 @@ fn validate_functionality(
     // — a second FD over the same set (any order) asserts the same
     // judgment, so its guard is pure write amplification, and rejecting it
     // is what makes containment target-key resolution unambiguous.
-    let this_set = field_set(projection);
+    let this_set = projection.fields();
     for (idx, earlier) in descriptors[..usize::from(id.0)].iter().enumerate() {
         if let StatementDescriptor::Functionality {
             relation: r,
             projection: p,
         } = earlier
             && *r == relation_id
-            && field_set(p) == this_set
+            && FieldSet::new(p).is_ok_and(|set| &set == this_set)
         {
             return Err(SchemaError::DuplicateFunctionality {
                 statement: id,
@@ -297,6 +331,7 @@ fn validate_functionality(
     // must fit `MAX_GUARD_WIDTH` — rejected at declaration, never
     // discovered at write time.
     let width: usize = projection
+        .ordered()
         .iter()
         .map(|field| {
             relation.fields[usize::from(field.0)]
@@ -320,10 +355,10 @@ fn validate_functionality(
     // probe's judgment, run over ≤256 sealed rows instead of a guard.
     if let Some(rows) = relation.extension.as_deref() {
         let layout = &relation.layout;
-        let scalar_len = projection.len() - usize::from(interval_position.is_some());
+        let scalar_len = projection.ordered().len() - usize::from(interval_position.is_some());
         for (row_idx, row) in rows.iter().enumerate() {
             for earlier in &rows[..row_idx] {
-                let scalars_agree = projection[..scalar_len].iter().all(|field| {
+                let scalars_agree = projection.ordered()[..scalar_len].iter().all(|field| {
                     let idx = usize::from(field.0);
                     field_bytes(&row.fact, layout, idx) == field_bytes(&earlier.fact, layout, idx)
                 });
@@ -333,7 +368,7 @@ fn validate_functionality(
                 let collide = match interval_position {
                     None => true,
                     Some(pos) => {
-                        let idx = usize::from(projection[pos].0);
+                        let idx = usize::from(projection.ordered()[pos].0);
                         let a = field_bytes(&row.fact, layout, idx);
                         let b = field_bytes(&earlier.fact, layout, idx);
                         // Half-open `[s, e)` intersection on the 8-byte
@@ -352,7 +387,10 @@ fn validate_functionality(
         }
     }
 
-    Ok(interval_position.is_some())
+    Ok(match interval_position {
+        Some(_) => FunctionalityEvidence::Pointwise(DisjointGuardProof(())),
+        None => FunctionalityEvidence::Scalar,
+    })
 }
 
 /// Roster "IND …" lines: `A(X | φ) <= B(Y | ψ)` under the acceptance gate.
@@ -366,7 +404,7 @@ fn validate_containment(
     descriptors: &[StatementDescriptor],
 ) -> Result<Enforcement, SchemaError> {
     validate_side_shape(id, source, relations)?;
-    validate_side_shape(id, target, relations)?;
+    let target_projection = validate_side_shape(id, target, relations)?;
 
     // Roster "arity mismatch between sides": |X| = |Y|.
     if source.projection.len() != target.projection.len() {
@@ -422,7 +460,7 @@ fn validate_containment(
         });
     }
 
-    let resolved = resolve_target_key(id, target, relations, descriptors)?;
+    let resolved = resolve_target_key(id, target, &target_projection, relations, descriptors)?;
 
     // Both sides constant: the judgment is decidable here, and a theory
     // whose axioms refute its own statement has no model to commit — the
@@ -516,19 +554,19 @@ fn known_relation(
 
 /// Roster "unknown … field ids" and "empty or duplicate-carrying
 /// projections" for one projection.
-fn validate_projection(
+fn validate_projection<'p>(
     id: StatementId,
     relation_id: RelationId,
-    projection: &[FieldId],
+    projection: &'p [FieldId],
     relation: &Relation,
-) -> Result<(), SchemaError> {
+) -> Result<Projection<'p>, SchemaError> {
     if projection.is_empty() {
         return Err(SchemaError::EmptyProjection {
             statement: id,
             relation: relation_id,
         });
     }
-    for (idx, field) in projection.iter().enumerate() {
+    for field in projection {
         if usize::from(field.0) >= relation.fields.len() {
             return Err(SchemaError::StatementUnknownField {
                 statement: id,
@@ -536,26 +574,28 @@ fn validate_projection(
                 field: *field,
             });
         }
-        if projection[..idx].contains(field) {
-            return Err(SchemaError::DuplicateProjectionField {
-                statement: id,
-                relation: relation_id,
-                field: *field,
-            });
-        }
     }
-    Ok(())
+    let fields =
+        FieldSet::new(projection).map_err(|field| SchemaError::DuplicateProjectionField {
+            statement: id,
+            relation: relation_id,
+            field,
+        })?;
+    Ok(Projection {
+        ordered: projection,
+        fields,
+    })
 }
 
 /// One side's id and duplication shape: unknown relation/field ids, empty
 /// or duplicate projection, duplicate selection binding (σ is a set).
-fn validate_side_shape(
+fn validate_side_shape<'s>(
     id: StatementId,
-    side: &Side,
+    side: &'s Side,
     relations: &[Relation],
-) -> Result<(), SchemaError> {
+) -> Result<Projection<'s>, SchemaError> {
     let relation = known_relation(id, side.relation, relations)?;
-    validate_projection(id, side.relation, &side.projection, relation)?;
+    let projection = validate_projection(id, side.relation, &side.projection, relation)?;
     for (idx, (field, _)) in side.selection.iter().enumerate() {
         if usize::from(field.0) >= relation.fields.len() {
             return Err(SchemaError::StatementUnknownField {
@@ -572,7 +612,7 @@ fn validate_side_shape(
             });
         }
     }
-    Ok(())
+    Ok(projection)
 }
 
 /// One side's selection semantics: roster "a selected field also projected"
@@ -640,6 +680,7 @@ fn validate_selection_literal(
 fn resolve_target_key(
     id: StatementId,
     target: &Side,
+    target_projection: &Projection<'_>,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<Enforcement, SchemaError> {
@@ -683,7 +724,7 @@ fn resolve_target_key(
     }
     let interval_position = positions.first().copied();
 
-    let want = field_set(&target.projection);
+    let want = target_projection.fields();
     let found = descriptors
         .iter()
         .enumerate()
@@ -691,7 +732,9 @@ fn resolve_target_key(
             StatementDescriptor::Functionality {
                 relation,
                 projection,
-            } if *relation == target.relation && field_set(projection) == want => {
+            } if *relation == target.relation
+                && FieldSet::new(projection).is_ok_and(|set| &set == want) =>
+            {
                 Some((index, projection.as_ref()))
             }
             StatementDescriptor::Functionality { .. } | StatementDescriptor::Containment { .. } => {
@@ -719,8 +762,8 @@ fn resolve_target_key(
     // gate's "key carries its interval" demand is discharged by
     // construction, not re-checked.
 
-    let key_permutation = target
-        .projection
+    let key_permutation = target_projection
+        .ordered()
         .iter()
         .map(|field| {
             let guard_pos = key_projection
@@ -743,11 +786,28 @@ fn resolve_target_key(
         .expect("statement count fits u16"),
     );
 
-    Ok(Enforcement::Probe {
-        target_key,
-        key_permutation,
-        coverage: interval_position.is_some(),
-    })
+    if interval_position.is_some() {
+        let FunctionalityEvidence::Pointwise(disjoint) = validate_functionality(
+            statement_id(key_idx),
+            target.relation,
+            key_projection,
+            relations,
+            descriptors,
+        )?
+        else {
+            unreachable!("a set-equal interval projection resolves to a pointwise key")
+        };
+        Ok(Enforcement::IntervalCoverage {
+            target_key,
+            key_permutation,
+            disjoint,
+        })
+    } else {
+        Ok(Enforcement::ScalarProbe {
+            target_key,
+            key_permutation,
+        })
+    }
 }
 
 /// One relation: field checks (duplicate names, enum shape, fresh typing,

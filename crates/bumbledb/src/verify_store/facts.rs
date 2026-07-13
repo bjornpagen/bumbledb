@@ -138,12 +138,16 @@ fn check_outgoing(
         if !judgment::satisfies(&checks.source, layout, fact) {
             continue;
         }
-        let (target_key, key_permutation, coverage) = match &statement.enforcement {
-            Enforcement::Probe {
+        let (target_key, key_permutation) = match &statement.enforcement {
+            Enforcement::ScalarProbe {
                 target_key,
                 key_permutation,
-                coverage,
-            } => (target_key, key_permutation, *coverage),
+            }
+            | Enforcement::IntervalCoverage {
+                target_key,
+                key_permutation,
+                ..
+            } => (target_key, key_permutation),
             // A closed-target containment has no `R` edge and no guard to
             // probe — the F↔R walk skips it, and the global judgment is
             // the membership test itself.
@@ -181,10 +185,12 @@ fn check_outgoing(
             fact_bytes: fact,
             direction: Direction::TargetRequired,
         };
-        let judged = if coverage {
-            checker.check_coverage(&probe)
-        } else {
-            checker.check_scalar(&probe)
+        let judged = match &statement.enforcement {
+            Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
+            Enforcement::IntervalCoverage { disjoint, .. } => {
+                checker.check_coverage(*disjoint, &probe)
+            }
+            Enforcement::Closed { .. } => unreachable!("classified above"),
         };
         if missing_edge {
             s.push(StoreFinding::FactWithoutReverseEdge {
@@ -253,15 +259,13 @@ fn check_extension_sources(
                     continue;
                 }
                 let judged = match &statement.enforcement {
-                    Enforcement::Probe {
+                    Enforcement::ScalarProbe {
                         target_key,
                         key_permutation,
-                        coverage,
                     } => {
                         // Interval positions on closed containments are
                         // refused at validate — the coverage walk never
                         // runs from a constant source.
-                        debug_assert!(!coverage);
                         keys::permuted_guard_bytes(
                             layout,
                             &statement.source.projection,
@@ -278,6 +282,9 @@ fn check_extension_sources(
                             fact_bytes: &row.fact,
                             direction: Direction::TargetRequired,
                         })
+                    }
+                    Enforcement::IntervalCoverage { .. } => {
+                        unreachable!("closed sources cannot have interval containments")
                     }
                     Enforcement::Closed { members } => {
                         let id = u64::from_be_bytes(field_word_bytes(

@@ -45,8 +45,8 @@ use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violati
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
-    CompiledCheck, ContainmentId, Enforcement, FieldId, KeyId, RelationId, Schema, StatementId,
-    StatementView,
+    CompiledCheck, ContainmentId, DisjointGuardProof, Enforcement, FieldId, KeyId, RelationId,
+    Schema, StatementId, StatementView,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -200,19 +200,28 @@ pub(super) fn check_source(
     for op in &plan.inserts {
         for edge in &op.edges {
             probes += 1;
+            let statement = schema.containment(edge.containment);
             let probe = Probe {
-                statement: edge.statement,
-                target_relation: edge.target_relation,
-                target_key: edge.target_key,
+                statement: statement.id,
+                target_relation: statement.target.relation,
+                target_key: match &statement.enforcement {
+                    Enforcement::ScalarProbe { target_key, .. }
+                    | Enforcement::IntervalCoverage { target_key, .. } => *target_key,
+                    Enforcement::Closed { .. } => {
+                        unreachable!("closed-target containments produce memberships, not edges")
+                    }
+                },
                 target_check: &plan.selections.containment(edge.containment).target,
                 key_bytes: &edge.key_bytes,
                 fact_bytes: op.fact,
                 direction: Direction::SourceUnsatisfied,
             };
-            let outcome = if edge.coverage {
-                checker.check_coverage(&probe)
-            } else {
-                checker.check_scalar(&probe)
+            let outcome = match &statement.enforcement {
+                Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
+                Enforcement::IntervalCoverage { disjoint, .. } => {
+                    checker.check_coverage(*disjoint, &probe)
+                }
+                Enforcement::Closed { .. } => unreachable!("classified above"),
             };
             collect(outcome, violations)?;
         }
@@ -322,7 +331,7 @@ pub(super) fn check_target(
                 scanned += 1;
                 counted = true;
             }
-            if dependent.coverage {
+            if let Enforcement::IntervalCoverage { .. } = &statement.enforcement {
                 // Interval form: conservatively scan the whole prefix
                 // group and filter by intersection. An optimized lower
                 // bound would need the maximum source-interval length,
@@ -430,7 +439,12 @@ pub(super) fn check_target(
                 "R key statement",
             )));
         }
-        let Enforcement::Probe { target_key, .. } = &statement.enforcement else {
+        let Enforcement::IntervalCoverage {
+            target_key,
+            disjoint,
+            ..
+        } = &statement.enforcement
+        else {
             return Err(Error::Corruption(CorruptionError::MalformedValue(
                 "R key statement",
             )));
@@ -451,7 +465,7 @@ pub(super) fn check_target(
             fact_bytes,
             direction: Direction::TargetRequired,
         };
-        collect(checker.check_coverage(&probe), violations)?;
+        collect(checker.check_coverage(*disjoint, &probe), violations)?;
     }
     span.set_args(scanned, 0);
     span.end();
@@ -494,7 +508,10 @@ fn closed_source_survivor(
     let statement = schema.containment(containment_id);
     let source = &statement.source;
     let key_permutation = match &statement.enforcement {
-        Enforcement::Probe {
+        Enforcement::ScalarProbe {
+            key_permutation, ..
+        }
+        | Enforcement::IntervalCoverage {
             key_permutation, ..
         } => key_permutation,
         Enforcement::Closed { .. } => return None,
@@ -604,8 +621,9 @@ impl<'a> Checker<'a> {
     /// The coverage walk (`docs/architecture/30-dependencies.md`
     /// § pointwise lifting): the source interval `[s, e)` must be jointly
     /// covered by the target's guard entries sharing its scalar prefix.
-    /// Sound in one forward pass because the target's own pointwise key
-    /// keeps the prefix group's intervals disjoint and start-ordered. All
+    /// Sound in one forward pass because `disjoint` was minted when the
+    /// target's pointwise key was accepted, proving the prefix group's
+    /// intervals are disjoint and start-ordered. All
     /// comparisons are on the 8-byte encoded halves — order-preserving,
     /// so byte compare is numeric compare. Rays by definition, not by
     /// accident (the point-domain law, `docs/architecture/10-data-model.md`):
@@ -619,7 +637,12 @@ impl<'a> Checker<'a> {
     /// boundaries stay where the data enters); the frontier walk itself
     /// is the shared segment sweep ([`crate::interval::sweep`]), driven
     /// through [`GapAt`].
-    pub(crate) fn check_coverage(&mut self, probe: &Probe<'_>) -> Result<()> {
+    pub(crate) fn check_coverage(
+        &mut self,
+        disjoint: DisjointGuardProof,
+        probe: &Probe<'_>,
+    ) -> Result<()> {
+        disjoint.authorize_coverage();
         let target_key = self.schema.key(probe.target_key);
         // The scratch holds the full guard key
         // `U | rel | stmt | prefix | s | e` (the acceptance gate puts the

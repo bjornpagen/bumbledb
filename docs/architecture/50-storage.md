@@ -184,8 +184,11 @@ variant agreement.
      selection exists). For interval positions, the probe is the **coverage walk**:
      from the guard entry at or before the source interval's start, walk start-
      ordered entries of the prefix group, requiring no gap before the source's end
-     — O(log n + segments), sound because the target's pointwise key keeps its
-     intervals disjoint (`30-dependencies.md`). The frontier loop is the shared
+     — O(log n + segments). The sealed `IntervalCoverage` enforcement carries the
+     validator-minted `DisjointGuardProof` that the target's pointwise key keeps
+     its prefix group disjoint and start-ordered; `check_coverage` requires that
+     token, so the soundness premise is represented rather than assumed
+     (`30-dependencies.md`). The frontier loop is the shared
      segment sweep (`interval/sweep.rs`, one walk for the checker's gap verdict and
      `Pack`'s coalescing fold); the commit site owns only entry-segment location
      and the key-shape trust checks.

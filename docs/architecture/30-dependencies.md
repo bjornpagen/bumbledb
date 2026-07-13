@@ -133,7 +133,10 @@ Concretely, validation demands:
   (probe-ability: one guard get answers "is this tuple present"); if any position is
   interval-typed, that key must carry the interval (pointwise — coverage needs the
   target's intervals disjoint and ordered, which its own key provides as a theorem,
-  not a requirement on the user). Each direction of `==` passes the gate
+  not a requirement on the user). Validation seals that theorem as a
+  `DisjointGuardProof`; interval enforcement and the coverage checker require the
+  token, so the forward sweep cannot be selected by an unchecked flag. Each
+  direction of `==` passes the gate
   independently. Selections may appear on either side; a selected field may not also
   be projected (a constant column — write the statement you mean).
 - **IND into a closed target:** the target side is stage-1-known, so there is no
@@ -159,6 +162,9 @@ discipline of acceptance — an accepted statement is a *measured promise*, exac
 like an accepted optimization (`00-product.md`).
 
 The sealed representation is a sum with homogeneous key and containment arenas.
+`FieldSet` gives each projection canonical set identity (sorted and
+duplicate-free), while `Projection` retains statement order beside that set so
+validation compares identity and execution derives the target-key permutation.
 Validation is the only mint for `KeyId` and `ContainmentId`: a key witness resolves
 totally through `Schema::key`, a containment witness resolves totally through
 `Schema::containment`, and `Schema::dependents` carries containment witnesses indexed
@@ -305,8 +311,9 @@ exactly the division of authority the delta-restricted judgment implies.
 canonical bytes are a pure function of the value is sealed into the statement at
 validate — the commit path byte-compares against sealed encodings and resolves
 only interned text (dictionary state is per-database; a never-interned literal
-still proves its side unsatisfiable). The pointwise/coverage judgments likewise
-read flags sealed at validate, never re-derive them from interval positions.
+still proves its side unsatisfiable). The pointwise/coverage judgment instead
+consumes the `IntervalCoverage` variant's validator-minted
+`DisjointGuardProof`; no boolean can license the sweep.
 Two audited stays, recorded so the staging audit's lines are discharged rather
 than forgotten: the `FactLayout` rebuild stays at open (open is rare, the
 rebuild pure and cheap), and the fresh→FD materialization stays at validate
@@ -372,7 +379,7 @@ not prove that stored bytes or unchecked host input satisfy the Rust premise.
 | Accepted `==` is key-backed unique correspondence in both directions. | `KeyBackedEquality.unique_target`; `KeyBackedEquality.unique_source` | Both lowered containments independently pass `resolve_target_key`; `schema::ContainmentStatement::mirror` records the accepted pair. PRD 12 adds the dedicated reverse-key rejection locks. | Lean theorem + validator premises |
 | A key proves uniqueness, not existence. | `Key.uniqueness` (the imported dependency model's `Key` field) | `schema/validate.rs::validate_functionality` accepts the declaration; `storage/commit/applier.rs::Applier` rejects colliding determinant images but never manufactures a fact. | Definition + validator and runtime premises |
 | An interval-position key proves per-scalar-group pointwise disjointness. | `IntervalFacts.PointwiseKey`; exercised by `overshoot_pointwiseKey` | `validate_functionality` admits one final interval position; `storage/commit/applier.rs::Applier::probe_neighbors` rejects overlap with predecessor or successor. | Formal predicate + validator and runtime premises |
-| One-way interval coverage is source-support inclusion; target overhang is legal. | `intervalContains_iff_support_subset`; `overshoot_isTiling_not_exact` | `storage/commit/judgment.rs::Checker::check_coverage` advances only across the demanded source interval. PRD 03 makes its disjointness premise a `DisjointGuardProof`. | Lean theorem/countermodel + runtime premise |
+| One-way interval coverage is source-support inclusion; target overhang is legal. | `intervalContains_iff_support_subset`; `overshoot_isTiling_not_exact` | `validate_functionality` alone mints `DisjointGuardProof` after accepting one final interval position; `Enforcement::IntervalCoverage` carries it into `Checker::check_coverage`, whose signature requires the proof and advances only across the demanded source interval. | Lean theorem/countermodel + represented validator/runtime premise |
 | Exact partition is mutual point coverage plus pointwise keys. | `exactTiling_iff_exactPointPartition` | The five ordinary statements and gap/overhang locks are delivered by PRD 11; no special partition primitive exists. | Lean theorem + validator premises |
 | Empty or reversed intervals have empty support, so admitting them would make coverage vacuous. | `empty_nat_interval_has_no_points` | `interval.rs::Interval::new` rejects `start >= end`; `Value` and `ValueRef` carry `Interval<T>`, making both literal and fact encoding total. `encoding::decode_interval_*` and `image::decode` independently reject damaged stored bytes. | Lean countermodel + representation/runtime premises |
 | Negation safety is positive range restriction and is independent of textual order. | `positive_range_restriction_implies_wellscoped` | `ir/validate/context.rs` derives binders only from positive atoms and emits `ValidationError::NegatedVariableUnbound` for every other occurrence. | Lean theorem + validator acceptance rule |

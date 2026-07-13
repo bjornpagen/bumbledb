@@ -316,7 +316,8 @@ fn replacing_a_handler_in_one_commit_commits() {
 #[test]
 fn the_domain_statement_resolved_the_handler_key() {
     let schema = schema();
-    let Enforcement::Probe { target_key, .. } = &schema.containment(ContainmentId(2)).enforcement
+    let Enforcement::ScalarProbe { target_key, .. } =
+        &schema.containment(ContainmentId(2)).enforcement
     else {
         panic!("domain quantification resolves against the ordinary target key");
     };

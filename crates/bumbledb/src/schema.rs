@@ -344,21 +344,53 @@ impl SchemaDescriptor {
     }
 }
 
-/// The enforcement plan of a sealed containment. Keys carry their one
-/// enforcement flag directly on [`KeyStatement`], so variant agreement is
-/// represented by the type rather than re-checked by every consumer.
+/// Validator-minted evidence that a functionality's interval position is
+/// final and unique. That shape makes every scalar-prefix guard group
+/// disjoint and start-ordered under the functionality judgment, which is
+/// precisely the precondition the interval coverage sweep consumes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DisjointGuardProof(());
+
+impl DisjointGuardProof {
+    /// Consumes the validator witness at the coverage boundary. The method
+    /// is intentionally zero-cost; possession of `self` is the check.
+    pub(crate) const fn authorize_coverage(self) {
+        let Self(()) = self;
+    }
+}
+
+/// The enforcement plan of a sealed containment. The variant records which
+/// judgment is valid; interval coverage carries its load-bearing proof rather
+/// than hiding the obligation in a boolean.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Enforcement {
-    /// Probe an ordinary target key. `key_permutation` maps statement
-    /// projection order to target-key order; `coverage` selects the interval
-    /// coverage walk instead of a scalar get.
-    Probe {
+    /// Probe an ordinary target key for one scalar tuple.
+    ScalarProbe {
         target_key: KeyId,
         key_permutation: Box<[u16]>,
-        coverage: bool,
+    },
+    /// Sweep the target's pointwise interval segments. `disjoint` proves the
+    /// resolved target key enforces disjoint, start-ordered prefix groups.
+    IntervalCoverage {
+        target_key: KeyId,
+        key_permutation: Box<[u16]>,
+        disjoint: DisjointGuardProof,
     },
     /// A closed target's stage-1-known answer set.
     Closed { members: [u64; 4] },
+}
+
+impl Enforcement {
+    /// The ordinary target key both probe forms resolve; closed targets
+    /// compile to membership and therefore have no stored key.
+    pub(crate) const fn target_key(&self) -> Option<KeyId> {
+        match self {
+            Self::ScalarProbe { target_key, .. } | Self::IntervalCoverage { target_key, .. } => {
+                Some(*target_key)
+            }
+            Self::Closed { .. } => None,
+        }
+    }
 }
 
 /// Whether `id` is inside a compiled member set — the whole judgment of a

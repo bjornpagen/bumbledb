@@ -88,20 +88,15 @@ pub(crate) struct MembershipOp {
 /// One containment edge of one fact: the `R` key material and, on the
 /// insert side, the source-probe input.
 pub(crate) struct EdgeOp {
-    /// The typed containment used for sealed selections and enforcement.
+    /// The typed containment supplies target relation, target key, and
+    /// scalar-versus-interval enforcement at judgment.
     pub(crate) containment: ContainmentId,
-    /// The `Containment` statement.
+    /// Prederived statement identity for the schema-free byte applier.
     pub(crate) statement: StatementId,
     /// The source projection laid down in the target key's guard order
     /// ([`keys::permuted_guard_bytes`]) — the `R` key-bytes segment and
     /// the source probe's target guard value.
     pub(crate) key_bytes: Box<[u8]>,
-    pub(crate) target_relation: RelationId,
-    /// The `Functionality` statement whose `U` guard the source probes.
-    pub(crate) target_key: KeyId,
-    /// Interval-position statement: the source probe is the coverage
-    /// walk, not the scalar get.
-    pub(crate) coverage: bool,
 }
 
 /// One disestablished key tuple and the dependent statements that must
@@ -121,8 +116,6 @@ pub(crate) struct GuardCheck {
 pub(crate) struct DependentCheck {
     /// The validation-minted containment witness.
     pub(crate) containment: ContainmentId,
-    /// Interval-position statement: survivors re-run the coverage walk.
-    pub(crate) coverage: bool,
     /// The tuple's exact bytes re-land in phase 2 and this dependent
     /// carries a ψ: the check applies only if the establishing fact fails
     /// ψ — the judgment fetches it (one `F` get, shared across the
@@ -233,10 +226,11 @@ fn fact_op<'d>(
             continue;
         }
         match &statement.enforcement {
-            Enforcement::Probe {
-                target_key,
-                key_permutation,
-                coverage,
+            Enforcement::ScalarProbe {
+                key_permutation, ..
+            }
+            | Enforcement::IntervalCoverage {
+                key_permutation, ..
             } => {
                 keys::permuted_guard_bytes(
                     layout,
@@ -249,9 +243,6 @@ fn fact_op<'d>(
                     containment: containment_id,
                     statement: statement.id,
                     key_bytes: scratch.as_slice().into(),
-                    target_relation: statement.target.relation,
-                    target_key: *target_key,
-                    coverage: *coverage,
                 });
             }
             Enforcement::Closed { .. } => {
@@ -300,10 +291,9 @@ fn target_checks(
                 .iter()
                 .filter_map(|&containment_id| {
                     let statement = schema.containment(containment_id);
-                    let coverage = match &statement.enforcement {
-                        Enforcement::Probe { coverage, .. } => *coverage,
-                        Enforcement::Closed { .. } => return None,
-                    };
+                    if matches!(statement.enforcement, Enforcement::Closed { .. }) {
+                        return None;
+                    }
                     let psi_qualified = if reestablished {
                         match &selections.containment(containment_id).target {
                             SelectionCheck::Empty => return None,
@@ -315,7 +305,6 @@ fn target_checks(
                     };
                     Some(DependentCheck {
                         containment: containment_id,
-                        coverage,
                         psi_qualified,
                     })
                 })

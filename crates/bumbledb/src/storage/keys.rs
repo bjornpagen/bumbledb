@@ -312,8 +312,8 @@ pub fn guard_bytes(
 /// Like [`guard_bytes`], but lays the sliced fields down in the *target
 /// key's* guard order: `key_permutation[i]` is the guard position of
 /// projection element `i` (statement projection order → target key order,
-/// `Enforcement::Probe::key_permutation`) — the key-bytes segment of an
-/// `R` key. Interval fields copy their whole 16 bytes, exactly as in
+/// `Enforcement::{ScalarProbe, IntervalCoverage}::key_permutation`) — the
+/// key-bytes segment of an `R` key. Interval fields copy their whole 16 bytes, exactly as in
 /// [`guard_bytes`].
 pub fn permuted_guard_bytes(
     layout: &FactLayout,

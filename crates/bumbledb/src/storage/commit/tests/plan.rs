@@ -12,8 +12,8 @@
 
 use crate::encoding::{ValueRef, encode_interval_u64, encode_u64};
 use crate::schema::{
-    ContainmentId, FieldId, KeyId, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    StatementDescriptor, StatementId, ValueType,
+    ContainmentId, Enforcement, FieldId, KeyId, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
 };
 use crate::storage::commit::plan::{CommitPlan, EdgeOp, FactOp, GuardOp};
 use crate::storage::delta::WriteDelta;
@@ -37,9 +37,6 @@ const LINK: RelationId = RelationId(9);
 /// Declared statement order (no fresh fields, so no auto-keys).
 const ACCOUNT_KEY: StatementId = StatementId(0);
 const ROOM_KEY: StatementId = StatementId(1);
-const PARENT_KEY: StatementId = StatementId(2);
-const CHILD_KEY: StatementId = StatementId(3);
-const COMBO_KEY: StatementId = StatementId(4);
 const TRANSFER_ACCOUNT: StatementId = StatementId(5);
 const GRANT_ACCOUNT: StatementId = StatementId(6);
 const REPORT_ACCOUNT: StatementId = StatementId(7);
@@ -282,20 +279,11 @@ fn assert_guard(op: &GuardOp, statement: StatementId, guard: &[u8], pointwise: b
     assert_eq!(op.pointwise, pointwise, "pointwise marker");
 }
 
-fn assert_edge(
-    edge: &EdgeOp,
-    statement: StatementId,
-    key_bytes: &[u8],
-    target_relation: RelationId,
-    target_key: KeyId,
-    coverage: bool,
-) {
+fn assert_edge(schema: &Schema, edge: &EdgeOp, statement: StatementId, key_bytes: &[u8]) {
     assert_eq!(edge.statement, statement);
     assert_eq!(edge.containment, containment_id(statement));
     assert_eq!(&*edge.key_bytes, key_bytes, "permuted key bytes");
-    assert_eq!(edge.target_relation, target_relation);
-    assert_eq!(edge.target_key, target_key);
-    assert_eq!(edge.coverage, coverage, "coverage marker");
+    assert_eq!(schema.containment(edge.containment).id, statement);
 }
 
 // ---------- per-fact ops: guards and edges ----------
@@ -358,14 +346,7 @@ fn source_selection_gates_the_edges() {
     let [edge] = &*op_for(&plan.inserts, REPORT, &urgent).edges else {
         panic!("one satisfied containment");
     };
-    assert_edge(
-        edge,
-        REPORT_ACCOUNT,
-        &encode_u64(5),
-        ACCOUNT,
-        key_id(ACCOUNT_KEY),
-        false,
-    );
+    assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));
     // Outside σ: no edge, so no R put and no source probe — by absence.
     assert!(op_for(&plan.inserts, REPORT, &calm).edges.is_empty());
 }
@@ -389,18 +370,11 @@ fn pair_statements_edge_their_own_directions() {
     let [edge] = &*op_for(&plan.inserts, PARENT, &p).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(
-        edge,
-        TOTALITY,
-        &encode_u64(4),
-        CHILD,
-        key_id(CHILD_KEY),
-        false,
-    );
+    assert_edge(&schema, edge, TOTALITY, &encode_u64(4));
     let [edge] = &*op_for(&plan.inserts, CHILD, &c).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, ARM, &encode_u64(4), PARENT, key_id(PARENT_KEY), false);
+    assert_edge(&schema, edge, ARM, &encode_u64(4));
 }
 
 #[test]
@@ -421,7 +395,7 @@ fn edge_key_bytes_land_in_target_key_order() {
     let [edge] = &*op_for(&plan.inserts, LINK, &l).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, LINK_COMBO, &expected, COMBO, key_id(COMBO_KEY), false);
+    assert_edge(&schema, edge, LINK_COMBO, &expected);
 }
 
 #[test]
@@ -441,7 +415,11 @@ fn interval_edges_are_marked_for_the_coverage_walk() {
     let [edge] = &*op_for(&plan.inserts, STAY, &s).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, STAY_ROOM, &expected, ROOM, key_id(ROOM_KEY), true);
+    assert_edge(&schema, edge, STAY_ROOM, &expected);
+    assert!(matches!(
+        schema.containment(edge.containment).enforcement,
+        Enforcement::IntervalCoverage { .. }
+    ));
 }
 
 #[test]
@@ -461,14 +439,7 @@ fn delete_ops_carry_the_byte_symmetric_edges() {
     let [edge] = &*op.edges else {
         panic!("one satisfied containment");
     };
-    assert_edge(
-        edge,
-        REPORT_ACCOUNT,
-        &encode_u64(5),
-        ACCOUNT,
-        key_id(ACCOUNT_KEY),
-        false,
-    );
+    assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));
     // Report has no keys, so nothing was disestablished.
     assert!(plan.target_checks.is_empty());
 }
@@ -496,20 +467,14 @@ fn disestablished_tuple_expands_per_dependent_statement() {
     let statements: Vec<_> = check
         .dependents
         .iter()
-        .map(|d| {
-            (
-                schema.containment(d.containment).id,
-                d.coverage,
-                d.psi_qualified,
-            )
-        })
+        .map(|d| (schema.containment(d.containment).id, d.psi_qualified))
         .collect();
     assert_eq!(
         statements,
         [
-            (TRANSFER_ACCOUNT, false, false),
-            (GRANT_ACCOUNT, false, false),
-            (REPORT_ACCOUNT, false, false),
+            (TRANSFER_ACCOUNT, false),
+            (GRANT_ACCOUNT, false),
+            (REPORT_ACCOUNT, false),
         ]
     );
 }
@@ -545,7 +510,7 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
 }
 
 #[test]
-fn pointwise_tuple_keeps_its_interval_tail_and_coverage_marker() {
+fn pointwise_tuple_keeps_its_interval_tail_and_coverage_evidence() {
     let dir = TempDir::new("plan-check-interval");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -569,6 +534,9 @@ fn pointwise_tuple_keeps_its_interval_tail_and_coverage_marker() {
         panic!("one dependent");
     };
     assert_eq!(schema.containment(dependent.containment).id, STAY_ROOM);
-    assert!(dependent.coverage);
+    assert!(matches!(
+        schema.containment(dependent.containment).enforcement,
+        Enforcement::IntervalCoverage { .. }
+    ));
     assert!(!dependent.psi_qualified);
 }

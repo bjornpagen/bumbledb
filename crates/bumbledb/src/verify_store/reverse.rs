@@ -45,20 +45,25 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             });
             continue;
         }
-        let Enforcement::Probe {
-            key_permutation, ..
-        } = &statement.enforcement
-        else {
-            // A closed-target statement never emits `R` traffic — its
-            // target side is vacuous by construction (axioms don't
-            // delete), so a stored edge's very existence is the finding
-            // (`docs/architecture/30-dependencies.md`, the shape
-            // criterion).
-            s.push(StoreFinding::ClosedRelationEntry {
-                relation: statement.target.relation,
-                key: key.into(),
-            });
-            continue;
+        let key_permutation = match &statement.enforcement {
+            Enforcement::ScalarProbe {
+                key_permutation, ..
+            }
+            | Enforcement::IntervalCoverage {
+                key_permutation, ..
+            } => key_permutation,
+            Enforcement::Closed { .. } => {
+                // A closed-target statement never emits `R` traffic — its
+                // target side is vacuous by construction (axioms don't
+                // delete), so a stored edge's very existence is the finding
+                // (`docs/architecture/30-dependencies.md`, the shape
+                // criterion).
+                s.push(StoreFinding::ClosedRelationEntry {
+                    relation: statement.target.relation,
+                    key: key.into(),
+                });
+                continue;
+            }
         };
         let layout = schema.relation(source_rel).layout();
 
