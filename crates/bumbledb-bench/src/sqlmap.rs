@@ -12,8 +12,7 @@
 //! `Value::IntervalI64` from the pair ([`interval_from_sql`]).
 
 use bumbledb::schema::{
-    FieldDescriptor, Generation, IntervalElement, Relation, Resolved, StatementDescriptor,
-    ValueType,
+    FieldDescriptor, Generation, IntervalElement, Relation, StatementId, StatementView, ValueType,
 };
 use bumbledb::{Schema, Value};
 
@@ -76,30 +75,28 @@ struct IndexSpec {
 /// (statements are anonymous — materialized order is their identity).
 fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
     let mut plan = Vec::new();
-    for (sid, statement) in schema.statements().iter().enumerate() {
-        match &statement.descriptor {
-            StatementDescriptor::Functionality {
-                relation,
-                projection,
-            } => {
-                let rel = schema.relation(*relation);
+    let statement_count = schema.keys().len() + schema.containments().len();
+    for sid in 0..statement_count {
+        let id = StatementId(u16::try_from(sid).expect("statement count fits u16"));
+        match schema.statement(id) {
+            StatementView::Key(_, statement) => {
+                let rel = schema.relation(statement.relation);
                 // A closed auto-key (`R(id) -> R`) is the mirrored
                 // table's PRIMARY KEY, exactly like a fresh auto-key —
                 // both fall to the rowid-coverage skip below.
-                let covered_by_rowid = projection.len() == 1
-                    && rowid_alias(rel) == Some(&*rel.fields()[usize::from(projection[0].0)].name);
+                let covered_by_rowid = statement.projection.len() == 1
+                    && rowid_alias(rel)
+                        == Some(&*rel.fields()[usize::from(statement.projection[0].0)].name);
                 if covered_by_rowid {
                     continue;
                 }
-                let key = matches!(
-                    statement.resolved,
-                    Resolved::Functionality { pointwise: false }
-                );
+                let key = !statement.pointwise;
                 plan.push(IndexSpec {
                     table: rel.name().to_owned(),
                     name: format!("{}_{}_s{sid}", if key { "uq" } else { "ix" }, rel.name()),
                     key,
-                    columns: projection
+                    columns: statement
+                        .projection
                         .iter()
                         .flat_map(|field| {
                             field_columns(&rel.fields()[usize::from(field.0)])
@@ -109,8 +106,8 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                         .collect(),
                 });
             }
-            StatementDescriptor::Containment { source, .. } => {
-                let rel = schema.relation(source.relation);
+            StatementView::Containment(_, statement) => {
+                let rel = schema.relation(statement.source.relation);
                 // A closed source (domain quantification) draws no probe
                 // index: the mirrored extension table is ≤256 rows and
                 // its id is already the PRIMARY KEY.
@@ -121,7 +118,8 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                     table: rel.name().to_owned(),
                     name: format!("ix_{}_s{sid}", rel.name()),
                     key: false,
-                    columns: source
+                    columns: statement
+                        .source
                         .projection
                         .iter()
                         .flat_map(|field| {
@@ -464,7 +462,7 @@ pub fn interval_from_sql(
 mod tests {
     use super::*;
     use crate::fixture::{field, fresh};
-    use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, Side};
+    use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor};
     use bumbledb::{FieldId, RelationId};
 
     /// A miniature of the ledger's statement shapes: fresh auto-keys

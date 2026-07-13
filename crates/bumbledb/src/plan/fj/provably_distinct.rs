@@ -49,7 +49,8 @@ pub(super) fn provably_distinct(normalized: &NormalizedQuery, schema: &Schema) -
                 .collect();
             relation.keys().iter().any(|id| {
                 schema
-                    .key_projection(*id)
+                    .key(*id)
+                    .projection
                     .iter()
                     .all(|f| bound_fields.contains(f))
             })

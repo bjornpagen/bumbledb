@@ -145,11 +145,12 @@ like an accepted optimization (`00-product.md`).
 
 The sealed representation is a sum with homogeneous key and containment arenas.
 Validation is the only mint for `KeyId` and `ContainmentId`: a key witness resolves
-totally to a key statement, a containment witness resolves totally to a containment
-statement, and reverse dependents carry containment witnesses indexed by a key
-witness. The global `StatementId` order survives as a separate sum-typed spine for
+totally through `Schema::key`, a containment witness resolves totally through
+`Schema::containment`, and `Schema::dependents` carries containment witnesses indexed
+by a key witness. The global `StatementId` order survives as a separate sum-typed
+spine; `Schema::statement` parses it into the corresponding borrowed typed arm for
 fingerprint identity, storage, diagnostics, and rendering. Downstream code consumes
-the typed arm directly — the witness carries the proof, so no descriptor/enforcement
+that arm directly — the witness carries the proof, so no descriptor/enforcement
 variant agreement remains to assert.
 
 ## Pointwise lifting (the interval semantics, derived)

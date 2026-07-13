@@ -11,7 +11,7 @@
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Row,
-    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
+    SchemaDescriptor, Side, StatementDescriptor, StatementId, StatementView, ValueType,
 };
 use bumbledb::{Db, Fact, Interval, Value};
 
@@ -181,8 +181,18 @@ fn macro_output_is_exactly_sugar() {
 #[test]
 fn statements_land_in_source_order_with_equality_lowered() {
     let schema = declared();
-    let descriptors: Vec<&StatementDescriptor> =
-        schema.statements().iter().map(|s| &s.descriptor).collect();
+    let descriptors: Vec<StatementDescriptor> = (0..8)
+        .map(|id| match schema.statement(StatementId(id)) {
+            StatementView::Key(_, statement) => StatementDescriptor::Functionality {
+                relation: statement.relation,
+                projection: statement.projection.clone(),
+            },
+            StatementView::Containment(_, statement) => StatementDescriptor::Containment {
+                source: statement.source.clone(),
+                target: statement.target.clone(),
+            },
+        })
+        .collect();
     // Materialized order: the two fresh auto-FDs first (Holder.id,
     // Account.id), then Kind's closed auto-key, then the declared
     // statements in source order — the `==` contributing its two
@@ -190,28 +200,28 @@ fn statements_land_in_source_order_with_equality_lowered() {
     assert_eq!(descriptors.len(), 8);
     assert_eq!(
         descriptors[0],
-        &StatementDescriptor::Functionality {
+        StatementDescriptor::Functionality {
             relation: RelationId(1),
             projection: Box::new([FieldId(0)]),
         }
     );
     assert_eq!(
         descriptors[1],
-        &StatementDescriptor::Functionality {
+        StatementDescriptor::Functionality {
             relation: RelationId(2),
             projection: Box::new([FieldId(0)]),
         }
     );
     assert_eq!(
         descriptors[2],
-        &StatementDescriptor::Functionality {
+        StatementDescriptor::Functionality {
             relation: RelationId(0),
             projection: Box::new([FieldId(0)]),
         }
     );
     assert_eq!(
         descriptors[3],
-        &StatementDescriptor::Containment {
+        StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(2),
                 projection: Box::new([FieldId(1)]),
@@ -226,7 +236,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
     );
     assert_eq!(
         descriptors[4],
-        &StatementDescriptor::Containment {
+        StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(2),
                 projection: Box::new([FieldId(2)]),
@@ -241,21 +251,21 @@ fn statements_land_in_source_order_with_equality_lowered() {
     );
     assert_eq!(
         descriptors[5],
-        &StatementDescriptor::Containment {
+        StatementDescriptor::Containment {
             source: savings_accounts(),
             target: savings_terms_side(),
         }
     );
     assert_eq!(
         descriptors[6],
-        &StatementDescriptor::Containment {
+        StatementDescriptor::Containment {
             source: savings_terms_side(),
             target: savings_accounts(),
         }
     );
     assert_eq!(
         descriptors[7],
-        &StatementDescriptor::Functionality {
+        StatementDescriptor::Functionality {
             relation: RelationId(3),
             projection: Box::new([FieldId(0)]),
         }
@@ -267,7 +277,12 @@ fn the_equality_pair_seals_mirror_links() {
     // The macro's `==` lowers to ids 5 and 6, which seal pointing at each
     // other; every FD and the one-way containments carry `None`.
     let schema = declared();
-    let mirrors: Vec<Option<StatementId>> = schema.statements().iter().map(|s| s.mirror).collect();
+    let mirrors: Vec<Option<StatementId>> = (0..8)
+        .map(|id| match schema.statement(StatementId(id)) {
+            StatementView::Key(_, _) => None,
+            StatementView::Containment(_, statement) => statement.mirror,
+        })
+        .collect();
     assert_eq!(
         mirrors,
         vec![
@@ -448,7 +463,7 @@ mod interval_newtype {
 }
 
 mod selection_literals {
-    use bumbledb::schema::{FieldId, StatementDescriptor};
+    use bumbledb::schema::{FieldId, StatementId, StatementView};
     use bumbledb::Value;
 
     bumbledb::schema! {
@@ -477,10 +492,10 @@ mod selection_literals {
                 .expect("the declared schema is valid")
         };
         // Statement 0 is Sensor.id's fresh auto-FD; 1 is the containment.
-        let StatementDescriptor::Containment { target, .. } = &schema.statements()[1].descriptor
-        else {
+        let StatementView::Containment(_, statement) = schema.statement(StatementId(1)) else {
             panic!("the declared statement is a containment");
         };
+        let target = &statement.target;
         assert_eq!(
             target.selection[..],
             [
@@ -628,7 +643,7 @@ mod closed_relations {
     //! be forgotten for a new theory. No fact struct and no `Fact` impl
     //! exist for `Status`/`Kind` — closed relations are unwritable.
 
-    use bumbledb::schema::{FieldId, RelationId, Row, StatementDescriptor};
+    use bumbledb::schema::{FieldId, RelationId, Row, StatementId, StatementView};
     use bumbledb::{Db, Theory as _, Value};
 
     bumbledb::schema! {
@@ -711,12 +726,12 @@ mod closed_relations {
             .expect("the declared schema is valid");
         // Materialized order: Submission.id's fresh auto-FD, the two
         // closed auto-keys (Status, Kind), then the declared containments.
-        assert_eq!(schema.statements().len(), 5);
-        let StatementDescriptor::Containment { source, target } =
-            &schema.statements()[4].descriptor
-        else {
+        assert_eq!(schema.keys().len() + schema.containments().len(), 5);
+        let StatementView::Containment(_, statement) = schema.statement(StatementId(4)) else {
             panic!("the second declared statement is a containment");
         };
+        let source = &statement.source;
+        let target = &statement.target;
         // `Submission(kind | status == Frozen)` — Frozen is row id 1.
         assert_eq!(source.relation, Review::SUBMISSION);
         assert_eq!(source.projection[..], [Review::SUBMISSION_KIND]);

@@ -841,7 +841,7 @@ pub fn corpus_relation_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bumbledb::schema::StatementDescriptor;
+    use bumbledb::schema::StatementView;
 
     const CFG: GenConfig = GenConfig {
         seed: 7,
@@ -854,22 +854,20 @@ mod tests {
     /// real statements, never guessed ids.
     #[test]
     fn the_closed_statement_pins_hold() {
-        let statements = schema().statements();
-        let containment =
-            |id: bumbledb::StatementId| match &statements[usize::from(id.0)].descriptor {
-                StatementDescriptor::Containment { source, target } => {
-                    (source.relation, target.relation)
-                }
-                other @ StatementDescriptor::Functionality { .. } => {
-                    panic!("statement {} is not a containment: {other:?}", id.0)
-                }
-            };
+        let schema = schema();
+        let containment = |id: bumbledb::StatementId| match schema.statement(id) {
+            StatementView::Containment(_, statement) => {
+                (statement.source.relation, statement.target.relation)
+            }
+            StatementView::Key(_, statement) => {
+                panic!("statement {} is a key: {statement:?}", id.0)
+            }
+        };
         assert_eq!(containment(VOCAB_CURRENCY), (ids::ACCOUNT, ids::CURRENCY));
         assert_eq!(containment(VOCAB_SOURCE), (ids::JOURNAL_ENTRY, ids::SOURCE));
         assert!(matches!(
-            &statements[usize::from(BACKING_KEY.0)].descriptor,
-            StatementDescriptor::Functionality { relation, .. }
-                if *relation == ids::CURRENCY_BACKING
+            schema.statement(BACKING_KEY),
+            StatementView::Key(_, statement) if statement.relation == ids::CURRENCY_BACKING
         ));
         assert_eq!(
             containment(BACKING_VALID),

@@ -275,7 +275,7 @@ impl SlotWidth {
             ValueType::Interval { .. } => Self::TWO,
             ValueType::FixedBytes { len } => Self(
                 u8::try_from(crate::encoding::fixed_bytes_words(*len))
-                    .expect("validated schema: at most 8 words"),
+                    .expect("bytes width is at most 8 words"),
             ),
             _ => Self::ONE,
         }

@@ -6,7 +6,7 @@
 //! invariant the neighbor probe assumes but never re-checks globally.
 
 use crate::error::Result;
-use crate::schema::{RelationId, Resolved, StatementId};
+use crate::schema::{RelationId, StatementId, StatementView};
 use crate::storage::keys;
 
 use super::{namespace, StoreFinding, Sweep};
@@ -49,7 +49,12 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             prev_pointwise = None;
             continue;
         }
-        if !relation.keys().contains(&sid) {
+        let Some(StatementView::Key(key_id, statement)) = schema.statement_checked(sid) else {
+            s.malformed(key, "U key statement");
+            prev_pointwise = None;
+            continue;
+        };
+        if statement.relation != rel || !relation.keys().contains(&key_id) {
             s.malformed(key, "U key statement");
             prev_pointwise = None;
             continue;
@@ -70,12 +75,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             None => false,
             Some(fact) if fact.len() != relation.layout().fact_width() => true,
             Some(fact) => {
-                keys::guard_bytes(
-                    relation.layout(),
-                    schema.statement(sid).key_projection(),
-                    fact,
-                    &mut derived,
-                );
+                keys::guard_bytes(relation.layout(), &statement.projection, fact, &mut derived);
                 derived == guard
             }
         };
@@ -92,10 +92,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // numeric compare. Half-open `[ps, pe)` and `[ns, ne)` with
         // `ps <= ns` by cursor order overlap iff `pe > ns`; equality is
         // adjacency, legal by construction.
-        let Resolved::Functionality { pointwise } = &schema.statement(sid).resolved else {
-            unreachable!("validated schema: relation keys resolve as Functionality")
-        };
-        if !*pointwise || guard.len() < 16 {
+        if !statement.pointwise || guard.len() < 16 {
             // A pointwise guard shorter than its interval is a width
             // desync the re-derivation above already convicted.
             prev_pointwise = None;

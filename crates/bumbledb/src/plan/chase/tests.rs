@@ -5,7 +5,7 @@ use crate::ir::{Atom, Comparison, PredicateTree, Query, Rule, Term, Value};
 use crate::plan::planner::{plan, OccStats};
 use crate::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, ValueType,
+    SchemaDescriptor, StatementDescriptor, ValueType,
 };
 
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {

@@ -27,7 +27,6 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 /// pointwise keys), and the `==` pair lowered to its two directions.
 #[test]
 fn the_schema_is_statement_complete() {
-    use bumbledb::schema::{Resolved, StatementDescriptor};
     let s = schema();
     for (idx, name) in [
         "Account",
@@ -64,25 +63,23 @@ fn the_schema_is_statement_complete() {
     let mut scalar_keys = 0;
     let mut pointwise = Vec::new();
     let mut containments = Vec::new();
-    for statement in s.statements() {
-        match &statement.descriptor {
-            StatementDescriptor::Functionality { relation, .. } => match statement.resolved {
-                Resolved::Functionality { pointwise: true } => pointwise.push(*relation),
-                _ if s.relation(*relation).is_closed() => closed_keys += 1,
-                _ => {
-                    // The fresh auto-keys lead; the declared scalar keys
-                    // are Attendance(event, person) and Claim(source).
-                    if autos < 6 && scalar_keys == 0 {
-                        autos += 1;
-                    } else {
-                        scalar_keys += 1;
-                    }
-                }
-            },
-            StatementDescriptor::Containment { source, target } => {
-                containments.push((source.relation, target.relation));
+    for statement in s.keys() {
+        if statement.pointwise {
+            pointwise.push(statement.relation);
+        } else if s.relation(statement.relation).is_closed() {
+            closed_keys += 1;
+        } else {
+            // The fresh auto-keys lead; the declared scalar keys are
+            // Attendance(event, person) and Claim(source).
+            if autos < 6 && scalar_keys == 0 {
+                autos += 1;
+            } else {
+                scalar_keys += 1;
             }
         }
+    }
+    for statement in s.containments() {
+        containments.push((statement.source.relation, statement.target.relation));
     }
     assert_eq!(autos, 6, "Account/Person/Calendar/Event/Attendance/Room");
     assert_eq!(closed_keys, 2, "the Rsvp and Arm closed auto-keys");

@@ -79,7 +79,7 @@ impl<S> WriteTx<'_, S> {
         refs: &mut Vec<ValueRef>,
     ) -> Result<bool> {
         for (idx, (value, field)) in values.iter().zip(fields).enumerate() {
-            let field_id = FieldId(u16::try_from(idx).expect("validated schema: fields fit u16"));
+            let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
             if let Err(mismatch) = crate::schema::value_matches(value, &field.value_type) {
                 return Err(shape_mismatch(rel, field_id, mismatch).into());
             }

@@ -14,7 +14,7 @@ use crate::ir::normalize::Occurrence;
 use crate::ir::CmpOp;
 use crate::plan::fj::split_filters;
 use crate::plan::planner::OccStats;
-use crate::schema::{FieldId, Schema, StatementDescriptor};
+use crate::schema::{FieldId, Schema};
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
 
@@ -236,7 +236,7 @@ fn distinct_of(
     let keyed = descriptor
         .keys()
         .iter()
-        .any(|id| schema.key_projection(*id) == [field]);
+        .any(|id| schema.key(*id).projection.as_ref() == [field]);
     if keyed {
         return Ok(rows.max(1));
     }
@@ -262,14 +262,12 @@ fn distinct_of(
     // the first statement's.
     let mut containment_bound: Option<u64> = None;
     for id in descriptor.outgoing() {
-        if let StatementDescriptor::Containment { source, target } =
-            &schema.statement(*id).descriptor
+        let statement = schema.containment(*id);
+        if statement.source.projection.as_ref() == [field] && statement.source.selection.is_empty()
         {
-            if source.projection.as_ref() == [field] && source.selection.is_empty() {
-                let target_rows = read::row_count(txn, target.relation)?;
-                containment_bound =
-                    Some(containment_bound.map_or(target_rows, |bound| bound.min(target_rows)));
-            }
+            let target_rows = read::row_count(txn, statement.target.relation)?;
+            containment_bound =
+                Some(containment_bound.map_or(target_rows, |bound| bound.min(target_rows)));
         }
     }
     if let Some(bound) = containment_bound {
@@ -289,7 +287,7 @@ mod tests {
     use crate::ir::normalize::{OccId, Role};
     use crate::schema::{
         FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
-        ValueType,
+        StatementDescriptor, ValueType,
     };
     use crate::storage::commit::commit;
     use crate::storage::delta::WriteDelta;

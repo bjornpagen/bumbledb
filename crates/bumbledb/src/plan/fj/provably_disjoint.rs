@@ -160,7 +160,7 @@ fn key_flows_to_common_head(
     schema: &Schema,
 ) -> bool {
     schema.relation(relation).keys().iter().any(|key| {
-        schema.key_projection(*key).iter().all(|field| {
+        schema.key(*key).projection.iter().all(|field| {
             let (Some(var_a), Some(var_b)) = (var_at(a, *field), var_at(b, *field)) else {
                 return false;
             };

@@ -55,7 +55,7 @@ pub(super) fn densify(
                 .iter()
                 .filter_map(|id| {
                     let mut set = 0u128;
-                    for field in schema.key_projection(*id) {
+                    for field in &schema.key(*id).projection {
                         let (_, var) = occurrence.vars.iter().find(|(f, _)| f == field)?;
                         set |= 1 << var_index[var];
                     }

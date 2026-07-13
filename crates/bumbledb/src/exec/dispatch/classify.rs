@@ -2,7 +2,7 @@ use super::{GuardPlan, GuardVar};
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::normalize::NormalizedQuery;
 use crate::ir::CmpOp;
-use crate::schema::{FieldId, Schema, StatementId};
+use crate::schema::{FieldId, Relation, Schema, StatementId};
 
 /// Classifies a normalized query: `Some(GuardPlan)` iff it is guard-probe
 /// eligible — exactly one atom occurrence (positive, so no negated atoms
@@ -94,26 +94,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     if relation.is_closed() {
         return None;
     }
-    // Prefer a key-statement probe (one `U` get); fall back to the
-    // full-fact membership check when every field is bound by value.
-    let (statement, key_fields): (Option<StatementId>, Vec<FieldId>) = relation
-        .keys()
-        .iter()
-        .find(|id| {
-            schema
-                .key_projection(**id)
-                .iter()
-                .all(|f| value_of(*f).is_some())
-        })
-        .map(|id| (Some(*id), schema.key_projection(*id).to_vec()))
-        .or_else(|| {
-            let all: Vec<FieldId> = (0..relation.fields().len())
-                .map(|i| FieldId(u16::try_from(i).expect("validated schema")))
-                .collect();
-            all.iter()
-                .all(|f| value_of(*f).is_some())
-                .then_some((None, all))
-        })?;
+    let (statement, key_fields) = guard_candidate(relation, schema, &value_of)?;
 
     let key: Vec<(FieldId, Const)> = key_fields
         .iter()
@@ -146,6 +127,37 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
         remaining_filters: unconsumed_filters(&occurrence.filters, key_fields),
         vars,
     })
+}
+
+/// Prefer a key-statement probe (one `U` get); fall back to the full-fact
+/// membership check when every field is bound by value.
+fn guard_candidate(
+    relation: &Relation,
+    schema: &Schema,
+    value_of: &impl Fn(FieldId) -> Option<Const>,
+) -> Option<(Option<StatementId>, Vec<FieldId>)> {
+    relation
+        .keys()
+        .iter()
+        .find(|id| {
+            schema
+                .key(**id)
+                .projection
+                .iter()
+                .all(|f| value_of(*f).is_some())
+        })
+        .map(|id| {
+            let key = schema.key(*id);
+            (Some(key.id), key.projection.to_vec())
+        })
+        .or_else(|| {
+            let all: Vec<FieldId> = (0..relation.fields().len())
+                .map(|i| FieldId(u16::try_from(i).expect("field count fits u16")))
+                .collect();
+            all.iter()
+                .all(|f| value_of(*f).is_some())
+                .then_some((None, all))
+        })
 }
 
 /// Filters not consumed by the key: everything except one Eq filter per

@@ -7,7 +7,7 @@
 //! and re-derives the same permuted key bytes.
 
 use crate::error::Result;
-use crate::schema::{Resolved, StatementDescriptor};
+use crate::schema::{Enforcement, StatementView};
 use crate::storage::commit::judgment;
 use crate::storage::keys;
 
@@ -26,15 +26,13 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // The statement id must name a containment whose source is the
         // embedded relation — anything else is not an R key the schema
         // could ever have written.
-        let Some(statement) = schema.statements().get(usize::from(sid.0)) else {
+        let Some(StatementView::Containment(containment_id, statement)) =
+            schema.statement_checked(sid)
+        else {
             s.malformed(key, "R key statement");
             continue;
         };
-        let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
-            s.malformed(key, "R key statement");
-            continue;
-        };
-        if source.relation != source_rel {
+        if statement.source.relation != source_rel {
             s.malformed(key, "R key source relation");
             continue;
         }
@@ -47,9 +45,9 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             });
             continue;
         }
-        let Resolved::Containment {
+        let Enforcement::Probe {
             key_permutation, ..
-        } = &statement.resolved
+        } = &statement.enforcement
         else {
             // A closed-target statement never emits `R` traffic — its
             // target side is vacuous by construction (axioms don't
@@ -57,7 +55,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             // (`docs/architecture/30-dependencies.md`, the shape
             // criterion).
             s.push(StoreFinding::ClosedRelationEntry {
-                relation: target.relation,
+                relation: statement.target.relation,
                 key: key.into(),
             });
             continue;
@@ -71,10 +69,14 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             None => false,
             Some(fact) if fact.len() != layout.fact_width() => true,
             Some(fact) => {
-                judgment::satisfies(&s.selections.containment(sid).source, layout, fact) && {
+                judgment::satisfies(
+                    &s.selections.containment(containment_id).source,
+                    layout,
+                    fact,
+                ) && {
                     keys::permuted_guard_bytes(
                         layout,
-                        &source.projection,
+                        &statement.source.projection,
                         key_permutation,
                         fact,
                         &mut derived,

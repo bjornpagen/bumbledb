@@ -102,7 +102,7 @@ mod tests {
         let schema = schema();
         // `Account(holder) <= Holder(id)` is the ledger's first declared
         // containment; its materialized id follows the fresh auto-FDs.
-        let containment = (0..schema.statements().len())
+        let containment = (0..schema.keys().len() + schema.containments().len())
             .map(|id| StatementId(u16::try_from(id).expect("small fixture")))
             .find(|&id| render::render(schema, id).contains("<="))
             .expect("the ledger schema declares containments");

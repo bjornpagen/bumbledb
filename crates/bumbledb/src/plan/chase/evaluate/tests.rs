@@ -13,6 +13,7 @@ use crate::ir::{
 use crate::plan::chase::{chase, with_chase_disabled};
 use crate::schema::{
     FieldDescriptor, Generation, RelationDescriptor, Row, Schema, SchemaDescriptor, Side,
+    StatementDescriptor,
 };
 
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {

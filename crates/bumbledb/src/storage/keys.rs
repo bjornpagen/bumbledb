@@ -257,7 +257,7 @@ pub fn guard_bytes(
 /// Like [`guard_bytes`], but lays the sliced fields down in the *target
 /// key's* guard order: `key_permutation[i]` is the guard position of
 /// projection element `i` (statement projection order → target key order,
-/// `Resolved::Containment::key_permutation`) — the key-bytes segment of an
+/// `Enforcement::Probe::key_permutation`) — the key-bytes segment of an
 /// `R` key. Interval fields copy their whole 16 bytes, exactly as in
 /// [`guard_bytes`].
 pub fn permuted_guard_bytes(
@@ -273,7 +273,7 @@ pub fn permuted_guard_bytes(
         let source_pos = key_permutation
             .iter()
             .position(|&p| usize::from(p) == guard_pos)
-            .expect("validated schema: key_permutation is a bijection");
+            .expect("key permutation contains every guard position");
         out.extend_from_slice(field_bytes(
             fact_bytes,
             layout,

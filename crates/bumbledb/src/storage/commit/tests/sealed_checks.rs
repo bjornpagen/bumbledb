@@ -25,7 +25,6 @@ const REPORT: RelationId = RelationId(2);
 /// Declared statement order (no fresh fields, no closed relations).
 const ACCOUNT_KEY: StatementId = StatementId(0);
 const TRANSFER_ACCOUNT: StatementId = StatementId(1);
-const REPORT_ACCOUNT: StatementId = StatementId(2);
 const TRANSFER_ACCOUNT_ID: ContainmentId = ContainmentId(0);
 const REPORT_ACCOUNT_ID: ContainmentId = ContainmentId(1);
 

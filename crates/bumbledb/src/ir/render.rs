@@ -54,7 +54,7 @@ use crate::ir::{
     AggOp, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, PredicateTree, Query, Rule, Term,
     Value, VarId,
 };
-use crate::schema::{FieldDescriptor, FieldId, Relation, RelationId, Schema};
+use crate::schema::{Enforcement, FieldDescriptor, FieldId, Relation, RelationId, Schema};
 
 /// The closed-reference position table, built once at renderer
 /// construction: `(relation, field)` → the closed relation whose row ids
@@ -68,12 +68,12 @@ struct ClosedRefs(BTreeMap<(RelationId, FieldId), RelationId>);
 impl ClosedRefs {
     fn build(schema: &Schema) -> Self {
         let mut map = BTreeMap::new();
-        for statement in schema.statements() {
-            let crate::schema::StatementDescriptor::Containment { source, target } =
-                &statement.descriptor
-            else {
+        for statement in schema.containments() {
+            if !matches!(statement.enforcement, Enforcement::Closed { .. }) {
                 continue;
-            };
+            }
+            let source = &statement.source;
+            let target = &statement.target;
             let target_closed = schema
                 .relation_checked(target.relation)
                 .is_some_and(Relation::is_closed);

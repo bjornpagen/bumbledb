@@ -11,14 +11,14 @@ use std::fmt;
 
 use super::{
     FieldDescriptor, FieldId, RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor,
-    StatementId, Value, ValueType,
+    StatementId, StatementView, Value, ValueType,
 };
 
 /// Renders one sealed statement in the exact macro notation: an FD as
 /// `SavingsTerms(account) -> SavingsTerms`, a containment as
 /// `Account(holder) <= Holder(id)` with any selection after `|`
 /// (`Account(id | kind == Savings)`), and a bidirectional pair — read off
-/// the sealed [`Statement::mirror`](super::Statement::mirror) link — as
+/// the sealed [`super::ContainmentStatement::mirror`] link — as
 /// `==` once, in the pair's written orientation (both ids render the same
 /// string). Selection literals render through one value formatter;
 /// intervals render as `start..end`.
@@ -28,11 +28,20 @@ use super::{
 /// On an out-of-range id — statement ids are validated, internal data.
 #[must_use]
 pub fn render(schema: &Schema, id: StatementId) -> String {
-    let statement = schema.statement(id);
+    let statement = match schema.statement(id) {
+        StatementView::Key(_, statement) => RenderedStatement::Key {
+            relation: statement.relation,
+            projection: &statement.projection,
+        },
+        StatementView::Containment(_, statement) => RenderedStatement::Containment {
+            source: &statement.source,
+            target: &statement.target,
+            mirror: statement.mirror,
+        },
+    };
     Rendered {
         names: &SealedNames(schema),
-        descriptor: &statement.descriptor,
-        mirror: statement.mirror,
+        statement,
         id,
     }
     .to_string()
@@ -54,12 +63,27 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
 pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String {
     let materialized = descriptor.materialized_statements();
     let index = usize::from(id.0);
+    let statement = match &materialized[index] {
+        StatementDescriptor::Functionality {
+            relation,
+            projection,
+        } => RenderedStatement::Key {
+            relation: *relation,
+            projection,
+        },
+        StatementDescriptor::Containment { source, target } => {
+            RenderedStatement::Containment {
+                source,
+                target,
+                // A rejected declaration seals no `mirror` field to read,
+                // so the pairing comes from sealing's one computation site.
+                mirror: super::validate::mirror_of(&materialized, index),
+            }
+        }
+    };
     Rendered {
         names: &DeclaredNames(descriptor),
-        descriptor: &materialized[index],
-        // A rejected declaration seals no `mirror` field to read, so the
-        // pairing comes from sealing's one computation site.
-        mirror: super::validate::mirror_of(&materialized, index),
+        statement,
         id,
     }
     .to_string()
@@ -88,7 +112,7 @@ trait Names {
 /// The shared containment walk behind both [`Names::closed_target`]
 /// impls, over whichever statement list the schema form carries.
 fn closed_target_of<'a>(
-    statements: impl Iterator<Item = &'a StatementDescriptor>,
+    statements: impl Iterator<Item = (&'a Side, &'a Side)>,
     is_closed: impl Fn(RelationId) -> bool,
     relation: RelationId,
     field: FieldId,
@@ -96,10 +120,7 @@ fn closed_target_of<'a>(
     if field == FieldId(0) && is_closed(relation) {
         return Some(relation);
     }
-    statements.into_iter().find_map(|statement| {
-        let StatementDescriptor::Containment { source, target } = statement else {
-            return None;
-        };
+    statements.into_iter().find_map(|(source, target)| {
         (source.relation == relation
             && source.projection.as_ref() == [field]
             && target.projection.as_ref() == [FieldId(0)]
@@ -124,7 +145,10 @@ impl Names for SealedNames<'_> {
 
     fn closed_target(&self, relation: RelationId, field: FieldId) -> Option<RelationId> {
         closed_target_of(
-            self.0.statements().iter().map(|s| &s.descriptor),
+            self.0
+                .containments()
+                .iter()
+                .map(|statement| (&statement.source, &statement.target)),
             |id| {
                 self.0
                     .relation_checked(id)
@@ -176,7 +200,13 @@ impl Names for DeclaredNames<'_> {
 
     fn closed_target(&self, relation: RelationId, field: FieldId) -> Option<RelationId> {
         closed_target_of(
-            self.0.statements.iter(),
+            self.0
+                .statements
+                .iter()
+                .filter_map(|statement| match statement {
+                    StatementDescriptor::Containment { source, target } => Some((source, target)),
+                    StatementDescriptor::Functionality { .. } => None,
+                }),
             |id| {
                 self.0
                     .relations
@@ -205,24 +235,39 @@ impl Names for DeclaredNames<'_> {
 /// The lazy renderer behind both entry points.
 struct Rendered<'a> {
     names: &'a dyn Names,
-    descriptor: &'a StatementDescriptor,
-    /// The `==` partner, if any — the sealed fact, never re-detected here.
-    mirror: Option<StatementId>,
+    statement: RenderedStatement<'a>,
     id: StatementId,
+}
+
+enum RenderedStatement<'a> {
+    Key {
+        relation: RelationId,
+        projection: &'a [FieldId],
+    },
+    Containment {
+        source: &'a Side,
+        target: &'a Side,
+        /// The `==` partner, if any — the sealed fact, never re-detected.
+        mirror: Option<StatementId>,
+    },
 }
 
 impl fmt::Display for Rendered<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.descriptor {
-            StatementDescriptor::Functionality {
+        match self.statement {
+            RenderedStatement::Key {
                 relation,
                 projection,
             } => {
-                side_parts(f, self.names, *relation, projection, &[])?;
+                side_parts(f, self.names, relation, projection, &[])?;
                 write!(f, " -> ")?;
-                relation_name(f, self.names, *relation)
+                relation_name(f, self.names, relation)
             }
-            StatementDescriptor::Containment { source, target } => match self.mirror {
+            RenderedStatement::Containment {
+                source,
+                target,
+                mirror,
+            } => match mirror {
                 // A mirrored pair renders `==` once, canonically in the
                 // lower id's written orientation — both partners produce
                 // the same string, so the higher id flips its sides

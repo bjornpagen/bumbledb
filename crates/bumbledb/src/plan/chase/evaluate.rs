@@ -75,7 +75,7 @@
 //!   closed relation, or a binder's field carries an accepted
 //!   containment into the closed relation's id (with the statement's φ
 //!   carried literally by that occurrence — every committed value is
-//!   then inside the compiled member set, `Resolved::ClosedContainment`).
+//!   then inside the compiled closed-target member set).
 //!   No witness → REFUSED, recorded (the anti-probe stays; trigger: a
 //!   profiled anti-probe worth folding under a richer domain analysis).
 //! - complement empty (`S` = the whole extension): under the same
@@ -91,9 +91,7 @@ use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, VarId};
-use crate::schema::{
-    FieldId, IntervalElement, Relation, RelationId, Schema, StatementDescriptor, ValueType,
-};
+use crate::schema::{FieldId, IntervalElement, Relation, RelationId, Schema, ValueType};
 
 use super::var_is_dead;
 
@@ -408,23 +406,22 @@ fn containment_into_id(
     field: FieldId,
     closed: RelationId,
 ) -> bool {
-    schema.statements().iter().any(|statement| {
-        let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
-            return false;
-        };
-        source.relation == occurrence.relation
-            && source.projection.as_ref() == [field]
-            && target.relation == closed
-            && target.projection.as_ref() == [FieldId(0)]
-            && super::encoded_selection(source).iter().all(|(f, value)| {
-                occurrence.filters.iter().any(|filter| {
-                    matches!(
-                        filter,
-                        FilterPredicate::Compare { field: ff, op: CmpOp::Eq, value: v }
-                            if ff == f && v == value
-                    )
+    schema.containments().iter().any(|statement| {
+        statement.source.relation == occurrence.relation
+            && statement.source.projection.as_ref() == [field]
+            && statement.target.relation == closed
+            && statement.target.projection.as_ref() == [FieldId(0)]
+            && super::encoded_selection(&statement.source)
+                .iter()
+                .all(|(f, value)| {
+                    occurrence.filters.iter().any(|filter| {
+                        matches!(
+                            filter,
+                            FilterPredicate::Compare { field: ff, op: CmpOp::Eq, value: v }
+                                if ff == f && v == value
+                        )
+                    })
                 })
-            })
     })
 }
 

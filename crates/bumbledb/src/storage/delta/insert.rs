@@ -92,8 +92,7 @@ impl WriteDelta<'_> {
             if field.generation != Generation::Fresh {
                 continue;
             }
-            let field_id =
-                FieldId(u16::try_from(idx).expect("validated schema: field ids fit u16"));
+            let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
             let raw = field_bytes(fact_bytes, relation.layout(), idx);
             let value = decode_u64(raw.try_into().expect("fresh fields are 8 bytes"));
             let mark = self.fresh_mark(view, rel, field_id)?;

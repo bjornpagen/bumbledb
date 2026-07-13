@@ -10,7 +10,7 @@
 
 use crate::encoding::{fact_hash, field_bytes, TypeDesc};
 use crate::error::{Direction, Error, Result};
-use crate::schema::{RelationId, Resolved, StatementDescriptor};
+use crate::schema::{Enforcement, RelationId};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 
@@ -95,14 +95,10 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
 
         // F→U: every key statement's guard must hold this row id
         // (guards re-derived by slicing, exactly as the commit path).
-        for &sid in relation.keys() {
-            keys::guard_bytes(
-                layout,
-                schema.statement(sid).key_projection(),
-                fact,
-                &mut guard,
-            );
-            let u_len = keys::guard_key(&mut scratch, rel, sid, &guard);
+        for &key_id in relation.keys() {
+            let statement = schema.key(key_id);
+            keys::guard_bytes(layout, &statement.projection, fact, &mut guard);
+            let u_len = keys::guard_key(&mut scratch, rel, statement.id, &guard);
             let held = s
                 .data
                 .get(txn.raw(), &scratch[..u_len])?
@@ -110,7 +106,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             if !held {
                 s.push(StoreFinding::FactWithoutGuard {
                     relation: rel,
-                    statement: sid,
+                    statement: statement.id,
                     row_id,
                     guard_key: scratch[..u_len].into(),
                 });
@@ -143,17 +139,15 @@ fn check_outgoing(
     let schema = s.schema;
     let relation = schema.relation(rel);
     let layout = relation.layout();
-    for &sid in relation.outgoing() {
-        let statement = schema.statement(sid);
-        let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
-            unreachable!("validated schema: outgoing ids name Containment statements")
-        };
-        let checks = s.selections.containment(sid);
+    for &containment_id in relation.outgoing() {
+        let statement = schema.containment(containment_id);
+        let sid = statement.id;
+        let checks = s.selections.containment(containment_id);
         if !judgment::satisfies(&checks.source, layout, fact) {
             continue;
         }
-        let (target_key, key_permutation, coverage) = match &statement.resolved {
-            Resolved::Containment {
+        let (target_key, key_permutation, coverage) = match &statement.enforcement {
+            Enforcement::Probe {
                 target_key,
                 key_permutation,
                 coverage,
@@ -161,8 +155,8 @@ fn check_outgoing(
             // A closed-target containment has no `R` edge and no guard to
             // probe — the F↔R walk skips it, and the global judgment is
             // the membership test itself.
-            Resolved::ClosedContainment { members } => {
-                let word = field_bytes(fact, layout, usize::from(source.projection[0].0));
+            Enforcement::Closed { members } => {
+                let word = field_bytes(fact, layout, usize::from(statement.source.projection[0].0));
                 let id = u64::from_be_bytes(word.try_into().expect("u64 field is 8 bytes"));
                 if !crate::schema::closed_member(members, id) {
                     s.push(StoreFinding::JudgmentViolation {
@@ -173,16 +167,19 @@ fn check_outgoing(
                 }
                 continue;
             }
-            Resolved::Functionality { .. } => {
-                unreachable!("validated schema: outgoing ids resolve as containments")
-            }
         };
-        keys::permuted_guard_bytes(layout, &source.projection, key_permutation, fact, guard);
+        keys::permuted_guard_bytes(
+            layout,
+            &statement.source.projection,
+            key_permutation,
+            fact,
+            guard,
+        );
         let r_len = keys::reverse_key(scratch, sid, guard, rel, row_id);
         let missing_edge = s.data.get(txn.raw(), &scratch[..r_len])?.is_none();
         let probe = judgment::Probe {
             statement: sid,
-            target_relation: target.relation,
+            target_relation: statement.target.relation,
             target_key: *target_key,
             target_check: &checks.target,
             key_bytes: guard,
@@ -244,20 +241,18 @@ fn check_extension_sources(
             continue;
         };
         let layout = relation.layout();
-        for &sid in relation.outgoing() {
-            let statement = schema.statement(sid);
-            let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
-                unreachable!("validated schema: outgoing ids name Containment statements")
-            };
+        for &containment_id in relation.outgoing() {
+            let statement = schema.containment(containment_id);
+            let sid = statement.id;
             for row in rows {
                 // Fetched per row so the borrow of `s.selections` ends
                 // before the finding push.
-                let checks = s.selections.containment(sid);
+                let checks = s.selections.containment(containment_id);
                 if !judgment::satisfies(&checks.source, layout, &row.fact) {
                     continue;
                 }
-                let judged = match &statement.resolved {
-                    Resolved::Containment {
+                let judged = match &statement.enforcement {
+                    Enforcement::Probe {
                         target_key,
                         key_permutation,
                         coverage,
@@ -268,14 +263,14 @@ fn check_extension_sources(
                         debug_assert!(!coverage);
                         keys::permuted_guard_bytes(
                             layout,
-                            &source.projection,
+                            &statement.source.projection,
                             key_permutation,
                             &row.fact,
                             &mut guard,
                         );
                         checker.check_scalar(&judgment::Probe {
                             statement: sid,
-                            target_relation: target.relation,
+                            target_relation: statement.target.relation,
                             target_key: *target_key,
                             target_check: &checks.target,
                             key_bytes: &guard,
@@ -283,9 +278,12 @@ fn check_extension_sources(
                             direction: Direction::TargetRequired,
                         })
                     }
-                    Resolved::ClosedContainment { members } => {
-                        let word =
-                            field_bytes(&row.fact, layout, usize::from(source.projection[0].0));
+                    Enforcement::Closed { members } => {
+                        let word = field_bytes(
+                            &row.fact,
+                            layout,
+                            usize::from(statement.source.projection[0].0),
+                        );
                         let id = u64::from_be_bytes(word.try_into().expect("u64 field is 8 bytes"));
                         if crate::schema::closed_member(members, id) {
                             Ok(())
@@ -296,9 +294,6 @@ fn check_extension_sources(
                                 fact: row.fact.clone(),
                             })
                         }
-                    }
-                    Resolved::Functionality { .. } => {
-                        unreachable!("validated schema: outgoing ids resolve as containments")
                     }
                 };
                 match judged {

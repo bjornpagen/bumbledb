@@ -98,7 +98,7 @@ impl FixedBytesValue {
     pub fn new(raw: &[u8]) -> Self {
         assert!(
             !raw.is_empty() && raw.len() <= MAX_FIXED_BYTES,
-            "validated schema: bytes<N> widths are 1..=64"
+            "bytes<N> widths are 1..=64"
         );
         let mut bytes = [0u8; MAX_FIXED_BYTES];
         bytes[..raw.len()].copy_from_slice(raw);

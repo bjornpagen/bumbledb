@@ -177,7 +177,7 @@ pub mod ids {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bumbledb::schema::{Resolved, StatementDescriptor, ValueType};
+    use bumbledb::schema::ValueType;
 
     /// The pre-funeral enum theory's fingerprint — the enum→closed
     /// rewrite of the same vocabulary is a DIFFERENT theory, no store
@@ -227,24 +227,24 @@ mod tests {
     /// key.
     #[test]
     fn the_statement_roster_matches_the_doc() {
-        let statements = schema().statements();
-        assert_eq!(statements.len(), 6 + 3 + 12 + 1);
+        let schema = schema();
+        assert_eq!(
+            schema.keys().len() + schema.containments().len(),
+            6 + 3 + 12 + 1
+        );
         let mut autos = 0;
         let mut containments = Vec::new();
         let mut pointwise = 0;
-        for statement in statements {
-            match &statement.descriptor {
-                StatementDescriptor::Functionality { relation, .. } => match statement.resolved {
-                    Resolved::Functionality { pointwise: true } => {
-                        pointwise += 1;
-                        assert_eq!(*relation, ids::MANDATE);
-                    }
-                    _ => autos += 1,
-                },
-                StatementDescriptor::Containment { source, target } => {
-                    containments.push((source.relation, target.relation));
-                }
+        for statement in schema.keys() {
+            if statement.pointwise {
+                pointwise += 1;
+                assert_eq!(statement.relation, ids::MANDATE);
+            } else {
+                autos += 1;
             }
+        }
+        for statement in schema.containments() {
+            containments.push((statement.source.relation, statement.target.relation));
         }
         assert_eq!(
             autos, 9,

@@ -109,7 +109,7 @@ pub fn column_spans(field_types: &[crate::encoding::TypeDesc]) -> Box<[ColumnSpa
                 TypeDesc::U64 | TypeDesc::I64 | TypeDesc::String => ColumnWidth::Word,
                 TypeDesc::FixedBytes { len } => {
                     match u16::try_from(crate::encoding::fixed_bytes_words(*len))
-                        .expect("validated schema: at most 8 words")
+                        .expect("bytes width is at most 8 words")
                     {
                         1 => ColumnWidth::Word,
                         count => ColumnWidth::Words { count },
@@ -123,7 +123,7 @@ pub fn column_spans(field_types: &[crate::encoding::TypeDesc]) -> Box<[ColumnSpa
             };
             next_column = next_column
                 .checked_add(width.column_count())
-                .expect("validated schema: column count fits u16");
+                .expect("column count fits u16");
             span
         })
         .collect()

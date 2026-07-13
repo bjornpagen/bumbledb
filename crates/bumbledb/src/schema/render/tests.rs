@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
-use crate::schema::{IntervalElement, RelationDescriptor};
+use crate::schema::{ContainmentId, IntervalElement, RelationDescriptor};
 
 /// The `docs/architecture/30-dependencies.md` example schema plus an
 /// interval-selected containment (Shift/Roster). Materialized ids: 0/1
@@ -177,11 +177,11 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
     let schema = declaration.clone().validate().expect("valid");
     // The links seal symmetric across the gap.
     assert_eq!(
-        schema.statement(StatementId(2)).mirror,
+        schema.containment(ContainmentId(0)).mirror,
         Some(StatementId(4))
     );
     assert_eq!(
-        schema.statement(StatementId(4)).mirror,
+        schema.containment(ContainmentId(1)).mirror,
         Some(StatementId(2))
     );
     // Both halves render the pair once, in the lower id's orientation.
@@ -197,7 +197,7 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
 fn declared_rendering_matches_sealed_rendering() {
     let declaration = example();
     let schema = declaration.clone().validate().expect("valid");
-    for id in 0..u16::try_from(schema.statements().len()).expect("small") {
+    for id in 0..u16::try_from(declaration.materialized_statements().len()).expect("small") {
         assert_eq!(
             render_declared(&declaration, StatementId(id)),
             render(&schema, StatementId(id)),

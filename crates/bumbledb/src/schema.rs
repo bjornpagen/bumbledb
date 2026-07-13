@@ -464,8 +464,8 @@ pub enum StatementRef {
 /// Consumers that already hold a typed id use the total arena accessors.
 #[derive(Debug, Clone, Copy)]
 pub enum StatementView<'schema> {
-    Key(&'schema KeyStatement),
-    Containment(&'schema ContainmentStatement),
+    Key(KeyId, &'schema KeyStatement),
+    Containment(ContainmentId, &'schema ContainmentStatement),
 }
 
 impl StatementView<'_> {
@@ -473,8 +473,8 @@ impl StatementView<'_> {
     #[must_use]
     pub const fn id(self) -> StatementId {
         match self {
-            Self::Key(statement) => statement.id,
-            Self::Containment(statement) => statement.id,
+            Self::Key(_, statement) => statement.id,
+            Self::Containment(_, statement) => statement.id,
         }
     }
 }
@@ -616,9 +616,9 @@ impl Schema {
     #[must_use]
     pub fn statement(&self, id: StatementId) -> StatementView<'_> {
         match self.order[usize::from(id.0)] {
-            StatementRef::Key(key) => StatementView::Key(self.key(key)),
+            StatementRef::Key(key) => StatementView::Key(key, self.key(key)),
             StatementRef::Containment(containment) => {
-                StatementView::Containment(self.containment(containment))
+                StatementView::Containment(containment, self.containment(containment))
             }
         }
     }
@@ -630,9 +630,9 @@ impl Schema {
             .get(usize::from(id.0))
             .copied()
             .map(|statement| match statement {
-                StatementRef::Key(key) => StatementView::Key(self.key(key)),
+                StatementRef::Key(key) => StatementView::Key(key, self.key(key)),
                 StatementRef::Containment(containment) => {
-                    StatementView::Containment(self.containment(containment))
+                    StatementView::Containment(containment, self.containment(containment))
                 }
             })
     }

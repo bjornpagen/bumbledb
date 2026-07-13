@@ -12,7 +12,7 @@ use crate::encoding::{
 };
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
-use crate::schema::{FieldId, RelationId, StatementId};
+use crate::schema::{FieldId, KeyId, RelationId, StatementId, StatementView};
 use crate::storage::delta::GuardOverlay;
 use crate::storage::read;
 
@@ -105,7 +105,7 @@ impl<S> WriteTx<'_, S> {
         // one-field instance of the guard-byte format `get_dyn` spells
         // out value by value.
         let guard = encode_u64(id.fresh());
-        let key = self.fresh_key_statement(F::RELATION, <F::FreshKey as Fresh>::FIELD);
+        let key = self.fresh_key(F::RELATION, <F::FreshKey as Fresh>::FIELD);
         match self.fact_by_guard(F::RELATION, key, &guard)? {
             Some(bytes) => F::decode_write(self, bytes).map(Some),
             None => Ok(None),
@@ -139,14 +139,21 @@ impl<S> WriteTx<'_, S> {
         let Some(rel) = self.schema.relation_checked(relation) else {
             return Err(FactShapeError::UnknownRelation { relation }.into());
         };
-        if !rel.keys().contains(&key) {
+        let Some(StatementView::Key(key_id, statement)) = self.schema.statement_checked(key) else {
+            return Err(FactShapeError::NotAKeyStatement {
+                relation,
+                statement: key,
+            }
+            .into());
+        };
+        if statement.relation != relation || !rel.keys().contains(&key_id) {
             return Err(FactShapeError::NotAKeyStatement {
                 relation,
                 statement: key,
             }
             .into());
         }
-        let projection = self.schema.key_projection(key);
+        let projection = &statement.projection;
         if key_values.len() != projection.len() {
             return Err(FactShapeError::ArityMismatch {
                 relation,
@@ -159,7 +166,7 @@ impl<S> WriteTx<'_, S> {
             if !tx.encode_guard(relation, projection, key_values, guard)? {
                 return Ok(None);
             }
-            tx.fact_by_guard(relation, key, guard)?
+            tx.fact_by_guard(relation, key_id, guard)?
                 .map(|bytes| tx.decode_values(relation, bytes))
                 .transpose()
         })
@@ -223,17 +230,17 @@ impl<S> WriteTx<'_, S> {
     fn fact_by_guard(
         &self,
         relation: RelationId,
-        key: StatementId,
+        key: KeyId,
         guard: &[u8],
     ) -> Result<Option<&[u8]>> {
         let rel = self.schema.relation(relation);
+        let statement = self.schema.key(key);
         if let Some(extension) = rel.extension() {
-            let projection = self.schema.key_projection(key);
             let mut derived = Vec::with_capacity(guard.len());
             for row in extension {
                 crate::storage::keys::guard_bytes(
                     rel.layout(),
-                    projection,
+                    &statement.projection,
                     &row.fact,
                     &mut derived,
                 );
@@ -246,7 +253,7 @@ impl<S> WriteTx<'_, S> {
         match self.delta.guard_overlay(key, guard) {
             Some(GuardOverlay::Present(bytes)) => Ok(Some(bytes)),
             Some(GuardOverlay::Absent) => Ok(None),
-            None => match read::guard_row(&self.view, relation, key, guard)? {
+            None => match read::guard_row(&self.view, relation, statement.id, guard)? {
                 Some(row) => read::fetch(&self.view, self.schema, relation, row).map(Some),
                 None => Ok(None),
             },
@@ -266,11 +273,11 @@ impl<S> WriteTx<'_, S> {
 
     /// The auto-materialized `Functionality` statement for one fresh
     /// field (schema validation guarantees exactly one exists).
-    fn fresh_key_statement(&self, relation: RelationId, field: FieldId) -> StatementId {
+    fn fresh_key(&self, relation: RelationId, field: FieldId) -> KeyId {
         let rel = self.schema.relation(relation);
         *rel.keys()
             .iter()
-            .find(|&&statement| self.schema.key_projection(statement) == [field])
-            .expect("validated schema: every fresh field materializes its Functionality")
+            .find(|&&key| self.schema.key(key).projection.as_ref() == [field])
+            .expect("fresh generation materializes its key")
     }
 }

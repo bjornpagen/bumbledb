@@ -63,7 +63,7 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
         let id = StatementId(u16::try_from(index).expect("small fixture"));
         match (schema.statement(id), descriptor) {
             (
-                StatementView::Key(sealed),
+                StatementView::Key(_, sealed),
                 StatementDescriptor::Functionality {
                     relation,
                     projection,
@@ -73,7 +73,7 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
                 assert_eq!(sealed.projection, *projection);
             }
             (
-                StatementView::Containment(sealed),
+                StatementView::Containment(_, sealed),
                 StatementDescriptor::Containment { source, target },
             ) => {
                 assert_eq!(sealed.source, *source);
@@ -270,7 +270,7 @@ fn pointwise_key_and_containment_resolve() {
     .validate()
     .expect("pointwise key and coverage containment are valid");
 
-    assert_eq!(schema.key(KeyId(0)).pointwise, true);
+    assert!(schema.key(KeyId(0)).pointwise);
     assert_eq!(
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::Probe {

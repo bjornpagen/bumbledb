@@ -362,14 +362,15 @@ pub(super) fn check_target(
                 "R key shape",
             )));
         };
-        let Some(StatementView::Containment(stored_statement)) = schema.statement_checked(sid)
+        let Some(StatementView::Containment(stored_id, stored_statement)) =
+            schema.statement_checked(sid)
         else {
             return Err(Error::Corruption(CorruptionError::MalformedValue(
                 "R key statement",
             )));
         };
         let statement = schema.containment(*containment_id);
-        if stored_statement.id != statement.id {
+        if stored_id != *containment_id || stored_statement.id != statement.id {
             return Err(Error::Corruption(CorruptionError::MalformedValue(
                 "R key statement",
             )));

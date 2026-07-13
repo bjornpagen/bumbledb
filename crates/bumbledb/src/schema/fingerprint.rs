@@ -7,16 +7,17 @@
 //! relation, field, and statement ids are pinned by declaration/materialized
 //! order and therefore covered without being hashed separately.
 //!
-//! [`Resolved`](super::Resolved) data (target keys, key permutations,
-//! interval positions) and the sealed `==` pairing
-//! ([`Statement::mirror`](super::Statement::mirror)) are **not** hashed:
+//! Sealed enforcement data (target keys, key permutations, interval flags)
+//! and the sealed `==` pairing ([`super::ContainmentStatement::mirror`])
+//! are **not** hashed:
 //! the acceptance gate computes both as deterministic functions of the
 //! hashed inputs, the same way materialized order leaves "statement ids …
 //! pinned by the fingerprint without being hashed separately"
 //! (`docs/architecture/10-data-model.md`).
 
 use super::{
-    FieldId, Generation, IntervalElement, RelationId, Schema, Side, StatementDescriptor, ValueType,
+    FieldId, Generation, IntervalElement, RelationId, Schema, Side, StatementId, StatementView,
+    ValueType,
 };
 use crate::encoding::encode_literal;
 use crate::value::Value;
@@ -80,24 +81,23 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             }
         }
     }
-    put_len(out, schema.statements().len());
-    for statement in schema.statements() {
-        match &statement.descriptor {
-            StatementDescriptor::Functionality {
-                relation,
-                projection,
-            } => {
+    let statement_count = schema.keys().len() + schema.containments().len();
+    put_len(out, statement_count);
+    for index in 0..statement_count {
+        let id = StatementId(u16::try_from(index).expect("statement count fits u16"));
+        match schema.statement(id) {
+            StatementView::Key(_, statement) => {
                 out.push(0);
-                put_relation_id(out, *relation);
-                put_len(out, projection.len());
-                for field in projection {
+                put_relation_id(out, statement.relation);
+                put_len(out, statement.projection.len());
+                for field in &statement.projection {
                     put_field_id(out, *field);
                 }
             }
-            StatementDescriptor::Containment { source, target } => {
+            StatementView::Containment(_, statement) => {
                 out.push(1);
-                put_side(out, source);
-                put_side(out, target);
+                put_side(out, &statement.source);
+                put_side(out, &statement.target);
             }
         }
     }
@@ -112,7 +112,7 @@ pub fn fingerprint(schema: &Schema) -> SchemaFingerprint {
 }
 
 fn put_len(out: &mut Vec<u8>, len: usize) {
-    let len = u32::try_from(len).expect("validated schema: list lengths fit u32");
+    let len = u32::try_from(len).expect("schema list length fits u32");
     out.extend_from_slice(&len.to_le_bytes());
 }
 
@@ -255,8 +255,8 @@ mod tests {
 
     #[test]
     fn mirror_links_never_reach_the_fingerprint() {
-        // Identity golden: the sealed `==` pairing (`Statement::mirror`)
-        // is derived from hashed inputs exactly like `Resolved`, so a
+        // Identity golden: the sealed `==` pairing is derived from hashed
+        // inputs exactly like enforcement, so a
         // schema carrying a mirrored pair hashes only its descriptors —
         // pinned so the field can never leak into `canonical_bytes`.
         let mut decl = base();
@@ -272,7 +272,7 @@ mod tests {
         // The fixture genuinely seals a pair (materialized ids 3 and 4:
         // two fresh auto-keys and the declared FD precede them).
         assert_eq!(
-            schema.statement(StatementId(3)).mirror,
+            schema.containment(crate::schema::ContainmentId(0)).mirror,
             Some(StatementId(4))
         );
         assert_eq!(
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn identical_closed_declarations_yield_identical_fingerprints() {
         // The invariance test, extended to ground axioms: the sealed
-        // pre-encoded rows (like `Resolved` and `mirror`) are deterministic
+        // pre-encoded rows (like enforcement and `mirror`) are deterministic
         // functions of the hashed declaration, so two independently built
         // identical closed declarations hash identically.
         assert_eq!(

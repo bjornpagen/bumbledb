@@ -84,7 +84,7 @@ use std::collections::BTreeSet;
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::normalize::{lower_literal, NormalizedQuery, Occurrence, Role};
 use crate::ir::{AggOp, CmpOp, FindTerm, VarId};
-use crate::schema::{FieldId, Resolved, Schema, Side, StatementDescriptor, StatementId};
+use crate::schema::{Enforcement, FieldId, Schema, Side, StatementId};
 
 pub(crate) mod evaluate;
 
@@ -164,13 +164,18 @@ fn removable(
     output_vars: &BTreeSet<VarId>,
     support: &[Option<usize>],
 ) -> Option<(usize, usize, StatementId)> {
-    for (stmt_idx, statement) in schema.statements().iter().enumerate() {
-        let StatementDescriptor::Containment { source, target } = &statement.descriptor else {
-            continue;
-        };
-        if !scalar_positions_only(&statement.resolved) {
+    for statement in schema.containments() {
+        if !matches!(
+            statement.enforcement,
+            Enforcement::Probe {
+                coverage: false,
+                ..
+            }
+        ) {
             continue; // condition 4
         }
+        let source = &statement.source;
+        let target = &statement.target;
         for (b_idx, b) in normalized.occurrences.iter().enumerate() {
             if !b.role.participates() || b.relation != target.relation {
                 continue;
@@ -195,11 +200,7 @@ fn removable(
                     )
                     && variables_join_or_dead(normalized, b_idx, a_idx, source, target, output_vars)
                 {
-                    return Some((
-                        b_idx,
-                        a_idx,
-                        StatementId(u16::try_from(stmt_idx).expect("statement ids fit u16")),
-                    ));
+                    return Some((b_idx, a_idx, statement.id));
                 }
             }
         }
@@ -305,21 +306,11 @@ fn variables_join_or_dead(
 
 /// **Condition 4** — interval refusal (v0): no paired position is
 /// interval-typed. The gate's resolution seals the coverage flag
-/// (`Resolved::Containment::coverage` — an accepted containment with an
+/// (`Enforcement::Probe::coverage` — an accepted containment with an
 /// interval position always resolves it, 30-dependencies acceptance
 /// gate), so `coverage: false` *is* the condition. Pointwise coverage is
 /// not 1:1 fact-to-fact; the OPEN sub-question rides the doc amendment
 /// (trigger: a census query that would benefit).
-fn scalar_positions_only(resolved: &Resolved) -> bool {
-    matches!(
-        resolved,
-        Resolved::Containment {
-            coverage: false,
-            ..
-        }
-    )
-}
-
 /// Whether `var` is dead outside occurrence `b_idx`: not an output
 /// variable, not compared in any residual (whole-value or word), not in
 /// any anti-probe's bindings, and neither bound nor read as a
