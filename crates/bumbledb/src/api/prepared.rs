@@ -16,6 +16,7 @@ use crate::exec::dispatch::GuardPlan;
 use crate::exec::run::{Bindings, Executor};
 use crate::exec::sink::{AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::{Const, FilterPredicate};
+use crate::ir::validate::Predicate;
 use crate::plan::fj::ValidatedPlan;
 use crate::schema::{Schema, ValueType};
 
@@ -194,9 +195,11 @@ pub struct PreparedQuery<'s, S> {
     /// its seen-set spanning rules is the entire implementation of ∪ —
     /// no merge node, no concat-then-dedup pass exists.
     program: Program,
-    /// Per head position: the result type (identical across rules — the
-    /// head's positional alignment pins it at validation).
-    column_types: Vec<ValueType>,
+    /// The predicate the query defines ([`Predicate`] — the signature
+    /// authority), sealed at validation and cloned here at prepare. It
+    /// sits BESIDE the program because `Program::Empty` still has an
+    /// arity and buffer types (the empty path's `out.arity` reads it).
+    predicate: Predicate,
     /// Dense per-param bind contracts (validation rejects id gaps): one
     /// sum carries scalar/set/mask shape, element type, and point-domain
     /// status without parallel flags.

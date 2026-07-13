@@ -55,11 +55,10 @@ pub(crate) fn prepare<'s, S>(
 
     let (survivors, subsumed) = chase_program(normalized, &witness, schema);
 
-    // The head's result-type row, derived from the witness alone —
-    // validation pinned the positional alignment, so rule 0 speaks for
-    // every rule, it exists even when every rule below dies, and every
-    // prepared rule re-derives exactly it (the debug assert).
-    let column_types: Vec<ValueType> = result_types(&witness.rule(0));
+    // The predicate the query defines, sealed at validation (the ONE
+    // signature derivation) — it exists even when every rule below dies,
+    // so the empty program still types its result columns.
+    let predicate = witness.predicate().clone();
     let mut rules = Vec::with_capacity(survivors.len());
     let mut dead = Vec::new();
     for (rule_idx, normalized_rule) in survivors {
@@ -75,12 +74,14 @@ pub(crate) fn prepare<'s, S>(
             continue;
         }
         let rule = witness.rule(rule_idx);
-        let (prepared, types) = prepare_rule(txn, cache, schema, &rule, &normalized_rule)?;
-        debug_assert_eq!(
-            types, column_types,
-            "live rules compute the head's pinned type row"
-        );
-        rules.push(prepared);
+        rules.push(prepare_rule(
+            txn,
+            cache,
+            schema,
+            &rule,
+            &normalized_rule,
+            &predicate.columns,
+        )?);
     }
     // A program deletion (subsumption or rule death) shrank to at most
     // one live rule has no pair left to prove (the stats surface's
@@ -122,9 +123,10 @@ pub(crate) fn prepare<'s, S>(
     // The byte-heap types keep the resolving finalize: String resolves
     // through the dictionary; a bytes<N> find re-assembles its slot words
     // into the byte heap (no dictionary — inline values).
-    let all_words = column_types
+    let all_words = predicate
+        .columns
         .iter()
-        .all(|ty| !matches!(ty, ValueType::String | ValueType::FixedBytes { .. }));
+        .all(|column| !matches!(column.ty, ValueType::String | ValueType::FixedBytes { .. }));
     let unresolved_literals = rules.iter().map(pending_literals).sum();
     let program = if rules.is_empty() {
         Program::Empty
@@ -138,7 +140,7 @@ pub(crate) fn prepare<'s, S>(
         subsumed,
         dead,
         program,
-        column_types,
+        predicate,
         params,
         resolved_params: Vec::new(),
         unresolved_literals,
@@ -171,32 +173,6 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
         })
         .max()
         .unwrap_or(0)
-}
-
-/// The head's result-type row from one rule's find terms alone — the
-/// types half of [`find_specs`], computable without a plan (the
-/// all-dead program must still type its empty result columns), and
-/// identical across rules by validation's positional alignment.
-fn result_types(rule: &RuleWitness<'_>) -> Vec<ValueType> {
-    rule.rule()
-        .finds
-        .iter()
-        .map(|term| match term {
-            FindTerm::Var(var) => rule.var_type(*var).clone(),
-            // The measure positions are u64 by definition (|[s, e)| =
-            // e − s — 20-query-ir § the measure).
-            FindTerm::Duration(_) | FindTerm::AggregateDuration { .. } => ValueType::U64,
-            FindTerm::Aggregate { op, over } => match op {
-                AggOp::ArgMax { .. } | AggOp::ArgMin { .. } | AggOp::Pack => rule
-                    .var_type(over.expect("validated: Arg and Pack carry a variable"))
-                    .clone(),
-                AggOp::Sum | AggOp::Min | AggOp::Max => rule
-                    .var_type(over.expect("validated: folds carry a variable"))
-                    .clone(),
-                AggOp::Count | AggOp::CountDistinct => ValueType::U64,
-            },
-        })
-        .collect()
 }
 
 /// The rule's `str` literals awaiting dictionary words — the latch
@@ -332,15 +308,16 @@ fn chase_program(
 /// The per-rule pipeline tail: classify → statistics → DP → lowering →
 /// plan validation — the conjunctive query's pipeline, with zero
 /// changes, over one already-chased rule. Returns the rule's prepared
-/// artifact and its result-type row (the head's; identical across
-/// rules).
+/// artifact; result types are the query's predicate ([`super::Predicate`]),
+/// never re-derived here.
 fn prepare_rule(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
-) -> Result<(PreparedRule, Vec<ValueType>)> {
+    columns: &[crate::ir::validate::PredicateColumn],
+) -> Result<PreparedRule> {
     // Classification first: a guard probe needs no statistics or planning.
     let classified = {
         let _s = obs::span(obs::names::CLASSIFY, obs::Category::Prepare);
@@ -348,16 +325,12 @@ fn prepare_rule(
     };
     if let Some(plan) = classified {
         let finds = find_specs(rule, &plan);
-        let guard_finds = guard_find_table(&plan, &finds);
-        let (finds, types) = finds.into_iter().unzip();
-        return Ok((
-            PreparedRule::Guard(GuardRule {
-                plan,
-                finds,
-                guard_finds,
-            }),
-            types,
-        ));
+        let guard_finds = guard_find_table(&plan, &finds, columns);
+        return Ok(PreparedRule::Guard(GuardRule {
+            plan,
+            finds,
+            guard_finds,
+        }));
     }
 
     // The staleness pin record (`staleness.rs`): the statistics below,
@@ -419,20 +392,16 @@ fn prepare_rule(
         let _s = obs::span(obs::names::BUILD_COLTS, obs::Category::Prepare);
         build_view_memo(&plan)
     };
-    let (specs, types) = finds.into_iter().unzip();
-    Ok((
-        PreparedRule::FreeJoin(FreeJoinRule {
-            plan,
-            executor,
-            finds: specs,
-            resolved_filters: vec![Vec::new(); occurrence_count],
-            resolved_selections: vec![Vec::new(); occurrence_count],
-            resolved_complete: false,
-            memo,
-            pinned: pins.into_boxed_slice(),
-        }),
-        types,
-    ))
+    Ok(PreparedRule::FreeJoin(FreeJoinRule {
+        plan,
+        executor,
+        finds,
+        resolved_filters: vec![Vec::new(); occurrence_count],
+        resolved_selections: vec![Vec::new(); occurrence_count],
+        resolved_complete: false,
+        memo,
+        pinned: pins.into_boxed_slice(),
+    }))
 }
 
 /// COLT sources with their fixed column schemas over [`View::Unbound`]:
@@ -505,12 +474,12 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
     memo
 }
 
-/// Derives one rule's per-find output specs (slot spans + result types)
-/// from its witness slice and classified plan. Slots and widths both come
+/// Derives one rule's per-find output specs (slot spans) from its
+/// witness slice and classified plan. Slots and widths both come
 /// from the rule's binding-slot layout (`slot_of`/`width_of` — the
 /// `SlotWidth` map): an interval variable's find spans two words, and no
-/// consumer assumes width 1. The types are the head's (validation aligned
-/// every rule's row); the specs are this rule's.
+/// consumer assumes width 1. Result types are NOT derived here — they
+/// are the query's predicate (`ir/validate`); the specs are this rule's.
 trait SlotLayout {
     fn slot_of(&self, var: crate::ir::VarId) -> usize;
     fn width_of(&self, var: crate::ir::VarId) -> usize;
@@ -536,72 +505,52 @@ impl SlotLayout for crate::exec::dispatch::GuardPlan {
     }
 }
 
-fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<(FindSpec, ValueType)> {
+fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec> {
     rule.rule()
         .finds
         .iter()
         .map(|term| match term {
-            FindTerm::Var(var) => (
-                FindSpec::Var {
-                    slot: layout.slot_of(*var),
-                    width: layout.width_of(*var),
-                },
-                rule.var_type(*var).clone(),
-            ),
+            FindTerm::Var(var) => FindSpec::Var {
+                slot: layout.slot_of(*var),
+                width: layout.width_of(*var),
+            },
             // The measure positions: one u64 word computed from the
             // interval variable's two-slot span (the sinks own the
             // subtraction and the ray check — `exec::sink`).
-            FindTerm::Duration(var) => (
-                FindSpec::Duration {
-                    slot: layout.slot_of(*var),
+            FindTerm::Duration(var) => FindSpec::Duration {
+                slot: layout.slot_of(*var),
+            },
+            FindTerm::AggregateDuration { op, over } => FindSpec::AggDuration {
+                op: match op {
+                    AggOp::Sum => crate::exec::sink::FoldOp::Sum,
+                    AggOp::Min => crate::exec::sink::FoldOp::Min,
+                    AggOp::Max => crate::exec::sink::FoldOp::Max,
+                    AggOp::Count
+                    | AggOp::CountDistinct
+                    | AggOp::ArgMax { .. }
+                    | AggOp::ArgMin { .. }
+                    | AggOp::Pack => {
+                        unreachable!("validated: measure folds are Sum/Min/Max")
+                    }
                 },
-                ValueType::U64,
-            ),
-            FindTerm::AggregateDuration { op, over } => (
-                FindSpec::AggDuration {
-                    op: match op {
-                        AggOp::Sum => crate::exec::sink::FoldOp::Sum,
-                        AggOp::Min => crate::exec::sink::FoldOp::Min,
-                        AggOp::Max => crate::exec::sink::FoldOp::Max,
-                        AggOp::Count
-                        | AggOp::CountDistinct
-                        | AggOp::ArgMax { .. }
-                        | AggOp::ArgMin { .. }
-                        | AggOp::Pack => {
-                            unreachable!("validated: measure folds are Sum/Min/Max")
-                        }
-                    },
-                    slot: layout.slot_of(*over),
-                },
-                ValueType::U64,
-            ),
+                slot: layout.slot_of(*over),
+            },
             FindTerm::Aggregate { op, over } => match op {
                 // Arg-restriction: the carry's span plus the shared key
                 // slot (orderable — validated U64/I64, one word).
                 AggOp::ArgMax { key } | AggOp::ArgMin { key } => {
                     let carry = over.expect("validated: Arg carries a variable");
-                    (
-                        FindSpec::Arg {
-                            slot: layout.slot_of(carry),
-                            width: layout.width_of(carry),
-                            key_slot: layout.slot_of(*key),
-                            max: matches!(op, AggOp::ArgMax { .. }),
-                        },
-                        rule.var_type(carry).clone(),
-                    )
+                    FindSpec::Arg {
+                        slot: layout.slot_of(carry),
+                        width: layout.width_of(carry),
+                        key_slot: layout.slot_of(*key),
+                        max: matches!(op, AggOp::ArgMax { .. }),
+                    }
                 }
-                // Pack: the interval variable's two-slot span; the result
-                // position is interval-typed (the packed segment shares
-                // its input's type).
-                AggOp::Pack => {
-                    let over = over.expect("validated: Pack carries a variable");
-                    (
-                        FindSpec::Pack {
-                            slot: layout.slot_of(over),
-                        },
-                        rule.var_type(over).clone(),
-                    )
-                }
+                // Pack: the interval variable's two-slot span.
+                AggOp::Pack => FindSpec::Pack {
+                    slot: layout.slot_of(over.expect("validated: Pack carries a variable")),
+                },
                 AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Count | AggOp::CountDistinct => {
                     let (over_slot, over_width, over_ty) = match over {
                         Some(var) => (
@@ -611,49 +560,50 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<(FindSpec
                         ),
                         None => (None, 1, ValueType::U64), // Count
                     };
-                    let (fold, result_ty) = match op {
-                        AggOp::Sum => (crate::exec::sink::FoldOp::Sum, over_ty.clone()),
-                        AggOp::Min => (crate::exec::sink::FoldOp::Min, over_ty.clone()),
-                        AggOp::Max => (crate::exec::sink::FoldOp::Max, over_ty.clone()),
-                        AggOp::Count => (crate::exec::sink::FoldOp::Count, ValueType::U64),
-                        AggOp::CountDistinct => {
-                            (crate::exec::sink::FoldOp::CountDistinct, ValueType::U64)
-                        }
+                    let fold = match op {
+                        AggOp::Sum => crate::exec::sink::FoldOp::Sum,
+                        AggOp::Min => crate::exec::sink::FoldOp::Min,
+                        AggOp::Max => crate::exec::sink::FoldOp::Max,
+                        AggOp::Count => crate::exec::sink::FoldOp::Count,
+                        AggOp::CountDistinct => crate::exec::sink::FoldOp::CountDistinct,
                         AggOp::ArgMax { .. } | AggOp::ArgMin { .. } | AggOp::Pack => {
                             unreachable!("handled above")
                         }
                     };
-                    (
-                        FindSpec::Agg {
-                            op: fold,
-                            over_slot,
-                            over_width,
-                            signed: matches!(over_ty, ValueType::I64),
-                        },
-                        result_ty,
-                    )
+                    FindSpec::Agg {
+                        op: fold,
+                        over_slot,
+                        over_width,
+                        // The fold INPUT's signedness (a rule-local
+                        // fact, not the signature's): Sum must decode
+                        // the biased word form before accumulating.
+                        signed: matches!(over_ty, ValueType::I64),
+                    }
                 }
             },
         })
         .collect()
 }
 
-/// The guard fast lane's find table: `Some` for
-/// guard plans whose finds are all plain variables.
+/// The guard fast lane's find table: `Some` for guard plans whose finds
+/// are all plain variables. Types come from the predicate's columns —
+/// find order IS column order.
 fn guard_find_table(
     guard: &crate::exec::dispatch::GuardPlan,
-    finds: &[(FindSpec, ValueType)],
+    finds: &[FindSpec],
+    columns: &[crate::ir::validate::PredicateColumn],
 ) -> Option<Vec<(crate::schema::FieldId, ValueType)>> {
     finds
         .iter()
-        .map(|(spec, ty)| match spec {
+        .zip(columns)
+        .map(|(spec, column)| match spec {
             FindSpec::Var { slot, .. } => {
                 let var = guard
                     .vars
                     .iter()
                     .find(|v| v.slot == *slot)
                     .expect("find slots come from the guard plan's layout");
-                Some((var.field, ty.clone()))
+                Some((var.field, column.ty.clone()))
             }
             // aggregate and measure guards keep the sink path
             FindSpec::Agg { .. }

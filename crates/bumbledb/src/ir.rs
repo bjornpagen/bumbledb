@@ -8,7 +8,7 @@
 
 pub(crate) mod normalize;
 pub mod render;
-pub(crate) mod validate;
+pub mod validate;
 
 use crate::schema::{FieldId, RelationId};
 

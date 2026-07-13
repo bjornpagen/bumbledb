@@ -167,7 +167,13 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
     let witness = validate(&schema(), &query).expect("per-rule scopes validate");
     assert_eq!(witness.rule(0).var_type(VarId(0)), &ValueType::U64);
     assert_eq!(witness.rule(1).var_type(VarId(0)), &ValueType::I64);
-    assert_eq!(witness.head_types(), &[ValueType::U64]);
+    let types: Vec<ValueType> = witness
+        .predicate()
+        .columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect();
+    assert_eq!(types, vec![ValueType::U64]);
 }
 
 #[test]

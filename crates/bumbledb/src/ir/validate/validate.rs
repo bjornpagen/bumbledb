@@ -101,18 +101,21 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         });
     }
 
-    let mut head_types: Vec<ValueType> = Vec::new();
+    let mut pinned_row: Vec<ValueType> = Vec::new();
     let mut rules = Vec::with_capacity(lowered.len());
     let mut params = ParamTables::default();
     for (rule_idx, rule) in lowered.iter().enumerate() {
         check_head_alignment(&query.head, rule, rule_idx)?;
         let (typing, ctx) = validate_rule(schema, rule)?;
-        // The positional type row: rule 0's pins the head; every later
-        // rule must agree position by position.
-        let row = head_row(rule, &typing);
+        // Every rule derives the predicate: rule 0's resolved positional
+        // input row pins the head, and every later rule must agree
+        // position by position (the input row, not the signature — a
+        // `CountDistinct` position anchors its *input* type across
+        // rules, though its signature column is U64 regardless).
+        let row = input_row(rule, &typing);
         if rule_idx == 0 {
-            head_types = row;
-        } else if let Some(position) = (0..row.len()).find(|i| row[*i] != head_types[*i]) {
+            pinned_row = row;
+        } else if let Some(position) = (0..row.len()).find(|i| row[*i] != pinned_row[*i]) {
             return Err(ValidationError::HeadTypeMismatch {
                 rule: rule_idx,
                 position,
@@ -122,6 +125,10 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         rules.push(typing);
     }
     params.check_masks_and_density()?;
+
+    // The predicate, derived ONCE — rule 0 speaks for every rule (the
+    // alignment above), and nothing downstream re-derives the signature.
+    let predicate = super::Predicate::derive(&lowered[0], &rules[0]);
 
     let ParamTables {
         param_types,
@@ -135,7 +142,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         .collect();
     Ok(ValidatedQuery {
         lowered,
-        head_types,
+        predicate,
         rules,
         param_types,
         set_params,
@@ -239,11 +246,13 @@ fn validate_rule(
     ))
 }
 
-/// One rule's positional type contribution: a variable position carries
-/// the variable's type; an aggregate position its fold input type (the
-/// nullary `Count` is `U64`; an Arg position carries the *carried*
-/// variable's type — the key is rule-internal).
-fn head_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
+/// One rule's positional INPUT contribution to the alignment check: a
+/// variable position carries the variable's type; an aggregate position
+/// its fold input type (the nullary `Count` is `U64`; an Arg position
+/// carries the *carried* variable's type — the key is rule-internal).
+/// Alignment-only — the signature is [`super::Predicate::derive`],
+/// never this row (their one divergence: a `CountDistinct` input).
+fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
     let var_type = |var: &VarId| typing.var_types[var].clone();
     rule.finds
         .iter()

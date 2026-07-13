@@ -1,4 +1,4 @@
-use super::{BindValue, PreparedQuery, PreparedRule, Program, ResultBuffer, ValueType};
+use super::{BindValue, PreparedQuery, PreparedRule, Program, ResultBuffer};
 
 use crate::api::stats::{ExecutionStats, GuardStats, RuleStats};
 use crate::error::Result;
@@ -43,9 +43,16 @@ impl<S> PreparedQuery<'_, S> {
             stats,
         };
         // The report opens with the query in the rule notation
-        // (`crate::ir::render` — the read-side syntax): EXPLAIN prints
-        // what it explains.
-        Ok((out, format!("query:\n{}\n{report}", self.rendered)))
+        // (`crate::ir::render` — the read-side syntax) and the predicate
+        // it defines (`ir/validate` — the signature authority): EXPLAIN
+        // prints what it explains.
+        Ok((
+            out,
+            format!(
+                "query:\n{}\npredicate: {}\n{report}",
+                self.rendered, self.predicate
+            ),
+        ))
     }
 
     /// The query in the rule notation, rendered at prepare
@@ -77,7 +84,7 @@ impl<S> PreparedQuery<'_, S> {
     ) -> Result<(ResultBuffer, ExecutionStats)> {
         self.check_snapshot(txn)?;
         let mut out = ResultBuffer::new();
-        out.arity = self.column_types.len();
+        out.arity = self.predicate.columns.len();
         // The statically-empty program mirrors `run_bound`'s
         // short-circuit: bind (errors surface), then nothing runs and
         // nothing is counted — the death record is the whole story.
@@ -168,7 +175,7 @@ impl<S> PreparedQuery<'_, S> {
                 &mut self.row_scratch,
                 &mut self.resolve_memo,
                 txn,
-                &self.column_types,
+                &self.predicate.columns,
                 self.all_words,
                 &mut out,
             )?;
@@ -245,11 +252,13 @@ impl<S> PreparedQuery<'_, S> {
         })
     }
 
-    /// The result column types, one per head position — the metadata a
-    /// generic host needs to type an (even empty) result. The buffer
-    /// itself stays typeless: stamping owned types per execution would
-    /// allocate on the warm path.
-    pub fn column_types(&self) -> impl Iterator<Item = &ValueType> {
-        self.column_types.iter()
+    /// The predicate this query defines — the buffer-typing authority
+    /// (docs/architecture/70-api.md): one column per head position, the
+    /// metadata a generic host needs to type an (even empty) result.
+    /// The buffer itself stays typeless: stamping owned types per
+    /// execution would allocate on the warm path.
+    #[must_use]
+    pub fn predicate(&self) -> &crate::ir::validate::Predicate {
+        &self.predicate
     }
 }

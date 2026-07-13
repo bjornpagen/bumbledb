@@ -46,12 +46,28 @@ compile-time nominal safety at the app layer — see `10-data-model.md`.)
 
 A query is a **program**: one head and a non-empty list of conjunctive
 **rules** — which is precisely a **non-recursive Datalog program**. The head
-owns the find shape (arity, aggregate ops, and the positional type row —
-computed at validation and pinned in the witness); each rule is a conjunct
+owns the find shape (arity, aggregate ops, and the output typing — the
+predicate below, sealed at validation); each rule is a conjunct
 (positive atoms, negated atoms, predicates) whose find terms align against
 the head position by position. The single-rule query is the degenerate case
 and embeds the conjunctive query unchanged (`Query::single`); every
 pre-rules query is a one-rule program.
+
+- **A query defines one anonymous predicate; rules derive it.** The head is
+  its definition, and its typed **signature** is the result-type row: one
+  column per head position, each carrying the type that lands in the buffer
+  (`Count`/`CountDistinct` are U64 whatever they counted; the measure is
+  U64; `Sum`/`Min`/`Max` carry their input's type; `Pack` its interval
+  type; the Arg forms the carried payload's type) together with the fold
+  producing it. It is derived **once**, at validation, and sealed in the
+  witness (`ir/validate`'s `Predicate`); sink construction, result-buffer
+  typing, finalize's all-words decision, and EXPLAIN's header all read that
+  one object — no second derivation of the output row exists anywhere.
+  The fence: the predicate is anonymous and engine-internal, **referenced
+  by nothing** (names live in the host, exactly like relations pre-`as`).
+  The moment something REFERENCES a predicate — a head usable as a body
+  atom — that is the recursion trigger firing: go through the recursion
+  design's ledger, not around it.
 
 - **Denotation: the query denotes the set union of its rules' denotations.**
   Set semantics means there is exactly one union — no bag distinction exists
@@ -562,8 +578,9 @@ program's breadth is bounded here and each rule's width there); and **head
 misalignment** — a rule whose find-term count differs from the head's arity,
 whose term shape (variable vs aggregate-op kind) differs at a position, or
 whose resolved positional type differs from the pinned row (rule 0's
-resolved types pin the head's positional type row in the witness; every
-later rule must agree position by position). Between the program shape and
+resolved input types pin the head's positional row; every later rule must
+agree position by position — that alignment is *how* every rule derives
+the one predicate, whose signature the witness then seals from rule 0). Between the program shape and
 the per-rule roster, the **nesting boundary guard** (trees deeper than
 `MAX_PREDICATE_DEPTH` are the typed `PredicateNestingTooDeep`, judged
 iteratively before any recursive walk — the trust-boundary law above), then

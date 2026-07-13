@@ -364,8 +364,12 @@ proposition the commit checks in one integer compare.
   ids at materialization, into the buffer's byte heap; `bytes<N>` re-assembled
   from its inline slot words with no dictionary touch; intervals as start/end word
   pairs), a `rows()` iterator, and column metadata via
-  `PreparedQuery::column_types()` (the buffer itself stays typeless: stamping owned
-  types per execution would allocate on the warm path). Contract on `Err`: the
+  `PreparedQuery::predicate()` — the predicate the query defines
+  (`20-query-ir.md` § the query shape) is the **buffer-typing authority**:
+  one signature column per head position, result type plus producing fold,
+  sealed at validation and read by every consumer (the buffer itself stays
+  typeless: stamping owned types per execution would allocate on the warm
+  path). Contract on `Err`: the
   buffer's contents are unspecified — ignore `out` when `execute` errors; the
   snapshot stays usable. Results are **sets**: unordered; the host sorts. Zero-alloc
   path: caller-provided reusable buffer (`40-execution.md`); convenience path

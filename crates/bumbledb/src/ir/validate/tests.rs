@@ -8,6 +8,7 @@ use crate::schema::{
 mod accept;
 mod reject;
 mod rules;
+mod signature;
 
 /// The fixture schema:
 /// Holder(id fresh, name string);

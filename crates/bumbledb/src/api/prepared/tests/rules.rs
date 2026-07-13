@@ -73,7 +73,12 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
         assert_eq!(rule.resolved_filters.len(), 1, "one occurrence per rule");
     }
     assert_eq!(
-        prepared.column_types().collect::<Vec<_>>(),
+        prepared
+            .predicate()
+            .columns
+            .iter()
+            .map(|column| &column.ty)
+            .collect::<Vec<_>>(),
         vec![&ValueType::String, &ValueType::I64],
         "the head's result row types the program once"
     );

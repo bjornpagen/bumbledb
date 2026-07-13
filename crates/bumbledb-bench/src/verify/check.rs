@@ -42,7 +42,12 @@ impl<S> Run<'_, S> {
                 Err("not executed: no column types without a prepared query".to_owned()),
             ),
             Ok(mut prepared) => {
-                let types: Vec<ValueType> = prepared.column_types().cloned().collect();
+                let types: Vec<ValueType> = prepared
+                    .predicate()
+                    .columns
+                    .iter()
+                    .map(|column| column.ty.clone())
+                    .collect();
                 let mut buffer = ResultBuffer::new();
                 let args = param_args(params);
                 let ours = self

@@ -177,7 +177,7 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
 /// skip hid it; under an aggregate sink (never skips, gate forces the
 /// dedup seen-set) it was the S-scale crucible hang — verify random
 /// case 19, `MIN ... GROUP BY` over a star join × a bare `PostingTag`
-/// atom, |join| × |PostingTag| ≈ 10¹⁰ folds. The collapse: a
+/// atom, |join| × |`PostingTag`| ≈ 10¹⁰ folds. The collapse: a
 /// zero-arity cover yields at most one entry — in `pump` (middle node)
 /// and `run_node` (leaf) both — and an empty gate still kills every
 /// binding.

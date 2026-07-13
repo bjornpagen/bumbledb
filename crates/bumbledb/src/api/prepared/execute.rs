@@ -33,7 +33,7 @@ impl<S> PreparedQuery<'_, S> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
-        out.arity = self.column_types.len();
+        out.arity = self.predicate.columns.len();
         {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_params(txn, params)?;
@@ -61,7 +61,7 @@ impl<S> PreparedQuery<'_, S> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
-        out.arity = self.column_types.len();
+        out.arity = self.predicate.columns.len();
         {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_param_args(txn, args)?;
@@ -133,7 +133,7 @@ impl<S> PreparedQuery<'_, S> {
             &mut self.row_scratch,
             &mut self.resolve_memo,
             txn,
-            &self.column_types,
+            &self.predicate.columns,
             self.all_words,
             out,
         )

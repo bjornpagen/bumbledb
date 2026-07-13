@@ -230,7 +230,12 @@ fn the_hand_coalesce_matches_pack() {
         .expect("registered");
     let query = (family.query)();
     let mut prepared = db.prepare(&query).expect("prepare");
-    let types: Vec<bumbledb::schema::ValueType> = prepared.column_types().cloned().collect();
+    let types: Vec<bumbledb::schema::ValueType> = prepared
+        .predicate()
+        .columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect();
     let draw = families::unit_draw("free_busy", CFG.seed, &sizes);
     let args = param_args(&draw);
     let mut buffer = ResultBuffer::new();

@@ -244,11 +244,15 @@ fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
         "typed, named: {err:?}"
     );
 
-    // A well-formed bind executes to the empty result.
+    // A well-formed bind executes to the empty result — correctly
+    // shaped: the empty program still has an arity and buffer types,
+    // read off the predicate (it sits beside the program exactly so
+    // this path can type an empty buffer).
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::AllenMask(AllenMask::INTERSECTS)])
         .expect("execute");
     assert_eq!(out.len(), 0, "stage-2-known empty");
+    assert_eq!(out.arity(), 1, "the predicate shapes the empty buffer");
 
     // EXPLAIN prints the program kind and both killing predicates.
     let (out, report) = prepared

@@ -40,7 +40,12 @@ fn fairness_and_the_prepared_sample_contract() {
         let db_dir = dir.join("types-db");
         let db = bumbledb::Db::create(&db_dir, crate::schema::Ledger).expect("create");
         let prepared = db.prepare(&(family.query)()).expect("prepare");
-        prepared.column_types().cloned().collect()
+        prepared
+            .predicate()
+            .columns
+            .iter()
+            .map(|column| column.ty.clone())
+            .collect()
     };
     let mut prepared = PreparedFamily::new(&conn, &translated, types).expect("prepare once");
 
@@ -76,7 +81,12 @@ fn fairness_and_the_prepared_sample_contract() {
     let point_types: Vec<ValueType> = {
         let db = bumbledb::Db::open(&dir.join("types-db"), crate::schema::Ledger).expect("reopen");
         let prepared = db.prepare(&(point.query)()).expect("prepare");
-        prepared.column_types().cloned().collect()
+        prepared
+            .predicate()
+            .columns
+            .iter()
+            .map(|column| column.ty.clone())
+            .collect()
     };
     let mut point_prepared =
         PreparedFamily::new(&conn, &point_translated, point_types).expect("prepare once");

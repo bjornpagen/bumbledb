@@ -370,7 +370,7 @@ fn accepts_an_arg_carry_equal_to_its_key() {
 fn accepts_pack_and_pins_the_interval_result_type() {
     // finds [account, Pack(span)]: the coalescing fold — the result
     // position is interval-typed (a packed segment shares its input's
-    // type), pinned in the head's positional row.
+    // type), sealed in the predicate's signature.
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
@@ -382,9 +382,15 @@ fn accepts_pack_and_pins_the_interval_result_type() {
         vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
     );
     let witness = validate(&schema(), &query).expect("valid");
+    let types: Vec<ValueType> = witness
+        .predicate()
+        .columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect();
     assert_eq!(
-        witness.head_types(),
-        &[
+        types,
+        vec![
             ValueType::U64,
             ValueType::Interval {
                 element: IntervalElement::U64

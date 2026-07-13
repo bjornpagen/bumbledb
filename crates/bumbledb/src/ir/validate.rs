@@ -98,6 +98,101 @@ mod validate;
 
 pub use validate::validate;
 
+/// The predicate a query defines — anonymous (names live in the host,
+/// exactly like relations pre-`as`), its typed output signature derived
+/// ONCE at validation and sealed. The single authority for sink
+/// construction, result-buffer typing, finalize's all-words decision,
+/// and EXPLAIN's header. Referenced by NOTHING — the named-view refusal
+/// stands; a reference to a predicate is the recursion trigger firing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Predicate {
+    /// The signature: one column per head position, in head order.
+    pub columns: Box<[PredicateColumn]>,
+}
+
+impl std::fmt::Display for Predicate {
+    /// The signature in one line — EXPLAIN's header (`(u64, Sum i64)`:
+    /// declaration type spellings, rule-notation fold names).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("(")?;
+        for (index, column) in self.columns.iter().enumerate() {
+            if index > 0 {
+                f.write_str(", ")?;
+            }
+            if let Some(op) = column.op {
+                write!(f, "{op} ")?;
+            }
+            match &column.ty {
+                ValueType::Bool => f.write_str("bool")?,
+                ValueType::U64 => f.write_str("u64")?,
+                ValueType::I64 => f.write_str("i64")?,
+                ValueType::String => f.write_str("string")?,
+                ValueType::FixedBytes { len } => write!(f, "bytes<{len}>")?,
+                ValueType::Interval { element } => match element {
+                    IntervalElement::U64 => f.write_str("interval<u64>")?,
+                    IntervalElement::I64 => f.write_str("interval<i64>")?,
+                },
+            }
+        }
+        f.write_str(")")
+    }
+}
+
+/// One column of the predicate's signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PredicateColumn {
+    /// The RESULT type — what lands in the buffer. Count is U64 here
+    /// whatever it counted; Duration's measure is U64; Min/Max/Sum
+    /// carry their input's type; Pack carries the interval type; the
+    /// Arg forms carry the projected payload's type.
+    pub ty: ValueType,
+    /// None = plain projection; Some = the fold producing the column.
+    /// Kept together deliberately: the sink needs both jointly, and a
+    /// signature-only split would re-create a parallel table (decided
+    /// here, not inherited from the sketch).
+    pub op: Option<AggKind>,
+}
+
+/// The fold producing a predicate column, by kind alone: an Arg key is a
+/// rule-scoped variable outside the signature's vocabulary, so the head
+/// owns the payload-free kind (a projected measure is a plain column —
+/// `None` — while a folded measure carries its fold's kind).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AggKind {
+    /// [`crate::ir::AggOp::Sum`].
+    Sum,
+    /// [`crate::ir::AggOp::Min`].
+    Min,
+    /// [`crate::ir::AggOp::Max`].
+    Max,
+    /// [`crate::ir::AggOp::Count`].
+    Count,
+    /// [`crate::ir::AggOp::CountDistinct`].
+    CountDistinct,
+    /// [`crate::ir::AggOp::ArgMax`], key elided.
+    ArgMax,
+    /// [`crate::ir::AggOp::ArgMin`], key elided.
+    ArgMin,
+    /// [`crate::ir::AggOp::Pack`].
+    Pack,
+}
+
+impl std::fmt::Display for AggKind {
+    /// The rule notation's fold names (`ir/render.rs`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Sum => "Sum",
+            Self::Min => "Min",
+            Self::Max => "Max",
+            Self::Count => "Count",
+            Self::CountDistinct => "CountDistinct",
+            Self::ArgMax => "ArgMax",
+            Self::ArgMin => "ArgMin",
+            Self::Pack => "Pack",
+        })
+    }
+}
+
 /// The sealed witness: the query plus the derived tables downstream layers
 /// trust. Unconstructible outside this module.
 ///
@@ -110,11 +205,10 @@ pub struct ValidatedQuery {
     /// input rules (duplicates collapsed) — the artifact everything
     /// downstream reads. No `Or` survives validation.
     lowered: Vec<LoweredRule>,
-    /// The head's positional type row, pinned at validation: rule 0's
-    /// resolved find-term types (an aggregate position carries its fold
-    /// input type; nullary `Count` is `U64`), which every later rule was
-    /// checked against position by position.
-    head_types: Vec<ValueType>,
+    /// The predicate the query defines, derived once from rule 0 after
+    /// every rule was checked to derive the same signature (the per-rule
+    /// positional alignment below).
+    predicate: Predicate,
     /// Per rule, in rule order: its variable typing and group key.
     rules: Vec<RuleTyping>,
     param_types: BTreeMap<ParamId, ValueType>,
@@ -142,12 +236,12 @@ struct RuleTyping {
 }
 
 impl ValidatedQuery {
-    /// The head's pinned positional type row (see the field doc); the
-    /// rule loop's result-type row derives from it per rule at prepare.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The predicate this query defines (see [`Predicate`]): the sealed
+    /// signature every downstream consumer reads — no other derivation
+    /// of the output row types exists.
     #[must_use]
-    pub fn head_types(&self) -> &[ValueType] {
-        &self.head_types
+    pub fn predicate(&self) -> &Predicate {
+        &self.predicate
     }
 
     /// One rule's slice of the witness — the unit the per-rule pipeline

@@ -381,7 +381,7 @@ fn insert_payroll(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i
 
 /// The interval find round-trip: a projected interval variable
 /// materializes as `Value::IntervalI64` rows equal to the stored
-/// facts', and `column_types` reports the interval type.
+/// facts', and the predicate's signature reports the interval type.
 #[test]
 fn interval_find_round_trips_through_the_result_buffer() {
     let dir = TempDir::new("prepared-interval-roundtrip");
@@ -410,7 +410,12 @@ fn interval_find_round_trips_through_the_result_buffer() {
         predicates: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let types: Vec<ValueType> = prepared.column_types().cloned().collect();
+    let types: Vec<ValueType> = prepared
+        .predicate()
+        .columns
+        .iter()
+        .map(|column| column.ty.clone())
+        .collect();
     assert_eq!(
         types,
         vec![
@@ -419,7 +424,7 @@ fn interval_find_round_trips_through_the_result_buffer() {
                 element: IntervalElement::I64
             },
         ],
-        "column_types reports the interval type"
+        "the predicate reports the interval type"
     );
     let out = prepared
         .execute_collect(&txn, &cache, &[])

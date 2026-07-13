@@ -124,7 +124,12 @@ impl BenchRun<'_> {
             .prepare(&spec.query)
             .map_err(|e| format!("{}: prepare: {e:?}", spec.name))?;
         let sets = spec.sets.clone();
-        let types: Vec<bumbledb::schema::ValueType> = prepared.column_types().cloned().collect();
+        let types: Vec<bumbledb::schema::ValueType> = prepared
+            .predicate()
+            .columns
+            .iter()
+            .map(|column| column.ty.clone())
+            .collect();
 
         let mut rotation = Rotation::new(sets.clone());
         let mut buffer = ResultBuffer::new();
