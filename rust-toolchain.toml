@@ -8,6 +8,12 @@
 # The pin moves DELIBERATELY, never implicitly: moving it is a PRD-sized
 # action that carries the #[ignore]d microbench re-earn session with it
 # (codegen changes invalidate every pinned margin).
+#
+# Nightly features adopted (each a dividend — it deletes code or guards,
+# never adopted because it exists; docs/prd-crucible/02-nightly-dividend.md
+# carries the refusal ledger):
+#   - try_blocks (crates/bumbledb): kills the immediately-invoked-closure
+#     error idiom — a fallible region is a block, not a fake call.
 [toolchain]
 channel = "nightly-2026-07-12"
 components = ["miri", "llvm-tools", "rustfmt", "clippy", "rust-src"]

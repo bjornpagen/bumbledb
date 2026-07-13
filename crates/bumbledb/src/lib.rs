@@ -70,6 +70,12 @@
 //! cargo test --workspace
 //! ```
 
+// Nightly dividend (docs/prd-crucible/02-nightly-dividend.md): `try`
+// blocks replace the immediately-invoked-closure error idiom — the
+// block states "this region fails as a unit" without a fake function
+// call.
+#![feature(try_blocks)]
+
 // 64-bit only (docs/architecture/00-product.md): `usize` is 8 bytes everywhere
 // and no design decision accommodates narrower platforms. Building for a
 // 32-bit target (e.g. `--target i686-unknown-linux-gnu`) fails with this

@@ -218,7 +218,12 @@ fn decode_field_surfaces_corruption() {
     fact[1] = 0x00;
     // Invert the IntervalU64 field (offset 42): end half below its start.
     fact[50..58].copy_from_slice(&encode_u64(0));
-    let corrupt: [u8; 16] = fact[42..58].try_into().expect("16-byte field");
+    // The expected error payload, rebuilt from the same primitives the
+    // fixture used: the untouched start half ‖ the zeroed end half.
+    let mut corrupt = [0u8; 16];
+    let (corrupt_start, corrupt_end) = corrupt.split_at_mut(8);
+    corrupt_start.copy_from_slice(&encode_u64(3));
+    corrupt_end.copy_from_slice(&encode_u64(0));
     assert_eq!(
         decode_field(&fact, &layout, 6),
         Err(CorruptionError::InvalidInterval(corrupt))
@@ -228,7 +233,11 @@ fn decode_field_surfaces_corruption() {
     // trailing pad (offsets 26 + 12 .. 26 + 16) is typed corruption —
     // the pad is encoding, not data.
     fact[39] = 0x5A;
-    let tail: [u8; 8] = fact[34..42].try_into().expect("trailing word");
+    // The bytes<12> field's trailing word, sliced layout-first — the
+    // error payload is the field's last whole word.
+    let &tail = field_bytes(&fact, &layout, 5)
+        .last_chunk()
+        .expect("bytes<12> spans two whole words");
     assert_eq!(
         decode_field(&fact, &layout, 5),
         Err(CorruptionError::NonzeroFixedBytesPad(tail))

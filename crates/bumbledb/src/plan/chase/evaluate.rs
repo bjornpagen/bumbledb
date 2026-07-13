@@ -235,13 +235,9 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     // probe is then precisely `k ∈ S`. A payload-bound probe key would
     // need multi-column set reasoning; REFUSED v0, recorded (trigger: a
     // profiled multi-key anti-probe on a closed relation).
-    let [(field, k)] = occurrence.vars.as_slice() else {
+    let &[(FieldId(0), k)] = occurrence.vars.as_slice() else {
         return false;
     };
-    if *field != FieldId(0) {
-        return false;
-    }
-    let k = *k;
     let closed = occurrence.relation;
     let binders = membership_binders(normalized, c_idx, k);
     if binders.is_empty() {
@@ -607,8 +603,10 @@ fn row_satisfies(
     let bytes = |field: FieldId| field_bytes(fact, layout, usize::from(field.0));
     let word = |field: FieldId| field_word(layout, fact, field);
     let pair = |field: FieldId| {
-        let b = bytes(field);
-        (be_word(&b[..8]), be_word(&b[8..16]))
+        // A validated interval field is exactly two words; `as_chunks`
+        // carries the half width in its type.
+        let (halves, _) = bytes(field).as_chunks::<8>();
+        (u64::from_be_bytes(halves[0]), u64::from_be_bytes(halves[1]))
     };
     match filter {
         ResolvableFilter::WordCompare {
@@ -666,15 +664,13 @@ fn row_satisfies(
 /// byte column widened, or the 8-byte column as-is.
 fn field_word(layout: &crate::encoding::FactLayout, fact: &[u8], field: FieldId) -> u64 {
     let bytes = field_bytes(fact, layout, usize::from(field.0));
-    match bytes.len() {
-        1 => u64::from(bytes[0]),
-        8 => be_word(bytes),
-        _ => unreachable!("parsed word filters address validated scalar columns"),
+    match bytes {
+        &[byte] => u64::from(byte),
+        _ => match <[u8; 8]>::try_from(bytes) {
+            Ok(word) => u64::from_be_bytes(word),
+            Err(_) => unreachable!("parsed word filters address validated scalar columns"),
+        },
     }
-}
-
-fn be_word(bytes: &[u8]) -> u64 {
-    u64::from_be_bytes(bytes.try_into().expect("8-byte slice"))
 }
 
 /// Attaches the plan-constant membership to every binder: one

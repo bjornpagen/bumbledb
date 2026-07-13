@@ -127,8 +127,6 @@ pub const MEMBERSHIP_KEY_LEN: usize = 1 + 4 + 32;
 pub const FRESH_KEY_LEN: usize = 1 + 4 + 2;
 /// `S` key width: tag + relation + stat kind.
 pub const STAT_KEY_LEN: usize = 1 + 4 + 1;
-/// `R` key width after the key bytes: `source_rel` + `source_row`.
-pub const REVERSE_KEY_TAIL_LEN: usize = 4 + 8;
 
 pub fn fact_key(buf: &mut [u8], relation: RelationId, row_id: u64) -> usize {
     KeyWriter::new(buf, NS_FACT)
@@ -219,19 +217,76 @@ pub fn stat_key(buf: &mut [u8], relation: RelationId, stat: StatKind) -> usize {
 /// `None` on anything not shaped like a reverse-edge key (corrupt data).
 #[must_use]
 pub fn parse_reverse_key(key: &[u8]) -> Option<(StatementId, &[u8], RelationId, u64)> {
-    if key.len() < R_OVERHEAD || key[0] != NS_REVERSE {
+    // The split chain is the length check: tag(1) + statement(2) off the
+    // front, source_row(8) then source_rel(4) off the back — anything
+    // shorter than R_OVERHEAD fails a split.
+    let (&namespace, rest) = key.split_first()?;
+    if namespace != NS_REVERSE {
         return None;
     }
-    let statement = StatementId(u16::from_be_bytes(
-        key[1..3].try_into().expect("fixed-width slice"),
-    ));
-    let tail = key.len() - REVERSE_KEY_TAIL_LEN;
-    let key_bytes = &key[3..tail];
-    let source_relation = RelationId(u32::from_be_bytes(
-        key[tail..tail + 4].try_into().expect("fixed-width slice"),
-    ));
-    let source_row = u64::from_be_bytes(key[tail + 4..].try_into().expect("fixed-width slice"));
-    Some((statement, key_bytes, source_relation, source_row))
+    let (&statement, rest) = rest.split_first_chunk()?;
+    let (rest, &source_row) = rest.split_last_chunk()?;
+    let (key_bytes, &source_relation) = rest.split_last_chunk()?;
+    Some((
+        StatementId(u16::from_be_bytes(statement)),
+        key_bytes,
+        RelationId(u32::from_be_bytes(source_relation)),
+        u64::from_be_bytes(source_row),
+    ))
+}
+
+/// Splits a full `F` key into `(relation, row_id)`. `None` on anything
+/// not exactly the codec's fixed 13-byte fact-key shape (corrupt data) —
+/// the split chain is the length check.
+#[must_use]
+pub fn parse_fact_key(key: &[u8]) -> Option<(RelationId, u64)> {
+    let (_, rest) = key.split_first()?;
+    let (&relation, rest) = rest.split_first_chunk()?;
+    let &row_id = <&[u8; 8]>::try_from(rest).ok()?;
+    Some((
+        RelationId(u32::from_be_bytes(relation)),
+        u64::from_be_bytes(row_id),
+    ))
+}
+
+/// Splits a full `M` key into `(relation, fact_hash)`. `None` on anything
+/// not exactly the codec's fixed 37-byte membership-key shape.
+#[must_use]
+pub fn parse_membership_key(key: &[u8]) -> Option<(RelationId, &[u8; 32])> {
+    let (_, rest) = key.split_first()?;
+    let (&relation, rest) = rest.split_first_chunk()?;
+    let hash = <&[u8; 32]>::try_from(rest).ok()?;
+    Some((RelationId(u32::from_be_bytes(relation)), hash))
+}
+
+/// Splits a full `U` key into `(relation, statement, guard)`. `None` when
+/// the header is short or the guard empty (projections are non-empty by
+/// validation, so an empty guard is corrupt data).
+#[must_use]
+pub fn parse_guard_key(key: &[u8]) -> Option<(RelationId, StatementId, &[u8])> {
+    let (_, rest) = key.split_first()?;
+    let (&relation, rest) = rest.split_first_chunk()?;
+    let (&statement, guard) = rest.split_first_chunk()?;
+    if guard.is_empty() {
+        return None;
+    }
+    Some((
+        RelationId(u32::from_be_bytes(relation)),
+        StatementId(u16::from_be_bytes(statement)),
+        guard,
+    ))
+}
+
+/// Splits a full `S` key into `(relation, stat byte)`. `None` on anything
+/// not exactly the codec's fixed 6-byte stat-key shape.
+#[must_use]
+pub fn parse_stat_key(key: &[u8]) -> Option<(RelationId, u8)> {
+    let (_, rest) = key.split_first()?;
+    let (&relation, rest) = rest.split_first_chunk()?;
+    match rest {
+        &[stat] => Some((RelationId(u32::from_be_bytes(relation)), stat)),
+        _ => None,
+    }
 }
 
 /// Concatenates the canonical encodings of `projection`'s fields, sliced

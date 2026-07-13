@@ -129,11 +129,11 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
         .collect();
     let expected_starts: Vec<u64> = encoded
         .iter()
-        .map(|enc| word(enc[..8].try_into().expect("8-byte half")))
+        .map(|enc| word(crate::encoding::split_halves(*enc).0))
         .collect();
     let expected_ends: Vec<u64> = encoded
         .iter()
-        .map(|enc| word(enc[8..].try_into().expect("8-byte half")))
+        .map(|enc| word(crate::encoding::split_halves(*enc).1))
         .collect();
     assert_eq!(
         image.column_words(usize::from(span.first_column)),

@@ -426,7 +426,7 @@ fn a_bulk_load_error_keeps_its_committed_count_through_question_mark() {
         .map(|i| vec![Value::String(format!("v{i}").into_bytes().into())])
         .chain(std::iter::once(vec![]))
         .collect();
-    let surfaced = (|| -> Result<u64> { Ok(db.bulk_load(named, facts)?) })();
+    let surfaced: Result<u64> = db.bulk_load(named, facts).map_err(Error::from);
     match surfaced.unwrap_err() {
         Error::BulkLoad { committed, error } => {
             assert_eq!(committed, BULK_CHUNK as u64, "the whole first chunk");

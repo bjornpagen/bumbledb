@@ -193,7 +193,7 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
     // The Never σ: "urgent" was never interned, so no Report fact can
     // satisfy the selection — an insert with a different interned note
     // commits although its would-be target is absent.
-    let noted: Result<Vec<u8>> = (|| {
+    let noted: Result<Vec<u8>> = try {
         let view = env.read_txn()?;
         let mut delta = WriteDelta::new(&schema);
         let note = delta.intern_str(&view, "routine")?;
@@ -205,7 +205,7 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
         delta.insert(&view, REPORT, &bytes)?;
         drop(view);
         crate::storage::commit::commit(delta, &env)?;
-        Ok(bytes)
-    })();
+        bytes
+    };
     noted.expect("no fact can satisfy an uninterned σ — the edge never derives");
 }

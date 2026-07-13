@@ -18,7 +18,7 @@ use super::{
     RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor, StatementId, StatementRef,
     ValueMismatch, ValueType, closed_member, value_matches,
 };
-use crate::encoding::field_bytes;
+use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::SchemaError;
 use crate::storage::keys::MAX_GUARD_WIDTH;
 use crate::value::Value;
@@ -497,11 +497,7 @@ fn sealed_satisfies(checks: &[CompiledCheck], layout: &FactLayout, fact: &[u8]) 
 /// One u64 field decoded off a sealed row's canonical bytes (big-endian,
 /// order-preserving — `docs/architecture/10-data-model.md`).
 fn decoded_word(layout: &FactLayout, field: FieldId, fact: &[u8]) -> u64 {
-    u64::from_be_bytes(
-        field_bytes(fact, layout, usize::from(field.0))
-            .try_into()
-            .expect("u64 field is 8 bytes"),
-    )
+    u64::from_be_bytes(field_word_bytes(fact, layout, usize::from(field.0)))
 }
 
 /// Roster "unknown relation … ids": the relation for a statement-named id.

@@ -1,4 +1,4 @@
-use crate::encoding::{decode_u64, fact_hash, field_bytes};
+use crate::encoding::{decode_u64, fact_hash, field_word_bytes};
 use crate::error::Result;
 use crate::schema::{FieldId, Generation, RelationId};
 use crate::storage::env::ReadTxn;
@@ -93,8 +93,7 @@ impl WriteDelta<'_> {
                 continue;
             }
             let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
-            let raw = field_bytes(fact_bytes, relation.layout(), idx);
-            let value = decode_u64(raw.try_into().expect("fresh fields are 8 bytes"));
+            let value = decode_u64(field_word_bytes(fact_bytes, relation.layout(), idx));
             let mark = self.fresh_mark(view, rel, field_id)?;
             // `saturating_add`: an explicit u64::MAX is legal to insert; the
             // sequence is then exhausted for the generator (alloc errors).

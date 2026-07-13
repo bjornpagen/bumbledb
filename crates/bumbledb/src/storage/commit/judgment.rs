@@ -634,12 +634,14 @@ impl<'a> Checker<'a> {
         );
         let group_len = full_len - 16;
         let seek_len = full_len - 8;
-        let source_start: [u8; 8] = self.key[group_len..seek_len]
-            .try_into()
-            .expect("fixed-width slice");
-        let source_end: [u8; 8] = self.key[seek_len..full_len]
-            .try_into()
-            .expect("fixed-width slice");
+        // The scratch parses exactly like a stored guard key: its tail
+        // is the probe interval `s ‖ e` (the acceptance gate puts the
+        // interval last) — a construction invariant of `guard_key`, so
+        // the surviving guard is a programmer-error panic, never a
+        // corruption path (the slice type cannot carry a runtime guard
+        // width).
+        let (source_start, source_end, _) = segment_words(&self.key[..full_len], &[])
+            .expect("the guard scratch ends in the probe interval");
 
         // Entry location: the one guard entry that can cover `s`. A
         // segment starting exactly at `s` has full key `seek ‖ its end`,
@@ -669,20 +671,20 @@ impl<'a> Checker<'a> {
         };
         let (entry, chain) = match located {
             Some((entry_key, entry_value)) => {
-                if entry_key.len() != full_len {
+                let Some(segment) = (entry_key.len() == full_len)
+                    .then(|| segment_words(entry_key, entry_value))
+                    .flatten()
+                else {
                     return Err(Error::Corruption(CorruptionError::MalformedValue(
                         "U guard key length",
                     )));
-                }
+                };
                 // The forward chain: everything past the entry, in key
                 // order — shape-checked and parsed by the adapter below,
                 // walked by the sweep.
                 let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
                     (Bound::Excluded(entry_key), Bound::Unbounded);
-                (
-                    Some(segment_words(entry_key, entry_value)),
-                    Some(self.data.range(self.txn, &bounds)?),
-                )
+                (Some(segment), Some(self.data.range(self.txn, &bounds)?))
             }
             None => (None, None),
         };
@@ -725,12 +727,14 @@ impl<'a> Checker<'a> {
 /// value (the σ payload — a row id for the target-selection re-check).
 type GuardSegment<'t> = ([u8; 8], [u8; 8], &'t [u8]);
 
-/// Parses a shape-checked guard key into the sweep's word pair.
-fn segment_words<'t>(key: &[u8], value: &'t [u8]) -> GuardSegment<'t> {
-    let tail = key.len() - 16;
-    let start = key[tail..tail + 8].try_into().expect("fixed-width slice");
-    let end = key[tail + 8..].try_into().expect("fixed-width slice");
-    (start, end, value)
+/// Parses a guard key into the sweep's word pair: the interval halves
+/// are the key's last 16 bytes (the acceptance gate puts the interval
+/// last). `None` on a key too short to carry them — the callers' key-
+/// shape corruption path consumes it alongside their length check.
+fn segment_words<'t>(key: &[u8], value: &'t [u8]) -> Option<GuardSegment<'t>> {
+    let (head, &end) = key.split_last_chunk()?;
+    let (_, &start) = head.split_last_chunk()?;
+    Some((start, end, value))
 }
 
 /// One prefix group's guard entries as sweep segments: the located entry
@@ -777,13 +781,16 @@ where
             self.chain = None;
             return None;
         }
-        if key.len() != self.full_len {
+        let Some(segment) = (key.len() == self.full_len)
+            .then(|| segment_words(key, value))
+            .flatten()
+        else {
             self.chain = None;
             return Some(Err(Error::Corruption(CorruptionError::MalformedValue(
                 "U guard key length",
             ))));
-        }
-        Some(Ok(segment_words(key, value)))
+        };
+        Some(Ok(segment))
     }
 }
 

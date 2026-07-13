@@ -1,5 +1,5 @@
 use super::{R, fact, populated, schema};
-use crate::encoding::encode_i64;
+use crate::encoding::{encode_i64, field_word_bytes};
 use crate::image::{LINE, SET_STRIDE, build};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
@@ -58,14 +58,9 @@ fn columns_equal_per_field_decode_of_the_scan() {
     for (position, entry) in read::scan(&txn, &schema, R).expect("scan").enumerate() {
         let (_, fact_bytes) = entry.expect("ok");
         // 8-byte columns hold the byte-order-normalized word.
-        let id_word = u64::from_be_bytes(fact_bytes[..8].try_into().expect("8"));
+        let id_word = u64::from_be_bytes(field_word_bytes(fact_bytes, layout, 0));
         assert_eq!(image.column_words(0)[position], id_word);
-        let amount_off = layout.field_offset(3);
-        let amount_word = u64::from_be_bytes(
-            fact_bytes[amount_off..amount_off + 8]
-                .try_into()
-                .expect("8"),
-        );
+        let amount_word = u64::from_be_bytes(field_word_bytes(fact_bytes, layout, 3));
         assert_eq!(image.column_words(3)[position], amount_word);
         // 1-byte columns hold the validated byte.
         assert_eq!(image.column_bytes(1)[position], fact_bytes[8]);
@@ -98,7 +93,7 @@ fn positions_stay_dense_under_row_id_holes() {
         .expect("scan")
         .map(|e| {
             let (_, bytes) = e.expect("ok");
-            u64::from_be_bytes(bytes[..8].try_into().expect("8"))
+            u64::from_be_bytes(field_word_bytes(bytes, schema.relation(R).layout(), 0))
         })
         .collect();
     assert_eq!(image.column_words(0), &scanned[..]);

@@ -12,7 +12,10 @@ mod layout;
 #[cfg(test)]
 mod tests;
 
-pub use decode::{decode_bool, decode_field, decode_i64, decode_u64, field_bytes};
+pub(crate) use decode::split_halves;
+pub use decode::{
+    decode_bool, decode_field, decode_i64, decode_u64, field_bytes, field_word_bytes,
+};
 pub use encode::{
     encode_bool, encode_fact, encode_fixed_bytes, encode_i64, encode_interval_i64,
     encode_interval_u64, encode_literal, encode_u64,

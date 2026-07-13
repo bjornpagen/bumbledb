@@ -75,16 +75,21 @@ pub const fn decode_interval_i64(bytes: [u8; 16]) -> Result<(i64, i64), Corrupti
 pub fn decode_fixed_bytes(padded: &[u8], len: u16) -> Result<FixedBytesValue, CorruptionError> {
     debug_assert_eq!(padded.len(), super::fixed_bytes_words(len) * 8);
     let len = usize::from(len);
-    if padded[len..].iter().any(|&byte| byte != 0) {
-        let tail: [u8; 8] = padded[padded.len() - 8..]
-            .try_into()
-            .expect("8-byte trailing word");
+    // A nonzero pad byte implies at least one stored word, so the
+    // `last_chunk` arm of the chain always holds when the first does —
+    // the offending trailing word rides the error.
+    if padded[len..].iter().any(|&byte| byte != 0)
+        && let Some(&tail) = padded.last_chunk()
+    {
         return Err(CorruptionError::NonzeroFixedBytesPad(tail));
     }
     Ok(FixedBytesValue::new(&padded[..len]))
 }
 
-const fn split_halves(bytes: [u8; 16]) -> ([u8; 8], [u8; 8]) {
+/// Splits an interval encoding's `start ‖ end` into its 8-byte halves
+/// (readers: the interval decoders here, the image's word-pair fill, and
+/// the image tests' expectations).
+pub(crate) const fn split_halves(bytes: [u8; 16]) -> ([u8; 8], [u8; 8]) {
     let (mut start, mut end) = ([0; 8], [0; 8]);
     let mut i = 0;
     while i < 8 {
@@ -101,6 +106,23 @@ pub fn field_bytes<'a>(fact_bytes: &'a [u8], layout: &FactLayout, field_idx: usi
     debug_assert_eq!(fact_bytes.len(), layout.fact_width());
     let (offset, desc) = layout.fields[field_idx];
     &fact_bytes[offset..offset + desc.width()]
+}
+
+/// [`field_bytes`] with the width in the type: one word-width field's
+/// canonical 8 bytes. The one surviving fixed-width guard for word
+/// fields — a field's width is a runtime layout fact the slice type
+/// cannot carry, so every word-field consumer funnels through this
+/// single check instead of guarding locally.
+///
+/// # Panics
+///
+/// Only on a programmer-invariant violation: the addressed field is not
+/// word-width (callers' fields are schema-validated U64/I64/String or a
+/// one-word `bytes<N ≤ 8>`).
+#[must_use]
+pub fn field_word_bytes(fact_bytes: &[u8], layout: &FactLayout, field_idx: usize) -> [u8; 8] {
+    <[u8; 8]>::try_from(field_bytes(fact_bytes, layout, field_idx))
+        .expect("word-width field: the layout derives the width")
 }
 
 /// Decodes one field of an encoded fact.
@@ -121,17 +143,20 @@ pub fn decode_field(
     field_idx: usize,
 ) -> Result<ValueRef, CorruptionError> {
     let bytes = field_bytes(fact_bytes, layout, field_idx);
-    let word = |b: &[u8]| decode_u64(b.try_into().expect("8-byte field slice"));
+    let word = || field_word_bytes(fact_bytes, layout, field_idx);
     match layout.field_type(field_idx) {
         TypeDesc::Bool => decode_bool(bytes[0]).map(ValueRef::Bool),
-        TypeDesc::U64 => Ok(ValueRef::U64(word(bytes))),
-        TypeDesc::I64 => Ok(ValueRef::I64(decode_i64(
-            bytes.try_into().expect("8-byte field slice"),
-        ))),
-        TypeDesc::String => Ok(ValueRef::String(word(bytes))),
+        TypeDesc::U64 => Ok(ValueRef::U64(decode_u64(word()))),
+        TypeDesc::I64 => Ok(ValueRef::I64(decode_i64(word()))),
+        TypeDesc::String => Ok(ValueRef::String(decode_u64(word()))),
         TypeDesc::FixedBytes { len } => decode_fixed_bytes(bytes, len).map(ValueRef::FixedBytes),
         TypeDesc::Interval { element } => {
-            let bytes: [u8; 16] = bytes.try_into().expect("16-byte field slice");
+            // The 16-byte width is layout-derived — the same
+            // single-guard ruling as [`field_word_bytes`], inline for
+            // the one wide shape.
+            let bytes: [u8; 16] = bytes
+                .try_into()
+                .expect("interval field: the layout derives the width");
             match element {
                 IntervalElement::U64 => {
                     decode_interval_u64(bytes).map(|(s, e)| ValueRef::IntervalU64(s, e))

@@ -107,11 +107,13 @@ impl Colt {
         debug_assert_eq!(m.arity, A);
         let nbm = m.nbuckets - 1;
         let wanted = ctrl_tag(hash);
+        // Ctrl regions are 8-aligned (`Map::ctrl_start`), so the slab
+        // reads as whole SWAR groups.
+        let (groups, _) = self.ctrl.as_chunks::<8>();
+        let group_base = m.ctrl_start / 8;
         let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
         loop {
-            let group = m.ctrl_start + b * 8;
-            let cw =
-                u64::from_le_bytes(self.ctrl[group..group + 8].try_into().expect("ctrl group"));
+            let cw = u64::from_le_bytes(groups[group_base + b]);
             let mut matches = eq_byte_mask(cw, wanted);
             while matches != 0 {
                 let slot = (matches.trailing_zeros() as usize) >> 3;
@@ -144,11 +146,13 @@ impl Colt {
     fn probe_walk_general(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
         let nbm = m.nbuckets - 1;
         let wanted = ctrl_tag(hash);
+        // Ctrl regions are 8-aligned (`Map::ctrl_start`), so the slab
+        // reads as whole SWAR groups.
+        let (groups, _) = self.ctrl.as_chunks::<8>();
+        let group_base = m.ctrl_start / 8;
         let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
         loop {
-            let group = m.ctrl_start + b * 8;
-            let cw =
-                u64::from_le_bytes(self.ctrl[group..group + 8].try_into().expect("ctrl group"));
+            let cw = u64::from_le_bytes(groups[group_base + b]);
             let mut matches = eq_byte_mask(cw, wanted);
             while matches != 0 {
                 let slot = (matches.trailing_zeros() as usize) >> 3;

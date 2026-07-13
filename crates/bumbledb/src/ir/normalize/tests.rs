@@ -221,14 +221,9 @@ fn fixed_bytes_literals_lower_to_padded_words_with_no_dict_traffic() {
         other => panic!("expected a word block, got {other:?}"),
     };
     assert_eq!(words.len(), 4);
-    assert_eq!(
-        words[0],
-        u64::from_be_bytes(digest[..8].try_into().unwrap())
-    );
-    assert_eq!(
-        words[3],
-        u64::from_be_bytes(digest[24..].try_into().unwrap())
-    );
+    let (digest_words, _) = digest.as_chunks::<8>();
+    assert_eq!(words[0], u64::from_be_bytes(digest_words[0]));
+    assert_eq!(words[3], u64::from_be_bytes(digest_words[3]));
     // A pad-boundary width: 9 bytes = 2 words, tail zero-padded.
     let nine: Vec<u8> = (1u8..=9).collect();
     assert_eq!(

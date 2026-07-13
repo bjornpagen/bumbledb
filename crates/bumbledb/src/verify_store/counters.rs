@@ -21,13 +21,10 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let mut seen: BTreeSet<(RelationId, u8)> = BTreeSet::new();
     for entry in namespace(s.data, txn, keys::NS_STAT)? {
         let (key, value) = entry?;
-        if key.len() != keys::STAT_KEY_LEN {
+        let Some((rel, stat)) = keys::parse_stat_key(key) else {
             s.malformed(key, "S key length");
             continue;
-        }
-        let rel = RelationId(u32::from_be_bytes(
-            key[1..5].try_into().expect("fixed-width slice"),
-        ));
+        };
         if s.schema.relation_checked(rel).is_none() {
             s.malformed(key, "S key relation");
             continue;
@@ -37,8 +34,8 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             continue;
         };
         let stored = u64::from_le_bytes(bytes);
-        seen.insert((rel, key[5]));
-        match key[5] {
+        seen.insert((rel, stat));
+        match stat {
             ROW_COUNT => {
                 let counted = s.tallies.get(&rel).map_or(0, |t| t.rows);
                 if stored != counted {
