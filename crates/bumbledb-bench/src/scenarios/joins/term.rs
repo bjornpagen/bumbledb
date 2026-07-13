@@ -1,8 +1,6 @@
-use bumbledb::{ParamId, Term, VarId};
+use bumbledb::{ParamId, Term};
 
-pub(super) fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
-}
+pub(super) use crate::fixture::var;
 
 pub(super) fn param(id: u16) -> Term {
     Term::Param(ParamId(id))

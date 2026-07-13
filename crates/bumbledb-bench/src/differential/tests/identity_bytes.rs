@@ -8,39 +8,16 @@
 //! stored alongside for round-trip.
 
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, SchemaDescriptor, Side,
-    StatementDescriptor, ValueType,
+    FieldId, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{
     AggOp, Atom, CmpOp, Comparison, Db, FindTerm, PredicateTree, Query, RelationId, Rule, Term,
     Value, VarId,
 };
 
-use std::path::{Path, PathBuf};
-
 use crate::differential::{run, Op};
+use crate::fixture::{field, var, TempDir};
 use crate::naive::{Delta, NaiveDb};
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-idbytes-{tag}"));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 const BLOB: RelationId = RelationId(0);
 const REF: RelationId = RelationId(1);
@@ -49,11 +26,6 @@ const REF: RelationId = RelationId(1);
 /// Ref(hash bytes<32>) <= Blob(hash). Materialized order:
 /// 0 Blob(hash) -> Blob, 1 Ref(hash) <= Blob(hash).
 fn schema() -> SchemaDescriptor {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
     let digest = |name: &str, len: u16| field(name, ValueType::FixedBytes { len });
     SchemaDescriptor {
         relations: vec![
@@ -206,10 +178,6 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
         deltas.push(delta);
     }
     deltas
-}
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
 }
 
 fn blob_atom(bindings: Vec<(u16, Term)>) -> Atom {

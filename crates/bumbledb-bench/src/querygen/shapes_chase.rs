@@ -89,10 +89,10 @@ const WALKS: &[(RelationId, FieldId, FieldId, RelationId, FieldId, FieldId)] = &
 pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
     let idx = usize::try_from(rng.range(WALKS.len() as u64)).expect("small");
     let (source_rel, ref_field, payload_field, target_rel, key_field, extra_field) = WALKS[idx];
-    let source = b.atom(source_rel);
+    let source = b.add_atom(source_rel);
     let join = b.bind_var(source, ref_field);
     let payload = b.bind_var(source, payload_field);
-    let target = b.atom(target_rel);
+    let target = b.add_atom(target_rel);
     b.bind(target, key_field, Term::Var(join));
     match rng.range(9) {
         // Near-miss (a third): the target produces output, so
@@ -130,17 +130,17 @@ pub(super) fn du_walk(b: &mut Builder, rng: &mut Rng) {
     let import = Term::Literal(Value::U64(SOURCE_IMPORT));
     match rng.range(3) {
         0 => {
-            let child = b.atom(ids::IMPORT_BATCH);
+            let child = b.add_atom(ids::IMPORT_BATCH);
             let join = b.bind_var(child, ids::import_batch::ENTRY);
             let payload = b.bind_var(child, ids::import_batch::BATCH);
             b.find_var(payload);
-            let header = b.atom(ids::JOURNAL_ENTRY);
+            let header = b.add_atom(ids::JOURNAL_ENTRY);
             b.bind(header, ids::journal_entry::ID, Term::Var(join));
             b.bind(header, ids::journal_entry::SOURCE, import);
             b.chase = Some(ChaseVariant::DuHeader);
         }
         variant => {
-            let header = b.atom(ids::JOURNAL_ENTRY);
+            let header = b.add_atom(ids::JOURNAL_ENTRY);
             let join = b.bind_var(header, ids::journal_entry::ID);
             let payload = b.bind_var(header, ids::journal_entry::CREATED_AT);
             b.find_var(payload);
@@ -150,7 +150,7 @@ pub(super) fn du_walk(b: &mut Builder, rng: &mut Rng) {
             } else {
                 b.chase = Some(ChaseVariant::DuMissingPhi);
             }
-            let child = b.atom(ids::IMPORT_BATCH);
+            let child = b.add_atom(ids::IMPORT_BATCH);
             b.bind(child, ids::import_batch::ENTRY, Term::Var(join));
         }
     }

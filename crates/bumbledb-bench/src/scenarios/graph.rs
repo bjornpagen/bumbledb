@@ -11,6 +11,7 @@ use bumbledb::{
 };
 
 use super::{mix, Scenario, ScenarioQuery};
+use crate::fixture::var;
 use crate::gen::Rng;
 
 bumbledb::schema! {
@@ -110,10 +111,6 @@ fn distinct_edges(seed: u64) -> Vec<Vec<Value>> {
         }
     }
     out
-}
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
 }
 
 fn param(id: u16) -> Term {

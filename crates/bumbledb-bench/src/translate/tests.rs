@@ -1,11 +1,9 @@
 use std::sync::OnceLock;
 
 use super::*;
+use crate::fixture::{field, fresh, var};
 use bumbledb::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, PredicateTree, Rule, Term};
-use bumbledb::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, Side,
-    ValueType,
-};
+use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
 use bumbledb::AggOp;
 use bumbledb::AllenMask;
 
@@ -66,22 +64,6 @@ mod ids {
     pub mod transfer {
         use super::FieldId;
         pub const EXTREF: FieldId = FieldId(1);
-    }
-}
-
-fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    }
-}
-
-fn fresh(name: &str) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type: ValueType::U64,
-        generation: Generation::Fresh,
     }
 }
 
@@ -183,10 +165,6 @@ fn schema() -> &'static Schema {
         .validate()
         .expect("the test ledger validates")
     })
-}
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
 }
 
 #[test]

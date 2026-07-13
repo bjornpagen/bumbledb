@@ -31,12 +31,10 @@
 
 use std::sync::OnceLock;
 
-use bumbledb::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, Row, SchemaDescriptor,
-    ValueType,
-};
+use bumbledb::schema::{IntervalElement, RelationDescriptor, Row, SchemaDescriptor, ValueType};
 use bumbledb::{Schema, Value};
 
+use crate::fixture::{field, fresh};
 use crate::gen::{GenConfig, Rng, Scale};
 use crate::querygen::interval_data;
 
@@ -151,22 +149,6 @@ pub mod ids {
         use super::FieldId;
         pub const ID: FieldId = FieldId(0);
         pub const MINOR_UNITS: FieldId = FieldId(1);
-    }
-}
-
-fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    }
-}
-
-fn fresh(name: &str) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type: ValueType::U64,
-        generation: Generation::Fresh,
     }
 }
 

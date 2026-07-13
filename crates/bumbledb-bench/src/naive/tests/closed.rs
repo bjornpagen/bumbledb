@@ -6,11 +6,11 @@
 //! extension by value comparison, from the definition.
 
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, Row, SchemaDescriptor, Side,
-    StatementDescriptor, ValueType,
+    FieldId, RelationDescriptor, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{Direction, RelationId, StatementId, Value};
 
+use crate::fixture::{field, side};
 use crate::naive::{Delta, NaiveDb, Tuple, Violation};
 
 const SEVERITY: RelationId = RelationId(0);
@@ -23,22 +23,6 @@ const HANDLER: RelationId = RelationId(3);
 const ALERT_SEVERITY: StatementId = StatementId(2);
 const ESCALATION_SEVERITY: StatementId = StatementId(3);
 const SEVERITY_HANDLED: StatementId = StatementId(4);
-
-fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    }
-}
-
-fn side(relation: RelationId, projection: &[u16]) -> Side {
-    Side {
-        relation,
-        projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([]),
-    }
-}
 
 /// Severity closed {pages: bool} = Low(false) | Med(true) | High(true);
 /// Alert(severity) <= Severity(id); Escalation(severity) <= Severity(id
@@ -90,11 +74,11 @@ fn schema() -> SchemaDescriptor {
                 projection: Box::new([FieldId(0)]),
             },
             StatementDescriptor::Containment {
-                source: side(ALERT, &[0]),
-                target: side(SEVERITY, &[0]),
+                source: side(ALERT, &[0], &[]),
+                target: side(SEVERITY, &[0], &[]),
             },
             StatementDescriptor::Containment {
-                source: side(ESCALATION, &[0]),
+                source: side(ESCALATION, &[0], &[]),
                 target: Side {
                     relation: SEVERITY,
                     projection: Box::new([FieldId(0)]),
@@ -102,8 +86,8 @@ fn schema() -> SchemaDescriptor {
                 },
             },
             StatementDescriptor::Containment {
-                source: side(SEVERITY, &[0]),
-                target: side(HANDLER, &[0]),
+                source: side(SEVERITY, &[0], &[]),
+                target: side(HANDLER, &[0], &[]),
             },
         ],
     }

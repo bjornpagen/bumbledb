@@ -8,7 +8,7 @@ use crate::schema::{
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
-use crate::storage::keys::{KeyBuf, MAX_KEY};
+use crate::storage::keys::key;
 use crate::value::Value;
 
 use std::collections::BTreeSet;
@@ -24,9 +24,8 @@ mod target;
 
 // ---------- shared fixture vocabulary ----------
 //
-// Every commit-test schema builds from these shorthands (the PRD 07/08/09
-// eras each grew their own copies); the schemas themselves stay per-file —
-// each judgment matrix wants its own statement shapes.
+// Shared shorthands live here; schemas stay per-file because each
+// judgment matrix wants its own statement shapes.
 
 /// A plain (non-fresh) field.
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
@@ -213,10 +212,4 @@ fn committed_data(env: &Environment) -> Vec<(Vec<u8>, Vec<u8>)> {
             (k.to_vec(), v.to_vec())
         })
         .collect()
-}
-
-fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
-    let mut buf: KeyBuf = [0; MAX_KEY];
-    let len = write(&mut buf);
-    buf[..len].to_vec()
 }

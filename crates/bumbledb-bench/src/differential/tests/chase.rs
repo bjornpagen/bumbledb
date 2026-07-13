@@ -7,80 +7,18 @@
 //! the chase-on plan carries exactly one `Role::Eliminated` mark naming
 //! the fixture's fallen relation; the chase-off plan carries none.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, SchemaDescriptor, Side,
-    StatementDescriptor, ValueType,
+    FieldId, RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType,
 };
 use bumbledb::{
     with_chase_disabled, AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::differential::{engine_query, Rows};
+use crate::fixture::{atom, field, fresh, side, var, TempDir};
 use crate::naive::{Delta, NaiveDb};
-
-fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    }
-}
-
-fn fresh(name: &str) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type: ValueType::U64,
-        generation: Generation::Fresh,
-    }
-}
-
-fn side(relation: u32, projection: u16, selection: &[(u16, Value)]) -> Side {
-    Side {
-        relation: RelationId(relation),
-        projection: Box::new([FieldId(projection)]),
-        selection: selection
-            .iter()
-            .map(|(f, v)| (FieldId(*f), v.clone()))
-            .collect(),
-    }
-}
-
-fn atom(relation: u32, bindings: &[(u16, Term)]) -> Atom {
-    Atom {
-        relation: RelationId(relation),
-        bindings: bindings
-            .iter()
-            .map(|(f, t)| (FieldId(*f), t.clone()))
-            .collect(),
-    }
-}
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
-}
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-chase-{tag}"));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 /// One store pair over a fixture: the engine store and the model,
 /// loaded with the same single-commit delta (containment clusters
@@ -162,8 +100,8 @@ fn walk_descriptor() -> SchemaDescriptor {
             },
         ],
         statements: vec![StatementDescriptor::Containment {
-            source: side(0, 1, &[]),
-            target: side(1, 0, &[]),
+            source: side(RelationId(0), &[1], &[]),
+            target: side(RelationId(1), &[0], &[]),
         }],
     }
 }
@@ -200,8 +138,8 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
     let descriptor = walk_descriptor();
     let (db, naive) = stores(dir.path(), &descriptor, walk_inserts());
     let atoms = vec![
-        atom(0, &[(0, var(0)), (1, var(1)), (2, var(2))]),
-        atom(1, &[(0, var(1))]),
+        atom(RelationId(0), &[(0, var(0)), (1, var(1)), (2, var(2))]),
+        atom(RelationId(1), &[(0, var(1))]),
     ];
     let projection = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
@@ -252,12 +190,12 @@ fn du_descriptor() -> SchemaDescriptor {
                 projection: Box::new([FieldId(0)]),
             },
             StatementDescriptor::Containment {
-                source: side(0, 0, &[(1, Value::U64(0))]),
-                target: side(1, 0, &[]),
+                source: side(RelationId(0), &[0], &[(1, Value::U64(0))]),
+                target: side(RelationId(1), &[0], &[]),
             },
             StatementDescriptor::Containment {
-                source: side(1, 0, &[]),
-                target: side(0, 0, &[(1, Value::U64(0))]),
+                source: side(RelationId(1), &[0], &[]),
+                target: side(RelationId(0), &[0], &[(1, Value::U64(0))]),
             },
         ],
     }
@@ -276,8 +214,11 @@ fn du_inserts() -> Vec<(RelationId, Vec<Value>)> {
 
 fn du_atoms() -> (Atom, Atom) {
     (
-        atom(0, &[(0, var(0)), (1, Term::Literal(Value::U64(0)))]),
-        atom(1, &[(0, var(0)), (1, var(1))]),
+        atom(
+            RelationId(0),
+            &[(0, var(0)), (1, Term::Literal(Value::U64(0)))],
+        ),
+        atom(RelationId(1), &[(0, var(0)), (1, var(1))]),
     )
 }
 
@@ -358,8 +299,8 @@ fn the_missing_phi_near_miss_refuses_and_still_agrees() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
-            atom(0, &[(0, var(0)), (1, var(2))]),
-            atom(1, &[(0, var(0)), (1, var(1))]),
+            atom(RelationId(0), &[(0, var(0)), (1, var(2))]),
+            atom(RelationId(1), &[(0, var(0)), (1, var(1))]),
         ],
         negated: vec![],
         predicates: vec![],

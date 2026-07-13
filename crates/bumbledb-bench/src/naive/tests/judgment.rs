@@ -10,27 +10,12 @@ use bumbledb::schema::{
 };
 use bumbledb::{Direction, RelationId, StatementId, Value};
 
+use crate::fixture::{field, side};
 use crate::naive::{Delta, NaiveDb, Violation};
-
-fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    }
-}
 
 fn interval() -> ValueType {
     ValueType::Interval {
         element: IntervalElement::U64,
-    }
-}
-
-fn side(relation: RelationId, projection: &[u16]) -> Side {
-    Side {
-        relation,
-        projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([]),
     }
 }
 
@@ -148,8 +133,8 @@ fn matrix_schema() -> SchemaDescriptor {
                 projection: Box::new([FieldId(0), FieldId(1)]),
             },
             StatementDescriptor::Containment {
-                source: side(CLAIM, &[0]),
-                target: side(TARGET, &[0]),
+                source: side(CLAIM, &[0], &[]),
+                target: side(TARGET, &[0], &[]),
             },
         ],
     }
@@ -418,28 +403,28 @@ mod source_side {
                     projection: Box::new([FieldId(0), FieldId(1)]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(PARENT, &[0]),
-                    target: side(CHILD, &[0]),
+                    source: side(PARENT, &[0], &[]),
+                    target: side(CHILD, &[0], &[]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(CHILD, &[0]),
-                    target: side(PARENT, &[0]),
+                    source: side(CHILD, &[0], &[]),
+                    target: side(PARENT, &[0], &[]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(TRANSFER, &[0]),
+                    source: side(TRANSFER, &[0], &[]),
                     target: selected(ACCOUNT, &[0], 1, true),
                 },
                 StatementDescriptor::Containment {
-                    source: side(SESSION, &[0, 1]),
-                    target: side(SHIFT, &[0, 1]),
+                    source: side(SESSION, &[0, 1], &[]),
+                    target: side(SHIFT, &[0, 1], &[]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(REST, &[0, 1]),
+                    source: side(REST, &[0, 1], &[]),
                     target: selected(SHIFT, &[0, 1], 2, true),
                 },
                 StatementDescriptor::Containment {
                     source: selected(REPORT, &[0], 1, true),
-                    target: side(ACCOUNT, &[0]),
+                    target: side(ACCOUNT, &[0], &[]),
                 },
             ],
         }
@@ -646,8 +631,8 @@ mod source_side {
                 },
             ],
             statements: vec![StatementDescriptor::Containment {
-                source: side(RelationId(1), &[0, 1]),
-                target: side(RelationId(0), &[0, 1]),
+                source: side(RelationId(1), &[0, 1], &[]),
+                target: side(RelationId(0), &[0, 1], &[]),
             }],
         };
         run(
@@ -827,24 +812,24 @@ mod target_side {
                     projection: Box::new([FieldId(0)]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(CLAIM_A, &[0]),
-                    target: side(TARGET2, &[0]),
+                    source: side(CLAIM_A, &[0], &[]),
+                    target: side(TARGET2, &[0], &[]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(CLAIM_B, &[0]),
-                    target: side(TARGET2, &[0]),
+                    source: side(CLAIM_B, &[0], &[]),
+                    target: side(TARGET2, &[0], &[]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(SESSION, &[0, 1]),
-                    target: side(SHIFT, &[0, 1]),
+                    source: side(SESSION, &[0, 1], &[]),
+                    target: side(SHIFT, &[0, 1], &[]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(PARENT, &[0]),
-                    target: side(CHILD, &[0]),
+                    source: side(PARENT, &[0], &[]),
+                    target: side(CHILD, &[0], &[]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(CHILD, &[0]),
-                    target: side(PARENT, &[0]),
+                    source: side(CHILD, &[0], &[]),
+                    target: side(PARENT, &[0], &[]),
                 },
                 StatementDescriptor::Functionality {
                     relation: ACCOUNT,
@@ -855,11 +840,11 @@ mod target_side {
                     projection: Box::new([FieldId(0), FieldId(1)]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(TRANSFER, &[0]),
+                    source: side(TRANSFER, &[0], &[]),
                     target: selected(ACCOUNT, &[0], 1, true),
                 },
                 StatementDescriptor::Containment {
-                    source: side(REST, &[0, 1]),
+                    source: side(REST, &[0, 1], &[]),
                     target: selected(ROSTER, &[0, 1], 2, true),
                 },
             ],

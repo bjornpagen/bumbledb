@@ -301,8 +301,8 @@ fn contradictory_order_filters_kill_the_rule() {
 }
 
 #[test]
-fn an_eq_outside_the_summary_kills_the_rule_with_the_prd_picture() {
-    // The PRD's own example: x ∈ [8, 19] ∧ x == 3.
+fn an_eq_outside_the_summary_kills_the_rule_with_the_rendered_picture() {
+    // The canonical contradiction: x ∈ [8, 19] ∧ x == 3.
     let schema = schema();
     let normalized = one_rule(
         &schema,

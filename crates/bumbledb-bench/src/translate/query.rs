@@ -98,7 +98,7 @@ fn rule_core<'q>(
         params: std::mem::take(&mut params.params),
     };
     for atom in &rule.atoms {
-        b.atom(atom)?;
+        b.render_atom(atom)?;
     }
     b.flush_deferred()?;
     for comparison in rule.predicates.iter().map(super::leaf) {

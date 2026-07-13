@@ -12,13 +12,12 @@
 use bumbledb::{Db, Direction, Value};
 
 use crate::differential::{run, Op};
+use crate::fixture::{string, TempDir};
 use crate::gen::{GenConfig, Rng, Scale};
 use crate::naive::{Delta, NaiveDb, ParamValue, Violation};
 use crate::querygen::target::{self, ids};
 use crate::querygen::writes::{closed_write_cases, ClosedWriteCase, ClosedWriteKind};
 use crate::querygen::{params_for, random_query};
-
-use super::TempDir;
 
 const CFG: GenConfig = GenConfig {
     seed: 21,
@@ -83,10 +82,6 @@ pub(super) fn seed() -> Delta {
             ),
         ],
     }
-}
-
-fn string(text: &str) -> Value {
-    Value::String(text.as_bytes().to_vec().into())
 }
 
 fn case_delta(case: &ClosedWriteCase) -> Delta {

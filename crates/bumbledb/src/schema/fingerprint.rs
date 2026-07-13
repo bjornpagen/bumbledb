@@ -143,8 +143,8 @@ fn put_side(out: &mut Vec<u8>, side: &Side) {
 }
 
 fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
-    // Tag 1 died with the enum type (the funeral, PRD 05); it is never
-    // reused — a reissued tag would collide theories across the funeral.
+    // Tag 1 is the deleted enum type's tombstone; it is never reused —
+    // a reissued tag would collide theories across the vocabulary cut.
     match value_type {
         ValueType::Bool => out.push(0),
         ValueType::U64 => out.push(2),

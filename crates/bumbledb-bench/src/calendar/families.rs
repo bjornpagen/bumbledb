@@ -20,12 +20,9 @@ use bumbledb::{
 use crate::calendar::gen::{created_at, CalSizes, CAL_BASE, CAL_HORIZON, HOUR};
 use crate::calendar::{ids, ARM_BUSY, RSVP_ACCEPTED, RSVP_DECLINED, RSVP_TENTATIVE};
 use crate::families::{scalar_draw, Draw, FamilyIndex, Kind};
+use crate::fixture::var;
 use crate::gen::GenConfig;
 use crate::translate::{ParamSlot, Translated};
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
-}
 
 fn param(id: u16) -> Term {
     Term::Param(ParamId(id))

@@ -26,6 +26,13 @@ pub const MAX_KEY: usize = 511;
 /// Fixed scratch buffer for key writers.
 pub type KeyBuf = [u8; MAX_KEY];
 
+#[cfg(test)]
+pub(crate) fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
+    let mut buf = [0u8; MAX_KEY];
+    let len = write(&mut buf);
+    buf[..len].to_vec()
+}
+
 /// Byte overhead of a reverse-edge (`R`) key beyond its embedded key bytes:
 /// `tag(1) + statement(2) + source_rel(4) + source_row(8)`.
 const R_OVERHEAD: usize = 1 + 2 + 4 + 8;
@@ -280,12 +287,6 @@ mod tests {
     use super::*;
     use crate::encoding::{encode_fact, encode_interval_u64, encode_u64, TypeDesc, ValueRef};
     use crate::schema::IntervalElement;
-
-    fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
-        let mut buf = [0u8; MAX_KEY];
-        let len = write(&mut buf);
-        buf[..len].to_vec()
-    }
 
     #[test]
     fn fact_key_round_trips_components() {

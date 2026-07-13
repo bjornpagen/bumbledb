@@ -43,7 +43,7 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
             // one relation (falsity is the empty-store pass's job;
             // diversity here is about relation shape) — including under
             // aggregates, per the two aggregate-bearing arms above.
-            b.atom(match rng.range(3) {
+            b.add_atom(match rng.range(3) {
                 0 => ids::ORG,
                 1 => ids::ORG_PARENT,
                 _ => ids::POSTING_TAG,

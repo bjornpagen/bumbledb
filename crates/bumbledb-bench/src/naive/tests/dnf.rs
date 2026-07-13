@@ -7,14 +7,13 @@
 
 use std::collections::BTreeSet;
 
-use bumbledb::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
-};
+use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
     ir, Atom, CmpOp, Comparison, FieldId, FindTerm, PredicateTree, Query, RelationId, Rule, Term,
     Value, VarId,
 };
 
+use crate::fixture::field;
 use crate::gen::Rng;
 use crate::naive::{Delta, NaiveDb, Tuple};
 
@@ -22,11 +21,6 @@ use crate::naive::{Delta, NaiveDb, Tuple};
 /// Posting(account u64, amount i64), with tiny value domains so random
 /// comparisons select real subsets.
 fn schema() -> SchemaDescriptor {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,

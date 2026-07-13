@@ -63,7 +63,7 @@ const SATELLITES: &[(FieldId, RelationId, FieldId)] = &[
 pub(super) fn guard(b: &mut Builder, rng: &mut Rng) {
     let idx = usize::try_from(rng.range(GUARDABLE.len() as u64)).expect("small");
     let (relation, id, fields) = GUARDABLE[idx];
-    let atom = b.atom(relation);
+    let atom = b.add_atom(relation);
     let param = b.fresh_param();
     let term = if rng.chance(1, 5) {
         Term::ParamSet(param)
@@ -84,7 +84,7 @@ pub(super) fn guard(b: &mut Builder, rng: &mut Rng) {
 /// its reference fields, projecting amount plus each satellite's
 /// payload.
 pub(super) fn star(b: &mut Builder, rng: &mut Rng) {
-    let posting = b.atom(ids::POSTING);
+    let posting = b.add_atom(ids::POSTING);
     let amount = b.bind_var(posting, ids::posting::AMOUNT);
     b.find_var(amount);
     let take = 1 + usize::try_from(rng.range(3)).expect("small");
@@ -92,7 +92,7 @@ pub(super) fn star(b: &mut Builder, rng: &mut Rng) {
     for k in 0..take {
         let (edge, relation, payload) = SATELLITES[(start + k) % SATELLITES.len()];
         let join = b.bind_var(posting, edge);
-        let satellite = b.atom(relation);
+        let satellite = b.add_atom(relation);
         b.bind(satellite, FieldId(0), Term::Var(join));
         let projected = b.bind_var(satellite, payload);
         b.find_var(projected);
@@ -125,16 +125,16 @@ pub(super) fn star(b: &mut Builder, rng: &mut Rng) {
 
 /// Holder ← Account ← Posting (2–3 hops), projecting the ends.
 pub(super) fn chain(b: &mut Builder, rng: &mut Rng) {
-    let posting = b.atom(ids::POSTING);
+    let posting = b.add_atom(ids::POSTING);
     let amount = b.bind_var(posting, ids::posting::AMOUNT);
     b.find_var(amount);
     let account_join = b.bind_var(posting, ids::posting::ACCOUNT);
-    let account = b.atom(ids::ACCOUNT);
+    let account = b.add_atom(ids::ACCOUNT);
     b.bind(account, ids::account::ID, Term::Var(account_join));
     if rng.chance(1, 2) {
         // Three hops: through to Holder, projecting its name.
         let holder_join = b.bind_var(account, ids::account::HOLDER);
-        let holder = b.atom(ids::HOLDER);
+        let holder = b.add_atom(ids::HOLDER);
         b.bind(holder, ids::holder::ID, Term::Var(holder_join));
         let name = b.bind_var(holder, ids::holder::NAME);
         b.find_var(name);
@@ -149,10 +149,10 @@ pub(super) fn chain(b: &mut Builder, rng: &mut Rng) {
 /// — and, half the time, a cross-atom ordered residual between them
 /// (`x < y` and friends): residual placement and survivor compaction.
 pub(super) fn self_join(b: &mut Builder, rng: &mut Rng) {
-    let first = b.atom(ids::POSTING);
+    let first = b.add_atom(ids::POSTING);
     let entry = b.bind_var(first, ids::posting::ENTRY);
     let x = b.bind_var(first, ids::posting::AMOUNT);
-    let second = b.atom(ids::POSTING);
+    let second = b.add_atom(ids::POSTING);
     b.bind(second, ids::posting::ENTRY, Term::Var(entry));
     let y = b.bind_var(second, ids::posting::AMOUNT);
     b.find_var(x);

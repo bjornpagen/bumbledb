@@ -11,6 +11,7 @@ use bumbledb::{
 };
 
 use super::{mix, Scenario, ScenarioQuery};
+use crate::fixture::var;
 use crate::gen::Rng;
 
 bumbledb::schema! {
@@ -82,10 +83,6 @@ fn doc_row(seed: u64, i: u64) -> Vec<Value> {
         // Identity-shaped: a random 32-byte payload digest, inline.
         Value::FixedBytes(payload.into()),
     ]
-}
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
 }
 
 fn param(id: u16) -> Term {

@@ -10,16 +10,14 @@
 //! field, so decoded values determine the canonical fact bytes). Plus
 //! the one real-concurrency test the engine permits itself.
 
-use bumbledb::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, StatementDescriptor,
-    ValueType,
-};
+use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType};
 use bumbledb::{Db, Error, FieldId, RelationId, Value};
 
-use super::{schema, TempDir, BOOKING, MARKER};
+use super::{schema, BOOKING, MARKER};
 use crate::differential::{
     engine_write, engine_write_from, naive_write_from, ConditionalVerdict, Verdict,
 };
+use crate::fixture::{field, TempDir};
 use crate::naive::{Delta, NaiveDb};
 
 /// One consistent Booking+Marker pair insert.
@@ -212,16 +210,14 @@ fn write_from_with_no_intervening_commit_is_write() {
 /// Register(slot, value) with the key (slot): the increment fixture for
 /// the concurrency test.
 fn register_schema() -> SchemaDescriptor {
-    let field = |name: &str| FieldDescriptor {
-        name: name.into(),
-        value_type: ValueType::U64,
-        generation: Generation::None,
-    };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
             name: "Register".into(),
-            fields: vec![field("slot"), field("value")],
+            fields: vec![
+                field("slot", ValueType::U64),
+                field("value", ValueType::U64),
+            ],
         }],
         statements: vec![StatementDescriptor::Functionality {
             relation: RelationId(0),

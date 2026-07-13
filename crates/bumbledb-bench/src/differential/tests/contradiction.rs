@@ -7,22 +7,17 @@
 use bumbledb::{Atom, Db, FindTerm, Query, Rule, Term, Value, VarId};
 
 use crate::differential::{engine_query, run, Op};
+use crate::fixture::{string, TempDir};
 use crate::gen::{GenConfig, Rng, Scale};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb};
 use crate::querygen::target::{self, ids};
 use crate::querygen::{contradiction_query, params_for};
 
-use super::TempDir;
-
 const CFG: GenConfig = GenConfig {
     seed: 33,
     scale: Scale::S,
 };
-
-fn string(text: &str) -> Value {
-    Value::String(text.as_bytes().to_vec().into())
-}
 
 /// A small live world — every containment satisfied (all three
 /// currencies backed, references in range), enough rows that an

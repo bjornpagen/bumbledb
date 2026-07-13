@@ -463,24 +463,9 @@ pub fn interval_from_sql(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixture::{field, fresh};
     use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, Side};
     use bumbledb::{FieldId, RelationId};
-
-    fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
-        FieldDescriptor {
-            name: name.into(),
-            value_type,
-            generation: Generation::None,
-        }
-    }
-
-    fn fresh(name: &str) -> FieldDescriptor {
-        FieldDescriptor {
-            name: name.into(),
-            value_type: ValueType::U64,
-            generation: Generation::Fresh,
-        }
-    }
 
     /// A miniature of the ledger's statement shapes: fresh auto-keys
     /// (the PRIMARY KEYs), a declared scalar key, two containments, a

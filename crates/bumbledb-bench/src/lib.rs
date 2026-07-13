@@ -14,6 +14,7 @@ pub mod corpus;
 pub mod differential;
 pub mod driver;
 pub mod families;
+pub(crate) mod fixture;
 pub mod gen;
 pub mod harness;
 pub mod json;

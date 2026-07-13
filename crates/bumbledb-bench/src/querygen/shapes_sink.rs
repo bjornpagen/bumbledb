@@ -17,7 +17,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
     let over = match rng.range(7) {
         // U64: distinct accounts, optionally per entry.
         0 => {
-            let posting = b.atom(ids::POSTING);
+            let posting = b.add_atom(ids::POSTING);
             let over = b.bind_var(posting, ids::posting::ACCOUNT);
             if rng.chance(1, 2) {
                 let entry = b.bind_var(posting, ids::posting::ENTRY);
@@ -27,7 +27,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
         }
         // I64: distinct amounts, optionally per account.
         1 => {
-            let posting = b.atom(ids::POSTING);
+            let posting = b.add_atom(ids::POSTING);
             let over = b.bind_var(posting, ids::posting::AMOUNT);
             if rng.chance(1, 2) {
                 let account = b.bind_var(posting, ids::posting::ACCOUNT);
@@ -37,7 +37,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
         }
         // Vocabulary: distinct currencies, optionally per holder.
         2 => {
-            let account = b.atom(ids::ACCOUNT);
+            let account = b.add_atom(ids::ACCOUNT);
             let over = b.bind_var(account, ids::account::CURRENCY);
             if rng.chance(1, 2) {
                 let holder = b.bind_var(account, ids::account::HOLDER);
@@ -47,7 +47,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
         }
         // Bool: distinct reconciliation states per account.
         3 => {
-            let posting = b.atom(ids::POSTING);
+            let posting = b.add_atom(ids::POSTING);
             let over = b.bind_var(posting, ids::posting::RECONCILED);
             if rng.chance(1, 2) {
                 let account = b.bind_var(posting, ids::posting::ACCOUNT);
@@ -57,7 +57,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
         }
         // String: distinct holder names, global.
         4 => {
-            let holder = b.atom(ids::HOLDER);
+            let holder = b.add_atom(ids::HOLDER);
             b.bind_var(holder, ids::holder::NAME)
         }
         // bytes<N>: distinct digests — the 32-byte extref (maximal
@@ -65,7 +65,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
         // small vocabularies, so distinctness folds real duplicates),
         // optionally per window-group id.
         5 => {
-            let transfer = b.atom(ids::TRANSFER);
+            let transfer = b.add_atom(ids::TRANSFER);
             match rng.range(4) {
                 0 => b.bind_var(transfer, ids::transfer::EXTREF),
                 which => {
@@ -87,7 +87,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
         // Interval: distinct active windows, optionally per account —
         // distinctness of interval *values*, the two-word type.
         _ => {
-            let mandate = b.atom(ids::MANDATE);
+            let mandate = b.add_atom(ids::MANDATE);
             let over = b.bind_var(mandate, ids::mandate::ACTIVE);
             if rng.chance(1, 2) {
                 let account = b.bind_var(mandate, ids::mandate::ACCOUNT);
@@ -118,7 +118,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
 /// queries project the key itself (a second Arg term carrying the key);
 /// a quarter carry a second variable (multi-carry coherence).
 pub(super) fn arg(b: &mut Builder, rng: &mut Rng) {
-    let posting = b.atom(ids::POSTING);
+    let posting = b.add_atom(ids::POSTING);
     let carried = b.bind_var(posting, ids::posting::ID);
     let key = if rng.chance(1, 2) {
         b.bind_var(posting, ids::posting::AMOUNT)
@@ -159,7 +159,7 @@ pub(super) fn arg(b: &mut Builder, rng: &mut Rng) {
     // join, not just a scan.
     if rng.chance(1, 2) {
         let account_join = b.var_at(0, ids::posting::ACCOUNT).expect("var or fresh");
-        let account = b.atom(ids::ACCOUNT);
+        let account = b.add_atom(ids::ACCOUNT);
         b.bind(account, ids::account::ID, Term::Var(account_join));
     }
 }

@@ -9,36 +9,14 @@
 //! (`bumbledb-bench/src/schema.rs`) and the ALG-16 calendar
 //! (`bumbledb-bench/src/calendar.rs`) — transcribed here declaration for
 //! declaration (the bench crate is quarantined; its schemas are data and
-//! travel as text), plus the PRD's Tax-shaped fixture.
+//! travel as text), plus a compact Tax-shaped fixture.
 
 use bumbledb::ir::render::render;
 use bumbledb::{Db, Query, Schema, Theory};
 use bumbledb_query::query;
 
-use std::path::{Path, PathBuf};
-
-/// A self-cleaning temp directory (the engine testutil's shape; deps
-/// stay zero here too).
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-query-test-{tag}"));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+mod common;
+use common::TempDir;
 
 /// The benchmark ledger, transcribed.
 mod ledger {
@@ -184,7 +162,7 @@ mod calendar {
     }
 }
 
-/// The PRD's Tax-shaped fixture (the notation unit's second example
+/// The Tax-shaped fixture (the notation unit's second example
 /// wants a year/regime/bracket walk; `status`'s closed relation is named
 /// `UpperCamel` of its field so the bare-handle spelling stays available).
 mod tax {
@@ -230,7 +208,7 @@ fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
     render(&schema, query)
 }
 
-/// The PRD's first example adapted to the landed calendar: Busy ∪ Ooo is
+/// The calendar union example: Busy ∪ Ooo is
 /// the Claim relation's two arms — two clauses, one head, a window param.
 /// The qualified handle spelling (`ClaimKind::Busy`) resolves through the
 /// host enum's welded row id; the renderer prints the row id back as its
@@ -292,7 +270,7 @@ fn calendar_union_lowers_to_the_exact_ir() {
     );
 }
 
-/// The PRD's second example on the Tax fixture: a three-atom walk, two
+/// The Tax fixture's three-atom walk, with two
 /// point-membership items, a param selection — the normalized text is
 /// pinned, then reparsed below.
 const TAX_RATE_NORMALIZED: &str = "(v4) | Year(id: v0, span: v1), \
@@ -327,7 +305,7 @@ fn tax_rate_normalized_text_is_a_fixed_point() {
     );
 }
 
-/// The PRD's third example on the landed calendar: the self-join with
+/// The calendar self-join with
 /// explicit variables on both ends (the punning law's join spelling), an
 /// order comparison, a literal mask.
 const CONFLICTS_NORMALIZED: &str = "(v0, v3) | Event(id: v0, calendar: v1, span: v2), \

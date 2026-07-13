@@ -11,7 +11,7 @@ use crate::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
     Side, StatementDescriptor, ValueType,
 };
-use crate::storage::keys::{KeyBuf, StatKind, MAX_KEY};
+use crate::storage::keys::{key, StatKind};
 use crate::testutil::TempDir;
 use crate::value::Value;
 
@@ -221,12 +221,6 @@ fn claim_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> Ve
         &mut out,
     );
     out
-}
-
-fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
-    let mut buf: KeyBuf = [0; MAX_KEY];
-    let len = write(&mut buf);
-    buf[..len].to_vec()
 }
 
 /// Deletes one fact's `F`/`M`/`U` rows *coherently* — every namespace

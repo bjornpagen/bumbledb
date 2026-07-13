@@ -11,6 +11,7 @@ use bumbledb::{
 };
 
 use super::{mix, Scenario, ScenarioQuery};
+use crate::fixture::var;
 use crate::gen::Rng;
 
 bumbledb::schema! {
@@ -134,10 +135,6 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
         }
         other => unreachable!("no such relation {other:?}"),
     }
-}
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
 }
 
 fn param(id: u16) -> Term {

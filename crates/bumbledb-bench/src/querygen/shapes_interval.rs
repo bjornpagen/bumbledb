@@ -147,10 +147,10 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         // Var point: `at` is the scalar anchor, constructed here; the
         // Mandate occurrence equality-joins on account.
         0 => {
-            let posting = b.atom(ids::POSTING);
+            let posting = b.add_atom(ids::POSTING);
             let account = b.bind_var(posting, ids::posting::ACCOUNT);
             let at = b.bind_var(posting, ids::posting::AT);
-            let mandate = b.atom(ids::MANDATE);
+            let mandate = b.add_atom(ids::MANDATE);
             b.bind(mandate, ids::mandate::ACCOUNT, Term::Var(account));
             org = b.bind_var(mandate, ids::mandate::ORG);
             b.bind(mandate, ids::mandate::ACTIVE, Term::Var(at));
@@ -159,11 +159,11 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         // Param point: the param's scalar anchor is a Posting.at
         // binding — mandates covering a probed instant.
         1 => {
-            let posting = b.atom(ids::POSTING);
+            let posting = b.add_atom(ids::POSTING);
             let account = b.bind_var(posting, ids::posting::ACCOUNT);
             let point = b.fresh_param();
             b.bind(posting, ids::posting::AT, Term::Param(point));
-            let mandate = b.atom(ids::MANDATE);
+            let mandate = b.add_atom(ids::MANDATE);
             b.bind(mandate, ids::mandate::ACCOUNT, Term::Var(account));
             org = b.bind_var(mandate, ids::mandate::ORG);
             b.bind(mandate, ids::mandate::ACTIVE, Term::Param(point));
@@ -173,7 +173,7 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         // interval field IS membership); the account pin is a literal
         // or — the account-set flavor — a param set.
         _ => {
-            let mandate = b.atom(ids::MANDATE);
+            let mandate = b.add_atom(ids::MANDATE);
             let account_term = if rng.chance(2, 5) {
                 Term::ParamSet(b.fresh_param())
             } else {
@@ -193,7 +193,7 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
     // asserts per run): a second Mandate occurrence joined on org (the
     // spine) whose interval must intersect an in-data literal.
     if rng.chance(7, 20) {
-        let second = b.atom(ids::MANDATE);
+        let second = b.add_atom(ids::MANDATE);
         b.bind(second, ids::mandate::ORG, Term::Var(org));
         let active = b.bind_var(second, ids::mandate::ACTIVE);
         let rhs = Term::Literal(i64_interval(b, rng, cfg));
@@ -214,9 +214,9 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         // Var point: the account id anchors as the scalar domain; the
         // window's occurrence carries an equality selection.
         0 => {
-            let posting = b.atom(ids::POSTING);
+            let posting = b.add_atom(ids::POSTING);
             let account = b.bind_var(posting, ids::posting::ACCOUNT);
-            let transfer = b.atom(ids::TRANSFER);
+            let transfer = b.add_atom(ids::TRANSFER);
             let _payload = pin_transfer(b, rng, cfg, domains, transfer);
             b.bind(transfer, ids::transfer::WINDOW, Term::Var(account));
             b.find_var(account);
@@ -225,16 +225,16 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
         // (no var rides the membership — the rule does not apply).
         1 => {
             let point = b.fresh_param();
-            let posting = b.atom(ids::POSTING);
+            let posting = b.add_atom(ids::POSTING);
             b.bind(posting, ids::posting::ACCOUNT, Term::Param(point));
-            let transfer = b.atom(ids::TRANSFER);
+            let transfer = b.add_atom(ids::TRANSFER);
             let extref = b.bind_var(transfer, ids::transfer::EXTREF);
             b.bind(transfer, ids::transfer::WINDOW, Term::Param(point));
             b.find_var(extref);
         }
         // Literal point.
         _ => {
-            let transfer = b.atom(ids::TRANSFER);
+            let transfer = b.add_atom(ids::TRANSFER);
             let extref = b.bind_var(transfer, ids::transfer::EXTREF);
             b.bind(
                 transfer,
@@ -248,7 +248,7 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
     // The occurrence is pinned — with no scalar join key it would
     // otherwise cross-product against the membership part.
     if rng.chance(7, 20) {
-        let second = b.atom(ids::TRANSFER);
+        let second = b.add_atom(ids::TRANSFER);
         let _payload = pin_transfer(b, rng, cfg, domains, second);
         let window = b.bind_var(second, ids::transfer::WINDOW);
         let rhs = Term::Literal(u64_interval(b, rng, cfg));
@@ -316,12 +316,12 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
         }
     } else {
         // U64 lane: every occurrence pinned (no scalar join key exists).
-        let first = b.atom(ids::TRANSFER);
+        let first = b.add_atom(ids::TRANSFER);
         let _payload = pin_transfer(b, rng, cfg, domains, first);
         let lhs = b.bind_var(first, ids::transfer::WINDOW);
         let rhs = match right {
             Right::Var => {
-                let second = b.atom(ids::TRANSFER);
+                let second = b.add_atom(ids::TRANSFER);
                 let _payload = pin_transfer(b, rng, cfg, domains, second);
                 let window = b.bind_var(second, ids::transfer::WINDOW);
                 Term::Var(window)
@@ -341,7 +341,7 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
 /// [`interval_join`]'s I64 lane: Mandate occurrences joined on account
 /// (the spine).
 fn mandate_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, right: Right) -> (VarId, Term) {
-    let first = b.atom(ids::MANDATE);
+    let first = b.add_atom(ids::MANDATE);
     let account = b.bind_var(first, ids::mandate::ACCOUNT);
     let lhs = b.bind_var(first, ids::mandate::ACTIVE);
     let org = b.bind_var(first, ids::mandate::ORG);
@@ -349,7 +349,7 @@ fn mandate_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, right: Right) ->
     b.find_var(org);
     let rhs = match right {
         Right::Var => {
-            let second = b.atom(ids::MANDATE);
+            let second = b.add_atom(ids::MANDATE);
             b.bind(second, ids::mandate::ACCOUNT, Term::Var(account));
             let active = b.bind_var(second, ids::mandate::ACTIVE);
             Term::Var(active)
@@ -370,7 +370,7 @@ fn mandate_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, right: Right) ->
 /// differential oracle keeps this class covered.
 fn wide_mandate_join(b: &mut Builder) -> (VarId, Term) {
     let account = b.fresh_param();
-    let first = b.atom(ids::MANDATE);
+    let first = b.add_atom(ids::MANDATE);
     b.bind(first, ids::mandate::ACCOUNT, Term::Param(account));
     let org = b.bind_var(first, ids::mandate::ORG);
     let lhs = b.bind_var(first, ids::mandate::ACTIVE);
@@ -378,7 +378,7 @@ fn wide_mandate_join(b: &mut Builder) -> (VarId, Term) {
     b.find_var(lhs);
     let mut rhs = lhs;
     for _ in 0..3 {
-        let occurrence = b.atom(ids::MANDATE);
+        let occurrence = b.add_atom(ids::MANDATE);
         b.bind(occurrence, ids::mandate::ACCOUNT, Term::Param(account));
         let active = b.bind_var(occurrence, ids::mandate::ACTIVE);
         b.find_var(active);
@@ -416,7 +416,7 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
             Value::IntervalI64(e1, e1 + width)
         };
         let point = Value::I64(if left { s0 } else { e1 });
-        let mandate = b.atom(ids::MANDATE);
+        let mandate = b.add_atom(ids::MANDATE);
         b.bind(
             mandate,
             ids::mandate::ACCOUNT,
@@ -437,7 +437,7 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
             Value::IntervalU64(e1, e1 + TOUCH_WIDTH)
         };
         let point = Value::U64(if left { s0 } else { e1 });
-        let transfer = b.atom(ids::TRANSFER);
+        let transfer = b.add_atom(ids::TRANSFER);
         let id = b.bind_var(transfer, ids::transfer::ID);
         let window = b.bind_var(transfer, ids::transfer::WINDOW);
         b.find_var(id);
@@ -456,7 +456,7 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
 /// folded (`Sum`/`Min`/`Max` — `Sum` under a duration bound so the
 /// reachable sum stays far below 2⁶³, the generator's Sum-range duty).
 pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
-    let transfer = b.atom(ids::TRANSFER);
+    let transfer = b.add_atom(ids::TRANSFER);
     match rng.range(3) {
         // Find position: `[extref, Duration(window)]` over a pinned
         // occurrence, or the open distinct-durations scan.

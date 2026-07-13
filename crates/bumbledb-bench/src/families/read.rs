@@ -4,14 +4,11 @@ use bumbledb::{
 };
 
 use crate::families::{scalar_draw, Draw, Family, Kind};
+use crate::fixture::var;
 use crate::gen::{self, GenConfig, Rng, Sizes};
 use crate::naive::ParamValue;
 use crate::schema::ids;
 use crate::translate::goldens;
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
-}
 
 fn param(id: u16) -> Term {
     Term::Param(ParamId(id))

@@ -29,15 +29,12 @@ use bumbledb::{
 };
 
 use crate::differential::Op;
+use crate::fixture::var;
 use crate::gen::{Rng, Sizes, AT_BASE, AT_STEP};
 use crate::naive::query::dnf_width;
 use crate::schema::ids;
 use crate::translate::{sqlite_expressible, Inexpressible, LaneCase};
 use crate::verify::Run;
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
-}
 
 fn leaf(op: CmpOp, lhs: Term, rhs: Term) -> PredicateTree {
     PredicateTree::Leaf(Comparison { op, lhs, rhs })

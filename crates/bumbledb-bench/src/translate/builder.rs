@@ -234,7 +234,7 @@ impl Builder<'_> {
         Ok(())
     }
 
-    pub(super) fn atom(&mut self, atom: &Atom) -> Result<(), String> {
+    pub(super) fn render_atom(&mut self, atom: &Atom) -> Result<(), String> {
         let relation = self.schema.relation(atom.relation);
         if atom.bindings.is_empty() {
             // The nonemptiness gate.
@@ -392,7 +392,7 @@ impl Builder<'_> {
         Ok(())
     }
 
-    fn side(&mut self, term: &Term) -> Result<Rendered, String> {
+    fn render_term(&mut self, term: &Term) -> Result<Rendered, String> {
         match term {
             Term::Var(var) => match self.columns.get(var) {
                 Some(VarCols::Scalar(column)) => Ok(Rendered::One(column.clone())),
@@ -430,7 +430,7 @@ impl Builder<'_> {
         // Eq against a set: "any element" — the literal IN form.
         if matches!(comparison.op, CmpOp::Eq) {
             if let Some((param, other)) = set_side(comparison) {
-                let Rendered::One(column) = self.side(other)? else {
+                let Rendered::One(column) = self.render_term(other)? else {
                     return Err(format!("param set {} compared to an interval", param.0));
                 };
                 let rendered = self.in_list(&column, param)?;
@@ -438,8 +438,8 @@ impl Builder<'_> {
                 return Ok(());
             }
         }
-        let lhs = self.side(&comparison.lhs)?;
-        let rhs = self.side(&comparison.rhs)?;
+        let lhs = self.render_term(&comparison.lhs)?;
+        let rhs = self.render_term(&comparison.rhs)?;
         let conjunct = match (comparison.op, lhs, rhs) {
             // Interval value equality is pairwise on the halves; the
             // negation is a disjunction, parenthesized because it joins

@@ -43,12 +43,14 @@ The duplication census (2026-07-12 audit):
 ## Technical direction
 
 1. New `crates/bumbledb-bench/src/fixture.rs`, compiled in every target,
-   holding exactly the shared query shorthands used by both production
-   benchmark families and tests: `var(u16) -> Term`,
+   holding exactly the shared query shorthands. The execution compile
+   census found `var`/`field`/`fresh` have production readers while
+   `atom`/`side` have test readers only, so the latter are item-gated
+   alongside the other test-only helpers: `var(u16) -> Term`,
    `atom(RelationId, &[(u16, Term)]) -> Atom` (fold the two shapes into
    one; callers adapt), `field`/`fresh` descriptor helpers, `side`,
-   `string`, `TempDir` (the test-only `string`/`TempDir` items are gated
-   individually with `#[cfg(test)]`; one definition; the per-file
+   `string`, `TempDir` (the test-only `atom`/`side`/`string`/`TempDir`
+   items are gated individually with `#[cfg(test)]`; one definition; the per-file
    `bumbledb-*-{tag}`
    temp naming becomes a `TempDir::new(tag)` argument exactly as the
    engine crate does). Register as `mod fixture;` in
@@ -78,7 +80,9 @@ The duplication census (2026-07-12 audit):
   `differential/tests/`.
 - `[shape]` `grep -rn "fn var(" crates/bumbledb-bench/src | wc -l` → 1;
   same for `fn atom(`, `fn side(`, `fn string(` (within the bench crate);
-  `grep -rn "fn key(" crates/bumbledb/src` → 1.
+  `grep -rn "fn key(write" crates/bumbledb/src` → 1. The signature scope
+  excludes the unrelated `LeafBatch::key` executor accessor discovered
+  during execution.
 - `[shape]` `grep -rn "PRD 07/08/09 eras\|PRD 12 §1\|query-notation PRD"
   crates` → zero hits.
 - `[test]` No test's assertions change — this PRD moves definitions only;

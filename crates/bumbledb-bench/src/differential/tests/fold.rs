@@ -17,28 +17,22 @@ use bumbledb::schema::{
     StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    with_chase_disabled, AggOp, Atom, CmpOp, Comparison, Db, FindTerm, PredicateTree, Query,
-    RelationId, Rule, Term, Value, VarId,
+    with_chase_disabled, AggOp, CmpOp, Comparison, Db, FindTerm, PredicateTree, Query, RelationId,
+    Rule, Term, Value, VarId,
 };
 
 use crate::differential::{engine_query, Rows};
+use crate::fixture::{atom, field, var, TempDir};
 use crate::gen::{GenConfig, Rng, Scale};
 use crate::naive::query::{ParamValue, QueryError};
 use crate::naive::{Delta, NaiveDb};
 use crate::querygen::target;
 use crate::querygen::{params_for, random_query};
 
-use super::TempDir;
-
 /// Reading(id fresh, kind u64, value i64) referencing the closed
 /// Kind(rank u64; ranks 10/20/20/30) through Reading(kind) <= Kind(id)
 /// — the containment doubles as the complement fold's domain witness.
 fn descriptor() -> SchemaDescriptor {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -94,20 +88,6 @@ fn descriptor() -> SchemaDescriptor {
 
 const READING: RelationId = RelationId(0);
 const KIND: RelationId = RelationId(1);
-
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
-}
-
-fn atom(relation: RelationId, bindings: Vec<(u16, Term)>) -> Atom {
-    Atom {
-        relation,
-        bindings: bindings
-            .into_iter()
-            .map(|(field, term)| (FieldId(field), term))
-            .collect(),
-    }
-}
 
 /// One randomized corpus: every kind witnessed at least once, then
 /// random draws — the fold's set must matter on every round.
@@ -176,11 +156,8 @@ fn selected(rank: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
-            atom(READING, vec![(0, var(0)), (1, var(1)), (2, var(2))]),
-            atom(
-                KIND,
-                vec![(0, var(1)), (1, Term::Literal(Value::U64(rank)))],
-            ),
+            atom(READING, &[(0, var(0)), (1, var(1)), (2, var(2))]),
+            atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(rank)))]),
         ],
         negated: vec![],
         predicates: vec![],
@@ -199,11 +176,8 @@ fn selected_count(rank: u64) -> Query {
             },
         ],
         atoms: vec![
-            atom(READING, vec![(0, var(0)), (1, var(1))]),
-            atom(
-                KIND,
-                vec![(0, var(1)), (1, Term::Literal(Value::U64(rank)))],
-            ),
+            atom(READING, &[(0, var(0)), (1, var(1))]),
+            atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(rank)))]),
         ],
         negated: vec![],
         predicates: vec![],
@@ -216,8 +190,8 @@ fn dead_payload() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1)), FindTerm::Var(VarId(2))],
         atoms: vec![
-            atom(READING, vec![(0, var(0)), (1, var(1)), (2, var(2))]),
-            atom(KIND, vec![(0, var(1)), (1, var(3))]),
+            atom(READING, &[(0, var(0)), (1, var(1)), (2, var(2))]),
+            atom(KIND, &[(0, var(1)), (1, var(3))]),
         ],
         negated: vec![],
         predicates: vec![],
@@ -231,9 +205,9 @@ fn double_closed() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
-            atom(READING, vec![(0, var(0)), (1, var(1)), (2, var(2))]),
-            atom(KIND, vec![(0, var(1)), (1, Term::Literal(Value::U64(20)))]),
-            atom(KIND, vec![(0, var(1)), (1, var(3))]),
+            atom(READING, &[(0, var(0)), (1, var(1)), (2, var(2))]),
+            atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(20)))]),
+            atom(KIND, &[(0, var(1)), (1, var(3))]),
         ],
         negated: vec![],
         predicates: vec![PredicateTree::Leaf(Comparison {
@@ -249,10 +223,10 @@ fn double_closed() -> Query {
 fn negated_subset(rank: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-        atoms: vec![atom(READING, vec![(0, var(0)), (1, var(1)), (2, var(2))])],
+        atoms: vec![atom(READING, &[(0, var(0)), (1, var(1)), (2, var(2))])],
         negated: vec![atom(
             KIND,
-            vec![(0, var(1)), (1, Term::Literal(Value::U64(rank)))],
+            &[(0, var(1)), (1, Term::Literal(Value::U64(rank)))],
         )],
         predicates: vec![],
     })
@@ -264,8 +238,8 @@ fn negated_subset(rank: u64) -> Query {
 fn negated_whole() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![atom(READING, vec![(0, var(0)), (1, var(1))])],
-        negated: vec![atom(KIND, vec![(0, var(1))])],
+        atoms: vec![atom(READING, &[(0, var(0)), (1, var(1))])],
+        negated: vec![atom(KIND, &[(0, var(1))])],
         predicates: vec![],
     })
 }

@@ -17,7 +17,7 @@ impl Builder {
         param
     }
 
-    pub(super) fn atom(&mut self, relation: RelationId) -> usize {
+    pub(super) fn add_atom(&mut self, relation: RelationId) -> usize {
         self.atoms.push(Atom {
             relation,
             bindings: Vec::new(),

@@ -564,7 +564,7 @@ impl Context {
     }
 
     /// Bivalent-anchor resolution — the one subtle typing rule
-    /// (`docs/architecture/20-query-ir.md` § membership; PRD 12 §1),
+    /// (`docs/architecture/20-query-ir.md` § membership),
     /// implemented exactly once, here.
     ///
     /// A binding `(field: Interval(E), term)` does not fix the term's

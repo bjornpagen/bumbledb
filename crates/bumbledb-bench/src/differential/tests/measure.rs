@@ -7,50 +7,21 @@
 //! while the `Allen(DISJOINT`-from-rays`)` guard keeps the same query
 //! answering rows.
 
-use bumbledb::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
-};
+use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FieldId, FindTerm, MaskTerm, ParamId,
-    PredicateTree, Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, MaskTerm, ParamId, PredicateTree,
+    Query, RelationId, Rule, Term, Value, VarId,
 };
-
-use std::path::{Path, PathBuf};
 
 use crate::differential::{run, Op};
+use crate::fixture::{atom, field, var, TempDir};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb};
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-measure-{tag}"));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 /// Stay(room u64, span interval<u64>, cap u64);
 /// Shift(tag u64, span interval<i64>);
 /// Limit(room u64, cap u64). No statements: every write commits.
 fn schema() -> SchemaDescriptor {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -94,26 +65,12 @@ const STAY: RelationId = RelationId(0);
 const SHIFT: RelationId = RelationId(1);
 const LIMIT: RelationId = RelationId(2);
 
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
-}
-
-fn atom(relation: RelationId, bindings: Vec<(u16, Term)>) -> Atom {
-    Atom {
-        relation,
-        bindings: bindings
-            .into_iter()
-            .map(|(field, term)| (FieldId(field), term))
-            .collect(),
-    }
-}
-
 fn stay_atom() -> Atom {
-    atom(STAY, vec![(0, var(0)), (1, var(1)), (2, var(2))])
+    atom(STAY, &[(0, var(0)), (1, var(1)), (2, var(2))])
 }
 
 fn shift_atom() -> Atom {
-    atom(SHIFT, vec![(0, var(0)), (1, var(1))])
+    atom(SHIFT, &[(0, var(0)), (1, var(1))])
 }
 
 fn single(finds: Vec<FindTerm>, atoms: Vec<Atom>, predicates: Vec<PredicateTree>) -> Query {
@@ -235,8 +192,8 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
             single(
                 vec![FindTerm::Var(VarId(0))],
                 vec![
-                    atom(STAY, vec![(0, var(0)), (1, var(1))]),
-                    atom(LIMIT, vec![(0, var(0)), (1, var(3))]),
+                    atom(STAY, &[(0, var(0)), (1, var(1))]),
+                    atom(LIMIT, &[(0, var(0)), (1, var(3))]),
                 ],
                 vec![PredicateTree::Leaf(Comparison {
                     op: CmpOp::Ge,
@@ -344,7 +301,7 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
         }],
         vec![atom(
             STAY,
-            vec![(0, Term::Literal(Value::U64(0))), (1, var(1)), (2, var(2))],
+            &[(0, Term::Literal(Value::U64(0))), (1, var(1)), (2, var(2))],
         )],
         vec![],
     );

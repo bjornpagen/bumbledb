@@ -13,11 +13,9 @@ mod measure;
 mod pack;
 mod witness;
 
-use std::path::{Path, PathBuf};
-
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
-    Side, StatementDescriptor, ValueType,
+    FieldId, IntervalElement, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor,
+    ValueType,
 };
 use bumbledb::{
     AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, HeadOp, HeadTerm, MaskTerm, ParamId,
@@ -25,6 +23,7 @@ use bumbledb::{
 };
 
 use crate::differential::{run, Op, Summary};
+use crate::fixture::{atom, field, var, TempDir};
 use crate::naive::query::ParamValue;
 use crate::naive::{Delta, NaiveDb};
 
@@ -36,11 +35,6 @@ use crate::naive::{Delta, NaiveDb};
 /// 2 Marker(id) -> Marker, 3 Booking(ref) <= Marker(id),
 /// 4 Marker(id) <= Booking(ref).
 fn schema() -> SchemaDescriptor {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -246,20 +240,6 @@ fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
     (deltas, pattern_cases)
 }
 
-fn var(id: u16) -> Term {
-    Term::Var(VarId(id))
-}
-
-fn atom(relation: RelationId, bindings: Vec<(u16, Term)>) -> Atom {
-    Atom {
-        relation,
-        bindings: bindings
-            .into_iter()
-            .map(|(field, term)| (FieldId(field), term))
-            .collect(),
-    }
-}
-
 fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>) -> Query {
     Query::single(Rule {
         finds,
@@ -270,7 +250,7 @@ fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>) -> Query {
 }
 
 fn booking_atom() -> Atom {
-    atom(BOOKING, vec![(0, var(0)), (1, var(1)), (2, var(2))])
+    atom(BOOKING, &[(0, var(0)), (1, var(1)), (2, var(2))])
 }
 
 /// The 23 fixed queries, each with its parameters.
@@ -286,7 +266,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         (plain(vec![v(0), v(1), v(2)], vec![booking_atom()]), vec![]),
         // 2: every marker.
         (
-            plain(vec![v(0)], vec![atom(MARKER, vec![(0, var(0))])]),
+            plain(vec![v(0)], vec![atom(MARKER, &[(0, var(0))])]),
             vec![],
         ),
         // 3: rooms booked at instant 7 (literal membership).
@@ -295,7 +275,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 vec![v(0)],
                 vec![atom(
                     BOOKING,
-                    vec![(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
+                    &[(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
                 )],
             ),
             vec![],
@@ -306,8 +286,8 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             plain(
                 vec![v(0), v(1)],
                 vec![
-                    atom(MARKER, vec![(0, var(1))]),
-                    atom(BOOKING, vec![(0, var(0)), (1, var(1)), (2, var(2))]),
+                    atom(MARKER, &[(0, var(1))]),
+                    atom(BOOKING, &[(0, var(0)), (1, var(1)), (2, var(2))]),
                 ],
             ),
             vec![],
@@ -316,7 +296,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         (
             plain(
                 vec![v(0), v(2)],
-                vec![booking_atom(), atom(MARKER, vec![(0, var(2))])],
+                vec![booking_atom(), atom(MARKER, &[(0, var(2))])],
             ),
             vec![],
         ),
@@ -324,10 +304,10 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         (
             Query::single(Rule {
                 finds: vec![v(0)],
-                atoms: vec![atom(MARKER, vec![(0, var(0))])],
+                atoms: vec![atom(MARKER, &[(0, var(0))])],
                 negated: vec![atom(
                     BOOKING,
-                    vec![(0, Term::Literal(Value::U64(0))), (2, var(0))],
+                    &[(0, Term::Literal(Value::U64(0))), (2, var(0))],
                 )],
                 predicates: vec![],
             }),
@@ -378,7 +358,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 finds: vec![v(2), v(5)],
                 atoms: vec![
                     booking_atom(),
-                    atom(BOOKING, vec![(0, var(3)), (1, var(4)), (2, var(5))]),
+                    atom(BOOKING, &[(0, var(3)), (1, var(4)), (2, var(5))]),
                 ],
                 negated: vec![],
                 predicates: vec![
@@ -404,7 +384,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 finds: vec![v(2), v(5)],
                 atoms: vec![
                     booking_atom(),
-                    atom(BOOKING, vec![(0, var(3)), (1, var(4)), (2, var(5))]),
+                    atom(BOOKING, &[(0, var(3)), (1, var(4)), (2, var(5))]),
                 ],
                 negated: vec![],
                 predicates: vec![
@@ -428,7 +408,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         (
             Query::single(Rule {
                 finds: vec![v(2), v(3)],
-                atoms: vec![booking_atom(), atom(MARKER, vec![(0, var(3))])],
+                atoms: vec![booking_atom(), atom(MARKER, &[(0, var(3))])],
                 negated: vec![],
                 predicates: vec![PredicateTree::Leaf(Comparison {
                     op: CmpOp::Contains,
@@ -444,7 +424,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 vec![v(0), v(1)],
                 vec![atom(
                     BOOKING,
-                    vec![(0, Term::Param(ParamId(0))), (1, var(0)), (2, var(1))],
+                    &[(0, Term::Param(ParamId(0))), (1, var(0)), (2, var(1))],
                 )],
             ),
             vec![ParamValue::Scalar(Value::U64(1))],
@@ -455,7 +435,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 vec![v(0), v(1)],
                 vec![atom(
                     BOOKING,
-                    vec![(0, Term::ParamSet(ParamId(0))), (1, var(0)), (2, var(1))],
+                    &[(0, Term::ParamSet(ParamId(0))), (1, var(0)), (2, var(1))],
                 )],
             ),
             vec![ParamValue::Set(vec![Value::U64(0), Value::U64(2)])],
@@ -479,10 +459,10 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         (
             Query::single(Rule {
                 finds: vec![v(0)],
-                atoms: vec![atom(MARKER, vec![(0, var(0))])],
+                atoms: vec![atom(MARKER, &[(0, var(0))])],
                 negated: vec![atom(
                     BOOKING,
-                    vec![(0, Term::ParamSet(ParamId(0))), (2, var(0))],
+                    &[(0, Term::ParamSet(ParamId(0))), (2, var(0))],
                 )],
                 predicates: vec![],
             }),
@@ -492,7 +472,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         (
             plain(
                 vec![v(0)],
-                vec![atom(MARKER, vec![(0, var(0))]), atom(BOOKING, vec![])],
+                vec![atom(MARKER, &[(0, var(0))]), atom(BOOKING, &[])],
             ),
             vec![],
         ),
@@ -508,7 +488,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                         finds: vec![v(0)],
                         atoms: vec![atom(
                             BOOKING,
-                            vec![(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
+                            &[(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
                         )],
                         negated: vec![],
                         predicates: vec![],
@@ -542,7 +522,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                         finds: vec![agg(AggOp::Sum, Some(1)), agg(AggOp::Count, None)],
                         atoms: vec![atom(
                             BOOKING,
-                            vec![(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
+                            &[(0, var(0)), (1, Term::Literal(Value::U64(7))), (2, var(1))],
                         )],
                         negated: vec![],
                         predicates: vec![],
@@ -570,10 +550,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 rules: vec![
                     Rule {
                         finds: vec![v(1)],
-                        atoms: vec![atom(
-                            BOOKING,
-                            vec![(0, Term::Param(ParamId(0))), (2, var(1))],
-                        )],
+                        atoms: vec![atom(BOOKING, &[(0, Term::Param(ParamId(0))), (2, var(1))])],
                         negated: vec![],
                         predicates: vec![],
                     },
@@ -592,27 +569,6 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             vec![ParamValue::Scalar(Value::U64(2))],
         ),
     ]
-}
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-naive-{tag}"));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
 }
 
 /// The net-disposition Direction-divergence regression: `A(x) <= B(y)` standing,

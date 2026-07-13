@@ -58,14 +58,14 @@ pub(super) fn closed_join(b: &mut Builder, rng: &mut Rng) {
     let variant = rng.range(4);
     // The payload-selection class needs the payload-bearing vocabulary.
     let (source, reference, closed, _, payload) = if variant == 1 { &PAIRS[0] } else { pair(rng) };
-    let atom = b.atom(*source);
+    let atom = b.add_atom(*source);
     match variant {
         // The plain join: handle variable through the closed atom's id
         // position, optionally projecting the vocabulary payload.
         0 => {
             let handle = b.bind_var(atom, *reference);
             b.find_var(handle);
-            let vocabulary = b.atom(*closed);
+            let vocabulary = b.add_atom(*closed);
             b.bind(vocabulary, FieldId(0), Term::Var(handle));
             if *closed == ids::CURRENCY && rng.chance(1, 2) {
                 let units = b.bind_var(vocabulary, ids::currency::MINOR_UNITS);
@@ -81,7 +81,7 @@ pub(super) fn closed_join(b: &mut Builder, rng: &mut Rng) {
         1 => {
             let handle = b.bind_var(atom, *reference);
             b.find_var(handle);
-            let vocabulary = b.atom(*closed);
+            let vocabulary = b.add_atom(*closed);
             b.bind(vocabulary, FieldId(0), Term::Var(handle));
             let units = if rng.chance(1, 2) { 0 } else { 2 };
             b.bind(
@@ -118,12 +118,12 @@ pub(super) fn closed_join(b: &mut Builder, rng: &mut Rng) {
 /// the join id — its payload, when bound, is a dead variable.
 pub(super) fn closed_fold(b: &mut Builder, rng: &mut Rng) {
     let (source, reference, closed, row, _) = pair(rng);
-    let atom = b.atom(*source);
+    let atom = b.add_atom(*source);
     let handle = b.bind_var(atom, *reference);
     // The row-identity binding keeps one distinct binding per
     // referencing row, so Count counts references per handle.
     let _rows = b.bind_var(atom, *row);
-    let vocabulary = b.atom(*closed);
+    let vocabulary = b.add_atom(*closed);
     b.bind(vocabulary, FieldId(0), Term::Var(handle));
     if *closed == ids::CURRENCY && rng.chance(1, 2) {
         // The dead payload variable: bound on the closed atom, escaping

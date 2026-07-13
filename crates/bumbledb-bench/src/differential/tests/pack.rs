@@ -10,46 +10,17 @@
 //! (`translate::Inexpressible::PackAggregate`), so the differential here
 //! is naive-only by decision.
 
-use bumbledb::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
-};
+use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{AggOp, Atom, Db, FieldId, FindTerm, Query, RelationId, Rule, Term, Value, VarId};
 
-use std::path::{Path, PathBuf};
-
 use crate::differential::{run, Op};
+use crate::fixture::{field, TempDir};
 use crate::naive::{Delta, NaiveDb, Tuple};
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-pack-{tag}"));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 /// Busy(id u64, person u64, slot interval<u64>);
 /// Shift(id u64, person u64, slot interval<i64>). No statements: every
 /// write commits (ids are plain — the generator numbers them itself).
 fn schema() -> SchemaDescriptor {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
     let slot = |element: IntervalElement| ValueType::Interval { element };
     SchemaDescriptor {
         relations: vec![

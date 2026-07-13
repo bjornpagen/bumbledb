@@ -8,8 +8,8 @@
 //! (v0, v1) | Busy(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);
 //! ```
 //!
-//! The grammar is the schema grammar's own query side, promoted (the
-//! query-notation PRD owns the normative block; this module emits it):
+//! The grammar is the schema grammar's own query side, promoted
+//! (`docs/architecture/20-query-ir.md` owns the normative block; this module emits it):
 //! atoms as `Relation(field: var)`, in-atom selections `field == literal`
 //! (schema-grammar-verbatim, params admitted as `?N`), `!` negation,
 //! membership as `in`, `Allen(term, MASK, term)` with masks as named

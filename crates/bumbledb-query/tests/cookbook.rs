@@ -14,31 +14,10 @@ use bumbledb::ir::render::render;
 use bumbledb::{Db, Query, Schema, Theory};
 use bumbledb_query::query;
 
-use std::path::{Path, PathBuf};
-
 const COOKBOOK: &str = include_str!("../../../docs/cookbook.md");
 
-/// A self-cleaning temp directory (the notation-test shape; deps stay zero).
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-cookbook-test-{tag}"));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create test dir");
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+mod common;
+use common::TempDir;
 
 /// One module per recipe: the schema compiled, its token source pinned for
 /// the doc-sync test, and a validation entry point for the roster test.
