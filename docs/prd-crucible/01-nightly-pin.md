@@ -90,10 +90,17 @@ two CI stories. One pinned nightly deletes the split before it exists.
    forbidden class `position_matches` now matches the *name* of the
    same machine code that always passed. The probe loop is unchanged;
    the per-element probe class carries no new calls. Per direction 3
-   the gate is NOT edited here; `check-asm.sh` exits 1 on the new
-   binary until the re-earn session rules how the forbidden patterns
-   are re-expressed against v0/demangled names. This blocks PRD 01's
-   asm-gate criterion pending that ruling.
+   the gate was NOT edited by this PRD's executor.
+   **RESOLVED 2026-07-13 by owner ruling:** symbol-name forbidden-class
+   greps are ceremony — a gate that fails on mangling spelling asserts
+   naming, not machine code. All `no_calls_inside` gates (probe_pass,
+   run_node, emit_batch × name-regex classes) were REMOVED from
+   `check-asm.sh`; the instruction-class gates (the three Allen
+   flag-free asserts: cmp/csel/adds/ccmp/bl greps over kernel bodies)
+   stay — they read instructions, not names. The inlining discipline
+   the removed gates watched is owned by the #[ignore]d microbench
+   pins, which measure the thing itself. `check-asm.sh` exits 0 on the
+   nightly binary; PRD 01's asm-gate criterion is met.
 2. **Two S-scale gate tests hang on a pre-existing liveness bug.**
    `driver::tests::the_full_sequence_runs_at_s` and
    `verify::tests::a_full_verify_at_s_succeeds` loop forever in the
