@@ -56,7 +56,7 @@ fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
         .collect();
 
     let (residuals, word_residuals, allen_residuals, duration_residuals) =
-        place_comparisons(rule, &mut occurrences);
+        place_comparisons(rule.classified_comparisons(), &mut occurrences);
 
     // The binding-slot widths — the two-slot interval layout, decided at
     // [`SlotWidth`] and exported here to the plan witness.

@@ -84,8 +84,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
-use crate::ir::{FindTerm, ParamId, VarId};
+use crate::ir::{CmpOp, FindTerm, MaskTerm, ParamId, Value, VarId};
 use crate::schema::{IntervalElement, ValueType};
 
 mod context;
@@ -193,6 +194,89 @@ impl std::fmt::Display for AggKind {
     }
 }
 
+/// A comparison's proven legal shape — validation's classification,
+/// sealed. Constructed at the exact point the typed comparison rules
+/// prove legality (`context.rs`: the proof and the seal are the same
+/// lines), carried per rule on the witness
+/// ([`RuleWitness::classified_comparisons`]), and consumed by
+/// normalization's placement (`ir/normalize/place_comparisons.rs`) with
+/// a **total** match — no shape is re-derived downstream, so no
+/// defensive arm exists. The fifth sealed finding, alongside the
+/// witness's typing tables, `ResolvableFilter`, `SinkSpec`, and
+/// `ParamSpec`.
+///
+/// The variants are exactly the comparison language validation accepts —
+/// nothing aspirational — and each carries the RESOLVED facts placement
+/// needs: the rule-variable ids, the sealed constant or param handle,
+/// the operator sealed variable-on-left / measure-on-left, the mask
+/// sealed field-on-left. Interval `Eq`/`Ne` canonicalize here (the
+/// `EQUALS` mask / its complement), so exactly one interval-pair form
+/// leaves validation.
+///
+/// Pipeline-internal: never part of `ir.rs`'s input language, never in
+/// the public API, never serialized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ClassifiedComparison {
+    /// Scalar var-vs-var under `Eq`/`Ne`/order — one shared non-interval
+    /// type (interval equality seals as [`Self::AllenVarVar`]).
+    VarVar { op: CmpOp, lhs: VarId, rhs: VarId },
+    /// Scalar var-vs-constant under `Eq`/`Ne`/order, the operator sealed
+    /// variable-on-left (a constant-first order comparison mirrors).
+    VarConst {
+        op: CmpOp,
+        var: VarId,
+        value: SealedConst,
+    },
+    /// `Eq` against the set marker (`Term::ParamSet` — legal under `Eq`
+    /// alone): a selection-level word-set membership at execution.
+    VarInSet { var: VarId, set: ParamId },
+    /// The interval-pair comparison over two variables, the mask
+    /// symbolic in written operand order.
+    AllenVarVar {
+        lhs: VarId,
+        rhs: VarId,
+        mask: MaskTerm,
+    },
+    /// The interval-pair comparison against a constant, the mask sealed
+    /// field-on-left ([`MaskConst`]: conversed immediately for a literal
+    /// written constant-first, `ConversedParam` for a param).
+    AllenVarConst {
+        var: VarId,
+        other: SealedConst,
+        mask: MaskConst,
+    },
+    /// Point containment between variables: `interval-var ∋ point-var`.
+    ContainsVarVar { interval: VarId, point: VarId },
+    /// Point containment of a constant point: `interval-var ∋ point`.
+    ContainsVarPoint { interval: VarId, point: SealedConst },
+    /// Point containment in a constant interval: `outer ∋ scalar-var`.
+    VarWithin { var: VarId, outer: SealedConst },
+    /// The measure comparison, the operator sealed measure-on-left:
+    /// `Duration(interval) <op> other`.
+    Duration {
+        interval: VarId,
+        op: CmpOp,
+        other: DurationOperand,
+    },
+}
+
+/// A classified comparison's sealed constant side: the bind-time param
+/// handle, or the literal exactly as written (encoding to column words
+/// stays normalization's job — the seal is IR-algebra only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SealedConst {
+    Param(ParamId),
+    Literal(Value),
+}
+
+/// The measure's comparison side: another rule variable (u64-resolved),
+/// or a sealed constant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DurationOperand {
+    Var(VarId),
+    Const(SealedConst),
+}
+
 /// The sealed witness: the query plus the derived tables downstream layers
 /// trust. Unconstructible outside this module.
 ///
@@ -233,6 +317,9 @@ struct RuleTyping {
     var_types: BTreeMap<VarId, ValueType>,
     /// Non-aggregated find variables — the group key under aggregation.
     group_key: BTreeSet<VarId>,
+    /// The rule's comparisons, classified — one sealed proof per
+    /// condition, in condition order ([`ClassifiedComparison`]).
+    classified: Vec<ClassifiedComparison>,
 }
 
 impl ValidatedQuery {
@@ -347,6 +434,15 @@ impl<'a> RuleWitness<'a> {
         self.typing.var_types.iter().map(|(v, t)| (*v, t))
     }
 
+    /// The rule's comparisons, classified — validation's sealed proof of
+    /// each comparison's legal shape, in condition order. Placement
+    /// (`ir/normalize/place_comparisons.rs`) consumes exactly this;
+    /// nothing downstream re-derives a comparison's shape from its terms.
+    #[must_use]
+    pub(crate) fn classified_comparisons(&self) -> &'a [ClassifiedComparison] {
+        &self.typing.classified
+    }
+
     /// The resolved type of a param — query-global
     /// ([`ValidatedQuery::param_type`]).
     ///
@@ -412,7 +508,16 @@ enum ParamKind {
 /// Accumulated typing state while walking the query.
 #[derive(Default)]
 struct Context {
+    /// Variable inference slots — the pre-resolution state. CONSUMED by
+    /// [`Context::resolve_bivalents`] into [`Context::var_types`]: the
+    /// phase change is a type change, so no post-resolution reader can
+    /// see (or re-match) an unresolved slot.
     var_slots: BTreeMap<VarId, TypeSlot>,
+    /// Every variable's resolved structural type — the resolution's
+    /// product, empty until [`Context::resolve_bivalents`] runs.
+    var_types: BTreeMap<VarId, ValueType>,
+    /// Param inference slots. Params stay slots past resolution: the
+    /// typed comparison pass still anchors them.
     param_slots: BTreeMap<ParamId, TypeSlot>,
     /// Every param seen, with its scalar-vs-set role (doubles as the
     /// density-check roster).

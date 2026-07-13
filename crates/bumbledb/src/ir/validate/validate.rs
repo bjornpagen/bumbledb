@@ -204,7 +204,7 @@ fn validate_rule(
 
     let mut ctx = Context::default();
     ctx.check_atoms(schema, rule)?;
-    ctx.check_comparisons(rule)?;
+    let classified = ctx.check_comparisons(rule)?;
     ctx.check_membership_domains()?;
     // The group key (non-aggregated find variables) is computed once and
     // shared between the find checks and the witness. A measure find's
@@ -221,26 +221,21 @@ fn validate_rule(
         })
         .collect();
     ctx.check_finds(rule, &group_key)?;
-    if ctx.var_slots.len() > crate::plan::planner::MAX_DISTINCT_VARS {
+    if ctx.var_types.len() > crate::plan::planner::MAX_DISTINCT_VARS {
         return Err(ValidationError::TooManyVariables {
-            count: ctx.var_slots.len(),
+            count: ctx.var_types.len(),
         });
     }
 
-    // Every slot is monovalent past `resolve_bivalents` — the typing
-    // carries plain types.
-    let var_types = ctx
-        .var_slots
-        .iter()
-        .map(|(var, slot)| match slot {
-            TypeSlot::Mono(value_type) => (*var, value_type.clone()),
-            TypeSlot::Bivalent(_) => unreachable!("resolve_bivalents ran"),
-        })
-        .collect();
+    // The variable types are already resolved (`resolve_bivalents`
+    // consumed the inference slots into `var_types` during
+    // `check_comparisons`): the typing takes them verbatim.
+    let var_types = ctx.var_types.clone();
     Ok((
         RuleTyping {
             var_types,
             group_key,
+            classified,
         },
         ctx,
     ))

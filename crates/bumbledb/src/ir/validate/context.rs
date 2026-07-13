@@ -1,5 +1,7 @@
-use super::{Context, ParamKind, TypeSlot};
+use super::{ClassifiedComparison, Context, DurationOperand, ParamKind, SealedConst, TypeSlot};
+use crate::allen::AllenMask;
 use crate::error::ValidationError;
+use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
 use crate::ir::{CmpOp, Comparison, MaskTerm, ParamId, Term, Value, VarId};
 use crate::schema::{FieldId, IntervalElement, Schema, ValueType};
@@ -92,6 +94,216 @@ fn check_interval_field_literal(
             }
         }
         _ => Err(ValidationError::LiteralTypeMismatch { atom, field }),
+    }
+}
+
+/// The operator's class — the dimension a comparison's operand roster
+/// depends on, matched exactly once per comparison. The order operators
+/// precompute their mirror here, so no later phase re-matches an
+/// operator to flip it.
+#[derive(Clone, Copy)]
+enum OpClass {
+    /// `Eq`/`Ne` (`negated` = `Ne`).
+    Equality { negated: bool },
+    /// `Lt`/`Le`/`Gt`/`Ge`, with the mirrored operator alongside.
+    Order { op: CmpOp, mirror: CmpOp },
+    /// `Allen { mask }`.
+    Allen { mask: MaskTerm },
+    /// `Contains`.
+    Contains,
+}
+
+impl OpClass {
+    fn of(op: CmpOp) -> Self {
+        match op {
+            CmpOp::Eq => Self::Equality { negated: false },
+            CmpOp::Ne => Self::Equality { negated: true },
+            CmpOp::Lt => Self::Order {
+                op: CmpOp::Lt,
+                mirror: CmpOp::Gt,
+            },
+            CmpOp::Le => Self::Order {
+                op: CmpOp::Le,
+                mirror: CmpOp::Ge,
+            },
+            CmpOp::Gt => Self::Order {
+                op: CmpOp::Gt,
+                mirror: CmpOp::Lt,
+            },
+            CmpOp::Ge => Self::Order {
+                op: CmpOp::Ge,
+                mirror: CmpOp::Le,
+            },
+            CmpOp::Allen { mask } => Self::Allen { mask },
+            CmpOp::Contains => Self::Contains,
+        }
+    }
+}
+
+/// One comparison's operand shape, proven and sealed by the shape pass
+/// ([`Context::comparison_shape`]): the operator class fused with exactly
+/// the operand roster the shape rules admit under it, so the typed pass
+/// ([`Context::classify`]) matches only representable shapes — the
+/// rejected ones (constant comparisons, two measures, a measure outside
+/// the order operators, a set outside `Eq`) exist as typed errors, never
+/// as arms. Literal sides borrow the rule; the typed pass seals owned
+/// values into [`ClassifiedComparison`].
+enum Shaped<'rule> {
+    /// `Eq`/`Ne` over two distinct variables.
+    EqVarVar {
+        negated: bool,
+        lhs: VarId,
+        rhs: VarId,
+    },
+    /// `Eq`/`Ne` against a scalar constant (written order kept for the
+    /// canonicalized interval form's mask converse).
+    EqVarConst {
+        negated: bool,
+        var: VarId,
+        var_on_left: bool,
+        constant: ConstSide<'rule>,
+    },
+    /// `Eq` against the set marker (legal under `Eq` alone).
+    EqVarSet { var: VarId, set: ParamId },
+    /// An order comparison over two variables.
+    OrdVarVar { op: CmpOp, lhs: VarId, rhs: VarId },
+    /// An order comparison against a constant — the operator already
+    /// sealed variable-on-left; the written order kept for the operand
+    /// screen's diagnostic order.
+    OrdVarConst {
+        op: CmpOp,
+        var: VarId,
+        var_on_left: bool,
+        constant: ConstSide<'rule>,
+    },
+    /// The measure against a variable, the operator sealed
+    /// measure-on-left.
+    OrdMeasureVar {
+        op: CmpOp,
+        interval: VarId,
+        scalar: VarId,
+    },
+    /// The measure against a constant, the operator sealed
+    /// measure-on-left.
+    OrdMeasureConst {
+        op: CmpOp,
+        interval: VarId,
+        constant: ConstSide<'rule>,
+    },
+    /// `Allen` over two variables, the mask as written.
+    AllenVarVar {
+        mask: MaskTerm,
+        lhs: VarId,
+        rhs: VarId,
+    },
+    /// `Allen` against a constant (written order kept for the mask
+    /// converse).
+    AllenVarConst {
+        mask: MaskTerm,
+        var: VarId,
+        var_on_left: bool,
+        constant: ConstSide<'rule>,
+    },
+    /// `Contains` over two variables, written order (`lhs ∋ rhs`).
+    ContainsVarVar { lhs: VarId, rhs: VarId },
+    /// `var ∋ constant`.
+    ContainsVarConst {
+        var: VarId,
+        constant: ConstSide<'rule>,
+    },
+    /// `constant ∋ var`.
+    ContainsConstVar {
+        constant: ConstSide<'rule>,
+        var: VarId,
+    },
+}
+
+/// A proven constant comparison side: the param handle or the literal.
+enum ConstSide<'rule> {
+    Param(ParamId),
+    Literal(&'rule Value),
+}
+
+/// Seals a proven variable-vs-constant operand pair under its operator
+/// class: the order form seals the operator variable-on-left (a
+/// constant-first comparison mirrors — the mirror rode in on
+/// [`OpClass::Order`]); the containment form seals its direction as a
+/// variant.
+fn shaped_var_const(
+    class: OpClass,
+    var: VarId,
+    var_on_left: bool,
+    constant: ConstSide<'_>,
+) -> Shaped<'_> {
+    match class {
+        OpClass::Equality { negated } => Shaped::EqVarConst {
+            negated,
+            var,
+            var_on_left,
+            constant,
+        },
+        OpClass::Order { op, mirror } => Shaped::OrdVarConst {
+            op: if var_on_left { op } else { mirror },
+            var,
+            var_on_left,
+            constant,
+        },
+        OpClass::Allen { mask } => Shaped::AllenVarConst {
+            mask,
+            var,
+            var_on_left,
+            constant,
+        },
+        OpClass::Contains if var_on_left => Shaped::ContainsVarConst { var, constant },
+        OpClass::Contains => Shaped::ContainsConstVar { constant, var },
+    }
+}
+
+/// Interval equality's canonical mask: interval `Eq`/`Ne` are the derived
+/// facts `Allen(EQUALS)` / `Allen(¬EQUALS)` — sealed at classification,
+/// so exactly one interval-pair form leaves validation.
+fn equals_mask(negated: bool) -> AllenMask {
+    if negated {
+        AllenMask::EQUALS.complement()
+    } else {
+        AllenMask::EQUALS
+    }
+}
+
+/// The scalar operator a sealed `Eq`/`Ne` shape carries (symmetric, so
+/// operand order never mirrors it).
+fn equality_op(negated: bool) -> CmpOp {
+    if negated { CmpOp::Ne } else { CmpOp::Eq }
+}
+
+/// The sealed mask side of an interval comparison against a constant,
+/// the mirrored form pre-encoded exactly as the filter shape carries it:
+/// `Allen(a, b, m) ≡ Allen(b, a, converse(m))`, so a comparison written
+/// constant-first seals the field on the left and the mask conversed —
+/// immediately for a literal, deferred to bind for a param
+/// ([`MaskConst::ConversedParam`]).
+fn sealed_mask(mask: MaskTerm, mirrored: bool) -> MaskConst {
+    match (mask, mirrored) {
+        (MaskTerm::Literal(mask), false) => MaskConst::Mask(mask),
+        (MaskTerm::Literal(mask), true) => MaskConst::Mask(mask.converse()),
+        (MaskTerm::Param(param), false) => MaskConst::Param(param),
+        (MaskTerm::Param(param), true) => MaskConst::ConversedParam(param),
+    }
+}
+
+/// The order operators' operand screen: an interval operand and a digest
+/// operand get their dedicated diagnostics — the predictable mistake
+/// gets the good error (order on bytes is an encoding artifact, identity
+/// only: `docs/architecture/10-data-model.md`).
+fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(), ValidationError> {
+    match operand {
+        Some(ValueType::Interval { .. }) => {
+            Err(ValidationError::OrderComparisonOnInterval { index })
+        }
+        Some(ValueType::FixedBytes { .. }) => {
+            Err(ValidationError::OrderComparisonOnFixedBytes { index })
+        }
+        _ => Ok(()),
     }
 }
 
@@ -216,12 +428,17 @@ impl Context {
     }
 
     /// The resolved type of a variable. Callable only after
-    /// [`Context::resolve_bivalents`].
+    /// [`Context::resolve_bivalents`] — the map it reads is the
+    /// resolution's product, so no unresolved slot is representable
+    /// here.
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: an unknown `VarId` (every
+    /// comparison variable was checked atom-bound before the typed
+    /// pass).
     pub(super) fn resolved_var_type(&self, var: VarId) -> &ValueType {
-        match &self.var_slots[&var] {
-            TypeSlot::Mono(value_type) => value_type,
-            TypeSlot::Bivalent(_) => unreachable!("resolve_bivalents ran"),
-        }
+        &self.var_types[&var]
     }
 
     // --- atoms ------------------------------------------------------------
@@ -387,11 +604,18 @@ impl Context {
 
     // --- comparisons ------------------------------------------------------
 
-    pub(super) fn check_comparisons(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
-        self.comparison_shapes(rule)?;
+    /// The three comparison phases, ending in the seal: the shape pass
+    /// proves the operand forms ([`Shaped`]), the anchor fixpoint and
+    /// bivalent resolution fix every type, and the typed pass proves
+    /// per-operator legality — constructing the [`ClassifiedComparison`]
+    /// each proof establishes, on the same lines.
+    pub(super) fn check_comparisons(
+        &mut self,
+        rule: &LoweredRule,
+    ) -> Result<Vec<ClassifiedComparison>, ValidationError> {
+        let shaped = self.comparison_shapes(rule)?;
         self.propagate_comparison_anchors(rule)?;
         self.resolve_bivalents();
-        self.comparison_types(rule)?;
         // A param with no anchor is unwritable by construction: every
         // param position is itself an anchor (a field binding types it
         // immediately; a comparison against a variable types it via the
@@ -401,84 +625,225 @@ impl Context {
         // rules — mask-vs-value conflicts and id density — are checked
         // after every rule contributed (params are query-global;
         // `validate::ParamTables`).
-        Ok(())
+        self.classify_comparisons(&shaped)
     }
 
     /// Shape rules that need no types: self-comparisons, constant
     /// comparisons (no variable side), comparison-only variables, param
-    /// roles, and the `ParamSet`-only-under-`Eq` rule.
-    fn comparison_shapes(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
-        for (index, Comparison { op, lhs, rhs }) in rule.conditions.iter().enumerate() {
-            // The Allen mask position, both vacuity rules for literals
-            // (∅ = "never": write no query; full = "always": write no
-            // condition) and the roster registration for params (their
-            // vacuity is checked at bind, where the value exists).
-            if let CmpOp::Allen { mask } = op {
-                match mask {
-                    MaskTerm::Literal(mask) => {
-                        if mask.is_empty() {
-                            return Err(ValidationError::EmptyAllenMask { index });
-                        }
-                        if mask.is_full() {
-                            return Err(ValidationError::FullAllenMask { index });
-                        }
+    /// roles, the measure discipline, and the `ParamSet`-only-under-`Eq`
+    /// rule — one sealed [`Shaped`] per condition, in condition order.
+    fn comparison_shapes<'rule>(
+        &mut self,
+        rule: &'rule LoweredRule,
+    ) -> Result<Vec<Shaped<'rule>>, ValidationError> {
+        rule.conditions
+            .iter()
+            .enumerate()
+            .map(|(index, comparison)| self.comparison_shape(index, comparison))
+            .collect()
+    }
+
+    /// One comparison's shape judgment: a single exhaustive match over
+    /// the operand pair whose arms either reject — the same typed errors
+    /// as ever, in the same diagnostic priority (mask vacuity, self
+    /// comparison, the measure discipline, constant comparisons, then
+    /// the per-side rules in written order) — or seal the proven
+    /// [`Shaped`] form. The proof and the seal are the same lines, so
+    /// no rejected shape is ever represented.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // one arm per operand-pair shape, in diagnostic priority order
+    fn comparison_shape<'rule>(
+        &mut self,
+        index: usize,
+        comparison: &'rule Comparison,
+    ) -> Result<Shaped<'rule>, ValidationError> {
+        let Comparison { op, lhs, rhs } = comparison;
+        let class = OpClass::of(*op);
+        // The Allen mask position first: both vacuity rules for literals
+        // (∅ = "never": write no query; full = "always": write no
+        // condition) and the roster registration for params (their
+        // vacuity is checked at bind, where the value exists).
+        if let OpClass::Allen { mask } = class {
+            match mask {
+                MaskTerm::Literal(mask) => {
+                    if mask.is_empty() {
+                        return Err(ValidationError::EmptyAllenMask { index });
                     }
-                    MaskTerm::Param(param) => {
-                        self.note_param_kind(*param, ParamKind::Scalar)?;
-                        self.mask_params.insert(*param);
+                    if mask.is_full() {
+                        return Err(ValidationError::FullAllenMask { index });
                     }
                 }
-            }
-            // A comparison of a variable with itself is constant-valued —
-            // the "write the query you mean" rule applies exactly as it
-            // does to literal-vs-literal.
-            if let (Term::Var(l), Term::Var(r)) = (lhs, rhs)
-                && l == r
-            {
-                return Err(ValidationError::SelfComparison { index });
-            }
-            // The measure's comparison discipline (20-query-ir, § the
-            // measure): one `Duration` side at most, and only under the
-            // order operators — every other operator is a typed
-            // rejection here, so the typed phase below never sees a
-            // measure outside `check_order`.
-            match (lhs, rhs) {
-                (Term::Duration(_), Term::Duration(_)) => {
-                    return Err(ValidationError::DurationBothSides { index });
-                }
-                (Term::Duration(_), _) | (_, Term::Duration(_))
-                    if !matches!(op, CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge) =>
-                {
-                    return Err(ValidationError::DurationComparisonOperator { index });
-                }
-                _ => {}
-            }
-            // A comparison with no variable side is a constant comparison —
-            // write the query you mean (a measure varies with its bound
-            // variable, so it is a variable side).
-            let varies = |term: &Term| matches!(term, Term::Var(_) | Term::Duration(_));
-            if !varies(lhs) && !varies(rhs) {
-                return Err(ValidationError::ConstantComparison { index });
-            }
-            for term in [lhs, rhs] {
-                match term {
-                    Term::Var(var) | Term::Duration(var) => {
-                        if !self.var_slots.contains_key(var) {
-                            return Err(ValidationError::ComparisonOnlyVariable { var: *var });
-                        }
-                    }
-                    Term::Param(param) => self.note_param_kind(*param, ParamKind::Scalar)?,
-                    Term::ParamSet(param) => {
-                        self.note_param_kind(*param, ParamKind::Set)?;
-                        if !matches!(op, CmpOp::Eq) {
-                            return Err(ValidationError::ParamSetComparison { index });
-                        }
-                    }
-                    Term::Literal(_) => {}
+                MaskTerm::Param(param) => {
+                    self.note_param_kind(param, ParamKind::Scalar)?;
+                    self.mask_params.insert(param);
                 }
             }
         }
-        Ok(())
+        match (lhs, rhs) {
+            // A comparison of a variable with itself is constant-valued —
+            // the "write the query you mean" rule applies exactly as it
+            // does to literal-vs-literal.
+            (Term::Var(l), Term::Var(r)) if l == r => {
+                Err(ValidationError::SelfComparison { index })
+            }
+            (Term::Var(l), Term::Var(r)) => {
+                self.comparison_var(*l)?;
+                self.comparison_var(*r)?;
+                Ok(match class {
+                    OpClass::Equality { negated } => Shaped::EqVarVar {
+                        negated,
+                        lhs: *l,
+                        rhs: *r,
+                    },
+                    OpClass::Order { op, .. } => Shaped::OrdVarVar {
+                        op,
+                        lhs: *l,
+                        rhs: *r,
+                    },
+                    OpClass::Allen { mask } => Shaped::AllenVarVar {
+                        mask,
+                        lhs: *l,
+                        rhs: *r,
+                    },
+                    OpClass::Contains => Shaped::ContainsVarVar { lhs: *l, rhs: *r },
+                })
+            }
+            // The measure's comparison discipline (20-query-ir, § the
+            // measure): one `Duration` side at most, and only under the
+            // order operators — sealed measure-on-left (a comparison
+            // written measure-second mirrors its operator).
+            (Term::Duration(_), Term::Duration(_)) => {
+                Err(ValidationError::DurationBothSides { index })
+            }
+            (Term::Duration(interval), Term::Var(scalar))
+            | (Term::Var(scalar), Term::Duration(interval)) => {
+                let OpClass::Order { op, mirror } = class else {
+                    return Err(ValidationError::DurationComparisonOperator { index });
+                };
+                let measure_on_left = matches!(lhs, Term::Duration(_));
+                if measure_on_left {
+                    self.comparison_var(*interval)?;
+                    self.comparison_var(*scalar)?;
+                } else {
+                    self.comparison_var(*scalar)?;
+                    self.comparison_var(*interval)?;
+                }
+                Ok(Shaped::OrdMeasureVar {
+                    op: if measure_on_left { op } else { mirror },
+                    interval: *interval,
+                    scalar: *scalar,
+                })
+            }
+            (Term::Duration(interval), Term::Param(param))
+            | (Term::Param(param), Term::Duration(interval)) => {
+                let OpClass::Order { op, mirror } = class else {
+                    return Err(ValidationError::DurationComparisonOperator { index });
+                };
+                let measure_on_left = matches!(lhs, Term::Duration(_));
+                if measure_on_left {
+                    self.comparison_var(*interval)?;
+                    self.note_param_kind(*param, ParamKind::Scalar)?;
+                } else {
+                    self.note_param_kind(*param, ParamKind::Scalar)?;
+                    self.comparison_var(*interval)?;
+                }
+                Ok(Shaped::OrdMeasureConst {
+                    op: if measure_on_left { op } else { mirror },
+                    interval: *interval,
+                    constant: ConstSide::Param(*param),
+                })
+            }
+            (Term::Duration(interval), Term::Literal(value))
+            | (Term::Literal(value), Term::Duration(interval)) => {
+                let OpClass::Order { op, mirror } = class else {
+                    return Err(ValidationError::DurationComparisonOperator { index });
+                };
+                self.comparison_var(*interval)?;
+                Ok(Shaped::OrdMeasureConst {
+                    op: if matches!(lhs, Term::Duration(_)) {
+                        op
+                    } else {
+                        mirror
+                    },
+                    interval: *interval,
+                    constant: ConstSide::Literal(value),
+                })
+            }
+            (Term::Duration(interval), Term::ParamSet(param))
+            | (Term::ParamSet(param), Term::Duration(interval)) => {
+                if !matches!(class, OpClass::Order { .. }) {
+                    return Err(ValidationError::DurationComparisonOperator { index });
+                }
+                // An order operator is never `Eq`, so the set side is
+                // illegal whichever side it was written on — after the
+                // written-order checks that outrank it.
+                if matches!(lhs, Term::Duration(_)) {
+                    self.comparison_var(*interval)?;
+                }
+                self.note_param_kind(*param, ParamKind::Set)?;
+                Err(ValidationError::ParamSetComparison { index })
+            }
+            (Term::Var(var), Term::Param(param)) | (Term::Param(param), Term::Var(var)) => {
+                let var_on_left = matches!(lhs, Term::Var(_));
+                if var_on_left {
+                    self.comparison_var(*var)?;
+                    self.note_param_kind(*param, ParamKind::Scalar)?;
+                } else {
+                    self.note_param_kind(*param, ParamKind::Scalar)?;
+                    self.comparison_var(*var)?;
+                }
+                Ok(shaped_var_const(
+                    class,
+                    *var,
+                    var_on_left,
+                    ConstSide::Param(*param),
+                ))
+            }
+            (Term::Var(var), Term::Literal(value)) | (Term::Literal(value), Term::Var(var)) => {
+                self.comparison_var(*var)?;
+                Ok(shaped_var_const(
+                    class,
+                    *var,
+                    matches!(lhs, Term::Var(_)),
+                    ConstSide::Literal(value),
+                ))
+            }
+            (Term::Var(var), Term::ParamSet(param)) | (Term::ParamSet(param), Term::Var(var)) => {
+                let var_on_left = matches!(lhs, Term::Var(_));
+                if var_on_left {
+                    self.comparison_var(*var)?;
+                }
+                self.note_param_kind(*param, ParamKind::Set)?;
+                if !matches!(class, OpClass::Equality { negated: false }) {
+                    return Err(ValidationError::ParamSetComparison { index });
+                }
+                if !var_on_left {
+                    self.comparison_var(*var)?;
+                }
+                Ok(Shaped::EqVarSet {
+                    var: *var,
+                    set: *param,
+                })
+            }
+            // No variable side and no measure side: a constant comparison
+            // — write the query you mean.
+            (
+                Term::Param(_) | Term::ParamSet(_) | Term::Literal(_),
+                Term::Param(_) | Term::ParamSet(_) | Term::Literal(_),
+            ) => Err(ValidationError::ConstantComparison { index }),
+        }
+    }
+
+    /// A comparison-position variable must already be atom-bound —
+    /// comparisons bind nothing (the comparison-only rejection).
+    fn comparison_var(&self, var: VarId) -> Result<(), ValidationError> {
+        if self.var_slots.contains_key(&var) {
+            Ok(())
+        } else {
+            Err(ValidationError::ComparisonOnlyVariable { var })
+        }
     }
 
     /// Monovalent-anchor propagation: under the same-type operators, a
@@ -589,242 +954,362 @@ impl Context {
     ///    comparison collapsed a variable to the element type while all
     ///    its positive atom bindings are interval fields: element-typed,
     ///    membership-bound, no enumerable domain.
+    ///
+    /// The phase change is a type change: the variable slots are
+    /// CONSUMED into [`Context::var_types`], so nothing after this line
+    /// can see — or defensively re-match — an unresolved variable slot.
+    /// Params stay slots: the typed pass still anchors them
+    /// ([`Context::check_const`]).
     fn resolve_bivalents(&mut self) {
-        for slot in self
-            .var_slots
-            .values_mut()
-            .chain(self.param_slots.values_mut())
-        {
+        self.var_types = std::mem::take(&mut self.var_slots)
+            .into_iter()
+            .map(|(var, slot)| {
+                let value_type = match slot {
+                    TypeSlot::Mono(value_type) => value_type,
+                    TypeSlot::Bivalent(element) => ValueType::Interval { element },
+                };
+                (var, value_type)
+            })
+            .collect();
+        for slot in self.param_slots.values_mut() {
             if let TypeSlot::Bivalent(element) = *slot {
                 *slot = TypeSlot::Mono(ValueType::Interval { element });
             }
         }
     }
 
-    /// Per-operator type legality over final types, and the param
-    /// anchoring those rules imply. Runs after `resolve_bivalents`: every
-    /// variable slot is monovalent here.
-    fn comparison_types(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
-        for (index, Comparison { op, lhs, rhs }) in rule.conditions.iter().enumerate() {
-            match op {
-                CmpOp::Eq | CmpOp::Ne => self.check_equality(index, lhs, rhs)?,
-                CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
-                    self.check_order(index, lhs, rhs)?;
-                }
-                CmpOp::Allen { .. } => self.check_allen(index, lhs, rhs)?,
-                CmpOp::Contains => self.check_contains(index, lhs, rhs)?,
-            }
-        }
-        Ok(())
+    /// The typed pass: per-operator type legality over final types, and
+    /// the param anchoring those rules imply. Runs after
+    /// [`Context::resolve_bivalents`], so every variable type is plain —
+    /// and consumes the shape pass's seal, so no operand form is
+    /// re-derived. Each proof constructs its [`ClassifiedComparison`] on
+    /// the lines that establish it.
+    fn classify_comparisons(
+        &mut self,
+        shaped: &[Shaped<'_>],
+    ) -> Result<Vec<ClassifiedComparison>, ValidationError> {
+        shaped
+            .iter()
+            .enumerate()
+            .map(|(index, shape)| self.classify(index, shape))
+            .collect()
     }
 
-    /// `Eq`/`Ne`: same structural type both sides, every type legal.
-    /// `ParamSet` reaches here under `Eq` only (`comparison_shapes`) and
-    /// anchors at the variable side's type — unless that type is an
-    /// interval, the dedicated `IntervalParamSet` rejection.
-    fn check_equality(
+    /// One comparison's typed judgment and seal.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // one arm per proven shape, each ending in its seal
+    fn classify(
         &mut self,
         index: usize,
-        lhs: &Term,
-        rhs: &Term,
-    ) -> Result<(), ValidationError> {
-        let (var, other) = match (lhs, rhs) {
-            (Term::Var(var), other) | (other, Term::Var(var)) => (*var, other),
-            _ => unreachable!("comparison_shapes rejected constant comparisons"),
-        };
-        let var_type = self.resolved_var_type(var).clone();
-        match other {
-            Term::Var(other_var) => {
-                if *self.resolved_var_type(*other_var) != var_type {
+        shape: &Shaped<'_>,
+    ) -> Result<ClassifiedComparison, ValidationError> {
+        match shape {
+            // `Eq`/`Ne`: same structural type both sides, every type
+            // legal — and interval equality canonicalizes to its derived
+            // `Allen` fact (`EQUALS` / its complement), so exactly one
+            // interval-pair form leaves validation.
+            Shaped::EqVarVar { negated, lhs, rhs } => {
+                let lhs_type = self.resolved_var_type(*lhs).clone();
+                if *self.resolved_var_type(*rhs) != lhs_type {
                     return Err(ValidationError::IllegalComparison { index });
                 }
-            }
-            Term::Param(param) => self.anchor_param_mono(*param, &var_type)?,
-            Term::ParamSet(param) => {
-                if matches!(var_type, ValueType::Interval { .. }) {
-                    return Err(ValidationError::IntervalParamSet { param: *param });
-                }
-                self.anchor_param_mono(*param, &var_type)?;
-            }
-            Term::Literal(value) => self.check_literal_against(index, value, &var_type)?,
-            Term::Duration(_) => {
-                unreachable!("comparison_shapes admits measures under order operators only")
-            }
-        }
-        Ok(())
-    }
-
-    /// `Lt`/`Le`/`Gt`/`Ge`: U64/U64 and I64/I64 only — plus the measure
-    /// side, `Duration(v)`, whose variable must have resolved to an
-    /// interval and whose value side is u64 (20-query-ir, § the
-    /// measure). An interval operand gets the dedicated diagnostic — the
-    /// predictable mistake gets the good error.
-    fn check_order(&mut self, index: usize, lhs: &Term, rhs: &Term) -> Result<(), ValidationError> {
-        for term in [lhs, rhs] {
-            match self.term_mono_type(term) {
-                Some(ValueType::Interval { .. }) => {
-                    return Err(ValidationError::OrderComparisonOnInterval { index });
-                }
-                // The order-on-bytes refusal: a digest's lexicographic
-                // order is an encoding artifact — identity only
-                // (docs/architecture/10-data-model.md).
-                Some(ValueType::FixedBytes { .. }) => {
-                    return Err(ValidationError::OrderComparisonOnFixedBytes { index });
-                }
-                _ => {}
-            }
-        }
-        // The measure side, if any (comparison_shapes admitted at most
-        // one): the measured variable must be an interval; the other
-        // side checks against u64 exactly as a u64 variable side would.
-        if let (Term::Duration(var), other) | (other, Term::Duration(var)) = (lhs, rhs) {
-            if !matches!(self.resolved_var_type(*var), ValueType::Interval { .. }) {
-                return Err(ValidationError::DurationOverNonInterval { var: *var });
-            }
-            return self.check_order_side(index, other, &ValueType::U64);
-        }
-        let (var, other) = match (lhs, rhs) {
-            (Term::Var(var), other) | (other, Term::Var(var)) => (*var, other),
-            _ => unreachable!("comparison_shapes rejected constant comparisons"),
-        };
-        let var_type = self.resolved_var_type(var).clone();
-        if !matches!(var_type, ValueType::U64 | ValueType::I64) {
-            return Err(ValidationError::IllegalComparison { index });
-        }
-        self.check_order_side(index, other, &var_type)
-    }
-
-    /// One order comparison's non-anchoring side against the anchoring
-    /// side's resolved type (a variable's, or u64 for a measure).
-    fn check_order_side(
-        &mut self,
-        index: usize,
-        other: &Term,
-        expected: &ValueType,
-    ) -> Result<(), ValidationError> {
-        match other {
-            Term::Var(other_var) => {
-                if self.resolved_var_type(*other_var) != expected {
-                    return Err(ValidationError::IllegalComparison { index });
-                }
-            }
-            Term::Param(param) => self.anchor_param_mono(*param, expected)?,
-            Term::ParamSet(_) => unreachable!("comparison_shapes rejected sets under order ops"),
-            Term::Literal(value) => self.check_literal_against(index, value, expected)?,
-            Term::Duration(_) => {
-                unreachable!("comparison_shapes rejected two-measure comparisons")
-            }
-        }
-        Ok(())
-    }
-
-    /// `Allen { mask }`: two interval terms of one element type — the one
-    /// interval-pair comparison (the mask itself was checked in
-    /// `comparison_shapes`; params get the vacuity rules at bind).
-    fn check_allen(&mut self, index: usize, lhs: &Term, rhs: &Term) -> Result<(), ValidationError> {
-        let (var, other) = match (lhs, rhs) {
-            (Term::Var(var), other) | (other, Term::Var(var)) => (*var, other),
-            _ => unreachable!("comparison_shapes rejected constant comparisons"),
-        };
-        let var_type = self.resolved_var_type(var).clone();
-        if !matches!(var_type, ValueType::Interval { .. }) {
-            return Err(ValidationError::IllegalComparison { index });
-        }
-        match other {
-            Term::Var(other_var) => {
-                if *self.resolved_var_type(*other_var) != var_type {
-                    return Err(ValidationError::IllegalComparison { index });
-                }
-            }
-            Term::Param(param) => self.anchor_param_mono(*param, &var_type)?,
-            Term::ParamSet(_) => unreachable!("comparison_shapes rejected sets under Allen"),
-            Term::Literal(value) => self.check_literal_against(index, value, &var_type)?,
-            Term::Duration(_) => {
-                unreachable!("comparison_shapes admits measures under order operators only")
-            }
-        }
-        Ok(())
-    }
-
-    /// `Contains`: point membership as a predicate — an interval left
-    /// side, an **element-typed** right side (the predicate form of the
-    /// membership binding rule, for terms already bound elsewhere). The
-    /// interval⊇interval form is gone: that predicate is `Allen(COVERS)`,
-    /// and an interval-typed right side is an illegal comparison.
-    fn check_contains(
-        &mut self,
-        index: usize,
-        lhs: &Term,
-        rhs: &Term,
-    ) -> Result<(), ValidationError> {
-        // The element domain comes from the interval side; every shape
-        // with a variable somewhere is covered (constant comparisons are
-        // already rejected).
-        let element = match lhs {
-            Term::Var(var) => match self.resolved_var_type(*var) {
-                ValueType::Interval { element } => *element,
-                _ => return Err(ValidationError::IllegalComparison { index }),
-            },
-            Term::Param(param) => {
-                // The right side is a variable (constant comparisons are
-                // gone), and it is the *point*: its element type names the
-                // param's interval domain.
-                let Term::Var(rhs_var) = rhs else {
-                    unreachable!("comparison_shapes rejected constant comparisons")
-                };
-                let element = match self.resolved_var_type(*rhs_var) {
-                    ValueType::U64 => IntervalElement::U64,
-                    ValueType::I64 => IntervalElement::I64,
-                    _ => return Err(ValidationError::IllegalComparison { index }),
-                };
-                return self.anchor_param_mono(*param, &ValueType::Interval { element });
-            }
-            Term::Literal(value) => {
-                let Some(ValueType::Interval { element }) = literal_anchor_type(value) else {
-                    return Err(ValidationError::IllegalComparison { index });
-                };
-                if literal_matches(value, &ValueType::Interval { element }).is_err() {
-                    return Err(ValidationError::ComparisonEmptyIntervalLiteral { index });
-                }
-                element
-            }
-            Term::ParamSet(_) => {
-                unreachable!("comparison_shapes rejected sets under Contains")
-            }
-            Term::Duration(_) => {
-                unreachable!("comparison_shapes admits measures under order operators only")
-            }
-        };
-        match rhs {
-            Term::Var(var) => {
-                if *self.resolved_var_type(*var) != element_type(element) {
-                    return Err(ValidationError::IllegalComparison { index });
-                }
-            }
-            Term::Param(param) => {
-                // A `Contains` right side is a point at an interval
-                // position: the ceiling rule applies at bind, where the
-                // value exists (the point-domain law).
-                self.interval_position_params.insert(*param);
-                self.anchor_param_mono(*param, &element_type(element))?;
-            }
-            Term::Literal(value) => match (value, element) {
-                (Value::U64(_), IntervalElement::U64) | (Value::I64(_), IntervalElement::I64) => {
-                    // The point domain is `MIN ..= MAX−1`.
-                    if at_domain_ceiling(value) {
-                        return Err(ValidationError::ComparisonPointLiteralAtCeiling { index });
+                Ok(if matches!(lhs_type, ValueType::Interval { .. }) {
+                    ClassifiedComparison::AllenVarVar {
+                        lhs: *lhs,
+                        rhs: *rhs,
+                        mask: MaskTerm::Literal(equals_mask(*negated)),
                     }
-                }
-                _ => return Err(ValidationError::IllegalComparison { index }),
-            },
-            Term::ParamSet(_) => {
-                unreachable!("comparison_shapes rejected sets under Contains")
+                } else {
+                    ClassifiedComparison::VarVar {
+                        op: equality_op(*negated),
+                        lhs: *lhs,
+                        rhs: *rhs,
+                    }
+                })
             }
-            Term::Duration(_) => {
-                unreachable!("comparison_shapes admits measures under order operators only")
+            Shaped::EqVarConst {
+                negated,
+                var,
+                var_on_left,
+                constant,
+            } => {
+                let var_type = self.resolved_var_type(*var).clone();
+                let value = self.check_const(index, constant, &var_type)?;
+                Ok(if matches!(var_type, ValueType::Interval { .. }) {
+                    ClassifiedComparison::AllenVarConst {
+                        var: *var,
+                        other: value,
+                        mask: sealed_mask(MaskTerm::Literal(equals_mask(*negated)), !var_on_left),
+                    }
+                } else {
+                    ClassifiedComparison::VarConst {
+                        op: equality_op(*negated),
+                        var: *var,
+                        value,
+                    }
+                })
+            }
+            // The set marker anchors at the variable side's type — unless
+            // that type is an interval, the dedicated `IntervalParamSet`
+            // rejection.
+            Shaped::EqVarSet { var, set } => {
+                let var_type = self.resolved_var_type(*var).clone();
+                if matches!(var_type, ValueType::Interval { .. }) {
+                    return Err(ValidationError::IntervalParamSet { param: *set });
+                }
+                self.anchor_param_mono(*set, &var_type)?;
+                Ok(ClassifiedComparison::VarInSet {
+                    var: *var,
+                    set: *set,
+                })
+            }
+            // `Lt`/`Le`/`Gt`/`Ge`: U64/U64 and I64/I64 only — the operand
+            // screen first, in written order.
+            Shaped::OrdVarVar { op, lhs, rhs } => {
+                for var in [lhs, rhs] {
+                    screen_order_operand(index, Some(self.resolved_var_type(*var)))?;
+                }
+                let lhs_type = self.resolved_var_type(*lhs).clone();
+                if !matches!(lhs_type, ValueType::U64 | ValueType::I64) {
+                    return Err(ValidationError::IllegalComparison { index });
+                }
+                if *self.resolved_var_type(*rhs) != lhs_type {
+                    return Err(ValidationError::IllegalComparison { index });
+                }
+                Ok(ClassifiedComparison::VarVar {
+                    op: *op,
+                    lhs: *lhs,
+                    rhs: *rhs,
+                })
+            }
+            Shaped::OrdVarConst {
+                op,
+                var,
+                var_on_left,
+                constant,
+            } => {
+                let var_screen = Some(self.resolved_var_type(*var).clone());
+                let const_screen = self.constant_screen(constant);
+                let screens = if *var_on_left {
+                    [var_screen, const_screen]
+                } else {
+                    [const_screen, var_screen]
+                };
+                for operand in &screens {
+                    screen_order_operand(index, operand.as_ref())?;
+                }
+                let var_type = self.resolved_var_type(*var).clone();
+                if !matches!(var_type, ValueType::U64 | ValueType::I64) {
+                    return Err(ValidationError::IllegalComparison { index });
+                }
+                let value = self.check_const(index, constant, &var_type)?;
+                Ok(ClassifiedComparison::VarConst {
+                    op: *op,
+                    var: *var,
+                    value,
+                })
+            }
+            // The measure side (20-query-ir, § the measure): the measured
+            // variable must have resolved to an interval, and the value
+            // side checks against u64 exactly as a u64 variable side
+            // would (the measure itself is u64 by definition and never
+            // screens).
+            Shaped::OrdMeasureVar {
+                op,
+                interval,
+                scalar,
+            } => {
+                screen_order_operand(index, Some(self.resolved_var_type(*scalar)))?;
+                if !matches!(
+                    self.resolved_var_type(*interval),
+                    ValueType::Interval { .. }
+                ) {
+                    return Err(ValidationError::DurationOverNonInterval { var: *interval });
+                }
+                if *self.resolved_var_type(*scalar) != ValueType::U64 {
+                    return Err(ValidationError::IllegalComparison { index });
+                }
+                Ok(ClassifiedComparison::Duration {
+                    interval: *interval,
+                    op: *op,
+                    other: DurationOperand::Var(*scalar),
+                })
+            }
+            Shaped::OrdMeasureConst {
+                op,
+                interval,
+                constant,
+            } => {
+                screen_order_operand(index, self.constant_screen(constant).as_ref())?;
+                if !matches!(
+                    self.resolved_var_type(*interval),
+                    ValueType::Interval { .. }
+                ) {
+                    return Err(ValidationError::DurationOverNonInterval { var: *interval });
+                }
+                let value = self.check_const(index, constant, &ValueType::U64)?;
+                Ok(ClassifiedComparison::Duration {
+                    interval: *interval,
+                    op: *op,
+                    other: DurationOperand::Const(value),
+                })
+            }
+            // `Allen { mask }`: two interval terms of one element type —
+            // the one interval-pair comparison (the mask itself was
+            // checked at the shape pass; params get the vacuity rules at
+            // bind).
+            Shaped::AllenVarVar { mask, lhs, rhs } => {
+                let lhs_type = self.resolved_var_type(*lhs).clone();
+                if !matches!(lhs_type, ValueType::Interval { .. }) {
+                    return Err(ValidationError::IllegalComparison { index });
+                }
+                if *self.resolved_var_type(*rhs) != lhs_type {
+                    return Err(ValidationError::IllegalComparison { index });
+                }
+                Ok(ClassifiedComparison::AllenVarVar {
+                    lhs: *lhs,
+                    rhs: *rhs,
+                    mask: *mask,
+                })
+            }
+            Shaped::AllenVarConst {
+                mask,
+                var,
+                var_on_left,
+                constant,
+            } => {
+                let var_type = self.resolved_var_type(*var).clone();
+                if !matches!(var_type, ValueType::Interval { .. }) {
+                    return Err(ValidationError::IllegalComparison { index });
+                }
+                let other = self.check_const(index, constant, &var_type)?;
+                Ok(ClassifiedComparison::AllenVarConst {
+                    var: *var,
+                    other,
+                    mask: sealed_mask(*mask, !var_on_left),
+                })
+            }
+            // `Contains`: point membership as a predicate — an interval
+            // side, an **element-typed** point side (the predicate form
+            // of the membership binding rule, for terms already bound
+            // elsewhere). The interval⊇interval form is gone: that
+            // predicate is `Allen(COVERS)`, and an interval-typed point
+            // side is an illegal comparison.
+            Shaped::ContainsVarVar { lhs, rhs } => {
+                let ValueType::Interval { element } = *self.resolved_var_type(*lhs) else {
+                    return Err(ValidationError::IllegalComparison { index });
+                };
+                if *self.resolved_var_type(*rhs) != element_type(element) {
+                    return Err(ValidationError::IllegalComparison { index });
+                }
+                Ok(ClassifiedComparison::ContainsVarVar {
+                    interval: *lhs,
+                    point: *rhs,
+                })
+            }
+            Shaped::ContainsVarConst { var, constant } => {
+                let ValueType::Interval { element } = *self.resolved_var_type(*var) else {
+                    return Err(ValidationError::IllegalComparison { index });
+                };
+                match constant {
+                    ConstSide::Param(param) => {
+                        // A `Contains` point side is a point at an
+                        // interval position: the ceiling rule applies at
+                        // bind, where the value exists (the point-domain
+                        // law).
+                        self.interval_position_params.insert(*param);
+                        self.anchor_param_mono(*param, &element_type(element))?;
+                        Ok(ClassifiedComparison::ContainsVarPoint {
+                            interval: *var,
+                            point: SealedConst::Param(*param),
+                        })
+                    }
+                    ConstSide::Literal(value) => match (value, element) {
+                        (Value::U64(_), IntervalElement::U64)
+                        | (Value::I64(_), IntervalElement::I64) => {
+                            // The point domain is `MIN ..= MAX−1`.
+                            if at_domain_ceiling(value) {
+                                return Err(ValidationError::ComparisonPointLiteralAtCeiling {
+                                    index,
+                                });
+                            }
+                            Ok(ClassifiedComparison::ContainsVarPoint {
+                                interval: *var,
+                                point: SealedConst::Literal((*value).clone()),
+                            })
+                        }
+                        _ => Err(ValidationError::IllegalComparison { index }),
+                    },
+                }
+            }
+            Shaped::ContainsConstVar { constant, var } => match constant {
+                ConstSide::Param(param) => {
+                    // The point side is the variable: its element type
+                    // names the param's interval domain.
+                    let element = match self.resolved_var_type(*var) {
+                        ValueType::U64 => IntervalElement::U64,
+                        ValueType::I64 => IntervalElement::I64,
+                        _ => return Err(ValidationError::IllegalComparison { index }),
+                    };
+                    self.anchor_param_mono(*param, &ValueType::Interval { element })?;
+                    Ok(ClassifiedComparison::VarWithin {
+                        var: *var,
+                        outer: SealedConst::Param(*param),
+                    })
+                }
+                ConstSide::Literal(value) => {
+                    let Some(ValueType::Interval { element }) = literal_anchor_type(value) else {
+                        return Err(ValidationError::IllegalComparison { index });
+                    };
+                    if literal_matches(value, &ValueType::Interval { element }).is_err() {
+                        return Err(ValidationError::ComparisonEmptyIntervalLiteral { index });
+                    }
+                    if *self.resolved_var_type(*var) != element_type(element) {
+                        return Err(ValidationError::IllegalComparison { index });
+                    }
+                    Ok(ClassifiedComparison::VarWithin {
+                        var: *var,
+                        outer: SealedConst::Literal((*value).clone()),
+                    })
+                }
+            },
+        }
+    }
+
+    /// One sealed constant side against the anchoring side's resolved
+    /// type: a param anchors there ([`Context::anchor_param_mono`]); a
+    /// literal is checked precisely, exactly as the atom-binding path
+    /// reports it — and the passing proof seals the side.
+    fn check_const(
+        &mut self,
+        index: usize,
+        constant: &ConstSide<'_>,
+        expected: &ValueType,
+    ) -> Result<SealedConst, ValidationError> {
+        match constant {
+            ConstSide::Param(param) => {
+                self.anchor_param_mono(*param, expected)?;
+                Ok(SealedConst::Param(*param))
+            }
+            ConstSide::Literal(value) => {
+                self.check_literal_against(index, value, expected)?;
+                Ok(SealedConst::Literal((*value).clone()))
             }
         }
-        Ok(())
+    }
+
+    /// The type a constant side contributes to the order screen right
+    /// now, if any: the param's anchored type, or the literal's own.
+    fn constant_screen(&self, constant: &ConstSide<'_>) -> Option<ValueType> {
+        match constant {
+            ConstSide::Param(param) => match self.param_slots.get(param) {
+                Some(TypeSlot::Mono(value_type)) => Some(value_type.clone()),
+                _ => None,
+            },
+            ConstSide::Literal(value) => literal_anchor_type(value),
+        }
     }
 
     /// A literal against a comparison side's resolved type — the precise
@@ -858,10 +1343,7 @@ impl Context {
     /// positive atom bindings are all interval fields is bound only by
     /// membership — no enumerable domain.
     pub(super) fn check_membership_domains(&self) -> Result<(), ValidationError> {
-        for (var, slot) in &self.var_slots {
-            let TypeSlot::Mono(value_type) = slot else {
-                unreachable!("resolve_bivalents ran")
-            };
+        for (var, value_type) in &self.var_types {
             if matches!(value_type, ValueType::Interval { .. }) {
                 continue;
             }

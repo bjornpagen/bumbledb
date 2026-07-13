@@ -666,6 +666,21 @@ occurrences counted, they consume plan-time work — more than 128 distinct
 variables) — enforced here so downstream id widths and bitset sizes are true
 invariants.
 
+**The classified comparison — the fifth sealed finding.** Validation does
+not merely *accept* a comparison: at the exact point the typed rules prove
+it legal, the proof is sealed as a `ClassifiedComparison` — a closed sum
+whose variants are exactly the accepted comparison language (scalar
+var/var and var/const with the operator sealed variable-on-left, the
+`Eq`-only set marker, the `Allen` pair and constant forms with the mask
+sealed field-on-left, both point-containment directions, and the measure
+with its operator sealed measure-on-left; interval `Eq`/`Ne` canonicalize
+to the `EQUALS` mask inside the seal). The witness carries the list per
+rule (`RuleWitness::classified_comparisons`) and normalization's
+placement consumes it with a **total** match — proved once, sealed,
+consumed totally, alongside the witness's typing tables,
+`ResolvableFilter`, `SinkSpec`, and `ParamSpec`. It is pipeline-internal:
+never part of the input IR, never in the public API, never serialized.
+
 ## The renderer — `ir::render`, the read-side syntax
 
 The statement renderer's sibling (`schema/render.rs`): `ir::render::render` prints
