@@ -401,12 +401,48 @@ time the emulation, not the engine.
   (`50-storage.md`); full round-trip (export → fresh database → import in
   dependency-cluster order → oracle-equal results). ETL is the migration story; an
   ETL bug is a data-loss bug.
-- **Encoding round-trip fuzzing is retained** (decision: the one fuzz target that
-  earns its place — order-preserving encodings and composite guard keys are where a
+- **Encoding round-trip fuzzing is retained** (decision: the one *in-tree* fuzz
+  target — order-preserving encodings and composite guard keys are where a
   boundary bug corrupts sort order silently; i64::MIN, empty bytes, max-length
   values, and now interval starts/ends at element extremes and `start+1 == end`
   minimal intervals). Executor differential fuzzing is subsumed by the seeded
-  generator above.
+  generator above; the coverage-guided campaign over the public API lives in the
+  detached `fuzz/` crate (the fuzzing charter, below).
+
+## The fuzzing charter
+
+The detached `fuzz/` crate (cargo-fuzz layout, its own workspace — the
+workspace gates never build fuzz artifacts) is the adversary-first lane:
+coverage-guided, structure-aware generation through the entropy seam
+(`Rng::Bytes` steering the same `corpus_gen` generators the seeded lanes
+run, at `Scale::Tiny`), driving the REAL public API against the oracles
+this engine already owns. The harness owns no logic worth fuzzing
+(refusal: we do not fuzz the harness — a fuzzer for the judge has no
+judge); generation arms live in `bumbledb-bench`'s `corpus_gen`, and each
+target in `fuzz/fuzz_targets/` is one thin call into one shared-harness
+runner.
+
+- **Targets** (one entry point each): `theory` — schema acceptance over
+  the random-descriptor arm (`corpus_gen::theorygen`): structurally-free
+  descriptors, deliberately-invalid shapes alongside valid ones, judged
+  by `Db::create`. Later targets extend the roster: `ops` (the op-stream
+  flagship), `query` + `rewrites`, `crash`.
+- **Oracle discipline** (every iteration, all of them): *no-panic
+  totality* — hostile input yields `Ok` or a typed error, any
+  panic/abort is a finding by definition; *typed rejection* — every
+  `Err` is a named variant, matched TOTALLY in the harness (zero `_ =>`
+  arms over engine error enums, so a new variant is a compile error —
+  the matcher is a census instrument); *judgment determinism* — the same
+  input judged twice on fresh stores yields the identical verdict, and
+  accepted schemas reopen cleanly with `verify_store` passing on the
+  empty store.
+- **Corpus policy**: `fuzz/corpus/<target>/` is a checked-in seed corpus
+  from a small deterministic generator run; `fuzz/artifacts/` is
+  gitignored. Every real counterexample is minimized (`cargo fuzz tmin`)
+  and pinned as a permanent regression test in the crate that owns the
+  bug.
+- **Trophy ledger**: `fuzz/README.md` — one row per real finding (date,
+  target, root cause, the pinning test).
 
 ## Golden set
 

@@ -21,6 +21,7 @@ mod scale;
 mod sizes;
 #[cfg(test)]
 mod tests;
+pub mod theorygen;
 
 pub use corpus_digest::corpus_digest;
 pub use digest_hex::digest_hex;
