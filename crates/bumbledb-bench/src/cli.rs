@@ -34,7 +34,10 @@ impl Default for CorpusArgs {
 }
 
 /// `bench`'s knobs.
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent booleans mirror the external configuration"
+)]
 // a 1:1 mirror of independent CLI
 // flags; folding them into state enums would misrepresent the surface.
 #[derive(Debug, Clone, PartialEq, Eq)]

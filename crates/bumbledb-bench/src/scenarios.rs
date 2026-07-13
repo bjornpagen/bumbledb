@@ -65,7 +65,10 @@ pub struct Scenario {
     /// state (loads and queries are all dynamic-surface).
     pub descriptor: fn() -> SchemaDescriptor,
     /// Relations in containment order with their row iterators.
-    #[allow(clippy::type_complexity)]
+    #[expect(
+        clippy::type_complexity,
+        reason = "the tuple shape directly represents parallel protocol streams"
+    )]
     pub rows: fn(u64) -> Vec<(RelationId, Box<dyn Iterator<Item = Vec<Value>>>)>,
     /// `CREATE INDEX` statements for predicate columns the statement
     /// registry does not already cover.

@@ -11,7 +11,10 @@ use super::{MAP_SIZE, MAX_READERS};
 /// This is the single sanctioned `unsafe` block outside `exec::kernel`
 /// (the 40-storage doc amendment): `heed 0.22` marks environment opening unsafe because
 /// opening one environment path twice in a process is LMDB UB.
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 pub(super) fn open_env(path: &Path) -> Result<heed::Env<WithoutTls>> {
     // MDB_NOTLS: reader slots belong to transaction objects, not threads —
     // a thread may pin an old snapshot while opening new ones (long-lived

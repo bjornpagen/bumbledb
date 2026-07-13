@@ -456,7 +456,10 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
 /// must ride the pipeline's carried set to the attachment node (the
 /// pipe tables' cursor-USES extension).
 #[test]
-#[allow(clippy::too_many_lines)] // one fixture: the full three-node pipeline, linear
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one fixture: the full three-node pipeline, linear
 fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     let dir = TempDir::new("run-membership-carried");
     // Payroll(emp, during); Dept(emp, dept); Event(emp, at) — reuse the

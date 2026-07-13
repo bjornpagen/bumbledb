@@ -319,6 +319,8 @@ by machinery, not judgment:
   loop contains no calls and no `bcmp`" are asserted against `objdump`
   output — an `#[inline(always)]` that silently stopped working fails a
   gate, not a code review.
+- **Checked lint exceptions**: suppressions are `#[expect]` claims with a
+  reason, so an exception that stops being necessary fails the gate itself.
 - **Microbench pins**: load-bearing mechanisms carry `#[ignore]`d in-tree
   benchmarks that re-assert their measured margins on demand.
 - **Refutation is a result.** A mechanism that measures as a loss is

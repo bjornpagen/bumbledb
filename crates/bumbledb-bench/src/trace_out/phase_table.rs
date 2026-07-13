@@ -34,7 +34,10 @@ pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
                 .map_or(0, |(.., ns, _)| *ns)
     };
 
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )]
     let us = |ns: u64| ns as f64 / 1000.0;
     let mut out = String::new();
     let _ = writeln!(

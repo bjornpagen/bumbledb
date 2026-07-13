@@ -63,7 +63,10 @@ fn ghz_report(stamp: crate::clockproxy::GhzStamp) -> report::GhzReport {
 }
 
 /// The per-run context the bench families share.
-#[allow(clippy::struct_excessive_bools)] // mirrors BenchArgs' flag surface.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent booleans mirror the external configuration"
+)] // mirrors BenchArgs' flag surface.
 struct BenchRun<'a> {
     cfg: GenConfig,
     proto: Protocol,

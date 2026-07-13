@@ -131,7 +131,10 @@ pub(super) fn decode_plan(
 
 /// The scan loop: one width check per fact, then unchecked loads and
 /// slab stores through the plan. Returns the rows filled.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the split borrows and execution context are clearer unpacked"
+)]
 pub(super) fn fill_columns(
     txn: &ReadTxn<'_>,
     schema: &Schema,
@@ -163,7 +166,10 @@ pub(super) fn fill_columns(
 /// and closed-relation synthesis ([`super::build::synthesize_closed`]),
 /// so a sealed extension decodes through exactly the machinery a stored
 /// fact does.
-#[allow(unsafe_code)] // 00-product policy: image decode kernels
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)] // 00-product policy: image decode kernels
 pub(super) fn decode_fact(
     rel: RelationId,
     plan: &[Decode],

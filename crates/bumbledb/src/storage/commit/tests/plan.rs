@@ -55,7 +55,10 @@ const LINK_COMBO: StatementId = StatementId(11);
 /// during)) with the coverage dependent Stay <= Room. Parent == Child
 /// lowered to [`TOTALITY`] and [`ARM`]. Link(p, q) <= Combo(y, x) against
 /// key Combo(x, y): a non-identity key permutation.
-#[allow(clippy::too_many_lines)] // one fixture schema, a table
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one fixture schema, a table
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![

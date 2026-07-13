@@ -14,7 +14,10 @@ use super::neon;
 /// Only on a programmer-invariant violation: the strided extent
 /// exceeding `values`.
 #[must_use]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: usize) -> i128 {
     assert!(stride > 0 && (count == 0 || (count - 1) * stride + offset < values.len()));
     #[cfg(target_arch = "aarch64")]
@@ -51,7 +54,10 @@ pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: 
 /// Only on a programmer-invariant violation: the strided extent
 /// exceeding `values`.
 #[must_use]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> u128 {
     assert!(stride > 0 && (count == 0 || (count - 1) * stride + offset < values.len()));
     #[cfg(target_arch = "aarch64")]
@@ -96,7 +102,10 @@ pub fn fold_min_max_u64(values: &[u64], stride: usize, offset: usize, count: usi
 
 /// The scalar strided (min, max) — the live path wherever the NEON dense
 /// form does not apply.
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 fn fold_min_max_u64_strided(
     values: &[u64],
     stride: usize,

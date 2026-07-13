@@ -30,7 +30,10 @@ pub fn push_str_lit(out: &mut String, s: &str) {
 /// Appends nanoseconds as microseconds with three decimals — the trace
 /// writer's timestamp/duration format.
 pub fn push_us(out: &mut String, ns: u64) {
-    #[allow(clippy::cast_precision_loss)] // ns fit f64 exactly for ~104 days
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )] // ns fit f64 exactly for ~104 days
     let us = ns as f64 / 1000.0;
     let _ = write!(out, "{us:.3}");
 }

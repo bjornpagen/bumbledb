@@ -29,7 +29,10 @@ fn debug_assert_idx_bounds(values: &[u64], stride: usize, offset: usize, indices
 /// Sum of sign-flip-decoded i64 words at the indexed positions — exact
 /// i128, bit-identical to the naive fold.
 #[must_use]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 pub fn fold_sum_biased_i64_idx(
     values: &[u64],
     stride: usize,
@@ -59,7 +62,10 @@ pub fn fold_sum_biased_i64_idx(
 
 /// Sum of u64 words at the indexed positions — exact u128.
 #[must_use]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &[u32]) -> u128 {
     debug_assert_idx_bounds(values, stride, offset, indices);
     let mut acc = [0u128; 4];
@@ -88,7 +94,10 @@ pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &
 /// Only on a programmer-invariant violation: an empty index list (the
 /// executor never emits empty batches).
 #[must_use]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 pub fn fold_min_max_u64_idx(
     values: &[u64],
     stride: usize,

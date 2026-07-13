@@ -72,7 +72,10 @@ pub(super) fn run_query(
         crate::sqlite_run::sample(&mut sqlite_family, rotation.next_set())
     })?;
 
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )]
     let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
     Ok(QueryReport {
         scenario: scenario.name,

@@ -117,7 +117,10 @@ impl Colt {
                 let slot = (matches.trailing_zeros() as usize) >> 3;
                 let base = m.bucket_start + b * (8 * A + 8);
                 let mut eq = true;
-                #[allow(clippy::needless_range_loop)] // 0..A is the unroll
+                #[expect(
+                    clippy::needless_range_loop,
+                    reason = "the explicit constant range is the intended unroll shape"
+                )] // 0..A is the unroll
                 // guarantee: A is const — iterating the runtime slice
                 // would bound the loop by its len and block it
                 for i in 0..A {

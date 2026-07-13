@@ -49,7 +49,10 @@ fn a_thousand_queries_validate_and_translate() {
 /// every type, Arg-restriction variants — and the structural
 /// compositions at least once per run.
 #[test]
-#[allow(clippy::too_many_lines)] // the contract's assertion roster, one row per construct
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the contract's assertion roster, one row per construct
 fn the_coverage_contract_holds_at_a_thousand() {
     let cov = coverage(N, SEED, CFG);
     let total: u64 = SHAPE_WEIGHTS.iter().map(|(_, w)| w).sum();

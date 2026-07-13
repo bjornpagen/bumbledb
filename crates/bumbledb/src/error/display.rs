@@ -122,7 +122,10 @@ impl fmt::Display for CorruptionError {
 }
 
 impl fmt::Display for SchemaError {
-    #[allow(clippy::too_many_lines)] // a rendering table: one arm per variant
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // a rendering table: one arm per variant
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Short bindings: r = relation, fd = field.
         match self {
@@ -379,7 +382,10 @@ impl fmt::Display for SchemaError {
 }
 
 impl fmt::Display for ValidationError {
-    #[allow(clippy::too_many_lines)] // a rendering table: one arm per variant
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // a rendering table: one arm per variant
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyRuleSet => write!(f, "the rule set is empty — the empty union is no query"),
@@ -587,7 +593,10 @@ impl fmt::Display for ValidationError {
 }
 
 impl fmt::Display for Error {
-    #[allow(clippy::too_many_lines)] // a rendering table: one arm per variant
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // a rendering table: one arm per variant
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FormatMismatch { found, expected } => {

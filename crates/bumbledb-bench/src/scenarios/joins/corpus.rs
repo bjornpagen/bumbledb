@@ -9,7 +9,6 @@ pub(super) fn s(text: String) -> Value {
 
 /// One deterministic row (pure in (seed, relation, index) — params can
 /// recompute any row's content).
-#[allow(clippy::cast_possible_truncation)]
 fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
     let mut rng = Rng::new(mix(seed, rel.0, i));
     match rel {

@@ -204,7 +204,10 @@ fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>, predicates: Vec<PredicateTree>)
 /// bytes<32> Eq hits and adversarial misses, a membership set, a
 /// bytes<32> join (Ref ⋈ Blob on hash), and the criteria pair —
 /// group-by over bytes<N> and `CountDistinct` at widths 8/16/32/64.
-#[allow(clippy::too_many_lines)] // the criteria block, one query per line item
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the criteria block, one query per line item
 fn queries() -> Vec<Op> {
     let mut ops = Vec::new();
     // Round-trip: project the whole row back (all seven digest widths).

@@ -132,7 +132,10 @@ impl<S> PreparedQuery<'_, S> {
 /// pinned))`, with the numerator also floored at 1 so two zero counts
 /// (prepared empty, still empty) read as no drift, not zero.
 fn drift_ratio(pinned: u64, live: u64) -> f64 {
-    #[allow(clippy::cast_precision_loss)] // row counts sit far below 2^52
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )] // row counts sit far below 2^52
     {
         (pinned.max(live).max(1) as f64) / (pinned.min(live).max(1) as f64)
     }

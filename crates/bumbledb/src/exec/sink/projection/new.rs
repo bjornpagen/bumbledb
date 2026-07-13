@@ -87,7 +87,10 @@ impl ProjectionSink {
 
     /// Whether no rows landed (clippy's `len` companion).
     #[must_use]
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "the companion API documents and preserves the type contract"
+    )]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -2,7 +2,10 @@ use std::fmt::Write as _;
 
 use super::{GhzReport, RunReport, Verdict};
 
-#[allow(clippy::cast_precision_loss)]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "reporting accepts lossy integer-to-float conversion"
+)]
 fn us(ns: u64) -> f64 {
     ns as f64 / 1000.0
 }
@@ -95,7 +98,10 @@ fn markdown_family_tables(out: &mut String, report: &RunReport) {
     let on = report.reads.iter().find(|f| f.name == "rsvp_union");
     let off = report.reads.iter().find(|f| f.name == "rsvp_union_off");
     if let (Some(on), Some(off)) = (on, off) {
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "reporting accepts lossy integer-to-float conversion"
+        )]
         let delta_pct =
             (off.ours.p50 as f64 - on.ours.p50 as f64) / on.ours.p50.max(1) as f64 * 100.0;
         let _ = writeln!(

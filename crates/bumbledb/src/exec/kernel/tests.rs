@@ -311,7 +311,10 @@ fn fold_throughput_contiguous_sum() {
             sink += f();
         }
         let elapsed = start.elapsed();
-        #[allow(clippy::cast_precision_loss)] // both far below 2^52
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "reporting accepts lossy integer-to-float conversion"
+        )] // both far below 2^52
         let rate = (values.len() as u64 * reps) as f64
             / u64::try_from(elapsed.as_nanos().max(1)).expect("short run") as f64;
         println!("{label}: {rate:.2} rows/ns (sink {sink})");
@@ -321,7 +324,10 @@ fn fold_throughput_contiguous_sum() {
         fold_sum_biased_i64(&values, 1, 0, values.len())
     });
     let unsigned = rate_of("fold_sum_u64 dense", &mut || {
-        #[allow(clippy::cast_possible_wrap)]
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "the benchmark intentionally reinterprets the unsigned result"
+        )]
         {
             fold_sum_u64(&values, 1, 0, values.len()) as i128
         }
@@ -342,7 +348,6 @@ fn fold_throughput_contiguous_sum() {
 /// rays (`end == u64::MAX`, the point-domain law) mixed in. The leading
 /// pairs pin the named shapes (adjacent, nested, equal, rays) whenever
 /// `len` admits them.
-#[allow(clippy::type_complexity)] // four parallel streams IS the operand shape
 fn allen_corpus(len: usize, rng: &mut Lcg) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>) {
     const MAX: u64 = u64::MAX;
     let named: &[(u64, u64, u64, u64)] = &[

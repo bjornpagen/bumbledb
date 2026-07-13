@@ -30,7 +30,6 @@ impl Bindings {
     }
 
     /// Starts a fresh execution: every slot becomes stale at once.
-    #[allow(clippy::unused_self)] // the epoch bump is debug-only; release reads no state
     pub fn reset(&mut self) {
         #[cfg(debug_assertions)]
         {

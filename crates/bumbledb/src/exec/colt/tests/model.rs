@@ -55,7 +55,10 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
 /// word and byte columns, the identity (all-rows) root, chunked
 /// children, and resume-token splits at every batch size.
 #[test]
-#[allow(clippy::too_many_lines)] // one fixture, five batch sizes, two node shapes
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one fixture, five batch sizes, two node shapes
 fn hoisted_gathers_match_the_per_position_reference() {
     let dir = TempDir::new("colt-hoisted-gather");
     // R(k u64, v u64, b bool): a byte-backed column beside the words.

@@ -55,7 +55,10 @@ const REST_COVER: StatementId = StatementId(12);
 /// can re-land the guard), and Rest(worker, span) <= Roster(worker, span
 /// | rested == true) with pointwise key Roster(worker, span) and non-key
 /// `rested` (a byte-identical segment can re-land outside ψ).
-#[allow(clippy::too_many_lines)] // one fixture schema, a table
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one fixture schema, a table
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![

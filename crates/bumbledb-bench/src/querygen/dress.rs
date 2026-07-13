@@ -165,7 +165,10 @@ fn active_literal_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
 /// dressed atom's relation: integer range ops, string/bytes hits and
 /// misses, vocabulary and bool equalities, interval-value `Eq`/`Ne` against
 /// in-data literals, and same-typed var-vs-var.
-#[allow(clippy::too_many_lines)] // one arm per dressed relation, in id order
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one arm per dressed relation, in id order
 pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     if !rng.chance(DRESS_PCT, 100) {
         return;

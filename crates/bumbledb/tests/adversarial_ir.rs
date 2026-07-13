@@ -374,7 +374,10 @@ fn plausible_query(rng: &mut Rng) -> Query {
 
 /// The hostile catalog: one fault injected into a query in place — the
 /// querygen machinery inverted (generate *invalid* shapes deliberately).
-#[allow(clippy::too_many_lines)] // the catalog: one arm per fault class
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the catalog: one arm per fault class
 fn mutate(rng: &mut Rng, query: &mut Query) {
     match rng.below(16) {
         // Unknown relation id.
@@ -573,7 +576,10 @@ fn adversarial_ir_never_panics() {
         let outcome = catch_unwind(AssertUnwindSafe(|| db.prepare(&query).map(|_| ())));
         // A caught unwind IS the red case — there is no error to match:
         // the panic payload already printed through the hook.
-        #[allow(clippy::match_wild_err_arm)]
+        #[expect(
+            clippy::match_wild_err_arm,
+            reason = "the test intentionally rejects every non-target error uniformly"
+        )]
         match outcome {
             Ok(Ok(())) => ok += 1,
             Ok(Err(_)) => rejected += 1,

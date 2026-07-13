@@ -137,7 +137,10 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
                 debug_assert_eq!(miss.len(), arity);
                 probe(&miss);
             }
-            #[allow(clippy::cast_precision_loss)]
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "reporting accepts lossy integer-to-float conversion"
+            )]
             let rate = false_compares as f64 / probes as f64;
             (name, rate)
         })
@@ -209,7 +212,10 @@ fn probe_steps_stay_near_one_at_max_load() {
             idx = (idx + 1) & mask;
         }
     }
-    #[allow(clippy::cast_precision_loss)] // both far below 2^52
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )] // both far below 2^52
     let avg = steps as f64 / keys.len() as f64;
     println!("avg probe steps at the shipped max load: {avg:.3}");
     assert!(avg <= 1.2, "near-one probe steps at 25% load, got {avg}");

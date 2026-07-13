@@ -77,7 +77,10 @@ pub(super) fn commit_bounded<T>(mut attempt: impl FnMut() -> Result<T>) -> Resul
 /// # Panics
 ///
 /// Only on programmer-invariant violations (validated-schema shapes).
-#[allow(clippy::needless_pass_by_value)] // consuming the delta IS the contract: a commit ends it
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "consuming the delta is the commit boundary contract"
+)] // consuming the delta IS the contract: a commit ends it
 pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> {
     // The empty delta is the *only* no-op commit shape — net dispositions
     // make every recorded entry a genuine state change. It commits without

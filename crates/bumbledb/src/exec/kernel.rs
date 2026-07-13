@@ -59,7 +59,10 @@ pub mod reference;
 
 /// The NEON kernels (128-bit: 2 x u64 or 16 x u8 lanes).
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_code)] // the 40-execution doc: the one sanctioned unsafe module
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)] // the 40-execution doc: the one sanctioned unsafe module
 mod neon;
 
 pub use allen::{

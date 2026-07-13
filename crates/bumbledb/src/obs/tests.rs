@@ -62,7 +62,10 @@ fn stamp_costs_match_the_measured_model() {
     }
     let raw_ticks = fastclock::ticks().wrapping_sub(start);
     std::hint::black_box(acc);
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )]
     let raw_ns = fastclock::ticks_to_ns(raw_ticks) as f64 / n as f64;
 
     let mut acc = 0u64;
@@ -72,7 +75,10 @@ fn stamp_costs_match_the_measured_model() {
     }
     let ss_ticks = fastclock::ticks().wrapping_sub(start);
     std::hint::black_box(acc);
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )]
     let ss_ns = fastclock::ticks_to_ns(ss_ticks) as f64 / n as f64;
 
     assert!(

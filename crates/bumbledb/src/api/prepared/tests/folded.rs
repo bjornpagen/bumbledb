@@ -185,8 +185,8 @@ fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
 }
 
 /// The `[shape]` leg: the folded occurrence never builds an image and
-/// never binds a view — exactly one VIEW_BUILD (the Reading occurrence)
-/// and one IMAGE_BUILD (Reading's) appear; the closed relation's
+/// never binds a view — exactly one `VIEW_BUILD` (the Reading occurrence)
+/// and one `IMAGE_BUILD` (Reading's) appear; the closed relation's
 /// synthesized image is never touched.
 #[cfg(feature = "trace")]
 #[test]

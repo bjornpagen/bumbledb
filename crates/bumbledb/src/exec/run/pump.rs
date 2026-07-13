@@ -8,8 +8,14 @@ use super::{
 impl Executor {
     /// Consumes every pending entry at a middle node, cascading full
     /// child batches immediately and draining the remainder at the end.
-    #[allow(clippy::too_many_lines)] // one batch loop; the invariants read in order
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // one batch loop; the invariants read in order
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the split borrows and execution context are clearer unpacked"
+    )]
     pub(super) fn pump<S: Sink, C: Counters>(
         &mut self,
         tables: &PipeTables,

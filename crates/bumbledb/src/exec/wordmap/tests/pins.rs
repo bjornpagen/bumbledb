@@ -63,7 +63,10 @@ fn const_arity_k4_insert_beats_the_dyn_arm() {
     }
     let core_ns = u64::try_from(core_best.as_nanos()).expect("fits");
     let dyn_ns = u64::try_from(dyn_best.as_nanos()).expect("fits");
-    #[allow(clippy::cast_precision_loss)] // both far below 2^52
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )] // both far below 2^52
     let ratio = dyn_ns as f64 / core_ns as f64;
     println!("const-arity K=4 fill: core {core_ns} ns, dyn {dyn_ns} ns, ratio {ratio:.2}");
     assert!(

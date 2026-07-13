@@ -240,7 +240,10 @@ pub(super) fn check_source(
 /// `R` entry, because phase 1 removed its outgoing edges — so a survivor
 /// is always live in the final state, no disposition re-check is needed,
 /// and its `F` row must exist (a miss is corruption, never a race).
-#[allow(clippy::too_many_lines)] // the target-side judgment, one phase per block
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the target-side judgment, one phase per block
 pub(super) fn check_target(
     txn: &WriteTxn<'_>,
     schema: &Schema,

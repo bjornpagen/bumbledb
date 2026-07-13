@@ -31,7 +31,10 @@ const CLAIM_BOOKING: StatementId = StatementId(3);
 /// Account(holder, kind) ⊆ Holder under the σ `kind == 0` (checking);
 /// Claim(room, span) ⊆ Booking(room, during) — the coverage-form
 /// containment (the target's pointwise key carries the interval).
-#[allow(clippy::too_many_lines)] // one descriptor literal, four relations
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one descriptor literal, four relations
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![

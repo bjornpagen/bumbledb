@@ -23,7 +23,10 @@ use crate::schema::{FieldId, RelationId, StatementId, ValueType};
 mod dnf;
 mod fold;
 mod lower_literal;
-#[allow(clippy::module_inception)]
+#[expect(
+    clippy::module_inception,
+    reason = "the nested module owns the operation named by its parent"
+)]
 mod normalize;
 mod place_comparisons;
 

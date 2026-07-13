@@ -110,7 +110,10 @@ pub(crate) fn mask_of(mask: MaskConst, params: &[Const]) -> crate::allen::AllenM
 /// bind-time resolution slice, indexed by `ParamId`: `Word`/`Byte` for
 /// scalar params, `Interval` for interval params, `WordSet` for set
 /// params.
-#[allow(clippy::too_many_lines)] // one arm per filter kind, in kind order
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one arm per filter kind, in kind order
 fn row_matches(
     image: &RelationImage,
     predicates: &[FilterPredicate],
@@ -548,7 +551,10 @@ fn interval_columns(image: &RelationImage, field: FieldId) -> (&[u64], &[u64]) {
 /// inverts at the hit, exactly like every other predicate class.
 /// Returns whether the scan ran; `false` falls back to the scalar
 /// `row_matches` loop.
-#[allow(clippy::too_many_lines)] // one arm per kernel-shaped predicate kind
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one arm per kernel-shaped predicate kind
 fn kernel_scan(
     image: &RelationImage,
     predicate: &FilterPredicate,

@@ -12,8 +12,14 @@ impl Executor {
     /// pending entries; survivors either append to the child's pending
     /// (middle child — flushed when a full batch accumulates) or run the
     /// last node per parent through `run_node`.
-    #[allow(clippy::too_many_lines)]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the split borrows and execution context are clearer unpacked"
+    )]
     pub(super) fn probe_pass<S: Sink, C: Counters>(
         &mut self,
         tables: &PipeTables,

@@ -90,7 +90,10 @@ use crate::schema::{IntervalElement, ValueType};
 
 mod context;
 mod finds;
-#[allow(clippy::module_inception)]
+#[expect(
+    clippy::module_inception,
+    reason = "the nested module owns the operation named by its parent"
+)]
 mod validate;
 
 pub use validate::validate;

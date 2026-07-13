@@ -479,7 +479,10 @@ mod tests {
             .expect("the mini schema validates")
     }
 
-    #[allow(clippy::too_many_lines)] // the fixture roster, one relation per block
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // the fixture roster, one relation per block
     fn mini_descriptor() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![

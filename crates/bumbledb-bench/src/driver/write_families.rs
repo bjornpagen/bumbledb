@@ -6,7 +6,10 @@ use crate::gen::GenConfig;
 use crate::schema::Ledger;
 use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebench};
 
-#[allow(clippy::cast_precision_loss)]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "reporting accepts lossy integer-to-float conversion"
+)]
 fn facts_per_sec(m: &harness::Measurement, samples: u32) -> f64 {
     let total_secs = (m.stats.mean_ns * u64::from(samples)) as f64 / 1e9;
     m.work as f64 / total_secs.max(f64::EPSILON)

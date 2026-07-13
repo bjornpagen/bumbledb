@@ -35,7 +35,10 @@ impl Executor {
 
     /// The pinned-row arm: a batch of exactly one, with every batch
     /// scaffold skipped — gather, residuals, emit.
-    #[allow(clippy::too_many_arguments)] // the run_node context, unpacked
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the split borrows and execution context are clearer unpacked"
+    )] // the run_node context, unpacked
     fn run_leaf_pinned<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,

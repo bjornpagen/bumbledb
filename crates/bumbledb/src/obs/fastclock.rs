@@ -1,6 +1,9 @@
 /// An opaque monotonic tick count.
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_code)] // one mrs read; sanctioned for trace-only builds
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)] // one mrs read; sanctioned for trace-only builds
 #[inline]
 #[must_use]
 pub fn ticks() -> u64 {
@@ -20,7 +23,10 @@ pub fn ticks() -> u64 {
 /// tailoring rulings pin the reference host at M2+, where ECV is
 /// architectural.
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_code)] // one mrs read; sanctioned for trace-only builds
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)] // one mrs read; sanctioned for trace-only builds
 #[inline]
 #[must_use]
 pub fn ticks_ss() -> u64 {
@@ -43,7 +49,10 @@ pub fn ticks_ss() -> u64 {
 
 /// Tick frequency in Hz (`cntfrq_el0`).
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 #[must_use]
 pub fn frequency() -> u64 {
     // SAFETY: cntfrq_el0 is a user-readable constant register.

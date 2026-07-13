@@ -99,7 +99,10 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
     }
     let bucket_ns = u64::try_from(bucket_best.as_nanos()).expect("fits");
     let linear_ns = u64::try_from(linear_best.as_nanos()).expect("fits");
-    #[allow(clippy::cast_precision_loss)] // both far below 2^52
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )] // both far below 2^52
     let ratio = linear_ns as f64 / bucket_ns as f64;
     println!("force build: bucket {bucket_ns} ns, linear-ref {linear_ns} ns, ratio {ratio:.2}");
     assert!(

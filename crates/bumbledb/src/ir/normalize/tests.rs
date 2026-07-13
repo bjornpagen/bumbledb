@@ -644,7 +644,10 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
 }
 
 #[test]
-#[allow(clippy::too_many_lines)] // one lowering case per residual form
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one lowering case per residual form
 fn cross_atom_allen_becomes_the_mask_residual() {
     // Golden (d): P(during = x), P(during = y), Allen(x, y, m) — the
     // residual carries the mask whole (four endpoint slots + mask);
@@ -865,7 +868,10 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
 // --- constant-side interval comparisons -------------------------------------
 
 #[test]
-#[allow(clippy::too_many_lines)] // a fixed list, one entry per const shape
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // a fixed list, one entry per const shape
 fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
     let iv = || Term::Literal(Value::IntervalI64(2, 9));
     let iv_const = Const::Interval {

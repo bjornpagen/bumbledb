@@ -139,7 +139,10 @@ fn crash_child_alloc_loop() {
 /// torn — a torn 8-byte counter would surface as `Corruption` (or a
 /// non-monotonic allocation) on the very next alloc.
 #[test]
-#[allow(clippy::redundant_closure_for_method_calls)] // HRTB: the method path does not unify
+#[expect(
+    clippy::redundant_closure_for_method_calls,
+    reason = "the method path does not satisfy the higher-ranked bound"
+)] // HRTB: the method path does not unify
 fn kill_during_counters_only_commit_leaves_q_consistent() {
     let exe = std::env::current_exe().expect("test binary path");
     for (round, delay_ms) in [10u64, 40].into_iter().enumerate() {

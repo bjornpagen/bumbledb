@@ -406,7 +406,10 @@ fn ray_guard() -> PredicateTree {
 /// does the bounded-end (`COVERED_BY` a bounded window) form: the
 /// filter-order law runs the guard before the subtraction.
 #[test]
-#[allow(clippy::too_many_lines)] // one fixture, every evaluation path in order
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one fixture, every evaluation path in order
 fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
     let dir = TempDir::new("measure-ray");
     let schema = measure_schema();

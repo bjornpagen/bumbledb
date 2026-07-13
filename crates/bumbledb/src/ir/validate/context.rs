@@ -830,7 +830,10 @@ impl Context {
     /// A literal against a comparison side's resolved type — the precise
     /// diagnosis, exactly as the atom-binding path reports it (the ordinal
     /// names the comparison instead of an atom).
-    #[allow(clippy::unused_self)] // shape-parallel with the sibling checkers
+    #[expect(
+        clippy::unused_self,
+        reason = "the receiver keeps this checker API shape-parallel"
+    )] // shape-parallel with the sibling checkers
     fn check_literal_against(
         &self,
         index: usize,

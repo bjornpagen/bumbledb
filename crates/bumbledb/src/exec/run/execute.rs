@@ -100,8 +100,11 @@ impl Executor {
     ///
     /// Only on a programmer-invariant violation: a zero batch size.
     #[must_use]
-    #[allow(clippy::too_many_lines)] // table construction, one table at a
-                                     // time — splitting scatters the shapes
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // table construction, one table at a
+       // time — splitting scatters the shapes
     pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(
             batch > 0,

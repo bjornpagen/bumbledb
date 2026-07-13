@@ -3,6 +3,8 @@
 /// safety obligations on the pointer beyond being a valid address to
 /// hint about (a stale hint is harmless).
 #[inline]
+// `unsafe` exists only in the aarch64 body; the portable body is safe, so an
+// expectation would be unfulfilled when this same item is built off aarch64.
 #[allow(unsafe_code)]
 pub fn prefetch_read<T>(ptr: *const T) {
     #[cfg(target_arch = "aarch64")]

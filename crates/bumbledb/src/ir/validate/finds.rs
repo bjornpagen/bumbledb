@@ -9,7 +9,10 @@ use crate::schema::ValueType;
 use std::collections::BTreeSet;
 
 impl Context {
-    #[allow(clippy::too_many_lines)] // the aggregate roster, one arm per shape
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // the aggregate roster, one arm per shape
     pub(super) fn check_finds(
         &self,
         rule: &LoweredRule,

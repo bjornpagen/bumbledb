@@ -414,7 +414,10 @@ fn resolve_selection_into(
 /// through positive occurrences (`split_filters` routes every
 /// Eq-constant into selections) and live for negated ones, whose
 /// Eq-constants ARE view filters.
-#[allow(clippy::too_many_lines)] // one arm per filter kind, in kind order
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one arm per filter kind, in kind order
 fn resolve_filter_into(
     txn: &ReadTxn<'_>,
     template: &mut FilterPredicate,

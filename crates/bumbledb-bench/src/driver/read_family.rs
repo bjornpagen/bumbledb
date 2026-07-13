@@ -14,7 +14,10 @@ fn exec_digest(stats: &bumbledb::ExecutionStats) -> report::ExecDigest {
     let mut worst = 1.0_f64;
     let mut covers = String::new();
     for (index, node) in stats.rules.iter().flat_map(|r| &r.nodes).enumerate() {
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "reporting accepts lossy integer-to-float conversion"
+        )]
         let (estimate, actual) = (node.estimate.max(1) as f64, node.actual.max(1) as f64);
         worst = worst.max((estimate / actual).max(actual / estimate));
         if index > 0 {
@@ -122,7 +125,10 @@ impl BenchRun<'_> {
             };
             let off = self.measure_read(db, conn, &off_spec)?;
             let on = &out[0];
-            #[allow(clippy::cast_precision_loss)]
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "reporting accepts lossy integer-to-float conversion"
+            )]
             let delta_pct =
                 (off.ours.p50 as f64 - on.ours.p50 as f64) / on.ours.p50.max(1) as f64 * 100.0;
             eprintln!(
@@ -138,7 +144,10 @@ impl BenchRun<'_> {
     /// The shared measurement core: warm both engines under the exact
     /// protocol, quantum-guarded, traced and profiled where the modes
     /// ask.
-    #[allow(clippy::too_many_lines)] // one family's full protocol, linear
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // one family's full protocol, linear
     fn measure_read<S>(
         &mut self,
         db: &Db<S>,
@@ -255,7 +264,10 @@ impl BenchRun<'_> {
             })
         })?;
 
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "reporting accepts lossy integer-to-float conversion"
+        )]
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
         #[cfg(feature = "obs")]
         let alloc = alloc_report(ours.alloc);

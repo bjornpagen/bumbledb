@@ -111,7 +111,10 @@ fn bounded_corpus() -> Delta {
 }
 
 /// The fixed measure queries over the bounded corpus.
-#[allow(clippy::too_many_lines)] // a fixed list, one entry per query
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // a fixed list, one entry per query
 fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
     let dur = |op: AggOp| FindTerm::AggregateDuration { op, over: VarId(1) };
     vec![

@@ -418,7 +418,6 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
 }
 
 #[test]
-#[allow(clippy::too_many_lines)] // one violation per statement kind, linear
 fn statement_violations_surface_from_commit_through_the_public_api() {
     let dir = common::TempDir::new("api-violations");
     let db = Db::create(dir.path(), Ledger).expect("create");
@@ -973,7 +972,10 @@ fn a_second_handle_on_a_live_path_is_locked_out() {
 /// environment (named databases, no `_meta`), while the half-created
 /// bumbledb recovery case — an empty root — still proceeds.
 #[test]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 fn create_refuses_a_foreign_lmdb_environment() {
     let dir = common::TempDir::new("api-env-foreign-lmdb");
     {
@@ -1132,7 +1134,10 @@ fn prepared_executions_observe_exactly_one_generation() {
 /// (insert then delete of the same absent fact). The generation must
 /// not move for either — `Q` marks are not query-visible state.
 #[test]
-#[allow(clippy::redundant_closure_for_method_calls)] // HRTB: the method path does not unify
+#[expect(
+    clippy::redundant_closure_for_method_calls,
+    reason = "the method path does not satisfy the higher-ranked bound"
+)] // HRTB: the method path does not unify
 fn escaped_fresh_ids_survive_noop_commits() {
     let dir = common::TempDir::new("api-fresh-escape");
     let db = Db::create(dir.path(), Ledger).expect("create");
@@ -1298,8 +1303,6 @@ fn out_of_range_relation_ids_are_typed_errors() {
 /// occurrence (and as the max); re-preparing resets the pin; a shrunk
 /// relation also reads as drift > 1 — the ratio is symmetric.
 #[test]
-#[allow(clippy::too_many_lines)] // one lifecycle, read in order: fresh →
-                                 // grown → re-prepared → shrunk
 fn staleness_reports_drift_and_reprepare_resets_it() {
     let dir = common::TempDir::new("api-staleness");
     let db = Db::create(dir.path(), Ledger).expect("create");

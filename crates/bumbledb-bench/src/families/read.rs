@@ -676,7 +676,10 @@ fn mandate_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
 /// ported ten, then the redesign's five (param set, negation,
 /// Arg-restriction, membership, overlap).
 #[must_use]
-#[allow(clippy::too_many_lines)] // the registry is a table, one entry per family
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the registry is a table, one entry per family
 pub fn all() -> &'static [Family] {
     &[
         Family {

@@ -9,8 +9,11 @@ use crate::storage::env::ReadTxn;
 /// Resets the owned COLT sources against this execution's images and
 /// views (buffer ping-pong: old survivor buffers recycle into the new
 /// views), then runs the join into the sink.
-#[allow(clippy::too_many_arguments)] // the prepared query's split borrows;
-                                     // bundling them into a struct would only rename the same ten things
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the split borrows and execution context are clearer unpacked"
+)] // the prepared query's split borrows;
+   // bundling them into a struct would only rename the same ten things
 pub(super) fn run_join<C: crate::exec::run::Counters>(
     plan: &crate::plan::fj::ValidatedPlan,
     schema: &Schema,

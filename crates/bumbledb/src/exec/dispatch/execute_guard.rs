@@ -17,9 +17,12 @@ use crate::storage::env::ReadTxn;
 ///
 /// `Lmdb`/`Corruption` from the storage reads. A missing key or a failed
 /// filter is not an error: the result is simply empty.
-#[allow(clippy::too_many_arguments)] // the prepared query's split borrows,
-                                     // exactly like `run_join`'s — bundling
-                                     // would only rename the same eight things
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the split borrows and execution context are clearer unpacked"
+)] // the prepared query's split borrows,
+   // exactly like `run_join`'s — bundling
+   // would only rename the same eight things
 pub fn execute_guard<S: Sink, C: crate::exec::run::Counters>(
     plan: &GuardPlan,
     txn: &ReadTxn<'_>,

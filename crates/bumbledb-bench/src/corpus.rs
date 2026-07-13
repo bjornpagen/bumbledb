@@ -25,7 +25,10 @@ impl LoadStats {
     /// calendar loader, `crate::calendar::corpus`).
     #[must_use]
     pub fn of(facts: u64, wall: Duration) -> Self {
-        #[allow(clippy::cast_precision_loss)] // reporting, not arithmetic
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "reporting accepts lossy integer-to-float conversion"
+        )] // reporting, not arithmetic
         let facts_per_sec = facts as f64 / wall.as_secs_f64().max(f64::EPSILON);
         Self {
             facts,

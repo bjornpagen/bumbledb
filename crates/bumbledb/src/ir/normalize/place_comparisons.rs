@@ -106,7 +106,10 @@ fn word(var: VarId, word: IntervalWord) -> VarWord {
 /// stays whole (four endpoint slots + mask, [`PlacedAllen`]), and point
 /// containment, which decomposes into word comparisons
 /// (docs/architecture/20-query-ir.md).
-#[allow(clippy::too_many_lines)] // one linear pass, each comparison class in order
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one linear pass, each comparison class in order
 pub(super) fn place_comparisons(
     rule: &RuleWitness<'_>,
     occurrences: &mut [Occurrence],

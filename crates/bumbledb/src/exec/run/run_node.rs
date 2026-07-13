@@ -7,8 +7,11 @@ use super::{
 };
 
 impl Executor {
-    #[allow(clippy::too_many_lines)] // the one hot loop; splitting it would
-                                     // scatter the batch invariants the comments walk through in order
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // the one hot loop; splitting it would
+       // scatter the batch invariants the comments walk through in order
     pub(super) fn run_node<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,

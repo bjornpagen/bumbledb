@@ -389,7 +389,10 @@ fn mixed_params_query() -> Query {
 /// non-dense param ids each raise their precise error; a valid mixed
 /// bind (two scalars, one set) executes.
 #[test]
-#[allow(clippy::too_many_lines)] // the bind matrix: one case per arm, linear
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the bind matrix: one case per arm, linear
 fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     let dir = common::TempDir::new("edge-bind-matrix");
     let db = Db::create(dir.path(), Ledger).expect("create");

@@ -64,7 +64,10 @@ pub(super) fn filter_range_u64(col: &[u64], lo: u64, hi: u64, out: &mut Vec<u32>
 /// no new NEON width): `mask` maps a (starts, ends) lane pair to the
 /// combined survivor mask; the branchless writes are the predicate-scan
 /// pattern verbatim, and `tail` is its scalar twin over the remainder.
-#[allow(clippy::inline_always)]
+#[expect(
+    clippy::inline_always,
+    reason = "measured kernel inlining is machine-checked and load-bearing"
+)]
 // the fused pass exists to keep the mask
 // closures from becoming outlined calls
 // per two-lane chunk (the
@@ -244,7 +247,10 @@ const ALLEN_SIG_TABLE: [u8; 64] = {
 
 /// Two lanes' signatures from the 8 predicate lanes (4 `cmhi`/`cmeq`
 /// pairs over the endpoint words), packed by masked constant bits.
-#[allow(clippy::inline_always)]
+#[expect(
+    clippy::inline_always,
+    reason = "measured kernel inlining is machine-checked and load-bearing"
+)]
 // the window loops exist to keep this
 // arithmetic in registers; an outlined call per two lanes would spill it
 #[inline(always)]
@@ -273,7 +279,6 @@ unsafe fn allen_sig2(
 /// One 8-pair window: 4×2 signature lanes narrowed to 8 index bytes,
 /// mapped through the 64-byte table in q registers via `tbl`, stored as
 /// 8 code bytes.
-#[allow(clippy::inline_always)] // as `allen_sig2`
 #[inline(always)]
 unsafe fn allen_code_window(
     table: std::arch::aarch64::uint8x16x4_t,
@@ -300,7 +305,10 @@ unsafe fn allen_code_window(
 }
 
 /// The 64-byte nibble table, loaded into four q registers.
-#[allow(clippy::inline_always)] // as `allen_sig2`
+#[expect(
+    clippy::inline_always,
+    reason = "measured kernel inlining is machine-checked and load-bearing"
+)] // as `allen_sig2`
 #[inline(always)]
 unsafe fn allen_table() -> std::arch::aarch64::uint8x16x4_t {
     // SAFETY (caller's contract): four 16-byte loads within the 64-byte

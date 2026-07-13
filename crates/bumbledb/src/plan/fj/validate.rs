@@ -175,8 +175,11 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// Only on programmer-invariant violations (more than 256 subatoms in one
 /// node — impossible for plans over the planner's occurrence cap — or a
 /// normalized query whose slot-width map misses a variable).
-#[allow(clippy::too_many_lines)] // the placement rules read in order;
-                                 // each attaches one residual kind
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the placement rules read in order;
+   // each attaches one residual kind
 pub fn validate(
     plan: &FjPlan,
     normalized: &NormalizedQuery,

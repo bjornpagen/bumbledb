@@ -83,7 +83,10 @@ impl AggregateSink {
     /// elision is a representation (`seen: None`), never a hot-loop
     /// branch.
     #[must_use]
-    #[allow(clippy::too_many_lines)] // one table per sink concern, in order
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // one table per sink concern, in order
     pub fn with_capacity_hint(
         mut finds: Vec<FindSpec>,
         slot_count: usize,

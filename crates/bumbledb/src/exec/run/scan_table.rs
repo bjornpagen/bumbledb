@@ -10,8 +10,14 @@ impl Executor {
     /// the sink's kernels; no key batch exists. Leaf residuals filter
     /// positions per run before the sink sees them; a leaf that could
     /// skip (D2) stays on the batch path.
-    #[allow(clippy::too_many_arguments)] // the run_node context, unpacked
-    #[allow(clippy::too_many_lines)] // the two measured eval arms are siblings by design
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the split borrows and execution context are clearer unpacked"
+    )] // the run_node context, unpacked
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // the two measured eval arms are siblings by design
     pub(super) fn run_leaf_scan<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,

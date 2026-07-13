@@ -254,7 +254,10 @@ fn booking_atom() -> Atom {
 }
 
 /// The 23 fixed queries, each with its parameters.
-#[allow(clippy::too_many_lines)] // a fixed list, one entry per query
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // a fixed list, one entry per query
 fn queries() -> Vec<(Query, Vec<ParamValue>)> {
     let v = |id: u16| FindTerm::Var(VarId(id));
     let agg = |op: AggOp, over: Option<u16>| FindTerm::Aggregate {

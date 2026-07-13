@@ -85,7 +85,10 @@ impl FlameSummary {
     #[must_use]
     pub fn render_top(&self, rows: usize) -> String {
         use std::fmt::Write as _;
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "reporting accepts lossy integer-to-float conversion"
+        )]
         let us = |ns: u64| ns as f64 / 1000.0;
         let mut out = String::new();
         let _ = writeln!(

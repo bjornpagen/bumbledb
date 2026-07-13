@@ -12,7 +12,10 @@ impl Colt {
     /// per-key fanout of a fully-descended cursor; the forced arm exists
     /// for zero-arity gate occurrences whose root a sibling probe forced.
     #[must_use]
-    #[allow(clippy::inline_always)]
+    #[expect(
+        clippy::inline_always,
+        reason = "measured kernel inlining is machine-checked and load-bearing"
+    )]
     // the per-element probe class carries no calls (`scripts/
     // check-asm.sh`); this wrapper only builds the check closure — the
     // recursive walk below is the deliberately-outlined body, and its
@@ -153,7 +156,10 @@ impl Colt {
 
     /// Column-hoisted gather of one position segment into
     /// `keys_out[out_base..]` + pinned-row children (the unchecked-gather interior).
-    #[allow(unsafe_code)]
+    #[expect(
+        unsafe_code,
+        reason = "the localized unsafe operation has a documented safety invariant"
+    )]
     pub(super) fn gather_segment(
         &self,
         level: usize,

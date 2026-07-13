@@ -33,9 +33,12 @@ const PROXY_ITERS: u64 = 30_000;
 /// extend the dependent chain.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-#[allow(unsafe_code)] // 00-product policy: register-only asm, no memory —
-                      // the proxy's cycle count must be known by construction, which no
-                      // compiler-emitted loop guarantees across rustc versions.
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)] // 00-product policy: register-only asm, no memory —
+   // the proxy's cycle count must be known by construction, which no
+   // compiler-emitted loop guarantees across rustc versions.
 fn chain(seed: u64, iters: u64) -> u64 {
     // An odd multiplier keeps the chain value from collapsing to zero.
     let mut x = seed | 1;
@@ -81,9 +84,15 @@ pub fn effective_ghz() -> f64 {
     let start = Instant::now();
     std::hint::black_box(chain(0x1234_5678, PROXY_ITERS));
     let ns = start.elapsed().as_nanos().max(1);
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )]
     let cycles = (PROXY_ITERS * CHAIN_MULS * MUL_LATENCY_CYCLES) as f64;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting accepts lossy integer-to-float conversion"
+    )]
     let ns = ns as f64;
     cycles / ns
 }

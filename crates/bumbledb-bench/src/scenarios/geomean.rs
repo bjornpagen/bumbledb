@@ -3,7 +3,10 @@ use super::QueryReport;
 /// Geometric mean of the p50 ratios (the honest cross-query summary:
 /// ratios multiply, so the geomean is the scale-free center).
 #[must_use]
-#[allow(clippy::cast_precision_loss)]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "reporting accepts lossy integer-to-float conversion"
+)]
 pub fn geomean(reports: &[&QueryReport]) -> f64 {
     if reports.is_empty() {
         return 1.0;

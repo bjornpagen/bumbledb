@@ -176,7 +176,10 @@ fn leaf(tree: &bumbledb::PredicateTree) -> &Comparison {
 /// fresh id counters, the registry of variables the shapes bound
 /// (group-key candidates), and each bound variable's anchoring
 /// (relation, field) — the provenance the negation pass draws from.
-#[allow(clippy::struct_excessive_bools)] // independent generation-fact flags.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent booleans mirror the external configuration"
+)] // independent generation-fact flags.
 #[derive(Default)]
 struct Builder {
     atoms: Vec<Atom>,
@@ -227,7 +230,10 @@ impl Builder {
 /// Generation facts the query alone cannot reveal (hit-vs-miss and the
 /// boundary polarities are corpus-content properties; the chase variant
 /// is the generator's intent, engine-verified in the tests).
-#[allow(clippy::struct_excessive_bools)] // independent corpus-content tags.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent booleans mirror the external configuration"
+)] // independent corpus-content tags.
 #[derive(Debug, Clone, Copy, Default)]
 struct GenTags {
     miss: bool,

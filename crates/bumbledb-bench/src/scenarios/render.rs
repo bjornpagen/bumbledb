@@ -1,7 +1,10 @@
 use super::{geomean, QueryReport};
 use crate::harness::Protocol;
 
-#[allow(clippy::cast_precision_loss)]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "reporting accepts lossy integer-to-float conversion"
+)]
 fn us(ns: u64) -> f64 {
     ns as f64 / 1000.0
 }

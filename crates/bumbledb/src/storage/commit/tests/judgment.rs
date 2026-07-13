@@ -44,7 +44,6 @@ const REPORT_ACCOUNT: StatementId = StatementId(9);
 /// Shift(worker, span | rested == true): coverage against a pointwise
 /// key, unselected and selected. Report(subject | urgent == true) <=
 /// Account(id): a conditional source.
-#[allow(clippy::too_many_lines)] // one fixture: eight relations, ten statements
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![

@@ -28,11 +28,17 @@ use super::{word_base, AntiProbeSpec, Colt, Counters, JoinPhase, Source, PREFETC
 /// (`run_node` reads `bindings`, `probe_pass` the element's parent row).
 /// Sources are per key **word**: an interval variable's pair reads two
 /// consecutive batch words or slots (the `SlotWidth` layout).
-#[allow(clippy::too_many_arguments)] // the probe-pass context, unpacked —
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the split borrows and execution context are clearer unpacked"
+)] // the probe-pass context, unpacked —
 // the same split borrows as the sibling passes
-#[allow(clippy::too_many_lines)] // one pass, three probe forms (gate,
-                                 // keyless membership, keyed) — the
-                                 // invariants read in order
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // one pass, three probe forms (gate,
+   // keyless membership, keyed) — the
+   // invariants read in order
 pub(super) fn anti_probe_pass<C: Counters>(
     specs: &[AntiProbeSpec],
     node_idx: usize,
