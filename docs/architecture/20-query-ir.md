@@ -381,8 +381,8 @@ of one comparison, a non-interval variable, and any fold but the three.
 - **Selectivity:** a measure comparison is a range predicate over the
   derived duration word; the existing range keep-fraction floor applies
   unmodified.
-- The measure position weakens no proof silently: rule-disjointness and
-  the union elision treat a measure head position as non-witnessing
+- The measure position weakens no proof silently: rule-disjointness treats
+  a measure head position as non-witnessing
   (`end − start` is a non-injective map of its variable, so distinct
   bindings may project equal head rows).
 

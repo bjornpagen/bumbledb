@@ -251,44 +251,6 @@ fn the_hand_coalesce_matches_pack() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The `rsvp_union` DU whole-read runs identically with the disjointness
-/// proof on and forced off on a loaded store — the elision is never
-/// semantic; the bench's delta sub-measurement measures cost, not
-/// meaning.
-#[test]
-fn the_elision_is_never_semantic() {
-    let dir = scratch("elision");
-    let sizes = CalSizes::unit();
-    let db = Db::create(&dir, Scheduling).expect("create");
-    corpus::load_bumbledb_sized(&db, CFG, sizes).expect("unit load");
-    let family = families::all()
-        .iter()
-        .find(|f| f.name == "rsvp_union")
-        .expect("registered");
-    let query = (family.query)();
-
-    let mut on = db.prepare(&query).expect("prepare");
-    assert!(on.disjoint_rules(), "the DU arms prove disjointness");
-    let types: Vec<bumbledb::schema::ValueType> = on.column_types().cloned().collect();
-    let mut off = db.prepare(&query).expect("prepare");
-    off.force_disjoint_off();
-
-    let rows_on = db
-        .read(|snap| snap.execute_collect_args(&mut on, &[]))
-        .expect("proof on");
-    let rows_off = db
-        .read(|snap| snap.execute_collect_args(&mut off, &[]))
-        .expect("proof off");
-    assert!(!rows_on.is_empty());
-    assert_eq!(
-        crate::compare::from_buffer(&rows_on, &types),
-        crate::compare::from_buffer(&rows_off, &types),
-        "byte-identical either way"
-    );
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// One SQL golden shape check on a loaded store: every family's SQL for
 /// its first S draw prepares and executes on the mirror (window
 /// functions included), and translation errors never reach a bench run.

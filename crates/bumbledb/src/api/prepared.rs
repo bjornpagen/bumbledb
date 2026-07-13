@@ -171,14 +171,10 @@ pub struct PreparedQuery<'s, S> {
     /// pairwise disjoint, carrying the witness — the (relation, field)
     /// whose differing pinned literals forbid cross-rule head
     /// collisions. `None` for single-rule programs and unproven pairs.
-    /// Readers: the sink configuration (built at prepare), EXPLAIN and
-    /// the structured stats (an elision must name its proof).
+    /// Readers: EXPLAIN and the structured stats. The executor deliberately
+    /// does not spend this proof; see the measured refutation in
+    /// `docs/architecture/40-execution.md`.
     disjoint_rules: Option<crate::plan::fj::DisjointWitness>,
-    /// The union elision, composed at prepare: disjoint rules ∧ per-rule
-    /// distinct bindings ∧ heads reading every slot — the multi-rule
-    /// aggregate seen-set is elided exactly when this holds
-    /// (introspection's observable; the sink was built from it).
-    union_elided: bool,
     /// The subsumption record (`plan/chase.rs`): rules deleted at
     /// prepare, each with its subsuming rule, in lowered-rule indices —
     /// `rules` below holds only the survivors, in order. Readers:

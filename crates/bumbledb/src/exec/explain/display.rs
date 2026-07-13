@@ -37,9 +37,9 @@ impl fmt::Display for Report<'_> {
                 absorbed,
             )?;
             // The rule-disjointness proof (docs/architecture/
-            // 40-execution.md § set semantics): an elision must name its
-            // proof — the witness (R, f) whose differing pinned literals
-            // forbid cross-rule head collisions.
+            // 40-execution.md § set semantics): diagnostic knowledge names
+            // its witness (R, f), whose differing pinned literals forbid
+            // cross-rule head collisions.
             match &self.stats.disjoint_rules {
                 Some(witness) => writeln!(
                     f,

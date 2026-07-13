@@ -253,20 +253,11 @@ direction), and exact-abutment working-hour chains from the epoch to ∞.
 |---|---|
 | `busy_scan` | the Allen mask against a param window over an O(n) scan (03/04); the range-accelerator trigger's evidence |
 | `meets_chain` | named-relation probes: singleton `MEETS` chain join + `DURING` filter — singleton cost = composite cost (03) |
-| `rsvp_union` | the DU whole-read: three rules, one per RSVP arm, under the rule-disjointness elision (05/07/08) |
+| `rsvp_union` | the DU whole-read: three rules, one per RSVP arm, through the spanning union seen-set (05/07/08) |
 | `conflict_pairs` | the Allen-mask self-join, `INTERSECTS` across one account's persons (04) |
 | `conflict_free` | the anti-probe: ¬Claim with a point-membership binding at an event-creation instant (04 + negation) |
 | `free_busy` | `Pack`, the coalescing fold, per person per window (11/12); free time is the host's gap walk (the `Gaps` refusal) |
 | `claim_hours` | the measure: `Sum(Duration)` by claim arm under the `Allen(DISJOINT)` ray guard (10) |
-
-**The elision delta is a named sub-measurement:** `rsvp_union` is measured
-twice — the proof on, then forced off (`PreparedQuery::force_disjoint_off`, the
-same override the differential guard uses; never semantic) — reported as the
-`rsvp_union_off` row plus a delta line. The elision's number exists in every
-report. Its one-variable isolation is typed by
-`force_disjoint_off_changes_only_the_union_sink_configuration`, which pins
-plans, estimates, scratch shapes, and capacity hints while changing only the
-sink's union regime and its absorbed accounting.
 
 **Mirror rules.** The calendar mirror follows the value-mapping and template
 rules above; `free_busy` is the one family the IR→SQL translator cannot express
@@ -328,9 +319,9 @@ time the emulation, not the engine.
   aggregate-sink binding dedup** (the two places a set-semantics bug would hide).
   The algebra families extend the same contract: **multi-rule programs** at arm
   counts 2–4 — provably-disjoint arms (distinct closed-reference selections on one
-  discriminant, the DU-arm shape whose disjointness feeds the executor's
-  cross-rule-dedup elision, exercised adversarially against the oracles' plain
-  union), overlapping arms with duplicate head rows across rules (the union's
+  discriminant, with the proof visible diagnostically and the spanning union
+  exercised against the oracles' plain union), overlapping arms with duplicate
+  head rows across rules (the union's
   teeth), and the multi-rule aggregate union fold (`rules ∧ aggregate`, at least
   once per run); **the measure** in all three construct kinds — find position,
   order predicate, and `Sum`/`Min`/`Max` fold (`Sum` under a duration bound, the

@@ -165,41 +165,6 @@ fn the_json_is_structurally_sound() {
 }
 
 #[test]
-fn the_elision_pair_reports_emitted_and_absorbed_work() {
-    let mut report = fixture();
-    report.reads[0].name = "rsvp_union".to_owned();
-    report.reads[0].ours = stats(1_400_000);
-    report.reads[0].exec = Some(ExecDigest {
-        worst_estimate_factor: 3.0,
-        covers: "n0:s0x3".to_owned(),
-        emitted: 300,
-        absorbed: 0,
-    });
-    let mut off = report.reads[0].clone();
-    off.name = "rsvp_union_off".to_owned();
-    off.ours = stats(900_000);
-    off.exec = Some(ExecDigest {
-        worst_estimate_factor: 1.0,
-        covers: "n0:s0x3".to_owned(),
-        emitted: 300,
-        absorbed: 12,
-    });
-    report.reads.push(off);
-
-    let markdown = to_markdown(&report);
-    assert!(
-        markdown.contains("| rsvp_union | 3.00 | n0:s0x3 | 300 | 0 |"),
-        "{markdown}"
-    );
-    assert!(
-        markdown.contains("| rsvp_union_off | 1.00 | n0:s0x3 | 300 | 12 |"),
-        "{markdown}"
-    );
-    let json = to_json(&report);
-    assert!(json.contains("\"emitted\":300,\"absorbed\":12"), "{json}");
-}
-
-#[test]
 fn ghz_stamps_render_in_markdown_json_and_the_merge_excludes_dirt() {
     let mut stamped = fixture();
     stamped.reads[0].ghz = Some(GhzReport {

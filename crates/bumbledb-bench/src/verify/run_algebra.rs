@@ -4,7 +4,7 @@
 //! - **Rules**: multi-rule programs replayed engine-vs-naive — the
 //!   naive model evaluates the rules *directly* (union of per-rule
 //!   binding sets, no engine sink mechanics) — disjoint vocabulary-selected
-//!   arms (the elision path), overlapping arms with duplicate head rows,
+//!   arms, overlapping arms with duplicate head rows,
 //!   and the multi-rule aggregate union fold.
 //! - **DNF**: seeded random predicate trees to depth 3 — the naive
 //!   model evaluates the *input tree*; the engine evaluates the lowered
@@ -97,7 +97,7 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
         rules,
     };
     vec![
-        // Disjoint arms (distinct vocabulary selections — the elision path),
+        // Disjoint arms (distinct vocabulary selections),
         // two and three wide.
         query(assemble(vec![entry_arm(0), entry_arm(2)])),
         query(assemble(vec![entry_arm(0), entry_arm(1), entry_arm(2)])),

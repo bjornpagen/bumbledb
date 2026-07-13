@@ -18,9 +18,9 @@ pub struct ExecutionStats {
     pub emits: u64,
     /// The rule-disjointness proof (docs/architecture/40-execution.md
     /// § set semantics): `Some` iff the program's rules are provably
-    /// pairwise disjoint, naming the witness — an elision must name its
-    /// proof. `None` for single-rule programs and unproven pairs (the
-    /// spanning seen-set stays).
+    /// pairwise disjoint, naming the witness. `None` for single-rule
+    /// programs and unproven pairs. This is diagnostic knowledge; the
+    /// spanning seen-set stays in either case.
     pub disjoint_rules: Option<DisjointRules>,
     /// Rules the subsumption pass deleted at prepare (`plan/chase.rs`):
     /// after per-rule elimination the subsuming rule's normalized body
@@ -96,8 +96,8 @@ pub struct RuleStats {
     pub emitted: u64,
     /// Of those, the ones the spanning seen-set absorbed — duplicates
     /// within the rule or re-derivations of an earlier rule's head fact
-    /// (`emitted - absorbed` were new). Zero under the single-rule
-    /// elision (nothing is ever absorbed — by proof).
+    /// (`emitted - absorbed` were new). Zero under a single-rule
+    /// distinct-bindings proof (nothing can be absorbed).
     pub absorbed: u64,
     /// Present iff this rule classified as a guard probe.
     pub guard: Option<GuardStats>,

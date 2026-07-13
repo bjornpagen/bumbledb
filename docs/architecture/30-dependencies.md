@@ -207,10 +207,10 @@ triggers:
    of two mechanisms.
 3. **Exclusivity** (derived): an id in two child relations would force the parent's
    `kind` to equal two handles; the parent's key on `id` makes that a contradiction,
-   not a rule. The theorem's third consumer: the checker enforces it, the chase
-   spends it, and the executor spends it again — rules selecting different `kind`
-   values are provably disjoint, so the union's cross-rule dedup is elided at plan
-   time (`40-execution.md` § set semantics, the rule-disjointness elision).
+   not a rule. Two consumers remain: the checker enforces it and the chase spends
+   it. EXPLAIN can also report that rule heads are provably disjoint, but execution
+   deliberately does not spend that knowledge; the measured refutation is in
+   `40-execution.md` § set semantics.
 
 A **parent-only handle** needs no statement (a kind with no child relation
 simply has no arm). A **0..1 optional attribute** — the no-nulls idiom

@@ -75,13 +75,10 @@ impl AggregateSink {
     /// keys the whole slot array; a multi-rule sink keys the **head
     /// projection** — rule-independent by construction. `distinct` is
     /// the caller's proof that the emitted dedup-key stream is
-    /// duplicate-free, and it elides the seen-set entirely: single-rule,
-    /// the plan's distinct-bindings flag; multi-rule, the rule-
-    /// disjointness composition (docs/architecture/40-execution.md § set
-    /// semantics — pairwise-disjoint rules, per-rule distinct bindings,
-    /// and heads reading every slot). One flag, one mechanism — the
-    /// elision is a representation (`seen: None`), never a hot-loop
-    /// branch.
+    /// duplicate-free, and it elides the seen-set for a single rule.
+    /// Multi-rule sinks always retain one head-projection seen-set: that
+    /// spanning map is the union representation, even when the rules are
+    /// provably disjoint.
     #[must_use]
     #[expect(
         clippy::too_many_lines,
@@ -178,10 +175,10 @@ impl AggregateSink {
             groups: WordMap::with_capacity_hint(key_words, hint.min(4096)),
             key_scratch: vec![0; key_words],
             binding_scratch: vec![0; scratch_words],
-            // Single-rule: whole-binding key. Multi-rule: head-projection
-            // key. Either is elided exactly when the caller proved its
-            // stream duplicate-free (`distinct`).
-            seen: (!distinct).then(|| {
+            // Single-rule: whole-binding key, elided when its own plan
+            // proves distinct bindings. Multi-rule: head-projection key,
+            // always retained as the union representation.
+            seen: (union || !distinct).then(|| {
                 WordMap::with_capacity_hint(if union { union_words } else { scratch_words }, hint)
             }),
             union_scratch: vec![0; union_words],

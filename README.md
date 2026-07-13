@@ -112,12 +112,11 @@ fact-table ledger and a calendar world of interval claims, RSVP arms, and
 ray horizons), Apple M2 Max, engine-favorable workload class (point lookups
 through multi-way joins, interval algebra, and aggregates — exactly what a
 set-semantic Free Join engine is built for). SQLite is measured warm,
-prepared, and well-indexed on the identical data. One internal sub-
-measurement is currently a recorded loss: the rule-disjointness elision
-(`rsvp_union` vs `rsvp_union_off`) measures ~32% slower than the seen-set
-it removes, pending the owner's ratchet ruling. This is a research engine
-validated at this scale, not a production database. Regenerate everything
-yourself:
+prepared, and well-indexed on the identical data. One internal experiment is
+a recorded refutation: replacing the multi-rule spanning seen-set with
+per-rule drains measured ~32% slower, so that optimization was removed and
+the proof remains diagnostic only. This is a research engine validated at
+this scale, not a production database. Regenerate everything yourself:
 
 ```sh
 cargo build --release -p bumbledb-bench

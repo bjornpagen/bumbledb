@@ -214,25 +214,23 @@ impl<S> PreparedQuery<'_, S> {
 
     /// Whether the aggregate sink's binding seen-set is elided
     /// (40-execution) — the regime observable for the batch-fold fast
-    /// path. Per-query-shape: a single-rule program elides under its
-    /// plan's distinct-bindings proof; a multi-rule program elides under
-    /// the rule-disjointness composition (docs/architecture/
-    /// 40-execution.md § set semantics): disjoint rules ∧ per-rule
-    /// distinct bindings ∧ heads reading every slot.
+    /// path. A single-rule program may elide under its plan's
+    /// distinct-bindings proof. A multi-rule program always returns false:
+    /// its spanning head-projection seen-set is the union representation.
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
         match &*self.rules {
             [rule] => rule.plan.distinct_bindings(),
-            _ => self.union_elided,
+            _ => false,
         }
     }
 
     /// Whether the program's rules are provably pairwise disjoint
-    /// (docs/architecture/40-execution.md § set semantics) — the flag
-    /// that drops the projection sink's cross-rule guard and, composed
-    /// with per-rule distinct bindings, elides the aggregate seen-set.
-    /// Always `false` for single-rule programs (no pair exists). The
-    /// witness itself is reported by EXPLAIN and
+    /// (docs/architecture/40-execution.md § set semantics). This is
+    /// diagnostic knowledge, not an executor switch: the measured
+    /// cross-rule optimization was reverted. Always `false` for
+    /// single-rule programs (no pair exists). The witness is reported by
+    /// EXPLAIN and
     /// [`crate::api::stats::ExecutionStats::disjoint_rules`].
     #[must_use]
     pub fn disjoint_rules(&self) -> bool {
@@ -249,43 +247,6 @@ impl<S> PreparedQuery<'_, S> {
                 field: relation.field(witness.field).name.to_string(),
             }
         })
-    }
-
-    /// The differential guard's override: forces the disjointness
-    /// elision off before any execution of this prepared query, so a
-    /// covered query can run both regimes against identical inputs — the
-    /// elision is *never* semantic, and the results must be
-    /// byte-identical. Public for the two callers the elision's number
-    /// answers to: the in-crate differential tests, and the benchmark's
-    /// named elision-delta sub-measurement (the calendar DU whole-read,
-    /// `docs/architecture/60-validation.md`). One-way by design: the
-    /// override sticks for the prepared query's lifetime — measure the
-    /// proof-on regime on a second prepared instance.
-    ///
-    /// The disjointness witness gates exactly the sink representation:
-    /// projection keeps one map across rules or drains it per rule;
-    /// aggregate retains or elides its union seen-set. The public proof
-    /// metadata remains present, while `union_elided` records the forced
-    /// sink honestly. Plans, estimates, view-memo shapes, executor scratch,
-    /// and the capacity hint are all reused unchanged. The test
-    /// `force_disjoint_off_changes_only_the_union_sink_configuration`
-    /// compares those artifacts and the resulting statistics directly.
-    pub fn force_disjoint_off(&mut self) {
-        let union = self.rules.len() > 1;
-        let first = &self.rules[0];
-        self.sink = super::build::make_sink(
-            &first.finds,
-            first.plan.slot_count(),
-            if union {
-                false
-            } else {
-                first.plan.distinct_bindings()
-            },
-            union,
-            false,
-            super::build::output_hint(&self.rules),
-        );
-        self.union_elided = false;
     }
 
     /// The result column types, one per head position — the metadata a

@@ -3,10 +3,8 @@
 //! data at the top). Three variants, each holding one obligation:
 //!
 //! - **Disjoint arms**: one relation, every arm selecting a distinct
-//!   vocabulary row id on the discriminant field — provably disjoint, so
-//!   the executor's rule-disjointness elision path
-//!   (`docs/architecture/40-execution.md` § set semantics) runs
-//!   adversarially against the oracles' plain set union.
+//!   vocabulary row id on the discriminant field — provably disjoint,
+//!   exercised against the oracles' plain set union.
 //! - **Overlapping arms**: nested selections over one relation whose
 //!   arm denotations share rows — duplicate head rows across rules, the
 //!   union's teeth — including the **DU twin**: the `JournalEntry`

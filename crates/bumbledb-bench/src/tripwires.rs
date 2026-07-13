@@ -76,13 +76,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The calendar families' plan regimes, pinned (structural, no wall
+    /// The calendar aggregate family's plan regime, pinned (structural, no wall
     /// clock — docs/architecture/60-validation.md § the calendar
     /// benchmark):
-    /// - `rsvp_union` carries the rule-disjointness proof (distinct
-    ///   `rsvp` selections on one discriminant) — the elision the
-    ///   family exists to measure; a planner change that loses the
-    ///   proof fails here by name;
     /// - `claim_hours` binds the claim key (`source`), so the fold's
     ///   distinct-bindings elision engages (the `balance` regime);
     #[test]
@@ -99,10 +95,6 @@ mod tests {
                 .expect("registered");
             db.prepare(&(family.query)()).expect("prepares")
         };
-        assert!(
-            prepared("rsvp_union").disjoint_rules(),
-            "the DU arms must prove disjointness — the elision family's premise"
-        );
         assert!(
             prepared("claim_hours").distinct_bindings(),
             "the source binding covers the claim key — the fold elides its seen set"

@@ -472,9 +472,8 @@ fn union_rules_query() -> Query {
 }
 
 /// Q(holder, Sum(amount), Count) :- the same two rules — the multi-rule
-/// aggregate shape: the union regime's head-projection seen-set (kept —
-/// overlapping rules pin no witness, so the rule-disjointness elision
-/// stays off) must reach its high-water and stay silent.
+/// aggregate shape: the union regime's always-spanning head-projection
+/// seen-set must reach its high-water and stay silent.
 fn union_aggregate_query() -> Query {
     let rule = |op: CmpOp| Rule {
         finds: vec![

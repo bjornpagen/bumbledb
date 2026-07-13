@@ -164,13 +164,11 @@ fn meets_chain_params(cfg: &GenConfig) -> Vec<Draw> {
 }
 
 /// `rsvp_union` — **times the DU whole-read: a three-rule program, one
-/// rule per RSVP arm, union'd under the rule-disjointness elision**
-/// (PRDs 05/07/08: rules as data, the one-sink union, and the
-/// exclusivity theorem spent at plan time — distinct `rsvp` selections
-/// on one discriminant with the `(event, person)` key in the head make
-/// cross-rule dedup provably vacuous). The bench measures this family
-/// twice — proof ON and forced OFF — and reports the delta as the
-/// elision's number.
+/// rule per RSVP arm through one spanning union seen-set** (rules as
+/// data, one sink, and cross-rule set semantics). The distinct `rsvp`
+/// selections still prove the arms disjoint and EXPLAIN reports that
+/// knowledge, but execution deliberately keeps the spanning set after
+/// the measured refutation in `docs/architecture/40-execution.md`.
 fn rsvp_union_query() -> Query {
     let arm = |ordinal: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],

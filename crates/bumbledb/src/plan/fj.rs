@@ -250,7 +250,7 @@ pub struct PlanNode {
 
 /// The sealed plan witness execution trusts; validated once at
 /// construction, nothing downstream re-checks (post-mortem §38).
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ValidatedPlan {
     occurrences: Vec<PlanOccurrence>,
     nodes: Vec<PlanNode>,

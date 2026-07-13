@@ -105,8 +105,8 @@ enum Shape {
     /// plus the missing-φ near-miss.
     DuWalk,
     /// Multi-rule programs (`shapes_rules.rs`): rule counts 2–4,
-    /// overlapping and provably-disjoint arm sets (DU-arm unions — the
-    /// elision path exercised adversarially), duplicate head rows across
+    /// overlapping and provably-disjoint arm sets (DU-arm unions),
+    /// duplicate head rows across
     /// rules, and the rules ∧ aggregate union fold.
     Rules,
     /// The measure over the U64 window lane: `Duration` in a find
@@ -254,7 +254,7 @@ struct GenTags {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RulesVariant {
     /// Provably-disjoint arms: one relation, distinct vocabulary selections on
-    /// the discriminant field (the elision path).
+    /// the discriminant field.
     Disjoint,
     /// Overlapping arms with duplicate head rows across rules (the
     /// union's teeth) — including the DU twin (`JournalEntry` import

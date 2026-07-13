@@ -235,25 +235,29 @@ Two facts identical on all *bound* variables produce the same binding; the solut
   distinct bindings, and the plan carries a proof flag that lets the aggregate sink
   skip the seen-set entirely. Provable at plan time from the schema's FD statements —
   a representation-level fix, not a runtime branch per binding.
-- **Rule-disjointness elision** (the exclusivity theorem's third consumer —
-  `30-dependencies.md`): a multi-rule program's cross-rule dedup is deleted at plan
-  time when the rules are **provably pairwise disjoint**
-  (`plan/fj/provably_disjoint.rs`). **Witness form**: a relation R and a field f
-  such that both rules bind a positive occurrence of R whose filters pin f to
-  *different* concrete literals, **and** that occurrence's bound key columns flow
-  to the same head positions in both rules — equal head rows would force the two
-  pinned facts to agree on a key of R, one fact whose f cannot equal two different
-  literals. The DU-arm union (one rule per `kind`) is exactly this shape.
-  Conservative and pairwise: params, sets, and mixed constant forms pin nothing;
-  any unprovable pair keeps the seen-set — correct first, elided when proven.
-  Two consumers: the **projection sink** drops the cross-rule guard (its map
-  drains per rule at re-aim; per-rule dedup stays, as the semantics require), and
-  the **aggregate sink** composes the proof with per-rule distinct bindings and a
-  head projection reading every slot (distinct bindings ⇒ distinct head tuples) to
-  elide the union seen-set entirely — the same `seen: None` representation as the
-  single-rule elision, no hot-loop branch. EXPLAIN names the proof:
-  `disjoint_rules: proven (R.f)`. A test-only override forces the flag off and the
-  differential corpus pins byte-identical results — the elision is never semantic.
+- **Rule-disjointness knowledge:** `plan/fj/provably_disjoint.rs` recognizes a
+  multi-rule program whose heads are provably pairwise disjoint. **Witness form**:
+  a relation R and field f such that both rules bind a positive R occurrence whose
+  filters pin f to different concrete literals, while that occurrence's bound key
+  columns flow to the same head positions. Equal head rows would force the pinned
+  facts to agree on R's key — one fact whose f cannot equal two literals. The
+  DU-arm union is exactly this shape. The proof is conservative and pairwise;
+  params, sets, and mixed constant forms pin nothing. EXPLAIN retains the knowledge
+  as `disjoint_rules: proven (R.f)`, but execution always keeps one head-projection
+  seen-set spanning a multi-rule program.
+
+  **Refutation — cross-rule dedup removal.** Three pre-isolation scale-S runs
+  measured the proof-driven per-rule-drain representation 32.1%, 32.6%, and 32.4%
+  slower (proof path 1396.5/1393.2/1408.3 µs p50 versus spanning
+  948.0/938.8/952.1 µs). The typed isolated run at commit `39f6bee` reproduced the
+  loss: 1376.9 µs versus 937.2 µs, −31.9%; per-repetition clock-normalized p50s
+  were 1375.2 and 936.8 µs, both clean. Both arms emitted 82,983 bindings and
+  absorbed zero, excluding D2 cancellation as the cause. The failed representation
+  still built a per-rule dedup map, then copied every entry to a row buffer and
+  cleared the map at each rule boundary — extra O(n) drain/copy passes versus the
+  spanning map's single final walk. It was deleted. Reconsider only for a workload
+  where spanning-map probe cost measurably dominates and D2 skip provably never
+  fires; any replacement must re-earn its own isolated win.
 
 **Deviation D2 (set semantics — replaces the old D2):** the paper is bag-semantic
 (leaves may carry multiplicity, output is a tuple stream). We: sets everywhere; leaves

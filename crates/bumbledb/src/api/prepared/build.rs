@@ -99,25 +99,18 @@ pub(crate) fn prepare<'s, S>(
     // The one sink configuration — head-owned shape (projection vs
     // aggregate, arity, distinctness), built aimed at rule 0's layout
     // and re-aimed per rule by the rule loop. Presized against the
-    // rules' worst estimate (one sink hears every rule). Dedup is
-    // per-query-shape: a single-rule aggregate elides its seen-set under
-    // the plan's distinct-bindings proof; a multi-rule one keys head
-    // projections and elides only under the rule-disjointness
-    // composition below — correct first, elided when proven.
+    // rules' worst estimate (one sink hears every rule). A single-rule
+    // aggregate may elide its seen-set under the plan's distinct-bindings
+    // proof. Every multi-rule sink keeps one head-projection seen-set
+    // spanning all rules: that map is the union representation.
     let output_hint = output_hint(&rules);
     let union = rules.len() > 1;
-    let union_elided = union && disjoint_rules.is_some() && union_elision(&rules);
     let first = &rules[0];
     let sink = make_sink(
         &first.finds,
         first.plan.slot_count(),
-        if union {
-            union_elided
-        } else {
-            first.plan.distinct_bindings()
-        },
+        !union && first.plan.distinct_bindings(),
         union,
-        union && disjoint_rules.is_some(),
         output_hint,
     );
     // The rule-shared binding-slot scratch, sized at the rules'
@@ -141,7 +134,6 @@ pub(crate) fn prepare<'s, S>(
         schema,
         env_instance: txn.env_instance(),
         disjoint_rules,
-        union_elided,
         subsumed,
         dead,
         rules,
@@ -164,9 +156,8 @@ pub(crate) fn prepare<'s, S>(
 }
 
 /// The shared sink's capacity hint, derived only from the already-frozen
-/// rule plans. The differential override reuses this exact derivation when
-/// it reconstructs the sink, so capacity cannot become a second variable.
-pub(super) fn output_hint(rules: &[PreparedRule]) -> usize {
+/// rule plans.
+fn output_hint(rules: &[PreparedRule]) -> usize {
     rules
         .iter()
         .map(|rule| match &rule.plan {
@@ -670,10 +661,10 @@ fn guard_find_table(
 }
 
 /// The rule-disjointness proof (docs/architecture/40-execution.md § set
-/// semantics) — the exclusivity theorem's third consumer, run over the
+/// semantics) — retained as diagnostic knowledge for EXPLAIN, run over the
 /// whole program before the pipeline goes per-rule (the chase rewrites
 /// occurrences but never the denotation, so the pre-chase proof stands).
-/// Single-rule programs have no pair to prove and no union to elide.
+/// Single-rule programs have no pair to prove.
 fn disjointness(
     witness: &crate::ir::validate::ValidatedQuery,
     normalized: &[NormalizedQuery],
@@ -691,82 +682,17 @@ fn disjointness(
         .flatten()
 }
 
-/// The union elision's per-rule legs (docs/architecture/40-execution.md
-/// § set semantics), composed on top of the disjointness proof: distinct
-/// bindings (each binding emitted once) and a head projection reading
-/// every slot (distinct bindings ⇒ distinct head tuples) make each
-/// rule's dedup-key stream duplicate-free, and the witness forbids
-/// cross-rule collisions — so the union seen-set guards nothing and is
-/// deleted at plan time.
-fn union_elision(rules: &[PreparedRule]) -> bool {
-    rules.iter().all(|rule| {
-        // A measure position breaks the within-rule leg outright:
-        // distinct bindings project through a NON-injective map (two
-        // distinct intervals may share one measure), so the dedup-key
-        // stream is not proven duplicate-free — the seen-set stays.
-        let no_measures = rule.finds.iter().all(|find| {
-            !matches!(
-                find,
-                FindSpec::Duration { .. } | FindSpec::AggDuration { .. }
-            )
-        });
-        no_measures
-            && rule.plan.distinct_bindings()
-            && head_reads_every_slot(&rule.finds, rule.plan.slot_count())
-    })
-}
-
-/// Whether the head projection reads every binding slot — the
-/// within-rule leg of the union elision: with every slot read, distinct
-/// bindings project to distinct head tuples, so a rule's dedup-key
-/// stream inherits the distinct-bindings proof whole. A rule binding an
-/// existential the head never reads fails here and keeps the seen-set.
-fn head_reads_every_slot(finds: &[FindSpec], slot_count: usize) -> bool {
-    let mut read = vec![false; slot_count];
-    for find in finds {
-        let (slot, width) = match find {
-            FindSpec::Var { slot, width } => (*slot, *width),
-            FindSpec::Agg {
-                over_slot: Some(slot),
-                over_width,
-                ..
-            } => (*slot, *over_width),
-            // Two-slot readers: a Pack position reads its claim's two
-            // words raw (the fold-time dedup key is injective there,
-            // unlike the measure), and a measure reads its interval
-            // variable's two slots — moot for the elision, which
-            // `union_elision` already refused on measure heads, but
-            // recorded for the read set.
-            FindSpec::Pack { slot }
-            | FindSpec::Duration { slot }
-            | FindSpec::AggDuration { slot, .. } => (*slot, 2),
-            // The nullary Count reads nothing; Arg never crosses rules
-            // (validation), so a multi-rule head cannot carry it.
-            FindSpec::Agg {
-                over_slot: None, ..
-            }
-            | FindSpec::Arg { .. } => continue,
-        };
-        read[slot..slot + width].fill(true);
-    }
-    read.iter().all(|slot_read| *slot_read)
-}
-
 /// Builds the sink matching the head shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`), aimed at rule 0's binding
 /// layout. `union` is the multi-rule regime (head-projection dedup
 /// keys); `distinct` is the proof the dedup-key stream is duplicate-free
-/// (single-rule: the plan flag; multi-rule: the rule-disjointness
-/// composition), which elides the aggregate seen-set; `disjoint` is the
-/// bare disjointness proof, which drops the projection sink's cross-rule
-/// guard (per-rule dedup stays — docs/architecture/40-execution.md § set
-/// semantics).
-pub(super) fn make_sink(
+/// for a single rule, which elides the aggregate seen-set. It is always
+/// false for a union: one spanning seen-set is the union representation.
+fn make_sink(
     finds: &[FindSpec],
     slot_count: usize,
     distinct: bool,
     union: bool,
-    disjoint: bool,
     hint: usize,
 ) -> EitherSink {
     let all_plain = finds
@@ -780,7 +706,6 @@ pub(super) fn make_sink(
         EitherSink::Projection(ProjectionSink::with_capacity_hint(
             crate::exec::sink::sources_of(finds),
             hint,
-            union && disjoint,
         ))
     } else {
         EitherSink::Aggregate(Box::new(AggregateSink::with_capacity_hint(

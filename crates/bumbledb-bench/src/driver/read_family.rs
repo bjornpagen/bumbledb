@@ -68,10 +68,6 @@ pub(super) struct ReadSpec<'a> {
     /// Per-draw SQL — the translator for the ledger and paired calendar
     /// families, the hand-written coalesce for `free_busy`.
     pub sql_for: &'a dyn Fn(&Query, &Draw) -> Result<Translated, String>,
-    /// The elision-delta sub-measurement's switch: force the
-    /// rule-disjointness elision off on the prepared query before any
-    /// execution (never semantic; the delta is the elision's number).
-    pub force_disjoint_off: bool,
 }
 
 impl BenchRun<'_> {
@@ -86,22 +82,17 @@ impl BenchRun<'_> {
             query: (family.query)(),
             sets: (family.params)(&self.cfg),
             sql_for: &|query, draw| translate(query, schema(), &set_bindings(draw)),
-            force_disjoint_off: false,
         };
         let db = self.db;
         let conn = self.conn;
         self.measure_read(db, conn, &spec)
     }
 
-    /// One calendar family on both engines — plus, for the DU
-    /// whole-read, the elision-delta sub-measurement: the same query
-    /// re-prepared with the disjointness proof forced off, reported as
-    /// the named `rsvp_union_off` row (`Kind::Report` — a diagnostic,
-    /// never a gate) with the delta printed.
+    /// One calendar family on both engines.
     pub(super) fn read_cal_family(
         &mut self,
         family: &calendar::families::CalFamily,
-    ) -> Result<Vec<report::ReadFamilyReport>, String> {
+    ) -> Result<report::ReadFamilyReport, String> {
         let sql_for = |query: &Query, draw: &Draw| family.sql_for(query, draw);
         let spec = ReadSpec {
             name: family.name,
@@ -109,37 +100,10 @@ impl BenchRun<'_> {
             query: (family.query)(),
             sets: (family.params)(&self.cfg),
             sql_for: &sql_for,
-            force_disjoint_off: false,
         };
         let db = self.cal_db;
         let conn = self.cal_conn;
-        let on = self.measure_read(db, conn, &spec)?;
-        let mut out = vec![on];
-        if family.name == "rsvp_union" {
-            let off_spec = ReadSpec {
-                name: "rsvp_union_off",
-                kind: Kind::Report,
-                query: (family.query)(),
-                sets: (family.params)(&self.cfg),
-                sql_for: &sql_for,
-                force_disjoint_off: true,
-            };
-            let off = self.measure_read(db, conn, &off_spec)?;
-            let on = &out[0];
-            #[expect(
-                clippy::cast_precision_loss,
-                reason = "reporting accepts lossy integer-to-float conversion"
-            )]
-            let delta_pct =
-                (off.ours.p50 as f64 - on.ours.p50 as f64) / on.ours.p50.max(1) as f64 * 100.0;
-            eprintln!(
-                "bench: elision delta (rsvp_union): proof on p50 {} ns, forced off p50 {} ns \
-                 ({delta_pct:+.1}%)",
-                on.ours.p50, off.ours.p50
-            );
-            out.push(off);
-        }
-        Ok(out)
+        self.measure_read(db, conn, &spec)
     }
 
     /// The shared measurement core: warm both engines under the exact
@@ -159,9 +123,6 @@ impl BenchRun<'_> {
         let mut prepared = db
             .prepare(&spec.query)
             .map_err(|e| format!("{}: prepare: {e:?}", spec.name))?;
-        if spec.force_disjoint_off {
-            prepared.force_disjoint_off();
-        }
         let sets = spec.sets.clone();
         let types: Vec<bumbledb::schema::ValueType> = prepared.column_types().cloned().collect();
 

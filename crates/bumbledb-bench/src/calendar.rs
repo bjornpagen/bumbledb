@@ -5,8 +5,8 @@
 //! (fully-indexed `SQLite`, fullfsync parity, warm medians, verify before
 //! time), a second theory: accounts of persons, per-person calendars,
 //! events with bounded and ray horizons, attendance with RSVP arms (the
-//! discriminated-union shape whose `==` statements arm the executor's
-//! rule-disjointness elision), per-person claims over intervals with
+//! discriminated-union shape whose exclusivity proof is visible in
+//! EXPLAIN), per-person claims over intervals with
 //! busy/OOO arms, rooms with pointwise-keyed bookings (the exclusion
 //! theorem as data), and working-hour segments covering every busy claim
 //! (the coverage walk as data).

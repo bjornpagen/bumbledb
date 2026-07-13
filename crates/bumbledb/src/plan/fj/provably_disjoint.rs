@@ -6,16 +6,14 @@ use crate::schema::{FieldId, RelationId, Schema};
 /// The rule-disjointness proof's witness (docs/architecture/40-execution.md
 /// § set semantics): the relation and field whose differing pinned
 /// literals make the rules' head rows collision-free. EXPLAIN renders it
-/// as `disjoint_rules: proven (R.f)` — an elision must name its proof.
+/// as diagnostic knowledge: `disjoint_rules: proven (R.f)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DisjointWitness {
     pub relation: RelationId,
     pub field: FieldId,
 }
 
-/// The rule-disjointness check — the exclusivity theorem's third consumer
-/// (docs/architecture/30-dependencies.md: the checker enforces it, the
-/// chase spends it, and here the executor spends it again). A pair of
+/// The rule-disjointness check — EXPLAIN's direct proof producer. A pair of
 /// rules is **provably disjoint** when there is a relation R and a field
 /// f such that both rules bind a positive occurrence of R whose filters
 /// pin f to *different* concrete literals, **and** that occurrence's

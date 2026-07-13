@@ -91,28 +91,6 @@ fn markdown_family_tables(out: &mut String, report: &RunReport) {
     }
     let _ = writeln!(out);
 
-    // The elision delta, named (docs/architecture/60-validation.md § the
-    // calendar benchmark): the DU whole-read measured with the
-    // rule-disjointness proof on and forced off — the delta is the
-    // elision's number.
-    let on = report.reads.iter().find(|f| f.name == "rsvp_union");
-    let off = report.reads.iter().find(|f| f.name == "rsvp_union_off");
-    if let (Some(on), Some(off)) = (on, off) {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "reporting accepts lossy integer-to-float conversion"
-        )]
-        let delta_pct =
-            (off.ours.p50 as f64 - on.ours.p50 as f64) / on.ours.p50.max(1) as f64 * 100.0;
-        let _ = writeln!(
-            out,
-            "elision delta (rsvp_union): proof on {:.1} us, forced off {:.1} us \
-             ({delta_pct:+.1}% p50).\n",
-            us(on.ours.p50),
-            us(off.ours.p50),
-        );
-    }
-
     let _ = writeln!(out, "## Write families\n");
     let _ = writeln!(
         out,

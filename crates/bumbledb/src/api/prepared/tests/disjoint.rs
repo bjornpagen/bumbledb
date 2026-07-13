@@ -1,11 +1,8 @@
-//! The exclusivity elision (docs/architecture/40-execution.md § set
-//! semantics): rules that select different values of one discriminator
-//! are provably disjoint, so the cross-rule seen-set guards nothing and
-//! is deleted at plan time. What these tests pin: the DU-arm union
-//! proves (and an unselected arm unproves), EXPLAIN names the witness,
-//! the aggregate composition runs with ZERO seen-set insertions, and the
-//! differential guard — elided vs forced-off byte-identical across a
-//! randomized rule-query corpus — because the elision is never semantic.
+//! The rule-disjointness proof (docs/architecture/40-execution.md § set
+//! semantics): rules selecting different values of one discriminator are
+//! provably disjoint. The proof remains visible in EXPLAIN, while execution
+//! deliberately keeps one seen-set spanning the rules. These tests pin the
+//! proof and show that the spanning set absorbs nothing across proven arms.
 
 use super::*;
 use crate::ir::{AggOp, HeadOp, HeadTerm};
@@ -92,114 +89,6 @@ fn du_query(rules: Vec<Rule>) -> Query {
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules,
     }
-}
-
-/// Every result row, debug-rendered and sorted — the differential
-/// guard's comparison surface (results are sets; order is not part of
-/// the answer).
-fn table(out: &ResultBuffer, arity: usize) -> Vec<Vec<String>> {
-    let mut rows: Vec<Vec<String>> = (0..out.len())
-        .map(|row| {
-            (0..arity)
-                .map(|column| format!("{:?}", out.get(row, column)))
-                .collect()
-        })
-        .collect();
-    rows.sort();
-    rows
-}
-
-fn assert_plan_derived_artifacts_equal<S>(
-    proof_on: &PreparedQuery<'_, S>,
-    forced_off: &PreparedQuery<'_, S>,
-) {
-    assert_eq!(proof_on.rules.len(), forced_off.rules.len());
-    for (on, off) in proof_on.rules.iter().zip(&forced_off.rules) {
-        match (&on.plan, &off.plan) {
-            (ExecPlan::FreeJoin(on), ExecPlan::FreeJoin(off)) => {
-                assert_eq!(on, off, "validated plans differ");
-                assert_eq!(on.estimates(), off.estimates(), "estimates differ");
-            }
-            (ExecPlan::GuardProbe(on), ExecPlan::GuardProbe(off)) => assert_eq!(on, off),
-            (ExecPlan::Empty, ExecPlan::Empty) => {}
-            _ => panic!("execution-plan variants differ"),
-        }
-        assert_eq!(on.finds, off.finds, "sink layouts differ");
-        assert_eq!(
-            on.resolved_filters, off.resolved_filters,
-            "filter scratch shapes differ"
-        );
-        assert_eq!(
-            on.resolved_selections, off.resolved_selections,
-            "selection scratch shapes differ"
-        );
-        assert_eq!(
-            on.executor.is_some(),
-            off.executor.is_some(),
-            "executor scratch variants differ"
-        );
-        assert_eq!(on.memo.colts.len(), off.memo.colts.len());
-        assert_eq!(on.memo.generation, off.memo.generation);
-        assert_eq!(on.memo.filters, off.memo.filters);
-        assert_eq!(on.memo.parked.len(), off.memo.parked.len());
-        assert_eq!(on.memo.spare_buffers, off.memo.spare_buffers);
-        let on_pins: Vec<_> = on
-            .pinned
-            .iter()
-            .map(|pin| (pin.occ_id, pin.relation, pin.rows, pin.survivors))
-            .collect();
-        let off_pins: Vec<_> = off
-            .pinned
-            .iter()
-            .map(|pin| (pin.occ_id, pin.relation, pin.rows, pin.survivors))
-            .collect();
-        assert_eq!(on_pins, off_pins, "pinned estimates differ");
-    }
-    assert_eq!(
-        super::super::build::output_hint(&proof_on.rules),
-        super::super::build::output_hint(&forced_off.rules),
-        "sink capacity hints differ"
-    );
-}
-
-/// The benchmark override is a one-variable experiment: two independent
-/// prepares produce identical plans, estimates, memos, and executor shapes;
-/// forcing the control arm reconstructs only its sink and updates the
-/// elision observable. Counted execution may differ only in how many emitted
-/// bindings that spanning sink absorbs.
-#[test]
-fn force_disjoint_off_changes_only_the_union_sink_configuration() {
-    let dir = TempDir::new("prepared-disjoint-isolation");
-    let schema = du_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_items(&env, &schema, &item_rows());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-    let query = du_query(vec![arm_rule(0), arm_rule(1)]);
-
-    let mut proof_on = prepare(&txn, &cache, &schema, &query).expect("proof-on prepare");
-    let mut forced_off = prepare(&txn, &cache, &schema, &query).expect("control prepare");
-    assert_plan_derived_artifacts_equal(&proof_on, &forced_off);
-    assert!(proof_on.union_elided);
-    assert!(forced_off.union_elided);
-
-    forced_off.force_disjoint_off();
-    assert_plan_derived_artifacts_equal(&proof_on, &forced_off);
-    assert!(proof_on.union_elided);
-    assert!(!forced_off.union_elided);
-    assert_eq!(proof_on.disjoint_rules, forced_off.disjoint_rules);
-
-    let (on_rows, mut on_stats) = proof_on.profile(&txn, &cache, &[]).expect("profile on");
-    let (off_rows, mut off_stats) = forced_off.profile(&txn, &cache, &[]).expect("profile off");
-    assert_eq!(table(&on_rows, 2), table(&off_rows, 2));
-    for (on, off) in on_stats.rules.iter_mut().zip(&mut off_stats.rules) {
-        on.absorbed = 0;
-        off.absorbed = 0;
-    }
-    assert_eq!(
-        on_stats, off_stats,
-        "only per-rule absorbed accounting may differ"
-    );
 }
 
 /// The DU-arm union (two arms, `kind`-selected) proves disjoint;
@@ -299,14 +188,11 @@ fn explain_names_the_disjointness_witness() {
     assert!(report.contains("disjoint_rules: unproven"), "{report}");
 }
 
-/// The aggregate composition: `Count` over a proven-disjoint union with
-/// per-rule key-covered bindings runs with ZERO seen-set insertions —
-/// the fold seen-set is elided outright (the counting surface holds
-/// nothing, before and after the execution) — and matches the naive
-/// model: the fold domain is the union of head projections, one `(id)`
-/// per item of the selected kinds.
+/// `Count` over a proven-disjoint union retains the spanning seen-set,
+/// which absorbs zero rows because the theorem is true, and matches the
+/// naive model: one `(id)` per item of the selected kinds.
 #[test]
-fn count_over_a_proven_disjoint_union_elides_the_fold_seen_set() {
+fn count_over_a_proven_disjoint_union_absorbs_nothing() {
     let dir = TempDir::new("prepared-disjoint-count");
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -341,25 +227,19 @@ fn count_over_a_proven_disjoint_union_elides_the_fold_seen_set() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(prepared.disjoint_rules(), "the arms prove disjoint");
-    assert!(
-        prepared.distinct_bindings(),
-        "the composition elides the union seen-set"
-    );
+    assert!(!prepared.distinct_bindings(), "unions always retain dedup");
     let EitherSink::Aggregate(sink) = &prepared.sink else {
         panic!("Count builds the aggregate sink");
     };
-    assert!(sink.seen_elided(), "no seen-set exists to insert into");
+    assert!(!sink.seen_elided(), "the spanning seen-set exists");
 
-    let out = prepared
-        .execute_collect(&txn, &cache, &[])
-        .expect("execute");
-    // The counting surface: an elided seen-set holds nothing — zero
-    // insertions happened because no set exists (`None`, not `Some(0)`).
+    let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(
         prepared.sink.distinct_seen(),
-        None,
-        "zero seen-set insertions, structurally"
+        Some(4),
+        "all four head projections inhabit the spanning set"
     );
+    assert!(stats.rules.iter().all(|rule| rule.absorbed == 0));
     // The naive model: fold domain = ∪ head-projected bindings; per
     // group (id) the projection is the singleton (id), so Count = 1 for
     // each note/event item and the task never appears.
@@ -375,143 +255,13 @@ fn count_over_a_proven_disjoint_union_elides_the_fold_seen_set() {
         .collect();
     rows.sort_unstable();
     assert_eq!(rows, vec![(1, 1), (2, 1), (3, 1), (4, 1)]);
-
-    // The differential guard on this exact shape: forced off, the
-    // spanning seen-set returns and the rows do not move.
-    let mut forced = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    forced.force_disjoint_off();
-    let EitherSink::Aggregate(sink) = &forced.sink else {
-        panic!("Count builds the aggregate sink");
-    };
-    assert!(!sink.seen_elided(), "the override reinstated the seen-set");
-    let control = forced.execute_collect(&txn, &cache, &[]).expect("execute");
-    assert_eq!(table(&out, 2), table(&control, 2));
 }
 
-/// A deterministic LCG (the house randomized-test shape).
-struct Lcg(u64);
-
-impl Lcg {
-    fn next(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.0 >> 33
-    }
-}
-
-/// The differential guard across the randomized rule-query corpus:
-/// elided vs forced-off byte-identical on every covered query. The
-/// corpus draws multi-rule programs over the DU shape — arms with
-/// selected, repeated, or missing discriminators (proven AND unproven
-/// programs, both asserted present), projection and aggregate heads,
-/// heads that do and do not carry the key — and every one must render
-/// the same table under both regimes, because the elision is never
-/// semantic.
+/// The projection sink under the proof: a three-arm union returns every
+/// item exactly once and the spanning set absorbs nothing across arms.
 #[test]
-fn the_randomized_corpus_is_byte_identical_elided_vs_forced_off() {
-    let dir = TempDir::new("prepared-disjoint-corpus");
-    let schema = du_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    // Duplicated payloads across kinds and within a kind: cross-rule
-    // and within-rule head collisions are live wherever the proof does
-    // not forbid them.
-    let mut rows = Vec::new();
-    let mut lcg = Lcg(0xB0B5_CAFE);
-    for id in 1..=40u64 {
-        rows.push((id, (lcg.next() % 3) as u8, 10 + lcg.next() % 4));
-    }
-    insert_items(&env, &schema, &rows);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-
-    // One corpus rule: bind the key (or not), select a kind (or not),
-    // and shape the head. Kind 3 = no selection.
-    let body = |bind_id: bool, kind: u8, vars: &[u16]| -> Atom {
-        let mut bindings = Vec::new();
-        if bind_id {
-            bindings.push((FieldId(0), Term::Var(VarId(vars[0]))));
-        }
-        if kind < 3 {
-            bindings.push((FieldId(1), Term::Literal(Value::U64(u64::from(kind)))));
-        }
-        bindings.push((FieldId(2), Term::Var(VarId(vars[1]))));
-        Atom {
-            relation: ITEM,
-            bindings,
-        }
-    };
-
-    let mut proven = 0usize;
-    let mut unproven = 0usize;
-    for seed in 0..48u64 {
-        let mut lcg = Lcg(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) + 1);
-        let head_shape = lcg.next() % 3;
-        let rule_count = 2 + (lcg.next() % 2) as usize;
-        let (head, finds): (Vec<HeadTerm>, Vec<FindTerm>) = match head_shape {
-            // Q(id, payload) — the DU read; the key flows to the head.
-            0 => (
-                vec![HeadTerm::Var, HeadTerm::Var],
-                vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
-            ),
-            // Q(payload) — the key never reaches the head: unprovable.
-            1 => (vec![HeadTerm::Var], vec![FindTerm::Var(VarId(1))]),
-            // Q(id, Sum(payload)) — the aggregate composition.
-            _ => (
-                vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Sum)],
-                vec![
-                    FindTerm::Var(VarId(0)),
-                    FindTerm::Aggregate {
-                        op: AggOp::Sum,
-                        over: Some(VarId(1)),
-                    },
-                ],
-            ),
-        };
-        let rules: Vec<Rule> = (0..rule_count)
-            .map(|_| Rule {
-                finds: finds.clone(),
-                atoms: vec![body(head_shape != 1, (lcg.next() % 4) as u8, &[0, 1])],
-                negated: vec![],
-                predicates: vec![],
-            })
-            .collect();
-        let query = Query { head, rules };
-        let arity = query.head.len();
-
-        let mut elided = prepare(&txn, &cache, &schema, &query).expect("prepare");
-        if elided.disjoint_rules() {
-            proven += 1;
-        } else {
-            unproven += 1;
-        }
-        let mut forced = prepare(&txn, &cache, &schema, &query).expect("prepare");
-        forced.force_disjoint_off();
-
-        let fast = elided.execute_collect(&txn, &cache, &[]).expect("execute");
-        let slow = forced.execute_collect(&txn, &cache, &[]).expect("execute");
-        assert_eq!(
-            table(&fast, arity),
-            table(&slow, arity),
-            "seed {seed}: the elision changed the answer"
-        );
-    }
-    // The corpus guards its own vacuousness: both regimes must occur.
-    assert!(proven > 0, "no seed proved disjoint — the corpus is dead");
-    assert!(
-        unproven > 0,
-        "every seed proved — the negative space is dead"
-    );
-}
-
-/// The projection sink under the proof: a three-arm union (two drain
-/// boundaries) returns every item exactly once, and per-rule dedup
-/// still absorbs a within-rule duplicate (a payload-only head over one
-/// kind can repeat).
-#[test]
-fn a_three_arm_union_survives_the_per_rule_drains() {
-    let dir = TempDir::new("prepared-disjoint-drain");
+fn a_three_arm_union_absorbs_nothing_across_rules() {
+    let dir = TempDir::new("prepared-disjoint-spanning");
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_items(&env, &schema, &item_rows());
@@ -524,9 +274,8 @@ fn a_three_arm_union_survives_the_per_rule_drains() {
         prepared.disjoint_rules(),
         "all three pairs share the witness"
     );
-    let out = prepared
-        .execute_collect(&txn, &cache, &[])
-        .expect("execute");
+    let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    assert!(stats.rules.iter().all(|rule| rule.absorbed == 0));
     let mut rows: Vec<(u64, u64)> = (0..out.len())
         .map(|row| {
             let (ResultValue::U64(id), ResultValue::U64(payload)) =

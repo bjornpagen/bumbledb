@@ -148,10 +148,10 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     }
     // The calendar family set (docs/architecture/60-validation.md § the
     // calendar benchmark): same protocol, second store pair; the DU
-    // whole-read contributes its elision-delta sub-measurement.
+    // whole-read exercises the spanning multi-rule union.
     for family in crate::calendar::families::all() {
         if selected(family.name) {
-            reads.extend(run.read_cal_family(family)?);
+            reads.push(run.read_cal_family(family)?);
         }
     }
     let flames = std::mem::take(&mut run.flames);
