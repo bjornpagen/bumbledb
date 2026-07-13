@@ -19,7 +19,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::schema::{ContainmentId, Enforcement, KeyId, RelationId, Schema, StatementId};
+use crate::schema::{
+    AxiomIndex, ContainmentId, Enforcement, KeyId, RelationId, Schema, StatementId,
+};
 use crate::storage::delta::WriteDelta;
 use crate::storage::keys;
 
@@ -80,9 +82,9 @@ pub(crate) struct MembershipOp {
     /// The validation-minted containment witness; the fingerprint identity
     /// is derived only when constructing an error.
     pub(crate) containment: ContainmentId,
-    /// The referencing field's word — a row id into the target's sealed
-    /// extension when the fact is legal; out of range is simply a miss.
-    pub(crate) id: u64,
+    /// The referencing field narrowed to the closed extension's index
+    /// domain. `None` is an out-of-range value and therefore a miss.
+    pub(crate) axiom: Option<AxiomIndex>,
 }
 
 /// One containment edge of one fact: the `R` key material and, on the
@@ -253,7 +255,7 @@ fn fact_op<'d>(
                 );
                 memberships.push(MembershipOp {
                     containment: containment_id,
-                    id: u64::from_be_bytes(word),
+                    axiom: AxiomIndex::try_from(u64::from_be_bytes(word)).ok(),
                 });
             }
         }

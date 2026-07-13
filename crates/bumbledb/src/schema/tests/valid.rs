@@ -1,5 +1,13 @@
 use super::*;
 
+fn member_set(indices: &[u16]) -> MemberSet {
+    let mut members = MemberSet::empty();
+    for &index in indices {
+        members.insert(AxiomIndex(index));
+    }
+    members
+}
+
 #[test]
 fn valid_schema_constructs_with_statement_indices() {
     let schema = ledger_slice().validate().expect("valid schema");
@@ -412,7 +420,7 @@ fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
     assert_eq!(
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::Closed {
-            members: [0b11, 0, 0, 0]
+            members: member_set(&[0, 1])
         }
     );
     // No dependents ride the closed auto-key: the target side is vacuous
@@ -458,7 +466,7 @@ fn a_psi_selected_closed_containment_compiles_its_member_set() {
     assert_eq!(
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::Closed {
-            members: [0b110, 0, 0, 0]
+            members: member_set(&[1, 2])
         }
     );
 }

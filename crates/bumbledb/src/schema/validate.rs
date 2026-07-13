@@ -13,10 +13,10 @@
 //! rejected.
 
 use super::{
-    CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement, DisjointGuardProof,
-    Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId, KeyStatement, Relation,
-    RelationDescriptor, RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor,
-    StatementId, StatementRef, ValueMismatch, ValueType, closed_member, value_matches,
+    AxiomIndex, CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement,
+    DisjointGuardProof, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId,
+    KeyStatement, MemberSet, Relation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
+    Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::SchemaError;
@@ -478,7 +478,8 @@ fn validate_containment(
                 continue;
             }
             let word = decoded_word(layout, source.projection[0], &row.fact);
-            if !closed_member(members, word) {
+            let index = AxiomIndex::try_from(word).expect("sealed axiom index fits u16");
+            if !members.contains(index) {
                 return Err(SchemaError::ClosedStatementRefuted {
                     statement: id,
                     relation: source.relation,
@@ -700,14 +701,9 @@ fn resolve_target_key(
                 relation: target.relation,
             });
         }
-        let psi = compiled_checks(&target.selection);
-        let mut members = [0u64; 4];
-        for (idx, row) in rows.iter().enumerate() {
-            if sealed_satisfies(&psi, &target_relation.layout, &row.fact) {
-                members[idx / 64] |= 1 << (idx % 64);
-            }
-        }
-        return Ok(Enforcement::Closed { members });
+        return Ok(Enforcement::Closed {
+            members: compile_member_set(target_relation, target, rows),
+        });
     }
 
     let target_fields = &target_relation.fields;
@@ -808,6 +804,23 @@ fn resolve_target_key(
             key_permutation,
         })
     }
+}
+
+/// Compiles ψ over one sealed extension into its typed axiom set. The
+/// extension passed validation before statement resolution, so every
+/// declaration index is below [`super::MAX_EXTENSION_ROWS`].
+fn compile_member_set(target: &Relation, side: &Side, rows: &[super::SealedRow]) -> MemberSet {
+    let psi = compiled_checks(&side.selection);
+    let mut members = MemberSet::empty();
+    for (idx, row) in rows.iter().enumerate() {
+        if sealed_satisfies(&psi, &target.layout, &row.fact) {
+            let index = AxiomIndex(
+                u16::try_from(idx).expect("the validated extension cap is below u16::MAX"),
+            );
+            members.insert(index);
+        }
+    }
+    members
 }
 
 /// One relation: field checks (duplicate names, enum shape, fresh typing,

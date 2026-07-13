@@ -230,7 +230,10 @@ pub(super) fn check_source(
             let Enforcement::Closed { members } = &statement.enforcement else {
                 continue;
             };
-            if !crate::schema::closed_member(members, membership.id) {
+            if !membership
+                .axiom
+                .is_some_and(|index| members.contains(index))
+            {
                 violations.push(Violation::Containment {
                     statement: statement.id,
                     direction: Direction::SourceUnsatisfied,

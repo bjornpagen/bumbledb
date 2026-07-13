@@ -292,6 +292,9 @@ fixed extension.
   opens with a synthetic first field (`id`, U64), so guards, statements, and
   queries address the id uniformly at field 0; the macro never lets the user
   declare it (a hand-built descriptor that tries collides on the field name).
+  Compiled sub-vocabulary membership is a typed `MemberSet::contains(AxiomIndex)`
+  query; an arbitrary fact word narrows at that boundary, and every out-of-range
+  index means absence rather than a distinct error.
 - **The auto-key.** Closedness materializes `R(id) -> R` exactly as `fresh` does
   (materialized order below) — ordinary in every way and targetable: a reference
   to a closed relation is a plain u64 column plus a declared containment, like any

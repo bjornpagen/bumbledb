@@ -377,7 +377,7 @@ pub(crate) enum Enforcement {
         disjoint: DisjointGuardProof,
     },
     /// A closed target's stage-1-known answer set.
-    Closed { members: [u64; 4] },
+    Closed { members: MemberSet },
 }
 
 impl Enforcement {
@@ -393,17 +393,49 @@ impl Enforcement {
     }
 }
 
-/// Whether `id` is inside a compiled member set — the whole judgment of a
-/// closed-target containment. An out-of-range id (≥ the 256-row roster
-/// cap, or ≥ the extension length: those bits are never set) is simply
-/// absent — the same containment violation as any dangling reference, no
-/// special error.
-#[must_use]
-pub(crate) fn closed_member(members: &[u64; 4], id: u64) -> bool {
-    usize::try_from(id / 64)
-        .ok()
-        .and_then(|word| members.get(word))
-        .is_some_and(|word| word & (1 << (id % 64)) != 0)
+/// Index of a ground axiom in a sealed closed extension. Arbitrary `u64`
+/// fact values narrow through [`TryFrom`]; values beyond `u16` are absent,
+/// and [`MemberSet::contains`] makes indices `256..=u16::MAX` absent too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AxiomIndex(pub(crate) u16);
+
+impl TryFrom<u64> for AxiomIndex {
+    type Error = std::num::TryFromIntError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        u16::try_from(value).map(Self)
+    }
+}
+
+/// A closed relation's compiled member set: one bit per sealed ground
+/// axiom, in extension order. The four words encode the declaration-time
+/// 256-axiom bound enforced by `schema::validate::validate_extension` and
+/// [`MAX_EXTENSION_ROWS`]. Out-of-range indices are absent by contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MemberSet {
+    words: [u64; 4],
+}
+
+impl MemberSet {
+    pub(crate) const fn empty() -> Self {
+        Self { words: [0; 4] }
+    }
+
+    /// Tests membership; an index outside the four-word domain is absent.
+    #[must_use]
+    pub(crate) fn contains(&self, index: AxiomIndex) -> bool {
+        let word = usize::from(index.0 / 64);
+        self.words
+            .get(word)
+            .is_some_and(|bits| bits & (1 << (index.0 % 64)) != 0)
+    }
+
+    /// Inserts a sealed axiom. The caller has already enforced
+    /// [`MAX_EXTENSION_ROWS`], so its declaration index is below 256.
+    pub(crate) fn insert(&mut self, index: AxiomIndex) {
+        let word = usize::from(index.0 / 64);
+        self.words[word] |= 1 << (index.0 % 64);
+    }
 }
 
 /// One σ-literal check compiled at validate (the staging law applied to

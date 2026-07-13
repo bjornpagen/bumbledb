@@ -10,7 +10,7 @@
 
 use crate::encoding::{TypeDesc, fact_hash, field_word_bytes};
 use crate::error::{Direction, Error, Result, Violation, Violations};
-use crate::schema::{Enforcement, RelationId};
+use crate::schema::{AxiomIndex, Enforcement, RelationId};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 
@@ -157,7 +157,7 @@ fn check_outgoing(
                     layout,
                     usize::from(statement.source.projection[0].0),
                 ));
-                if !crate::schema::closed_member(members, id) {
+                if !AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index)) {
                     s.push(StoreFinding::JudgmentViolation {
                         statement: sid,
                         direction: Direction::TargetRequired,
@@ -292,7 +292,7 @@ fn check_extension_sources(
                             layout,
                             usize::from(statement.source.projection[0].0),
                         ));
-                        if crate::schema::closed_member(members, id) {
+                        if AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index)) {
                             Ok(())
                         } else {
                             Err(Error::CommitRejected {
