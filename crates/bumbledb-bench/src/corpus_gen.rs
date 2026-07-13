@@ -15,7 +15,7 @@ mod corpus_digest;
 mod digest_hex;
 mod mandate;
 mod range_window;
-mod rng;
+pub mod rng;
 mod row;
 mod scale;
 mod sizes;
@@ -26,14 +26,8 @@ pub use corpus_digest::corpus_digest;
 pub use digest_hex::digest_hex;
 pub use mandate::{MANDATE_SEGMENTS, Segment, mandate_segments};
 pub use range_window::range_window;
+pub use rng::Rng;
 pub use row::{relation_rows, row};
-
-/// The house LCG (the engine's test constants): deterministic, fast, and
-/// dependency-free.
-#[derive(Debug, Clone)]
-pub struct Rng {
-    state: u64,
-}
 
 /// Corpus scale points (docs/architecture/60-validation.md: 10⁵–10⁷).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
