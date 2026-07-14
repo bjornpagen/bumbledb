@@ -1,6 +1,7 @@
 import Bumbledb.Query.Aggregates
 import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
+import Bumbledb.Exec.Rewrites
 import Bumbledb.Txn
 
 /-!
@@ -121,6 +122,27 @@ part of the spec.
   (`Query.BoundFieldsCoverKey`) cannot be dropped, which is why
   `provably_distinct` is the only mint of the witness and
   `AggregateSink::without_seen_set` demands it by value.
+
+## PRD 08 residents
+
+* `elimination_needs_containment` — dropping a containment-backed
+  atom WITHOUT the containment premise changes answers: a two-atom
+  rule in full `Query.ElimStep` shape (every syntactic elimination
+  condition holds) over an instance where the source fact has no
+  target witness — the survivor answers, the original does not. Why
+  elimination consults the THEORY (`plan/ground.rs::removable` scans
+  `schema.containments()`), never just the shapes: the shape conditions
+  are checkable at prepare, the existence guarantee is the statement's
+  alone.
+
+* `latch_miss_not_static` — the latch's two constructors are not
+  interchangeable: a rule empty at one instance through a selection
+  miss (`Query.EmptyAt.selectionMiss` — the `PendingIntern` dictionary
+  miss, `Ok(false)`) ANSWERS at another instance, so the miss verdict
+  can never be promoted to the plan-level `Program::Empty` — which is
+  exactly the design decision `api/prepared/bind.rs`'s latch encodes
+  (the miss short-circuits one execution; only the fold's refutation
+  deletes the rule).
 -/
 
 namespace Bumbledb.Countermodels
@@ -762,5 +784,149 @@ theorem distinct_premise_load_bearing (ρ : Query.ParamEnv) :
     postingA_ne_postingB⟩, unkeyed_no_cover, rfl, ?_⟩
   rw [dedup_dupStream]
   rfl
+
+/-! ## The elimination-needs-containment countermodel (PRD 08)
+
+Two atoms joined on their id fields, in FULL elimination shape — every
+syntactic condition of `Query.ElimStep` holds — but over an instance
+with no containment: the source relation holds one fact, the target
+relation is empty. The survivor rule answers where the original
+cannot. -/
+
+/-- The source atom `A(0: v₀)`. -/
+def elimSrc : Query.Atom :=
+  { relation := ⟨0⟩, bindings := [(⟨0⟩, .var ⟨0⟩)] }
+
+/-- The target atom `B(0: v₀)` — the drop candidate. -/
+def elimTgt : Query.Atom :=
+  { relation := ⟨1⟩, bindings := [(⟨0⟩, .var ⟨0⟩)] }
+
+/-- The two-atom rule: `finds v₀ where A(0: v₀), B(0: v₀)`. -/
+def elimRule : Query.Rule where
+  finds := [⟨0⟩]
+  atoms := [elimSrc, elimTgt]
+  negated := []
+  conditions := []
+
+/-- The survivor: the target dropped. -/
+def elimSurvivor : Query.Rule where
+  finds := [⟨0⟩]
+  atoms := [elimSrc]
+  negated := []
+  conditions := []
+
+/-- The one source fact — an orphan: no target row shares its id. -/
+def orphanFact : Fact := fun _ => ⟨.bool, true⟩
+
+/-- The instance: relation 0 holds the orphan, everything else is
+empty — the containment `A(0) <= B(0)` FAILS here. -/
+def elimInstance : Instance := fun R => fun f =>
+  R.id = 0 ∧ f = orphanFact
+
+/-- Every syntactic elimination condition holds of the pair — the
+shape alone cannot see the missing witness. -/
+theorem elim_step_holds :
+    Query.ElimStep elimRule elimSurvivor elimSrc elimTgt [⟨0⟩] [⟨0⟩]
+      Selection.empty Selection.empty where
+  atoms_split := ⟨[elimSrc], [], rfl, rfl⟩
+  finds_eq := rfl
+  negated_eq := rfl
+  conditions_eq := rfl
+  source := List.mem_singleton.mpr rfl
+  join_covers := by
+    intro p hp
+    rcases List.mem_singleton.mp hp with rfl
+    exact ⟨⟨0⟩, List.mem_singleton.mpr rfl, List.mem_singleton.mpr rfl⟩
+  carries_phi := fun s hs => by cases hs
+  target_bindings := by
+    intro bd hbd
+    rcases List.mem_singleton.mp hbd with rfl
+    exact Or.inl ⟨⟨0⟩, rfl⟩
+  var_functional := by
+    intro i j v hi hj
+    exact (congrArg Prod.fst (List.mem_singleton.mp hi)).trans
+      (congrArg Prod.fst (List.mem_singleton.mp hj)).symm
+  join_or_dead := by
+    intro i v hb
+    have h1 := List.mem_singleton.mp hb
+    left
+    refine ⟨(⟨0⟩, ⟨0⟩), List.mem_singleton.mpr rfl,
+      (congrArg Prod.fst h1).symm, ?_⟩
+    have hv : Query.Term.var v = Query.Term.var (⟨0⟩ : Query.VarId) :=
+      congrArg Prod.snd h1
+    rw [hv]
+    exact List.mem_singleton.mpr rfl
+
+/-- The containment premise FAILS: the orphan has no target witness. -/
+theorem elim_no_containment :
+    ¬ Containment (elimInstance elimSrc.relation) Selection.empty
+      [⟨0⟩] (elimInstance elimTgt.relation) Selection.empty [⟨0⟩] := by
+  intro h
+  obtain ⟨g, hg, -, -⟩ :=
+    h orphanFact ⟨rfl, rfl⟩ (Selection.empty_satisfies _)
+  exact absurd hg.1 (by decide)
+
+/-- The survivor answers: the orphan derives it. -/
+theorem elim_survivor_answers (C : Query.Classify)
+    (ρ : Query.ParamEnv) :
+    [orphanFact ⟨0⟩] ∈
+      Query.ruleAnswers C elimSurvivor elimInstance ρ := by
+  refine Query.mem_ruleAnswers.mpr
+    ⟨fun _ => orphanFact ⟨0⟩, ⟨?_, ?_, ?_⟩, rfl⟩
+  · intro a ha
+    rcases List.mem_singleton.mp ha with rfl
+    refine ⟨orphanFact, ⟨rfl, rfl⟩, ?_⟩
+    intro bd hbd
+    rcases List.mem_singleton.mp hbd with rfl
+    rfl
+  · intro a ha
+    cases ha
+  · intro c hc
+    cases hc
+
+/-- The original rule answers NOTHING: its target atom demands a fact
+the empty target relation does not hold. -/
+theorem elim_rule_empty (C : Query.Classify) (ρ : Query.ParamEnv) :
+    ∀ t, t ∉ Query.ruleAnswers C elimRule elimInstance ρ := by
+  intro t ht
+  obtain ⟨σ, ⟨hatoms, -, -⟩, -⟩ := Query.mem_ruleAnswers.mp ht
+  obtain ⟨f, hf, -⟩ := hatoms elimTgt
+    (List.mem_cons_of_mem _ (List.mem_singleton.mpr rfl))
+  exact absurd hf.1 (by decide)
+
+/-- **The countermodel (PRD 08).** `elimination_needs_containment` —
+the elimination shape holds, the containment premise fails, and
+dropping the atom CHANGES answers: the survivor emits the orphan's
+tuple, the original emits nothing. Why the elimination consults the
+theory's statements and `elimination_sound` carries `Containment` as
+a hypothesis — the syntactic conditions license the transfer, only
+the statement licenses existence. -/
+theorem elimination_needs_containment (C : Query.Classify)
+    (ρ : Query.ParamEnv) :
+    Query.ElimStep elimRule elimSurvivor elimSrc elimTgt [⟨0⟩] [⟨0⟩]
+      Selection.empty Selection.empty ∧
+    ¬ Containment (elimInstance elimSrc.relation) Selection.empty
+      [⟨0⟩] (elimInstance elimTgt.relation) Selection.empty [⟨0⟩] ∧
+    ∃ t, t ∈ Query.ruleAnswers C elimSurvivor elimInstance ρ ∧
+      t ∉ Query.ruleAnswers C elimRule elimInstance ρ :=
+  ⟨elim_step_holds, elim_no_containment,
+    [orphanFact ⟨0⟩], elim_survivor_answers C ρ, elim_rule_empty C ρ _⟩
+
+/-! ## The latch-miss countermodel (PRD 08) -/
+
+/-- **The countermodel (PRD 08).** `latch_miss_not_static` — the
+selection miss is PER-INSTANCE: the one-atom rule is empty at the
+empty instance through `Query.EmptyAt.selectionMiss` (the dictionary
+miss's abstract face), yet ANSWERS at the orphan instance — so the
+miss verdict can never be promoted to the instance-independent
+refutation, which is the latch's two-constructor design decision made
+checkable. -/
+theorem latch_miss_not_static (C : Query.Classify)
+    (ρ : Query.ParamEnv) :
+    Query.EmptyAt C ρ elimSurvivor emptyInstance ∧
+    ∃ t, t ∈ Query.ruleAnswers C elimSurvivor elimInstance ρ :=
+  ⟨.selectionMiss elimSrc (List.mem_singleton.mpr rfl)
+      (fun _ hf _ _ => hf),
+    [orphanFact ⟨0⟩], elim_survivor_answers C ρ⟩
 
 end Bumbledb.Countermodels
