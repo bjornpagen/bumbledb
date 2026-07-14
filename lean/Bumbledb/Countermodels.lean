@@ -1,4 +1,4 @@
-import Bumbledb.Values
+import Bumbledb.Dependencies
 
 /-!
 # Countermodels — the design scratchpad (PRD 02 onward, grows all campaign)
@@ -27,6 +27,26 @@ part of the spec.
   values. This is a deliberate absence (a typing fact), machine-
   checked below with `#check_failure`: the instance searches FAIL,
   and the build breaks if anyone ever adds the instances.
+
+## PRD 03 residents
+
+* `bare_eq_not_unique` — the two-row countermodel (port): bare `==`
+  (mutual containment) holds between a one-fact source and a two-fact
+  target sharing one projected key value, while the target projection
+  is NOT a key. Bare projected view equality is not unique
+  correspondence; the key premises of `KeyBackedEquality` are load-
+  bearing, which is why each `==` direction must independently pass
+  `resolve_target_key` (the ==-reverse-key locks).
+
+* `one_way_overhang` — the [0,10)/[0,20) overshoot (port): one-way
+  coverage of a [0,10) source by a [0,20) target HOLDS (with the
+  target vacuously pointwise-keyed — a disjoint cover), while exact
+  partition FAILS at point 15, which the target covers outside the
+  source's support. The tiling over-read's killer: coverage is
+  support INCLUSION (`coverage_is_support_inclusion`), never
+  equality; exact partition needs both directions
+  (`exact_partition_iff`), which is exactly recipe 26's five-statement
+  construction and its commit matrix's one-way-overhang-accepted row.
 -/
 
 namespace Bumbledb.Countermodels
@@ -83,5 +103,129 @@ example : DecidableEq StrId := inferInstance
 
 #guard_msgs (drop info) in
 #check_failure (inferInstance : Ord StrId)
+
+/-! ## The bare-`==` countermodel (PRD 03)
+
+A one-fact source and a two-fact target: field 0 carries the shared
+key value in every fact, field 1 the payload that makes the two
+target facts distinct. -/
+
+/-- The shared projected key value. -/
+def keyVal : Value := ⟨.u64, ⟨0, by omega⟩⟩
+
+/-- The Bool observer that discriminates the two target payloads. -/
+def Value.asBool : Value → Bool
+  | { type := .bool, val := b } => b
+  | _ => false
+
+/-- The source fact (and first target fact): payload `true`. -/
+def rowTrue : Fact := fun i => if i.id = 1 then ⟨.bool, true⟩ else keyVal
+
+/-- The second target fact: payload `false`, same projected key. -/
+def rowFalse : Fact := fun i => if i.id = 1 then ⟨.bool, false⟩ else keyVal
+
+/-- The one-fact source. -/
+def oneSource : Set Fact := fun f => f = rowTrue
+
+/-- The two-fact target, both rows sharing the projected key. -/
+def twoTarget : Set Fact := fun f => f = rowTrue ∨ f = rowFalse
+
+/-- The projection both sides use: field 0, the shared key. -/
+def keyProj : List FieldId := [⟨0⟩]
+
+/-- **The countermodel (port).** Bare `==` holds — the views are both
+`{[keyVal]}` — while the target projection is NOT a key: `rowTrue`
+and `rowFalse` agree on it and differ. Unique correspondence needs
+the `KeyBackedEquality` premises; `keyed_eq_unique_correspondence`
+is exactly what this model refutes without them. Bridge: why each
+lowered `==` direction independently passes `resolve_target_key`. -/
+theorem bare_eq_not_unique :
+    ContainsEq oneSource Selection.empty keyProj
+      twoTarget Selection.empty keyProj ∧
+    ¬ Functionality twoTarget keyProj := by
+  refine ⟨⟨?_, ?_⟩, ?_⟩
+  · intro f hf _
+    have hf' : f = rowTrue := hf
+    exact ⟨rowTrue, Or.inl rfl, Selection.empty_satisfies _,
+      by rw [hf']⟩
+  · intro g hg _
+    have hg' : g = rowTrue ∨ g = rowFalse := hg
+    refine ⟨rowTrue, rfl, Selection.empty_satisfies _, ?_⟩
+    cases hg' with
+    | inl h => rw [h]
+    | inr h => rw [h]; rfl
+  · intro h
+    have heq : rowTrue = rowFalse :=
+      h rowTrue rowFalse (Or.inl rfl) (Or.inr rfl) rfl
+    have hb : (true : Bool) = false :=
+      congrArg (fun f : Fact => Value.asBool (f ⟨1⟩)) heq
+    cases hb
+
+/-! ## The one-way-overhang countermodel (PRD 03)
+
+The [0,10)/[0,20) overshoot, ported onto the in-tree `Interval U64`
+(nonempty by construction — the raw-pair vacuity above is exactly
+what these facts CANNOT exhibit). One scalar group (empty prefix),
+interval position at field 0. -/
+
+/-- The source span: `[0, 10)`. -/
+def domSpan : Value :=
+  ⟨.interval .u64, ⟨⟨0, by omega⟩, ⟨10, by omega⟩, by decide⟩⟩
+
+/-- The overshooting target span: `[0, 20)`. -/
+def tileSpan : Value :=
+  ⟨.interval .u64, ⟨⟨0, by omega⟩, ⟨20, by omega⟩, by decide⟩⟩
+
+/-- The one-fact source relation. -/
+def domFact : Fact := fun _ => domSpan
+/-- The one-fact overshooting target relation. -/
+def tileFact : Fact := fun _ => tileSpan
+
+def domRel : Set Fact := fun f => f = domFact
+def tileRel : Set Fact := fun f => f = tileFact
+
+/-- The single overshooting tile is pointwise-keyed vacuously: no two
+distinct selected target facts exist — the "disjoint cover" half of
+the port's `IsTilingOf`. -/
+theorem overhang_tile_pointwise_key :
+    PointwiseKey (Selected tileRel Selection.empty) [] ⟨0⟩ :=
+  fun f g hf hg _ hne _ _ _ =>
+    hne ((show f = tileFact from hf.1).trans
+      (show g = tileFact from hg.1).symm)
+
+/-- **The countermodel (port).** One-way coverage of `[0, 10)` by
+`[0, 20)` HOLDS — target overhang is legal, coverage is support
+INCLUSION only (`coverage_is_support_inclusion`) — while exact
+partition FAILS: the tile covers point 15 outside the source's
+support. The tiling over-read's killer, now in-tree. Bridge:
+`Checker::check_coverage` walks only the demanded source interval;
+recipe 26's commit matrix locks the one-way-overhang-accepted and
+reverse-overhang-rejected rows (`r26_exact_partition_commit_matrix`). -/
+theorem one_way_overhang :
+    Coverage domRel Selection.empty [] ⟨0⟩
+      tileRel Selection.empty [] ⟨0⟩ ∧
+    ¬ ExactPartition domRel Selection.empty [] ⟨0⟩
+      tileRel Selection.empty [] ⟨0⟩ := by
+  constructor
+  · intro f hf _ x hx
+    have hf' : f = domFact := hf
+    subst hf'
+    refine ⟨tileFact, rfl, Selection.empty_satisfies _, rfl, ?_⟩
+    cases x with
+    | u64 y =>
+      have h1 : (0 : Nat) ≤ y.val := hx.1
+      have h2 : y.val < 10 := hx.2
+      exact ⟨h1, show y.val < 20 by omega⟩
+    | i64 y => exact False.elim hx
+  · intro hex
+    have htile : (Point.u64 ⟨15, by omega⟩) ∈
+        Support tileRel Selection.empty [] ⟨0⟩ [] :=
+      ⟨tileFact, rfl, Selection.empty_satisfies _, rfl,
+        by decide, by decide⟩
+    have hdom := (hex.2 [] (Point.u64 ⟨15, by omega⟩)).mpr htile
+    obtain ⟨f, hf, -, -, hx⟩ := mem_support.mp hdom
+    have hf' : f = domFact := hf
+    subst hf'
+    exact absurd hx.2 (by decide)
 
 end Bumbledb.Countermodels
