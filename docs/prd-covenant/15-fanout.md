@@ -50,17 +50,20 @@ Each agent's mandate:
    with the grade's one-paragraph justification. Honest grades — an
    A must mean "no divergence found under adversarial reading," not
    "looks fine."
-5. NO fixes inside the review (blind agents don't mutate the shared
-   tree); findings return to the orchestrator.
+5. NO code changes anywhere in this PRD — reviews AND
+   consolidation are read-only (owner directive); findings return to
+   the orchestrator as report content only.
 
 The orchestrator (me) then: consolidates into
 `docs/reports/spec-fidelity/00-summary.md` (grades table, findings
-ranked, reconciliation verdicts); every class-(a) finding is triaged
-under trophy discipline (minimal repro, standalone fix commit or
-recorded deferral with reason); class-(b) gaps become recorded spec
-obligations (Countermodels/Bridge additions in a follow-up commit);
-class-(c) errors fix the spec (with the gate law observed — same
-commit updates any doc citation).
+ranked most-severe first, each with an adversarial re-verification
+verdict — CONFIRMED or REFUTED — and a RECOMMENDED disposition).
+**REPORTS ONLY — the fanout changes no code.** By owner directive,
+neither the review agents nor the orchestrator commits any fix,
+spec edit, Bridge addition, or reconciliation: every finding lands in
+the summary with its evidence and recommendation, and the decision to
+act is the owner's. The only commit this PRD produces is the reports
+themselves.
 
 ## Technical direction
 
@@ -77,15 +80,14 @@ survive to a commit).
 - `[shape]` Ten reports + the summary exist; every report carries the
   per-theorem table, divergence lists with dual citations, and a
   justified grade.
-- `[shape]` Every class-(a) finding: re-verified, then fixed in a
-  standalone commit OR recorded as a deferred trophy with reason;
-  zero silently dropped.
-- `[shape]` Every class-(b)/(c) item: a Countermodels/Bridge/spec
-  commit or a recorded refusal.
-- `[gate]` After reconciliation: full gates green (workspace + lean +
-  spec-census + conformance corpus) — the two spec halves agree at
-  campaign end, with every known divergence either fixed or on the
-  record.
+- `[shape]` Every class-(a) finding adversarially re-verified with a
+  CONFIRMED/REFUTED verdict and a recommended disposition; zero
+  silently dropped; ZERO code/spec/doc changes anywhere (`git diff
+  --stat` shows only `docs/reports/spec-fidelity/`).
+- `[shape]` Class-(b)/(c) items each carry a recommendation in the
+  summary — recorded, not acted on.
+- `[gate]` The reports commit is the PRD's only commit; the gates are
+  untouched by construction.
 
 ## Doc amendments
 
