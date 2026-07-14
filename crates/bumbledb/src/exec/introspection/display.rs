@@ -30,6 +30,15 @@ impl fmt::Display for IntrospectionReport<'_> {
                 // the death record (`stats.dead`).
                 RulePlan::Empty => writeln!(f, "access path: statically empty")?,
             }
+            writeln!(
+                f,
+                "  distinct_bindings: {}",
+                if stats.distinct_bindings {
+                    "proven"
+                } else {
+                    "unproven"
+                }
+            )?;
             // The union accounting, per rule (docs/architecture/
             // 40-execution.md § the rule loop): what this rule handed the
             // shared sink and what the spanning seen-set absorbed.

@@ -58,7 +58,7 @@ fn a_str_literal_latches_on_first_execution() {
     let [PreparedRule::FreeJoin(rule)] = prepared.program.rules() else {
         panic!("free join fixture");
     };
-    assert!(rule.resolved_complete);
+    assert_eq!(rule.resolution, ResolutionState::Complete);
 
     // The latch IS the rewrite: the template slot now carries the word —
     // no parallel resolution state exists to consult.
@@ -116,7 +116,7 @@ fn a_miss_stays_live_and_latches_after_interning() {
         matches!(
             prepared.program.rules(),
             [PreparedRule::FreeJoin(FreeJoinRule {
-                resolved_complete: false,
+                resolution: ResolutionState::Pending,
                 ..
             })]
         ),

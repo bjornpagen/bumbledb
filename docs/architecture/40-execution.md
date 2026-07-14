@@ -199,8 +199,8 @@ no residual concept; we own filter placement because there is no external optimi
 **`ValidatedPlan` contents** (the witness type execution trusts): atom occurrences with
 field→column maps; the node list with subatom partitions; per-node cover sets; per-
 occurrence trie schemas derived per §3.3; per-node residual **and anti-probe** lists;
-per-atom filter lists; the binding-slot layout (below); and the
-provably-distinct-bindings flag (below). Validated once at construction; nothing
+per-atom filter lists; the binding-slot layout (below); and the optional
+`DistinctWitness` (below). Validated once at construction; nothing
 downstream re-checks.
 
 ## Set semantics in the executor
@@ -245,9 +245,12 @@ Two facts identical on all *bound* variables produce the same binding; the solut
   pushdown applies).
 - **Elision optimization:** if every atom occurrence's bound fields cover a key of
   its relation (typical for ledger queries that bind fresh ids), distinct facts ⇒
-  distinct bindings, and the plan carries a proof flag that lets the aggregate sink
-  skip the seen-set entirely. Provable at plan time from the schema's FD statements —
-  a representation-level fix, not a runtime branch per binding.
+  distinct bindings. `provably_distinct` is the only mint for
+  `DistinctWitness`; `AggregateSink::without_seen_set` requires that witness by
+  value, and the ordinary/union constructors cannot omit the set. This is a
+  single-rule proof: the multi-rule union keeps its spanning head-projection
+  seen-set even when every rule has its own witness. That is deliberately distinct
+  from the measured cross-rule elision refutation below.
 - **Rule-disjointness knowledge:** `plan/fj/provably_disjoint.rs` recognizes a
   multi-rule program whose heads are provably pairwise disjoint. **Witness form**:
   a relation R and field f such that both rules bind a positive R occurrence whose
@@ -316,9 +319,9 @@ and stays a non-goal.
   the fold domain is the union of the rules' binding sets projected to the head".
   The single-rule aggregate keys the full slot array (its fold domain is the rule's
   distinct full bindings — the normative single-rule semantics, unchanged).
-  Under the rule-disjointness proof (§ set semantics) the spanning condition is
-  dropped: the projection map drains per rule and the composed aggregate
-  seen-set is elided — a collision the theorem forbids needs no set to absorb it.
+  The spanning set remains under the rule-disjointness proof (§ set semantics):
+  `DisjointWitness` is diagnostic knowledge, and the measured refutation above
+  rejects the slower per-rule drain representation.
 - **Per-rule re-aiming:** the sink's slot tables (projection slots; aggregate finds,
   group spans, head-projection spans) re-aim to each rule's binding layout at rule
   entry — head positions are fixed (arity, ops, widths, types), slots are the rule's.
@@ -742,7 +745,7 @@ with its subsuming rule's index (`subsumed: rule 0 by rule 1`, lowered-rule
 indices — the per-rule sections are the survivors). The obs registry mirrors it: one `RULE` span
 per rule under the execute span (`rule_N` — the index rides in the name,
 `MAX_RULES`-bounded), args (emitted, absorbed), populated on counted paths.
-The output contract is `introspection v1`: byte-identical within the version for
+The output contract is `introspection v2`: byte-identical within the version for
 identical schema fingerprint, canonical query, parameter types, and features, with
 the fixed ordering specified in `70-api.md`. Any content or ordering change bumps
 the rendered and structured version together. Release builds contain no other instrumentation: no per-tuple labels, no

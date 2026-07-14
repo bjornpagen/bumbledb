@@ -459,7 +459,7 @@ impl<'a> RuleWitness<'a> {
     /// cross nodes binding nothing projected. For an aggregate-bearing
     /// head it is **every** variable of the rule: the fold is defined over
     /// the distinct full binding set, so no node's bindings are skippable,
-    /// and the `sink_relevant` bits themselves encode the illegality —
+    /// and the `SuffixSkip::Forbidden` evidence itself encodes the illegality —
     /// any `SkipSuffix` a future sink ever signaled under an aggregate
     /// plan is absorbed at the node that produced it.
     #[must_use]

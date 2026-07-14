@@ -688,7 +688,6 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
             signed: false,
         }],
         1,
-        true,
     );
     let mut key = Vec::new();
     execute_key_probe(

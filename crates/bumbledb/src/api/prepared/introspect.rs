@@ -149,6 +149,7 @@ impl<S> PreparedQuery<'_, S> {
             let stats = ExecutionStats {
                 introspection_version: crate::api::stats::INTROSPECTION_VERSION,
                 rules: vec![RuleStats {
+                    distinct_bindings: self.program.rules()[0].distinct_witness().is_some(),
                     nodes: Vec::new(),
                     // A key probe is a single-atom query: the grounding has
                     // nothing to pair and nothing to fold, so no marks
@@ -208,7 +209,8 @@ impl<S> PreparedQuery<'_, S> {
                     self.rule_pinned_rows(rule_idx),
                     absorbed,
                 ),
-                PreparedRule::KeyProbe(_) => RuleStats {
+                PreparedRule::KeyProbe(rule) => RuleStats {
+                    distinct_bindings: rule.distinct_witness.is_some(),
                     nodes: Vec::new(),
                     eliminated: Vec::new(),
                     folded: Vec::new(),
@@ -226,7 +228,7 @@ impl<S> PreparedQuery<'_, S> {
                 &mut self.resolve_memo,
                 txn,
                 &self.predicate.columns,
-                self.all_words,
+                self.answer_heap,
                 &mut out,
             )?;
         }
@@ -251,6 +253,7 @@ impl<S> PreparedQuery<'_, S> {
         ExecutionStats {
             introspection_version: crate::api::stats::INTROSPECTION_VERSION,
             rules: vec![RuleStats {
+                distinct_bindings: false,
                 nodes: Vec::new(),
                 eliminated: Vec::new(),
                 folded: Vec::new(),
@@ -275,7 +278,7 @@ impl<S> PreparedQuery<'_, S> {
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
         match self.program.rules() {
-            [rule] => rule.distinct_bindings(),
+            [rule] => rule.distinct_witness().is_some(),
             _ => false,
         }
     }

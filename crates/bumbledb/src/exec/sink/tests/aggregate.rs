@@ -43,7 +43,7 @@ fn constant_group_batches_fold_once_per_run() {
     for (batch, distinct) in [(1usize, true), (7, true), (128, true), (128, false)] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-        let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), distinct);
+        let mut sink = aggregate_sink(&plan, finds(&plan), distinct);
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -117,7 +117,7 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         // distinct_bindings = false: the dedup arm is mandatory.
-        let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), false);
+        let mut sink = AggregateSink::new(finds(&plan), plan.slot_count());
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -174,7 +174,7 @@ fn constant_over_slot_folds_value_times_count() {
     for distinct in [true, false] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-        let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), distinct);
+        let mut sink = aggregate_sink(&plan, finds(&plan), distinct);
         Executor::with_batch_size(&plan, 128)
             .execute(
                 &plan,
@@ -199,7 +199,7 @@ fn constant_over_slot_folds_value_times_count() {
     for distinct in [true, false] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-        let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), distinct);
+        let mut sink = aggregate_sink(&plan, finds(&plan), distinct);
         Executor::with_batch_size(&plan, 128)
             .execute(
                 &plan,
@@ -248,7 +248,7 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
     for batch in [1usize, 2, 7, 128] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-        let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), true);
+        let mut sink = aggregate_sink(&plan, finds(&plan), true);
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -276,7 +276,7 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
     for batch in [1usize, 2, 7, 128] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-        let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), true);
+        let mut sink = aggregate_sink(&plan, finds(&plan), true);
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -329,7 +329,7 @@ fn count_distinct_collapses_multiplicities_per_group() {
         for distinct in [true, false] {
             let mut colts = colts_for(&plan, &views);
             let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-            let mut sink = AggregateSink::new(finds(&plan), plan.slot_count(), distinct);
+            let mut sink = aggregate_sink(&plan, finds(&plan), distinct);
             Executor::with_batch_size(&plan, batch)
                 .execute(
                     &plan,
@@ -367,14 +367,19 @@ fn elision_skips_the_seen_set_but_never_the_value_sets() {
         vec![],
     );
     let plan = planned(&schema, &normalized, &[0], &[1]);
-    assert!(plan.distinct_bindings(), "fresh ids are bound");
+    assert!(plan.distinct_witness().is_some(), "fresh ids are bound");
     let finds = vec![
         var_spec(&plan, 1),
         agg_spec(&plan, FoldOp::CountDistinct, Some(2), true),
     ];
     let mut colts = colts_for(&plan, &views);
     let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-    let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
+    let mut sink = AggregateSink::new_distinct(
+        finds,
+        plan.slot_count(),
+        plan.distinct_witness()
+            .expect("fresh ids prove distinctness"),
+    );
     Executor::new(&plan)
         .execute(
             &plan,
@@ -422,7 +427,12 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let finds = vec![var_spec(&plan, 1), arg_spec(&plan, 2, 0, true)];
-        let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
+        let mut sink = AggregateSink::new_distinct(
+            finds,
+            plan.slot_count(),
+            plan.distinct_witness()
+                .expect("fresh ids prove distinctness"),
+        );
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -443,7 +453,12 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
         // ArgMin mirror.
         let mut colts = colts_for(&plan, &views);
         let finds = vec![var_spec(&plan, 1), arg_spec(&plan, 2, 0, false)];
-        let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
+        let mut sink = AggregateSink::new_distinct(
+            finds,
+            plan.slot_count(),
+            plan.distinct_witness()
+                .expect("fresh ids prove distinctness"),
+        );
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -464,7 +479,12 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
         // Global group: one row for the whole input.
         let mut colts = colts_for(&plan, &views);
         let finds = vec![arg_spec(&plan, 2, 0, true)];
-        let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
+        let mut sink = AggregateSink::new_distinct(
+            finds,
+            plan.slot_count(),
+            plan.distinct_witness()
+                .expect("fresh ids prove distinctness"),
+        );
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -507,7 +527,12 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let finds = vec![var_spec(&plan, 1), arg_spec(&plan, 0, 2, true)];
-        let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
+        let mut sink = AggregateSink::new_distinct(
+            finds,
+            plan.slot_count(),
+            plan.distinct_witness()
+                .expect("fresh ids prove distinctness"),
+        );
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -529,7 +554,12 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
         // key-also-projected (the carry IS the key variable).
         let mut colts = colts_for(&plan, &views);
         let finds = vec![var_spec(&plan, 1), arg_spec(&plan, 2, 2, true)];
-        let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
+        let mut sink = AggregateSink::new_distinct(
+            finds,
+            plan.slot_count(),
+            plan.distinct_witness()
+                .expect("fresh ids prove distinctness"),
+        );
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -556,7 +586,12 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
             arg_spec(&plan, 0, 2, true),
             arg_spec(&plan, 2, 2, true),
         ];
-        let mut sink = AggregateSink::new(finds, plan.slot_count(), plan.distinct_bindings());
+        let mut sink = AggregateSink::new_distinct(
+            finds,
+            plan.slot_count(),
+            plan.distinct_witness()
+                .expect("fresh ids prove distinctness"),
+        );
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -702,7 +737,7 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
             },
         ]
     };
-    let mut sink = AggregateSink::with_capacity_hint(&spec(0, 1), 2, false, true, 0);
+    let mut sink = AggregateSink::for_union(&spec(0, 1), 2, 0);
     sink.reset(); // once per execution, never per rule
 
     // Rule A: (g = 7, x = 100) and (g = 7, x = 250).

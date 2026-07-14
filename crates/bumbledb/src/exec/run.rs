@@ -118,8 +118,8 @@ pub trait Sink {
     /// fold is absorbed at the node that produced it — this method
     /// backs the debug tripwire that a skip never *crosses* a node
     /// unless the sink is allowed to skip at all.
-    fn may_skip(&self) -> bool {
-        false
+    fn skip_capability(&self) -> SkipCapability {
+        SkipCapability::Forbidden
     }
 
     /// Opens a fused leaf scan. `false` — the
@@ -144,6 +144,15 @@ pub trait Sink {
         let _ = scan;
         unreachable!("end_scan without begin_scan == true");
     }
+}
+
+/// Sink-side evidence for D2 subtree cancellation. Only projection sinks
+/// mint `Licensed`; aggregate sinks inherit the forbidden default because
+/// existential variables still multiply their fold domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipCapability {
+    Forbidden,
+    Licensed,
 }
 
 /// One executor phase, for per-(node, phase) time attribution
@@ -529,7 +538,7 @@ struct PipeTables {
     /// node — a leaf skip cancels the subtree of one of its elements.
     /// `Some(N-1)` (the leaf itself) means skips never cross a node;
     /// `None` means a skip ends the whole execution. Skips only exist
-    /// under sinks that `may_skip`; cancellation is an optimization —
+    /// under sinks carrying `SkipCapability::Licensed`; cancellation is an optimization —
     /// a late cancel re-emits rows the seen-set already holds.
     absorb: Option<usize>,
 }

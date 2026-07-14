@@ -80,7 +80,8 @@ impl Executor {
                 key_slots,
                 bindings,
             };
-            let stop_on_skip = !node.sink_relevant && sink.may_skip();
+            let stop_on_skip = node.suffix_skip == crate::plan::fj::SuffixSkip::Licensed
+                && sink.skip_capability() == super::SkipCapability::Licensed;
             let flow = sink.emit_batch(&batch, stop_on_skip);
             counters.emit();
             counters.phase_end(node_idx, JoinPhase::Descend);

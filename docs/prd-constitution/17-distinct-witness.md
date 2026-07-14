@@ -81,3 +81,39 @@ refactor, compiler-chased.
 `40-execution.md` § the distinct-bindings elision: the witness named;
 the cross-reference to the union-elision refutation record; the
 theorem↔evidence dedup row updates its cell.
+
+## Results
+
+`DistinctWitness` is minted only in `provably_distinct` and is stored as an
+`Option` in `ValidatedPlan`. The production sink boundary has three structural
+entries: ordinary single-rule dedup, mandatory union dedup, and
+`without_seen_set`, whose signature consumes `DistinctWitness`. No boolean or
+unwitnessed flag crosses from the proof to the elision. Plan introspection v2 and
+`RuleStats::distinct_bindings` expose the proof without using that diagnostic bool
+to authorize construction.
+
+The bool-licensed-rewrite sweep covered `plan/`, `api/prepared/`, and the sink/
+executor consumers reached by their decisions:
+
+| Candidate | Judgment | Result / reason |
+|---|---|---|
+| Distinct-binding seen-set elision | Semantics-bearing elision | Replaced `bool` with `DistinctWitness`; only `AggregateSink::without_seen_set` consumes it. |
+| Single-rule vs union aggregate dedup | Semantics-bearing representation | Replaced `(distinct, union)` booleans with `SinkProgram`, separate ordinary/union/elided constructors, and internal `DedupRegime`. |
+| D2 suffix cancellation: plan node | Semantics-bearing elision | Replaced `sink_relevant: bool` with `SuffixSkip::{Forbidden, Licensed}` evidence. |
+| D2 suffix cancellation: sink | Semantics-bearing elision | Replaced `may_skip() -> bool` with `SkipCapability::{Forbidden, Licensed}`; D2 requires both evidence types. |
+| All-word answer finalization | Semantics-bearing representation dispatch | Replaced cached `all_words: bool` with `AnswerHeap::{Words, Bytes}`, sealed from the validated predicate. |
+| Literal-resolution warm skip | Semantics-bearing lifecycle state | Replaced `resolved_complete: bool` with `ResolutionState::{Pending, Complete}`; only a completed rewrite pass arms the skip. |
+| Rule-disjointness | Diagnostic theorem, deliberately unspent | Already `Option<DisjointWitness>`; public/stats booleans are read-only projections. The spanning union set remains by the measured refutation. |
+| Key-probe rewrite | Semantics-bearing dispatch | Already `Option<KeyProbePlan>` / `PreparedRule::KeyProbe`; no parallel flag. |
+| Grounding elimination | Semantics-bearing rewrite | Proof predicates are local booleans consumed immediately; the cross-seam evidence is typed `Role::Eliminated(statement)`. |
+| Closed-relation fold | Semantics-bearing rewrite | Parser returns typed `ResolvableFilter` values and the cross-seam evidence is `Role::Folded(mark)`; local evaluator predicates do not escape. |
+| Rule subsumption | Semantics-bearing rewrite | Local containment predicates mint typed `SubsumedRule`; no stored permission flag. |
+| `is_point_filter`, selectivity and matching predicates | Heuristic/local propositions | Left as booleans: they either choose cost/placement or are consumed in the proving frame; they authorize no downstream semantic shortcut alone. |
+| `ParamSpec::point`, `missed_params`, negation/operator booleans | Runtime/type payload | Left as data, not optimizer licenses; their enum/typed parent determines meaning and no plan rewrite consumes them. |
+| View-memo hit, fused-scan engagement, counter/empty queries | Heuristic/runtime observation | Left as booleans; both paths are value-identical and differential tests pin them. |
+
+The keyed/unkeyed `CountDistinct` pair in
+`elision_skips_binding_dedup_but_count_distinct_still_collapses` returns identical
+answers while asserting `proven`/`unproven` in both structured and rendered
+introspection. The sink-level differential additionally forces witnessed elision
+against ordinary dedup on the same proved plan.

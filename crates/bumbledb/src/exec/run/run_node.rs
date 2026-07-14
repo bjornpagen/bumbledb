@@ -488,7 +488,9 @@ impl Executor {
                 key_slots: &self.slot_map[node_idx][cover_sub],
                 bindings,
             };
-            let stop_on_skip = !plan.nodes()[node_idx].sink_relevant && sink.may_skip();
+            let stop_on_skip = plan.nodes()[node_idx].suffix_skip
+                == crate::plan::fj::SuffixSkip::Licensed
+                && sink.skip_capability() == super::SkipCapability::Licensed;
             let batch_flow = sink.emit_batch(&batch, stop_on_skip);
             // introspection's `emits` counts rows the sink consumed: the
             // whole batch, or exactly one when the first emit's skip
@@ -504,7 +506,7 @@ impl Executor {
             counters.phase_end(node_idx, JoinPhase::Descend);
             if batch_flow == Flow::SkipSuffix {
                 debug_assert!(
-                    sink.may_skip(),
+                    sink.skip_capability() == super::SkipCapability::Licensed,
                     "a SkipSuffix crossed a node under a non-skipping sink"
                 );
                 counters.skip(node_idx);

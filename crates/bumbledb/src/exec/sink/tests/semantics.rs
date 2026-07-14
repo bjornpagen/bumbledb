@@ -67,7 +67,7 @@ fn joining_a_three_tag_relation_triples_the_sum() {
 }
 
 #[test]
-fn distinct_flag_elision_matches_the_seen_set_path() {
+fn witnessed_elision_matches_the_seen_set_path() {
     let dir = TempDir::new("sink-elision");
     let schema = schema();
     let postings = vec![(1u64, 7u64, 10i64), (2, 7, 20), (3, 8, 30)];
@@ -78,7 +78,7 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
         vec![],
     );
     let plan = planned(&schema, &normalized, &[0], &[1]);
-    assert!(plan.distinct_bindings(), "fresh ids are bound");
+    assert!(plan.distinct_witness().is_some(), "fresh ids are bound");
     let finds = |plan: &ValidatedPlan| {
         vec![
             var_spec(plan, 1),
@@ -89,7 +89,12 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
     // Elided path (as the plan proves) vs forced seen-set path.
     let mut colts = colts_for(&plan, &views);
     let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-    let mut elided = AggregateSink::new(finds(&plan), plan.slot_count(), true);
+    let mut elided = AggregateSink::new_distinct(
+        finds(&plan),
+        plan.slot_count(),
+        plan.distinct_witness()
+            .expect("fresh ids prove distinctness"),
+    );
     Executor::new(&plan)
         .execute(
             &plan,
@@ -100,7 +105,7 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
         )
         .expect("execute");
     let mut colts = colts_for(&plan, &views);
-    let mut checked = AggregateSink::new(finds(&plan), plan.slot_count(), false);
+    let mut checked = AggregateSink::new(finds(&plan), plan.slot_count());
     Executor::new(&plan)
         .execute(
             &plan,
@@ -156,7 +161,7 @@ fn sum_is_order_independent_near_the_boundary() {
     };
     for order in [[0usize, 1, 2], [2, 1, 0], [1, 2, 0]] {
         let values = [i64::MAX, 1, -2];
-        let mut sink = AggregateSink::new(vec![sum_find], 1, true);
+        let mut sink = AggregateSink::new(vec![sum_find], 1);
         let mut bindings = Bindings::new(1);
         bindings.reset();
         for idx in order {
@@ -168,7 +173,7 @@ fn sum_is_order_independent_near_the_boundary() {
     }
     for order in [[0usize, 1], [1, 0]] {
         let values = [i64::MAX, 1];
-        let mut sink = AggregateSink::new(vec![sum_find], 1, true);
+        let mut sink = AggregateSink::new(vec![sum_find], 1);
         let mut bindings = Bindings::new(1);
         bindings.reset();
         for idx in order {
@@ -204,7 +209,6 @@ fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
             },
         ],
         1,
-        true,
     );
     let mut bindings = Bindings::new(1);
     bindings.reset();
@@ -228,7 +232,7 @@ fn arg_keys_honor_logical_i64_order_across_the_sign_boundary() {
         key_slot: 0,
         max: true,
     }];
-    let mut sink = AggregateSink::new(finds, 2, true);
+    let mut sink = AggregateSink::new(finds, 2);
     let mut bindings = Bindings::new(2);
     bindings.reset();
     for (key, carry) in [(-5i64, 10u64), (3, 20), (-100, 30), (0, 40)] {

@@ -461,11 +461,12 @@ explicit per-thread capture of nanosecond spans and point events over every prep
 execute/commit phase, drained by tooling into Chrome-trace artifacts. Plan
 introspection — EXPLAIN, colloquially — is always available through
 `snap.introspect(..)`. It returns an ANALYZE-semantics rendered artifact beginning
-with `introspection v1`, then the query in rule notation (`20-query-ir.md` § the
+with `introspection v2`, then the query in rule notation (`20-query-ir.md` § the
 renderer; `PreparedQuery::rendered_query` exposes the same query string), predicate,
 plan sections, and diagnostics. `Snapshot::profile` returns the same execution as
-structured `ExecutionStats`, carrying `introspection_version: 1` and the same
-program/node ordering.
+structured `ExecutionStats`, carrying `introspection_version: 2`, each rule's
+`distinct_bindings` proof status, and the same program/node ordering. Version 2
+adds that proof-status line/field to version 1's artifact.
 
 Within one version, identical schema fingerprint, canonical query, parameter types,
 and feature set produce byte-identical rendered output. Sections are fixed; rules

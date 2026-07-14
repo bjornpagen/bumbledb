@@ -120,6 +120,7 @@ impl CountingCounters {
             })
             .collect();
         RuleStats {
+            distinct_bindings: plan.distinct_witness().is_some(),
             nodes,
             eliminated,
             folded,

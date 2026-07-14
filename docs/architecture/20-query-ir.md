@@ -163,8 +163,9 @@ union of its rules' head projections. An answer is identical exactly when its
 canonical head-tuple bytes are identical. The sink is that union—one sink hears
 every rule and its spanning seen-set performs semantic deduplication; no merge node
 exists (`exec/sink.rs`'s module contract and `40-execution.md` § the rule loop).
-That seen-set is elided only when validation and planning supply the
-distinct-bindings proof whose witness is specified in PRD 17.
+That seen-set is elided only when planning supplies a typed
+`DistinctWitness`; the seen-set-free aggregate constructor requires it by value
+(`40-execution.md` § set semantics).
 
 **Equality at three types.** Dependency `==` is key-backed correspondence between
 selected projected views (`30-dependencies.md`); selection `==` is σ equality

@@ -134,7 +134,7 @@ impl<S> PreparedQuery<'_, S> {
             &mut self.resolve_memo,
             txn,
             &self.predicate.columns,
-            self.all_words,
+            self.answer_heap,
             out,
         )
     }
@@ -214,24 +214,29 @@ impl<S> PreparedQuery<'_, S> {
             }
             PreparedRule::FreeJoin(rule) => {
                 let plan = &mut rule.plan;
-                let resolved = if fast_eligible && rule.resolved_complete {
-                    true
-                } else {
-                    let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
-                    let complete = resolve_filters(
-                        txn,
-                        plan,
-                        &self.resolved_params,
-                        &self.missed_params,
-                        &mut rule.resolved_filters,
-                        &mut rule.resolved_selections,
-                        &mut latched,
-                    )?;
-                    // A short-circuited pass leaves later slots
-                    // unwritten; only a completed one arms the skip.
-                    rule.resolved_complete = complete;
-                    complete
-                };
+                let resolved =
+                    if fast_eligible && rule.resolution == super::ResolutionState::Complete {
+                        true
+                    } else {
+                        let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
+                        let complete = resolve_filters(
+                            txn,
+                            plan,
+                            &self.resolved_params,
+                            &self.missed_params,
+                            &mut rule.resolved_filters,
+                            &mut rule.resolved_selections,
+                            &mut latched,
+                        )?;
+                        // A short-circuited pass leaves later slots
+                        // unwritten; only a completed one arms the skip.
+                        rule.resolution = if complete {
+                            super::ResolutionState::Complete
+                        } else {
+                            super::ResolutionState::Pending
+                        };
+                        complete
+                    };
                 if resolved {
                     // This execution's Allen-residual masks (literal or
                     // bound param) resolve into the executor before the

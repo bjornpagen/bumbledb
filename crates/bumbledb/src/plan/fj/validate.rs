@@ -163,7 +163,7 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// Validates a plan against its normalized query, deriving covers,
 /// residual/word-residual/anti-probe placement, trie schemas (negated
 /// occurrences included), field→column span maps, the two-slot-aware
-/// binding-slot layout, and the distinct-bindings flag.
+/// binding-slot layout, and the optional distinct-bindings witness.
 ///
 /// # Errors
 ///
@@ -219,7 +219,11 @@ pub fn validate(
 
     let mut nodes = derive_nodes(plan)?;
     for node in &mut nodes {
-        node.sink_relevant = node.new_vars.iter().any(|v| sink_vars.contains(v));
+        node.suffix_skip = if node.new_vars.iter().any(|v| sink_vars.contains(v)) {
+            super::SuffixSkip::Forbidden
+        } else {
+            super::SuffixSkip::Licensed
+        };
     }
 
     // Cumulative bound-variable sets, once — the one input every
@@ -357,12 +361,12 @@ pub fn validate(
     // are empty (see `build_occurrences`).
     debug_assert!(check_selections(&occurrences).is_ok());
 
-    let distinct_bindings = provably_distinct(normalized, schema);
+    let distinct_witness = provably_distinct(normalized, schema);
     Ok(ValidatedPlan {
         occurrences,
         nodes,
         slots,
-        distinct_bindings,
+        distinct_witness,
         estimates,
     })
 }

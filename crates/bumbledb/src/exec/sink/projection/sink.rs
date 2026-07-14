@@ -14,7 +14,7 @@ impl Sink for ProjectionSink {
         self.seen.insert(&self.scratch);
         // The doc's first-emit signal (40-execution D2): once a projected
         // tuple lands — new or duplicate — the current suffix can only
-        // multiply witnesses. The executor's sink_relevant gating
+        // multiply witnesses. The executor's `SuffixSkip` evidence
         // (run.rs's skip-absorption arm) decides how far the skip
         // unwinds — for projections the bits come from the group key;
         // signaling on the *first* emit (not the
@@ -68,8 +68,8 @@ impl Sink for ProjectionSink {
         Flow::Continue
     }
 
-    fn may_skip(&self) -> bool {
-        true
+    fn skip_capability(&self) -> crate::exec::run::SkipCapability {
+        crate::exec::run::SkipCapability::Licensed
     }
 
     /// The projection scan: positions insert straight

@@ -12,7 +12,9 @@ use crate::ir::normalize::{NormalizedQuery, normalize};
 use crate::ir::validate::{RuleWitness, validate};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
-use crate::plan::fj::{DisjointWitness, binary2fj, factor, provably_disjoint_rules};
+use crate::plan::fj::{
+    DisjointWitness, DistinctWitness, binary2fj, factor, provably_disjoint_rules, provably_distinct,
+};
 use crate::plan::planner::plan as plan_order;
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
@@ -97,17 +99,15 @@ pub(crate) fn prepare<'s, S>(
     // proof. Every multi-rule sink keeps one head-projection seen-set
     // spanning all rules: that map is the union representation.
     let output_hint = output_hint(&rules);
-    let union = rules.len() > 1;
     let sink = rules.first().map_or_else(
-        || make_sink(&[], 0, true, false, 0),
+        || make_sink(&[], 0, SinkProgram::SingleRule(None), 0),
         |first| {
-            make_sink(
-                first.finds(),
-                first.slot_count(),
-                !union && first.distinct_bindings(),
-                union,
-                output_hint,
-            )
+            let program = if rules.len() > 1 {
+                SinkProgram::Union
+            } else {
+                SinkProgram::SingleRule(first.distinct_witness())
+            };
+            make_sink(first.finds(), first.slot_count(), program, output_hint)
         },
     );
     // The rule-shared binding-slot scratch, sized at the rules'
@@ -123,10 +123,15 @@ pub(crate) fn prepare<'s, S>(
     // The byte-heap types keep the resolving finalize: String resolves
     // through the dictionary; a bytes<N> find re-assembles its slot words
     // into the byte heap (no dictionary — inline values).
-    let all_words = predicate
+    let answer_heap = if predicate
         .columns
         .iter()
-        .all(|column| !matches!(column.ty, ValueType::String | ValueType::FixedBytes { .. }));
+        .all(|column| !matches!(column.ty, ValueType::String | ValueType::FixedBytes { .. }))
+    {
+        super::AnswerHeap::Words
+    } else {
+        super::AnswerHeap::Bytes
+    };
     let unresolved_literals = rules.iter().map(pending_literals).sum();
     let program = if rules.is_empty() {
         Program::Empty
@@ -148,7 +153,7 @@ pub(crate) fn prepare<'s, S>(
         sink,
         bindings,
         answer_scratch: Vec::new(),
-        all_words,
+        answer_heap,
         resolve_memo: ResolveMemo::new(),
         determinant_key: Vec::new(),
         rendered: crate::ir::render::render(schema, query),
@@ -318,6 +323,7 @@ fn prepare_rule(
     normalized: &NormalizedQuery,
     columns: &[crate::ir::validate::PredicateColumn],
 ) -> Result<PreparedRule> {
+    let distinct_witness = provably_distinct(normalized, schema);
     // Classification first: a key probe needs no statistics or planning.
     let classified = {
         let _s = obs::span(obs::names::CLASSIFY, obs::Category::Prepare);
@@ -328,6 +334,7 @@ fn prepare_rule(
         let key_probe_finds = key_probe_find_table(&plan, &finds, columns);
         return Ok(PreparedRule::KeyProbe(KeyProbeRule {
             plan,
+            distinct_witness,
             finds,
             key_probe_finds,
         }));
@@ -398,7 +405,7 @@ fn prepare_rule(
         finds,
         resolved_filters: vec![Vec::new(); occurrence_count],
         resolved_selections: vec![Vec::new(); occurrence_count],
-        resolved_complete: false,
+        resolution: super::ResolutionState::Pending,
         memo,
         pinned: pins.into_boxed_slice(),
     }))
@@ -639,15 +646,12 @@ fn disjointness(
 
 /// Builds the sink matching the head shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`), aimed at rule 0's binding
-/// layout. `union` is the multi-rule regime (head-projection dedup
-/// keys); `distinct` is the proof the dedup-key stream is duplicate-free
-/// for a single rule, which elides the aggregate seen-set. It is always
-/// false for a union: one spanning seen-set is the union representation.
+/// layout. The program regime structurally selects single-rule binding
+/// dedup, witnessed elision, or the mandatory union seen-set.
 fn make_sink(
     finds: &[FindSpec],
     slot_count: usize,
-    distinct: bool,
-    union: bool,
+    program: SinkProgram,
     hint: usize,
 ) -> EitherSink {
     let all_plain = finds
@@ -660,8 +664,21 @@ fn make_sink(
         // are word rows the finalize pass re-assembles by find type.
         EitherSink::Projection(ProjectionSink::with_capacity_hint(finds, slot_count, hint))
     } else {
-        EitherSink::Aggregate(Box::new(AggregateSink::with_capacity_hint(
-            finds, slot_count, distinct, union, hint,
-        )))
+        let sink = match program {
+            SinkProgram::SingleRule(Some(witness)) => {
+                AggregateSink::without_seen_set(finds, slot_count, witness, hint)
+            }
+            SinkProgram::SingleRule(None) => {
+                AggregateSink::with_capacity_hint(finds, slot_count, hint)
+            }
+            SinkProgram::Union => AggregateSink::for_union(finds, slot_count, hint),
+        };
+        EitherSink::Aggregate(Box::new(sink))
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SinkProgram {
+    SingleRule(Option<DistinctWitness>),
+    Union,
 }

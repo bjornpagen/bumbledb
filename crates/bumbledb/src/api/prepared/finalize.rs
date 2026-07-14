@@ -1,4 +1,4 @@
-use super::{Answers, EitherSink, ResolveMemo, ValueType};
+use super::{AnswerHeap, Answers, EitherSink, ResolveMemo, ValueType};
 
 use crate::error::Result;
 use crate::ir::validate::PredicateColumn;
@@ -20,7 +20,7 @@ pub(super) fn finalize(
     memo: &mut ResolveMemo,
     txn: &ReadTxn<'_>,
     columns: &[PredicateColumn],
-    all_words: bool,
+    answer_heap: AnswerHeap,
     out: &mut Answers,
 ) -> Result<()> {
     memo.clear();
@@ -32,7 +32,7 @@ pub(super) fn finalize(
     match sink {
         EitherSink::Projection(sink) => {
             out.cells.reserve(sink.len() * columns.len());
-            if all_words {
+            if answer_heap == AnswerHeap::Words {
                 for answer in sink.answers() {
                     push_word_answer(out, columns, answer);
                 }
@@ -45,7 +45,7 @@ pub(super) fn finalize(
         }
         EitherSink::Aggregate(sink) => {
             out.cells.reserve(sink.group_count() * columns.len());
-            if all_words {
+            if answer_heap == AnswerHeap::Words {
                 return sink.finalize_into(answer_scratch, |answer| {
                     push_word_answer(out, columns, answer);
                     Ok(())

@@ -317,6 +317,7 @@ fn key_probe_queries_report_their_classification() {
         stats: ExecutionStats {
             introspection_version: crate::api::stats::INTROSPECTION_VERSION,
             rules: vec![crate::api::stats::RuleStats {
+                distinct_bindings: true,
                 nodes: Vec::new(),
                 eliminated: Vec::new(),
                 folded: Vec::new(),

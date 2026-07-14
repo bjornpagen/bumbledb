@@ -32,7 +32,10 @@ impl Executor {
     ) -> Option<Flow> {
         let node = &plan.nodes()[node_idx];
         {
-            if !colts[occ].suffix_scannable(cursor) || (!node.sink_relevant && sink.may_skip()) {
+            if !colts[occ].suffix_scannable(cursor)
+                || (node.suffix_skip == crate::plan::fj::SuffixSkip::Licensed
+                    && sink.skip_capability() == super::SkipCapability::Licensed)
+            {
                 return None;
             }
             // Batch-constant residuals (both sides outer) decide the

@@ -301,6 +301,9 @@ struct ArgSpec {
 /// signaled by mistake would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
+    /// Evidence retained exactly when the binding seen-set is absent.
+    /// Construction cannot enter that regime without a plan proof.
+    distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     /// The measure-free sink specs in **derived-slot form**: construction
     /// parses every measure onto a derived binding-scratch word —
     /// `Duration { slot }` becomes `Var { slot: derived, width: 1 }` and

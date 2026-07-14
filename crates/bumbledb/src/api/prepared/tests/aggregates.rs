@@ -124,6 +124,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
         "the fresh key is covered: the binding seen-set is elided"
     );
     let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    assert!(stats.rules[0].distinct_bindings);
     assert_eq!(
         stats.emits, 3,
         "every binding reaches the sink — elision dropped none"
@@ -133,6 +134,42 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
         (AnswerValue::U64(3), AnswerValue::U64(2)) => {}
         other => panic!("CountDistinct still collapsed 3 bindings to 2 values: {other:?}"),
     }
+    let (_, report) = prepared
+        .introspect(&txn, &cache, &[])
+        .expect("introspection");
+    assert!(report.contains("distinct_bindings: proven"), "{report}");
+
+    // Same answer, deliberately unkeyed: dropping the fresh id makes the
+    // two amount-10 facts one binding, so the binding seen-set is required.
+    let unkeyed = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::CountDistinct,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![Atom {
+            relation: POSTING,
+            bindings: vec![
+                (FieldId(1), Term::Var(VarId(0))),
+                (FieldId(3), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &unkeyed).expect("prepare");
+    assert!(!prepared.distinct_bindings());
+    let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    assert!(!stats.rules[0].distinct_bindings);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out.get(0, 0), AnswerValue::U64(3));
+    assert_eq!(out.get(0, 1), AnswerValue::U64(2));
+    let (_, report) = prepared
+        .introspect(&txn, &cache, &[])
+        .expect("introspection");
+    assert!(report.contains("distinct_bindings: unproven"), "{report}");
 }
 
 /// `ArgMax` over the fresh id — latest posting per account — plus the

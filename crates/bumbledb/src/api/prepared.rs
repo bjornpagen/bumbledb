@@ -237,9 +237,8 @@ pub struct PreparedQuery<'s, S> {
     bindings: Bindings,
     /// Aggregate-finalization answer scratch.
     answer_scratch: Vec<u64>,
-    /// No interned finds: finalize takes the
-    /// infallible all-words blit.
-    all_words: bool,
+    /// Final answer materialization regime, sealed from the predicate.
+    answer_heap: AnswerHeap,
     /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md).
     resolve_memo: ResolveMemo,
     /// KeyProbe-key byte scratch.
@@ -295,7 +294,7 @@ struct FreeJoinRule {
     /// `resolve_filters` pass (a short-circuited pass leaves later
     /// slots unwritten and does not set it) — one leg of the
     /// fully-latched fast path.
-    resolved_complete: bool,
+    resolution: ResolutionState,
     /// The view memo (docs/architecture/40-execution.md): per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
@@ -309,6 +308,7 @@ struct FreeJoinRule {
 
 struct KeyProbeRule {
     plan: KeyProbePlan,
+    distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     finds: Vec<FindSpec>,
     /// The direct point lane's find table. `Some` iff every find is a plain
     /// variable; aggregate and measure key-probe rules keep the shared sink.
@@ -346,10 +346,10 @@ impl PreparedRule {
         }
     }
 
-    fn distinct_bindings(&self) -> bool {
+    fn distinct_witness(&self) -> Option<crate::plan::fj::DistinctWitness> {
         match self {
-            Self::FreeJoin(rule) => rule.plan.distinct_bindings(),
-            Self::KeyProbe(_) => true,
+            Self::FreeJoin(rule) => rule.plan.distinct_witness(),
+            Self::KeyProbe(rule) => rule.distinct_witness,
         }
     }
 
@@ -376,6 +376,22 @@ enum ParamSpec {
     Set { elem: ValueType, point: bool },
     /// An Allen mask: neither a data-model value nor a set/point.
     Mask,
+}
+
+/// Whether finalization can blit words directly or must populate the
+/// owned byte heap for string/fixed-byte answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnswerHeap {
+    Words,
+    Bytes,
+}
+
+/// Whether every symbolic filter/selection slot was written by a complete
+/// resolution pass. Only `Complete` licenses the warm resolution skip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolutionState {
+    Pending,
+    Complete,
 }
 
 /// How many (generation, resolved residual filters) bindings each

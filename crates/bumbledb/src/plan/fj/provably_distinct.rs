@@ -3,6 +3,13 @@ use crate::ir::normalize::NormalizedQuery;
 use crate::schema::Schema;
 use std::collections::BTreeSet;
 
+/// Proof that distinct facts imply distinct bindings for this rule:
+/// every participating occurrence's bound fields cover a key of its
+/// relation. Carrying this witness is the license to construct an
+/// aggregate sink without a binding seen-set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DistinctWitness(());
+
 /// The distinct-bindings elision check (40-execution): every participating
 /// occurrence's bound fields — variable-bound or equality-pinned to one
 /// constant — cover the projection of one of its keys (`Functionality`
@@ -22,7 +29,10 @@ use std::collections::BTreeSet;
 ///   `WordSet` matches any element, so two distinct facts can differ on
 ///   that field while producing one binding — sets are excluded from the
 ///   pinned-constant field set.
-pub(super) fn provably_distinct(normalized: &NormalizedQuery, schema: &Schema) -> bool {
+pub(crate) fn provably_distinct(
+    normalized: &NormalizedQuery,
+    schema: &Schema,
+) -> Option<DistinctWitness> {
     normalized
         .occurrences
         .iter()
@@ -55,4 +65,5 @@ pub(super) fn provably_distinct(normalized: &NormalizedQuery, schema: &Schema) -
                     .all(|f| bound_fields.contains(f))
             })
         })
+        .then_some(DistinctWitness(()))
 }

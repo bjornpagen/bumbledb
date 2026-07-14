@@ -6,7 +6,7 @@
 //! instrumentation; allocation-sanctioned exactly like `introspect`).
 
 /// The version shared by rendered and structured plan introspection.
-pub const INTROSPECTION_VERSION: u16 = 1;
+pub const INTROSPECTION_VERSION: u16 = 2;
 
 /// One execution's counted statistics: per-rule node stats under the
 /// head-level union accounting (docs/architecture/40-execution.md § the
@@ -79,6 +79,10 @@ pub struct DisjointRules {
 /// One rule's counted execution under the shared sink.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleStats {
+    /// Whether this rule carries the proof that distinct facts imply
+    /// distinct bindings. A single-rule aggregate spends this witness to
+    /// omit its binding seen-set; a union retains its spanning set.
+    pub distinct_bindings: bool,
     /// Per plan node, in node order (empty for key-probe rules).
     pub nodes: Vec<NodeStats>,
     /// Occurrences the grounding eliminated (`plan/ground.rs`), read straight
