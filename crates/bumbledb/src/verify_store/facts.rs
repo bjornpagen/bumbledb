@@ -8,8 +8,8 @@
 //! no second scan) and collects the referenced intern ids, checking each
 //! against the dictionary next-id counter.
 
-use crate::encoding::{TypeDesc, fact_hash, field_word_bytes};
-use crate::error::{Direction, Error, Result, Violation, Violations};
+use crate::encoding::{TypeDesc, decode_field, fact_hash, field_word_bytes};
+use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
 use crate::schema::{AxiomIndex, Enforcement, RelationId};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, DeterminantImage, KeyBuf, MAX_KEY};
@@ -52,6 +52,23 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         if fact.len() != layout.fact_width() {
             s.malformed(key, "F fact width");
             continue;
+        }
+
+        // Canonical field encodings are part of F coherence, not merely an
+        // image-build concern. Reuse the one field decoder so Bool bytes,
+        // fixed-bytes padding, and interval nonemptiness cannot drift between
+        // the online reader and the offline proof. Keep walking after a
+        // finding: namespace parity is independently useful evidence.
+        for idx in 0..layout.field_count() {
+            if let Err(error) = decode_field(fact, layout, idx) {
+                let what = match error {
+                    CorruptionError::InvalidBool(_) => "F fact bool",
+                    CorruptionError::NonzeroFixedBytesPad(_) => "F fact fixed bytes padding",
+                    CorruptionError::InvalidInterval(_) => "F fact interval",
+                    _ => unreachable!("decode_field has exactly three corruption classes"),
+                };
+                s.malformed(key, what);
+            }
         }
 
         // Referenced intern ids, bounded by the dictionary next-id

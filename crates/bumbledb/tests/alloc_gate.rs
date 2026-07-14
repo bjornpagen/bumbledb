@@ -178,10 +178,8 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 ],
             )?;
         }
-        let mut account = 20u64;
-        let mut holder = 5u64;
         let mut id = 500u64;
-        for count in LADDER {
+        for ((account, holder), count) in (20u64..).zip(5u64..).zip(LADDER) {
             tx.insert_dyn(ACCOUNT, &[Value::U64(account), Value::U64(holder)])?;
             for _ in 0..count {
                 tx.insert_dyn(
@@ -195,8 +193,6 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 )?;
                 id += 1;
             }
-            account += 1;
-            holder += 1;
         }
         Ok(())
     })
@@ -274,9 +270,9 @@ fn aggregate_query() -> Query {
 }
 
 /// Q(holder, memo) :- Posting(account = a, memo), Account(id = a, holder),
-/// memo != "memo-0" — string results through the byte heap, a PendingIntern
+/// memo != "memo-0" — string results through the byte heap, a `PendingIntern`
 /// literal under Ne, and a projection narrower than the join (the D2
-/// SkipSuffix path live on every duplicate (holder, memo) pair).
+/// `SkipSuffix` path live on every duplicate (holder, memo) pair).
 fn string_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(3))],
@@ -686,13 +682,13 @@ fn escalation_gate(
             &mut out,
         );
         // Every previously-seen parameter sits below the high-water.
-        for j in 0..i {
+        for (j, previous) in params.iter().enumerate().take(i) {
             silent(
                 label,
                 &format!("repeat of params[{j}] under params[{i}]'s high-water"),
                 prepared,
                 snap,
-                &params[j],
+                previous,
                 &mut out,
             );
         }
@@ -704,6 +700,51 @@ fn escalation_gate(
         "{label}: the escalation observed no growth event — the fixture is vacuous"
     );
     assert!(!out.is_empty(), "{label}: the fixture produced rows");
+}
+
+/// Typed borrowed facts use host-owned strings on both insert and point-read
+/// surfaces. Warm the transaction scratch, then measure only the repeat path.
+fn borrowed_struct_gate() {
+    let dir = common::TempDir::new("alloc-gate-borrowed");
+    let db = Db::create(dir.path(), GateLedger).expect("create");
+    let item = db
+        .write(|tx| {
+            let id: GateItemId = tx.alloc()?;
+            tx.insert(&GateItem {
+                id,
+                memo: "memo-borrowed",
+            })?;
+            Ok(id)
+        })
+        .expect("seed");
+    db.write(|tx| {
+        // Warm the transaction's encode scratch outside the window.
+        tx.insert(&GateItem {
+            id: item,
+            memo: "memo-borrowed",
+        })?;
+        alloc_counter::reset();
+        let fact = GateItem {
+            id: item,
+            memo: "memo-borrowed",
+        };
+        tx.insert(&fact)?;
+        let got = tx.get::<GateItem>(item)?.expect("present");
+        assert_eq!(got.memo, "memo-borrowed");
+        let bytes = alloc_counter::snapshot();
+        assert_eq!(
+            (
+                bytes.allocs,
+                bytes.deallocs,
+                bytes.alloc_bytes,
+                bytes.dealloc_bytes
+            ),
+            (0, 0, 0, 0),
+            "borrowed-struct insert + get must be host-allocation-free"
+        );
+        Ok(())
+    })
+    .expect("borrowed-struct gate");
 }
 
 /// One test function: the gate binary is single-threaded by construction.
@@ -841,45 +882,5 @@ fn zero_warm_allocation_gate() {
     // per read, no boxing per write. Engine arena/delta copies are
     // sanctioned but absent here by construction (the value is already
     // interned; the fact already present).
-    let borrowed_dir = common::TempDir::new("alloc-gate-borrowed");
-    let borrowed_db = Db::create(borrowed_dir.path(), GateLedger).expect("create");
-    let item = borrowed_db
-        .write(|tx| {
-            let id: GateItemId = tx.alloc()?;
-            tx.insert(&GateItem {
-                id,
-                memo: "memo-borrowed",
-            })?;
-            Ok(id)
-        })
-        .expect("seed");
-    borrowed_db
-        .write(|tx| {
-            // Warm the transaction's encode scratch outside the window.
-            tx.insert(&GateItem {
-                id: item,
-                memo: "memo-borrowed",
-            })?;
-            alloc_counter::reset();
-            let fact = GateItem {
-                id: item,
-                memo: "memo-borrowed",
-            };
-            tx.insert(&fact)?;
-            let got = tx.get::<GateItem>(item)?.expect("present");
-            assert_eq!(got.memo, "memo-borrowed");
-            let bytes = alloc_counter::snapshot();
-            assert_eq!(
-                (
-                    bytes.allocs,
-                    bytes.deallocs,
-                    bytes.alloc_bytes,
-                    bytes.dealloc_bytes
-                ),
-                (0, 0, 0, 0),
-                "borrowed-struct insert + get must be host-allocation-free"
-            );
-            Ok(())
-        })
-        .expect("borrowed-struct gate");
+    borrowed_struct_gate();
 }

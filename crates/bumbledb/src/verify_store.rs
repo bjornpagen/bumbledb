@@ -8,9 +8,9 @@
 //! The passes mirror the key-layout table of `50-storage.md`:
 //!
 //! ```text
-//! F  facts          forward checks into M/U/R, tallies, intern references,
-//!                   and the global containment judgment per outgoing
-//!                   statement
+//! F  facts          key/schema/width/canonical-field decode, forward checks
+//!                   into M/U/R, tallies, intern references, and the global
+//!                   containment judgment per outgoing statement
 //! M  membership     resolves back to its fact, hash-verified
 //! U  FD determinants      resolves back + per-group pointwise disjointness
 //! R  reverse edges  resolves back to a live source inside φ (the heart:
@@ -178,8 +178,10 @@ pub enum StoreFinding {
         relation: RelationId,
         key: Box<[u8]>,
     },
-    /// An entry that does not parse under the schema; the static string
-    /// names the failing shape, [`CorruptionError::MalformedValue`]-style.
+    /// An entry that does not parse under the schema, including a fact field
+    /// with a noncanonical Bool, fixed-bytes pad, or interval encoding; the
+    /// static string names the failing shape,
+    /// [`CorruptionError::MalformedValue`]-style.
     ///
     /// [`CorruptionError::MalformedValue`]: crate::error::CorruptionError::MalformedValue
     Malformed { key: Box<[u8]>, what: &'static str },

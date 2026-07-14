@@ -276,7 +276,11 @@ verifying they existed (unlike `F`/`M`/`U`, whose absence is the
 `MembershipDesync` hard error); a missing `R` entry is not independently
 detectable at delete time without re-deriving every statement's edges, and the
 class is covered by the offline sweeper, `Db::verify_store` — the same
-compensating control that re-verifies the rest of M↔F↔U↔R consistency. **Counter overflow checks** — the fresh ceiling is checked
+compensating control that re-verifies the rest of M↔F↔U↔R consistency.
+**The online path maintains reverse edges; the offline pass proves them** —
+including the delete-asymmetry fixture in the verifier matrix
+(`docs/prd-constitution/22-verifier-matrix.md` § Results). **Counter overflow
+checks** — the fresh ceiling is checked
 (`FreshExhausted` at `u64::MAX`, because hosts can supply explicit fresh values),
 while the storage tx id and row-id high-waters are not: they advance by at most one
 per commit/insert, so wrapping needs ~2⁶⁴ commits — twelve orders beyond the scale
@@ -311,8 +315,13 @@ additionally **bounded before they size anything**: the image build caps the cla
 over-approximates any one relation's rows because the DBI spans every namespace,
 which is exactly what a ceiling is allowed to do — and a claim above it is the typed
 `CounterDesync` corruption *before* any size-derived allocation; the F-scan
-cross-check stays the exactness guarantee. An offline integrity
-checker (M↔F↔U↔R sweep) is out of scope for v0, stated.
+cross-check stays the exactness guarantee. The offline integrity checker,
+`Db::verify_store`, then proves canonical F encodings, M↔F↔U↔R coherence,
+pointwise disjointness, global scalar/coverage containments, virtual-relation
+absence, counters, and dictionary bounds over one snapshot. The complete
+claim × pass × deterministic corruption-fixture coverage ledger is the verifier
+matrix (`docs/prd-constitution/22-verifier-matrix.md` § Results); an empty
+finding list is backed by every row there, not by a smoke test.
 
 ## The columnar image cache (the hot representation)
 

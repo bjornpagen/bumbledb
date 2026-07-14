@@ -141,16 +141,17 @@ mod tests {
     /// These tests read/reset shared global counters and therefore
     /// exclude one another; the *rest* of the lib test binary still
     /// runs concurrently, so every assertion uses a probe allocation large
-    /// enough (MiBs) to dominate that background noise, with one-sided
+    /// enough (`MiBs`) to dominate that background noise, with one-sided
     /// bounds or generous slack.
     static EXCLUSIVE: Mutex<()> = Mutex::new(());
     const MIB: u64 = 1 << 20;
+    const MIB_USIZE: usize = 1 << 20;
 
     #[test]
     fn bytes_track_a_known_allocation_and_its_free() {
         let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
         let before = snapshot();
-        let v: Vec<u8> = Vec::with_capacity(8 * MIB as usize);
+        let v: Vec<u8> = Vec::with_capacity(8 * MIB_USIZE);
         let mid = snapshot();
         assert!(
             mid.alloc_bytes - before.alloc_bytes >= 8 * MIB,
@@ -172,7 +173,7 @@ mod tests {
     #[test]
     fn reset_zeroes_windows_but_not_absolutes() {
         let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
-        let keep: Vec<u8> = Vec::with_capacity(8 * MIB as usize);
+        let keep: Vec<u8> = Vec::with_capacity(8 * MIB_USIZE);
         reset();
         let snap = snapshot();
         // Window counters were just zeroed; background threads may have
@@ -191,11 +192,11 @@ mod tests {
     #[test]
     fn realloc_accounts_both_byte_sides() {
         let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
-        let mut v: Vec<u8> = Vec::with_capacity(2 * MIB as usize);
-        v.extend(std::iter::repeat_n(0u8, 2 * MIB as usize));
+        let mut v: Vec<u8> = Vec::with_capacity(2 * MIB_USIZE);
+        v.extend(std::iter::repeat_n(0u8, 2 * MIB_USIZE));
         let before = snapshot();
         // Force genuine growth of the same vec.
-        v.reserve_exact(14 * MIB as usize);
+        v.reserve_exact(14 * MIB_USIZE);
         let after = snapshot();
         assert!(
             after.alloc_bytes - before.alloc_bytes >= 16 * MIB,
