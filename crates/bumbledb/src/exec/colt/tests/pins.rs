@@ -5,7 +5,7 @@ use super::*;
 /// spec keeps ctrl in a separate slab (the probe-side choice), so an
 /// insert touches ctrl + key + child lines and the build measured
 /// PARITY at the DRAM-tier 100k shape (ratio 1.00) and ~1.5× slower
-/// at an L2-resident 20k shape. The pin guards DRAM-tier parity — the
+/// at an L2-resident 20k shape. The pin protects DRAM-tier parity — the
 /// force-heavy ledger families gate the rest. Biased AGAINST the
 /// shipped side: the reference consumes pre-decoded keys while
 /// `force()` pays its own column decode. Ignored: a microbenchmark,

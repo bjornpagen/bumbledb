@@ -40,7 +40,7 @@ pub(super) fn densify(
                 .map(|(var, distinct)| (1u128 << var_index[var], *distinct))
                 .collect();
             // Translate each key's projection to a var bitset; skip keys
-            // with any non-var-bound field. **The pointwise-key guard**
+            // with any non-var-bound field. **The pointwise-key determinant**
             // (docs/architecture/40-execution.md): `occurrence.vars`
             // carries value bindings only — a membership-bound interval
             // field lowered to a filter and never appears here — so a

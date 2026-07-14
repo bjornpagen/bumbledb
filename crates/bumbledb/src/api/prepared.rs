@@ -12,7 +12,7 @@
 //! execution.
 
 use crate::exec::colt::Colt;
-use crate::exec::dispatch::GuardPlan;
+use crate::exec::dispatch::KeyProbePlan;
 use crate::exec::run::{Bindings, Executor};
 use crate::exec::sink::{AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::{Const, FilterPredicate};
@@ -153,7 +153,7 @@ pub struct Row<'a> {
 /// scratch); executes from one thread at a time; owns its scratch.
 /// Carries the preparing database's schema typestate `S`, so it executes
 /// only against same-schema snapshots (the same-environment check stays
-/// a runtime guard — `env_instance`).
+/// a runtime key-probe check — `env_instance`).
 ///
 /// Not shareable across threads:
 ///
@@ -242,8 +242,8 @@ pub struct PreparedQuery<'s, S> {
     all_words: bool,
     /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md).
     resolve_memo: ResolveMemo,
-    /// Guard-key byte scratch.
-    guard_key: Vec<u8>,
+    /// KeyProbe-key byte scratch.
+    determinant_key: Vec<u8>,
     /// The query in the rule notation ([`crate::ir::render`]), rendered
     /// once at prepare — the EXPLAIN report's header and the
     /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
@@ -272,7 +272,7 @@ enum Program {
 )]
 enum PreparedRule {
     FreeJoin(FreeJoinRule),
-    Guard(GuardRule),
+    KeyProbe(KeyProbeRule),
 }
 
 struct FreeJoinRule {
@@ -307,12 +307,12 @@ struct FreeJoinRule {
     pinned: Box<[OccurrencePin]>,
 }
 
-struct GuardRule {
-    plan: GuardPlan,
+struct KeyProbeRule {
+    plan: KeyProbePlan,
     finds: Vec<FindSpec>,
     /// The direct point lane's find table. `Some` iff every find is a plain
-    /// variable; aggregate and measure guard rules keep the shared sink.
-    guard_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
+    /// variable; aggregate and measure key-probe rules keep the shared sink.
+    key_probe_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
 }
 
 impl Program {
@@ -335,28 +335,28 @@ impl PreparedRule {
     fn finds(&self) -> &[FindSpec] {
         match self {
             Self::FreeJoin(rule) => &rule.finds,
-            Self::Guard(rule) => &rule.finds,
+            Self::KeyProbe(rule) => &rule.finds,
         }
     }
 
     fn slot_count(&self) -> usize {
         match self {
             Self::FreeJoin(rule) => rule.plan.slot_count(),
-            Self::Guard(rule) => rule.plan.slot_count(),
+            Self::KeyProbe(rule) => rule.plan.slot_count(),
         }
     }
 
     fn distinct_bindings(&self) -> bool {
         match self {
             Self::FreeJoin(rule) => rule.plan.distinct_bindings(),
-            Self::Guard(_) => true,
+            Self::KeyProbe(_) => true,
         }
     }
 
     fn pinned(&self) -> &[OccurrencePin] {
         match self {
             Self::FreeJoin(rule) => &rule.pinned,
-            Self::Guard(_) => &[],
+            Self::KeyProbe(_) => &[],
         }
     }
 }

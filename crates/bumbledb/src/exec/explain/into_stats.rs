@@ -126,7 +126,7 @@ impl CountingCounters {
             pinned,
             emitted: self.emits,
             absorbed,
-            guard: None,
+            key_probe: None,
         }
     }
 }

@@ -33,7 +33,7 @@ impl WriteDelta<'_> {
                 // The pending Insert proves the fact committed-absent:
                 // cancel it.
                 self.facts.remove(&(rel, hash));
-                self.record_guards(rel, fact_bytes, None);
+                self.record_determinants(rel, fact_bytes, None);
                 *self.row_count_delta.entry(rel).or_insert(0) -= 1;
                 Ok(true)
             }
@@ -43,7 +43,7 @@ impl WriteDelta<'_> {
                 }
                 let slice = self.arena.alloc(fact_bytes);
                 self.facts.insert((rel, hash), (slice, Disposition::Delete));
-                self.record_guards(rel, fact_bytes, None);
+                self.record_determinants(rel, fact_bytes, None);
                 *self.row_count_delta.entry(rel).or_insert(0) -= 1;
                 Ok(true)
             }

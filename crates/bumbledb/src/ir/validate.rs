@@ -15,7 +15,7 @@
 //!     pins the head's positional types, and every later rule must agree)
 //!
 //! Between the program shape and the per-rule roster, first the
-//! **nesting boundary guard**: condition trees deeper than
+//! **nesting boundary check**: condition trees deeper than
 //! [`crate::ir::MAX_CONDITION_DEPTH`] are the typed
 //! `ConditionNestingTooDeep` — judged by an iterative depth walk before
 //! any recursive tree walk runs, so hostile nesting is a rejection,

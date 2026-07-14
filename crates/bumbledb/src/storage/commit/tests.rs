@@ -104,7 +104,7 @@ fn plan_for<'d>(delta: &'d WriteDelta<'_>, env: &Environment) -> CommitPlan<'d> 
 /// Target(id fresh) + Keyed(x u64, y i64; key x) +
 /// Booking(room u64, during interval<u64>, tag u64; key (room, during)) +
 /// Claim(holder u64; Claim(holder) <= Target(id)) — the containment gives
-/// Target's key a dependent, so its guards feed the target-side check.
+/// Target's key a dependent, so its determinants feed the target-side check.
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -181,7 +181,7 @@ fn claim_fact(schema: &Schema, holder: u64) -> Vec<u8> {
 }
 
 /// A Booking fact: `during = [start, end)`; `tag` distinguishes facts
-/// sharing a key guard (an exact-duplicate key on distinct facts).
+/// sharing a key determinant (an exact-duplicate key on distinct facts).
 fn booking_fact(schema: &Schema, room: u64, start: u64, end: u64, tag: u64) -> Vec<u8> {
     fact(
         schema,

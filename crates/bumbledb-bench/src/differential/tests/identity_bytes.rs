@@ -1,5 +1,5 @@
 //! The identity-bytes differential criteria (10-data-model, the
-//! `bytes<N>` cut): round-trip, guard-key FD enforcement, and
+//! `bytes<N>` cut): round-trip, determinant-key FD enforcement, and
 //! containment over a **bytes<32> key** — engine vs the naive model —
 //! plus `CountDistinct` and group-by over bytes<N> at widths
 //! 8/16/32/64. The corpus digests are adversarial by construction:
@@ -115,7 +115,7 @@ impl Rng {
 }
 
 /// The write ops: consistent pairs (commit), duplicate bytes<32> keys
-/// (guard aborts — the same guard bytes under a second fact), lone Refs
+/// (determinant aborts — the same determinant bytes under a second fact), lone Refs
 /// (source-side containment aborts), key deletes stranding a Ref
 /// (target-side aborts), and pair demolitions (commit). The generator
 /// keeps a naive mirror so deletes name real facts.
@@ -124,7 +124,7 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
     let mut deltas = Vec::new();
     for _ in 0..160 {
         let delta = match rng.below(10) {
-            // A keyed blob alone: commits unless the hash guard is taken.
+            // A keyed blob alone: commits unless the hash determinant is taken.
             0..=3 => {
                 let k = rng.below(24);
                 Delta {
@@ -133,7 +133,7 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
                 }
             }
             // A blob with a second blob under the SAME bytes<32> key but
-            // different payload: the guard put-conflict — both oracles
+            // different payload: the determinant put-conflict — both oracles
             // must abort on statement 0.
             4 => {
                 let k = rng.below(24);
@@ -334,7 +334,7 @@ fn queries() -> Vec<Op> {
 }
 
 /// The seeded stream: writes interleaved with the query block, engine vs
-/// naive — every verdict (guard aborts on the bytes<32> key, both
+/// naive — every verdict (determinant aborts on the bytes<32> key, both
 /// containment directions) and every result set must agree.
 #[test]
 fn identity_bytes_agree_with_the_naive_model() {

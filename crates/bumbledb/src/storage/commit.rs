@@ -16,7 +16,7 @@
 //! violations preempt phase 3, because the containment probes are defined
 //! over the keyed final state. Phase 3 — the judgment phase (`judgment`) —
 //! proves every containment against the final state, consuming the plan's
-//! source-probe list and disestablished-guard check sets, equally
+//! source-probe list and disestablished-determinant check sets, equally
 //! scan-complete.
 
 use std::collections::BTreeMap;
@@ -71,7 +71,7 @@ pub enum CrashpointSide {
 /// | `after-staging` | `write.rs` `commit`: past the empty-delta gate, before plan derivation | prefix |
 /// | `mid-write-m` | `applier.rs` `insert_fact`: after a fact's `M` put | prefix |
 /// | `mid-write-f` | `applier.rs` `insert_fact`: after a fact's `F` put | prefix |
-/// | `mid-write-u` | `applier.rs` `insert_fact`: after a `U` guard put | prefix |
+/// | `mid-write-u` | `applier.rs` `insert_fact`: after a `U` determinant put | prefix |
 /// | `mid-write-r` | `applier.rs` `insert_fact`: after an `R` edge put | prefix |
 /// | `before-judgment` | `write.rs` `commit`: phases 1–2 applied, before phase 3 | prefix |
 /// | `mid-write-s` | `write.rs` `flush_counters`: after an `S` row-count put (phase 4) | prefix |

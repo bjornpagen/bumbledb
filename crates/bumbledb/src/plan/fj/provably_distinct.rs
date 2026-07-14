@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 /// and grounding-eliminated occurrences contribute no facts at all
 /// (`plan/ground.rs`), so neither can break the proof.
 ///
-/// Two guards keep the proof honest:
+/// Two checks keep the proof honest:
 /// - **Pointwise keys**: coverage requires the interval field bound **by
 ///   value** — `vars` holds value bindings only (membership positions
 ///   lowered to filters and never enter it), and membership filter kinds

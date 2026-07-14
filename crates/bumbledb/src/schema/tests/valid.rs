@@ -290,7 +290,7 @@ fn pointwise_key_and_containment_resolve() {
 }
 
 /// The target projection may be any permutation of the key: the recorded
-/// permutation maps statement projection order to the key's guard order.
+/// permutation maps statement projection order to the key's determinant order.
 #[test]
 fn permuted_target_projection_resolves_with_permutation() {
     let schema = SchemaDescriptor {
@@ -307,7 +307,7 @@ fn permuted_target_projection_resolves_with_permutation() {
             },
         ],
         statements: vec![
-            fd(RelationId(0), &[FieldId(0), FieldId(1)]), // guard order (a, b)
+            fd(RelationId(0), &[FieldId(0), FieldId(1)]), // determinant order (a, b)
             // S(x, y) <= T(b, a): projected against the key permuted.
             containment(
                 side(RelationId(1), &[FieldId(0), FieldId(1)]),
@@ -351,7 +351,7 @@ fn a_closed_relation_seals_pre_encoded_ground_axioms() {
     let relation = schema.relation(RelationId(0));
     assert!(relation.is_closed());
     // The synthetic id field opens the sealed list; declared columns
-    // shift by one — guards, statements, and queries address FieldId(0)
+    // shift by one — determinants, statements, and queries address FieldId(0)
     // uniformly.
     assert_eq!(relation.fields()[0].name.as_ref(), "id");
     assert_eq!(relation.fields()[0].value_type, ValueType::U64);

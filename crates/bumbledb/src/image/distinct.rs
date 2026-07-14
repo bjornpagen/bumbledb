@@ -12,7 +12,7 @@ impl RelationImage {
     /// Column indices come from [`ColumnSpan`](crate::image::ColumnSpan)s —
     /// an interval field has two counts, one per word column.
     /// Computed on first demand and memoized on the image; a plan that
-    /// never asks — every guard probe — never pays the walk.
+    /// never asks — every key probe — never pays the walk.
     #[must_use]
     pub fn distinct(&self, column: usize) -> u64 {
         *self.distincts[column].get_or_init(|| match self.column(column) {

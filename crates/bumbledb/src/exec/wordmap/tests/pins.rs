@@ -6,7 +6,7 @@ use super::*;
 /// dyn reconstruction which still carried the general-length
 /// compare ladder; the shipped dyn arm was already
 /// dieted (manual word loops, no `bcmp`), so the honest in-tree
-/// margin is 1.16–1.25× (16 MB / 2 MB tiers). The pin guards the
+/// margin is 1.16–1.25× (16 MB / 2 MB tiers). The pin protects the
 /// MECHANISM — monomorph strictly beats dyn — at a ≥ 10% floor that
 /// survives tier noise. Both arms probe OPAQUE runtime slices (flat
 /// buffer, black-boxed arity) — the shipped sink shape — so the

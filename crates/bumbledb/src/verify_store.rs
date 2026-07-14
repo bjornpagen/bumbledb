@@ -12,7 +12,7 @@
 //!                   and the global containment judgment per outgoing
 //!                   statement
 //! M  membership     resolves back to its fact, hash-verified
-//! U  FD guards      resolves back + per-group pointwise disjointness
+//! U  FD determinants      resolves back + per-group pointwise disjointness
 //! R  reverse edges  resolves back to a live source inside φ (the heart:
 //!                   the one namespace with no online verification)
 //! S  counters       row count and high-water against the F tallies
@@ -24,8 +24,8 @@
 //! over the full committed state — the class no incremental check can
 //! see: the incremental form was wrong once, long ago, and every commit
 //! since preserved the corruption. **Functionality** needs no pass of its
-//! own: duplicate scalar guards are impossible by LMDB key uniqueness, so
-//! the global judgment *is* the F pass's every-fact-holds-its-guard check
+//! own: duplicate scalar determinants are impossible by LMDB key uniqueness, so
+//! the global judgment *is* the F pass's every-fact-holds-its-determinant check
 //! plus the U pass's per-group disjointness walk — functionality findings
 //! are namespace findings. **Containment** rides the F scan (one scan,
 //! shared across every statement): each fact inside a source selection φ
@@ -33,7 +33,7 @@
 //! coverage walk ([`judgment`]'s `Checker` — one definition, never a
 //! sweeper copy). The U pass independently re-derives pointwise
 //! disjointness from stored bytes, while the shared coverage call still
-//! consumes the schema's validator-minted `DisjointGuardProof`; a miss is
+//! consumes the schema's validator-minted `DisjointDeterminantProof`; a miss is
 //! [`StoreFinding::JudgmentViolation`].
 //!
 //! Findings are data, not errors: a desynced store returns `Ok` with a
@@ -52,9 +52,9 @@ use crate::storage::env::ReadTxn;
 use crate::storage::keys;
 
 mod counters;
+mod determinants;
 mod dict_stat;
 mod facts;
-mod guards;
 mod membership;
 mod reverse;
 
@@ -92,22 +92,22 @@ pub enum StoreFinding {
         row_id: u64,
         membership_key: Box<[u8]>,
     },
-    /// A live `F` fact whose guard tuple is absent from `U` under a key
+    /// A live `F` fact whose determinant tuple is absent from `U` under a key
     /// statement (or held there by another row).
-    FactWithoutGuard {
+    FactWithoutDeterminant {
         relation: RelationId,
         statement: StatementId,
         row_id: u64,
-        guard_key: Box<[u8]>,
+        determinant_key: Box<[u8]>,
     },
     /// A `U` entry whose row id resolves to no live fact re-deriving the
-    /// same guard bytes.
-    GuardWithoutFact {
+    /// same determinant bytes.
+    DeterminantWithoutFact {
         relation: RelationId,
         statement: StatementId,
-        guard_key: Box<[u8]>,
+        determinant_key: Box<[u8]>,
     },
-    /// Two successive guard entries of one scalar-prefix group with
+    /// Two successive determinant entries of one scalar-prefix group with
     /// overlapping intervals — the pointwise-key invariant the neighbor
     /// probe assumes but never re-checks globally.
     PointwiseOverlap {
@@ -216,7 +216,7 @@ impl<S> Db<S> {
         };
         facts::sweep(&mut sweep)?;
         membership::sweep(&mut sweep)?;
-        guards::sweep(&mut sweep)?;
+        determinants::sweep(&mut sweep)?;
         reverse::sweep(&mut sweep)?;
         counters::sweep(&mut sweep)?;
         let dangling_intern_ids = dict_stat::dangling(&mut sweep)?;

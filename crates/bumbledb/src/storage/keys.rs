@@ -4,7 +4,7 @@
 //! ```text
 //! F | relation_id | row_id                                  facts
 //! M | relation_id | fact_hash                               membership
-//! U | relation_id | statement | guard                      FD guards
+//! U | relation_id | statement | determinant                      FD determinants
 //! R | statement | key_bytes | source_rel | source_row      IND reverse edges
 //! Q | relation_id | field_id                                fresh sequences
 //! S | relation_id | stat                                    counters
@@ -17,6 +17,9 @@
 //! written length — no oversized zeroing (post-mortem §25), and key types
 //! never derive `Ord` (LMDB byte order is the only order).
 
+use std::borrow::Borrow;
+use std::ops::Deref;
+
 use crate::encoding::{FactLayout, field_bytes};
 use crate::schema::{FieldId, RelationId, StatementId};
 
@@ -25,6 +28,53 @@ pub const MAX_KEY: usize = 511;
 
 /// Fixed scratch buffer for key writers.
 pub type KeyBuf = [u8; MAX_KEY];
+
+/// Owned canonical bytes of one functionality determinant.
+///
+/// The inner buffer is deliberately private: determinant images originate
+/// only in this codec, while callers may retain, compare, and borrow the
+/// resulting bytes without laundering arbitrary byte vectors into the type.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct DeterminantImage(Vec<u8>);
+
+impl DeterminantImage {
+    /// Empty reusable output for the two determinant encoders below.
+    #[must_use]
+    pub(crate) fn scratch() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Empty reusable output with an expected determinant width.
+    #[must_use]
+    pub(crate) fn scratch_with_capacity(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
+
+    #[must_use]
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Deref for DeterminantImage {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_bytes()
+    }
+}
+
+impl AsRef<[u8]> for DeterminantImage {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl Borrow<[u8]> for DeterminantImage {
+    fn borrow(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
 
 #[cfg(test)]
 pub(crate) fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
@@ -37,23 +87,23 @@ pub(crate) fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
 /// `tag(1) + statement(2) + source_rel(4) + source_row(8)`.
 const R_OVERHEAD: usize = 1 + 2 + 4 + 8;
 
-/// Maximum guard width a schema may declare.
+/// Maximum determinant width a schema may declare.
 ///
-/// Derivation: a guard value must embed whole in every key shape that
+/// Derivation: a determinant value must embed whole in every key shape that
 /// carries one. The `U` key spends `tag(1) + relation(4) + statement(2)`
-/// = 7 bytes beside its guard; the `R` key embeds a whole target-key value
+/// = 7 bytes beside its determinant; the `R` key embeds a whole target-key value
 /// as its key-bytes segment and spends [`R_OVERHEAD`] = 15 beside it. The
 /// `R` embedding is therefore the binding bound:
-/// `MAX_GUARD_WIDTH = MAX_KEY − R_OVERHEAD = 511 − 15 = 496`.
+/// `MAX_DETERMINANT_WIDTH = MAX_KEY − R_OVERHEAD = 511 − 15 = 496`.
 ///
-/// Schema-construction hook; rejection is `SchemaError::GuardKeyTooWide`
+/// Schema-construction hook; rejection is `SchemaError::DeterminantKeyTooWide`
 /// (the validator imports this constant — the bound has one owner).
-pub const MAX_GUARD_WIDTH: usize = MAX_KEY - R_OVERHEAD;
+pub const MAX_DETERMINANT_WIDTH: usize = MAX_KEY - R_OVERHEAD;
 
 /// Namespace tags, one byte, first in every key.
 pub const NS_FACT: u8 = b'F';
 pub const NS_MEMBERSHIP: u8 = b'M';
-pub const NS_GUARD: u8 = b'U';
+pub const NS_DETERMINANT: u8 = b'U';
 pub const NS_REVERSE: u8 = b'R';
 pub const NS_FRESH: u8 = b'Q';
 pub const NS_STAT: u8 = b'S';
@@ -148,21 +198,21 @@ pub fn membership_key(buf: &mut [u8], relation: RelationId, fact_hash: &[u8; 32]
         .finish()
 }
 
-/// `U | relation | statement | guard` — an FD guard key. `guard` is the
+/// `U | relation | statement | determinant` — an FD determinant key. `determinant` is the
 /// concatenated canonical encodings of the statement's projected fields in
-/// statement projection order ([`guard_bytes`]; width-bounded at schema
+/// statement projection order ([`determinant_image`]; width-bounded at schema
 /// construction).
-pub fn guard_key(
+pub fn determinant_key(
     buf: &mut KeyBuf,
     relation: RelationId,
     statement: StatementId,
-    guard: &[u8],
+    determinant: &[u8],
 ) -> usize {
-    debug_assert!(guard.len() <= MAX_GUARD_WIDTH);
-    KeyWriter::new(buf, NS_GUARD)
+    debug_assert!(determinant.len() <= MAX_DETERMINANT_WIDTH);
+    KeyWriter::new(buf, NS_DETERMINANT)
         .relation(relation)
         .statement(statement)
-        .put(guard)
+        .put(determinant)
         .finish()
 }
 
@@ -176,7 +226,7 @@ pub fn reverse_key(
     source_relation: RelationId,
     source_row: u64,
 ) -> usize {
-    debug_assert!(key_bytes.len() <= MAX_GUARD_WIDTH);
+    debug_assert!(key_bytes.len() <= MAX_DETERMINANT_WIDTH);
     KeyWriter::new(buf, NS_REVERSE)
         .statement(statement)
         .put(key_bytes)
@@ -188,7 +238,7 @@ pub fn reverse_key(
 /// `R | statement | key_bytes` — the prefix shared by every source fact
 /// requiring one target key value (reverse-edge prefix-scan reader).
 pub fn reverse_prefix(buf: &mut KeyBuf, statement: StatementId, key_bytes: &[u8]) -> usize {
-    debug_assert!(key_bytes.len() <= MAX_GUARD_WIDTH);
+    debug_assert!(key_bytes.len() <= MAX_DETERMINANT_WIDTH);
     KeyWriter::new(buf, NS_REVERSE)
         .statement(statement)
         .put(key_bytes)
@@ -259,21 +309,21 @@ pub fn parse_membership_key(key: &[u8]) -> Option<(RelationId, &[u8; 32])> {
     Some((RelationId(u32::from_be_bytes(relation)), hash))
 }
 
-/// Splits a full `U` key into `(relation, statement, guard)`. `None` when
-/// the header is short or the guard empty (projections are non-empty by
-/// validation, so an empty guard is corrupt data).
+/// Splits a full `U` key into `(relation, statement, determinant)`. `None` when
+/// the header is short or the determinant empty (projections are non-empty by
+/// validation, so an empty determinant is corrupt data).
 #[must_use]
-pub fn parse_guard_key(key: &[u8]) -> Option<(RelationId, StatementId, &[u8])> {
+pub fn parse_determinant_key(key: &[u8]) -> Option<(RelationId, StatementId, &[u8])> {
     let (_, rest) = key.split_first()?;
     let (&relation, rest) = rest.split_first_chunk()?;
-    let (&statement, guard) = rest.split_first_chunk()?;
-    if guard.is_empty() {
+    let (&statement, determinant) = rest.split_first_chunk()?;
+    if determinant.is_empty() {
         return None;
     }
     Some((
         RelationId(u32::from_be_bytes(relation)),
         StatementId(u16::from_be_bytes(statement)),
-        guard,
+        determinant,
     ))
 }
 
@@ -291,50 +341,53 @@ pub fn parse_stat_key(key: &[u8]) -> Option<(RelationId, u8)> {
 
 /// Concatenates the canonical encodings of `projection`'s fields, sliced
 /// out of `fact_bytes`, in statement projection order, into `out` — the
-/// guard segment of a `U` key, re-derived per fact, never a scan.
+/// determinant segment of a `U` key, re-derived per fact, never a scan.
 ///
 /// An interval field copies its whole 16-byte `start ‖ end` encoding in
 /// one piece (the slice width comes from the layout — never split here):
-/// the contiguity is what keeps the guard B-tree ordered by interval start
+/// the contiguity is what keeps the determinant B-tree ordered by interval start
 /// within one scalar-prefix group.
-pub fn guard_bytes(
+pub fn determinant_image<'a>(
     layout: &FactLayout,
     projection: &[FieldId],
     fact_bytes: &[u8],
-    out: &mut Vec<u8>,
-) {
-    out.clear();
+    out: &'a mut DeterminantImage,
+) -> &'a DeterminantImage {
+    out.0.clear();
     for &field in projection {
-        out.extend_from_slice(field_bytes(fact_bytes, layout, usize::from(field.0)));
+        out.0
+            .extend_from_slice(field_bytes(fact_bytes, layout, usize::from(field.0)));
     }
+    out
 }
 
-/// Like [`guard_bytes`], but lays the sliced fields down in the *target
-/// key's* guard order: `key_permutation[i]` is the guard position of
+/// Like [`determinant_image`], but lays the sliced fields down in the *target
+/// key's* determinant order: `key_permutation[i]` is the determinant position of
 /// projection element `i` (statement projection order → target key order,
 /// `Enforcement::{ScalarProbe, IntervalCoverage}::key_permutation`) — the
 /// key-bytes segment of an `R` key. Interval fields copy their whole 16 bytes, exactly as in
-/// [`guard_bytes`].
-pub fn permuted_guard_bytes(
+/// [`determinant_image`].
+pub fn permuted_determinant_image<'a>(
     layout: &FactLayout,
     projection: &[FieldId],
     key_permutation: &[u16],
     fact_bytes: &[u8],
-    out: &mut Vec<u8>,
-) {
+    out: &'a mut DeterminantImage,
+) -> &'a DeterminantImage {
     debug_assert_eq!(projection.len(), key_permutation.len());
-    out.clear();
-    for guard_pos in 0..key_permutation.len() {
+    out.0.clear();
+    for determinant_pos in 0..key_permutation.len() {
         let source_pos = key_permutation
             .iter()
-            .position(|&p| usize::from(p) == guard_pos)
-            .expect("key permutation contains every guard position");
-        out.extend_from_slice(field_bytes(
+            .position(|&p| usize::from(p) == determinant_pos)
+            .expect("key permutation contains every determinant position");
+        out.0.extend_from_slice(field_bytes(
             fact_bytes,
             layout,
             usize::from(projection[source_pos].0),
         ));
     }
+    out
 }
 
 #[cfg(test)]
@@ -371,32 +424,32 @@ mod tests {
     }
 
     #[test]
-    fn guard_key_golden_bytes() {
-        // U | relation(u32) | statement(u16) | guard — exact byte sequence.
-        let guard = [1u8, 2, 3];
-        let u = key(|b| guard_key(b, RelationId(2), StatementId(5), &guard));
-        assert_eq!(u, vec![NS_GUARD, 0, 0, 0, 2, 0, 5, 1, 2, 3]);
+    fn determinant_key_golden_bytes() {
+        // U | relation(u32) | statement(u16) | determinant — exact byte sequence.
+        let determinant = [1u8, 2, 3];
+        let u = key(|b| determinant_key(b, RelationId(2), StatementId(5), &determinant));
+        assert_eq!(u, vec![NS_DETERMINANT, 0, 0, 0, 2, 0, 5, 1, 2, 3]);
     }
 
     #[test]
-    fn guard_key_keeps_a_16_byte_interval_guard_contiguous() {
-        // Guard = scalar u64 ‖ whole 16-byte interval, contiguous. The
+    fn determinant_key_keeps_a_16_byte_interval_determinant_contiguous() {
+        // Determinant = scalar u64 ‖ whole 16-byte interval, contiguous. The
         // 7-byte header is tag + relation(u32) + statement(u16).
-        let mut guard = Vec::new();
-        guard.extend_from_slice(&encode_u64(0xAAAA_BBBB_CCCC_DDDD));
-        guard.extend_from_slice(&encode_interval_u64(
+        let mut determinant = Vec::new();
+        determinant.extend_from_slice(&encode_u64(0xAAAA_BBBB_CCCC_DDDD));
+        determinant.extend_from_slice(&encode_interval_u64(
             crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
         ));
-        assert_eq!(guard.len(), 24);
+        assert_eq!(determinant.len(), 24);
 
-        let k = key(|b| guard_key(b, RelationId(3), StatementId(9), &guard));
+        let k = key(|b| determinant_key(b, RelationId(3), StatementId(9), &determinant));
         assert_eq!(k.len(), 7 + 24);
-        // The interval's 16 bytes sit unsplit at the guard's tail.
+        // The interval's 16 bytes sit unsplit at the determinant's tail.
         assert_eq!(
             &k[7 + 8..],
             encode_interval_u64(crate::Interval::<u64>::new(10, 20).expect("nonempty interval"))
         );
-        assert_eq!(&k[7..], &guard[..]);
+        assert_eq!(&k[7..], &determinant[..]);
     }
 
     #[test]
@@ -433,8 +486,8 @@ mod tests {
 
     #[test]
     fn parsers_reject_other_namespace_and_truncated_keys() {
-        let guard = key(|b| guard_key(b, RelationId(1), StatementId(1), &[9]));
-        assert!(parse_reverse_key(&guard).is_none());
+        let determinant = key(|b| determinant_key(b, RelationId(1), StatementId(1), &[9]));
+        assert!(parse_reverse_key(&determinant).is_none());
         let reverse = key(|b| reverse_key(b, StatementId(1), &[9], RelationId(1), 1));
         assert!(parse_reverse_key(&reverse[..R_OVERHEAD - 1]).is_none());
     }
@@ -467,32 +520,32 @@ mod tests {
     }
 
     #[test]
-    fn guard_bytes_slices_projection_order_and_copies_intervals_whole() {
+    fn determinant_image_slices_projection_order_and_copies_intervals_whole() {
         let layout = interval_layout();
         let fact = interval_fact();
-        let mut guard = Vec::new();
+        let mut determinant = DeterminantImage::scratch();
         // Projection (f2, f1): scalar first, interval last, statement order.
-        guard_bytes(&layout, &[FieldId(2), FieldId(1)], &fact, &mut guard);
+        determinant_image(&layout, &[FieldId(2), FieldId(1)], &fact, &mut determinant);
 
         let mut expected = Vec::new();
         expected.extend_from_slice(&encode_u64(0x2222_2222_2222_2222));
         expected.extend_from_slice(&encode_interval_u64(
             crate::Interval::<u64>::new(3, 9).expect("nonempty interval"),
         ));
-        assert_eq!(guard, expected);
+        assert_eq!(determinant.as_bytes(), expected);
     }
 
     #[test]
-    fn permuted_guard_bytes_lay_fields_in_target_key_order() {
+    fn permuted_determinant_image_lay_fields_in_target_key_order() {
         let layout = interval_layout();
         let fact = interval_fact();
-        // Source projection order (f2, f0, f1); the target key's guard
+        // Source projection order (f2, f0, f1); the target key's determinant
         // order is (f0, f2, interval): permutation maps projection
-        // position -> guard position.
+        // position -> determinant position.
         let projection = [FieldId(2), FieldId(0), FieldId(1)];
         let key_permutation = [1u16, 0, 2];
-        let mut key_bytes = Vec::new();
-        permuted_guard_bytes(
+        let mut key_bytes = DeterminantImage::scratch();
+        permuted_determinant_image(
             &layout,
             &projection,
             &key_permutation,
@@ -506,7 +559,7 @@ mod tests {
         expected.extend_from_slice(&encode_interval_u64(
             crate::Interval::<u64>::new(3, 9).expect("nonempty interval"),
         )); // f1, whole
-        assert_eq!(key_bytes, expected);
+        assert_eq!(key_bytes.as_bytes(), expected);
 
         // The permutation-ordered R key round-trips through the parser.
         let r = key(|b| reverse_key(b, StatementId(4), &key_bytes, RelationId(1), 5));
@@ -514,7 +567,7 @@ mod tests {
             parse_reverse_key(&r).expect("well-formed reverse key");
         assert_eq!(
             (stmt, parsed, src_rel, src_row),
-            (StatementId(4), &key_bytes[..], RelationId(1), 5)
+            (StatementId(4), key_bytes.as_bytes(), RelationId(1), 5)
         );
     }
 
@@ -544,9 +597,9 @@ mod tests {
             key(|b| reverse_key(b, StatementId(1), &[0], RelationId(0), 0)),
             key(|b| stat_key(b, RelationId(1), StatKind::RowCount)),
             key(|b| stat_key(b, RelationId(1), StatKind::RowIdHighWater)),
-            key(|b| guard_key(b, RelationId(1), StatementId(0), &[0])),
-            key(|b| guard_key(b, RelationId(1), StatementId(0), &[1])),
-            key(|b| guard_key(b, RelationId(1), StatementId(1), &[0])),
+            key(|b| determinant_key(b, RelationId(1), StatementId(0), &[0])),
+            key(|b| determinant_key(b, RelationId(1), StatementId(0), &[1])),
+            key(|b| determinant_key(b, RelationId(1), StatementId(1), &[0])),
         ];
         let mut sorted = ordered.clone();
         sorted.sort();
@@ -554,17 +607,17 @@ mod tests {
     }
 
     #[test]
-    fn guard_width_bound_matches_reverse_overhead() {
+    fn determinant_width_bound_matches_reverse_overhead() {
         // MAX_KEY − (tag + statement + source_rel + source_row) = 511 − 15.
         // schema::validate imports this same constant for its
         // declaration-time rejection — the bound is never duplicated.
-        assert_eq!(MAX_GUARD_WIDTH, 511 - 15);
-        // A guard exactly at the limit builds, and the widest key shape —
+        assert_eq!(MAX_DETERMINANT_WIDTH, 511 - 15);
+        // A determinant exactly at the limit builds, and the widest key shape —
         // the R embedding — lands exactly on MAX_KEY.
-        let guard = vec![0xEE; MAX_GUARD_WIDTH];
-        let r = key(|b| reverse_key(b, StatementId(0), &guard, RelationId(0), 0));
+        let determinant = vec![0xEE; MAX_DETERMINANT_WIDTH];
+        let r = key(|b| reverse_key(b, StatementId(0), &determinant, RelationId(0), 0));
         assert_eq!(r.len(), MAX_KEY);
-        let u = key(|b| guard_key(b, RelationId(0), StatementId(0), &guard));
+        let u = key(|b| determinant_key(b, RelationId(0), StatementId(0), &determinant));
         assert!(u.len() <= MAX_KEY);
     }
 }

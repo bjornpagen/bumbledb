@@ -8,7 +8,7 @@
 //! Own fixture: two scalar containments sharing one target key (their
 //! `R` key bytes collide byte-for-byte — only the statement id separates
 //! them), a coverage statement over a pointwise key, a `==` pair, and
-//! two σ-carrying containments whose targets can re-land a key guard
+//! two σ-carrying containments whose targets can re-land a key determinant
 //! with a changed ψ-relevant non-key field.
 
 use crate::encoding::ValueRef;
@@ -52,7 +52,7 @@ const REST_COVER: StatementId = StatementId(12);
 /// == Child(parent; key parent), lowered to [`TOTALITY`] and [`ARM`].
 /// The ψ-qualification pair: Transfer(account) <= Account(id | active ==
 /// true) with key Account(id) and a non-key `note` (a distinct in-ψ fact
-/// can re-land the guard), and Rest(worker, span) <= Roster(worker, span
+/// can re-land the determinant), and Rest(worker, span) <= Roster(worker, span
 /// | rested == true) with pointwise key Roster(worker, span) and non-key
 /// `rested` (a byte-identical segment can re-land outside ψ).
 #[expect(
@@ -482,7 +482,7 @@ fn segment_outside_every_source_deletes_freely() {
 #[test]
 fn reestablishment_outside_psi_aborts_naming_the_source() {
     // Delete Account(9, active=true) + insert Account(9, active=false)
-    // in one delta: the key guard (id = 9) re-lands, but the establishing
+    // in one delta: the key determinant (id = 9) re-lands, but the establishing
     // fact fails TRANSFER_ACCOUNT's ψ — the tuple stays in that
     // statement's check set and the surviving transfer convicts.
     let schema = schema();
@@ -523,7 +523,7 @@ fn reestablishment_inside_psi_commits() {
 #[test]
 fn interval_reestablishment_outside_psi_aborts() {
     // Byte-identical segment delete + reinsert whose ψ-relevant non-key
-    // field changed: the guard bytes re-land, the establisher fails
+    // field changed: the determinant bytes re-land, the establisher fails
     // REST_COVER's ψ, and the re-walk's per-segment σ check convicts,
     // naming the surviving rest.
     let schema = schema();

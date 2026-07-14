@@ -334,8 +334,8 @@ fn free_busy_params(cfg: &GenConfig) -> Vec<Draw> {
 
 /// `claim_hours` — **times the measure: `Sum(Duration)` grouped by claim
 /// arm** (PRD 10 — the one arithmetic the point-set denotation defines),
-/// under the `Allen(DISJOINT)` ray guard against `[CAL_HORIZON, ∞)`:
-/// rays have no finite measure, and the guard keeps exactly the bounded
+/// under the `Allen(DISJOINT)` ray filter against `[CAL_HORIZON, ∞)`:
+/// rays have no finite measure, and the filter keeps exactly the bounded
 /// claims (every bounded end sits below the horizon), the documented
 /// host idiom. The `source` binding is the claim key, so the fold's
 /// distinct-bindings elision engages (key coverage — the `balance`
@@ -460,7 +460,7 @@ pub const FREE_BUSY_SLOTS: &[ParamSlot] = &[
 ];
 
 /// `claim_hours`: the normative fold template over the distinct binding
-/// set, the ray guard's 4 disjoint basics OR'd against the horizon
+/// set, the ray filter's 4 disjoint basics OR'd against the horizon
 /// literal (`[1800000000, ∞)` — ∞ = `i64::MAX`, the largest end word).
 pub const CLAIM_HOURS: &str = "SELECT v0, SUM(v2_end - v2_start) FROM (SELECT DISTINCT t0.\"arm\" AS v0, t0.\"source\" AS v1, t0.\"span_start\" AS v2_start, t0.\"span_end\" AS v2_end FROM \"Claim\" AS t0 WHERE ((t0.\"span_end\" < 1800000000) OR (t0.\"span_end\" = 1800000000) OR (9223372036854775807 = t0.\"span_start\") OR (9223372036854775807 < t0.\"span_start\"))) GROUP BY v0";
 
@@ -545,7 +545,7 @@ pub fn all() -> &'static [CalFamily] {
             params: claim_hours_params,
             golden_sql: CLAIM_HOURS,
             hand_param_slots: None,
-            param_policy: "No params — the ray-guarded full measure fold; one empty draw.",
+            param_policy: "No params — the ray-filtered full measure fold; one empty draw.",
             indexes: &[(
                 "idx_claim_arm_span",
                 "Claim",

@@ -221,14 +221,14 @@ fn booking_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> 
     out
 }
 
-/// `enc(room) ‖ enc(start ‖ end)` — the Booking key statement's guard.
-fn booking_guard(room: u64, start: u64, end: u64) -> Vec<u8> {
-    let mut guard = Vec::new();
-    guard.extend_from_slice(&encode_u64(room));
-    guard.extend_from_slice(&encode_interval_u64(
+/// `enc(room) ‖ enc(start ‖ end)` — the Booking key statement's determinant.
+fn booking_determinant(room: u64, start: u64, end: u64) -> Vec<u8> {
+    let mut determinant = Vec::new();
+    determinant.extend_from_slice(&encode_u64(room));
+    determinant.extend_from_slice(&encode_interval_u64(
         crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
     ));
-    guard
+    determinant
 }
 
 fn account_bytes(db: &Db<SchemaDescriptor>, holder: u64, kind: u64) -> Vec<u8> {
@@ -267,7 +267,7 @@ fn delete_target_rows(
     db: &Db<SchemaDescriptor>,
     rel: RelationId,
     row_id: u64,
-    guards: &[(StatementId, Vec<u8>)],
+    determinants: &[(StatementId, Vec<u8>)],
     remaining_rows: u64,
 ) {
     raw_write(db, |txn| {
@@ -281,8 +281,8 @@ fn delete_target_rows(
         let m = key(|b| keys::membership_key(b, rel, &fact_hash(&fact)));
         assert!(data.delete(txn.raw_mut(), &f).expect("raw delete"));
         assert!(data.delete(txn.raw_mut(), &m).expect("raw delete"));
-        for (sid, guard) in guards {
-            let u = key(|b| keys::guard_key(b, rel, *sid, guard));
+        for (sid, determinant) in determinants {
+            let u = key(|b| keys::determinant_key(b, rel, *sid, determinant));
             assert!(data.delete(txn.raw_mut(), &u).expect("raw delete"));
         }
         let count = key(|b| keys::stat_key(b, rel, StatKind::RowCount));
@@ -346,9 +346,9 @@ fn orphan_membership_is_found_from_the_entry_side() {
 }
 
 #[test]
-fn missing_guard_is_found_from_the_fact_side() {
+fn missing_determinant_is_found_from_the_fact_side() {
     let (_dir, db) = fixture("verify-missing-u");
-    let u = key(|b| keys::guard_key(b, BOOKING, BOOKING_KEY, &booking_guard(7, 0, 10)));
+    let u = key(|b| keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(7, 0, 10)));
     raw_write(&db, |txn| {
         let data = txn.env().data();
         assert!(data.delete(txn.raw_mut(), &u).expect("raw delete"));
@@ -357,13 +357,13 @@ fn missing_guard_is_found_from_the_fact_side() {
     assert_eq!(
         report.findings,
         vec![
-            StoreFinding::FactWithoutGuard {
+            StoreFinding::FactWithoutDeterminant {
                 relation: BOOKING,
                 statement: BOOKING_KEY,
                 row_id: 0,
-                guard_key: u.into(),
+                determinant_key: u.into(),
             },
-            // The deleted guard entry is also the segment covering claim
+            // The deleted determinant entry is also the segment covering claim
             // (7, [2,8)) — the coverage walk judges the `U` state, so the
             // desync convicts twice, once per broken invariant.
             StoreFinding::JudgmentViolation {
@@ -376,11 +376,12 @@ fn missing_guard_is_found_from_the_fact_side() {
 }
 
 #[test]
-fn orphan_guard_is_found_from_the_entry_side() {
+fn orphan_determinant_is_found_from_the_entry_side() {
     let (_dir, db) = fixture("verify-orphan-u");
-    // A guard for a fact that does not exist, pointing at a row that
+    // A determinant for a fact that does not exist, pointing at a row that
     // does not exist either.
-    let u = key(|b| keys::guard_key(b, BOOKING, BOOKING_KEY, &booking_guard(99, 0, 10)));
+    let u =
+        key(|b| keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(99, 0, 10)));
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &u, 42u64.to_le_bytes().as_slice())
@@ -389,10 +390,10 @@ fn orphan_guard_is_found_from_the_entry_side() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings,
-        vec![StoreFinding::GuardWithoutFact {
+        vec![StoreFinding::DeterminantWithoutFact {
             relation: BOOKING,
             statement: BOOKING_KEY,
-            guard_key: u.into(),
+            determinant_key: u.into(),
         }]
     );
 }
@@ -408,7 +409,7 @@ fn pointwise_overlap_is_found_by_the_ordered_walk() {
     let row_id = 2u64;
     let f = key(|b| keys::fact_key(b, BOOKING, row_id));
     let m = key(|b| keys::membership_key(b, BOOKING, &fact_hash(&fact)));
-    let u = key(|b| keys::guard_key(b, BOOKING, BOOKING_KEY, &booking_guard(7, 5, 15)));
+    let u = key(|b| keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(7, 5, 15)));
     let count = key(|b| keys::stat_key(b, BOOKING, StatKind::RowCount));
     let water = key(|b| keys::stat_key(b, BOOKING, StatKind::RowIdHighWater));
     raw_write(&db, |txn| {
@@ -429,8 +430,13 @@ fn pointwise_overlap_is_found_by_the_ordered_walk() {
         vec![StoreFinding::PointwiseOverlap {
             relation: BOOKING,
             statement: BOOKING_KEY,
-            first: key(|b| keys::guard_key(b, BOOKING, BOOKING_KEY, &booking_guard(7, 0, 10)))
-                .into(),
+            first: key(|b| keys::determinant_key(
+                b,
+                BOOKING,
+                BOOKING_KEY,
+                &booking_determinant(7, 0, 10)
+            ))
+            .into(),
             second: u.into(),
         }]
     );
@@ -441,7 +447,7 @@ fn a_coherently_deleted_scalar_target_is_a_judgment_violation() {
     let (_dir, db) = fixture("verify-judgment-scalar");
     // Holder 1 removed from every namespace at once — no namespace sweep
     // sees it, but account (1, checking) is a live source inside σ still
-    // requiring it: the scalar guard probe misses.
+    // requiring it: the scalar determinant probe misses.
     delete_target_rows(&db, HOLDER, 0, &[(HOLDER_KEY, encode_u64(1).to_vec())], 0);
     let report = db.verify_store().expect("verify");
     assert_eq!(
@@ -464,7 +470,7 @@ fn a_coherently_deleted_coverage_segment_is_a_judgment_violation() {
         &db,
         BOOKING,
         0,
-        &[(BOOKING_KEY, booking_guard(7, 0, 10))],
+        &[(BOOKING_KEY, booking_determinant(7, 0, 10))],
         1,
     );
     let report = db.verify_store().expect("verify");

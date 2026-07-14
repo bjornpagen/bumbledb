@@ -66,9 +66,9 @@ a closed reference's row-id order is a declaration-order accident, not semantics
 are meaningless to order; Bool ordering is noise. **`bytes<N>` is identity-only by
 refusal** (`Eq`/`Ne` and membership; order comparisons and `Min`/`Max` are typed
 validation errors): a digest's lexicographic order is an encoding artifact, and
-admitting it would make hash-function choice semantically visible. The guard B-tree
+admitting it would make hash-function choice semantically visible. The determinant B-tree
 still sorts the padded encodings — sortedness is the index's need, not a query
-semantics (the padded bytes memcmp in value-byte order, which is all the guard asks).
+semantics (the padded bytes memcmp in value-byte order, which is all the determinant asks).
 
 **The mask value shape:** the interval-pair relation itself is a value —
 `AllenMask`, a 13-bit word, bit *i* = Allen basic *i* in the palindromic order
@@ -264,7 +264,7 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
    ids other facts reference. The SQL-standard `GENERATED ALWAYS` shape is
    incompatible with the engine's own update idiom. Explicit writes advance the
    high-water (`saturating_add`); exhaustion at `u64::MAX` is ~585,000 years at 10⁶
-   allocs/sec — no guard beyond `FreshExhausted`. **Reverses if:** never —
+   allocs/sec — no check beyond `FreshExhausted`. **Reverses if:** never —
    writability is a theorem of the update idiom, not a preference.
 3. **Generation attribute, not a type.** A type is an encoding and the value's
    encoding *is* u64; a distinct engine type would smuggle nominal typing past the
@@ -290,7 +290,7 @@ fixed extension.
 - **Identity is the handle.** Each row declares a handle (`Usd`, `Q1`); its row id
   is the declaration index — exactly the declaration-order rule relations, fields,
   and statements already obey. The handle is NOT a column: the sealed relation
-  opens with a synthetic first field (`id`, U64), so guards, statements, and
+  opens with a synthetic first field (`id`, U64), so determinants, statements, and
   queries address the id uniformly at field 0; the macro never lets the user
   declare it (a hand-built descriptor that tries collides on the field name).
   Compiled sub-vocabulary membership is a typed `MemberSet::contains(AxiomIndex)`
@@ -458,6 +458,10 @@ transaction's final state** — there are no constraint modes, no per-operation
 enforcement, no deferral opt-in, and the words *unique*, *foreign key*, *primary key*,
 *cascade*, and *restrict* do not name anything in this system.
 
+**Glossary — determinant:** the ordered projection on the left side of a
+functionality; `DeterminantImage` is its canonical encoding in key order, stored in
+and probed against the `U` determinant index.
+
 ## Schema
 
 **A schema names a theory; a store models it.** A schema is a presentation of a
@@ -559,7 +563,7 @@ it as the positive atom under `Allen` against the param window; `conflict_free`
 pushes the *same* fragment into `negated` with a point-membership binding
 (negation is a position in the query, not a kind of atom — `20-query-ir.md`);
 `free_busy` folds its span variable under `Pack`. Change what "busy" means —
-an added arm, an added guard — and every consumer follows at the next compile.
+an added arm, an added match arm — and every consumer follows at the next compile.
 **Refusal, permanent: no named-view registry in
 the engine, ever.** A registry would be a second schema with none of the
 theory's guarantees — names resolved at run time, fragments outside the

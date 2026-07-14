@@ -33,7 +33,7 @@ mod tests {
     /// (docs/architecture/40-execution.md § selection levels — param
     /// sets ride the selection trie): warm executions emit
     /// `select_probe` events, and the membership families never emit a
-    /// `guard_probe`.
+    /// `key_probe`.
     #[cfg(feature = "obs")]
     #[test]
     fn selection_levels_engage_for_the_param_set_family() {
@@ -67,9 +67,9 @@ mod tests {
         );
         for membership in ["mandate_at_instant", "mandate_overlap"] {
             assert_eq!(
-                events_of(membership, obs::names::GUARD_PROBE),
+                events_of(membership, obs::names::KEY_PROBE),
                 0,
-                "{membership} must not guard-probe"
+                "{membership} must not key-probe"
             );
         }
         drop(db);
@@ -137,7 +137,7 @@ mod tests {
     /// Finding 1 (the access path), forever: after one full param
     /// rotation, **no read family ever rebuilds a view again within a
     /// generation** — selections probe, residual bindings ride the LRU,
-    /// and the guard family never touches views at all.
+    /// and the key-probe family never touches views at all.
     #[cfg(feature = "obs")]
     #[test]
     fn no_read_family_rescans_after_one_rotation() {
@@ -253,7 +253,7 @@ mod tests {
             // entries = 50_000, accounts = 500, holders = 125,
             // instruments = 512, orgs = 64, mandates = 2_000):
             let bound = match family.name {
-                // Guard probe: no join nodes at all.
+                // Key probe: no join nodes at all.
                 "point" => 0,
                 // One cold account: ~postings/accounts = 200 postings,
                 // plus the account and holder probes. 4x margin.

@@ -22,7 +22,7 @@
 //! frontier no later input exceeds.
 //!
 //! Words are anything ordered and copyable: the checker walks the 8-byte
-//! order-preserving halves of guard keys, `Pack` walks element words —
+//! order-preserving halves of determinant keys, `Pack` walks element words —
 //! on both sides of the seam, word compare is point-order compare.
 
 /// A caller of the sweep: what happens at the two places the walk can

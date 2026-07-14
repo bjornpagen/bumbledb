@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn bytes_track_a_known_allocation_and_its_free() {
-        let _guard = EXCLUSIVE.lock().expect("exclusive");
+        let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
         let before = snapshot();
         let v: Vec<u8> = Vec::with_capacity(8 * MIB as usize);
         let mid = snapshot();
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn reset_zeroes_windows_but_not_absolutes() {
-        let _guard = EXCLUSIVE.lock().expect("exclusive");
+        let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
         let keep: Vec<u8> = Vec::with_capacity(8 * MIB as usize);
         reset();
         let snap = snapshot();
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn realloc_accounts_both_byte_sides() {
-        let _guard = EXCLUSIVE.lock().expect("exclusive");
+        let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
         let mut v: Vec<u8> = Vec::with_capacity(2 * MIB as usize);
         v.extend(std::iter::repeat_n(0u8, 2 * MIB as usize));
         let before = snapshot();

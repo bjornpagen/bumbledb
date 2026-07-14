@@ -1,5 +1,5 @@
 //! The plan derivation (PRD: `CommitPlan` — compute, don't accumulate):
-//! delta in, plan out, byte-level assertions on guard bytes, reverse-edge
+//! delta in, plan out, byte-level assertions on determinant bytes, reverse-edge
 //! key bytes, probe markers, and the target-side check sets — the class
 //! of test the accumulate-during-apply shape could never have. Covers
 //! scalar keys, pointwise keys, satisfied and unsatisfied selections, the
@@ -15,7 +15,7 @@ use crate::schema::{
     ContainmentId, Enforcement, FieldId, KeyId, RelationDescriptor, RelationId, Schema,
     SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
 };
-use crate::storage::commit::plan::{CommitPlan, EdgeOp, FactOp, GuardOp};
+use crate::storage::commit::plan::{CommitPlan, DeterminantOp, EdgeOp, FactOp};
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
@@ -273,9 +273,14 @@ fn op_for<'a, 'd>(ops: &'a [FactOp<'d>], rel: RelationId, fact: &[u8]) -> &'a Fa
         .expect("an op exists for every net disposition")
 }
 
-fn assert_guard(op: &GuardOp, statement: StatementId, guard: &[u8], pointwise: bool) {
+fn assert_determinant(
+    op: &DeterminantOp,
+    statement: StatementId,
+    determinant: &[u8],
+    pointwise: bool,
+) {
     assert_eq!(op.statement, statement);
-    assert_eq!(&*op.guard, guard, "guard bytes");
+    assert_eq!(&*op.determinant, determinant, "determinant bytes");
     assert_eq!(op.pointwise, pointwise, "pointwise marker");
 }
 
@@ -286,11 +291,11 @@ fn assert_edge(schema: &Schema, edge: &EdgeOp, statement: StatementId, key_bytes
     assert_eq!(schema.containment(edge.containment).id, statement);
 }
 
-// ---------- per-fact ops: guards and edges ----------
+// ---------- per-fact ops: determinants and edges ----------
 
 #[test]
-fn scalar_and_pointwise_guards_carry_exact_bytes() {
-    let dir = TempDir::new("plan-guards");
+fn scalar_and_pointwise_determinants_carry_exact_bytes() {
+    let dir = TempDir::new("plan-determinants");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let a = account(&schema, 7, true, 0);
@@ -307,24 +312,24 @@ fn scalar_and_pointwise_guards_carry_exact_bytes() {
     assert_eq!(plan.inserts.len(), 2);
     let account_op = op_for(&plan.inserts, ACCOUNT, &a);
     assert_eq!(account_op.relation, ACCOUNT);
-    let [guard] = &*account_op.guards else {
+    let [determinant] = &*account_op.determinants else {
         panic!("one key statement");
     };
-    assert_guard(guard, ACCOUNT_KEY, &encode_u64(7), false);
+    assert_determinant(determinant, ACCOUNT_KEY, &encode_u64(7), false);
     assert!(account_op.edges.is_empty(), "Account has no outgoing");
 
-    // The pointwise guard: scalar prefix ‖ the interval's whole 16 bytes,
+    // The pointwise determinant: scalar prefix ‖ the interval's whole 16 bytes,
     // marked for the ordered-neighbor probe.
     let room_op = op_for(&plan.inserts, ROOM, &r);
-    let mut room_guard = Vec::new();
-    room_guard.extend_from_slice(&encode_u64(3));
-    room_guard.extend_from_slice(&encode_interval_u64(
+    let mut room_determinant = Vec::new();
+    room_determinant.extend_from_slice(&encode_u64(3));
+    room_determinant.extend_from_slice(&encode_interval_u64(
         crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
     ));
-    let [guard] = &*room_op.guards else {
+    let [determinant] = &*room_op.determinants else {
         panic!("one key statement");
     };
-    assert_guard(guard, ROOM_KEY, &room_guard, true);
+    assert_determinant(determinant, ROOM_KEY, &room_determinant, true);
 }
 
 #[test]
@@ -380,7 +385,7 @@ fn pair_statements_edge_their_own_directions() {
 #[test]
 fn edge_key_bytes_land_in_target_key_order() {
     // Link(p, q) <= Combo(y, x) against key Combo(x, y): projection
-    // element p maps to guard position 1, q to 0 — the plan's key bytes
+    // element p maps to determinant position 1, q to 0 — the plan's key bytes
     // are pre-permuted, byte-for-byte.
     let dir = TempDir::new("plan-permutation");
     let schema = schema();
@@ -435,7 +440,7 @@ fn delete_ops_carry_the_byte_symmetric_edges() {
     let plan = plan_of(&env, &mut delta, &[(REPORT, r.clone())], &[]);
     assert!(plan.inserts.is_empty());
     let op = op_for(&plan.deletes, REPORT, &r);
-    assert!(op.guards.is_empty(), "Report has no key statements");
+    assert!(op.determinants.is_empty(), "Report has no key statements");
     let [edge] = &*op.edges else {
         panic!("one satisfied containment");
     };
@@ -461,7 +466,7 @@ fn disestablished_tuple_expands_per_dependent_statement() {
     };
     assert_eq!(check.key, key_id(ACCOUNT_KEY));
     assert_eq!(schema.key(check.key).relation, ACCOUNT);
-    assert_eq!(&*check.guard, encode_u64(9).as_slice());
+    assert_eq!(&*check.determinant, encode_u64(9).as_slice());
     // Not re-established: every dependent checks unconditionally, in
     // materialized order.
     let statements: Vec<_> = check
@@ -487,7 +492,7 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
     let old = account(&schema, 9, true, 0);
     commit_base(&env, &schema, &[(ACCOUNT, old.clone())]);
 
-    // Delete + insert re-lands the exact guard bytes (only the non-key
+    // Delete + insert re-lands the exact determinant bytes (only the non-key
     // `note` differs): the plain set difference discharges the empty-ψ
     // dependents at plan time; the ψ-carrying dependent stays, marked —
     // only the judgment phase can read the establishing fact.
@@ -498,7 +503,7 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
         panic!("one disestablished tuple");
     };
     assert_eq!(check.key, key_id(ACCOUNT_KEY));
-    assert_eq!(&*check.guard, encode_u64(9).as_slice());
+    assert_eq!(&*check.determinant, encode_u64(9).as_slice());
     let [dependent] = &*check.dependents else {
         panic!("only the ψ-carrying dependent survives");
     };
@@ -524,12 +529,12 @@ fn pointwise_tuple_keeps_its_interval_tail_and_coverage_evidence() {
     };
     assert_eq!(check.key, key_id(ROOM_KEY));
     assert_eq!(schema.key(check.key).relation, ROOM);
-    let mut guard = Vec::new();
-    guard.extend_from_slice(&encode_u64(3));
-    guard.extend_from_slice(&encode_interval_u64(
+    let mut determinant = Vec::new();
+    determinant.extend_from_slice(&encode_u64(3));
+    determinant.extend_from_slice(&encode_interval_u64(
         crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
     ));
-    assert_eq!(&*check.guard, guard.as_slice());
+    assert_eq!(&*check.determinant, determinant.as_slice());
     let [dependent] = &*check.dependents else {
         panic!("one dependent");
     };

@@ -51,7 +51,7 @@ pub use oracle::{ParamDraw, params_for};
 /// adjacent-touching boundary probes, `CountDistinct` over every type,
 /// and Arg-restriction.
 const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
-    (Shape::Guard, 10),
+    (Shape::KeyProbe, 10),
     (Shape::Star, 15),
     (Shape::Chain, 15),
     (Shape::SelfJoin, 8),
@@ -77,7 +77,7 @@ const REPEAT_VAR_PCT: u64 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Shape {
-    Guard,
+    KeyProbe,
     Star,
     Chain,
     SelfJoin,
@@ -287,7 +287,7 @@ pub const CMP_OPS: [CmpOp; 8] = [
 /// structural type).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Coverage {
-    pub guard: u64,
+    pub key_probe: u64,
     pub star: u64,
     pub chain: u64,
     pub self_join: u64,

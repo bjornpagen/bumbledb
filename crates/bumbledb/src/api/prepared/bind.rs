@@ -14,7 +14,7 @@ use crate::storage::env::ReadTxn;
 impl<S> PreparedQuery<'_, S> {
     /// Rebuilds the executor scratch at a different batch size — the
     /// tuning/test surface for D4's measurement-owned constant. Allocation
-    /// happens here, outside any measured window. A no-op for guard
+    /// happens here, outside any measured window. A no-op for key_probe
     /// probes. Hidden: a measurement affordance, not a knob on the
     /// no-knobs surface (`docs/architecture/00-product.md`).
     #[doc(hidden)]
@@ -30,7 +30,7 @@ impl<S> PreparedQuery<'_, S> {
     /// `profile`; `execute_collect` and `explain` route through them):
     /// a snapshot of any environment other than the preparing one is a
     /// typed error before anything else runs. One u64 compare — with the
-    /// entry guarded, the view memo needs no environment epoch in its
+    /// entry protected, the view memo needs no environment epoch in its
     /// generation keys.
     pub(super) fn check_snapshot(&self, txn: &ReadTxn<'_>) -> Result<()> {
         if txn.env_instance() == self.env_instance {
@@ -305,7 +305,7 @@ pub(super) fn resolve_filters(
         // Templates are mutable for exactly one write: the literal latch
         // — a resolved `PendingIntern` becomes its `Const::Word` in
         // place, once, permanently (the dictionary is append-only, the
-        // prepared query owns its plan — `!Sync`, env-guarded — and ids
+        // prepared query owns its plan — `!Sync`, environment-pinned — and ids
         // outlive the environment).
         let negated = occurrence.role == crate::ir::normalize::Role::Negated;
         let filters = &mut out_filters[occ_idx];

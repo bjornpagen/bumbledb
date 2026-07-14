@@ -3,7 +3,7 @@ use bumbledb::Query;
 use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::dress::dress;
 use crate::querygen::negate::negate;
-use crate::querygen::shapes::{aggregate, chain, guard, self_join, star};
+use crate::querygen::shapes::{aggregate, chain, key_probe, self_join, star};
 use crate::querygen::shapes_closed::{closed_fold, closed_join};
 use crate::querygen::shapes_ground::{du_walk, existence_walk};
 use crate::querygen::shapes_interval::{boundary, interval_join, measure, membership};
@@ -27,13 +27,13 @@ fn shape_of(rng: &mut Rng) -> Shape {
 fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Builder {
     let mut b = Builder::default();
     match shape {
-        Shape::Guard => guard(&mut b, rng),
+        Shape::KeyProbe => key_probe(&mut b, rng),
         Shape::Star => star(&mut b, rng),
         Shape::Chain => chain(&mut b, rng),
         Shape::SelfJoin => self_join(&mut b, rng),
         Shape::Gated => {
             match rng.range(5) {
-                0 => guard(&mut b, rng),
+                0 => key_probe(&mut b, rng),
                 1 => star(&mut b, rng),
                 2 => chain(&mut b, rng),
                 3 => aggregate(&mut b, rng),

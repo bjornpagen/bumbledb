@@ -272,7 +272,7 @@ impl fmt::Display for SchemaError {
                 field: fd,
             } => write!(
                 f,
-                "statement {}: second interval field {} on relation {} — the ordered guard answers one dimension",
+                "statement {}: second interval field {} on relation {} — the ordered determinant answers one dimension",
                 s.0, fd.0, r.0
             ),
             Self::FunctionalityIntervalNotLast {
@@ -292,12 +292,12 @@ impl fmt::Display for SchemaError {
                 "statement {}: statement {} already keys this field set",
                 s.0, earlier.0
             ),
-            Self::GuardKeyTooWide {
+            Self::DeterminantKeyTooWide {
                 statement: s,
                 width,
             } => write!(
                 f,
-                "statement {}: {width}-byte guard key exceeds the key-size ceiling",
+                "statement {}: {width}-byte determinant key exceeds the key-size ceiling",
                 s.0
             ),
             Self::ContainmentArityMismatch {
@@ -726,7 +726,7 @@ impl fmt::Display for Error {
             Self::MeasureOfRay { start, end } => write!(
                 f,
                 "Duration of a ray: encoded interval [{start}, {end}) has no finite \
-                 measure — exclude rays with an Allen guard or a bounded-end filter"
+                 measure — exclude rays with an Allen predicate or a bounded-end filter"
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")
@@ -835,7 +835,7 @@ impl SchemaError {
             | Self::FunctionalityMultipleIntervals { statement, .. }
             | Self::FunctionalityIntervalNotLast { statement, .. }
             | Self::DuplicateFunctionality { statement, .. }
-            | Self::GuardKeyTooWide { statement, .. }
+            | Self::DeterminantKeyTooWide { statement, .. }
             | Self::ContainmentArityMismatch { statement, .. }
             | Self::ContainmentTypeMismatch { statement, .. }
             | Self::SelectedFieldProjected { statement, .. }

@@ -1,5 +1,5 @@
 use super::{
-    AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, GuardRule,
+    AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, KeyProbeRule,
     OccurrencePin, PARKED_SLOTS, PreparedQuery, PreparedRule, Program, ProjectionSink, ResolveMemo,
     Schema, ValueType, ViewMemo,
 };
@@ -150,7 +150,7 @@ pub(crate) fn prepare<'s, S>(
         row_scratch: Vec::new(),
         all_words,
         resolve_memo: ResolveMemo::new(),
-        guard_key: Vec::new(),
+        determinant_key: Vec::new(),
         rendered: crate::ir::render::render(schema, query),
         marker: std::marker::PhantomData,
     })
@@ -169,7 +169,7 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
                 usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
                     .expect("clamped")
             }
-            PreparedRule::Guard(_) => 1,
+            PreparedRule::KeyProbe(_) => 1,
         })
         .max()
         .unwrap_or(0)
@@ -177,7 +177,7 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
 
 /// The rule's `str` literals awaiting dictionary words — the latch
 /// counter's initial value ([`PreparedQuery::unresolved_literals`]).
-/// Guard plans resolve their key constants per probe and stay outside
+/// `KeyProbePlan` values resolve their key constants per probe and stay outside
 /// the latch (the templates the latch rewrites are Free Join plan
 /// arrays). Discharged occurrences count nothing: an eliminated one
 /// carries no conditions, and a folded one's retained filters are
@@ -318,23 +318,23 @@ fn prepare_rule(
     normalized: &NormalizedQuery,
     columns: &[crate::ir::validate::PredicateColumn],
 ) -> Result<PreparedRule> {
-    // Classification first: a guard probe needs no statistics or planning.
+    // Classification first: a key probe needs no statistics or planning.
     let classified = {
         let _s = obs::span(obs::names::CLASSIFY, obs::Category::Prepare);
         classify(normalized, schema)
     };
     if let Some(plan) = classified {
         let finds = find_specs(rule, &plan);
-        let guard_finds = guard_find_table(&plan, &finds, columns);
-        return Ok(PreparedRule::Guard(GuardRule {
+        let key_probe_finds = key_probe_find_table(&plan, &finds, columns);
+        return Ok(PreparedRule::KeyProbe(KeyProbeRule {
             plan,
             finds,
-            guard_finds,
+            key_probe_finds,
         }));
     }
 
     // The staleness pin record (`staleness.rs`): the statistics below,
-    // kept instead of dropped. Stays empty for guard probes — they read
+    // kept instead of dropped. Stays empty for key probes — they read
     // no statistics, so there is nothing to drift.
     let mut pins = Vec::new();
     // Per-occurrence input estimates (docs/architecture/40-execution.md): row counters
@@ -495,7 +495,7 @@ impl SlotLayout for crate::plan::fj::ValidatedPlan {
     }
 }
 
-impl SlotLayout for crate::exec::dispatch::GuardPlan {
+impl SlotLayout for crate::exec::dispatch::KeyProbePlan {
     fn slot_of(&self, var: crate::ir::VarId) -> usize {
         self.slot_of(var)
     }
@@ -585,11 +585,11 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
         .collect()
 }
 
-/// The guard fast lane's find table: `Some` for guard plans whose finds
+/// The key-probe fast lane's find table: `Some` for key-probe plans whose finds
 /// are all plain variables. Types come from the predicate's columns —
 /// find order IS column order.
-fn guard_find_table(
-    guard: &crate::exec::dispatch::GuardPlan,
+fn key_probe_find_table(
+    key_probe: &crate::exec::dispatch::KeyProbePlan,
     finds: &[FindSpec],
     columns: &[crate::ir::validate::PredicateColumn],
 ) -> Option<Vec<(crate::schema::FieldId, ValueType)>> {
@@ -598,14 +598,14 @@ fn guard_find_table(
         .zip(columns)
         .map(|(spec, column)| match spec {
             FindSpec::Var { slot, .. } => {
-                let var = guard
+                let var = key_probe
                     .vars
                     .iter()
                     .find(|v| v.slot == *slot)
-                    .expect("find slots come from the guard plan's layout");
+                    .expect("find slots come from the key-probe plan's layout");
                 Some((var.field, column.ty.clone()))
             }
-            // aggregate and measure guards keep the sink path
+            // aggregate and measure key_probes keep the sink path
             FindSpec::Agg { .. }
             | FindSpec::Arg { .. }
             | FindSpec::Pack { .. }

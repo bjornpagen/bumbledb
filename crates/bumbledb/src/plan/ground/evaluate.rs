@@ -54,7 +54,7 @@
 //!   the rule. The gate must bind **no variables at all**: a dead-but-
 //!   bound variable still multiplies an aggregate's fold domain (the
 //!   binding set is over ALL query variables — 40-execution, D2), so a
-//!   var-binding guard is REFUSED, recorded; trigger: a measured
+//!   var-binding gate is REFUSED, recorded; trigger: a measured
 //!   projection-sink-only win.
 //!
 //! The fold mark remains `Copy`, so it cannot carry the parsed filter
@@ -154,9 +154,9 @@ fn fold_positive(
         }
         binders
     } else {
-        // The pure-guard shape: only a var-less atom may delete — a
+        // The pure-gate shape: only a var-less atom may delete — a
         // dead-but-bound variable still multiplies an aggregate's fold
-        // domain (module doc), and the guard's truth must survive
+        // domain (module doc), and the gate's truth must survive
         // without it.
         if !normalized.occurrences[c_idx].vars.is_empty() {
             return false;
@@ -295,7 +295,7 @@ pub(super) fn payload_escapes(
 /// **Condition 1 (join half)** — the occurrence's live join variable:
 /// the variable bound at the id position `FieldId(0)`, if it is live
 /// outside the occurrence. A dead id variable is no join (the atom is
-/// then a guard candidate — and a var-binding guard refuses, module
+/// then a gate candidate — and a var-binding gate refuses, module
 /// doc).
 pub(super) fn join_id_var(
     normalized: &NormalizedQuery,

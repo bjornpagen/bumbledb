@@ -49,22 +49,22 @@ once.
 
 ## Access paths (before any join machinery)
 
-**Guard-probe point lookups.** A single-atom query whose bindings cover a key of the
+**Key-probe point lookups.** A single-atom query whose bindings cover a key of the
 relation (an FD statement, including the auto-key on fresh fields —
-`30-dependencies.md`) or the full fact executes as: one `U`-guard (or `M`-membership)
+`30-dependencies.md`) or the full fact executes as: one `U` determinant (or `M`-membership)
 LMDB get → one `F` fetch → decode. No images, no COLT, no plan search. This serves the
 headline "point lookup by key" workload at O(log n), including immediately after a
 commit (no rebuild cost).
 **Decision.** **Alternative:** COLT-only ("the join engine is the only read path") —
 lost because a fully-bound lookup through images pays an O(n) scan for a one-row answer
 and loses the benchmark family outright; the paper itself lists index-blindness as an
-open limitation (§6). **Reverses if:** never — the guards exist anyway (rule: every
+open limitation (§6). **Reverses if:** never — the determinants exist anyway (rule: every
 mechanism names its reader; this is `U`/`M`'s read-side reader).
 
 **Statically empty programs.** A program whose every rule the normalization
 fold refuted on constants (`20-query-ir.md`, § normalization — mutually
 unsatisfiable constant conditions) prepares to the empty program. Prepared
-execution has two rule kinds — guard probe and Free Join — plus this
+execution has two rule kinds — key probe and Free Join — plus this
 program-level empty variant. Execution binds params first — bind errors still surface, a
 vacuous Allen mask param is rejected exactly as on a live plan — then
 touches no images, binds no views, runs no join, and the result is the
@@ -81,9 +81,9 @@ interval occurrence shares **no equality variable** with the rest of the query i
 Cartesian with a filter — O(bindings × n), like any Cartesian, and only a stabbing
 structure could do better. Real interval workloads carry their group key
 (per-account, per-room); the randomized generator bounds itself to that shape
-(`60-validation.md`). Candidate mechanism recorded for trigger day: **guard skip
-scan** — `U` guards are already ordered composite keys of fixed per-statement
-width, so a non-prefix guard lookup or a range scan under a low-cardinality
+(`60-validation.md`). Candidate mechanism recorded for trigger day: **determinant skip
+scan** — `U` determinants are already ordered composite keys of fixed per-statement
+width, so a non-prefix determinant lookup or a range scan under a low-cardinality
 leading field (closed-reference discriminators) is servable with zero new structures by
 cursor `set_range` prefix-hopping (O(distinct-leading-prefixes × log n)); not
 applicable to interval stabbing, whose pointwise layout needs the coverage-walk
@@ -121,7 +121,7 @@ filters** (lowered negated atoms).
   which every variable of the negated atom is bound — and evaluate as: probe the
   negated occurrence for any matching fact; a hit **rejects** the binding. The
   negated occurrence is never a cover, contributes no plan variables, and its COLT
-  (or, when its bindings cover a key, its `U`/`M` guard — the same access-path
+  (or, when its bindings cover a key, its `U`/`M` determinant index — the same access-path
   hierarchy as positive lookups) is forced only to the levels the probe needs.
   In batches, anti-probe misses are survivors and hits are compacted away —
   branchless, identical machinery to residual failure. **This probe is the same
@@ -297,8 +297,8 @@ interval type. **Reverses if:** never structurally.
 ## The rule loop
 
 A prepared query is a program — one head, a list of prepared rules, each either a
-guard probe or a Free Join rule carrying its own `ValidatedPlan` (the whole planning
-pipeline runs for each non-guard rule at prepare). Execution runs the
+key probe or a Free Join rule carrying its own `ValidatedPlan` (the whole planning
+pipeline runs for each non-key-probe rule at prepare). Execution runs the
 rules **sequentially** into **one sink**: the sink resets once per execution, never
 per rule, and its dedup machinery spanning rules is the *entire* implementation of set
 union. **Union is not an operator** — no merge node, no concat-then-dedup pass exists
@@ -316,7 +316,7 @@ and stays a non-goal.
   the fold domain is the union of the rules' binding sets projected to the head".
   The single-rule aggregate keys the full slot array (its fold domain is the rule's
   distinct full bindings — the normative single-rule semantics, unchanged).
-  Under the rule-disjointness proof (§ set semantics) the spanning guard is
+  Under the rule-disjointness proof (§ set semantics) the spanning condition is
   dropped: the projection map drains per rule and the composed aggregate
   seen-set is elided — a collision the theorem forbids needs no set to absorb it.
 - **Per-rule re-aiming:** the sink's slot tables (projection slots; aggregate finds,
@@ -330,8 +330,8 @@ and stays a non-goal.
   reads; per-rule state is only what is plan-shaped (resolved filters, selections,
   the view memo). A rule whose `Eq`-anchored constant misses the dictionary
   short-circuits **that rule only** — a rule is one disjunct.
-- **Guard-probe rules** union through the sink like any other rule; the direct
-  no-sink decode lane applies only to the single-rule guard program (the union must
+- **Key-probe rules** union through the sink like any other rule; the direct
+  no-sink decode lane applies only to the single-rule key-probe program (the union must
   hear every rule).
 - **The view memo under rules:** occurrences of one relation in different rules share
   the image `Arc` by construction (one `ImageCache`, one build per
@@ -441,7 +441,7 @@ deleted at prepare exactly like a normalize-time death. No live `k` (a pure
 constant gate): `|S| ≥ 1` deletes the atom outright and `|S| == 0` kills the
 rule — but only a **var-less** gate may delete: a dead-but-bound variable
 still multiplies an aggregate's fold domain (the binding set is over all query
-variables — D2), so a var-binding guard refuses.
+variables — D2), so a variable-binding gate refuses.
 
 **The payload refusal, recorded:** a closed atom with a live non-id variable —
 payload escaping to the head ("return each event's severity rank") — keeps its
@@ -683,7 +683,7 @@ caller-provided. **High-water:** after warmup on the coldest parameter, a
 parameter sequence of strictly increasing selectivity — each parameter binds a
 strictly hotter key — asserts that allocations occur **only** on executions
 setting a new intermediate high-water: every repeat of a previously-seen
-parameter, immediate or later, is allocation-silent, and the window guards its
+parameter, immediate or later, is allocation-silent, and the window protects its
 own vacuousness — the harness must observe at least one growth event across the
 escalation, or the run proves nothing. First-execution and post-commit rebuild
 allocations are sanctioned and outside both windows. Param sets draw from the
@@ -815,7 +815,7 @@ Six measured decisions, enforced structurally by
   When the count is zero and the query has no params of any shape,
   `resolve_filters` is **skipped entirely** — the resolved tables were
   written once and are final (one cold branch at rule entry). Sound
-  because the prepared query owns its plan (`!Sync`, env-instance-guarded)
+  because the prepared query owns its plan (`!Sync`, environment-instance-pinned)
   and generational immutability never invalidates a word. The latch writes
   fixed-size words into existing slots — the alloc gate's `literal-latch`
   scenario pins zero allocation across the crossing.

@@ -1,5 +1,5 @@
 //! The `F` pass: one cursor over `F | relation | row_id`. Per live fact —
-//! its `M` entry must point back, every key statement's guard must hold
+//! its `M` entry must point back, every key statement's determinant must hold
 //! its row id in `U`, and every outgoing containment whose φ it satisfies
 //! must have its `R` edge **and its global judgment hold** (the target
 //! tuple present or covered, through the commit path's own probes — one
@@ -12,7 +12,7 @@ use crate::encoding::{TypeDesc, fact_hash, field_word_bytes};
 use crate::error::{Direction, Error, Result, Violation, Violations};
 use crate::schema::{AxiomIndex, Enforcement, RelationId};
 use crate::storage::commit::judgment;
-use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use crate::storage::keys::{self, DeterminantImage, KeyBuf, MAX_KEY};
 
 use super::{StoreFinding, Sweep, namespace};
 
@@ -20,7 +20,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
     let schema = s.schema;
     let mut scratch: KeyBuf = [0; MAX_KEY];
-    let mut guard = Vec::new();
+    let mut determinant = DeterminantImage::scratch();
     let mut checker = judgment::Checker::new(txn.raw(), s.data, schema);
     for entry in namespace(s.data, txn, keys::NS_FACT)? {
         let (key, fact) = entry?;
@@ -85,27 +85,36 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             });
         }
 
-        // F→U: every key statement's guard must hold this row id
-        // (guards re-derived by slicing, exactly as the commit path).
+        // F→U: every key statement's determinant must hold this row id
+        // (determinants re-derived by slicing, exactly as the commit path).
         for &key_id in relation.keys() {
             let statement = schema.key(key_id);
-            keys::guard_bytes(layout, &statement.projection, fact, &mut guard);
-            let u_len = keys::guard_key(&mut scratch, rel, statement.id, &guard);
+            keys::determinant_image(layout, &statement.projection, fact, &mut determinant);
+            let u_len =
+                keys::determinant_key(&mut scratch, rel, statement.id, determinant.as_bytes());
             let held = s
                 .data
                 .get(txn.raw(), &scratch[..u_len])?
                 .is_some_and(|v| v == row_id.to_le_bytes().as_slice());
             if !held {
-                s.push(StoreFinding::FactWithoutGuard {
+                s.push(StoreFinding::FactWithoutDeterminant {
                     relation: rel,
                     statement: statement.id,
                     row_id,
-                    guard_key: scratch[..u_len].into(),
+                    determinant_key: scratch[..u_len].into(),
                 });
             }
         }
 
-        check_outgoing(s, &mut checker, rel, row_id, fact, &mut scratch, &mut guard)?;
+        check_outgoing(
+            s,
+            &mut checker,
+            rel,
+            row_id,
+            fact,
+            &mut scratch,
+            &mut determinant,
+        )?;
     }
     check_extension_sources(s, &mut checker)
 }
@@ -125,7 +134,7 @@ fn check_outgoing(
     row_id: u64,
     fact: &[u8],
     scratch: &mut KeyBuf,
-    guard: &mut Vec<u8>,
+    determinant: &mut DeterminantImage,
 ) -> Result<()> {
     let txn = s.txn;
     let schema = s.schema;
@@ -148,7 +157,7 @@ fn check_outgoing(
                 key_permutation,
                 ..
             } => (target_key, key_permutation),
-            // A closed-target containment has no `R` edge and no guard to
+            // A closed-target containment has no `R` edge and no determinant to
             // probe — the F↔R walk skips it, and the global judgment is
             // the membership test itself.
             Enforcement::Closed { members } => {
@@ -167,21 +176,21 @@ fn check_outgoing(
                 continue;
             }
         };
-        keys::permuted_guard_bytes(
+        keys::permuted_determinant_image(
             layout,
             &statement.source.projection,
             key_permutation,
             fact,
-            guard,
+            determinant,
         );
-        let r_len = keys::reverse_key(scratch, sid, guard, rel, row_id);
+        let r_len = keys::reverse_key(scratch, sid, determinant.as_bytes(), rel, row_id);
         let missing_edge = s.data.get(txn.raw(), &scratch[..r_len])?.is_none();
         let probe = judgment::Probe {
             statement: sid,
             target_relation: statement.target.relation,
             target_key: *target_key,
             target_check: &checks.target,
-            key_bytes: guard,
+            key_bytes: determinant.as_bytes(),
             fact_bytes: fact,
             direction: Direction::TargetRequired,
         };
@@ -218,7 +227,7 @@ fn check_outgoing(
                     });
                 }
             }
-            // A corruption inside the probe (a guard row id resolving to
+            // A corruption inside the probe (a determinant row id resolving to
             // no fact, a malformed key width) is a namespace desync the
             // U pass convicts on its own — the judgment neither
             // double-reports it nor decides through it.
@@ -242,7 +251,7 @@ fn check_extension_sources(
     checker: &mut judgment::Checker<'_>,
 ) -> Result<()> {
     let schema = s.schema;
-    let mut guard = Vec::new();
+    let mut determinant = DeterminantImage::scratch();
     for relation in schema.relations() {
         let Some(rows) = relation.extension() else {
             continue;
@@ -266,19 +275,19 @@ fn check_extension_sources(
                         // Interval positions on closed containments are
                         // refused at validate — the coverage walk never
                         // runs from a constant source.
-                        keys::permuted_guard_bytes(
+                        keys::permuted_determinant_image(
                             layout,
                             &statement.source.projection,
                             key_permutation,
                             &row.fact,
-                            &mut guard,
+                            &mut determinant,
                         );
                         checker.check_scalar(&judgment::Probe {
                             statement: sid,
                             target_relation: statement.target.relation,
                             target_key: *target_key,
                             target_check: &checks.target,
-                            key_bytes: &guard,
+                            key_bytes: determinant.as_bytes(),
                             fact_bytes: &row.fact,
                             direction: Direction::TargetRequired,
                         })

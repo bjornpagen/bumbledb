@@ -1,4 +1,4 @@
-use super::GuardPlan;
+use super::KeyProbePlan;
 use super::fact_word::{FactOperand, fact_operand};
 use crate::error::Result;
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
@@ -9,8 +9,8 @@ use crate::storage::env::ReadTxn;
 use crate::storage::{dict, read};
 
 /// Resolves a constant to its canonical key-segment bytes — per field, the
-/// same canonical encoding [`crate::storage::keys::guard_bytes`] slices out
-/// of a stored fact (`U` guards and `M` fact bytes share it, so an
+/// same canonical encoding [`crate::storage::keys::determinant_image`] slices out
+/// of a stored fact (`U` determinants and `M` fact bytes share it, so an
 /// interval constant contributes its whole 16-byte `start ‖ end` piece).
 /// A `PendingIntern` that missed the dictionary resolves to the
 /// never-minted sentinel id — the ensuing `U`/`M` probe then misses (empty
@@ -25,7 +25,7 @@ fn const_bytes(
         Const::Word(w) => out.extend_from_slice(&w.to_be_bytes()),
         Const::Byte(b) => out.push(*b),
         // A bytes<N> constant's padded words ARE its canonical key
-        // bytes — the same encoding `guard_bytes` slices out of a fact.
+        // bytes — the same encoding `determinant_image` slices out of a fact.
         Const::Words(words) => {
             for word in words {
                 out.extend_from_slice(&word.to_be_bytes());
@@ -39,7 +39,7 @@ fn const_bytes(
             return const_bytes(txn, &params[usize::from(p.0)], params, out);
         }
         Const::ParamSet(_) | Const::WordSet(_) => {
-            unreachable!("classification: a param-set binding never reaches the guard path")
+            unreachable!("classification: a param-set binding never reaches the key-probe path")
         }
         Const::PendingIntern { bytes } => {
             let id = dict::lookup(txn, bytes)?.unwrap_or(dict::SENTINEL_ID);
@@ -69,7 +69,7 @@ fn const_operand(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<F
         Const::Interval { start, end } => Ok(FactOperand::Pair(*start, *end)),
         Const::Param(p) => const_operand(txn, &params[usize::from(p.0)], params),
         Const::ParamSet(_) | Const::WordSet(_) => {
-            unreachable!("classification: a param-set binding never reaches the guard path")
+            unreachable!("classification: a param-set binding never reaches the key-probe path")
         }
         Const::PendingIntern { bytes } => Ok(FactOperand::Word(
             dict::lookup(txn, bytes)?.unwrap_or(dict::SENTINEL_ID),
@@ -87,7 +87,7 @@ fn point_word(point: &ResolvedWordSource, params: &[Const]) -> u64 {
             _ => unreachable!("validated: a point param resolves to a word"),
         },
         ResolvedWordSource::Var(_) => {
-            unreachable!("classification: a var-sourced point never reaches the guard path")
+            unreachable!("classification: a var-sourced point never reaches the key-probe path")
         }
     }
 }
@@ -103,7 +103,7 @@ const fn point_in(start: u64, end: u64, point: u64) -> bool {
 fn fact_matches(
     txn: &ReadTxn<'_>,
     schema: &Schema,
-    plan: &GuardPlan,
+    plan: &KeyProbePlan,
     fact: &[u8],
     filter: &FilterPredicate,
     params: &[Const],
@@ -168,7 +168,7 @@ fn fact_matches(
             point_in(start, end, point_word(point, params))
         }
         FilterPredicate::AnyPointIn { .. } => {
-            unreachable!("classification: a param-set binding never reaches the guard path")
+            unreachable!("classification: a param-set binding never reaches the key-probe path")
         }
         // The Allen kinds: classify-then-test, exactly as the view
         // evaluator runs them (`image::view::apply`) — encoded words
@@ -205,16 +205,16 @@ fn fact_matches(
                 }
             }
         }
-        // Measure filters disqualify guard classification (`classify`):
+        // Measure filters disqualify key-probe classification (`classify`):
         // their evaluation is fallible and filter-ordered — the filtered
-        // view's job, never the guard's.
+        // view's job, never the key_probe's.
         FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. } => {
             unreachable!("classify refused measure filters")
         }
     })
 }
 
-/// The probe half of the guard: key bytes from constants, one `U` get
+/// The probe half of the key-probe path: key bytes from constants, one `U` get
 /// through the matched key statement (or the full-fact `M` get), one `F`
 /// fetch, remaining filters on the fact bytes. `None` = miss or a failed
 /// filter — an empty result, never an error.
@@ -222,15 +222,15 @@ fn fact_matches(
 /// # Errors
 ///
 /// `Lmdb`/`Corruption` from the storage reads.
-pub(crate) fn guard_probe_fact<'t>(
-    plan: &GuardPlan,
+pub(crate) fn key_probe_fact<'t>(
+    plan: &KeyProbePlan,
     txn: &'t ReadTxn<'_>,
     schema: &Schema,
     params: &[Const],
     key_scratch: &mut Vec<u8>,
 ) -> Result<Option<&'t [u8]>> {
     // Build the key bytes in the caller's reused scratch — the statement's
-    // projection order for a `U` guard, full canonical fact bytes for `M`.
+    // projection order for a `U` key_probe, full canonical fact bytes for `M`.
     // A dictionary miss lands the sentinel id in the key, and the probe
     // below misses.
     key_scratch.clear();
@@ -238,9 +238,9 @@ pub(crate) fn guard_probe_fact<'t>(
         const_bytes(txn, value, params, key_scratch)?;
     }
 
-    let mut probe_span = obs::span(obs::names::GUARD_PROBE, obs::Category::Execute);
+    let mut probe_span = obs::span(obs::names::KEY_PROBE, obs::Category::Execute);
     let row_id = match plan.statement {
-        Some(statement) => read::guard_row(txn, plan.relation, statement, key_scratch)?,
+        Some(statement) => read::determinant_row(txn, plan.relation, statement, key_scratch)?,
         None => read::fact_row(txn, plan.relation, key_scratch)?,
     };
     probe_span.set_args(u64::from(row_id.is_some()), 0);

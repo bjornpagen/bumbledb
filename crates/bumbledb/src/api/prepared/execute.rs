@@ -1,7 +1,9 @@
-use super::{BindValue, GuardRule, PreparedQuery, PreparedRule, Program, ResultBuffer, ValueType};
+use super::{
+    BindValue, KeyProbeRule, PreparedQuery, PreparedRule, Program, ResultBuffer, ValueType,
+};
 
 use crate::error::Result;
-use crate::exec::dispatch::execute_guard;
+use crate::exec::dispatch::execute_key_probe;
 use crate::exec::run::{Counters, NoopCounters};
 use crate::image::cache::ImageCache;
 use crate::obs;
@@ -91,17 +93,17 @@ impl<S> PreparedQuery<'_, S> {
         }
         // The point fast lane, single-rule programs only: one probe, one
         // fetch, cells decoded straight into the buffer — no sink, no
-        // bindings, no finalize pass. Aggregate-find guards (rare) and
-        // guard rules inside multi-rule programs keep the sink path (the
+        // bindings, no finalize pass. Aggregate-find key_probes (rare) and
+        // key-probe rules inside multi-rule programs keep the sink path (the
         // union must hear them).
         if matches!(
             self.program.rules(),
-            [PreparedRule::Guard(GuardRule {
-                guard_finds: Some(_),
+            [PreparedRule::KeyProbe(KeyProbeRule {
+                key_probe_finds: Some(_),
                 ..
             })]
         ) {
-            return self.execute_guard_direct(txn, out);
+            return self.execute_key_probe_direct(txn, out);
         }
         // Phase attribution engages only under an active obs capture
         // (docs/architecture/60-validation.md): timing runs — even obs
@@ -164,7 +166,7 @@ impl<S> PreparedQuery<'_, S> {
 
     /// One rule of the loop: re-aim the sink's slot tables at the rule's
     /// binding layout, resolve this execution's filter constants, and
-    /// run the rule's plan — guard probe or Free Join — into the shared
+    /// run the rule's plan — key probe or Free Join — into the shared
     /// sink. `Ok(false)` = the positive-occurrence `Eq` short-circuit (a
     /// dictionary miss or empty set emptied this conjunctive rule; the
     /// other rules still run — a rule is one disjunct).
@@ -199,13 +201,13 @@ impl<S> PreparedQuery<'_, S> {
             return Ok(false);
         };
         let ran = match &mut rules[rule_idx] {
-            PreparedRule::Guard(rule) => {
-                execute_guard(
+            PreparedRule::KeyProbe(rule) => {
+                execute_key_probe(
                     &rule.plan,
                     txn,
                     self.schema,
                     &self.resolved_params,
-                    &mut self.guard_key,
+                    &mut self.determinant_key,
                     &mut self.bindings,
                     &mut self.sink,
                     counters,
@@ -274,11 +276,15 @@ impl<S> PreparedQuery<'_, S> {
 
     /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery.
-    fn execute_guard_direct(&mut self, txn: &ReadTxn<'_>, out: &mut ResultBuffer) -> Result<()> {
+    fn execute_key_probe_direct(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        out: &mut ResultBuffer,
+    ) -> Result<()> {
         let [
-            PreparedRule::Guard(GuardRule {
-                plan: guard,
-                guard_finds: Some(guard_finds),
+            PreparedRule::KeyProbe(KeyProbeRule {
+                plan: key_probe,
+                key_probe_finds: Some(key_probe_finds),
                 ..
             }),
         ] = self.program.rules()
@@ -286,21 +292,26 @@ impl<S> PreparedQuery<'_, S> {
             return Ok(());
         };
         self.resolve_memo.clear();
-        let Some(fact) = crate::exec::dispatch::guard_probe_fact(
-            guard,
+        let Some(fact) = crate::exec::dispatch::key_probe_fact(
+            key_probe,
             txn,
             self.schema,
             &self.resolved_params,
-            &mut self.guard_key,
+            &mut self.determinant_key,
         )?
         else {
             return Ok(());
         };
-        out.cells.reserve(guard_finds.len());
-        for (field, ty) in guard_finds {
+        out.cells.reserve(key_probe_finds.len());
+        for (field, ty) in key_probe_finds {
             if let ValueType::Interval { element } = ty {
                 let crate::exec::dispatch::FactOperand::Pair(start, end) =
-                    crate::exec::dispatch::fact_operand(self.schema, guard.relation, fact, *field)
+                    crate::exec::dispatch::fact_operand(
+                        self.schema,
+                        key_probe.relation,
+                        fact,
+                        *field,
+                    )
                 else {
                     unreachable!("validated: interval finds read interval fields")
                 };
@@ -313,7 +324,7 @@ impl<S> PreparedQuery<'_, S> {
                 // fact — no dictionary.
                 let words = match crate::exec::dispatch::fact_operand(
                     self.schema,
-                    guard.relation,
+                    key_probe.relation,
                     fact,
                     *field,
                 ) {
@@ -328,7 +339,8 @@ impl<S> PreparedQuery<'_, S> {
                 out.push_fixed_bytes(*len, &words);
                 continue;
             }
-            let word = crate::exec::dispatch::fact_word(self.schema, guard.relation, fact, *field);
+            let word =
+                crate::exec::dispatch::fact_word(self.schema, key_probe.relation, fact, *field);
             match ty {
                 ValueType::String => {
                     out.push_word(txn, ty, word, &mut self.resolve_memo)?;

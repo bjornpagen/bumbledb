@@ -1,4 +1,4 @@
-//! The containment source-side judgment (PRD 08 criteria): scalar guard
+//! The containment source-side judgment (PRD 08 criteria): scalar determinant
 //! probes with and without target selections, conditional sources (σ
 //! gating both the `R` writes and the probes), the coverage-walk matrix,
 //! and the `==` pair's insert-time totality.
@@ -308,7 +308,7 @@ fn scalar_source_with_pre_committed_target_commits() {
 
 #[test]
 fn scalar_target_failing_the_target_selection_aborts() {
-    // The guard hit alone is not the proof: the found account is outside
+    // The determinant hit alone is not the proof: the found account is outside
     // the statement's target σ (active == true).
     let schema = schema();
     let t = transfer(&schema, 9);

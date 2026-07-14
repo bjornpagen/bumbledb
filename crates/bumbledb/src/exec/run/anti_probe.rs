@@ -12,7 +12,7 @@
 //!
 //! The probe's semantic — "no fact matches" — is the same judgment the
 //! commit-time checker runs (`storage/commit/judgment.rs`), there against
-//! LMDB guards rather than COLT: one mechanism, two callers
+//! LMDB key probes rather than COLT: one mechanism, two callers
 //! (`docs/architecture/50-storage.md` § commit step 3). The sharing is
 //! the semantic and the compaction machinery, not a common function.
 

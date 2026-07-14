@@ -546,7 +546,7 @@ fn schema_variant(rejection: &SchemaError) -> &'static str {
         SchemaError::FunctionalityMultipleIntervals { .. } => "FunctionalityMultipleIntervals",
         SchemaError::FunctionalityIntervalNotLast { .. } => "FunctionalityIntervalNotLast",
         SchemaError::DuplicateFunctionality { .. } => "DuplicateFunctionality",
-        SchemaError::GuardKeyTooWide { .. } => "GuardKeyTooWide",
+        SchemaError::DeterminantKeyTooWide { .. } => "DeterminantKeyTooWide",
         SchemaError::ContainmentArityMismatch { .. } => "ContainmentArityMismatch",
         SchemaError::ContainmentTypeMismatch { .. } => "ContainmentTypeMismatch",
         SchemaError::SelectedFieldProjected { .. } => "SelectedFieldProjected",

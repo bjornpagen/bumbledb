@@ -348,7 +348,7 @@ pub fn validate(
     let occurrences = build_occurrences(plan, normalized, schema, &slots);
     // A tautology at this call site — `split_filters` just constructed
     // these occurrences, so no Eq-constant can sit in `filters`. The real
-    // producers `check_selections` guards against are hand-built
+    // producers `check_selections` checks against are hand-built
     // `PlanOccurrence`s (tests, future callers); the executor-side twin
     // is a debug_assert too. `check_selections` judges participating
     // occurrences only: a negated occurrence's Eq-constants legitimately

@@ -549,8 +549,8 @@ fn pack_query() -> Query {
     })
 }
 
-/// Q(amount) :- Posting(id = ?0, amount) — the guard-probe shape.
-fn guard_query() -> Query {
+/// Q(amount) :- Posting(id = ?0, amount) — the key-probe shape.
+fn key_probe_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -697,7 +697,7 @@ fn escalation_gate(
             );
         }
     }
-    // The vacuousness guard: an escalation that never grew anything
+    // The vacuousness check: an escalation that never grew anything
     // cannot distinguish a correct engine from a gate with no eyes.
     assert!(
         growth_events >= 1,
@@ -722,7 +722,7 @@ fn zero_warm_allocation_gate() {
         vec![BindValue::I64(40)],
     ];
     // The miss (9999) runs first so the last measured execution leaves rows.
-    let guard_params = vec![
+    let key_probe_params = vec![
         vec![BindValue::U64(9999)],
         vec![BindValue::U64(5)],
         vec![BindValue::U64(499)],
@@ -759,8 +759,8 @@ fn zero_warm_allocation_gate() {
         let mut pack = db.prepare(&pack_query())?;
         gate("pack", &mut pack, snap, &no_params);
 
-        let mut guard = db.prepare(&guard_query())?;
-        gate("guard", &mut guard, snap, &guard_params);
+        let mut key_probe = db.prepare(&key_probe_query())?;
+        gate("key_probe", &mut key_probe, snap, &key_probe_params);
 
         // The rule loop (docs/architecture/40-execution.md § the rule
         // loop): multi-rule prepared queries in the measured window —

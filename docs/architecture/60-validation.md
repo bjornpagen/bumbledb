@@ -70,7 +70,7 @@ silently coerces everything and is the oracle-corrupting bug class:
 | bumbledb | SQLite | note |
 |---|---|---|
 | Bool | INTEGER 0/1 | |
-| U64 | INTEGER | generator constrains oracle-checked data to `< 2^63`; full-range U64 is covered by non-oracle property tests (encode/decode, guards) |
+| U64 | INTEGER | generator constrains oracle-checked data to `< 2^63`; full-range U64 is covered by non-oracle property tests (encode/decode, determinants) |
 | I64 | INTEGER | |
 | Interval | two INTEGER columns (start, end) | value equality = pairwise; an `Allen` mask translates to its basics' endpoint formulas OR'd (under the query's SELECT DISTINCT); membership is the endpoint pair — fully expressible in SQL; the *judgments* over intervals are the naive model's lane |
 | String | TEXT | intern ids decoded to bytes **before** comparison, outside any timed region |
@@ -265,7 +265,7 @@ direction), and exact-abutment working-hour chains from the epoch to ∞.
 | `conflict_pairs` | the Allen-mask self-join, `INTERSECTS` across one account's persons (04) |
 | `conflict_free` | the anti-probe: ¬Claim with a point-membership binding at an event-creation instant (04 + negation) |
 | `free_busy` | `Pack`, the coalescing fold, per person per window (11/12); free time is the host's gap walk (the `Gaps` refusal) |
-| `claim_hours` | the measure: `Sum(Duration)` by claim arm under the `Allen(DISJOINT)` ray guard (10) |
+| `claim_hours` | the measure: `Sum(Duration)` by claim arm under the `Allen(DISJOINT)` ray predicate (10) |
 
 **Mirror rules.** The calendar mirror follows the value-mapping and template
 rules above; `free_busy` is the one family the IR→SQL translator cannot express
@@ -366,7 +366,7 @@ time the emulation, not the engine.
   the cap-exceeders and vanished programs in the error-parity cases above;
   **`Pack`** rows (grouped, global, and the multi-rule union fold) naive-only per
   the expressibility gate; the **measure's rays** (`MeasureOfRay` on both sides,
-  typed, and the `Allen(DISJOINT)` ray guard keeping the same query answering
+  typed, and the `Allen(DISJOINT)` ray predicate keeping the same query answering
   rows); and the **converse-property lane**: for every generated Allen-bearing
   query, the converse twin — operands swapped, mask conversed per leaf — must
   produce the identical result set on the engine (`Allen(a, b, m) ≡
@@ -388,7 +388,7 @@ time the emulation, not the engine.
   representation. The `==`/totality corner (no-op parent re-insert + child
   delete) is the same class, caught via the parent's standing reverse edge.
 - Operation-sequence property tests for the write path: random insert/delete/alloc
-  interleavings with judgment checks, asserting idempotence, guard consistency,
+  interleavings with judgment checks, asserting idempotence, determinant consistency,
   reverse-edge consistency, and fresh monotonicity across commits and aborts —
   **plus WriteTx point reads asserted against the delta-overlaid view** (a read
   inside the transaction equals the post-commit read, on every interleaving).
@@ -410,7 +410,7 @@ time the emulation, not the engine.
   dependency-cluster order → oracle-equal results). ETL is the migration story; an
   ETL bug is a data-loss bug.
 - **Encoding round-trip fuzzing is retained** (decision: the one *in-tree* fuzz
-  target — order-preserving encodings and composite guard keys are where a
+  target — order-preserving encodings and composite determinant keys are where a
   boundary bug corrupts sort order silently; i64::MIN, empty bytes, max-length
   values, and now interval starts/ends at element extremes and `start+1 == end`
   minimal intervals). Executor differential fuzzing is subsumed by the seeded

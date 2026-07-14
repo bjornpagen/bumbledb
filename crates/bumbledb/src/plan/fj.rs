@@ -280,7 +280,7 @@ impl ValidatedPlan {
     /// a resolved `PendingIntern` rewrites its template slot once,
     /// permanently — the latch IS the rewrite; no parallel resolution
     /// state exists. Sound because the prepared query owns its plan
-    /// (`!Sync`, env-guarded), and a latched word is valid for the
+    /// (`!Sync`, environment-pinned), and a latched word is valid for the
     /// environment's lifetime (ids never reused, dictionary never
     /// shrinks).
     pub(crate) fn occurrences_mut(&mut self) -> &mut [PlanOccurrence] {

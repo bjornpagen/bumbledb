@@ -129,7 +129,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         // Phase 3, the judgment phase: final-state probes inside this same
         // write transaction (LMDB write txns read their own writes) — the
         // containment source side over the plan's probe list, then the
-        // target side over the plan's disestablished-guard check sets.
+        // target side over the plan's disestablished-determinant check sets.
         // Both sides are scan-complete collectors; the rejection is the
         // sealed COMPLETE violation set, never its first member.
         let final_state = judgment::FinalStateView::new(&txn, schema, &plan);

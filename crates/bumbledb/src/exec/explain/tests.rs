@@ -293,7 +293,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
 }
 
 #[test]
-fn guard_probe_queries_report_their_classification() {
+fn key_probe_queries_report_their_classification() {
     let schema = schema(1);
     let normalized = normalized(vec![Occurrence {
         occ_id: OccId(0),
@@ -306,9 +306,9 @@ fn guard_probe_queries_report_their_classification() {
             value: Const::Word(5),
         }],
     }]);
-    let guard = classify(&normalized, &schema).expect("guard probe");
+    let key_probe = classify(&normalized, &schema).expect("key probe");
     let report = Report {
-        rules: vec![RulePlan::GuardProbe(&guard)],
+        rules: vec![RulePlan::KeyProbe(&key_probe)],
         stats: ExecutionStats {
             rules: vec![crate::api::stats::RuleStats {
                 nodes: Vec::new(),
@@ -317,7 +317,7 @@ fn guard_probe_queries_report_their_classification() {
                 pinned: Vec::new(),
                 emitted: 0,
                 absorbed: 0,
-                guard: Some(crate::api::stats::GuardStats { hit: true }),
+                key_probe: Some(crate::api::stats::KeyProbeStats { hit: true }),
             }],
             emits: 0,
             disjoint_rules: None,
@@ -326,7 +326,7 @@ fn guard_probe_queries_report_their_classification() {
         },
     };
     let text = format!("{report}");
-    assert!(text.contains("guard probe"));
+    assert!(text.contains("key probe"));
     assert!(text.contains("key statement: 0"));
 }
 

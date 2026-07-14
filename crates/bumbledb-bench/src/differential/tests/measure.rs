@@ -3,8 +3,8 @@
 //! (which evaluates the measure **from the definition**, `|[s,e)| =
 //! e − s` over logical values), both element types, boundary intervals
 //! (`[x, x+1)`, `[MIN, MAX−1)`), the `Sum(Duration)` overflow verdict,
-//! and the ray: both oracles raise `MeasureOfRay` on the unguarded query
-//! while the `Allen(DISJOINT`-from-rays`)` guard keeps the same query
+//! and the ray: both oracles raise `MeasureOfRay` on the unfiltered query
+//! while the `Allen(DISJOINT`-from-rays`)` filter keeps the same query
 //! answering rows.
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
@@ -300,7 +300,7 @@ fn measure_queries_agree_with_the_naive_model() {
 /// `u64::MAX` is the overflow verdict on both oracles (the boundary
 /// interval `[MIN, MAX−1)` twice), and a ray reaching `Duration` is
 /// `MeasureOfRay` on both — while the `Allen(DISJOINT`-from-rays`)`
-/// guard keeps the same query answering rows on both.
+/// filter keeps the same query answering rows on both.
 #[test]
 fn measure_error_verdicts_agree_with_the_naive_model() {
     let descriptor = schema();
@@ -346,18 +346,18 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
         )],
         vec![],
     );
-    // The i64 boundary measure, guarded from nothing (no i64 rays here).
+    // The i64 boundary measure, filtered from nothing (no i64 rays here).
     let boundary_query = single(
         vec![FindTerm::Duration(VarId(1))],
         vec![shift_atom()],
         vec![],
     );
-    let unguarded = single(
+    let unfiltered = single(
         vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
         vec![stay_atom()],
         vec![],
     );
-    let guarded = single(
+    let filtered = single(
         vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
         vec![stay_atom()],
         // The ray probe [MAX−1, MAX): an interval intersects it iff its
@@ -382,11 +382,11 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
             params: vec![],
         },
         Op::Query {
-            query: unguarded,
+            query: unfiltered,
             params: vec![],
         },
         Op::Query {
-            query: guarded.clone(),
+            query: filtered.clone(),
             params: vec![],
         },
     ];
@@ -398,10 +398,10 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
     // `run` proved agreement; pin the verdicts themselves on the model.
     assert_eq!(
         naive
-            .query(&guarded, &[])
-            .expect("the guarded query answers rows")
+            .query(&filtered, &[])
+            .expect("the filtered query answers rows")
             .len(),
         2,
-        "the two bounded stays survive the ray guard"
+        "the two bounded stays survive the ray filter"
     );
 }

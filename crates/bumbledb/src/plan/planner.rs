@@ -79,7 +79,7 @@ struct OccInfo {
     /// Var bitsets of `Functionality` statements whose every projection
     /// field is var-bound in this occurrence (statements with any
     /// literal-bound or unbound field are skipped — simple and faithful
-    /// to the doc's estimator). The pointwise-key guard lives in the
+    /// to the doc's estimator). The pointwise-key determinant lives in the
     /// translation ([`densify`]): a pointwise key's set exists only when
     /// its interval field is bound **by value**, so a join binding just
     /// the scalar prefix never certifies fanout 1.

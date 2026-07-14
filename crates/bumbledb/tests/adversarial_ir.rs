@@ -7,7 +7,7 @@
 //! measure abuse, param-id gaps) through validate → normalize → prepare
 //! and asserts every outcome is `Ok` or a typed error. Any panic is a red
 //! run. `unreachable!` arms *downstream* of validation are exempt by
-//! construction — the sweep's point is proving the guard total, so an
+//! construction — the sweep's point is proving the check total, so an
 //! input that detonates one of them is a validation hole, and the sweep
 //! reports the seed that found it.
 //!
@@ -606,7 +606,7 @@ fn adversarial_ir_never_panics() {
 /// alternating And/Or chain is the typed `ConditionNestingTooDeep` —
 /// judged iteratively, so neither validation nor distribution ever
 /// recurses into it (the sweep's founding find: before the boundary
-/// guard existed, this input exhausted the stack).
+/// check existed, this input exhausted the stack).
 #[test]
 fn deep_predicate_nesting_is_a_typed_rejection() {
     let dir = common::TempDir::new("adversarial-ir-nesting");

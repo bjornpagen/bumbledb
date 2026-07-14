@@ -192,7 +192,7 @@ fn rejects_duplicate_selection_field() {
     );
 }
 
-/// Roster ">1 interval position": 2-D exclusion, which the ordered guard
+/// Roster ">1 interval position": 2-D exclusion, which the ordered determinant
 /// cannot answer.
 #[test]
 fn rejects_functionality_with_two_intervals() {
@@ -253,7 +253,7 @@ fn rejects_duplicate_functionality() {
 }
 
 /// The FD duplicate rule is a *set* rule: a permuted projection asserts the
-/// same judgment (its guard is pure write amplification), and rejecting it
+/// same judgment (its determinant is pure write amplification), and rejecting it
 /// is what keeps target-key resolution — a permutation match — unambiguous.
 #[test]
 fn rejects_permuted_duplicate_functionality() {
@@ -271,12 +271,12 @@ fn rejects_permuted_duplicate_functionality() {
     );
 }
 
-/// Roster "guard width overflow": one u64 field more than
-/// `MAX_GUARD_WIDTH` (the storage-side constant, imported — never
+/// Roster "determinant width overflow": one u64 field more than
+/// `MAX_DETERMINANT_WIDTH` (the storage-side constant, imported — never
 /// duplicated) admits.
 #[test]
-fn rejects_guard_overflow() {
-    let count = crate::storage::keys::MAX_GUARD_WIDTH / 8 + 1;
+fn rejects_determinant_overflow() {
+    let count = crate::storage::keys::MAX_DETERMINANT_WIDTH / 8 + 1;
     let fields: Vec<FieldDescriptor> = (0..count)
         .map(|i| field(&format!("f{i}"), ValueType::U64))
         .collect();
@@ -287,7 +287,7 @@ fn rejects_guard_overflow() {
     decl.statements.push(fd(RelationId(0), &projection));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::GuardKeyTooWide {
+        SchemaError::DeterminantKeyTooWide {
             statement: StatementId(0),
             width: count * 8
         }

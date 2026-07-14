@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::arena::Arena;
 use crate::schema::Schema;
+use crate::storage::keys::DeterminantImage;
 
 use super::WriteDelta;
 
@@ -12,8 +13,8 @@ impl<'s> WriteDelta<'s> {
             schema,
             arena: Arena::new(),
             facts: BTreeMap::new(),
-            guards: BTreeMap::new(),
-            guard_scratch: Vec::new(),
+            determinants: BTreeMap::new(),
+            determinant_scratch: DeterminantImage::scratch(),
             marks: BTreeMap::new(),
             row_count_delta: BTreeMap::new(),
             pending_interns: BTreeMap::new(),

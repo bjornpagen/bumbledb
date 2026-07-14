@@ -1,6 +1,6 @@
 //! Edge-case pins from the design audits: cyclic containments, nullary
 //! relations, fresh exhaustion, cap-wide closed vocabularies, 1-byte
-//! compound guards, and empty interned values — each a doc claim that
+//! compound determinants, and empty interned values — each a doc claim that
 //! previously rested on a code-reading argument instead of a test. Plus the PRD 20 bind matrix:
 //! precise per-position errors for every scalar/set misuse, and a valid
 //! mixed bind through the public [`bumbledb::ParamArg`] surface.
@@ -207,9 +207,9 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
 }
 
 /// A compound key plus a containment over 1-byte fields (bool, bool):
-/// the dense 2-byte guard shape in `U`/`R` keys, commit-judged.
+/// the dense 2-byte determinant shape in `U`/`R` keys, commit-judged.
 #[test]
-fn one_byte_compound_guards() {
+fn one_byte_compound_determinants() {
     let status = ValueType::Bool;
     let schema = SchemaDescriptor {
         relations: vec![
@@ -274,7 +274,7 @@ fn one_byte_compound_guards() {
     };
     let (switch, watcher) = (RelationId(0), RelationId(1));
 
-    let dir = common::TempDir::new("edge-byte-guards");
+    let dir = common::TempDir::new("edge-byte-determinants");
     let db = Db::create(dir.path(), schema).expect("create");
     db.write(|tx| {
         tx.insert_dyn(switch, &[Value::Bool(true), Value::Bool(true)])?;
@@ -284,9 +284,9 @@ fn one_byte_compound_guards() {
         )?;
         Ok(())
     })
-    .expect("guarded insert commits");
+    .expect("validated insert commits");
 
-    // The containment holds over the 2-byte guard: a watcher of a
+    // The containment holds over the 2-byte determinant: a watcher of a
     // missing pair aborts.
     let err = db
         .write(|tx| {

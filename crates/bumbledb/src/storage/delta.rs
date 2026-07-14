@@ -20,11 +20,12 @@ use std::collections::BTreeMap;
 
 use crate::arena::{Arena, ArenaSlice};
 use crate::schema::{FieldId, KeyId, RelationId, Schema};
+use crate::storage::keys::DeterminantImage;
 
 mod accessors;
 mod alloc;
 mod delete;
-mod guards;
+mod determinants;
 mod insert;
 mod intern;
 mod new;
@@ -42,7 +43,7 @@ pub enum Disposition {
     Delete,
 }
 
-/// The net effect recorded for one key statement's guard tuple — the
+/// The net effect recorded for one key statement's determinant tuple — the
 /// point-read index (`docs/architecture/50-storage.md` § `WriteTx`
 /// point reads): inserts record the establishing fact, deletes record absence;
 /// last disposition wins, mirroring the fact map — except that a delete
@@ -50,16 +51,16 @@ pub enum Disposition {
 /// the same key bytes (the `delete(old); insert(new)`-in-either-order
 /// idiom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GuardDisposition {
+enum DeterminantDisposition {
     Present(ArenaSlice),
     Absent,
 }
 
-/// A guard-map hit, resolved for point readers: the pending fact that
+/// A determinant-map hit, resolved for point readers: the pending fact that
 /// establishes the key tuple in the final state, or its recorded absence.
 /// A map miss (no overlay at all) means the committed state answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GuardOverlay<'a> {
+pub enum DeterminantOverlay<'a> {
     Present(&'a [u8]),
     Absent,
 }
@@ -93,20 +94,20 @@ pub struct WriteDelta<'s> {
     /// cancels a pending opposite instead of overwriting it. Judging a
     /// no-op insert is unrepresentable.
     facts: BTreeMap<(RelationId, [u8; 32]), (ArenaSlice, Disposition)>,
-    /// `key statement → (guard bytes → net disposition)` — the point-read
+    /// `key statement → (determinant bytes → net disposition)` — the point-read
     /// index maintained beside the fact map by `insert`/`delete`
-    /// (`docs/architecture/50-storage.md` § `WriteTx` point reads). Guard
+    /// (`docs/architecture/50-storage.md` § `WriteTx` point reads). Determinant
     /// bytes are derived by the one shared slicer
-    /// ([`crate::storage::keys::guard_bytes`]), exactly as commit derives
+    /// ([`crate::storage::keys::determinant_image`]), exactly as commit derives
     /// them. No relation id in the key: the validation-minted key witness
     /// determines its relation. Nested so
-    /// the probe borrows: `guard_overlay` looks guard bytes up as
+    /// the probe borrows: `determinant_overlay` looks determinant bytes up as
     /// `&[u8]`, never boxing a key copy (the typed point read is
     /// host-allocation-free — PRD 22's gate).
-    guards: BTreeMap<KeyId, BTreeMap<Box<[u8]>, GuardDisposition>>,
-    /// Scratch for guard derivation, reused across `insert`/`delete` calls
+    determinants: BTreeMap<KeyId, BTreeMap<DeterminantImage, DeterminantDisposition>>,
+    /// Scratch for determinant derivation, reused across `insert`/`delete` calls
     /// (the write path may allocate, but not per key statement per fact).
-    guard_scratch: Vec<u8>,
+    determinant_scratch: DeterminantImage,
     /// Fresh sequences touched this transaction, lazily initialized
     /// from `Q` once per `(relation, field)`. A mark is *dirty* — it
     /// escaped as an allocation the closure may have returned — iff its

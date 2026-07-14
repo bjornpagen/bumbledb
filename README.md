@@ -243,7 +243,7 @@ a theorem rather than a feature.
 **`A(X | φ) <= B(Y | ψ)` — the (conditional) inclusion dependency**:
 πX(σφ(A)) ⊆ πY(σψ(B)). Read `<=` as *is contained in* — it is `⊆` written
 in the tokens Rust lexes, and the choice is principled: the subset order is
-an order. The acceptance gate requires Y to be a key of B (one guard probe
+an order. The acceptance gate requires Y to be a key of B (one key probe
 answers "is this tuple present"). SQL's foreign key is the unselected
 special case; the selected form is the CIND of the data-quality
 literature. **Pointwise lifting:** an interval position turns containment
@@ -286,7 +286,7 @@ broken until they agree.
 | [20 — Query IR](docs/architecture/20-query-ir.md) | queries as data: atoms, negation, membership, param sets, aggregates |
 | [30 — Dependencies](docs/architecture/30-dependencies.md) | the two judgments, statements, pointwise lifting, the acceptance gate |
 | [40 — Execution](docs/architecture/40-execution.md) | Free Join, COLT, anti-probes, batching, the Apple Silicon model |
-| [50 — Storage](docs/architecture/50-storage.md) | LMDB layout, guards as judgment accelerators, the delta write path |
+| [50 — Storage](docs/architecture/50-storage.md) | LMDB layout, determinants as judgment accelerators, the delta write path |
 | [60 — Validation](docs/architecture/60-validation.md) | the two oracles, the bench ledger, measurement discipline |
 | [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, witnessed writes, prepared queries |
 

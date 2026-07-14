@@ -231,7 +231,7 @@ pub(super) fn place_comparisons(
             // same-atom variable sides push down as filters on the
             // measured variable's first positive occurrence (where the
             // filter-order law holds — an occurrence's other filters run
-            // first, so a guarded fact never reaches the subtraction);
+            // first, so a checked fact never reaches the subtraction);
             // only the cross-atom variable side is a residual.
             ClassifiedComparison::Duration {
                 interval,

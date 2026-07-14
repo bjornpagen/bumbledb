@@ -195,8 +195,8 @@ pub enum FilterPredicate {
     ///
     /// **The filter-order law (normative for both measure kinds):** the
     /// measure evaluates only on facts surviving the atom's *other*
-    /// filters — an `Allen` ray guard or a bounded-end filter on the
-    /// same atom always runs first, so a guarded fact never reaches the
+    /// filters — an `Allen` ray filter or a bounded-end filter on the
+    /// same atom always runs first, so a filtered fact never reaches the
     /// subtraction. On the survivors the subtraction path tests
     /// `end == MAX` and raises [`crate::Error::MeasureOfRay`] — the
     /// engine's one runtime type error — before comparing.

@@ -44,7 +44,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         return Err(ValidationError::EmptyFinds);
     }
 
-    // The nesting boundary guard runs before ANY recursive tree walk
+    // The nesting boundary check runs before ANY recursive tree walk
     // (the trust-boundary law: `disjunct_count` and `distribute` recurse
     // by depth, so a hostile depth must be a typed rejection here, judged
     // by the iterative `nesting_depth`, never a stack exhaustion there).

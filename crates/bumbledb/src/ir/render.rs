@@ -279,7 +279,7 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
 /// functionally (module doc — the input grammar's trees are pictures,
 /// not notation). Depth-budgeted at [`crate::ir::MAX_CONDITION_DEPTH`]:
 /// the renderer recurses by depth and must stay total on the hostile
-/// nesting validation rejects, so anything past the boundary guard's own
+/// nesting validation rejects, so anything past the boundary check's own
 /// cap elides to `...` instead of exhausting the stack.
 fn tree_item(tree: &ConditionTree) -> String {
     tree_item_within(tree, crate::ir::MAX_CONDITION_DEPTH)

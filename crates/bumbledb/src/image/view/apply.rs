@@ -301,9 +301,9 @@ fn scalar_or_pair(image: &RelationImage, field: FieldId, position: usize) -> Ope
 ///
 /// **The filter-order law** (docs/architecture/20-query-ir.md, § the
 /// measure): the measure kinds evaluate last, over the survivors of every
-/// other predicate of the atom — an `Allen` ray guard or a bounded-end
+/// other predicate of the atom — an `Allen` ray filter or a bounded-end
 /// filter on the same atom always runs before the subtraction, so a
-/// guarded fact never reaches it. On the survivors, `end == MAX` raises
+/// filtered fact never reaches it. On the survivors, `end == MAX` raises
 /// the typed [`crate::Error::MeasureOfRay`] — the engine's one runtime
 /// type error.
 ///

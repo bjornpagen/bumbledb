@@ -379,8 +379,8 @@ pub fn descriptor() -> SchemaDescriptor {
 /// DU pair as its two containments (mirror-detected at sealing), and —
 /// appended last so no earlier statement id shifts — the bytes<32> key
 /// `Transfer(extref) -> Transfer`: every corpus load writes an
-/// adversarial-digest guard per transfer, and an `Eq` extref binding is
-/// key-covering (the guard-probe fast path over a multi-word key).
+/// adversarial-digest determinant per transfer, and an `Eq` extref binding is
+/// key-covering (the key-probe fast path over a multi-word key).
 fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
     use bumbledb::schema::{Side, StatementDescriptor};
     let side = |relation: bumbledb::RelationId,

@@ -21,7 +21,7 @@ mod disjoint;
 mod explain;
 mod folded;
 mod ground;
-mod guard;
+mod key_probe;
 mod latch;
 mod measure;
 mod pack;

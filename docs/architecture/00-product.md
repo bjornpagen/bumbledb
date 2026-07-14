@@ -88,7 +88,7 @@ language. **Reverses if:** never — owner axiom.
 
 - **One process.** Multi-process access to one database is out of the envelope in v0
   (LMDB would permit it, but the environment-scope image cache and counter batching are
-  process-local). Guarded: every open takes an exclusive advisory lock on
+  process-local). Protected: every open takes an exclusive advisory lock on
   `<dir>/bumbledb.lock` for the handle's lifetime, so a second handle — another process,
   or a second `Db` on the same path in this one — fails loudly at open time
   (`EnvironmentLocked`) instead of corrupting derived state silently. Recorded as

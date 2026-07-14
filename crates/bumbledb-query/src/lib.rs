@@ -1344,7 +1344,7 @@ fn expand(input: TokenStream) -> Parse<String> {
 ///
 /// Never on malformed input — every diagnostic is a spanned
 /// `compile_error!` at the offending token. The one internal `expect`
-/// guards the generated code parsing as Rust, a bug in this macro if it
+/// ensures the generated code parsing as Rust, a bug in this macro if it
 /// ever fires.
 #[proc_macro]
 pub fn query(input: TokenStream) -> TokenStream {

@@ -100,8 +100,8 @@ fn membership_probe_hit_and_miss() {
 }
 
 #[test]
-fn guard_probe_hit_and_miss() {
-    let dir = TempDir::new("read-guard");
+fn key_probe_hit_and_miss() {
+    let dir = TempDir::new("read-determinant");
     let schema = schema();
     let env = fixture(&dir, &schema);
     let txn = env.read_txn().expect("txn");
@@ -111,16 +111,16 @@ fn guard_probe_hit_and_miss() {
     // The fresh auto-key (statement 0) on id and the declared key
     // (statement 1) on amount both resolve to the same row.
     assert_eq!(
-        guard_row(&txn, R, StatementId(0), &encode_u64(2)).expect("probe"),
+        determinant_row(&txn, R, StatementId(0), &encode_u64(2)).expect("probe"),
         Some(row)
     );
     assert_eq!(
-        guard_row(&txn, R, StatementId(1), &crate::encoding::encode_i64(30)).expect("probe"),
+        determinant_row(&txn, R, StatementId(1), &crate::encoding::encode_i64(30)).expect("probe"),
         Some(row)
     );
-    // The deleted fact's guard tuples are gone.
+    // The deleted fact's determinant tuples are gone.
     assert_eq!(
-        guard_row(&txn, R, StatementId(0), &encode_u64(1)).expect("probe"),
+        determinant_row(&txn, R, StatementId(0), &encode_u64(1)).expect("probe"),
         None
     );
 }

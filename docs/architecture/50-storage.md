@@ -24,7 +24,7 @@ every column.** A layout that instead stores field values severally across many
 namespaces turns megabytes of column data into hundreds of thousands of LMDB
 point-gets; this layout exists to make that shape unwritable.
 
-The second: **guard namespaces are
+The second: **derived index namespaces are
 derived accelerators for the dependency judgments (`30-dependencies.md`), not the
 judgments' definitions.** `U` exists so the functionality check is O(log n) per
 touched fact; `R` exists so the containment check's target side is O(log n) per
@@ -37,8 +37,8 @@ declaration, never discovered here.
 ```
 F | relation_id | row_id            -> fact_bytes     row-major facts   (reader: image builds, point-lookup fetch, export scan)
 M | relation_id | fact_hash         -> row_id         membership        (reader: insert/delete idempotence, point lookups, WriteTx point reads)
-U | relation_id | statement | key   -> row_id         FD guards         (reader: functionality checks — put-conflict and neighbor probes —
-                                                      guard-probe lookups, WriteTx key reads, coverage walks)
+U | relation_id | statement | key   -> row_id         FD determinants         (reader: functionality checks — put-conflict and neighbor probes —
+                                                      key-probe lookups, WriteTx key reads, coverage walks)
 R | statement | key | source_rel | source_row -> ()   IND reverse edges (reader: target-side containment checks on delete/shrink)
 Q | relation_id | field_id          -> next_u64       fresh sequences  (reader: alloc)
 S | relation_id | stat              -> u64            counters: stat 0 = row count (readers: the planner,
@@ -68,15 +68,15 @@ facts, never interned, so the key hash carries no type tag: forward
 - `fact_bytes` = the canonical encoding owned by `10-data-model.md`; identity = bytes.
 - `fact_hash` = full 32-byte blake3 of `fact_bytes`; an `M` hit is trusted without
   verification (collision axiom, recorded in `10-data-model.md`).
-- **`U` guard keys** are the FD statement's projected fields' canonical encodings,
+- **`U` determinant index keys** are the FD statement's projected fields' canonical encodings,
   concatenated in statement order. An interval field (always last —
   `30-dependencies.md` gate) contributes its 16 bytes, so within one scalar-prefix
-  group the guard B-tree is **ordered by interval start**: the property the
+  group the determinant B-tree is **ordered by interval start**: the property the
   pointwise check and the coverage walk stand on. A `bytes<N>` field contributes
   its ⌈N/8⌉ padded words — memcmp order over the uniform-width padded encodings is
-  value-byte order, which is all the guard needs (order *operations* on `bytes<N>`
+  value-byte order, which is all the determinant needs (order *operations* on `bytes<N>`
   stay refused at the query surface; sortedness is the index's need, not a
-  semantics). `MAX_GUARD_WIDTH` admits the 16-byte interval contribution and the
+  semantics). `MAX_DETERMINANT_WIDTH` admits the 16-byte interval contribution and the
   widest `bytes<64>` one; width overflow is a declaration-time error.
 - **`R` keys are statement-scoped**, not relation-scoped: `statement` is the
   schema-global materialized statement id (`10-data-model.md` fingerprint), and
@@ -140,7 +140,7 @@ in-memory mark past the supplied value; mixed explicit/generated allocation trac
 running maximum. **WriteTx point reads** (`70-api.md`: existence of a fact, lookup
 through an FD key) are the same committed-state gets overlaid with the delta — they
 observe exactly the final-state view the judgment checker will judge, which is what
-makes read-modify-write idioms (upsert, check-then-act guards) sound without exposing
+makes read-modify-write idioms (upsert, check-then-act conditions) sound without exposing
 query machinery to the write path. **Nothing touches an LMDB data page until commit**
 — an abort (error or panic) drops the arena and LMDB was never written, making
 "failed writes leave nothing" true by construction, not by rollback.
@@ -157,7 +157,7 @@ embedded `StatementId`; no commit path reconstructs or asserts descriptor/enforc
 variant agreement.
 
 1. **Deletes**: per deleted fact — `M` get → row_id → delete `F`, `M`, its `U` entries
-   (guard keys re-derived by slicing projected fields out of `fact_bytes` — never a
+   (determinant keys re-derived by slicing projected fields out of `fact_bytes` — never a
    scan), and its outgoing `R` entries. Deleted `U` keys are recorded per statement
    (the target-side check set for step 3).
 2. **Inserts**: per inserted fact — `F` put (row_id from the in-memory high-water),
@@ -165,27 +165,27 @@ variant agreement.
    satisfies). Because every delete has already landed and the insert-set is
    deduplicated, a scalar `U` put conflict here **is** a functionality violation —
    recorded into the commit's violation collector (the conflicting put is skipped;
-   the incumbent keeps the guard) and the phase finishes scan-complete, so the
+   the incumbent keeps the determinant) and the phase finishes scan-complete, so the
    rejection after step 2 carries the COMPLETE set of violated key statements
    (`30-dependencies.md` § judged on final states) and preempts step 3; the whole
-   transaction aborts. For a **pointwise FD** (interval-carrying guard), the put
+   transaction aborts. For a **pointwise FD** (interval-carrying determinant), the put
    cannot conflict on exact bytes alone; the insert additionally runs the
    **ordered-neighbor probe** — cursor-seek to (scalar prefix, start):
    predecessor in the same prefix group with `end > start`, or successor with
    `start < end`, is the violation, recorded identically. Two probes, O(log n),
    same B-tree. Deletes and inserts both check what they touch: a live `M` entry
-   whose `F` row or `U` guard is missing is the membership-desync corruption, a
+   whose `F` row or `U` determinant is missing is the membership-desync corruption, a
    hard error — never silently scrubbed.
 3. **Judgment phase** (final-state probes; LMDB write txns read their own writes) —
    one checker, statement-driven, restricted to delta-touched bindings:
    - **Containment, source side:** every inserted fact satisfying a statement's
-     source selection probes the target's key guard for its projected tuple; the
+     source selection probes the target's key determinant for its projected tuple; the
      found target fact is checked against the target selection (one `F` get when a
      selection exists). For interval positions, the probe is the **coverage walk**:
-     from the guard entry at or before the source interval's start, walk start-
+     from the determinant entry at or before the source interval's start, walk start-
      ordered entries of the prefix group, requiring no gap before the source's end
      — O(log n + segments). The sealed `IntervalCoverage` enforcement carries the
-     validator-minted `DisjointGuardProof` that the target's pointwise key keeps
+     validator-minted `DisjointDeterminantProof` that the target's pointwise key keeps
      its prefix group disjoint and start-ordered; `check_coverage` requires that
      token, so the soundness premise is represented rather than assumed
      (`30-dependencies.md`). The frontier loop is the shared
@@ -201,7 +201,7 @@ variant agreement.
      final states): an inserted source's own probe already judged the same tuple
      source-side. A surviving pre-existing requirer → violation recorded, naming
      the *source* fact by its bytes. **Re-establishment is per statement, ψ-qualified:** for a
-     dependent statement with a nonempty target selection, a re-landed guard tuple
+     dependent statement with a nonempty target selection, a re-landed determinant tuple
      counts as re-established only if the establishing fact satisfies that
      statement's ψ (one `F` get per re-established tuple per ψ-carrying dependent;
      empty-ψ dependents use the plain set difference). Without the qualification,
@@ -254,7 +254,7 @@ ourselves between logical phases.
 | `after-staging` | staging over, before plan derivation | prefix |
 | `mid-write-m` | phase 2, after a fact's `M` put | prefix |
 | `mid-write-f` | phase 2, after a fact's `F` put | prefix |
-| `mid-write-u` | phase 2, after a `U` guard put | prefix |
+| `mid-write-u` | phase 2, after a `U` determinant put | prefix |
 | `mid-write-r` | phase 2, after an `R` edge put | prefix |
 | `before-judgment` | phases 1–2 applied, before phase 3 | prefix |
 | `mid-write-s` | phase 4, after an `S` row-count put | prefix |
@@ -276,7 +276,7 @@ verifying they existed (unlike `F`/`M`/`U`, whose absence is the
 `MembershipDesync` hard error); a missing `R` entry is not independently
 detectable at delete time without re-deriving every statement's edges, and the
 class is covered by the offline sweeper, `Db::verify_store` — the same
-compensating control that re-verifies the rest of M↔F↔U↔R consistency. **Counter overflow guards** — the fresh ceiling is guarded
+compensating control that re-verifies the rest of M↔F↔U↔R consistency. **Counter overflow checks** — the fresh ceiling is checked
 (`FreshExhausted` at `u64::MAX`, because hosts can supply explicit fresh values),
 while the storage tx id and row-id high-waters are not: they advance by at most one
 per commit/insert, so wrapping needs ~2⁶⁴ commits — twelve orders beyond the scale
@@ -327,7 +327,7 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   kernel shape (predicate scan, compaction, gather, fold) applies unchanged. A
   `bytes<N>` field generalizes the same precedent: ⌈N/8⌉ parallel word columns
   (one plain word column for N ≤ 8), with the trailing pad validated zero at
-  decode. The multi-byte unit exists only in `fact_bytes` and guard keys, where
+  decode. The multi-byte unit exists only in `fact_bytes` and determinant keys, where
   ordering needs it.
   At ~60 GB/s of single-core scan bandwidth a build is single-digit milliseconds per
   100 MB — the number that makes the whole cache design sound. **Column pitches are
@@ -341,7 +341,7 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   16 KiB multiple, round it up to the next exact multiple (exact multiples measured
   clean — the poison is the small offset). Immutable once built. Positions in the
   image are **dense scan ordinals**; `row_id`s exist only in LMDB keys and never
-  appear in images (COLT offsets are image positions; the guard-probe path reads `F`
+  appear in images (COLT offsets are image positions; the key-probe path reads `F`
   directly and never needs a translation).
   **Decision: full-width images, cache key `(relation_id, storage_tx_id)`.**
   **Alternative:** per-field-scope images. **Why it lost:** scope keys are combinatorial
@@ -393,10 +393,10 @@ the theory itself.
   generation read.
 - **Read surfaces:** `Snapshot::scan`/`scan_facts` yield the extension's
   canonical fact bytes directly (row id = declaration index); `WriteTx`
-  point reads (`get_dyn`) resolve against the extension by re-deriving guard
+  point reads (`get_dyn`) resolve against the extension by re-deriving determinant
   bytes per row — ≤256 rows, L1-resident, an honest linear scan. There are no
-  `U` guards to probe: the closed auto-key is enforced by validation's
-  duplicate-handle check, and the guard-probe fast path refuses closed
+  `U` determinants to probe: the closed auto-key is enforced by validation's
+  duplicate-handle check, and the key-probe fast path refuses closed
   relations at classification (`40-execution.md` § access paths).
 - **Write refusal, three layers:** the typed `ClosedRelationWrite` at every
   write-surface entry, the commit plan's debug assertion, and the sweeper's
@@ -427,7 +427,7 @@ design — recorded so nobody re-derives it:
 - **Freelist churn**: chunked bulk-load commits leave CoW residue as free pages.
   LMDB never shrinks its file; length reflects peak usage.
 - **Several `_data` entries per fact by design**: fact (`F`) + membership hash
-  (`M`) + one FD guard (`U`) per key + one reverse edge (`R`) per satisfied
+  (`M`) + one FD determinant (`U`) per key + one reverse edge (`R`) per satisfied
   containment direction. This is deliberate rent for O(log n) commit-time
   judgment checks and stays.
 - **16 KB pages** on Apple Silicon (LMDB uses the OS page size) — chunkier

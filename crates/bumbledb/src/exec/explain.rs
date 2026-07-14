@@ -16,7 +16,7 @@
 //! its licensing statement through `schema/render.rs`) and the DP, which
 //! sees a smaller problem because eliminated occurrences never enter it.
 
-use crate::exec::dispatch::GuardPlan;
+use crate::exec::dispatch::KeyProbePlan;
 use crate::plan::fj::ValidatedPlan;
 
 mod counters;
@@ -68,7 +68,7 @@ pub struct Report<'p> {
 #[derive(Debug)]
 pub enum RulePlan<'p> {
     /// The rule classified as a point lookup.
-    GuardProbe(&'p GuardPlan),
+    KeyProbe(&'p KeyProbePlan),
     /// The Free Join engine.
     FreeJoin(&'p ValidatedPlan),
     /// The statically-empty program (`ir/normalize/fold.rs`): every

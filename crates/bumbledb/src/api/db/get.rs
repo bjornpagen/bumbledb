@@ -1,9 +1,9 @@
 //! `WriteTx` point reads (`docs/architecture/70-api.md` § `WriteTx`
 //! point reads): `contains` / `get` / `get_dyn` read **committed state overlaid
 //! with the pending delta** — the same final-state view the judgment phase
-//! judges — so read-modify-write idioms (upsert, check-then-act guards)
+//! judges — so read-modify-write idioms (upsert, check-then-act conditions)
 //! are sound without exposing query machinery to the write path. These are
-//! guard gets: no images, no plans, no snapshot.
+//! determinant gets: no images, no plans, no snapshot.
 
 use super::encode_dyn::shape_mismatch;
 use super::{Fact, Fresh, FreshKeyed, WriteTx, plumbing};
@@ -13,7 +13,7 @@ use crate::encoding::{
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
 use crate::schema::{FieldId, KeyId, RelationId, StatementId, StatementView};
-use crate::storage::delta::GuardOverlay;
+use crate::storage::delta::DeterminantOverlay;
 use crate::storage::read;
 
 impl<S> WriteTx<'_, S> {
@@ -45,7 +45,7 @@ impl<S> WriteTx<'_, S> {
 
     /// Point lookup of the full fact through the relation's fresh key —
     /// reads observe the final-state view the judgment phase will judge
-    /// (`docs/architecture/70-api.md`): the delta's guard map first, the
+    /// (`docs/architecture/70-api.md`): the delta's determinant map first, the
     /// committed `U` → `F` path otherwise. Typed sugar for the dominant
     /// single-fresh-field case; every other key goes through
     /// [`WriteTx::get_dyn`].
@@ -95,18 +95,18 @@ impl<S> WriteTx<'_, S> {
     ///
     /// # Errors
     ///
-    /// `Lmdb` on the guard probe, `Corruption` on undecodable stored
+    /// `Lmdb` on the determinant probe, `Corruption` on undecodable stored
     /// bytes.
     pub fn get<'tx, F>(&'tx self, id: F::FreshKey) -> Result<Option<F>>
     where
         F: FreshKeyed<'tx, Schema = S>,
     {
-        // The fresh field's guard is its canonical u64 encoding — the
-        // one-field instance of the guard-byte format `get_dyn` spells
+        // The fresh field's determinant is its canonical u64 encoding — the
+        // one-field instance of the determinant-byte format `get_dyn` spells
         // out value by value.
-        let guard = encode_u64(id.fresh());
+        let determinant = encode_u64(id.fresh());
         let key = self.fresh_key(F::RELATION, <F::FreshKey as Fresh>::FIELD);
-        match self.fact_by_guard(F::RELATION, key, &guard)? {
+        match self.fact_by_determinant(F::RELATION, key, &determinant)? {
             Some(bytes) => F::decode_write(self, bytes).map(Some),
             None => Ok(None),
         }
@@ -114,7 +114,7 @@ impl<S> WriteTx<'_, S> {
 
     /// Point lookup of the full fact through any key statement of
     /// `relation` — reads observe the final-state view the judgment phase
-    /// will judge (`docs/architecture/70-api.md`): the delta's guard map
+    /// will judge (`docs/architecture/70-api.md`): the delta's determinant map
     /// first, the committed `U` → `F` path otherwise. `key_values` are the
     /// key statement's projected fields in statement projection order,
     /// type-checked against the projection; the dynamic sibling of
@@ -162,21 +162,21 @@ impl<S> WriteTx<'_, S> {
             }
             .into());
         }
-        self.with_scratch(|tx, guard| {
-            if !tx.encode_guard(relation, projection, key_values, guard)? {
+        self.with_scratch(|tx, determinant| {
+            if !tx.encode_determinant(relation, projection, key_values, determinant)? {
                 return Ok(None);
             }
-            tx.fact_by_guard(relation, key_id, guard)?
+            tx.fact_by_determinant(relation, key_id, determinant)?
                 .map(|bytes| tx.decode_values(relation, bytes))
                 .transpose()
         })
     }
 
-    /// Encodes `key_values` into guard bytes — the concatenated canonical
+    /// Encodes `key_values` into determinant bytes — the concatenated canonical
     /// field encodings in statement projection order, byte-identical to
-    /// what `keys::guard_bytes` slices out of a stored fact. `Ok(false)` =
+    /// what `keys::determinant_image` slices out of a stored fact. `Ok(false)` =
     /// a string or bytes value was never interned: no fact can carry it.
-    fn encode_guard(
+    fn encode_determinant(
         &self,
         relation: RelationId,
         projection: &[FieldId],
@@ -217,43 +217,44 @@ impl<S> WriteTx<'_, S> {
         Ok(true)
     }
 
-    /// The shared lookup leg: delta guard map first (`Present` → the
+    /// The shared lookup leg: delta determinant map first (`Present` → the
     /// pending fact's bytes, `Absent` → known deleted), then the committed
     /// view — `U` get → `F` fetch.
     ///
     /// A **closed** relation resolves against its sealed extension instead
-    /// — virtual storage, no `U` guards exist
+    /// — virtual storage, no `U` determinants exist
     /// (`docs/architecture/50-storage.md` § virtual relations): the key's
-    /// guard bytes are re-derived per row by the same slicing the commit
+    /// determinant bytes are re-derived per row by the same slicing the commit
     /// path uses, and the scan is ≤256 rows, L1-resident — O(rows) is
     /// honest and tiny. No delta arm: writes are refused at entry.
-    fn fact_by_guard(
+    fn fact_by_determinant(
         &self,
         relation: RelationId,
         key: KeyId,
-        guard: &[u8],
+        determinant: &[u8],
     ) -> Result<Option<&[u8]>> {
         let rel = self.schema.relation(relation);
         let statement = self.schema.key(key);
         if let Some(extension) = rel.extension() {
-            let mut derived = Vec::with_capacity(guard.len());
+            let mut derived =
+                crate::storage::keys::DeterminantImage::scratch_with_capacity(determinant.len());
             for row in extension {
-                crate::storage::keys::guard_bytes(
+                crate::storage::keys::determinant_image(
                     rel.layout(),
                     &statement.projection,
                     &row.fact,
                     &mut derived,
                 );
-                if derived == guard {
+                if derived.as_bytes() == determinant {
                     return Ok(Some(&row.fact));
                 }
             }
             return Ok(None);
         }
-        match self.delta.guard_overlay(key, guard) {
-            Some(GuardOverlay::Present(bytes)) => Ok(Some(bytes)),
-            Some(GuardOverlay::Absent) => Ok(None),
-            None => match read::guard_row(&self.view, relation, statement.id, guard)? {
+        match self.delta.determinant_overlay(key, determinant) {
+            Some(DeterminantOverlay::Present(bytes)) => Ok(Some(bytes)),
+            Some(DeterminantOverlay::Absent) => Ok(None),
+            None => match read::determinant_row(&self.view, relation, statement.id, determinant)? {
                 Some(row) => read::fetch(&self.view, self.schema, relation, row).map(Some),
                 None => Ok(None),
             },

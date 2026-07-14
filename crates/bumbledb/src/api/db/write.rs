@@ -78,7 +78,7 @@ impl<S> Db<S> {
     /// # Errors
     ///
     /// [`Error::ForeignSnapshot`] on a witness from another database
-    /// (the environment-identity guard prepared queries run);
+    /// (the environment-identity check prepared queries run);
     /// [`Error::GenerationMoved`] when a state-changing commit landed
     /// after the witness; otherwise as [`Db::write`].
     ///
@@ -118,7 +118,7 @@ impl<S> Db<S> {
         // A panicking closure poisons nothing real: the delta died in the
         // unwind and LMDB was never touched, so the flag is cleared rather
         // than propagated.
-        let _guard = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let _writer_lock = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         self.writer_thread.store(caller, Ordering::Release);
         let _owner = WriterThreadReset(&self.writer_thread);
         // Drop the parked reader before writing: a

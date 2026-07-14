@@ -71,7 +71,7 @@ pub mod names {
     pub const VALIDATE: &str = "validate";
     /// Normalization. (-, -)
     pub const NORMALIZE: &str = "normalize";
-    /// Guard-vs-join classification. (-, -)
+    /// Key-probe-vs-join classification. (-, -)
     pub const CLASSIFY: &str = "classify";
     /// Statistics reads. (occurrences measured concretely, -)
     pub const STATS: &str = "stats";
@@ -110,8 +110,8 @@ pub mod names {
     pub const JOIN: &str = "join";
     /// Sink finalization into the result buffer. (-, -)
     pub const FINALIZE: &str = "finalize";
-    /// The guard-probe access path. (1 hit / 0 miss, -)
-    pub const GUARD_PROBE: &str = "guard_probe";
+    /// The key-probe access path. (1 hit / 0 miss, -)
+    pub const KEY_PROBE: &str = "key_probe";
     /// One occurrence's selection-level probe (docs/architecture/40-execution.md).
     /// (occurrence index, 1 hit / 0 miss)
     pub const SELECT_PROBE: &str = "select_probe";
@@ -148,7 +148,7 @@ pub mod names {
     pub const APPLY_INSERTS: &str = "apply_inserts";
     /// Phase 3, containment source side. (satisfying source probes, -)
     pub const JUDGMENT_SOURCE: &str = "judgment_source";
-    /// Phase 3, containment target side. (disestablished guards scanned, -)
+    /// Phase 3, containment target side. (disestablished determinants scanned, -)
     pub const JUDGMENT_TARGET: &str = "judgment_target";
     /// Phase 4. (pending interns flushed, -)
     pub const COUNTERS_FLUSH: &str = "counters_flush";

@@ -4,12 +4,12 @@ use crate::ir::{AggOp, ParamId};
 use crate::schema::{IntervalElement, StatementDescriptor};
 use crate::storage::dict;
 
-/// The guard fast lane — hit, miss, and a
+/// The key-probe fast lane — hit, miss, and a
 /// param-type error, with an interned find exercising the resolving
 /// column beside the word blits.
 #[test]
-fn guard_fast_lane_hits_misses_and_type_errors() {
-    let dir = TempDir::new("prepared-guard-lane");
+fn key_probe_fast_lane_hits_misses_and_type_errors() {
+    let dir = TempDir::new("prepared-key_probe-lane");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "memo-a", 41), (2, 8, "memo-b", 42)]);
@@ -38,12 +38,12 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
     assert!(
         matches!(
             prepared.program.rules(),
-            [PreparedRule::Guard(GuardRule {
-                guard_finds: Some(_),
+            [PreparedRule::KeyProbe(KeyProbeRule {
+                key_probe_finds: Some(_),
                 ..
             })]
         ),
-        "plain-variable guard takes the fast lane"
+        "plain-variable key_probe takes the fast lane"
     );
     let mut out = ResultBuffer::new();
     // Hit: every cell decoded straight from the fact.
@@ -66,13 +66,13 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
     assert!(matches!(err, Error::ParamTypeMismatch { .. }), "{err:?}");
 }
 
-/// The guard lane is stats-free end to end: a
-/// guard prepare + execute builds NO image — and the lazy distinct
+/// The key-probe lane is stats-free end to end: a
+/// key-probe preparation + execute builds NO image — and the lazy distinct
 /// counts live on images, so no image means no stats walk, ever.
 /// This is the isolation gate in its strongest form.
 #[test]
-fn a_guard_prepare_and_execute_build_no_image() {
-    let dir = TempDir::new("prepared-guard-statsfree");
+fn a_key_probe_prepare_and_execute_build_no_image() {
+    let dir = TempDir::new("prepared-key_probe-statsfree");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "memo-a", 41)]);
@@ -100,8 +100,8 @@ fn a_guard_prepare_and_execute_build_no_image() {
     assert!(
         matches!(
             prepared.program.rules(),
-            [PreparedRule::Guard(GuardRule {
-                guard_finds: Some(_),
+            [PreparedRule::KeyProbe(KeyProbeRule {
+                key_probe_finds: Some(_),
                 ..
             })]
         ),
@@ -116,18 +116,18 @@ fn a_guard_prepare_and_execute_build_no_image() {
     assert_eq!(
         cache.resident(),
         (0, 0),
-        "a guard execute must not build images (and so never walks stats)"
+        "a key-probe execution must not build images (and so never walks stats)"
     );
 }
 
 #[test]
-fn guard_probe_queries_flow_through_the_same_surface() {
-    let dir = TempDir::new("prepared-guard");
+fn key_probe_queries_flow_through_the_same_surface() {
+    let dir = TempDir::new("prepared-key_probe");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(5, 7, "found", 42)]);
     let cache = ImageCache::new(&schema);
-    // Q(amount) :- Posting(id = 5, amount) — the fresh key: guard probe.
+    // Q(amount) :- Posting(id = 5, amount) — the fresh key: key probe.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -142,7 +142,10 @@ fn guard_probe_queries_flow_through_the_same_surface() {
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.program.rules(), [PreparedRule::Guard(_)]));
+    assert!(matches!(
+        prepared.program.rules(),
+        [PreparedRule::KeyProbe(_)]
+    ));
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
@@ -152,7 +155,7 @@ fn guard_probe_queries_flow_through_the_same_surface() {
     // EXPLAIN reports the classification alongside the rows.
     let (rows, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
     assert_eq!(rows.len(), 1);
-    assert!(report.contains("guard probe"));
+    assert!(report.contains("key probe"));
 }
 
 // ---------- PRD 19 criteria: statement-derived point lookups ----------
@@ -236,11 +239,11 @@ fn booking_query(span_term: Term) -> Query {
 }
 
 /// A point lookup through the pointwise key with the interval bound **by
-/// value**: one `U` get on the exact `scalar ‖ 16-byte interval` guard,
+/// value**: one `U` get on the exact `scalar ‖ 16-byte interval` determinant,
 /// answered post-commit cold — no image build (cache-state inspection).
 #[test]
-fn pointwise_key_point_lookup_is_guarded_and_image_free() {
-    let dir = TempDir::new("prepared-guard-pointwise");
+fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
+    let dir = TempDir::new("prepared-key_probe-pointwise");
     let schema = booking_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_bookings(
@@ -254,7 +257,10 @@ fn pointwise_key_point_lookup_is_guarded_and_image_free() {
         crate::Interval::<u64>::new(5, 10).expect("nonempty interval"),
     )));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.program.rules(), [PreparedRule::Guard(_)]));
+    assert!(matches!(
+        prepared.program.rules(),
+        [PreparedRule::KeyProbe(_)]
+    ));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -265,16 +271,16 @@ fn pointwise_key_point_lookup_is_guarded_and_image_free() {
     assert_eq!(
         cache.resident(),
         (0, 0),
-        "post-commit cold: the guard path builds no image"
+        "post-commit cold: the key-probe path builds no image"
     );
 
     // The classification is observable through profile stats, and the
-    // 16-byte guard is exact: a one-off interval misses.
+    // 16-byte determinant is exact: a one-off interval misses.
     let (rows, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(rows.len(), 1);
     assert_eq!(
-        stats.rules[0].guard,
-        Some(crate::api::stats::GuardStats { hit: true })
+        stats.rules[0].key_probe,
+        Some(crate::api::stats::KeyProbeStats { hit: true })
     );
     let near = booking_query(Term::Literal(Value::IntervalU64(
         crate::Interval::<u64>::new(5, 11).expect("nonempty interval"),
@@ -283,8 +289,8 @@ fn pointwise_key_point_lookup_is_guarded_and_image_free() {
     let (rows, stats) = near.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(rows.len(), 0);
     assert_eq!(
-        stats.rules[0].guard,
-        Some(crate::api::stats::GuardStats { hit: false })
+        stats.rules[0].key_probe,
+        Some(crate::api::stats::KeyProbeStats { hit: false })
     );
     #[cfg(feature = "trace")]
     assert_eq!(cache.resident(), (0, 0));
@@ -296,7 +302,7 @@ fn pointwise_key_point_lookup_is_guarded_and_image_free() {
 /// correctly via scan+filter; the path is asserted via profile stats.
 #[test]
 fn a_membership_bound_single_atom_query_stays_free_join() {
-    let dir = TempDir::new("prepared-guard-membership");
+    let dir = TempDir::new("prepared-key_probe-membership");
     let schema = booking_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_bookings(
@@ -318,8 +324,8 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
 
     let (rows, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert!(
-        stats.rules[0].guard.is_none(),
-        "the scan+filter path, not the guard"
+        stats.rules[0].key_probe.is_none(),
+        "the scan+filter path, not the key_probe"
     );
     assert!(!stats.rules[0].nodes.is_empty());
     assert_eq!(rows.len(), 1);
@@ -346,7 +352,7 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
 /// one membership get — post-commit cold, no image build.
 #[test]
 fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
-    let dir = TempDir::new("prepared-guard-m-interval");
+    let dir = TempDir::new("prepared-key_probe-m-interval");
     // Stay(owner u64, span interval<u64>), no statements — no keys.
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -413,7 +419,10 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
         })
     };
     let mut prepared = prepare(&txn, &cache, &schema, &count_stay((5, 10))).expect("prepare");
-    assert!(matches!(prepared.program.rules(), [PreparedRule::Guard(_)]));
+    assert!(matches!(
+        prepared.program.rules(),
+        [PreparedRule::KeyProbe(_)]
+    ));
     let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
     assert!(report.contains("full-fact membership probe"), "{report}");
 
@@ -441,7 +450,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
 /// no error, and nothing is interned by the read path.
 #[test]
 fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
-    let dir = TempDir::new("prepared-guard-intern-miss");
+    let dir = TempDir::new("prepared-key_probe-intern-miss");
     // Doc(name str, val u64) with the declared key `Doc(name) -> Doc`.
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -497,7 +506,10 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
         conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.program.rules(), [PreparedRule::Guard(_)]));
+    assert!(matches!(
+        prepared.program.rules(),
+        [PreparedRule::KeyProbe(_)]
+    ));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::Str("ghost")])

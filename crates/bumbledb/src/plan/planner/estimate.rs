@@ -12,7 +12,7 @@ use super::OccInfo;
 /// per-var distincts cannot see those). Coverage means the FULL
 /// projection: for a pointwise key the interval field must be a join
 /// variable bound by value — a scalar-prefix-only join takes the
-/// general fanout below (the guard is `densify`'s translation).
+/// general fanout below (the determinant is `densify`'s translation).
 pub(super) fn estimate(prefix_est: u64, prefix_vars: u128, occs: &[OccInfo], last: usize) -> u64 {
     let r = &occs[last];
     let join_vars = r.vars & prefix_vars;

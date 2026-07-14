@@ -55,7 +55,7 @@ mod write;
 /// overhead without building one unbounded delta.
 const BULK_CHUNK: usize = 4096;
 
-/// The process-local commit sequence guarding parked-reader reuse. It
+/// The process-local commit sequence protecting parked-reader reuse. It
 /// resets when the database is opened and is deliberately not comparable
 /// with the persisted [`crate::GenerationId`] clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

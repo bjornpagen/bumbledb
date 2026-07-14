@@ -441,7 +441,7 @@ bumbledb::schema! {
     // THAT IS Shipped (validity), and every Shipped order has its Shipment
     // (totality) — the transition and its evidence commit together.
     Shipment(order) == Order(id | state == Shipped);
-    // Transition guards ("only Placed may ship") are host code under the
+    // Transition predicates ("only Placed may ship") are host code under the
     // generation witness — recipe 20; the schema pins the states, not the paths.
 
     //   (id, carrier) | Order(id, state == Shipped), Shipment(order: id, carrier);

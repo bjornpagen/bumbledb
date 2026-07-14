@@ -63,7 +63,7 @@ pub struct OccId(pub u16);
 ///   prepare** (`plan/ground/evaluate.rs`): its filters ran against the
 ///   sealed extension and the atom's whole contribution became a
 ///   plan-constant membership set on its siblings (or nothing at all,
-///   for a satisfied guard). Unlike `Eliminated`, a folded occurrence
+///   for a satisfied check). Unlike `Eliminated`, a folded occurrence
 ///   may have been negated — the mark records the polarity because the
 ///   occurrence's own role no longer does. The filters stay on the
 ///   occurrence (EXPLAIN renders them); nothing downstream resolves,

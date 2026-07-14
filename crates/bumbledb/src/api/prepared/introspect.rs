@@ -1,6 +1,6 @@
 use super::{BindValue, PreparedQuery, PreparedRule, Program, ResultBuffer};
 
-use crate::api::stats::{ExecutionStats, GuardStats, RuleStats};
+use crate::api::stats::{ExecutionStats, KeyProbeStats, RuleStats};
 use crate::error::Result;
 use crate::exec::explain::{CountingCounters, Report, RulePlan};
 use crate::exec::run::Counters;
@@ -35,7 +35,7 @@ impl<S> PreparedQuery<'_, S> {
                 Program::Rules(rules) => rules
                     .iter()
                     .map(|rule| match rule {
-                        PreparedRule::Guard(rule) => RulePlan::GuardProbe(&rule.plan),
+                        PreparedRule::KeyProbe(rule) => RulePlan::KeyProbe(&rule.plan),
                         PreparedRule::FreeJoin(rule) => RulePlan::FreeJoin(&rule.plan),
                     })
                     .collect(),
@@ -92,25 +92,25 @@ impl<S> PreparedQuery<'_, S> {
             self.bind_params(txn, params)?;
             return Ok((out, self.empty_stats()));
         }
-        // The single-rule guard program keeps its fast lane: `execute`
+        // The single-rule key-probe program keeps its fast lane: `execute`
         // dispatches it whole, and the stats are the probe's outcome.
-        if matches!(self.program.rules(), [PreparedRule::Guard(_)]) {
+        if matches!(self.program.rules(), [PreparedRule::KeyProbe(_)]) {
             self.execute(txn, cache, params, &mut out)?;
             let emitted = out.len() as u64;
             let stats = ExecutionStats {
                 rules: vec![RuleStats {
                     nodes: Vec::new(),
-                    // A guard probe is a single-atom query: the grounding has
+                    // A key probe is a single-atom query: the grounding has
                     // nothing to pair and nothing to fold, so no marks
                     // can exist.
                     eliminated: Vec::new(),
                     folded: Vec::new(),
-                    // Classification precedes statistics: a guard probe
+                    // Classification precedes statistics: a key probe
                     // reads none, so nothing is pinned.
                     pinned: Vec::new(),
                     emitted,
                     absorbed: 0,
-                    guard: Some(GuardStats {
+                    key_probe: Some(KeyProbeStats {
                         hit: !out.is_empty(),
                     }),
                 }],
@@ -118,7 +118,7 @@ impl<S> PreparedQuery<'_, S> {
                 // A single-rule program has no pair to prove.
                 disjoint_rules: None,
                 // ... but may still be a deletion pass's residue: a
-                // program deleted down to one guard rule keeps both
+                // program deleted down to one key-probe rule keeps both
                 // records.
                 subsumed: self.subsumed.clone(),
                 dead: self.dead.clone(),
@@ -139,7 +139,7 @@ impl<S> PreparedQuery<'_, S> {
             let seen_before = self.sink.distinct_seen().unwrap_or(0);
             let mut counters = match &self.program.rules()[rule_idx] {
                 PreparedRule::FreeJoin(rule) => CountingCounters::new(&rule.plan),
-                PreparedRule::Guard(_) => CountingCounters::for_guard(),
+                PreparedRule::KeyProbe(_) => CountingCounters::for_key_probe(),
             };
             ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
             // The union accounting (docs/architecture/40-execution.md
@@ -158,14 +158,14 @@ impl<S> PreparedQuery<'_, S> {
                     self.rule_pinned_rows(rule_idx),
                     absorbed,
                 ),
-                PreparedRule::Guard(_) => RuleStats {
+                PreparedRule::KeyProbe(_) => RuleStats {
                     nodes: Vec::new(),
                     eliminated: Vec::new(),
                     folded: Vec::new(),
                     pinned: Vec::new(),
                     emitted,
                     absorbed,
-                    guard: Some(GuardStats { hit: emitted > 0 }),
+                    key_probe: Some(KeyProbeStats { hit: emitted > 0 }),
                 },
             });
         }
@@ -205,7 +205,7 @@ impl<S> PreparedQuery<'_, S> {
                 pinned: Vec::new(),
                 emitted: 0,
                 absorbed: 0,
-                guard: None,
+                key_probe: None,
             }],
             emits: 0,
             // An empty program has no pair to prove.

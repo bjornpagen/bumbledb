@@ -4,8 +4,8 @@ use crate::corpus_gen::Rng;
 use crate::querygen::target::ids;
 use crate::querygen::{Builder, REPEAT_VAR_PCT};
 
-/// Guardable relations: (relation, fresh-id field, projectable fields).
-const GUARDABLE: &[(RelationId, FieldId, &[FieldId])] = &[
+/// Key-probe-capable relations: (relation, fresh-id field, projectable fields).
+const KEY_PROBE_RELATIONS: &[(RelationId, FieldId, &[FieldId])] = &[
     (ids::HOLDER, ids::holder::ID, &[ids::holder::NAME]),
     (
         ids::ACCOUNT,
@@ -60,9 +60,9 @@ const SATELLITES: &[(FieldId, RelationId, FieldId)] = &[
 /// One atom, fresh id bound to a param — or, a fifth of the time, a
 /// param **set** (the point-lookup-over-a-set family) — with 1–2 vars
 /// projected.
-pub(super) fn guard(b: &mut Builder, rng: &mut Rng) {
-    let idx = usize::try_from(rng.range(GUARDABLE.len() as u64)).expect("small");
-    let (relation, id, fields) = GUARDABLE[idx];
+pub(super) fn key_probe(b: &mut Builder, rng: &mut Rng) {
+    let idx = usize::try_from(rng.range(KEY_PROBE_RELATIONS.len() as u64)).expect("small");
+    let (relation, id, fields) = KEY_PROBE_RELATIONS[idx];
     let atom = b.add_atom(relation);
     let param = b.fresh_param();
     let term = if rng.chance(1, 5) {

@@ -93,7 +93,7 @@ fn aggregate_query() -> Query {
     })
 }
 
-/// Q(balance) :- Account(id = ?0, balance) — the point-lookup (guard) shape.
+/// Q(balance) :- Account(id = ?0, balance) — the point-lookup (key probe) shape.
 fn point_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -163,7 +163,7 @@ fn usage_shapes_end_to_end() {
         })
         .expect("write");
 
-    // Read: point lookup (guard probe), join, aggregate.
+    // Read: point lookup (key probe), join, aggregate.
     let mut point = db.prepare(&point_query()).expect("prepare point");
     let mut join = db.prepare(&join_query()).expect("prepare join");
     let mut aggregate = db.prepare(&aggregate_query()).expect("prepare agg");
@@ -947,7 +947,7 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
         );
-        // The staleness signal guards its entry identically: pinned
+        // The staleness signal checks its entry identically: pinned
         // statistics belong to the preparing environment.
         let err = prepared.staleness(snap).unwrap_err();
         assert!(
@@ -1035,7 +1035,7 @@ fn create_refuses_a_foreign_lmdb_environment() {
 
 /// `Db::write` is non-reentrant — a nested call on the same
 /// thread panics with the named message instead of deadlocking forever,
-/// and the guard clears for the next (sequential) write.
+/// and the write lock clears for the next (sequential) write.
 #[test]
 fn nested_write_panics_instead_of_deadlocking() {
     let dir = common::TempDir::new("api-nested-write");
@@ -1051,7 +1051,7 @@ fn nested_write_panics_instead_of_deadlocking() {
         .expect("string panic payload");
     assert!(message.contains("nested Db::write"), "{message}");
 
-    // Sequential writes on the same thread still work: the guard cleared.
+    // Sequential writes on the same thread still work: the write lock cleared.
     db.write(|tx| {
         let id: HolderId = tx.alloc()?;
         tx.insert(&Holder {

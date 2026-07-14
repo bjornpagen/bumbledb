@@ -17,7 +17,7 @@
 //! - **The measure's rays**: `Duration` over the ray-bearing mandate
 //!   corpus — `MeasureOfRay` on both sides (typed identity through the
 //!   differential runner's `Rows` verdict), and the `Allen(DISJOINT)`
-//!   ray guard keeping the same query answering rows.
+//!   ray filter keeping the same query answering rows.
 //! - **Error parity** ([`error_parity`]): cap-exceeding DNF, the
 //!   vanished program (every disjunct empty), and the vacuous masks
 //!   (EMPTY and FULL) — the engine's typed validation verdict compared
@@ -292,10 +292,10 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
     let mut ops: Vec<Op> = pack_queries.into_iter().map(query).collect();
 
     // The measure over the ray-bearing corpus (even accounts carry a
-    // `[s, ∞)` segment by construction): unguarded, both sides raise
+    // `[s, ∞)` segment by construction): unfiltered, both sides raise
     // `MeasureOfRay` — the typed verdict compared whole by the
-    // differential runner; guarded by the ray probe, both answer rows.
-    let ray_guard = leaf(
+    // differential runner; filtered by the ray probe, both answer rows.
+    let ray_filter = leaf(
         CmpOp::Allen {
             mask: MaskTerm::Literal(AllenMask::DISJOINT),
         },
@@ -318,7 +318,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
     ));
     ops.push(measure(
         vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
-        vec![ray_guard.clone()],
+        vec![ray_filter.clone()],
     ));
     ops.push(measure(
         vec![FindTerm::AggregateDuration {
@@ -332,7 +332,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
             op: AggOp::Sum,
             over: VarId(1),
         }],
-        vec![ray_guard],
+        vec![ray_filter],
     ));
     (ops, naive_only)
 }

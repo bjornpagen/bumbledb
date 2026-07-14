@@ -31,7 +31,7 @@ pub enum CorruptionError {
     DanglingInternId(u64),
     /// A row id obtained from `M`/`U` has no `F` entry in the same snapshot.
     MissingFact { relation: RelationId, row_id: u64 },
-    /// A live `M` entry's `F` row or `U` guard was absent at delete time —
+    /// A live `M` entry's `F` row or `U` determinant was absent at delete time —
     /// the write-side M/F disagreement (the read side raises
     /// [`CorruptionError::MissingFact`]).
     MembershipDesync { relation: RelationId, row_id: u64 },
@@ -210,7 +210,7 @@ pub enum SchemaError {
         field: FieldId,
     },
     /// Roster ">1 interval position": two interval fields in one FD
-    /// projection would be 2-D exclusion, which the ordered guard cannot
+    /// projection would be 2-D exclusion, which the ordered determinant cannot
     /// answer. Carries the second interval field.
     FunctionalityMultipleIntervals {
         statement: StatementId,
@@ -226,16 +226,16 @@ pub enum SchemaError {
     },
     /// Roster "duplicate statements", the Functionality-specific form: two
     /// FDs over one field set on one relation assert one judgment — the
-    /// second guard is pure write amplification, and rejecting it makes
+    /// second determinant is pure write amplification, and rejecting it makes
     /// containment target-key resolution unambiguous.
     DuplicateFunctionality {
         statement: StatementId,
         earlier: StatementId,
     },
-    /// Roster "guard width overflow": Σ projected field widths exceeds
-    /// [`crate::storage::keys::MAX_GUARD_WIDTH`] — rejected at declaration,
+    /// Roster "determinant width overflow": Σ projected field widths exceeds
+    /// [`crate::storage::keys::MAX_DETERMINANT_WIDTH`] — rejected at declaration,
     /// never discovered at write time.
-    GuardKeyTooWide {
+    DeterminantKeyTooWide {
         statement: StatementId,
         width: usize,
     },
@@ -386,7 +386,7 @@ pub enum ValidationError {
     },
     /// DNF distribution of the rules' condition trees would produce more
     /// rules than the cap ([`crate::ir::MAX_RULES`]) — the exponential
-    /// case is rejected at declaration, exactly like guard-width
+    /// case is rejected at declaration, exactly like determinant-width
     /// overflow. `produced` names the blowup: the structural term count
     /// across all rules, judged before a single disjunct is materialized
     /// (so before duplicate collapse).
@@ -395,7 +395,7 @@ pub enum ValidationError {
         cap: usize,
     },
     /// A rule's condition trees nest deeper than
-    /// [`crate::ir::MAX_CONDITION_DEPTH`] — the boundary guard for every
+    /// [`crate::ir::MAX_CONDITION_DEPTH`] — the boundary check for every
     /// recursive tree walk (the trust-boundary law: hostile nesting must
     /// be a typed rejection, never a stack exhaustion). Judged
     /// iteratively, before any recursion sees the tree.
@@ -676,7 +676,7 @@ pub enum ValidationError {
 /// directions, source before target ([`Violations`]' sort key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Direction {
-    /// An inserted source fact inside σ has no target: the guard probe
+    /// An inserted source fact inside σ has no target: the key probe
     /// missed, or the coverage walk found a gap.
     SourceUnsatisfied,
     /// A deleted target key tuple is still required by a surviving
@@ -690,7 +690,7 @@ pub enum Direction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Violation {
     /// A `Functionality` statement violated by the final state: two live
-    /// facts claim one key — the same guard bytes (scalar put-conflict),
+    /// facts claim one key — the same determinant bytes (scalar put-conflict),
     /// or overlapping intervals within one scalar-prefix group (the
     /// pointwise neighbor probe).
     Functionality {
@@ -699,7 +699,7 @@ pub enum Violation {
         fact: Box<[u8]>,
         /// The already-standing fact, for the pointwise arm — the probe
         /// names both parties. `None` for a scalar put-conflict, where
-        /// the guard bytes inside `fact` already identify the collision.
+        /// the determinant bytes inside `fact` already identify the collision.
         incumbent: Option<Box<[u8]>>,
     },
     /// A `Containment` statement violated by the final state
@@ -952,7 +952,7 @@ pub enum Error {
     ForeignPreparedQuery,
     /// A witness snapshot of a different database than the one being
     /// written ([`crate::Db::write_from`]) — the same environment-identity
-    /// guard prepared queries run at every execution entry, on the write
+    /// key-probe prepared queries run at every execution entry, on the write
     /// side: another database's generation clock proves nothing about
     /// this one.
     ForeignSnapshot,
@@ -1021,7 +1021,7 @@ pub enum Error {
     /// the offending fact's two encoded interval words (order-preserving
     /// column form — I64 endpoints are the sign-flipped biased words).
     /// The alternative — silently yielding `MAX` — would fabricate
-    /// arithmetic. Hosts exclude rays first: an `Allen` guard
+    /// arithmetic. Hosts exclude rays first: an `Allen` predicate
     /// (`DISJOINT` from the ray-detecting probe `[MAX−1, MAX)`) or a
     /// bounded-end filter on the measured atom runs before the measure
     /// by the filter-order law (`docs/architecture/20-query-ir.md`,

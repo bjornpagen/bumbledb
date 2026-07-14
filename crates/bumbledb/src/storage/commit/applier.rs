@@ -23,7 +23,7 @@ impl Applier<'_> {
         let row_id = decode_row_id(row_id_bytes)?;
         self.data.delete(self.txn.raw_mut(), &self.key[..m_len])?;
         let f_len = keys::fact_key(&mut self.key, rel, row_id);
-        // A live M entry MUST have its F row (and every U guard below):
+        // A live M entry MUST have its F row (and every U determinant below):
         // a miss is the M/F-disagreement corruption class, a hard error —
         // never silently scrubbed (docs/architecture/50-storage.md).
         if !self.data.delete(self.txn.raw_mut(), &self.key[..f_len])? {
@@ -32,8 +32,13 @@ impl Applier<'_> {
                 row_id,
             }));
         }
-        for guard in &op.guards {
-            let u_len = keys::guard_key(&mut self.key, rel, guard.statement, &guard.guard);
+        for determinant in &op.determinants {
+            let u_len = keys::determinant_key(
+                &mut self.key,
+                rel,
+                determinant.statement,
+                determinant.determinant.as_bytes(),
+            );
             if !self.data.delete(self.txn.raw_mut(), &self.key[..u_len])? {
                 return Err(Error::Corruption(CorruptionError::MembershipDesync {
                     relation: rel,
@@ -59,7 +64,7 @@ impl Applier<'_> {
     /// Phase-2 step: lands one fact's F/M/U/R entries, enforcing every key
     /// statement — scalar by put-conflict, pointwise by the
     /// ordered-neighbor probe the plan marked. A conflict RECORDS into the
-    /// collector and the step continues (scan-complete: every guard of
+    /// collector and the step continues (scan-complete: every determinant of
     /// every fact is judged, so the rejection carries the complete set of
     /// violated key statements; the transaction aborts after phase 2
     /// either way, so the skipped put persists nothing). The fact is
@@ -88,26 +93,31 @@ impl Applier<'_> {
             .put(self.txn.raw_mut(), &self.key[..f_len], op.fact)?;
         crashpoint!("mid-write-f");
 
-        for guard in &op.guards {
-            let u_len = keys::guard_key(&mut self.key, rel, guard.statement, &guard.guard);
+        for determinant in &op.determinants {
+            let u_len = keys::determinant_key(
+                &mut self.key,
+                rel,
+                determinant.statement,
+                determinant.determinant.as_bytes(),
+            );
             // Every delete already landed and the insert set is
-            // deduplicated, so an occupied guard here is a genuine
+            // deduplicated, so an occupied determinant here is a genuine
             // violation of the final-state judgment. On a pointwise key
             // this exact-bytes conflict is the exact-duplicate-interval
             // case; the incumbent is named via its row_id (cold aborting
             // path — one extra get, docs/architecture/50-storage.md).
-            // Recorded, put skipped (the incumbent keeps the guard —
+            // Recorded, put skipped (the incumbent keeps the determinant —
             // later conflicts against these exact bytes convict the same
-            // statement), next guard.
+            // statement), next determinant.
             if let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? {
-                let incumbent = if guard.pointwise {
+                let incumbent = if determinant.pointwise {
                     let incumbent_row = decode_row_id(value)?;
                     Some(fact_by_row(self.data, self.txn.raw(), rel, incumbent_row)?.into())
                 } else {
                     None
                 };
                 self.violations.push(Violation::Functionality {
-                    statement: guard.statement,
+                    statement: determinant.statement,
                     fact: op.fact.into(),
                     incumbent,
                 });
@@ -119,11 +129,11 @@ impl Applier<'_> {
                 row_id.to_le_bytes().as_slice(),
             )?;
             crashpoint!("mid-write-u");
-            if guard.pointwise {
+            if determinant.pointwise {
                 // The exact put cannot detect overlap — only equality —
                 // so a pointwise key additionally probes its ordered
                 // neighbors within the scalar-prefix group.
-                self.probe_neighbors(rel, guard.statement, u_len, op.fact)?;
+                self.probe_neighbors(rel, determinant.statement, u_len, op.fact)?;
             }
         }
         for edge in &op.edges {
@@ -136,7 +146,7 @@ impl Applier<'_> {
     }
 
     /// The ordered-neighbor probe for a pointwise key: after the exact `U`
-    /// put at `self.key[..u_len]`, checks the two adjacent guard entries of
+    /// put at `self.key[..u_len]`, checks the two adjacent determinant entries of
     /// the same scalar-prefix group for interval overlap. Two probes,
     /// O(log n), same write transaction — LMDB write txns read their own
     /// writes, so intra-delta overlaps are caught identically. An overlap
@@ -146,7 +156,7 @@ impl Applier<'_> {
     /// statement).
     ///
     /// Comparison directions, derived once from half-open semantics: a
-    /// guard is `prefix ‖ start ‖ end` with order-preserving 8-byte halves,
+    /// determinant is `prefix ‖ start ‖ end` with order-preserving 8-byte halves,
     /// so byte order within the group is `(start, end)` order, and byte
     /// comparison of halves is numeric comparison. Two half-open intervals
     /// `[s, e)` and `[x, y)` share a point iff `x < e && s < y`. The
@@ -171,11 +181,11 @@ impl Applier<'_> {
         if let Some((pk, pv)) = self.data.get_lower_than(self.txn.raw(), inserted)?
             && pk.starts_with(prefix)
         {
-            // Same statement, same guard width: a prefix-sharing key
+            // Same statement, same determinant width: a prefix-sharing key
             // of any other length is corrupt data, a hard error.
             if pk.len() != u_len {
                 return Err(Error::Corruption(CorruptionError::MalformedValue(
-                    "U guard key length",
+                    "U determinant key length",
                 )));
             }
             // Predecessor `[ps, pe)`: violation iff `pe > s`.
@@ -189,7 +199,7 @@ impl Applier<'_> {
         {
             if nk.len() != u_len {
                 return Err(Error::Corruption(CorruptionError::MalformedValue(
-                    "U guard key length",
+                    "U determinant key length",
                 )));
             }
             // Successor `[ns, ne)`: violation iff `ns < e`.

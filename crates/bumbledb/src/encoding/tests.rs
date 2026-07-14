@@ -277,7 +277,7 @@ fn fixed_bytes_round_trip_at_pad_boundaries() {
 
 #[test]
 fn fixed_bytes_padded_order_is_byte_order() {
-    // The guard B-tree's need: memcmp order over the padded encodings of
+    // The determinant B-tree's need: memcmp order over the padded encodings of
     // equal-width values equals byte order over the values (sortedness
     // is the index's need — order *operations* stay refused).
     let mut rng = Lcg(0x0303);

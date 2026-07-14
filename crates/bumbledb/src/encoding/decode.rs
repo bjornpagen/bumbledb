@@ -109,10 +109,10 @@ pub fn field_bytes<'a>(fact_bytes: &'a [u8], layout: &FactLayout, field_idx: usi
 }
 
 /// [`field_bytes`] with the width in the type: one word-width field's
-/// canonical 8 bytes. The one surviving fixed-width guard for word
+/// canonical 8 bytes. The one surviving fixed-width determinant for word
 /// fields — a field's width is a runtime layout fact the slice type
 /// cannot carry, so every word-field consumer funnels through this
-/// single check instead of guarding locally.
+/// single check instead of checking locally.
 ///
 /// # Panics
 ///
@@ -152,7 +152,7 @@ pub fn decode_field(
         TypeDesc::FixedBytes { len } => decode_fixed_bytes(bytes, len).map(ValueRef::FixedBytes),
         TypeDesc::Interval { element } => {
             // The 16-byte width is layout-derived — the same
-            // single-guard ruling as [`field_word_bytes`], inline for
+            // single-determinant ruling as [`field_word_bytes`], inline for
             // the one wide shape.
             let bytes: [u8; 16] = bytes
                 .try_into()

@@ -107,7 +107,7 @@ impl BenchRun<'_> {
     }
 
     /// The shared measurement core: warm both engines under the exact
-    /// protocol, quantum-guarded, traced and profiled where the modes
+    /// protocol, frequency-checked, traced and profiled where the modes
     /// ask.
     #[expect(
         clippy::too_many_lines,
@@ -153,10 +153,10 @@ impl BenchRun<'_> {
             }
             self.first_family_warmed = true;
         }
-        let (ours, ghz_ours) = clockproxy::guarded(|| {
+        let (ours, ghz_ours) = clockproxy::frequency_checked(|| {
             harness::measure_batched(proto, modes, 1, || run_ours(&mut prepared))
         })?;
-        // The quantum guard: a gated p50 below 12 timer ticks would be
+        // The quantum check: a gated p50 below 12 timer ticks would be
         // quantization, not measurement — batch executes and divide.
         let batch = if ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
             16
@@ -169,7 +169,7 @@ impl BenchRun<'_> {
                 spec.name,
                 harness::QUANTUM_FLOOR_NS
             );
-            clockproxy::guarded(|| {
+            clockproxy::frequency_checked(|| {
                 harness::measure_batched(proto, modes, batch, || run_ours(&mut prepared))
             })?
         } else {
@@ -223,7 +223,7 @@ impl BenchRun<'_> {
             )?);
         }
         let mut cursor = 0usize;
-        let (theirs, ghz_theirs) = clockproxy::guarded(|| {
+        let (theirs, ghz_theirs) = clockproxy::frequency_checked(|| {
             harness::measure_batched(proto, Modes::default(), batch, || {
                 let index = cursor;
                 cursor = (cursor + 1) % sets.len();

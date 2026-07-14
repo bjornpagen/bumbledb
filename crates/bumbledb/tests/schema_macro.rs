@@ -573,7 +573,7 @@ mod fixed_bytes_host_type {
         // by identity.
         let copied: ContentHash = original.hash;
         assert_eq!(copied, ContentHash(digest));
-        // The bytes<32> key guards writes: a second object under the
+        // The bytes<32> key determinants writes: a second object under the
         // same hash is a functionality violation.
         let err = db
             .write(|tx| {

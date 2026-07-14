@@ -55,7 +55,7 @@ fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
 /// zero-padded to the word boundary (`⌈N/8⌉ × 8` bytes) — the pad is
 /// encoding, not data. Injective for a fixed N, and memcmp order over the
 /// padded bytes equals byte order over the values (uniform width, zero
-/// tail), which is all the guard B-tree needs — order *operations* stay
+/// tail), which is all the determinant B-tree needs — order *operations* stay
 /// refused at the query surface.
 pub fn encode_fixed_bytes(raw: &[u8], out: &mut Vec<u8>) {
     let width = fixed_bytes_words(u16::try_from(raw.len()).expect("validated: N <= 64")) * 8;

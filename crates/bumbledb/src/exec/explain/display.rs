@@ -1,5 +1,5 @@
 use super::{Report, RulePlan};
-use crate::exec::dispatch::GuardPlan;
+use crate::exec::dispatch::KeyProbePlan;
 use crate::plan::fj::ValidatedPlan;
 use std::fmt;
 
@@ -12,7 +12,7 @@ impl fmt::Display for Report<'_> {
                 writeln!(f, "rule {rule_idx}:")?;
             }
             match rule {
-                RulePlan::GuardProbe(plan) => fmt_guard_probe(f, plan)?,
+                RulePlan::KeyProbe(plan) => fmt_key_probe(f, plan)?,
                 RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, stats)?,
                 // The reasons — one per dead rule — print below with
                 // the death record (`stats.dead`).
@@ -69,8 +69,8 @@ impl fmt::Display for Report<'_> {
     }
 }
 
-fn fmt_guard_probe(f: &mut fmt::Formatter<'_>, plan: &GuardPlan) -> fmt::Result {
-    writeln!(f, "access path: guard probe")?;
+fn fmt_key_probe(f: &mut fmt::Formatter<'_>, plan: &KeyProbePlan) -> fmt::Result {
+    writeln!(f, "access path: key probe")?;
     writeln!(f, "  relation: {}", plan.relation.0)?;
     match plan.statement {
         Some(s) => writeln!(f, "  key statement: {}", s.0)?,

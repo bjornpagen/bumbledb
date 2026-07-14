@@ -3,7 +3,7 @@
 //! variable, cross-atom variable), over both element types and the
 //! boundary intervals `[x, x+1)` / `[MIN, MAX−1)`; the ray raising the
 //! typed `MeasureOfRay` on every evaluation path while the same query
-//! guarded by `Allen(DISJOINT` from the ray probe`)` or a bounded-end
+//! filtered by `Allen(DISJOINT` from the ray probe`)` or a bounded-end
 //! filter succeeds; and `Sum(Duration)` overflow at the wide-accumulator
 //! → u64 boundary as the existing typed overflow error.
 
@@ -393,7 +393,7 @@ fn duration_comparisons_filter_and_join() {
 
 /// The ray probe `[MAX−1, MAX)`: an interval intersects it iff it covers
 /// the point `MAX−1`, i.e. iff `end == MAX` — exactly the rays.
-fn ray_guard() -> ConditionTree {
+fn ray_filter() -> ConditionTree {
     ConditionTree::Leaf(Comparison {
         op: CmpOp::Allen {
             mask: MaskTerm::Literal(AllenMask::DISJOINT),
@@ -408,15 +408,15 @@ fn ray_guard() -> ConditionTree {
 /// A ray reaching `Duration` raises the typed `MeasureOfRay` — the
 /// engine's one runtime type error — on every evaluation path: the find,
 /// the fold, the filter, and the cross-atom residual. The same queries
-/// guarded by `Allen(DISJOINT` from the ray probe`)` succeed, and so
+/// filtered by `Allen(DISJOINT` from the ray probe`)` succeed, and so
 /// does the bounded-end (`COVERED_BY` a bounded window) form: the
-/// filter-order law runs the guard before the subtraction.
+/// filter-order law runs the filter before the subtraction.
 #[test]
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // one fixture, every evaluation path in order
-fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
+fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
     let dir = TempDir::new("measure-ray");
     let schema = measure_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -447,13 +447,13 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
             other => panic!("expected MeasureOfRay, got {other:?}"),
         }
     };
-    let run_guarded = |mut rule: Rule| -> Vec<Vec<u64>> {
-        rule.conditions.push(ray_guard());
+    let run_filtered = |mut rule: Rule| -> Vec<Vec<u64>> {
+        rule.conditions.push(ray_filter());
         let query = Query::single(rule);
         let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         let out = prepared
             .execute_collect(&txn, &cache, &[])
-            .expect("guarded execute");
+            .expect("filtered execute");
         u64_rows(&out, out.arity())
     };
 
@@ -465,7 +465,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
         conditions: vec![],
     };
     assert_ray(&Query::single(find_rule.clone()));
-    assert_eq!(run_guarded(find_rule.clone()), vec![vec![10, 4]]);
+    assert_eq!(run_filtered(find_rule.clone()), vec![vec![10, 4]]);
 
     // The fold position.
     let fold_rule = Rule {
@@ -481,7 +481,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
         conditions: vec![],
     };
     assert_ray(&Query::single(fold_rule.clone()));
-    assert_eq!(run_guarded(fold_rule), vec![vec![10, 4]]);
+    assert_eq!(run_filtered(fold_rule), vec![vec![10, 4]]);
 
     // The filter position (measure vs literal).
     let filter_rule = Rule {
@@ -495,9 +495,9 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
         })],
     };
     assert_ray(&Query::single(filter_rule.clone()));
-    assert_eq!(run_guarded(filter_rule.clone()), vec![vec![10]]);
+    assert_eq!(run_filtered(filter_rule.clone()), vec![vec![10]]);
 
-    // The bounded-end guard form: span ⊆ [0, 100) bounds the end below
+    // The bounded-end filter form: span ⊆ [0, 100) bounds the end below
     // the ceiling, so the ray never reaches the subtraction.
     let mut bounded = filter_rule.clone();
     bounded.conditions.push(ConditionTree::Leaf(Comparison {
@@ -538,7 +538,7 @@ fn a_ray_reaching_duration_raises_and_a_guarded_query_succeeds() {
         })],
     };
     assert_ray(&Query::single(residual_rule.clone()));
-    assert_eq!(run_guarded(residual_rule), vec![vec![10]]);
+    assert_eq!(run_filtered(residual_rule), vec![vec![10]]);
 }
 
 /// `Sum(Duration)` overflow at the wide-accumulator → u64 boundary: two

@@ -16,7 +16,7 @@ use super::{StoreFinding, Sweep, namespace};
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
     let schema = s.schema;
-    let mut derived = Vec::new();
+    let mut derived = keys::DeterminantImage::scratch();
     for entry in namespace(s.data, txn, keys::NS_REVERSE)? {
         let (key, _) = entry?;
         let Some((sid, key_bytes, source_rel, source_row)) = keys::parse_reverse_key(key) else {
@@ -79,14 +79,14 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                     layout,
                     fact,
                 ) && {
-                    keys::permuted_guard_bytes(
+                    keys::permuted_determinant_image(
                         layout,
                         &statement.source.projection,
                         key_permutation,
                         fact,
                         &mut derived,
                     );
-                    derived == key_bytes
+                    derived.as_bytes() == key_bytes
                 }
             }
         };

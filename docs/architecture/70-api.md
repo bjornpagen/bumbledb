@@ -207,9 +207,9 @@ Both are emission; the grammar is untouched.
   execution-work ratios vary by query class up to 4761.9×, so a fixed cutoff cannot
   separate drift from estimation shape. Hosts may compare this raw signal across
   generations using workload-specific evidence. Same
-  foreign-snapshot guard as execution; it allocates — a diagnostic surface, never a
+  foreign-snapshot check as execution; it allocates — a diagnostic surface, never a
   warm-path call. Negated and grounding-eliminated occurrences earn no statistics read
-  at prepare and so carry no pin; guard probes pin nothing. The stats/EXPLAIN
+  at prepare and so carry no pin; key probes pin nothing. The stats/EXPLAIN
   surface (`Snapshot::profile`) carries the same pin record per occurrence —
   "estimated from (pinned rows at prepare)" — so a drifted plan is visible in one
   read of the existing report.
@@ -250,13 +250,13 @@ Both are emission; the grammar is untouched.
   ```
 
   **Full queries inside write transactions remain forbidden** — point reads are
-  guard gets (allocation-free, no images, no plans); dragging the image cache and
+  determinant gets (allocation-free, no images, no plans); dragging the image cache and
   executor into the write path is the refused half. **Alternative:** keep the pure
   two-transaction idiom. **Why it lost:** the surveyed workloads' upserts and
-  check-then-act guards are exactly the shape that needs a read of the state being
+  check-then-act conditions are exactly the shape that needs a read of the state being
   written, and the two-txn idiom reintroduces the TOCTOU the single-writer design
   exists to kill (safe only under host-side write ordering nobody polices).
-  **Reverses if:** never — the guards are already read inside commit; this exposes
+  **Reverses if:** never — the determinants are already read inside commit; this exposes
   the same gets one phase earlier. The ruling's **compensating control for
   query-driven writes** is the generation witness (§ conditional writes below):
   read on a snapshot, write through `write_from`.
@@ -294,7 +294,7 @@ proposition the commit checks in one integer compare.
   generation, the transaction aborts **before any page is touched** with the typed
   `GenerationMoved { witnessed, current }` (ids, never strings); the delta drops
   exactly as any abort does, and the closure never ran. The environment-identity
-  guard runs first, exactly as prepared queries run it at every execution entry —
+  check runs first, exactly as prepared queries run it at every execution entry —
   a witness snapshot of another database is the typed `ForeignSnapshot`.
 - **The witness is the snapshot, never an integer** (recorded refusal,
   recorded): a snapshot is evidence — its generation was read
@@ -312,9 +312,9 @@ proposition the commit checks in one integer compare.
   staleness-signal doctrine verbatim: the engine's job is to make the condition
   checkable. The host convention is re-run the query → re-compute → `write_from`
   again; conflicts are rare by the bursty-write design point (`00-product.md`).
-- **The two guards compose into the complete conditional-write vocabulary:** the
-  witness is the scan-shaped guard (premises from full queries, whole-snapshot
-  precision), WriteTx point reads remain the key-shaped guard (per-fact
+- **The two conditions compose into the complete conditional-write vocabulary:** the
+  witness is the scan-shaped condition (premises from full queries, whole-snapshot
+  precision), WriteTx point reads remain the key-shaped condition (per-fact
   precision, zero retries, race-free by construction inside one transaction).
   *Read the model, propose a delta, commit iff the model you read is still the
   model.*

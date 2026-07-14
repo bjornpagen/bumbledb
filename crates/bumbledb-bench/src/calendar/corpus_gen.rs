@@ -35,7 +35,7 @@ pub const HOUR: i64 = 3_600;
 
 /// Every bounded segment ends strictly below this instant (the longest
 /// chain tops out near `CAL_BASE + max_segments × 12 × HOUR` ≈
-/// `CAL_BASE + 2.3 × 10⁷`) — the ray-guard literal the measure family
+/// `CAL_BASE + 2.3 × 10⁷`) — the ray-filter literal the measure family
 /// filters against: `Allen(span, [CAL_HORIZON, ∞), DISJOINT)` keeps
 /// exactly the bounded claims.
 pub const CAL_HORIZON: i64 = CAL_BASE + 100_000_000;

@@ -131,7 +131,7 @@ fn a_noop_commit_between_read_and_write_does_not_abort() {
 }
 
 /// Scenario (c): a witness snapshot of another database is rejected
-/// typed (`ForeignSnapshot` — the prepared-query identity guard on the
+/// typed (`ForeignSnapshot` — the prepared-query identity check on the
 /// write side), before anything happens: the clock never moves.
 #[test]
 fn a_foreign_snapshot_is_rejected_typed() {

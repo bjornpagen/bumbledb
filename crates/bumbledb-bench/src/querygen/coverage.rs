@@ -238,7 +238,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
 impl Coverage {
     fn record_shape(&mut self, shape: Shape) {
         match shape {
-            Shape::Guard => self.guard += 1,
+            Shape::KeyProbe => self.key_probe += 1,
             Shape::Star => self.star += 1,
             Shape::Chain => self.chain += 1,
             Shape::SelfJoin => self.self_join += 1,

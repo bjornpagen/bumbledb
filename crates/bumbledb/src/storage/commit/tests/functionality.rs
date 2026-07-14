@@ -156,7 +156,7 @@ fn containment_cross_delta_aborts() {
 
 #[test]
 fn exact_duplicate_interval_in_delta_aborts() {
-    // Distinct facts (the tag differs) sharing one exact guard: caught
+    // Distinct facts (the tag differs) sharing one exact determinant: caught
     // by the put-conflict, not the neighbor probe.
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);

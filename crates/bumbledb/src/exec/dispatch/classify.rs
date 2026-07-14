@@ -1,10 +1,10 @@
-use super::{GuardPlan, GuardVar};
+use super::{KeyProbePlan, KeyProbeVar};
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::CmpOp;
 use crate::ir::normalize::NormalizedQuery;
 use crate::schema::{FieldId, Relation, Schema, StatementId};
 
-/// Classifies a normalized query: `Some(GuardPlan)` iff it is guard-probe
+/// Classifies a normalized query: `Some(KeyProbePlan)` iff it is key-probe
 /// eligible — exactly one atom occurrence (positive, so no negated atoms
 /// exist), no residuals, and the occurrence's by-value constant bindings
 /// cover some key (`Functionality`) statement's projection (fresh
@@ -21,7 +21,7 @@ use crate::schema::{FieldId, Relation, Schema, StatementId};
 ///
 /// Only on programmer-invariant violations (validated-schema id widths).
 #[must_use]
-pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPlan> {
+pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProbePlan> {
     let [occurrence] = normalized.occurrences.as_slice() else {
         return None;
     };
@@ -50,12 +50,12 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
         return None;
     }
     // Decision: a `ParamSet`-bound field disqualifies the fast path in v0
-    // — k guard gets would be correct, but the selection-level path
+    // — k key-probe gets would be correct, but the selection-level path
     // already serves sets (revisit trigger: a measured k-get win). A
     // plan-constant `WordSet` (the grounding-evaluator's attachment) refuses
     // identically — one set rule, both producers; unreachable from the
     // real pipeline (attachments imply a sibling occurrence, so the
-    // table is never single-atom), guarded for hand-built queries. A
+    // table is never single-atom), checked for hand-built queries. A
     // var-sourced point falls through with them (its evaluation home is
     // the executor's membership probes).
     if occurrence.filters.iter().any(|filter| {
@@ -87,14 +87,14 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     };
 
     let relation = schema.relation(occurrence.relation);
-    // A closed relation has no `U` guards and no `M` entries — its
+    // A closed relation has no `U` determinants and no `M` entries — its
     // storage is the theory (`docs/architecture/50-storage.md` § virtual
     // relations) — so even a fully key-bound single atom classifies as
     // Free Join and hits the synthesized image.
     if relation.is_closed() {
         return None;
     }
-    let (statement, key_fields) = guard_candidate(relation, schema, &value_of)?;
+    let (statement, key_fields) = key_probe_candidate(relation, schema, &value_of)?;
 
     let key: Vec<(FieldId, Const)> = key_fields
         .iter()
@@ -104,12 +104,12 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     // The slot layout over the decoded variables (the `SlotWidth` map,
     // exported by normalization).
     let mut slot = 0usize;
-    let vars: Vec<GuardVar> = occurrence
+    let vars: Vec<KeyProbeVar> = occurrence
         .vars
         .iter()
         .map(|(field, var)| {
             let width = normalized.slot_widths[var].slots();
-            let entry = GuardVar {
+            let entry = KeyProbeVar {
                 field: *field,
                 var: *var,
                 slot,
@@ -120,7 +120,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
         })
         .collect();
 
-    Some(GuardPlan {
+    Some(KeyProbePlan {
         relation: occurrence.relation,
         statement,
         key,
@@ -131,7 +131,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
 
 /// Prefer a key-statement probe (one `U` get); fall back to the full-fact
 /// membership check when every field is bound by value.
-fn guard_candidate(
+fn key_probe_candidate(
     relation: &Relation,
     schema: &Schema,
     value_of: &impl Fn(FieldId) -> Option<Const>,

@@ -150,7 +150,7 @@ fn provably_different(a: &Const, b: &Const) -> bool {
 /// Value-bound means present in `vars` (membership bindings lowered to
 /// filters and never enter it), so a pointwise key's interval column is
 /// carried by both words and equal spans mean one fact, exactly the
-/// `provably_distinct` guard.
+/// `provably_distinct` check.
 fn key_flows_to_common_head(
     a: &Occurrence,
     head_a: &[FindTerm],

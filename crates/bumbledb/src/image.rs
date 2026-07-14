@@ -144,7 +144,7 @@ pub struct RelationImage {
     /// Per-column exact distinct-value counts, computed LAZILY on first
     /// planner demand: the eager per-column pass was
     /// the cold path's dominant fixed cost (~1.8 ms per 150k rows,
-    /// paid before the first query could run — even a guard probe that
+    /// paid before the first query could run — even a key probe that
     /// needs no estimates). The image is generation-keyed by the cache,
     /// so a `OnceLock` per column IS the per-(snapshot, relation,
     /// column) stats cache; the counts themselves are unchanged (same

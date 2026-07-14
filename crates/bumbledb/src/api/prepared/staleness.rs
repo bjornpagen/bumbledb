@@ -58,7 +58,7 @@ pub struct Staleness {
     /// Per participating occurrence, in occurrence-id order.
     pub per_occurrence: Box<[OccurrenceDrift]>,
     /// The worst per-occurrence ratio — 1.0 when nothing drifted, or
-    /// when nothing was pinned (a guard probe reads no statistics).
+    /// when nothing was pinned (a key probe reads no statistics).
     pub max_ratio: f64,
 }
 
@@ -85,7 +85,7 @@ impl<S> PreparedQuery<'_, S> {
     /// # Errors
     ///
     /// [`crate::error::Error::ForeignPreparedQuery`] on a snapshot of
-    /// any environment other than the preparing one — the same guard,
+    /// any environment other than the preparing one — the same key-probe check,
     /// same error as every execution entry; `Lmdb`/`Corruption` from
     /// the counter gets.
     pub fn staleness(&self, snap: &Snapshot<'_, S>) -> Result<Staleness> {

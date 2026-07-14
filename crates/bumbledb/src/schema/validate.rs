@@ -14,13 +14,13 @@
 
 use super::{
     AxiomIndex, CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement,
-    DisjointGuardProof, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId,
+    DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId,
     KeyStatement, MemberSet, Relation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
     Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::SchemaError;
-use crate::storage::keys::MAX_GUARD_WIDTH;
+use crate::storage::keys::MAX_DETERMINANT_WIDTH;
 use crate::value::Value;
 
 impl SchemaDescriptor {
@@ -231,7 +231,7 @@ impl Projection<'_> {
 #[derive(Clone, Copy)]
 enum FunctionalityEvidence {
     Scalar,
-    Pointwise(DisjointGuardProof),
+    Pointwise(DisjointDeterminantProof),
 }
 
 /// The projection positions holding interval-typed fields — the one scan
@@ -286,7 +286,7 @@ fn validate_functionality(
 
     // Roster ">1 interval position" and "interval not in final position":
     // the neighbor probe needs the scalar prefix as its group; two interval
-    // positions would be 2-D exclusion, which the ordered guard cannot
+    // positions would be 2-D exclusion, which the ordered determinant cannot
     // answer.
     let positions = interval_positions(&relation.fields, projection.ordered());
     if positions.len() > 1 {
@@ -309,7 +309,7 @@ fn validate_functionality(
 
     // Roster "duplicate statements", FD form: one field *set* per relation
     // — a second FD over the same set (any order) asserts the same
-    // judgment, so its guard is pure write amplification, and rejecting it
+    // judgment, so its determinant is pure write amplification, and rejecting it
     // is what makes containment target-key resolution unambiguous.
     let this_set = projection.fields();
     for (idx, earlier) in descriptors[..usize::from(id.0)].iter().enumerate() {
@@ -327,8 +327,8 @@ fn validate_functionality(
         }
     }
 
-    // Roster "guard width overflow": Σ field widths (intervals count 16)
-    // must fit `MAX_GUARD_WIDTH` — rejected at declaration, never
+    // Roster "determinant width overflow": Σ field widths (intervals count 16)
+    // must fit `MAX_DETERMINANT_WIDTH` — rejected at declaration, never
     // discovered at write time.
     let width: usize = projection
         .ordered()
@@ -340,8 +340,8 @@ fn validate_functionality(
                 .width()
         })
         .sum();
-    if width > MAX_GUARD_WIDTH {
-        return Err(SchemaError::GuardKeyTooWide {
+    if width > MAX_DETERMINANT_WIDTH {
+        return Err(SchemaError::DeterminantKeyTooWide {
             statement: id,
             width,
         });
@@ -352,7 +352,7 @@ fn validate_functionality(
     // pair refutes the statement now or never. Scalar keys collide on
     // equal projected bytes; a pointwise key collides when the scalar
     // prefix agrees and the intervals share a point — the ordered-neighbor
-    // probe's judgment, run over ≤256 sealed rows instead of a guard.
+    // probe's judgment, run over ≤256 sealed rows instead of a determinant.
     if let Some(rows) = relation.extension.as_deref() {
         let layout = &relation.layout;
         let scalar_len = projection.ordered().len() - usize::from(interval_position.is_some());
@@ -388,7 +388,7 @@ fn validate_functionality(
     }
 
     Ok(match interval_position {
-        Some(_) => FunctionalityEvidence::Pointwise(DisjointGuardProof(())),
+        Some(_) => FunctionalityEvidence::Pointwise(DisjointDeterminantProof(())),
         None => FunctionalityEvidence::Scalar,
     })
 }
@@ -676,7 +676,7 @@ fn validate_selection_literal(
 /// (`docs/architecture/30-dependencies.md` § the acceptance gate): the
 /// target projection, as a set, must equal the field set of some
 /// `Functionality` statement on the target relation — probe-ability, one
-/// guard get answers "is this tuple present". Unambiguous because duplicate
+/// determinant get answers "is this tuple present". Unambiguous because duplicate
 /// field sets are rejected by [`SchemaError::DuplicateFunctionality`].
 fn resolve_target_key(
     id: StatementId,
@@ -689,7 +689,7 @@ fn resolve_target_key(
 
     // The compiled-subset branch (`docs/architecture/30-dependencies.md`):
     // a closed target is stage-1-known, so there is no key search, no
-    // permutation, and no guard-width concern — the enforcement plan is
+    // permutation, and no determinant-width concern — the enforcement plan is
     // the answer set itself. The handle id is the one probe-able identity
     // of a closed relation (the auto-key `R(id) -> R`), so the target
     // projection must be exactly the synthetic id; ψ folds against the
@@ -762,11 +762,11 @@ fn resolve_target_key(
         .ordered()
         .iter()
         .map(|field| {
-            let guard_pos = key_projection
+            let determinant_pos = key_projection
                 .iter()
                 .position(|k| k == field)
                 .expect("set-equal key contains every projected field");
-            u16::try_from(guard_pos).expect("field count fits u16")
+            u16::try_from(determinant_pos).expect("field count fits u16")
         })
         .collect();
 
@@ -838,7 +838,7 @@ fn validate_relation(
     } = decl;
 
     // A closed relation's sealed field list opens with the synthetic
-    // (`id`, U64) field — the handle's declaration index — so guards,
+    // (`id`, U64) field — the handle's declaration index — so determinants,
     // statements, and queries address it uniformly at `FieldId(0)`. The
     // macro (the emission) never lets the user declare it; a hand-built
     // descriptor declaring its own `id` collides here

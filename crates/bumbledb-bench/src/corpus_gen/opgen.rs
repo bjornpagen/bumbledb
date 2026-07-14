@@ -129,7 +129,7 @@ pub const CRASH_MATRIX_CELLS: usize = 3;
 /// One deterministic sweep cell: a fixed ops prefix and a victim commit
 /// CONSTRUCTED to lie on every crashpoint's path — accepted by the
 /// judgment (the co-located test pins it against the naive model) and
-/// touching every namespace family (inserts with guards and edges,
+/// touching every namespace family (inserts with determinants and edges,
 /// deletes, moved row counts). The victims are whole-world replacements:
 /// delete one complete seed world, insert another — the final state is
 /// exactly the incoming seed world, valid by construction.

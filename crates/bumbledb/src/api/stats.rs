@@ -73,22 +73,22 @@ pub struct DisjointRules {
 /// One rule's counted execution under the shared sink.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleStats {
-    /// Per plan node, in node order (empty for guard-probe rules).
+    /// Per plan node, in node order (empty for key-probe rules).
     pub nodes: Vec<NodeStats>,
     /// Occurrences the grounding eliminated (`plan/ground.rs`), read straight
     /// off the rule plan's `Role::Eliminated` marks — no separate list
     /// exists in the plan; this surface renders the marks. Empty for
-    /// guard probes (single-atom queries have nothing to pair).
+    /// key probes (single-atom queries have nothing to pair).
     pub eliminated: Vec<EliminatedOccurrence>,
     /// Occurrences the grounding-evaluator folded (`plan/ground/evaluate.rs`),
     /// read straight off the rule plan's `Role::Folded` marks exactly as
-    /// `eliminated` reads its own. Empty for guard probes.
+    /// `eliminated` reads its own. Empty for key probes.
     pub folded: Vec<FoldedOccurrence>,
     /// Per participating occurrence, in occurrence-id order: the
     /// statistics the rule's plan was costed with — every node `estimate`
     /// is estimated from (pinned rows at prepare), so a drifted plan is
     /// visible in one read of this surface (the pull-based signal is
-    /// `PreparedQuery::staleness`). Empty for guard probes (they read
+    /// `PreparedQuery::staleness`). Empty for key probes (they read
     /// no statistics); negated and grounding-eliminated occurrences earned
     /// no statistics read at prepare and carry no entry.
     pub pinned: Vec<PinnedRows>,
@@ -99,8 +99,8 @@ pub struct RuleStats {
     /// (`emitted - absorbed` were new). Zero under a single-rule
     /// distinct-bindings proof (nothing can be absorbed).
     pub absorbed: u64,
-    /// Present iff this rule classified as a guard probe.
-    pub guard: Option<GuardStats>,
+    /// Present iff this rule classified as a key probe.
+    pub key_probe: Option<KeyProbeStats>,
 }
 
 /// One grounding-eliminated occurrence: never joined, its view never built —
@@ -215,9 +215,9 @@ pub struct CoverStats {
     pub hashes: u64,
 }
 
-/// The guard-probe outcome.
+/// The key-probe outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GuardStats {
+pub struct KeyProbeStats {
     /// Whether the probe found a fact.
     pub hit: bool,
 }

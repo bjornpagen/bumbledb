@@ -374,12 +374,12 @@ fn explain_reports_per_rule_stats_and_the_union_accounting() {
     );
 }
 
-/// A guard-probe rule inside a program goes through the sink like any
+/// A key-probe rule inside a program goes through the sink like any
 /// other rule (the union must hear it): its re-derivation of another
 /// rule's row is absorbed.
 #[test]
-fn a_guard_rule_unions_through_the_sink() {
-    let dir = TempDir::new("prepared-rules-guard");
+fn a_key_probe_rule_unions_through_the_sink() {
+    let dir = TempDir::new("prepared-rules-key_probe");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
@@ -387,9 +387,9 @@ fn a_guard_rule_unions_through_the_sink() {
     let txn = env.read_txn().expect("txn");
 
     // Rule 0: account 3's (memo, amount). Rule 1: the point lookup
-    // `Posting(id = 2, memo, amount)` — a guard probe re-deriving
+    // `Posting(id = 2, memo, amount)` — a key probe re-deriving
     // ("b", 25), which rule 0 already produced.
-    let guard_rule = Rule {
+    let key_probe_rule = Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -403,14 +403,14 @@ fn a_guard_rule_unions_through_the_sink() {
         conditions: vec![],
     };
     let mut rule0 = by_account_rule(3);
-    rule0.conditions.clear(); // no param: the guard rule binds none
+    rule0.conditions.clear(); // no param: the key-probe rule binds none
     let query = Query {
         head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![rule0, guard_rule],
+        rules: vec![rule0, key_probe_rule],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
-        matches!(prepared.program.rules()[1], PreparedRule::Guard(_)),
+        matches!(prepared.program.rules()[1], PreparedRule::KeyProbe(_)),
         "rule 1 classifies as the point fast path"
     );
     let out = prepared
@@ -419,7 +419,7 @@ fn a_guard_rule_unions_through_the_sink() {
     assert_eq!(
         rows_of(&out),
         vec![("a".to_owned(), 10), ("b".to_owned(), 25)],
-        "the guard's re-derivation is absorbed by the spanning seen-set"
+        "the key_probe's re-derivation is absorbed by the spanning seen-set"
     );
 }
 

@@ -420,15 +420,15 @@ of one comparison, a non-interval variable, and any fold but the three.
   subtraction path tests `end == MAX` and raises the typed execution error
   `MeasureOfRay`, carrying the offending interval's two encoded words —
   **the engine's one runtime type error**. Hosts exclude rays first: an
-  `Allen(DISJOINT)` guard against the ray probe `[MAX−1, MAX)` (an interval
+  `Allen(DISJOINT)` predicate against the ray probe `[MAX−1, MAX)` (an interval
   intersects it iff its end is MAX — exactly the rays), or a bounded-end
   filter (`Allen(COVERED_BY)` a bounded window) on the measured atom.
 - **The filter-order law:** a measure comparison lowered to an atom's
   filter list evaluates only on facts surviving the atom's *other* filters
-  — a same-atom guard always runs before the subtraction, so a guarded
+  — a same-atom predicate always runs before the subtraction, so a filtered
   fact never reaches it. Cross-atom measure comparisons are residuals
   (evaluated where whole-value residuals attach), and the measure in finds
-  and folds evaluates at emit — after every condition — so guards protect
+  and folds evaluates at emit — after every condition — so predicates protect
   those positions unconditionally.
 - **Lowering:** normalization lowers the measure to a two-slot read +
   subtraction feeding the existing word machinery — a constant or same-atom
@@ -500,12 +500,12 @@ disjoin by writing rules, which is what rules are for.
   `MAX_RULES` included. The blowup is judged on the *structural* term count,
   before a single disjunct materializes; past the cap it is the typed
   `DnfExceedsRules { produced, cap }` — the exponential case is rejected at
-  declaration, exactly like guard-width overflow. (A program *written* with
+  declaration, exactly like determinant-width overflow. (A program *written* with
   more than `MAX_RULES` rules is still `TooManyRules`, judged first.)
 - **The nesting cap:** trees deeper than `MAX_CONDITION_DEPTH` (64) are the
   typed `ConditionNestingTooDeep`, judged **iteratively** (an explicit work
   list) before the count or the distribution runs — those walks recurse by
-  depth, so an unguarded hostile depth would be a stack exhaustion, not an
+  depth, so an unchecked hostile depth would be a stack exhaustion, not an
   error (the trust-boundary law, § validation boundary). The cap is generous:
   a meaningful tree's depth is bounded by its leaf count, and the blowup cap
   already limits leaves.
@@ -609,13 +609,13 @@ normalization, and prepare return `Ok` or a typed error on *arbitrary* input:
 out-of-range ids, duplicate bindings, vacuous masks, MAX-point literals,
 cap-exceeders, hostile nesting. The caps (`MAX_RULES`, the DNF blowup cap,
 `MAX_CONDITION_DEPTH`, `MAX_OCCURRENCES`, the 128-variable cap) are **boundary
-guards**, not planner hygiene — the nesting cap in particular exists because the
-tree walks recurse by depth, and its own judge is iterative so the guard is total.
+checks**, not planner hygiene — the nesting cap in particular exists because the
+tree walks recurse by depth, and its own judge is iterative so the check is total.
 Enforced mechanically: the adversarial sweep (a property test in the engine's
 integration suite) drives 10⁴+ structurally random malformed queries through
 validate → normalize → prepare and reddens on any panic; `unreachable!` arms
-*downstream* of validation are exempt — they are guarded by it, and the sweep's
-job is proving the guard total.
+*downstream* of validation are exempt — they are checked by it, and the sweep's
+job is proving the check total.
 
 The program shape first, each with a distinct typed error: an **empty rule
 set** (the empty union is no query); more than **`MAX_RULES` (16) rules**
@@ -628,7 +628,7 @@ whose resolved positional type differs from the pinned row (rule 0's
 resolved input types pin the head's positional row; every later rule must
 agree position by position — that alignment is *how* every rule derives
 the one predicate, whose signature the witness then seals from rule 0). Between the program shape and
-the per-rule roster, the **nesting boundary guard** (trees deeper than
+the per-rule roster, the **nesting boundary check** (trees deeper than
 `MAX_CONDITION_DEPTH` are the typed `ConditionNestingTooDeep`, judged
 iteratively before any recursive walk — the trust-boundary law above), then
 **DNF distribution** (§ the input condition grammar):

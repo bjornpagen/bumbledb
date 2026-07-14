@@ -17,7 +17,7 @@ Dependencies and queries share one representation; a dependency is not a new kin
 thing, it is a required property of an old kind of thing.
 
 **Functionality (FD).** `R(X) -> R` asserts that the projection πX is injective on
-R: no two distinct facts of R agree on X. X is ordered (the order defines the guard
+R: no two distinct facts of R agree on X. X is ordered (the order defines the determinant
 key, `50-storage.md`), non-empty, duplicate-free. The general form `R(X) -> R(Y)`
 with Y ⊊ fields exists in the theory (dependency theory's equality-generating
 dependencies); **only the key form — Y = the whole relation — is accepted**: a
@@ -26,7 +26,7 @@ of its own relation), and the engine refuses to be the crutch that makes the
 mis-design comfortable. Selections on FDs are likewise rejected — a "conditional
 key" is a relation split waiting to happen (`10-data-model.md` modeling discipline).
 **Decision.** **Alternative:** accept general/conditional FDs (the machinery is the
-same guards). **Why it lost:** every instance surveyed is better said as a schema
+same determinants). **Why it lost:** every instance surveyed is better said as a schema
 shape; accepting them sells normalization back as a runtime feature. **Reverses if:**
 a real invariant appears that no relation split can express.
 
@@ -50,7 +50,7 @@ scan-complete (the accept path already scans everything), and the set is sealed 
 nonempty, sorted, deduplicated — by its only constructor, so an under-reported
 rejection is unrepresentable. One preemption, from the enforcement structure
 itself: key (`Functionality`) violations preempt the containment judgment, because
-the containment probes are defined over the *keyed* final state (guards are the
+the containment probes are defined over the *keyed* final state (determinants are the
 probe index), which exists only when every key statement holds — so one rejection
 is the complete set of violated key statements, or the complete set of violated
 containment statements, never a mix. Within the containment set, the two
@@ -126,15 +126,15 @@ Concretely, validation demands:
 - **FD:** key form, no selection; at most **one** interval-typed field, and it must
   be the **final** projection position (the neighbor probe needs the scalar prefix
   as its group — two interval positions would be 2-D exclusion, which the ordered
-  guard cannot answer; SQL:2011 imposes the same last-position rule for the same
-  reason). Guard key width must fit `MAX_GUARD_WIDTH` (`50-storage.md`) — rejected
+  determinant index cannot answer; SQL:2011 imposes the same last-position rule for the same
+  reason). Determinant key width must fit `MAX_DETERMINANT_WIDTH` (`50-storage.md`) — rejected
   at declaration, never discovered at write time.
 - **IND:** the target projection Y must be a permutation of some declared key of B
-  (probe-ability: one guard get answers "is this tuple present"); if any position is
+  (probe-ability: one determinant get answers "is this tuple present"); if any position is
   interval-typed, that key must carry the interval (pointwise — coverage needs the
   target's intervals disjoint and ordered, which its own key provides as a theorem,
   not a requirement on the user). Validation seals that theorem as a
-  `DisjointGuardProof`; interval enforcement and the coverage checker require the
+  `DisjointDeterminantProof`; interval enforcement and the coverage checker require the
   token, so the forward sweep cannot be selected by an unchecked flag. Each
   direction of `==` passes the gate
   independently. Selections may appear on either side; a selected field may not also
@@ -195,7 +195,7 @@ iff it holds of the point-families.
   fact's span is covered by B facts for the same `who` — B's intervals need not
   match A's bounds, only jointly cover them. Checkable in O(log n + segments)
   because B's key keeps its intervals per-group disjoint and start-ordered: walk
-  adjacent guard entries from the span's start, require no gap before its end. A
+  adjacent determinant entries from the span's start, require no gap before its end. A
   **source ray requires coverage to ∞**: only a target chain reaching a ray
   satisfies it — bounded targets always leave a gap — while a target ray covers
   any bounded source above its start; both fall out of the same gap check, since
@@ -269,12 +269,12 @@ witness (`70-api.md` § conditional writes) runs before this pipeline entirely �
 an aborted witnessed write never reaches judgment, and judgment semantics are
 untouched by it. The phases:
 
-- FD: guard put conflicts (scalar) and ordered-neighbor probes (pointwise) during
+- FD: determinant put conflicts (scalar) and ordered-neighbor probes (pointwise) during
   the insert phase.
 - IND, source side: per **genuinely** inserted A-fact satisfying φ — true by
   representation: the delta's net insert set is exactly the facts the commit adds
   (`50-storage.md` net dispositions), so a redundant insert is never judged here —
-  probe B's key guard (plus the selection-literal check on the found fact, and the
+  probe B's key determinant (plus the selection-literal check on the found fact, and the
   coverage walk for interval positions).
 - IND, target side: per deleted-and-not-reestablished B key tuple
   (re-establishment ψ-qualified per statement — `50-storage.md`), probe the
@@ -313,13 +313,13 @@ validate — the commit path byte-compares against sealed encodings and resolves
 only interned text (dictionary state is per-database; a never-interned literal
 still proves its side unsatisfiable). The pointwise/coverage judgment instead
 consumes the `IntervalCoverage` variant's validator-minted
-`DisjointGuardProof`; no boolean can license the sweep.
+`DisjointDeterminantProof`; no boolean can license the sweep.
 Two audited stays, recorded so the staging audit's lines are discharged rather
 than forgotten: the `FactLayout` rebuild stays at open (open is rare, the
 rebuild pure and cheap), and the fresh→FD materialization stays at validate
 (the materialized ORDER is a fingerprint input, pinned there by contract).
 
-Guard namespaces (`U`, `R`) are **derived accelerators for these judgments, not
+Determinant namespaces (`U`, `R`) are **derived accelerators for these judgments, not
 definitions** — the reframe is normative in `50-storage.md`. The checker shares its
 anti-probe primitive with query-surface negation (`40-execution.md`): "no fact
 matches" is one mechanism with two callers. The coverage walk's frontier loop is
@@ -339,11 +339,11 @@ ids; empty or duplicate-carrying projections; arity mismatch between sides;
 positional structural-type mismatch; selection literal type mismatch (including
 non-UTF-8 string literals); a selected field also
 projected; FD with >1 interval position, interval not in
-final position, or guard width overflow; IND whose target projection matches no key
+final position, or determinant width overflow; IND whose target projection matches no key
 of the target (or, with an interval position, no pointwise key carrying it);
 duplicate statements (identical normalized sides and form — write it once), where
 two FDs over one field *set* are duplicates regardless of projection order (the
-order shapes only the guard, and key resolution is by set);
+order shapes only the determinant, and key resolution is by set);
 a statement referencing an interval position against a scalar position (that is the
 type-mismatch case, called out because it is the one migration authors will hit);
 an interval position on a containment with a closed side (the v0 refusal above);
@@ -379,7 +379,7 @@ not prove that stored bytes or unchecked host input satisfy the Rust premise.
 | Accepted `==` is key-backed unique correspondence in both directions. | `KeyBackedEquality.unique_target`; `KeyBackedEquality.unique_source` | Both lowered containments independently pass `resolve_target_key`; `schema::ContainmentStatement::mirror` records the accepted pair. PRD 12 adds the dedicated reverse-key rejection locks. | Lean theorem + validator premises |
 | A key proves uniqueness, not existence. | `Key.uniqueness` (the imported dependency model's `Key` field) | `schema/validate.rs::validate_functionality` accepts the declaration; `storage/commit/applier.rs::Applier` rejects colliding determinant images but never manufactures a fact. | Definition + validator and runtime premises |
 | An interval-position key proves per-scalar-group pointwise disjointness. | `IntervalFacts.PointwiseKey`; exercised by `overshoot_pointwiseKey` | `validate_functionality` admits one final interval position; `storage/commit/applier.rs::Applier::probe_neighbors` rejects overlap with predecessor or successor. | Formal predicate + validator and runtime premises |
-| One-way interval coverage is source-support inclusion; target overhang is legal. | `intervalContains_iff_support_subset`; `overshoot_isTiling_not_exact` | `validate_functionality` alone mints `DisjointGuardProof` after accepting one final interval position; `Enforcement::IntervalCoverage` carries it into `Checker::check_coverage`, whose signature requires the proof and advances only across the demanded source interval. | Lean theorem/countermodel + represented validator/runtime premise |
+| One-way interval coverage is source-support inclusion; target overhang is legal. | `intervalContains_iff_support_subset`; `overshoot_isTiling_not_exact` | `validate_functionality` alone mints `DisjointDeterminantProof` after accepting one final interval position; `Enforcement::IntervalCoverage` carries it into `Checker::check_coverage`, whose signature requires the proof and advances only across the demanded source interval. | Lean theorem/countermodel + represented validator/runtime premise |
 | Exact partition is mutual point coverage plus pointwise keys. | `exactTiling_iff_exactPointPartition` | The five ordinary statements and gap/overhang locks are delivered by PRD 11; no special partition primitive exists. | Lean theorem + validator premises |
 | Empty or reversed intervals have empty support, so admitting them would make coverage vacuous. | `empty_nat_interval_has_no_points` | `interval.rs::Interval::new` rejects `start >= end`; `Value` and `ValueRef` carry `Interval<T>`, making both literal and fact encoding total. `encoding::decode_interval_*` and `image::decode` independently reject damaged stored bytes. | Lean countermodel + representation/runtime premises |
 | Negation safety is positive range restriction and is independent of textual order. | `positive_range_restriction_implies_wellscoped` | `ir/validate/context.rs` derives binders only from positive atoms and emits `ValidationError::NegatedVariableUnbound` for every other occurrence. | Lean theorem + validator acceptance rule |

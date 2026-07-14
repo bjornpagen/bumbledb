@@ -126,7 +126,7 @@ impl GhzStamp {
         self.pre.min(self.post)
     }
 
-    /// The worst of two brackets guarded around one family's pair of
+    /// The worst of two brackets bracketing one family's pair of
     /// measurement blocks — contamination of either engine's block
     /// dirties the ratio, so the merged stamp reads component-wise
     /// worst.
@@ -158,11 +158,11 @@ impl GhzStamp {
 /// # Errors
 ///
 /// The closure's error, verbatim.
-pub fn guarded<T, F>(f: F) -> Result<(T, GhzStamp), String>
+pub fn frequency_checked<T, F>(f: F) -> Result<(T, GhzStamp), String>
 where
     F: FnMut() -> Result<T, String>,
 {
-    guarded_at(CONTAMINATION_GHZ, f)
+    frequency_checked_at(CONTAMINATION_GHZ, f)
 }
 
 /// Brackets `f` with proxy readings WITHOUT retry — the non-idempotent
@@ -189,12 +189,12 @@ where
     ))
 }
 
-/// [`guarded`] with an injectable threshold (the detector's test seam).
+/// [`frequency_checked`] with an injectable threshold (the detector's test seam).
 ///
 /// # Errors
 ///
 /// The closure's error, verbatim.
-pub fn guarded_at<T, F>(threshold: f64, mut f: F) -> Result<(T, GhzStamp), String>
+pub fn frequency_checked_at<T, F>(threshold: f64, mut f: F) -> Result<(T, GhzStamp), String>
 where
     F: FnMut() -> Result<T, String>,
 {
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn a_clean_bracket_never_retries() {
         let mut calls = 0u32;
-        let ((), stamp) = guarded_at(0.0, || {
+        let ((), stamp) = frequency_checked_at(0.0, || {
             calls += 1;
             Ok(())
         })
@@ -258,7 +258,7 @@ mod tests {
         // A threshold above any real frequency forces the dirty path
         // deterministically: one retry, then honest contamination.
         let mut calls = 0u32;
-        let (out, stamp) = guarded_at(1e9, || {
+        let (out, stamp) = frequency_checked_at(1e9, || {
             calls += 1;
             Ok(calls)
         })
@@ -300,7 +300,7 @@ mod tests {
         let mut fired = false;
         let mut worst = f64::MAX;
         for _ in 0..200 {
-            let ((), stamp) = guarded_at(threshold, || Ok(())).expect("runs");
+            let ((), stamp) = frequency_checked_at(threshold, || Ok(())).expect("runs");
             worst = worst.min(stamp.min());
             if stamp.retried || stamp.contaminated() {
                 fired = true;

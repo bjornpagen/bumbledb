@@ -722,11 +722,11 @@ fn an_empty_complement_kills_the_rule() {
     );
 }
 
-/// The dead guard: a var-less closed gate with a satisfiable selection
+/// The dead gate: a var-less closed gate with a satisfiable selection
 /// deletes outright — no membership to attach, nothing multiplies any
 /// fold domain.
 #[test]
-fn a_satisfied_var_less_guard_deletes_outright() {
+fn a_satisfied_var_less_gate_deletes_outright() {
     let schema = theory();
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -743,19 +743,19 @@ fn a_satisfied_var_less_guard_deletes_outright() {
     assert!(normalized.dead.is_none());
 }
 
-/// The guard's negative — a guard binding a variable (dead, but bound)
+/// The gate's negative — a gate binding a variable (dead, but bound)
 /// refuses: under an aggregate sink the fold domain is over ALL query
 /// variables, and deleting the binder would collapse |S| bindings into
 /// one.
 #[test]
-fn a_var_binding_guard_refuses() {
+fn a_var_binding_gate_refuses() {
     let schema = theory();
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(ITEM, &[(0, var(0))]),
             // rank == 20 plus a bound-but-dead id variable: no live k
-            // (nothing else binds Var 1), so this is guard-shaped — and
+            // (nothing else binds Var 1), so this is gate-shaped — and
             // must refuse.
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(20)))]),
         ],
@@ -779,10 +779,10 @@ fn an_empty_surviving_set_kills_the_rule() {
     );
 }
 
-/// |S| == 0 on a var-less guard kills the rule too (the guard's own
+/// |S| == 0 on a var-less gate kills the rule too (the gate's own
 /// negative-side twin of the delete above).
 #[test]
-fn an_unsatisfiable_guard_kills_the_rule() {
+fn an_unsatisfiable_gate_kills_the_rule() {
     let schema = theory();
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],

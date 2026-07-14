@@ -268,7 +268,7 @@ fn pointwise_stats() -> Vec<OccStats> {
     occ_stats
 }
 
-/// The pointwise-key guard, direction one (PRD 15 criterion): a join
+/// The pointwise-key determinant, direction one (PRD 15 criterion): a join
 /// binding only the scalar prefix of a pointwise key does NOT certify
 /// fanout 1 — two facts may share the prefix with disjoint intervals —
 /// so the step takes the general per-binding fanout.
@@ -289,7 +289,7 @@ fn pointwise_prefix_join_takes_the_general_fanout() {
     assert_ne!(est, 5, "the scalar prefix must not certify fanout 1");
 }
 
-/// The pointwise-key guard, direction two: binding the FULL projection —
+/// The pointwise-key determinant, direction two: binding the FULL projection —
 /// the interval field by value included — covers the key and pins the
 /// fanout to 1.
 #[test]
@@ -325,7 +325,7 @@ fn full_pointwise_projection_bound_by_value_pins_fanout_one() {
 
 /// A membership-bound interval field never enters `vars` (normalization
 /// lowers it to a filter), so the pointwise key's var set does not exist
-/// and coverage cannot fire — the other face of the same guard.
+/// and coverage cannot fire — the other face of the same determinant.
 #[test]
 fn membership_bound_interval_disables_key_coverage() {
     let schema = pointwise_schema();

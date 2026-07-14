@@ -21,7 +21,7 @@ where
 }
 
 /// The one measurement loop, timing `batch` calls per sample and dividing the
-/// elapsed time — the quantum guard's mechanism. Work counts sum across
+/// elapsed time — the quantum check's mechanism. Work counts sum across
 /// every call; batch 1 is the plain protocol.
 ///
 /// # Errors

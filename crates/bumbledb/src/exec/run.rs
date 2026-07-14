@@ -97,7 +97,7 @@ pub struct LeafScan<'a> {
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
 /// `output()`).
 pub trait Sink {
-    /// Emits one complete binding — the guard-probe path (single row by
+    /// Emits one complete binding — the key-probe path (single row by
     /// construction) and tests; the join executor's leaf path is
     /// [`Sink::emit_batch`].
     fn emit(&mut self, bindings: &Bindings) -> Flow;

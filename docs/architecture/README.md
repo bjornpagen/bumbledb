@@ -35,7 +35,7 @@ documents themselves describe **only the current reality**.
 | `20-query-ir.md` | The pure-data IR: atoms, negation, membership, param sets, aggregates, validation |
 | `30-dependencies.md` | The two judgments (functionality, containment), statements, pointwise lifting, the acceptance gate |
 | `40-execution.md` | Access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation |
-| `50-storage.md` | LMDB layout, guard namespaces as judgment accelerators, the delta write path, images |
+| `50-storage.md` | LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images |
 | `60-validation.md` | The two oracles (SQLite + naive model), ledger benchmark protocol, test families |
 | `70-api.md` | Embedding surface: the schema! grammar, transactions, point reads, results, ETL |
 | `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative (reader: the owner and any agent writing a theory) |
@@ -57,9 +57,9 @@ documents themselves describe **only the current reality**.
   latency-budget violation.*
 - **Declared range/stabbing accelerators**: time-range, point-membership, and
   overlap scans are O(n) by decision; accelerators return only with a benchmark that
-  demands them. Candidate mechanism on trigger: guard skip scan (cursor `set_range`
+  demands them. Candidate mechanism on trigger: determinant skip scan (cursor `set_range`
   prefix-hopping over existing `U` namespaces, O(distinct-prefix × log n)) — for
-  non-prefix guard lookups and low-cardinality-leading range scans; interval
+  non-prefix determinant lookups and low-cardinality-leading range scans; interval
   stabbing needs the coverage-walk shape instead (`40-execution.md`). *Trigger:
   latency budget violation on a range/interval family.*
 - **Grounding interval-pair elimination**: pointwise coverage proves that covering facts

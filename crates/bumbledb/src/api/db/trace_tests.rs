@@ -259,7 +259,7 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     let escaped = db.write(|tx| tx.alloc_at(id_field)).expect("bare alloc");
     assert_eq!(escaped, 1);
     assert_eq!(
-        db.generation().expect("generation"),
+        db.generation().expect("generation").value(),
         1,
         "a counters-only commit is not a state change"
     );

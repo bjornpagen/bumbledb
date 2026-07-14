@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::{Error, Result};
 
-/// Takes the exclusive advisory lock guarding single-process (and
+/// Takes the exclusive advisory lock enforcing single-process (and
 /// single-handle) access to the environment at `path`. A held lock —
 /// another process, or another live `Environment` on the same path in
 /// this process — is `Error::EnvironmentLocked`, converting the silent

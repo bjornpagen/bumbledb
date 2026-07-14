@@ -2,7 +2,7 @@
 //! § commit step 3; `30-dependencies.md` § enforcement). Source side:
 //! every inserted fact satisfying a statement's source selection proves
 //! its target tuple exists in the final state — scalar tuples by one
-//! guard probe, interval positions by the coverage walk. Target side:
+//! determinant probe, interval positions by the coverage walk. Target side:
 //! every key tuple disestablished by this commit probes its dependent
 //! statements' `R` prefixes for surviving sources — a scalar survivor is
 //! the violation outright; an interval survivor re-runs the coverage walk
@@ -45,8 +45,8 @@ use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violati
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
-    CompiledCheck, ContainmentId, DisjointGuardProof, Enforcement, FieldId, KeyId, RelationId,
-    Schema, StatementId, StatementView,
+    CompiledCheck, ContainmentId, DisjointDeterminantProof, Enforcement, FieldId, KeyId,
+    RelationId, Schema, StatementId, StatementView,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -286,7 +286,7 @@ pub(super) fn check_source(
 /// this phase can read the establishing fact — one `F` get per
 /// re-established tuple, shared across that tuple's ψ-carrying
 /// dependents; a ψ hit skips the check. A scalar survivor convicts
-/// outright: the key statement's guard was the tuple's one holder and the
+/// outright: the key statement's determinant was the tuple's one holder and the
 /// final state no longer has it. An interval tuple is a disestablished
 /// *segment* `(prefix, ts, te)`: each surviving source of the prefix
 /// group whose interval intersects the segment re-runs the coverage walk
@@ -331,9 +331,9 @@ pub(super) fn check_target(
     // to one coverage walk per source.
     let mut affected: BTreeSet<(ContainmentId, Vec<u8>)> = BTreeSet::new();
     for check in &plan.target_checks {
-        let guard = &check.guard;
+        let determinant = check.determinant.as_bytes();
         let key_statement = schema.key(check.key);
-        // The establishing fact of a re-landed guard, fetched at most
+        // The establishing fact of a re-landed determinant, fetched at most
         // once per tuple and shared by every ψ-carrying dependent.
         let mut establisher: Option<&[u8]> = None;
         let mut counted = false;
@@ -344,7 +344,7 @@ pub(super) fn check_target(
                 let fact = if let Some(fact) = establisher {
                     fact
                 } else {
-                    let fact = establishing_fact(data, txn, schema, check.key, guard)?;
+                    let fact = establishing_fact(data, txn, schema, check.key, determinant)?;
                     establisher = Some(fact);
                     fact
                 };
@@ -367,9 +367,10 @@ pub(super) fn check_target(
                 // bound would need the maximum source-interval length,
                 // which we refuse to track — the group is small and this
                 // is the delete path.
-                let ts = &guard[guard.len() - 16..guard.len() - 8];
-                let te = &guard[guard.len() - 8..];
-                let p_len = keys::reverse_prefix(&mut key, sid, &guard[..guard.len() - 16]);
+                let ts = &determinant[determinant.len() - 16..determinant.len() - 8];
+                let te = &determinant[determinant.len() - 8..];
+                let p_len =
+                    keys::reverse_prefix(&mut key, sid, &determinant[..determinant.len() - 16]);
                 let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
                     (Bound::Included(&key[..p_len]), Bound::Unbounded);
                 for group_entry in data.range(txn.raw(), &bounds)? {
@@ -384,7 +385,7 @@ pub(super) fn check_target(
                     };
                     // Same statement, same target key: any other key-bytes
                     // width is corrupt data, a hard error.
-                    if key_bytes.len() != guard.len() {
+                    if key_bytes.len() != determinant.len() {
                         return Err(Error::Corruption(CorruptionError::MalformedValue(
                             "R key width",
                         )));
@@ -409,7 +410,7 @@ pub(super) fn check_target(
                 // source outright
                 // (`docs/architecture/30-dependencies.md`).
                 if let Some(row) =
-                    closed_source_survivor(schema, plan, dependent.containment, guard)
+                    closed_source_survivor(schema, plan, dependent.containment, determinant)
                 {
                     violations.push(Violation::Containment {
                         statement: sid,
@@ -423,7 +424,7 @@ pub(super) fn check_target(
                 // one is the witness (an inserted survivor is the
                 // source side's work; its own probe missed the same
                 // tuple).
-                let p_len = keys::reverse_prefix(&mut key, sid, guard);
+                let p_len = keys::reverse_prefix(&mut key, sid, determinant);
                 let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
                     (Bound::Included(&key[..p_len]), Bound::Unbounded);
                 for entry in data.range(txn.raw(), &bounds)? {
@@ -502,8 +503,8 @@ pub(super) fn check_target(
     Ok(())
 }
 
-/// The fact that re-established a key guard in phase 2, reached through
-/// the guard's own `U` entry — the ψ-qualification subject. Both gets
+/// The fact that re-established a key determinant in phase 2, reached through
+/// the determinant's own `U` entry — the ψ-qualification subject. Both gets
 /// hit state this commit just wrote (write txns read their own writes),
 /// so a miss is corruption, never a race.
 fn establishing_fact<'t>(
@@ -511,21 +512,21 @@ fn establishing_fact<'t>(
     txn: &'t WriteTxn<'_>,
     schema: &Schema,
     key: KeyId,
-    guard: &[u8],
+    determinant: &[u8],
 ) -> Result<&'t [u8]> {
     let statement = schema.key(key);
     let mut buf: KeyBuf = [0; MAX_KEY];
-    let u_len = keys::guard_key(&mut buf, statement.relation, statement.id, guard);
+    let u_len = keys::determinant_key(&mut buf, statement.relation, statement.id, determinant);
     let value = data
         .get(txn.raw(), &buf[..u_len])?
         .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-            "re-established U guard",
+            "re-established U determinant",
         )))?;
     fact_by_row(data, txn.raw(), statement.relation, decode_row_id(value)?)
 }
 
 /// The first sealed source axiom inside φ projecting to the
-/// disestablished guard tuple — the domain-quantification survivor scan
+/// disestablished determinant tuple — the domain-quantification survivor scan
 /// (its `R`-probe sibling above walks stored edges; the constant source's
 /// edges were never stored). Returns the axiom's canonical fact bytes —
 /// the violation payload.
@@ -533,7 +534,7 @@ fn closed_source_survivor(
     schema: &Schema,
     plan: &CommitPlan<'_>,
     containment_id: ContainmentId,
-    guard: &[u8],
+    determinant: &[u8],
 ) -> Option<Box<[u8]>> {
     let statement = schema.containment(containment_id);
     let source = &statement.source;
@@ -549,19 +550,19 @@ fn closed_source_survivor(
     let relation = schema.relation(source.relation);
     let layout = relation.layout();
     let phi = &plan.selections.containment(containment_id).source;
-    let mut derived = Vec::with_capacity(guard.len());
+    let mut derived = keys::DeterminantImage::scratch_with_capacity(determinant.len());
     for row in relation.extension()? {
         if !satisfies(phi, layout, &row.fact) {
             continue;
         }
-        keys::permuted_guard_bytes(
+        keys::permuted_determinant_image(
             layout,
             &source.projection,
             key_permutation,
             &row.fact,
             &mut derived,
         );
-        if derived == guard {
+        if derived.as_bytes() == determinant {
             return Some(row.fact.clone());
         }
     }
@@ -577,10 +578,10 @@ fn closed_source_survivor(
 pub(crate) struct Probe<'a> {
     pub(crate) statement: StatementId,
     pub(crate) target_relation: RelationId,
-    /// The `Functionality` statement whose `U` guard is probed.
+    /// The `Functionality` statement whose `U` determinant is probed.
     pub(crate) target_key: KeyId,
     pub(crate) target_check: &'a SelectionCheck,
-    /// The source fact's projection, already in target guard order.
+    /// The source fact's projection, already in target determinant order.
     pub(crate) key_bytes: &'a [u8],
     /// The source fact — the violation payload.
     pub(crate) fact_bytes: &'a [u8],
@@ -631,12 +632,12 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Scalar target probe: one `U` get on the target key's guard. A miss
+    /// Scalar target probe: one `U` get on the target key's determinant. A miss
     /// is the violation; a hit with a nonempty target selection
     /// additionally checks the found fact against σ (one `F` get).
     pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
         let target_key = self.schema.key(probe.target_key);
-        let u_len = keys::guard_key(
+        let u_len = keys::determinant_key(
             &mut self.key,
             probe.target_relation,
             target_key.id,
@@ -650,7 +651,7 @@ impl<'a> Checker<'a> {
 
     /// The coverage walk (`docs/architecture/30-dependencies.md`
     /// § pointwise lifting): the source interval `[s, e)` must be jointly
-    /// covered by the target's guard entries sharing its scalar prefix.
+    /// covered by the target's determinant entries sharing its scalar prefix.
     /// Sound in one forward pass because `disjoint` was minted when the
     /// target's pointwise key was accepted, proving the prefix group's
     /// intervals are disjoint and start-ordered. All
@@ -669,17 +670,17 @@ impl<'a> Checker<'a> {
     /// through [`GapAt`].
     pub(crate) fn check_coverage(
         &mut self,
-        disjoint: DisjointGuardProof,
+        disjoint: DisjointDeterminantProof,
         probe: &Probe<'_>,
     ) -> Result<()> {
         disjoint.authorize_coverage();
         let target_key = self.schema.key(probe.target_key);
-        // The scratch holds the full guard key
+        // The scratch holds the full determinant key
         // `U | rel | stmt | prefix | s | e` (the acceptance gate puts the
         // interval last, so its 16 bytes are the tail). Only slices of it
         // are used: the group prefix, the seek key `group ‖ s`, and the
         // source window words.
-        let full_len = keys::guard_key(
+        let full_len = keys::determinant_key(
             &mut self.key,
             probe.target_relation,
             target_key.id,
@@ -687,16 +688,16 @@ impl<'a> Checker<'a> {
         );
         let group_len = full_len - 16;
         let seek_len = full_len - 8;
-        // The scratch parses exactly like a stored guard key: its tail
+        // The scratch parses exactly like a stored determinant key: its tail
         // is the probe interval `s ‖ e` (the acceptance gate puts the
-        // interval last) — a construction invariant of `guard_key`, so
-        // the surviving guard is a programmer-error panic, never a
-        // corruption path (the slice type cannot carry a runtime guard
+        // interval last) — a construction invariant of `determinant_key`, so
+        // the surviving determinant is a programmer-error panic, never a
+        // corruption path (the slice type cannot carry a runtime determinant
         // width).
         let (source_start, source_end, _) = segment_words(&self.key[..full_len], &[])
-            .expect("the guard scratch ends in the probe interval");
+            .expect("the determinant scratch ends in the probe interval");
 
-        // Entry location: the one guard entry that can cover `s`. A
+        // Entry location: the one determinant entry that can cover `s`. A
         // segment starting exactly at `s` has full key `seek ‖ its end`,
         // so the ≥ probe lands on it first when it exists; otherwise the
         // group's predecessor — the segment with the largest start below
@@ -714,7 +715,7 @@ impl<'a> Checker<'a> {
                 Some((k, v)) if k.starts_with(&self.key[..group_len]) => {
                     if k.len() != full_len {
                         return Err(Error::Corruption(CorruptionError::MalformedValue(
-                            "U guard key length",
+                            "U determinant key length",
                         )));
                     }
                     (k[full_len - 8..] > self.key[group_len..seek_len]).then_some((k, v))
@@ -729,7 +730,7 @@ impl<'a> Checker<'a> {
                     .flatten()
                 else {
                     return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "U guard key length",
+                        "U determinant key length",
                     )));
                 };
                 // The forward chain: everything past the entry, in key
@@ -741,7 +742,7 @@ impl<'a> Checker<'a> {
             }
             None => (None, None),
         };
-        let segments = GuardSegments {
+        let segments = DeterminantSegments {
             entry,
             chain,
             group: &self.key[..group_len],
@@ -757,9 +758,9 @@ impl<'a> Checker<'a> {
         )
     }
 
-    /// The per-segment target-selection check: with an empty σ the guard
+    /// The per-segment target-selection check: with an empty σ the determinant
     /// hit alone is the proof; otherwise the found target fact is fetched
-    /// (one `F` get via the guard's row id) and byte-checked against σ.
+    /// (one `F` get via the determinant's row id) and byte-checked against σ.
     fn check_segment(&self, probe: &Probe<'_>, value: &[u8]) -> Result<()> {
         if matches!(probe.target_check, SelectionCheck::Empty) {
             return Ok(());
@@ -775,29 +776,29 @@ impl<'a> Checker<'a> {
     }
 }
 
-/// One sweep segment out of the guard adapter: the 8-byte
-/// order-preserving interval halves off the key's tail, plus the guard
+/// One sweep segment out of the determinant adapter: the 8-byte
+/// order-preserving interval halves off the key's tail, plus the determinant
 /// value (the σ payload — a row id for the target-selection re-check).
-type GuardSegment<'t> = ([u8; 8], [u8; 8], &'t [u8]);
+type DeterminantSegment<'t> = ([u8; 8], [u8; 8], &'t [u8]);
 
-/// Parses a guard key into the sweep's word pair: the interval halves
+/// Parses a determinant key into the sweep's word pair: the interval halves
 /// are the key's last 16 bytes (the acceptance gate puts the interval
 /// last). `None` on a key too short to carry them — the callers' key-
 /// shape corruption path consumes it alongside their length check.
-fn segment_words<'t>(key: &[u8], value: &'t [u8]) -> Option<GuardSegment<'t>> {
+fn segment_words<'t>(key: &[u8], value: &'t [u8]) -> Option<DeterminantSegment<'t>> {
     let (head, &end) = key.split_last_chunk()?;
     let (_, &start) = head.split_last_chunk()?;
     Some((start, end, value))
 }
 
-/// One prefix group's guard entries as sweep segments: the located entry
+/// One prefix group's determinant entries as sweep segments: the located entry
 /// first, then the forward chain, ending at the group boundary. The
 /// key-shape corruption checks live here — the trust boundary stays
 /// where the data enters — so the shared walk sees only parsed words.
-struct GuardSegments<'t, 'k, I> {
+struct DeterminantSegments<'t, 'k, I> {
     /// The entry segment, already shape-checked, yielded first; `None`
     /// when nothing covers the source's start (the sweep gaps there).
-    entry: Option<GuardSegment<'t>>,
+    entry: Option<DeterminantSegment<'t>>,
     /// The chain cursor past the entry; `None` without an entry, and
     /// dropped at the group boundary or on a malformed key.
     chain: Option<I>,
@@ -808,11 +809,11 @@ struct GuardSegments<'t, 'k, I> {
     full_len: usize,
 }
 
-impl<'t, I> Iterator for GuardSegments<'t, '_, I>
+impl<'t, I> Iterator for DeterminantSegments<'t, '_, I>
 where
     I: Iterator<Item = std::result::Result<(&'t [u8], &'t [u8]), heed::Error>>,
 {
-    type Item = Result<GuardSegment<'t>>;
+    type Item = Result<DeterminantSegment<'t>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(segment) = self.entry.take() {
@@ -840,7 +841,7 @@ where
         else {
             self.chain = None;
             return Some(Err(Error::Corruption(CorruptionError::MalformedValue(
-                "U guard key length",
+                "U determinant key length",
             ))));
         };
         Some(Ok(segment))

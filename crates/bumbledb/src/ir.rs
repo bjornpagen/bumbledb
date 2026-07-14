@@ -32,13 +32,13 @@ pub const MAX_RULES: usize = 16;
 
 /// The condition-tree nesting cap: a [`ConditionTree`] deeper than this
 /// is rejected at validation (`ValidationError::ConditionNestingTooDeep`)
-/// — a **boundary guard**, not planner hygiene (the trust-boundary law,
+/// — a **boundary check**, not planner hygiene (the trust-boundary law,
 /// `docs/architecture/20-query-ir.md`): queries arrive as data, the tree
 /// walks (DNF counting, distribution, rendering) recurse by depth, and an
 /// unbounded depth would let hostile input exhaust the stack — a crash,
 /// not a typed error. Depth is measured **iteratively** (an explicit work
-/// list, [`normalize::nesting_depth`]), so the guard itself is total; the
-/// recursive walks run only on guarded trees. The cap is generous: a
+/// list, [`normalize::nesting_depth`]), so the check itself is total; the
+/// recursive walks run only on checked trees. The cap is generous: a
 /// meaningful tree's depth is bounded by its leaf count, and the DNF
 /// blowup cap ([`MAX_RULES`]) already limits leaves per disjunct.
 pub const MAX_CONDITION_DEPTH: usize = 64;
@@ -76,7 +76,7 @@ pub enum Term {
     /// both sides. A ray (`end == MAX`) has no finite measure: the
     /// subtraction raises the typed execution error
     /// [`crate::Error::MeasureOfRay`] — hosts exclude rays with an
-    /// `Allen` guard or a bounded-end filter on the same atom first.
+    /// `Allen` check or a bounded-end filter on the same atom first.
     Duration(VarId),
 }
 

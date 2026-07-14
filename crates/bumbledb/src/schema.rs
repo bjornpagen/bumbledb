@@ -200,7 +200,7 @@ pub struct Side {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatementDescriptor {
     /// `R(X) -> R`: πX is injective on R. X is ordered (the order defines
-    /// the guard key), non-empty, duplicate-free.
+    /// the determinant key), non-empty, duplicate-free.
     Functionality {
         relation: RelationId,
         projection: Box<[FieldId]>,
@@ -345,13 +345,13 @@ impl SchemaDescriptor {
 }
 
 /// Validator-minted evidence that a functionality's interval position is
-/// final and unique. That shape makes every scalar-prefix guard group
+/// final and unique. That shape makes every scalar-prefix determinant group
 /// disjoint and start-ordered under the functionality judgment, which is
 /// precisely the precondition the interval coverage sweep consumes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DisjointGuardProof(());
+pub(crate) struct DisjointDeterminantProof(());
 
-impl DisjointGuardProof {
+impl DisjointDeterminantProof {
     /// Consumes the validator witness at the coverage boundary. The method
     /// is intentionally zero-cost; possession of `self` is the check.
     pub(crate) const fn authorize_coverage(self) {
@@ -374,7 +374,7 @@ pub(crate) enum Enforcement {
     IntervalCoverage {
         target_key: KeyId,
         key_permutation: Box<[u16]>,
-        disjoint: DisjointGuardProof,
+        disjoint: DisjointDeterminantProof,
     },
     /// A closed target's stage-1-known answer set.
     Closed { members: MemberSet },
@@ -547,7 +547,7 @@ pub struct Relation {
     /// The sealed extension of a closed relation (`None` = ordinary): rows
     /// pre-encoded at validate, in declaration order — row id = index. A
     /// closed relation's `fields` open with the synthetic (`id`, U64)
-    /// field, so guards, statements, and queries address the handle's id
+    /// field, so determinants, statements, and queries address the handle's id
     /// uniformly at [`FieldId`] 0 (`docs/architecture/10-data-model.md`
     /// § closed relations).
     extension: Option<Box<[SealedRow]>>,

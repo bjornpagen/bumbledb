@@ -63,7 +63,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
             "{name}: count {count} outside ±30% of {expected}"
         );
     };
-    band("guard", cov.guard, 10);
+    band("key_probe", cov.key_probe, 10);
     band("star", cov.star, 15);
     band("chain", cov.chain, 15);
     band("self_join", cov.self_join, 8);
