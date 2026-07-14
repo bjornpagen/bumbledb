@@ -1,4 +1,4 @@
-import Bumbledb.Query.Denotation
+import Bumbledb.Query.Aggregates
 
 /-!
 # Countermodels — the design scratchpad (PRD 02 onward, grows all campaign)
@@ -50,6 +50,19 @@ part of the spec.
   never over the infinite complement. The validator's mechanisms:
   `NegatedVariableUnbound`, `ComparisonOnlyVariable`, and the
   find-side binding check.
+
+## PRD 05 resident
+
+* `sql_zero_row_from_no_binding` — the refused SQL reading of the
+  empty global aggregate (the seed artifact's `sum [] = 0`): a model
+  that ALWAYS emits one row manufactures, over a rule that derives
+  nothing, an answer with NO deriving witness — an answer from no
+  binding, which the engine-faithful `Query.aggAnswers` cannot
+  express (it demands the witness; `Query.empty_global_no_answer`).
+  The artifact-divergence note in `Query/Aggregates.lean` records
+  why the engine's contract is the authority.
+
+## PRD 04 resident (continued)
 
 * `one_way_overhang` — the [0,10)/[0,20) overshoot (port): one-way
   coverage of a [0,10) source by a [0,20) target HOLDS (with the
@@ -322,5 +335,54 @@ theorem unsafe_rule_infinite (C : Query.Classify) (ρ : Query.ParamEnv) :
       l.filterMap headStrId :=
     List.mem_filterMap.mpr ⟨_, hinl, rfl⟩
   exact Nat.not_succ_le_self _ (le_foldr_max _ _ hid)
+
+/-! ## The SQL zero-row countermodel (PRD 05)
+
+The artifact-divergence's refused reading, as a model: a global
+aggregate that ALWAYS emits one row — folding the possibly-empty
+binding set, SQL's ungrouped-aggregate behavior (`SUM` of nothing is
+`0`). Over an instance where the rule derives NOTHING, it
+manufactures an answer with no deriving witness. -/
+
+/-- The refused reading: one row, always — the fold of the (possibly
+empty) binding set. -/
+def sqlGlobalAgg (C : Query.Classify) (r : Query.Rule) (I : Instance)
+    (ρ : Query.ParamEnv) (fold : Set Query.Assignment → Value) :
+    Set Query.AnswerTuple :=
+  fun t => t = [fold (Query.bindingSet C r I ρ)]
+
+/-- The empty instance: no facts anywhere. -/
+def emptyInstance : Instance := fun _ => fun _ => False
+
+/-- A rule that derives nothing over the empty instance: its one
+positive atom demands a fact, and there are none. -/
+def gateRule : Query.Rule where
+  finds := []
+  atoms := [{ relation := ⟨0⟩, bindings := [] }]
+  negated := []
+  conditions := []
+
+theorem gateRule_derives_nothing (C : Query.Classify)
+    (ρ : Query.ParamEnv) :
+    ∀ σ, ¬ Query.derives C gateRule emptyInstance ρ σ := by
+  rintro σ ⟨hatoms, -, -⟩
+  obtain ⟨f, hf, -⟩ := hatoms _ (List.mem_singleton.mpr rfl)
+  exact hf
+
+/-- **The countermodel.** The SQL zero-row reading manufactures an
+answer over the EMPTY binding set — a row with no deriving witness —
+while the engine-faithful `Query.aggAnswers` is empty
+(`Query.empty_global_no_answer`): an answer must trace to a binding,
+and the artifact's `sum [] = 0` is refused. Bridge:
+`exec/sink/aggregate/finalize.rs` ("Empty input yields zero rows");
+the SQL-divergence oracle rule in `60-validation.md`. -/
+theorem sql_zero_row_from_no_binding (C : Query.Classify)
+    (ρ : Query.ParamEnv) (fold : Set Query.Assignment → Value)
+    (keys : List Query.VarId)
+    (foldRow : List Value → Set Query.Assignment → Query.AnswerTuple) :
+    ([fold (Query.bindingSet C gateRule emptyInstance ρ)] ∈
+      sqlGlobalAgg C gateRule emptyInstance ρ fold) ∧
+    (∀ t, t ∉ Query.aggAnswers C gateRule emptyInstance ρ keys foldRow) :=
+  ⟨rfl, Query.empty_global_no_answer (gateRule_derives_nothing C ρ)⟩
 
 end Bumbledb.Countermodels
