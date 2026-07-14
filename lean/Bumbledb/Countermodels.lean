@@ -1,5 +1,6 @@
 import Bumbledb.Query.Aggregates
 import Bumbledb.Exec.Sweep
+import Bumbledb.Exec.Dedup
 import Bumbledb.Txn
 
 /-!
@@ -108,6 +109,18 @@ part of the spec.
   `write_from` witness loop), exactly
   `Txn.derived_soundness_vs_freshness`'s other half.
 
+## PRD 07 resident
+
+* `distinct_premise_load_bearing` — the unkeyed double-count: one
+  positive occurrence whose bound fields cover NO key, two DISTINCT
+  facts (same bound amount, different unbound payload) collapsing to
+  ONE full binding, and a `Sum` that double-counts under seen-set
+  elision — 200 where the distinct binding set sums 100. The
+  bag-semantics accident `DistinctWitness` forecloses, made concrete:
+  `Query.distinct_witness_licence`'s premise
+  (`Query.BoundFieldsCoverKey`) cannot be dropped, which is why
+  `provably_distinct` is the only mint of the witness and
+  `AggregateSink::without_seen_set` demands it by value.
 -/
 
 namespace Bumbledb.Countermodels
@@ -614,5 +627,140 @@ theorem stale_but_sound :
   cases List.mem_singleton.mp hst
   intro f hf _
   exact absurd hf.1 child_ne_parent
+
+/-! ## The unkeyed double-count countermodel (PRD 07)
+
+The `DistinctWitness` premise, load-bearing. One positive occurrence
+binds only the amount field; the relation carries two facts agreeing
+there and differing at the UNBOUND payload field — so the bound
+fields cover no key, the two distinct facts produce ONE full binding
+(`amount ↦ 100`), the elided stream repeats the key, and a `Sum`
+folded without the seen-set answers 200 where the distinct binding
+set sums 100. Contrast the doc example "two postings of amount 100 to
+one account are two distinct bindings (their fresh ids differ)" —
+that holds when the fresh id IS bound; here it is not, and the
+seen-set is what keeps the collapse honest. -/
+
+/-- The shared bound value: amount 100. -/
+def amount : Value := ⟨.u64, ⟨100, by omega⟩⟩
+
+/-- The first posting: amount at field 0, payload `true` at the
+unbound field 1. -/
+def postingA : Fact := fun i =>
+  if i.id = 1 then ⟨.bool, true⟩ else amount
+
+/-- The second posting: same amount, payload `false`. -/
+def postingB : Fact := fun i =>
+  if i.id = 1 then ⟨.bool, false⟩ else amount
+
+/-- The two-fact relation. -/
+def postingRel : Set Fact := fun f => f = postingA ∨ f = postingB
+
+/-- The instance: every relation reads the posting pair (only the
+occurrence's relation is ever consulted). -/
+def postingInstance : Instance := fun _ => postingRel
+
+/-- The unkeyed occurrence: only the amount field is bound. -/
+def unkeyedAtom : Query.Atom :=
+  { relation := ⟨0⟩, bindings := [(⟨0⟩, .var ⟨0⟩)] }
+
+/-- The rule around it — the body a `Sum(amount)` head folds. -/
+def unkeyedRule : Query.Rule where
+  finds := [⟨0⟩]
+  atoms := [unkeyedAtom]
+  negated := []
+  conditions := []
+
+/-- The ONE binding both facts produce. -/
+def dupAssign : Query.Assignment := fun _ => amount
+
+/-- The two postings are distinct facts — they differ at the unbound
+payload field. -/
+theorem postingA_ne_postingB : postingA ≠ postingB := fun heq => by
+  have hb : (true : Bool) = false :=
+    congrArg (fun f : Fact => Value.asBool (f ⟨1⟩)) heq
+  cases hb
+
+/-- Both distinct facts are matched by the one binding — two fact
+tuples, one full binding: exactly the duplicate the binding seen-set
+exists to absorb. -/
+theorem both_facts_one_binding (ρ : Query.ParamEnv) :
+    Query.MatchSelection unkeyedRule postingInstance ρ dupAssign
+      (fun _ => postingA) ∧
+    Query.MatchSelection unkeyedRule postingInstance ρ dupAssign
+      (fun _ => postingB) := by
+  constructor <;> intro a ha <;> rcases List.mem_singleton.mp ha with rfl
+  · refine ⟨Or.inl rfl, ?_⟩
+    intro b hb
+    rcases List.mem_singleton.mp hb with rfl
+    rfl
+  · refine ⟨Or.inr rfl, ?_⟩
+    intro b hb
+    rcases List.mem_singleton.mp hb with rfl
+    rfl
+
+/-- The premise FAILS: the occurrence's bound fields cover no key —
+any covered field list lives at field 0, where the two distinct facts
+agree, so no `Functionality` over it can hold. -/
+theorem unkeyed_no_cover :
+    ¬ Query.BoundFieldsCoverKey unkeyedRule postingInstance := by
+  intro h
+  obtain ⟨K, hkey, hpin⟩ := h unkeyedAtom (List.mem_singleton.mpr rfl)
+  have hall : ∀ i, i ∈ K → postingA i = postingB i := by
+    intro i hi
+    obtain ⟨t, hb, -⟩ := hpin i hi
+    have hfield : i = ⟨0⟩ :=
+      congrArg Prod.fst (List.mem_singleton.mp hb)
+    subst hfield
+    rfl
+  exact postingA_ne_postingB
+    (hkey postingA postingB (Or.inl rfl) (Or.inr rfl)
+      ((Fact.project_eq_iff postingA postingB K).mpr hall))
+
+/-- The Sum observer: a key row's u64 payload. -/
+def headU64 : List Value → Nat
+  | { type := .u64, val := x } :: _ => x.val
+  | _ => 0
+
+/-- Sum over the emitted key rows. -/
+def sumHead (rows : List (List Value)) : Nat :=
+  natSum (rows.map headU64)
+
+/-- The elided key stream: both fact tuples emit the one binding's
+key. -/
+def dupStream : List (List Value) := [[amount], [amount]]
+
+/-- The distinct set of the stream is the one key. -/
+theorem dedup_dupStream : Query.dedup dupStream = [[amount]] := by
+  show Query.dedup [[amount], [amount]] = [[amount]]
+  unfold Query.dedup
+  rw [if_pos (List.mem_singleton.mpr rfl)]
+  unfold Query.dedup
+  rw [if_neg (fun h : [amount] ∈ ([] : List (List Value)) => nomatch h)]
+  rfl
+
+/-- **The countermodel (PRD 07).** `distinct_premise_load_bearing` —
+the `DistinctWitness` premise cannot be dropped: the unkeyed
+occurrence's two distinct facts collapse to one full binding
+(`both_facts_one_binding`, `postingA_ne_postingB`), no key is covered
+(`unkeyed_no_cover` — `provably_distinct` refuses this rule, so
+`AggregateSink::without_seen_set` is unreachable for it), and the
+`Sum` of the elided stream DOUBLE-COUNTS: 200 against the distinct
+binding set's 100. The normative fold domain is the distinct set
+(`Query.agg_over_distinct_bindings`); elision without the premise is
+bag semantics by accident. -/
+theorem distinct_premise_load_bearing (ρ : Query.ParamEnv) :
+    (Query.MatchSelection unkeyedRule postingInstance ρ dupAssign
+        (fun _ => postingA) ∧
+      Query.MatchSelection unkeyedRule postingInstance ρ dupAssign
+        (fun _ => postingB) ∧
+      postingA ≠ postingB) ∧
+    ¬ Query.BoundFieldsCoverKey unkeyedRule postingInstance ∧
+    sumHead dupStream = 200 ∧
+    sumHead (Query.dedup dupStream) = 100 := by
+  refine ⟨⟨(both_facts_one_binding ρ).1, (both_facts_one_binding ρ).2,
+    postingA_ne_postingB⟩, unkeyed_no_cover, rfl, ?_⟩
+  rw [dedup_dupStream]
+  rfl
 
 end Bumbledb.Countermodels
