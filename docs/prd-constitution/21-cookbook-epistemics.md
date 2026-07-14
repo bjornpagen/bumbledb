@@ -64,3 +64,53 @@ equal in strength, cited.
 ## Doc amendments (rule 6)
 
 This PRD is its amendments.
+
+## Results (2026-07-13)
+
+Every final-corpus recipe has an immediate `Guarantee:` line. The sync test
+walks numbered headings and fails unless the first nonblank line is that label,
+in the same 1–27 order as the schema roster.
+
+| recipe | epistemic label | negative/runtime witness |
+|---:|---|---|
+| 1 | formal predicate + validator/runtime premise | pointwise functionality matrices; checked `Interval`; `r01_duration_sum_round_trips` |
+| 2 | Lean theorem + validator/runtime premises | `KeyBackedEquality.unique_target/unique_source`; equality reverse-key reject locks; DU macro runtime locks |
+| 3 | definition + validator/runtime premises | `r03_a_second_optional_child_is_rejected`; absence query round-trip |
+| 4 | host discipline + validator premises | schema validation; bounded-sum runtime locks; scale/currency remain explicitly host-owned |
+| 5 | validator/runtime premises + host discipline | fixed-bytes round trips and determinant locks; external hashing/durability is not claimed |
+| 6 | validator/runtime premise | closed-extension validation/member-set tests; `r06_vocabulary_handle_round_trips` |
+| 7 | validator/runtime premise | ψ member-set tests; `r07_classification_round_trips` |
+| 8 | validator/runtime premise | `r08_sub_vocabulary_violating_insert_aborts` |
+| 9 | validator/runtime premise + host discipline | scalar functionality conflict locks; result ordering explicitly host-side |
+| 10 | Lean theorem + validator/runtime premises for arms; host discipline for acyclicity | equality macro locks; edge containment validation; acyclicity failure documented, not engine-tested |
+| 11 | validator/runtime premises | containment and composite-key judgment matrices; no transitive claim |
+| 12 | definition + validator/runtime premises | functionality/containment matrices and recipe 3's second-child countercase |
+| 13 | Lean theorem + validator/runtime premises for the shipped arm; host discipline for transitions | equality direction locks; transition-path failure is documented host policy |
+| 14 | Lean theorem + validator/runtime premises | calendar schema/family tests, DU locks, pointwise and coverage judgment matrices, `r14_booking_probe_round_trips` |
+| 15 | Lean theorem/countermodel + validator/runtime premise | `interior_gap_aborts`; recipe-26 matrix pins one-way overhang acceptance |
+| 16 | Lean theorem/countermodel + validator/runtime premise | `r26_exact_partition_commit_matrix` pins one-way overhang acceptance; `interior_gap_aborts` pins gap failure |
+| 17 | validator/runtime premises + host discipline | pointwise-key and coverage matrices; the recipe states full bracket coverage/proration as host duties |
+| 18 | runtime query semantics | `r18_pack_round_trips` plus Pack overlap/adjacency/ray suites; no stored invariant claimed |
+| 19 | Lean theorem + runtime invariant for sums; host discipline for double entry | `r19_balances_round_trips`, checked-sum overflow locks; double entry remains a host assertion |
+| 20 | generation-witness/runtime premise + host retry discipline | update-where, insert-select, snapshot-RMW movement locks; final-state point-read integration suite |
+| 21 | Lean theorem + validator/runtime premises for soundness; host discipline for completeness | `stale_derived_fact_is_rejected_after_source_movement`; omissions explicitly remain representable |
+| 22 | Lean theorem + represented planner/runtime premise | `r22_union_read_round_trips`; `r22_a_double_arm_payment_is_rejected`; disjoint-union introspection locks |
+| 23 | intentionally refused | each gravestone points to its compiled replacement; no unsupported failure is presented as an engine guarantee |
+| 24 | host discipline | `r24_closure_idiom_reaches_the_exact_set`; cross-snapshot staleness is documented rather than misclassified as an engine failure |
+| 25 | host discipline + runtime aggregate semantics | `r25_subtree_rollup_matches_the_hand_computed_sum`; recursion remains outside the engine |
+| 26 | Lean theorem + validator/runtime premises | `r26_exact_partition_commit_matrix`: exact/adjacent acceptance, forward gap, reverse overhang, one-way contrast, composite prefix |
+| 27 | host discipline + validator/runtime premises | `r27_maintenance_rederives_after_generation_movement`; stale-derived soundness rejection lock |
+
+Over-claim rewrites (before → after):
+
+- Recipe 20: “the three witness idioms” → “three write idioms”; only the
+  snapshot-derived update-where/insert-select paths are generation-witnessed,
+  while `WriteTx` point reads use the final-state class.
+- Recipe 21: “staleness the schema can name is uncommittable” → “unsoundness
+  the schema can name is uncommittable; incompleteness remains representable.”
+- Recipe 25: recursion “solved on the current engine” → “handled by explicit
+  host composition over the current query engine.”
+
+No other claim exceeded its new label. Host-discipline failures are named as
+documentation limits rather than fabricated engine tests; existing general
+validator/runtime matrices are cited instead of duplicated.

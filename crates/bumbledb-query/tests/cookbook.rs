@@ -693,6 +693,32 @@ fn doc_blocks() -> Vec<String> {
     blocks
 }
 
+/// The first nonblank line after every numbered heading. The label is prose,
+/// not part of the schema token stream, so the sync lock inventories it
+/// separately while walking the same ordered recipe corpus.
+fn doc_labels() -> Vec<(usize, String)> {
+    let lines: Vec<_> = COOKBOOK.lines().collect();
+    let mut labels = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let Some(rest) = line.strip_prefix("## ") else {
+            continue;
+        };
+        let Some((number, _)) = rest.split_once(". ") else {
+            continue;
+        };
+        let Ok(number) = number.parse() else {
+            continue;
+        };
+        let label = lines[index + 1..]
+            .iter()
+            .find(|candidate| !candidate.trim().is_empty())
+            .expect("a recipe heading has following prose")
+            .trim();
+        labels.push((number, label.to_owned()));
+    }
+    labels
+}
+
 /// The count assertion: the doc's numbered recipes are exactly the roster —
 /// a recipe added to the doc without a test entry (or the reverse) fails here.
 #[test]
@@ -713,11 +739,24 @@ fn the_doc_roster_is_exactly_this_roster() {
 #[test]
 fn doc_blocks_match_the_compiled_copies() {
     let blocks = doc_blocks();
+    let labels = doc_labels();
     assert_eq!(
         blocks.len(),
         ROSTER.len(),
         "one schema block per recipe, in roster order"
     );
+    assert_eq!(
+        labels.len(),
+        ROSTER.len(),
+        "one guarantee label per recipe, in roster order"
+    );
+    for (index, (number, label)) in labels.iter().enumerate() {
+        assert_eq!(*number, index + 1, "label numbering follows the roster");
+        assert!(
+            label.starts_with("Guarantee: "),
+            "recipe {number} has no immediate Guarantee label: {label:?}"
+        );
+    }
     for (i, (block, recipe)) in blocks.iter().zip(ROSTER.iter()).enumerate() {
         let expected = format!("bumbledb::schema!{{{}}}", normalize(recipe.source));
         assert_eq!(
@@ -936,6 +975,37 @@ fn r03_negation_round_trips() {
     );
 }
 
+/// Recipe 3's missing negative witness: the child key is the 0..1 proof,
+/// so two different address facts for one business abort together.
+#[test]
+fn r03_a_second_optional_child_is_rejected() {
+    use r03::{Business, MailingAddress, Optionality};
+
+    let dir = TempDir::new("r03-second-child");
+    let db = Db::create(dir.path(), Optionality).expect("create optionality store");
+    let error = db
+        .write(|tx| {
+            let business = tx.alloc()?;
+            tx.insert(&Business {
+                id: business,
+                name: "one",
+            })?;
+            tx.insert(&MailingAddress {
+                business,
+                line: "first",
+                city: "here",
+            })?;
+            tx.insert(&MailingAddress {
+                business,
+                line: "second",
+                city: "there",
+            })?;
+            Ok(())
+        })
+        .expect_err("the child key permits at most one address");
+    assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
+}
+
 /// Recipe 14: the room-conflict probe — one Allen mask against a param.
 #[test]
 fn r14_booking_probe_round_trips() {
@@ -1015,6 +1085,36 @@ fn r22_union_read_round_trips() {
         "(v0, v1) | Payment(id: v0, kind == Card), Card(payment: v0, last4: v1);\n\
          (v0, v1) | Payment(id: v0, kind == Ach), Ach(payment: v0, routing: v1);"
     );
+}
+
+/// Recipe 22's missing negative witness: one payment cannot inhabit both
+/// key-backed DU arms because the reverse equality requires two distinct
+/// discriminator values for the same fresh id.
+#[test]
+fn r22_a_double_arm_payment_is_rejected() {
+    use r22::{Ach, Card, Kind, Payment, PaymentId, Payments};
+
+    let dir = TempDir::new("r22-double-arm");
+    let db = Db::create(dir.path(), Payments).expect("create payments store");
+    let payment = PaymentId(7);
+    let error = db
+        .write(|tx| {
+            tx.insert(&Payment {
+                id: payment,
+                kind: Kind::Card.id(),
+            })?;
+            tx.insert(&Card {
+                payment,
+                last4: 1234,
+            })?;
+            tx.insert(&Ach {
+                payment,
+                routing: 99,
+            })?;
+            Ok(())
+        })
+        .expect_err("one id cannot inhabit Card and Ach simultaneously");
+    assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
 }
 
 /// Recipe 6: the vocabulary — the bare handle is a fixed point of the
