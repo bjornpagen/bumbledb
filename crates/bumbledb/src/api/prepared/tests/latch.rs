@@ -103,6 +103,15 @@ fn a_miss_stays_live_and_latches_after_interning() {
         .expect("execute");
     assert!(out.is_empty(), "an uninterned Eq literal empties the rule");
     assert_eq!(prepared.unresolved_literals, 1, "a miss never latches");
+    let (_, report) = prepared
+        .explain(&txn, &cache, &[])
+        .expect("the missed query explains");
+    assert!(
+        report.contains(
+            "pending literals: \"carol\" — an unresolved Eq literal empties its rule at execution until latched"
+        ),
+        "{report}"
+    );
     assert!(
         matches!(
             prepared.program.rules(),
@@ -120,11 +129,12 @@ fn a_miss_stays_live_and_latches_after_interning() {
     insert_postings(&env, &schema, &[(2, 8, "carol", 30)]);
     cache.evict_older_than(crate::GenerationId::from_storage(2));
     let txn = env.read_txn().expect("txn");
-    prepared
-        .execute(&txn, &cache, &[], &mut out)
-        .expect("execute");
-    assert_eq!(amounts(&out), vec![30]);
+    let (latched, report) = prepared
+        .explain(&txn, &cache, &[])
+        .expect("the newly interned literal explains and latches");
+    assert_eq!(amounts(&latched), vec![30]);
     assert_eq!(prepared.unresolved_literals, 0);
+    assert!(!report.contains("pending literals:"), "{report}");
 
     // Third execution: the fast path, same answer.
     prepared

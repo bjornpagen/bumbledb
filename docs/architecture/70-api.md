@@ -398,6 +398,10 @@ proposition the commit checks in one integer compare.
 - **Schema errors** (declaration boundary, `30-dependencies.md` roster included):
   typed, enumerated, returned from `Db::create`/`Db::open` — where the definition's
   descriptor is validated — before any environment exists.
+- **Schema warnings:** an accepted sealed schema exposes `Schema::warnings()`.
+  `RedundantSuperkey { relation, key, implied_by }` reports determinant write
+  amplification without weakening or disabling either key; warnings are never
+  errors and never alter the fingerprint.
 - **Validation errors** (IR boundary, `20-query-ir.md` roster): typed, enumerated,
   returned at prepare time.
 - **Runtime query errors:** `Overflow` (aggregate range check), `Corruption` (hard
@@ -458,7 +462,12 @@ execute/commit phase, drained by tooling into Chrome-trace artifacts. Always
 available: `snap.explain(..)` (rendered report — it opens with the query in the
 rule notation, `20-query-ir.md` § the renderer; `PreparedQuery::rendered_query`
 exposes the same string) and the structured execution-stats surface it is built
-from. For a query prepare *rejected* there is no handle to ask:
+from. When a String literal still awaits interning, EXPLAIN names every pending
+literal and states the latch consequence: an unresolved `Eq` literal empties its
+rule at execution until latched. The line is derived from the live plan templates
+after execution, so it disappears on the execution that resolves and rewrites the
+literal (`api/prepared/introspect.rs`, `bind.rs`). For a query prepare *rejected*
+there is no handle to ask:
 `Db::render_query` renders any query — malformed included, with placeholder
 names — so roster errors print beside the query they reject.
 

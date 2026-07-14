@@ -636,6 +636,45 @@ fn rejects_a_negated_atom_variable_unbound_by_positive_atoms() {
 }
 
 #[test]
+fn a_param_position_does_not_bind_a_negated_variable_even_when_written_after_it() {
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        // Hostile textual order: the unsafe occurrence is written first.
+        negated: vec![atom(POSTING, vec![(1, var(1))])],
+        atoms: vec![atom(
+            HOLDER,
+            vec![(0, var(0)), (1, Term::Param(ParamId(1)))],
+        )],
+        conditions: vec![],
+    });
+    assert_eq!(
+        expect_err(&query),
+        ValidationError::NegatedVariableUnbound { var: VarId(1) }
+    );
+}
+
+#[test]
+fn an_aggregate_output_does_not_bind_a_negated_variable_even_when_written_after_it() {
+    let query = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Sum,
+                over: Some(VarId(1)),
+            },
+        ],
+        // Hostile textual order: the unsafe occurrence is written first.
+        negated: vec![atom(POSTING, vec![(1, var(1))])],
+        atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        conditions: vec![],
+    });
+    assert_eq!(
+        expect_err(&query),
+        ValidationError::NegatedVariableUnbound { var: VarId(1) }
+    );
+}
+
+#[test]
 fn rejects_mixed_arg_and_fold_aggregates() {
     // ArgMax + Sum in one find list: "sum of the latest" is two queries.
     let query = simple(

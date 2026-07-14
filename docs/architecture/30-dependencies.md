@@ -169,6 +169,13 @@ Concretely, validation demands:
   model to commit.
 
 A statement failing the gate is a schema-declaration error naming the missing plan.
+The exact-field-set rule explains itself: `NoMatchingTargetKey` and
+`NoPointwiseTargetKey` own the target relation, requested projection, and every
+available key id plus field set. Their `Display` lists that evidence; the interval
+form ends by pointing at the executable repair—declare the exact pointwise key
+`R(prefix…, interval) -> R`. The owned payload is assembled by
+`schema/validate.rs::target_key_candidates`, so the rejection outlives its
+descriptor without borrowing schema internals.
 This is the simplicity doctrine applied to invariants: generality of representation,
 discipline of acceptance — an accepted statement is a *measured promise*, exactly
 like an accepted optimization (`00-product.md`).
@@ -185,6 +192,12 @@ spine; `Schema::statement` parses it into the corresponding borrowed typed arm f
 fingerprint identity, storage, diagnostics, and rendering. Downstream code consumes
 that arm directly — the witness carries the proof, so no descriptor/enforcement
 variant agreement remains to assert.
+
+A strict-superkey FD is accepted and enforced, but sealing records the non-fatal
+`SchemaWarning::RedundantSuperkey { relation, key, implied_by }`: the smaller
+determinant already implies it, so the larger determinant is write amplification.
+`Schema::warnings()` is diagnostics only; it changes neither the statement spine
+nor enforcement, and therefore does not enter the fingerprint.
 
 ## Pointwise lifting (the interval semantics, derived)
 

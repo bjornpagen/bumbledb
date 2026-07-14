@@ -938,8 +938,12 @@ mod equality_reverse_key {
             error,
             bumbledb::Error::Schema(SchemaError::NoMatchingTargetKey {
                 statement: StatementId(2),
-                relation,
-            }) if relation == Source::RELATION
+                target,
+                projection,
+                available,
+            }) if target == Source::RELATION
+                && *projection == [FieldId(0)]
+                && available.is_empty()
         ));
     }
 }
@@ -1049,6 +1053,75 @@ mod keyed_equality {
                     statement: StatementId(1),
                     ..
                 }])
+        ));
+    }
+}
+
+mod redundant_superkey_warning {
+    use bumbledb::schema::{RelationId, SchemaWarning, StatementId};
+    use bumbledb::{Db, Error, Interval, Theory as _, Violation};
+
+    bumbledb::schema! {
+        pub RedundantKeys;
+
+        relation Window { id: u64, span: interval<i64>, payload: i64 }
+
+        Window(id) -> Window;
+        Window(id, span) -> Window;
+    }
+
+    #[test]
+    fn redundant_superkey_warns_without_weakening_either_enforcement_plan() {
+        let schema = RedundantKeys
+            .descriptor()
+            .validate()
+            .expect("the redundant superkey remains accepted");
+        let [
+            SchemaWarning::RedundantSuperkey {
+                relation,
+                key,
+                implied_by,
+            },
+        ] = schema.warnings()
+        else {
+            panic!("expected exactly one redundant-superkey warning");
+        };
+        let keys = schema.relation(RelationId(0)).keys();
+        assert_eq!(*relation, RelationId(0));
+        assert_eq!((*key, *implied_by), (keys[1], keys[0]));
+
+        let dir = crate::common::TempDir::new("macro-redundant-superkey");
+        let db = Db::create(dir.path(), RedundantKeys).expect("warning is non-fatal");
+        let error = db
+            .write(|tx| {
+                tx.insert(&Window {
+                    id: 7,
+                    span: Interval::<i64>::new(0, 5).expect("interval"),
+                    payload: 10,
+                })?;
+                tx.insert(&Window {
+                    id: 7,
+                    span: Interval::<i64>::new(3, 8).expect("interval"),
+                    payload: 20,
+                })
+            })
+            .expect_err("both determinant plans reject the overlapping duplicate id");
+        let Error::CommitRejected { violations } = error else {
+            panic!("expected functionality violations, got {error:?}");
+        };
+        assert_eq!(violations.as_slice().len(), 2);
+        assert!(matches!(
+            violations.as_slice(),
+            [
+                Violation::Functionality {
+                    statement: StatementId(0),
+                    ..
+                },
+                Violation::Functionality {
+                    statement: StatementId(1),
+                    ..
+                }
+            ]
         ));
     }
 }

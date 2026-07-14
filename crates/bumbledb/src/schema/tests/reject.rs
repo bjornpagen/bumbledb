@@ -1,5 +1,12 @@
 use super::*;
-use crate::error::SchemaError;
+use crate::error::{SchemaError, TargetKeyCandidate};
+
+fn target_key(key: u16, projection: &[FieldId]) -> TargetKeyCandidate {
+    TargetKeyCandidate {
+        key: KeyId(key),
+        projection: projection.into(),
+    }
+}
 
 // Field-level checks first, then the statement reject corpus: one test per
 // line of the validation roster (docs/architecture/30-dependencies.md
@@ -134,7 +141,9 @@ fn equality_rejects_a_singleton_reverse_projection_without_a_left_key() {
         decl.validate().unwrap_err(),
         SchemaError::NoMatchingTargetKey {
             statement: StatementId(2),
-            relation: RelationId(0),
+            target: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+            available: Box::new([]),
         }
     );
 }
@@ -168,7 +177,9 @@ fn equality_rejects_a_composite_reverse_projection_without_a_left_key() {
         decl.validate().unwrap_err(),
         SchemaError::NoMatchingTargetKey {
             statement: StatementId(2),
-            relation: RelationId(0),
+            target: RelationId(0),
+            projection: Box::new([FieldId(0), FieldId(1)]),
+            available: Box::new([]),
         }
     );
 }
@@ -523,8 +534,36 @@ fn rejects_no_matching_target_key() {
         decl.validate().unwrap_err(),
         SchemaError::NoMatchingTargetKey {
             statement: StatementId(0),
-            relation: RelationId(1)
+            target: RelationId(1),
+            projection: Box::new([FieldId(0)]),
+            available: Box::new([]),
         }
+    );
+}
+
+#[test]
+fn target_key_diagnostic_lists_the_requested_projection_and_every_available_key() {
+    let decl = two_relations(
+        vec![field("a", ValueType::U64), field("b", ValueType::U64)],
+        vec![
+            field("x", ValueType::U64),
+            field("y", ValueType::U64),
+            field("z", ValueType::U64),
+        ],
+        vec![
+            fd(RelationId(1), &[FieldId(0)]),
+            fd(RelationId(1), &[FieldId(1), FieldId(2)]),
+            containment(
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+            ),
+        ],
+    );
+    let error = decl.validate().unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "statement 2: target relation 1 projection {0, 1} matches no declared key; \
+         available keys: key 0 {0}; key 1 {1, 2}"
     );
 }
 
@@ -546,12 +585,21 @@ fn rejects_interval_containment_without_pointwise_key() {
             ),
         ],
     );
+    let error = decl.validate().unwrap_err();
     assert_eq!(
-        decl.validate().unwrap_err(),
+        error,
         SchemaError::NoPointwiseTargetKey {
             statement: StatementId(1),
-            relation: RelationId(1)
+            target: RelationId(1),
+            projection: Box::new([FieldId(0), FieldId(1)]),
+            available: Box::new([target_key(0, &[FieldId(0)])]),
         }
+    );
+    assert_eq!(
+        error.to_string(),
+        "statement 1: target relation 1 projection {0, 1} matches no declared key; \
+         available keys: key 0 {0}; hint: declare the exact pointwise key \
+         `R(prefix…, interval) -> R`"
     );
 }
 
@@ -935,7 +983,9 @@ fn rejects_a_closed_target_projection_that_is_not_the_id() {
         decl.validate().unwrap_err(),
         SchemaError::NoMatchingTargetKey {
             statement: StatementId(1),
-            relation: RelationId(0)
+            target: RelationId(0),
+            projection: Box::new([FieldId(1)]),
+            available: Box::new([target_key(0, &[FieldId(0)])]),
         }
     );
 }

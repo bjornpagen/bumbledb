@@ -16,10 +16,11 @@ use super::{
     AxiomIndex, CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement,
     DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId,
     KeyStatement, MemberSet, Relation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType, value_matches,
+    SchemaWarning, Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
+    value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
-use crate::error::SchemaError;
+use crate::error::{SchemaError, TargetKeyCandidate};
 use crate::storage::keys::MAX_DETERMINANT_WIDTH;
 use crate::value::Value;
 
@@ -146,6 +147,7 @@ impl SchemaDescriptor {
         }
 
         Ok(Schema {
+            warnings: redundant_superkeys(&keys),
             relations: relations.into_boxed_slice(),
             keys: keys.into_boxed_slice(),
             containments: containments.into_boxed_slice(),
@@ -209,6 +211,41 @@ impl FieldSet {
         }
         Ok(Self(canonical.into_boxed_slice()))
     }
+
+    fn is_strict_subset_of(&self, other: &Self) -> bool {
+        self.0.len() < other.0.len()
+            && self
+                .0
+                .iter()
+                .all(|field| other.0.binary_search(field).is_ok())
+    }
+}
+
+/// Non-fatal key diagnostics, derived only after every accepted key has a
+/// stable [`KeyId`]. A strict superkey remains fully sealed and enforced;
+/// the warning records its determinant-write amplification.
+fn redundant_superkeys(keys: &[KeyStatement]) -> Box<[SchemaWarning]> {
+    let field_sets: Vec<FieldSet> = keys
+        .iter()
+        .map(|key| FieldSet::new(&key.projection).expect("sealed key projection is a set"))
+        .collect();
+    let mut warnings = Vec::new();
+    for (key_index, key) in keys.iter().enumerate() {
+        for (smaller_index, smaller) in keys.iter().enumerate() {
+            if key.relation == smaller.relation
+                && field_sets[smaller_index].is_strict_subset_of(&field_sets[key_index])
+            {
+                warnings.push(SchemaWarning::RedundantSuperkey {
+                    relation: key.relation,
+                    key: KeyId(u16::try_from(key_index).expect("statement count fits u16")),
+                    implied_by: KeyId(
+                        u16::try_from(smaller_index).expect("statement count fits u16"),
+                    ),
+                });
+            }
+        }
+    }
+    warnings.into_boxed_slice()
 }
 
 /// A validated projection carries both statement order (execution and key
@@ -696,10 +733,7 @@ fn resolve_target_key(
     // sealed extension here and never exists at commit.
     if let Some(rows) = target_relation.extension.as_deref() {
         if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
-            return Err(SchemaError::NoMatchingTargetKey {
-                statement: id,
-                relation: target.relation,
-            });
+            return Err(missing_target_key(id, target, descriptors, false));
         }
         return Ok(Enforcement::Closed {
             members: compile_member_set(target_relation, target, rows),
@@ -713,10 +747,7 @@ fn resolve_target_key(
     // two intervals (the FD gate rejects them), so with two or more there
     // is no pointwise key to resolve — reject without searching.
     if positions.len() > 1 {
-        return Err(SchemaError::NoPointwiseTargetKey {
-            statement: id,
-            relation: target.relation,
-        });
+        return Err(missing_target_key(id, target, descriptors, true));
     }
     let interval_position = positions.first().copied();
 
@@ -741,17 +772,12 @@ fn resolve_target_key(
     // Roster "IND whose target projection matches no key of the target
     // (or, with an interval position, no pointwise key carrying it)".
     let Some((key_idx, key_projection)) = found else {
-        return Err(if interval_position.is_some() {
-            SchemaError::NoPointwiseTargetKey {
-                statement: id,
-                relation: target.relation,
-            }
-        } else {
-            SchemaError::NoMatchingTargetKey {
-                statement: id,
-                relation: target.relation,
-            }
-        });
+        return Err(missing_target_key(
+            id,
+            target,
+            descriptors,
+            interval_position.is_some(),
+        ));
     };
     // Set equality means the resolved key carries the interval field, and
     // the key's own FD gate forces it last — the key *is* pointwise; the
@@ -803,6 +829,59 @@ fn resolve_target_key(
             target_key,
             key_permutation,
         })
+    }
+}
+
+/// Owned evidence for an exact-target-key rejection. Key ids follow the
+/// functionality-only typed arena order, exactly as successful sealing.
+fn target_key_candidates(
+    target: RelationId,
+    descriptors: &[StatementDescriptor],
+) -> Box<[TargetKeyCandidate]> {
+    let mut next_key = 0usize;
+    let mut available = Vec::new();
+    for descriptor in descriptors {
+        if let StatementDescriptor::Functionality {
+            relation,
+            projection,
+        } = descriptor
+        {
+            let key = KeyId(u16::try_from(next_key).expect("statement count fits u16"));
+            next_key += 1;
+            if *relation == target {
+                available.push(TargetKeyCandidate {
+                    key,
+                    projection: projection.clone(),
+                });
+            }
+        }
+    }
+    available.into_boxed_slice()
+}
+
+fn missing_target_key(
+    statement: StatementId,
+    side: &Side,
+    descriptors: &[StatementDescriptor],
+    pointwise: bool,
+) -> SchemaError {
+    let target = side.relation;
+    let projection = side.projection.clone();
+    let available = target_key_candidates(target, descriptors);
+    if pointwise {
+        SchemaError::NoPointwiseTargetKey {
+            statement,
+            target,
+            projection,
+            available,
+        }
+    } else {
+        SchemaError::NoMatchingTargetKey {
+            statement,
+            target,
+            projection,
+            available,
+        }
     }
 }
 

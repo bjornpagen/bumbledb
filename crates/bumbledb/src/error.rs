@@ -11,7 +11,16 @@ mod display;
 
 use crate::ir::{ParamId, VarId};
 use crate::schema::fingerprint::SchemaFingerprint;
-use crate::schema::{FieldId, RelationId, StatementId, ValueType};
+use crate::schema::{FieldId, KeyId, RelationId, StatementId, ValueType};
+
+/// One declared key offered as owned evidence in a target-key rejection.
+/// The diagnostic may outlive the descriptor, so it carries no schema
+/// references.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetKeyCandidate {
+    pub key: KeyId,
+    pub projection: Box<[FieldId]>,
+}
 
 /// Corruption detected while decoding stored bytes — a hard error, never a
 /// skip, never a default (`docs/architecture/50-storage.md`).
@@ -276,14 +285,18 @@ pub enum SchemaError {
     /// probe-ability requires Y to be a permutation of a declared key.
     NoMatchingTargetKey {
         statement: StatementId,
-        relation: RelationId,
+        target: RelationId,
+        projection: Box<[FieldId]>,
+        available: Box<[TargetKeyCandidate]>,
     },
     /// Roster "IND … (or, with an interval position, no pointwise key
     /// carrying it)": the coverage walk needs the target's own key to keep
     /// its intervals disjoint and ordered.
     NoPointwiseTargetKey {
         statement: StatementId,
-        relation: RelationId,
+        target: RelationId,
+        projection: Box<[FieldId]>,
+        available: Box<[TargetKeyCandidate]>,
     },
     /// An interval position on a containment with a closed side — refused
     /// v0: a pointwise judgment against a closed relation would mix the

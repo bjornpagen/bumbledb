@@ -5,6 +5,7 @@ use crate::error::Result;
 use crate::exec::explain::{CountingCounters, Report, RulePlan};
 use crate::exec::run::Counters;
 use crate::image::cache::ImageCache;
+use crate::image::view::{Const, FilterPredicate};
 use crate::storage::env::ReadTxn;
 
 use super::finalize::finalize;
@@ -29,6 +30,7 @@ impl<S> PreparedQuery<'_, S> {
         params: &[BindValue<'_>],
     ) -> Result<(Answers, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
+        let pending = self.pending_literal_note();
         let report = Report {
             rules: match &self.program {
                 Program::Empty => vec![RulePlan::Empty],
@@ -49,9 +51,53 @@ impl<S> PreparedQuery<'_, S> {
         Ok((
             out,
             format!(
-                "query:\n{}\npredicate: {}\n{report}",
-                self.rendered, self.predicate
+                "query:\n{}\npredicate: {}\n{}{report}",
+                self.rendered,
+                self.predicate,
+                pending.as_deref().unwrap_or("")
             ),
+        ))
+    }
+
+    /// The pending-literal explanation is derived from the mutable plan
+    /// templates after execution: a hit has already latched to `Word` and
+    /// disappears; a dictionary miss remains owned raw bytes here.
+    fn pending_literal_note(&self) -> Option<String> {
+        if self.unresolved_literals == 0 {
+            return None;
+        }
+        let mut literals = Vec::new();
+        for rule in self.program.rules() {
+            let PreparedRule::FreeJoin(rule) = rule else {
+                continue;
+            };
+            for occurrence in rule
+                .plan
+                .occurrences()
+                .iter()
+                .filter(|occurrence| !occurrence.role.discharged())
+            {
+                for selection in &occurrence.selections {
+                    if let Const::PendingIntern { bytes } = &selection.value {
+                        literals.push(pending_literal_label(bytes));
+                    }
+                }
+                for filter in &occurrence.filters {
+                    if let FilterPredicate::Compare {
+                        value: Const::PendingIntern { bytes },
+                        ..
+                    } = filter
+                    {
+                        literals.push(pending_literal_label(bytes));
+                    }
+                }
+            }
+        }
+        literals.sort();
+        literals.dedup();
+        Some(format!(
+            "pending literals: {} — an unresolved Eq literal empties its rule at execution until latched\n",
+            literals.join(", ")
         ))
     }
 
@@ -261,4 +307,11 @@ impl<S> PreparedQuery<'_, S> {
     pub fn predicate(&self) -> &crate::ir::validate::Predicate {
         &self.predicate
     }
+}
+
+fn pending_literal_label(bytes: &[u8]) -> String {
+    format!(
+        "{:?}",
+        std::str::from_utf8(bytes).expect("validated String literal is UTF-8")
+    )
 }

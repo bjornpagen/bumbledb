@@ -12,8 +12,57 @@ use std::fmt;
 use crate::schema::{Schema, SchemaDescriptor, StatementId, render};
 
 use super::{
-    CorruptionError, Direction, Error, FactShapeError, SchemaError, ValidationError, Violation,
+    CorruptionError, Direction, Error, FactShapeError, SchemaError, TargetKeyCandidate,
+    ValidationError, Violation,
 };
+
+fn field_set(f: &mut fmt::Formatter<'_>, projection: &[crate::schema::FieldId]) -> fmt::Result {
+    let mut fields = projection.to_vec();
+    fields.sort_unstable();
+    write!(f, "{{")?;
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            write!(f, ", ")?;
+        }
+        write!(f, "{}", field.0)?;
+    }
+    write!(f, "}}")
+}
+
+fn target_key_rejection(
+    f: &mut fmt::Formatter<'_>,
+    statement: crate::schema::StatementId,
+    target: crate::schema::RelationId,
+    projection: &[crate::schema::FieldId],
+    available: &[TargetKeyCandidate],
+    pointwise: bool,
+) -> fmt::Result {
+    write!(
+        f,
+        "statement {}: target relation {} projection ",
+        statement.0, target.0
+    )?;
+    field_set(f, projection)?;
+    write!(f, " matches no declared key; available keys: ")?;
+    if available.is_empty() {
+        write!(f, "none")?;
+    } else {
+        for (index, candidate) in available.iter().enumerate() {
+            if index > 0 {
+                write!(f, "; ")?;
+            }
+            write!(f, "key {} ", candidate.key.0)?;
+            field_set(f, &candidate.projection)?;
+        }
+    }
+    if pointwise {
+        write!(
+            f,
+            "; hint: declare the exact pointwise key `R(prefix…, interval) -> R`"
+        )?;
+    }
+    Ok(())
+}
 
 impl fmt::Display for Violation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -346,20 +395,16 @@ impl fmt::Display for SchemaError {
             ),
             Self::NoMatchingTargetKey {
                 statement: s,
-                relation: r,
-            } => write!(
-                f,
-                "statement {}: target projection matches no key of relation {}",
-                s.0, r.0
-            ),
+                target,
+                projection,
+                available,
+            } => target_key_rejection(f, *s, *target, projection, available, false),
             Self::NoPointwiseTargetKey {
                 statement: s,
-                relation: r,
-            } => write!(
-                f,
-                "statement {}: no pointwise key of relation {} carries the interval position",
-                s.0, r.0
-            ),
+                target,
+                projection,
+                available,
+            } => target_key_rejection(f, *s, *target, projection, available, true),
             Self::ClosedContainmentInterval {
                 statement: s,
                 relation: r,
