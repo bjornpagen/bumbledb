@@ -1,6 +1,7 @@
-# The CI spine (the crucible packet (git ecec1dc3)). Three lanes on
-# macos arm64 (macos-latest is M-series): the workspace gate and the
-# corpus-replay lane per push; the Miri lane on a nightly cron.
+# The CI spine (the crucible packet (git ecec1dc3)). Four lanes on
+# macos arm64 (macos-latest is M-series): the workspace gate, the
+# corpus-replay lane, and the Lean gate per push; the Miri lane on a
+# nightly cron.
 #
 # Wall-time record (measured locally on the pinned M2 Max, 2026-07-13):
 #   * corpus-replay lane: 463 s test wall (the query three-way replay
@@ -108,3 +109,35 @@ jobs:
             target
           key: miri-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
       - run: scripts/miri.sh
+
+  # Lane 4 — the Lean gate (the covenant campaign, PRD 01): elan
+  # installs the toolchain pinned in lean/lean-toolchain, then
+  # scripts/lean.sh runs `lake build` plus the placeholder battery.
+  # Per push — the build is seconds at this size; if it exceeds
+  # 2 minutes by campaign end, PRD 14 moves it to the Miri cron and
+  # records the number. First-run verification on a real push:
+  # pending (this workflow cannot be exercised from the local
+  # machine — the PRD-16-of-crucible precedent).
+  lean:
+    if: github.event_name != 'schedule'
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan
+            lean/.lake
+          key: lean-${{ runner.os }}-${{ hashFiles('lean/lean-toolchain') }}
+      - name: install elan (the pinned Lean toolchain)
+        # lean/lean-toolchain owns the exact version; elan resolves and
+        # installs it on first `lake` invocation inside lean/. On a
+        # cache hit the toolchain is already present and this step is
+        # a no-op beyond PATH.
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - run: scripts/lean.sh

@@ -1,0 +1,5 @@
+name = "bumbledb"
+defaultTargets = ["Bumbledb"]
+
+[[lean_lib]]
+name = "Bumbledb"

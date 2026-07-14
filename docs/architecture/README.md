@@ -4,6 +4,12 @@ These documents are the normative design. They are living documents, updated in 
 there are no work packets or compliance gates. Git history is the changelog; the
 documents themselves describe **only the current reality**.
 
+The formal specification lives in `lean/` — a buildable, CI-checked Lean development
+that is the only normative home of bumbledb's semantics; these docs cite its theorems
+by name and never restate them. The docs' surviving duties are what Lean cannot hold:
+mechanism, measurement, decision records, and operations (`lean/README.md` carries the
+laws).
+
 ## Rules for these docs
 
 1. **Every decision records its strongest alternative, why it lost, and what evidence

@@ -1,5 +1,10 @@
 # Formal semantics
 
+**SUPERSEDED (the covenant campaign, PRD 01):** this artifact is the
+statement inventory the living Lean specification in `lean/` was built
+from; the living spec is `lean/`, and PRD 14 deletes this directory
+(the SHA-pinned artifact remains reachable in git history forever).
+
 `GPT55DependencyTheory.lean` is the formal companion to Bumbledb's
 dependency and query semantics. It was produced by the gpt55 audit on
 2026-07-13, pinned against repository commit `98f1103`, and checked with
