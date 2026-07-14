@@ -224,7 +224,7 @@ the number of matching anchors, not a prose-quality proxy (each match was read).
 | 17 | `DistinctWitness` execution/table evidence | 3 |
 | 19 | projection-arity/type-mix validation charter | 12 |
 | 20 | maintenance/write-from protocol and 27-recipe roster | 10 + 27 |
-| 21 | immediate cookbook `Guarantee:` labels | 27 |
+| 21 | immediate cookbook `Guarantee:` labels | 28 |
 | 22 | verifier-matrix and online-maintains/offline-proves references | 3 |
 
 ### 6. Refusal-ledger verification — green

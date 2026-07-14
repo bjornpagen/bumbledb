@@ -69,7 +69,7 @@ This PRD is its amendments.
 
 Every final-corpus recipe has an immediate `Guarantee:` line. The sync test
 walks numbered headings and fails unless the first nonblank line is that label,
-in the same 1–27 order as the schema roster.
+in the same 1–28 order as the schema roster.
 
 | recipe | epistemic label | negative/runtime witness |
 |---:|---|---|
@@ -100,6 +100,7 @@ in the same 1–27 order as the schema roster.
 | 25 | host discipline + runtime aggregate semantics | `r25_subtree_rollup_matches_the_hand_computed_sum`; recursion remains outside the engine |
 | 26 | Lean theorem + validator/runtime premises | `r26_exact_partition_commit_matrix`: exact/adjacent acceptance, forward gap, reverse overhang, one-way contrast, composite prefix |
 | 27 | host discipline + validator/runtime premises | `r27_maintenance_rederives_after_generation_movement`; stale-derived soundness rejection lock |
+| 28 | validator/runtime premises + host discipline | `r28_migration_is_etl`: fingerprint refusal, snapshot-consistent export, identity-preserving load, fresh-id catch-up, and judgment under the target theory |
 
 Over-claim rewrites (before → after):
 
