@@ -313,22 +313,22 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
         }))
     };
     ops.push(measure(
-        vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         vec![],
     ));
     ops.push(measure(
-        vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         vec![ray_filter.clone()],
     ));
     ops.push(measure(
-        vec![FindTerm::AggregateDuration {
+        vec![FindTerm::AggregateMeasure {
             op: AggOp::Sum,
             over: VarId(1),
         }],
         vec![],
     ));
     ops.push(measure(
-        vec![FindTerm::AggregateDuration {
+        vec![FindTerm::AggregateMeasure {
             op: AggOp::Sum,
             over: VarId(1),
         }],

@@ -196,7 +196,7 @@ fn head_reads(term: &FindTerm) -> Option<VarId> {
         // Arg terms as before, and the measure positions — `end − start`
         // is a NON-injective map of its variable, so equal head rows do
         // not force equal interval values.
-        FindTerm::Aggregate { .. } | FindTerm::Duration(_) | FindTerm::AggregateDuration { .. } => {
+        FindTerm::Aggregate { .. } | FindTerm::Measure(_) | FindTerm::AggregateMeasure { .. } => {
             None
         }
     }

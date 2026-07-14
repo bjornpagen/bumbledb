@@ -171,13 +171,13 @@ fn clause(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
 fn find_term(out: &mut String, term: &FindTerm) {
     match term {
         FindTerm::Var(var) => var_name(out, *var),
-        FindTerm::Duration(var) => {
+        FindTerm::Measure(var) => {
             out.push_str("Duration(");
             var_name(out, *var);
             out.push(')');
         }
         FindTerm::Aggregate { op, over } => aggregate(out, *op, *over, false),
-        FindTerm::AggregateDuration { op, over } => aggregate(out, *op, Some(*over), true),
+        FindTerm::AggregateMeasure { op, over } => aggregate(out, *op, Some(*over), true),
     }
 }
 
@@ -264,7 +264,7 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
             }
             // Rejected by validation (`DurationInBinding`); rendered
             // anyway — the diagnostic pictures the mistake.
-            Term::Duration(var) => {
+            Term::Measure(var) => {
                 out.push_str(" == Duration(");
                 var_name(&mut out, *var);
                 out.push(')');
@@ -353,7 +353,7 @@ fn term(out: &mut String, term: &Term) {
         Term::Var(var) => var_name(out, *var),
         Term::Param(param) | Term::ParamSet(param) => param_name(out, *param),
         Term::Literal(value) => literal(out, value),
-        Term::Duration(var) => {
+        Term::Measure(var) => {
             out.push_str("Duration(");
             var_name(out, *var);
             out.push(')');

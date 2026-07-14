@@ -345,7 +345,7 @@ fn claim_hours_query() -> Query {
     Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(2),
             },

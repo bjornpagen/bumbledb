@@ -483,7 +483,7 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
                 b.find_var(id);
             }
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
-            b.finds.push(bumbledb::FindTerm::Duration(window));
+            b.finds.push(bumbledb::FindTerm::Measure(window));
         }
         // Predicate: `Duration(window) <op> literal` — an order
         // comparison over the measure word, the selection form.
@@ -493,7 +493,7 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
             b.conditions.push(Comparison {
                 op: crate::querygen::shapes::order_op(rng),
-                lhs: Term::Duration(window),
+                lhs: Term::Measure(window),
                 rhs: Term::Literal(Value::U64(rng.range(3 * interval_data::GROUP_SPAN))),
             });
         }
@@ -510,12 +510,12 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
                 // the sum tops out near transfers × 4096 ≪ 2⁶³.
                 b.conditions.push(Comparison {
                     op: bumbledb::CmpOp::Le,
-                    lhs: Term::Duration(window),
+                    lhs: Term::Measure(window),
                     rhs: Term::Literal(Value::U64(4 * interval_data::GROUP_SPAN)),
                 });
             }
             b.finds
-                .push(bumbledb::FindTerm::AggregateDuration { op, over: window });
+                .push(bumbledb::FindTerm::AggregateMeasure { op, over: window });
         }
     }
 }

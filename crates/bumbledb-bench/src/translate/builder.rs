@@ -191,7 +191,7 @@ impl Builder<'_> {
             }
             Term::ParamSet(param) => out.push(self.in_list(column, *param)?),
             Term::Var(_) => unreachable!("variable arms are polarity-specific"),
-            Term::Duration(_) => unreachable!("validated: no measure in bindings"),
+            Term::Measure(_) => unreachable!("validated: no measure in bindings"),
         }
         Ok(())
     }
@@ -231,7 +231,7 @@ impl Builder<'_> {
             }
             Term::ParamSet(param) => out.push(self.set_membership(start, end, *param)?),
             Term::Var(_) => unreachable!("variable arms are polarity-specific"),
-            Term::Duration(_) => unreachable!("validated: no measure in bindings"),
+            Term::Measure(_) => unreachable!("validated: no measure in bindings"),
         }
         Ok(())
     }
@@ -406,7 +406,7 @@ impl Builder<'_> {
             // The measure: end − start arithmetic over the halves —
             // exact in SQLite's i64 for the generated corpora (the U64
             // lane's sentinel end sits below 2⁶³).
-            Term::Duration(var) => match self.columns.get(var) {
+            Term::Measure(var) => match self.columns.get(var) {
                 Some(VarCols::Interval { start, end }) => {
                     Ok(Rendered::One(format!("({end} - {start})")))
                 }

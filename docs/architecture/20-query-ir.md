@@ -249,7 +249,7 @@ ConditionTree = Leaf(Comparison)      // the input condition grammar: any
 HeadTerm   = Var | Aggregate(HeadOp)  // var-free: variables are rule-scoped,
                                       //   so the head names shapes and the
                                       //   rules supply the variables (a
-                                      //   Duration find is a Var position:
+                                      //   Measure find is a Var position:
                                       //   a u64 value per binding)
 HeadOp     = Sum | Min | Max | Count | CountDistinct | ArgMax | ArgMin | Pack
 Atom {
@@ -257,7 +257,7 @@ Atom {
     bindings:   Vec<(FieldId, Term)>, // named-field; absence of a field IS the wildcard
 }
 Term       = Var(VarId) | Param(ParamId) | ParamSet(ParamId) | Literal(Value)
-           | Duration(VarId)          // the measure — comparison side only
+           | Measure(VarId)           // the measure — comparison side only
                                       //   (§ the measure; a binding position
                                       //   is a typed rejection)
 Value      = Bool(bool) | U64(u64) | I64(i64)
@@ -270,8 +270,8 @@ Value      = Bool(bool) | U64(u64) | I64(i64)
                                       //   never a field type (10-data-model.md)
 FindTerm   = Var(VarId)
            | Aggregate { op: AggOp, over: Option<VarId> }   // over: None for Count
-           | Duration(VarId)                                // the measure, projected
-           | AggregateDuration { op: AggOp, over: VarId }   // Sum/Min/Max of the
+           | Measure(VarId)                                 // the measure, projected
+           | AggregateMeasure { op: AggOp, over: VarId }   // Sum/Min/Max of the
                                                             //   measure (only those
                                                             //   three; typed rejection
                                                             //   otherwise)
@@ -395,13 +395,16 @@ of the engine.
 
 ## The measure (normative — the denotation's one arithmetic)
 
+**Vocabulary is pinned:** surface `Duration`, IR `Measure`; the denotation is
+point-set cardinality, and rays are refused at evaluation (`MeasureOfRay`).
+
 `Duration(t)` over an interval-typed rule variable is the measure of its
 point set, `|[s, e)| = e − s`, type u64 (`10-data-model.md`: the one
 arithmetic the denotation defines; everything else that looks like interval
 arithmetic is endpoint math and stays refused). **Legal positions,
-exhaustively:** a find term (`FindTerm::Duration` — a group-key position
+exhaustively:** a find term (`FindTerm::Measure` — a group-key position
 under aggregation, exactly like a plain variable find); the aggregated
-input of `Sum`/`Min`/`Max` (`FindTerm::AggregateDuration` — `Sum` in the
+input of `Sum`/`Min`/`Max` (`FindTerm::AggregateMeasure` — `Sum` in the
 wide accumulator with the single finalize range check, like every Sum); and
 one side of an **order comparison** (`Lt`/`Le`/`Gt`/`Ge`) against a
 u64-typed term or literal — "meetings longer than an hour". Every other

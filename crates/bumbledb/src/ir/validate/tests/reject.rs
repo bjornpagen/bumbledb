@@ -930,7 +930,7 @@ fn rejects_duration_in_a_binding() {
         vec![FindTerm::Var(VarId(0))],
         vec![atom(
             POSTING,
-            vec![(0, var(0)), (1, Term::Duration(VarId(1))), (SPAN, var(1))],
+            vec![(0, var(0)), (1, Term::Measure(VarId(1))), (SPAN, var(1))],
         )],
     );
     assert!(matches!(
@@ -952,7 +952,7 @@ fn rejects_duration_over_a_non_interval_variable() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Gt,
-            lhs: Term::Duration(VarId(1)),
+            lhs: Term::Measure(VarId(1)),
             rhs: Term::Literal(Value::U64(5)),
         })],
     });
@@ -965,7 +965,7 @@ fn rejects_duration_over_a_non_interval_variable() {
 #[test]
 fn rejects_a_duration_find_over_a_non_interval_variable() {
     let query = simple(
-        vec![FindTerm::Duration(VarId(0))],
+        vec![FindTerm::Measure(VarId(0))],
         vec![atom(POSTING, vec![(1, var(0))])],
     );
     assert!(matches!(
@@ -980,7 +980,7 @@ fn rejects_a_duration_aggregate_outside_sum_min_max() {
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::CountDistinct,
                 over: VarId(1),
             },
@@ -998,7 +998,7 @@ fn rejects_duration_under_equality() {
     // Only the order comparisons take a measure side.
     let query = duration_condition(Comparison {
         op: CmpOp::Eq,
-        lhs: Term::Duration(VarId(1)),
+        lhs: Term::Measure(VarId(1)),
         rhs: Term::Literal(Value::U64(5)),
     });
     assert!(matches!(
@@ -1011,8 +1011,8 @@ fn rejects_duration_under_equality() {
 fn rejects_duration_on_both_sides() {
     let query = duration_condition(Comparison {
         op: CmpOp::Lt,
-        lhs: Term::Duration(VarId(1)),
-        rhs: Term::Duration(VarId(1)),
+        lhs: Term::Measure(VarId(1)),
+        rhs: Term::Measure(VarId(1)),
     });
     assert!(matches!(
         expect_err(&query),
@@ -1032,7 +1032,7 @@ fn rejects_duration_against_a_non_u64_side() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Gt,
-            lhs: Term::Duration(VarId(1)),
+            lhs: Term::Measure(VarId(1)),
             rhs: var(2),
         })],
     });
@@ -1048,8 +1048,8 @@ fn rejects_a_duration_fold_over_a_group_key_variable() {
     // its measure is constant per group.
     let query = simple(
         vec![
-            FindTerm::Duration(VarId(1)),
-            FindTerm::AggregateDuration {
+            FindTerm::Measure(VarId(1)),
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(1),
             },
@@ -1070,7 +1070,7 @@ fn rejects_a_comparison_only_duration_variable() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Gt,
-            lhs: Term::Duration(VarId(9)),
+            lhs: Term::Measure(VarId(9)),
             rhs: Term::Literal(Value::U64(5)),
         })],
     });
@@ -1133,12 +1133,12 @@ fn rejects_pack_beside_a_fold_aggregate() {
 
 #[test]
 fn rejects_pack_beside_a_measure_fold() {
-    // The AggregateDuration form is a fold too — Sum∘Duration∘Pack in
+    // The AggregateMeasure form is a fold too — Sum∘Duration∘Pack in
     // one head stays two queries (the composition refusal).
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(1),
             },

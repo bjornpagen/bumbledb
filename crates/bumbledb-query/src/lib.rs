@@ -29,6 +29,9 @@
 //! term    := var | ?param | literal
 //! ```
 //!
+//! Surface `Duration(iv)` lowers to IR `Measure(iv)`: it denotes the
+//! point-set cardinality `end − start`, and a ray has no measure.
+//!
 //! **Punning law (B, decided; the alternative is ledgered in
 //! docs/architecture/70-api.md):** a bare field name binds a **clause-local variable
 //! named after the field** — projection shorthand, Rust's struct-shorthand
@@ -190,7 +193,7 @@ enum SelValue {
 enum Term {
     Var(Name),
     Param(Param),
-    Duration(Name),
+    Measure(Name),
     Lit(Lit),
 }
 
@@ -264,7 +267,7 @@ impl AggOp {
 /// variable names are a debugging sidecar the engine never stores.
 enum HeadTerm {
     Var(Name),
-    Duration(Name),
+    Measure(Name),
     Agg {
         op: AggOp,
         over: Option<Name>,
@@ -571,7 +574,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
         if let Some(extra) = inner.next() {
             return fail(extra.span(), "query!: Duration takes one variable");
         }
-        return Ok(HeadTerm::Duration(var));
+        return Ok(HeadTerm::Measure(var));
     }
     Ok(HeadTerm::Var(name))
 }
@@ -689,7 +692,7 @@ fn parse_term(tokens: &mut Tokens) -> Parse<Term> {
             if let Some(extra) = inner.next() {
                 return fail(extra.span(), "query!: Duration takes one variable");
             }
-            return Ok(Term::Duration(var));
+            return Ok(Term::Measure(var));
         }
         return Ok(Term::Var(name));
     }
@@ -839,7 +842,7 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
             if let Some(extra) = inner.next() {
                 return fail(extra.span(), "query!: Duration takes one variable");
             }
-            return finish_term_item(tokens, Term::Duration(var));
+            return finish_term_item(tokens, Term::Measure(var));
         }
         return Ok(Item::Atom(parse_atom(tokens, name)?));
     }
@@ -1091,8 +1094,8 @@ impl Emitter<'_> {
         Ok(match term {
             Term::Var(name) => Self::var(scope.intern(name)?),
             Term::Param(param) => self.param(param)?,
-            Term::Duration(name) => format!(
-                "::bumbledb::Term::Duration(::bumbledb::VarId({}))",
+            Term::Measure(name) => format!(
+                "::bumbledb::Term::Measure(::bumbledb::VarId({}))",
                 scope.intern(name)?
             ),
             Term::Lit(lit) => format!("::bumbledb::Term::Literal({})", Self::lit(lit)),
@@ -1186,8 +1189,8 @@ impl Emitter<'_> {
                 "::bumbledb::FindTerm::Var(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Duration(name) => format!(
-                "::bumbledb::FindTerm::Duration(::bumbledb::VarId({}))",
+            HeadTerm::Measure(name) => format!(
+                "::bumbledb::FindTerm::Measure(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
             HeadTerm::Agg { op, over, measure } => {
@@ -1198,7 +1201,7 @@ impl Emitter<'_> {
                              over: ::std::option::Option::None }}"
                     ),
                     Some(name) if *measure => format!(
-                        "::bumbledb::FindTerm::AggregateDuration {{ op: {op_expr}, \
+                        "::bumbledb::FindTerm::AggregateMeasure {{ op: {op_expr}, \
                              over: ::bumbledb::VarId({}) }}",
                         scope.head_var(name)?
                     ),

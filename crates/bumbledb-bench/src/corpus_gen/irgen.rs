@@ -145,9 +145,9 @@ fn random_find(rng: &mut Rng) -> FindTerm {
         },
         _ => {
             if rng.chance(1, 2) {
-                FindTerm::Duration(var(rng))
+                FindTerm::Measure(var(rng))
             } else {
-                FindTerm::AggregateDuration {
+                FindTerm::AggregateMeasure {
                     op: random_agg(rng),
                     over: var(rng),
                 }
@@ -185,7 +185,7 @@ fn random_term(rng: &mut Rng) -> Term {
         4 => Term::ParamSet(param(rng)),
         // `Duration` in a binding position is a typed rejection — a draw,
         // not a mode.
-        5 => Term::Duration(var(rng)),
+        5 => Term::Measure(var(rng)),
         _ => Term::Literal(random_value(rng)),
     }
 }

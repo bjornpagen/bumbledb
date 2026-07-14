@@ -173,7 +173,7 @@ fn duration_find_projects_the_measure_u64() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         atoms: vec![Atom {
             relation: SESSION,
             bindings: vec![
@@ -214,7 +214,7 @@ fn duration_find_projects_the_measure_i64() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         atoms: vec![Atom {
             relation: SHIFT,
             bindings: vec![
@@ -253,7 +253,7 @@ fn sum_min_max_over_the_measure() {
     );
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
-    let over = |op: AggOp| FindTerm::AggregateDuration { op, over: VarId(1) };
+    let over = |op: AggOp| FindTerm::AggregateMeasure { op, over: VarId(1) };
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -329,21 +329,21 @@ fn duration_comparisons_filter_and_join() {
     // Literal, both orientations (the mirrored form flips the operator).
     let literal = single(vec![ConditionTree::Leaf(Comparison {
         op: CmpOp::Gt,
-        lhs: Term::Duration(VarId(1)),
+        lhs: Term::Measure(VarId(1)),
         rhs: Term::Literal(Value::U64(2)),
     })]);
     assert_eq!(run(&literal), vec![vec![10], vec![20]]);
     let mirrored = single(vec![ConditionTree::Leaf(Comparison {
         op: CmpOp::Ge,
         lhs: Term::Literal(Value::U64(3)),
-        rhs: Term::Duration(VarId(1)),
+        rhs: Term::Measure(VarId(1)),
     })]);
     assert_eq!(run(&mirrored), vec![vec![20], vec![30]]);
 
     // Param bound at execution.
     let param = single(vec![ConditionTree::Leaf(Comparison {
         op: CmpOp::Lt,
-        lhs: Term::Duration(VarId(1)),
+        lhs: Term::Measure(VarId(1)),
         rhs: Term::Param(ParamId(0)),
     })]);
     let mut prepared = prepare(&txn, &cache, &schema, &param).expect("prepare");
@@ -355,7 +355,7 @@ fn duration_comparisons_filter_and_join() {
     // Same-atom u64 variable: measure vs the fact's own cap.
     let same_atom = single(vec![ConditionTree::Leaf(Comparison {
         op: CmpOp::Ge,
-        lhs: Term::Duration(VarId(1)),
+        lhs: Term::Measure(VarId(1)),
         rhs: Term::Var(VarId(2)),
     })]);
     assert_eq!(run(&same_atom), vec![vec![20], vec![30]]);
@@ -382,7 +382,7 @@ fn duration_comparisons_filter_and_join() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
-            lhs: Term::Duration(VarId(1)),
+            lhs: Term::Measure(VarId(1)),
             rhs: Term::Var(VarId(3)),
         })],
     });
@@ -459,7 +459,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
 
     // The find position.
     let find_rule = Rule {
-        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         atoms: vec![session_atom.clone()],
         negated: vec![],
         conditions: vec![],
@@ -471,7 +471,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
     let fold_rule = Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(1),
             },
@@ -490,7 +490,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Gt,
-            lhs: Term::Duration(VarId(1)),
+            lhs: Term::Measure(VarId(1)),
             rhs: Term::Literal(Value::U64(1)),
         })],
     };
@@ -533,7 +533,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
-            lhs: Term::Duration(VarId(1)),
+            lhs: Term::Measure(VarId(1)),
             rhs: Term::Var(VarId(3)),
         })],
     };
@@ -563,7 +563,7 @@ fn sum_of_durations_overflow_is_the_typed_overflow_error() {
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(1),
             },

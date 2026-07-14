@@ -98,7 +98,7 @@ fn typing(rule: &Rule) -> Typing {
                     t.scalar_params.insert(p.0);
                 }
                 // The measure never appears in bindings (validated).
-                Term::Literal(_) | Term::Duration(_) => {}
+                Term::Literal(_) | Term::Measure(_) => {}
             }
         }
     }
@@ -335,8 +335,8 @@ impl Coverage {
         for comparison in rule.conditions.iter().map(super::leaf) {
             // A measure side types the comparison u64 (the measure word)
             // and is its own construct row.
-            if matches!(comparison.lhs, Term::Duration(_))
-                || matches!(comparison.rhs, Term::Duration(_))
+            if matches!(comparison.lhs, Term::Measure(_))
+                || matches!(comparison.rhs, Term::Measure(_))
             {
                 self.duration_predicate += 1;
                 self.matrix[op_index(comparison.op)][0] += 1;
@@ -428,7 +428,7 @@ impl Coverage {
                     Term::Literal(_) => self.negation_literal += 1,
                     Term::Param(_) => self.negation_param += 1,
                     Term::ParamSet(_) => self.negation_set += 1,
-                    Term::Duration(_) => unreachable!("validated: no measure in bindings"),
+                    Term::Measure(_) => unreachable!("validated: no measure in bindings"),
                     Term::Var(var) => {
                         // Membership inside negation: an element-typed
                         // var at an interval field.
@@ -500,11 +500,11 @@ impl Coverage {
                 }
                 // The measure positions: one projected word / one fold
                 // like their plain twins, plus their own construct rows.
-                FindTerm::Duration(_) => {
+                FindTerm::Measure(_) => {
                     self.duration_find += 1;
                     projected_words += 1;
                 }
-                FindTerm::AggregateDuration { .. } => {
+                FindTerm::AggregateMeasure { .. } => {
                     self.duration_fold += 1;
                     aggregates += 1;
                 }

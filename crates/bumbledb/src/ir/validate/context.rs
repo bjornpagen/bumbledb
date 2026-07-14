@@ -523,7 +523,7 @@ impl Context {
             // The measure is a computation over a bound variable, not a
             // bindable value (docs/architecture/20-query-ir.md, § the
             // measure).
-            Term::Duration(_) => {
+            Term::Measure(_) => {
                 return Err(ValidationError::DurationInBinding {
                     atom: occ_idx,
                     field,
@@ -561,7 +561,7 @@ impl Context {
                 self.note_param_kind(*param, ParamKind::Set)?;
                 self.anchor_param_mono(*param, field_type)?;
             }
-            Term::Duration(_) => {
+            Term::Measure(_) => {
                 return Err(ValidationError::DurationInBinding {
                     atom: occ_idx,
                     field,
@@ -694,15 +694,15 @@ impl Context {
             // measure): one `Duration` side at most, and only under the
             // order operators — sealed measure-on-left (a comparison
             // written measure-second mirrors its operator).
-            (Term::Duration(_), Term::Duration(_)) => {
+            (Term::Measure(_), Term::Measure(_)) => {
                 Err(ValidationError::DurationBothSides { index })
             }
-            (Term::Duration(interval), Term::Var(scalar))
-            | (Term::Var(scalar), Term::Duration(interval)) => {
+            (Term::Measure(interval), Term::Var(scalar))
+            | (Term::Var(scalar), Term::Measure(interval)) => {
                 let OpClass::Order { op, mirror } = class else {
                     return Err(ValidationError::DurationComparisonOperator { index });
                 };
-                let measure_on_left = matches!(lhs, Term::Duration(_));
+                let measure_on_left = matches!(lhs, Term::Measure(_));
                 if measure_on_left {
                     self.comparison_var(*interval)?;
                     self.comparison_var(*scalar)?;
@@ -716,12 +716,12 @@ impl Context {
                     scalar: *scalar,
                 })
             }
-            (Term::Duration(interval), Term::Param(param))
-            | (Term::Param(param), Term::Duration(interval)) => {
+            (Term::Measure(interval), Term::Param(param))
+            | (Term::Param(param), Term::Measure(interval)) => {
                 let OpClass::Order { op, mirror } = class else {
                     return Err(ValidationError::DurationComparisonOperator { index });
                 };
-                let measure_on_left = matches!(lhs, Term::Duration(_));
+                let measure_on_left = matches!(lhs, Term::Measure(_));
                 if measure_on_left {
                     self.comparison_var(*interval)?;
                     self.note_param_kind(*param, ParamKind::Scalar)?;
@@ -735,14 +735,14 @@ impl Context {
                     constant: ConstSide::Param(*param),
                 })
             }
-            (Term::Duration(interval), Term::Literal(value))
-            | (Term::Literal(value), Term::Duration(interval)) => {
+            (Term::Measure(interval), Term::Literal(value))
+            | (Term::Literal(value), Term::Measure(interval)) => {
                 let OpClass::Order { op, mirror } = class else {
                     return Err(ValidationError::DurationComparisonOperator { index });
                 };
                 self.comparison_var(*interval)?;
                 Ok(Shaped::OrdMeasureConst {
-                    op: if matches!(lhs, Term::Duration(_)) {
+                    op: if matches!(lhs, Term::Measure(_)) {
                         op
                     } else {
                         mirror
@@ -751,15 +751,15 @@ impl Context {
                     constant: ConstSide::Literal(value),
                 })
             }
-            (Term::Duration(interval), Term::ParamSet(param))
-            | (Term::ParamSet(param), Term::Duration(interval)) => {
+            (Term::Measure(interval), Term::ParamSet(param))
+            | (Term::ParamSet(param), Term::Measure(interval)) => {
                 if !matches!(class, OpClass::Order { .. }) {
                     return Err(ValidationError::DurationComparisonOperator { index });
                 }
                 // An order operator is never `Eq`, so the set side is
                 // illegal whichever side it was written on — after the
                 // written-order checks that outrank it.
-                if matches!(lhs, Term::Duration(_)) {
+                if matches!(lhs, Term::Measure(_)) {
                     self.comparison_var(*interval)?;
                 }
                 self.note_param_kind(*param, ParamKind::Set)?;
@@ -871,7 +871,7 @@ impl Context {
             // The measure is u64-valued by definition, whatever its
             // variable resolves to (the interval requirement is checked
             // in `check_order` against final types).
-            Term::Duration(_) => Some(ValueType::U64),
+            Term::Measure(_) => Some(ValueType::U64),
         }
     }
 
@@ -904,7 +904,7 @@ impl Context {
             // A set never takes an interval type; its collapse would be
             // its own error, diagnosed in `comparison_types` — and a
             // measure names its own type (u64), never its variable's.
-            Term::ParamSet(_) | Term::Literal(_) | Term::Duration(_) => false,
+            Term::ParamSet(_) | Term::Literal(_) | Term::Measure(_) => false,
         }
     }
 

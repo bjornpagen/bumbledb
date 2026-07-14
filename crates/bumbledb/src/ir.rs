@@ -77,7 +77,7 @@ pub enum Term {
     /// subtraction raises the typed execution error
     /// [`crate::Error::MeasureOfRay`] — hosts exclude rays with an
     /// `Allen` check or a bounded-end filter on the same atom first.
-    Duration(VarId),
+    Measure(VarId),
 }
 
 /// One atom: a relation with named-field bindings. Absence of a field *is*
@@ -155,18 +155,20 @@ pub enum FindTerm {
         op: AggOp,
         over: Option<VarId>,
     },
-    /// The measure at a find position: projects `Duration(over)` — one
-    /// u64 value per binding, `end − start` of the interval variable
-    /// (see [`Term::Duration`]; the variable must be interval-typed and
+    /// The measure at a find position: projects surface `Duration(over)` —
+    /// one u64 value per binding, `end − start` of the interval variable
+    /// (see [`Term::Measure`]; the variable must be interval-typed and
     /// atom-bound). The projected measure is a group-key position under
-    /// aggregation, exactly like a plain variable find.
-    Duration(VarId),
+    /// aggregation, exactly like a plain variable find. A ray has no finite
+    /// measure and raises [`crate::Error::MeasureOfRay`] at evaluation.
+    Measure(VarId),
     /// A fold over the measure: `Sum`/`Min`/`Max` of `Duration(over)` —
     /// the only three ops the measure admits (`Count` is nullary;
     /// `CountDistinct` and the Arg ops are typed rejections). Accumulates
     /// exactly as `Sum`/`Min`/`Max` over a u64 variable — Sum in the wide
-    /// accumulator with the single finalize range check.
-    AggregateDuration {
+    /// accumulator with the single finalize range check. A ray has no finite
+    /// measure and raises [`crate::Error::MeasureOfRay`] at evaluation.
+    AggregateMeasure {
         op: AggOp,
         over: VarId,
     },
@@ -180,8 +182,8 @@ impl FindTerm {
     #[must_use]
     pub fn head_term(&self) -> HeadTerm {
         match self {
-            Self::Var(_) | Self::Duration(_) => HeadTerm::Var,
-            Self::Aggregate { op, .. } | Self::AggregateDuration { op, .. } => {
+            Self::Var(_) | Self::Measure(_) => HeadTerm::Var,
+            Self::Aggregate { op, .. } | Self::AggregateMeasure { op, .. } => {
                 HeadTerm::Aggregate(op.head_op())
             }
         }

@@ -580,8 +580,8 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
             // A projected variable, and the measure positions' interval
             // variable (the measure reads it).
             FindTerm::Var(var)
-            | FindTerm::Duration(var)
-            | FindTerm::AggregateDuration { over: var, .. } => {
+            | FindTerm::Measure(var)
+            | FindTerm::AggregateMeasure { over: var, .. } => {
                 vars.insert(*var);
             }
             FindTerm::Aggregate { op, over } => {

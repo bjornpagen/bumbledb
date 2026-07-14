@@ -517,10 +517,10 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
             // The measure positions: one u64 word computed from the
             // interval variable's two-slot span (the sinks own the
             // subtraction and the ray check — `exec::sink`).
-            FindTerm::Duration(var) => FindSpec::Duration {
+            FindTerm::Measure(var) => FindSpec::Duration {
                 slot: layout.slot_of(*var),
             },
-            FindTerm::AggregateDuration { op, over } => FindSpec::AggDuration {
+            FindTerm::AggregateMeasure { op, over } => FindSpec::AggDuration {
                 op: match op {
                     AggOp::Sum => crate::exec::sink::FoldOp::Sum,
                     AggOp::Min => crate::exec::sink::FoldOp::Min,

@@ -250,7 +250,7 @@ fn duration_head_golden() {
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(1),
             },
@@ -262,7 +262,7 @@ fn duration_head_golden() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
-            lhs: Term::Duration(VarId(1)),
+            lhs: Term::Measure(VarId(1)),
             rhs: Term::Literal(Value::U64(3600)),
         })],
     });

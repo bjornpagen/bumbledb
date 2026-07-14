@@ -623,7 +623,7 @@ pub enum ValidationError {
     PackInputType {
         find: usize,
     },
-    /// A `Term::Duration` in an atom binding: the measure is a
+    /// A `Term::Measure` in an atom binding: the measure is a
     /// computation over a bound interval variable, not a bindable value
     /// — its legal positions are a find term, the aggregated input of
     /// `Sum`/`Min`/`Max`, and one side of an order comparison
@@ -638,14 +638,14 @@ pub enum ValidationError {
     DurationOverNonInterval {
         var: VarId,
     },
-    /// A `FindTerm::AggregateDuration` whose op is not `Sum`/`Min`/`Max`
+    /// A `FindTerm::AggregateMeasure` whose op is not `Sum`/`Min`/`Max`
     /// — `Count` is nullary, `CountDistinct` over a measure is a count
     /// over derived values with no sighted use, and the Arg ops key on
     /// variables, not computations.
     DurationAggregateOp {
         find: usize,
     },
-    /// A `Term::Duration` under any operator but the order comparisons
+    /// A `Term::Measure` under any operator but the order comparisons
     /// (`Lt`/`Le`/`Gt`/`Ge`) — the measure's one comparison position
     /// (`docs/architecture/20-query-ir.md`, § the measure).
     DurationComparisonOperator {

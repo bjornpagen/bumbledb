@@ -46,7 +46,7 @@ pub fn translate(
     let aggregated = query.rules[0].finds.iter().any(|f| {
         matches!(
             f,
-            FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. }
+            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
         )
     });
     let mut arms: Vec<String> = Vec::new();
@@ -136,7 +136,7 @@ fn single_rule_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
     } else if rule.finds.iter().any(|f| {
         matches!(
             f,
-            FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. }
+            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
         )
     }) {
         fold_sql(&rule.finds, b, &from, &where_clause)
@@ -163,7 +163,7 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
             // The measure: end − start arithmetic over the halves.
-            FindTerm::Duration(var) => match b.columns.get(var) {
+            FindTerm::Measure(var) => match b.columns.get(var) {
                 Some(VarCols::Interval { start, end }) => {
                     cols.push(format!("({end} - {start})"));
                 }
@@ -172,7 +172,7 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
                 }
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
-            FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => {
+            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {
                 unreachable!("no aggregates here")
             }
         }
@@ -206,7 +206,7 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
                 }
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
-            FindTerm::Duration(var) | FindTerm::AggregateDuration { over: var, .. } => {
+            FindTerm::Measure(var) | FindTerm::AggregateMeasure { over: var, .. } => {
                 match b.columns.get(var) {
                     Some(VarCols::Interval { start, end }) => {
                         cols.push(format!("({end} - {start}) AS h{position}"));
@@ -233,7 +233,7 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
     let mut outer: Vec<String> = Vec::new();
     for (position, find) in finds.iter().enumerate() {
         match find {
-            FindTerm::Var(_) | FindTerm::Duration(_) => {
+            FindTerm::Var(_) | FindTerm::Measure(_) => {
                 // Interval group positions carry two columns; the pinned
                 // head row names which (validation aligns rules).
                 let names = if matches!(find, FindTerm::Var(_)) {
@@ -247,7 +247,7 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
                 group.extend(names.iter().cloned());
                 outer.extend(names);
             }
-            FindTerm::AggregateDuration { op, .. } => outer.push({
+            FindTerm::AggregateMeasure { op, .. } => outer.push({
                 let agg = match op {
                     AggOp::Sum => "SUM",
                     AggOp::Min => "MIN",
@@ -379,12 +379,12 @@ fn fold_sql(
             }
             // The measure as a group-key expression: end − start over the
             // subquery's halves.
-            FindTerm::Duration(var) => {
+            FindTerm::Measure(var) => {
                 let expr = format!("(v{0}_end - v{0}_start)", var.0);
                 group.push(expr.clone());
                 outer.push(expr);
             }
-            FindTerm::AggregateDuration { op, over } => outer.push({
+            FindTerm::AggregateMeasure { op, over } => outer.push({
                 let agg = match op {
                     AggOp::Sum => "SUM",
                     AggOp::Min => "MIN",
@@ -470,7 +470,7 @@ fn arg_sql(
             }
             // The measure as an aliased group-key expression on both
             // sides of the join-back.
-            FindTerm::Duration(var) => {
+            FindTerm::Measure(var) => {
                 let expr = format!("(v{0}_end - v{0}_start)", var.0);
                 group.push((
                     format!("{expr} AS dur{}", var.0),
@@ -483,7 +483,7 @@ fn arg_sql(
                 let carry = over.ok_or("Arg term without a carried variable")?;
                 outer.extend(var_names(b, carry, "d.")?);
             }
-            FindTerm::AggregateDuration { .. } => {
+            FindTerm::AggregateMeasure { .. } => {
                 return Err("Arg terms and measure folds never mix".to_owned());
             }
         }

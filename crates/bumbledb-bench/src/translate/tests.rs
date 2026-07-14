@@ -1171,7 +1171,7 @@ fn a_duration_find_is_end_minus_start_on_the_stored_columns() {
     // Q(account, Duration(active)) :- Mandate(account, active) — the
     // measure translates to arithmetic over the two interval columns.
     let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         atoms: vec![Atom {
             relation: ids::MANDATE,
             bindings: vec![

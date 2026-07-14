@@ -152,7 +152,7 @@ fn term(rng: &mut Rng) -> Term {
         4 => Term::Param(ParamId(u16::try_from(rng.below(3)).expect("small"))),
         5 => Term::Param(ParamId(40)), // a param-id gap
         6 => Term::ParamSet(ParamId(u16::try_from(rng.below(3)).expect("small"))),
-        7 => Term::Duration(VarId(u16::try_from(rng.below(5)).expect("small"))),
+        7 => Term::Measure(VarId(u16::try_from(rng.below(5)).expect("small"))),
         _ => Term::Literal(value(rng)),
     }
 }
@@ -230,12 +230,12 @@ fn find_term(rng: &mut Rng) -> FindTerm {
     };
     match rng.below(6) {
         0..=2 => FindTerm::Var(var(rng)),
-        3 => FindTerm::Duration(var(rng)),
+        3 => FindTerm::Measure(var(rng)),
         4 => FindTerm::Aggregate {
             op: agg_op(rng),
             over: rng.chance(4).then(|| var(rng)),
         },
-        _ => FindTerm::AggregateDuration {
+        _ => FindTerm::AggregateMeasure {
             op: agg_op(rng),
             over: var(rng),
         },
@@ -344,7 +344,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
         }),
         // The measure, projected and compared.
         4 => Query::single(Rule {
-            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
             atoms: vec![busy_atom(vec![
                 (Gauntlet::BUSY_PERSON, Term::Var(VarId(0))),
                 (Gauntlet::BUSY_DURING, Term::Var(VarId(1))),
@@ -352,7 +352,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
             negated: vec![],
             conditions: vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Ge,
-                lhs: Term::Duration(VarId(1)),
+                lhs: Term::Measure(VarId(1)),
                 rhs: Term::Literal(Value::U64(rng.below(10_000))),
             })],
         }),
@@ -493,7 +493,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         11 => {
             if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
                 atom.bindings
-                    .push((Gauntlet::BUSY_PERSON, Term::Duration(VarId(1))));
+                    .push((Gauntlet::BUSY_PERSON, Term::Measure(VarId(1))));
             }
         }
         // The empty program / the empty head.

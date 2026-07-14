@@ -216,8 +216,8 @@ fn validate_rule(
         .finds
         .iter()
         .filter_map(|term| match term {
-            FindTerm::Var(var) | FindTerm::Duration(var) => Some(*var),
-            FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => None,
+            FindTerm::Var(var) | FindTerm::Measure(var) => Some(*var),
+            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => None,
         })
         .collect();
     ctx.check_finds(rule, &group_key)?;
@@ -254,7 +254,7 @@ fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
         .map(|term| match term {
             FindTerm::Var(var) => var_type(var),
             // The measure is u64 by definition — projected or folded.
-            FindTerm::Duration(_) | FindTerm::AggregateDuration { .. } => ValueType::U64,
+            FindTerm::Measure(_) | FindTerm::AggregateMeasure { .. } => ValueType::U64,
             FindTerm::Aggregate { op, over } => match op {
                 AggOp::Count => ValueType::U64,
                 // A Pack position's row entry is an interval — the packed

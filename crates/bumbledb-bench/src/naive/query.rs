@@ -157,8 +157,8 @@ enum Substituted {
     Var(usize),
     Lit(Value),
     Set(Vec<Value>),
-    /// The measure of an interval variable (`Term::Duration`).
-    Duration(usize),
+    /// The measure of an interval variable (`Term::Measure`).
+    Measure(usize),
 }
 
 /// A predicate tree after parameter substitution — the input grammar's
@@ -329,7 +329,7 @@ impl NaiveDb {
                         } => Ok(binding.0[usize::from(var.0)].clone()),
                         // The measure positions project the measure — from
                         // the definition, ray included.
-                        FindTerm::Duration(var) | FindTerm::AggregateDuration { over: var, .. } => {
+                        FindTerm::Measure(var) | FindTerm::AggregateMeasure { over: var, .. } => {
                             measure_value(&binding.0[usize::from(var.0)]).map(Value::U64)
                         }
                         // Nullary Count: no fold input — a constant
@@ -347,7 +347,7 @@ impl NaiveDb {
             let key = Tuple(
                 head.iter()
                     .zip(&row.0)
-                    .filter(|(term, _)| matches!(term, FindTerm::Var(_) | FindTerm::Duration(_)))
+                    .filter(|(term, _)| matches!(term, FindTerm::Var(_) | FindTerm::Measure(_)))
                     .map(|(_, value)| value.clone())
                     .collect(),
             );
@@ -368,11 +368,11 @@ impl NaiveDb {
                         .iter()
                         .enumerate()
                         .map(|(index, term)| match term {
-                            FindTerm::Var(_) | FindTerm::Duration(_) => {
+                            FindTerm::Var(_) | FindTerm::Measure(_) => {
                                 Ok(group[0].0[index].clone())
                             }
                             FindTerm::Aggregate { .. } if index == position => Ok(segment.clone()),
-                            FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => {
+                            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {
                                 unreachable!("validated: Pack mixes with no other aggregate")
                             }
                         })
@@ -388,8 +388,8 @@ impl NaiveDb {
                     // The domain rows already hold measure values at the
                     // measure positions, so the union fold reads them
                     // exactly like plain positions.
-                    FindTerm::Var(_) | FindTerm::Duration(_) => Ok(group[0].0[index].clone()),
-                    FindTerm::Aggregate { op, .. } | FindTerm::AggregateDuration { op, .. } => {
+                    FindTerm::Var(_) | FindTerm::Measure(_) => Ok(group[0].0[index].clone()),
+                    FindTerm::Aggregate { op, .. } | FindTerm::AggregateMeasure { op, .. } => {
                         fold_position(*op, index, group)
                     }
                 })
@@ -429,7 +429,7 @@ fn count_vars(rule: &Rule) -> usize {
         *count = (*count).max(usize::from(var.0) + 1);
     }
     fn see_term(count: &mut usize, term: &Term) {
-        if let Term::Var(var) | Term::Duration(var) = term {
+        if let Term::Var(var) | Term::Measure(var) = term {
             see(count, *var);
         }
     }
@@ -457,8 +457,8 @@ fn count_vars(rule: &Rule) -> usize {
     }
     for find in &rule.finds {
         match find {
-            FindTerm::Var(var) | FindTerm::Duration(var) => see(&mut count, *var),
-            FindTerm::AggregateDuration { over, .. } => see(&mut count, *over),
+            FindTerm::Var(var) | FindTerm::Measure(var) => see(&mut count, *var),
+            FindTerm::AggregateMeasure { over, .. } => see(&mut count, *over),
             FindTerm::Aggregate { op, over } => {
                 if let Some(var) = over {
                     see(&mut count, *var);
@@ -512,7 +512,7 @@ fn substitute_tree(tree: &ConditionTree, params: &[ParamValue]) -> SubstitutedTr
 fn substitute(term: &Term, params: &[ParamValue]) -> Substituted {
     match term {
         Term::Var(var) => Substituted::Var(usize::from(var.0)),
-        Term::Duration(var) => Substituted::Duration(usize::from(var.0)),
+        Term::Measure(var) => Substituted::Measure(usize::from(var.0)),
         Term::Literal(value) => Substituted::Lit(value.clone()),
         Term::Param(id) => match &params[usize::from(id.0)] {
             ParamValue::Scalar(value) => Substituted::Lit(value.clone()),
@@ -595,7 +595,7 @@ fn admit(
     bound_here: &mut Vec<usize>,
 ) -> bool {
     match term {
-        Substituted::Duration(_) => unreachable!("validated: no measure in bindings"),
+        Substituted::Measure(_) => unreachable!("validated: no measure in bindings"),
         Substituted::Lit(value) => constrains(fact_value, field_is_interval, value),
         Substituted::Set(values) => values
             .iter()
@@ -737,7 +737,7 @@ fn predicate_holds(
             // The measure, from the definition — a ray poisons the rule
             // (the enumeration's caller raises `MeasureOfRay`) and the
             // binding is dropped.
-            Substituted::Duration(var) => {
+            Substituted::Measure(var) => {
                 let interval = assignment[*var]
                     .clone()
                     .expect("validated: predicate variables are bound");
@@ -754,7 +754,7 @@ fn predicate_holds(
     };
     // A poisoned measure side: reject the binding — the rule's answer is
     // the error, checked after enumeration.
-    if matches!(lhs, Substituted::Duration(_)) || matches!(rhs, Substituted::Duration(_)) {
+    if matches!(lhs, Substituted::Measure(_)) || matches!(rhs, Substituted::Measure(_)) {
         let (Some(left), Some(right)) = (resolve(lhs), resolve(rhs)) else {
             return false;
         };
@@ -852,11 +852,11 @@ fn pack_group_rows(
             .enumerate()
             .map(|(index, find)| match find {
                 FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
-                FindTerm::Duration(var) => {
+                FindTerm::Measure(var) => {
                     measure_value(&group[0].0[usize::from(var.0)]).map(Value::U64)
                 }
                 FindTerm::Aggregate { .. } if index == position => Ok(segment.clone()),
-                FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => {
+                FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {
                     unreachable!("validated: Pack mixes with no other aggregate")
                 }
             })
@@ -879,10 +879,10 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 FindTerm::Var(var) => key.push(binding.0[usize::from(var.0)].clone()),
                 // A measure find is a group-key position: the projected
                 // value is the measure, from the definition.
-                FindTerm::Duration(var) => {
+                FindTerm::Measure(var) => {
                     key.push(Value::U64(measure_value(&binding.0[usize::from(var.0)])?));
                 }
-                FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => {}
+                FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {}
             }
         }
         groups.entry(Tuple(key)).or_default().push(binding);
@@ -923,13 +923,13 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                     .iter()
                     .map(|find| match find {
                         FindTerm::Var(var) => Ok(binding.0[usize::from(var.0)].clone()),
-                        FindTerm::Duration(var) => {
+                        FindTerm::Measure(var) => {
                             measure_value(&binding.0[usize::from(var.0)]).map(Value::U64)
                         }
                         FindTerm::Aggregate { over, .. } => Ok(binding.0
                             [usize::from(over.expect("Arg terms carry a variable").0)]
                         .clone()),
-                        FindTerm::AggregateDuration { .. } => {
+                        FindTerm::AggregateMeasure { .. } => {
                             unreachable!("validated: Arg terms and folds never mix")
                         }
                     })
@@ -942,11 +942,11 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 .enumerate()
                 .map(|(index, find)| match find {
                     FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
-                    FindTerm::Duration(var) => {
+                    FindTerm::Measure(var) => {
                         measure_value(&group[0].0[usize::from(var.0)]).map(Value::U64)
                     }
                     FindTerm::Aggregate { op, over } => fold(*op, *over, group, index),
-                    FindTerm::AggregateDuration { op, over } => {
+                    FindTerm::AggregateMeasure { op, over } => {
                         fold_duration(*op, *over, group, index)
                     }
                 })

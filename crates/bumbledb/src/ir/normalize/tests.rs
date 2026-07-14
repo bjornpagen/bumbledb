@@ -1426,7 +1426,7 @@ fn sweep_duration_placements() {
         relation: P,
         bindings: vec![(P_EMP, var(0)), (P_DURING, var(1))],
     };
-    let duration = || Term::Duration(VarId(1));
+    let duration = || Term::Measure(VarId(1));
 
     let literal = query(
         vec![p_atom()],

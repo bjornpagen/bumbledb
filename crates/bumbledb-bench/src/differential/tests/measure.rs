@@ -162,12 +162,12 @@ fn bounded_corpus() -> Delta {
     reason = "the linear table or protocol is clearer kept together"
 )] // a fixed list, one entry per query
 fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
-    let dur = |op: AggOp| FindTerm::AggregateDuration { op, over: VarId(1) };
+    let dur = |op: AggOp| FindTerm::AggregateMeasure { op, over: VarId(1) };
     vec![
         // The measure in a find position, u64 spans.
         (
             single(
-                vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+                vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
                 vec![stay_atom()],
                 vec![],
             ),
@@ -177,7 +177,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
         // cancellation, differentially pinned).
         (
             single(
-                vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+                vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
                 vec![shift_atom()],
                 vec![],
             ),
@@ -204,7 +204,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
                 vec![stay_atom()],
                 vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Gt,
-                    lhs: Term::Duration(VarId(1)),
+                    lhs: Term::Measure(VarId(1)),
                     rhs: Term::Literal(Value::U64(7)),
                 })],
             ),
@@ -218,7 +218,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
                 vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Ge,
                     lhs: Term::Param(ParamId(0)),
-                    rhs: Term::Duration(VarId(1)),
+                    rhs: Term::Measure(VarId(1)),
                 })],
             ),
             vec![ParamValue::Scalar(Value::U64(8))],
@@ -230,7 +230,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
                 vec![stay_atom()],
                 vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Lt,
-                    lhs: Term::Duration(VarId(1)),
+                    lhs: Term::Measure(VarId(1)),
                     rhs: var(2),
                 })],
             ),
@@ -246,7 +246,7 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
                 ],
                 vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Ge,
-                    lhs: Term::Duration(VarId(1)),
+                    lhs: Term::Measure(VarId(1)),
                     rhs: var(3),
                 })],
             ),
@@ -261,13 +261,13 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
                 head: vec![bumbledb::HeadTerm::Var],
                 rules: vec![
                     Rule {
-                        finds: vec![FindTerm::Duration(VarId(1))],
+                        finds: vec![FindTerm::Measure(VarId(1))],
                         atoms: vec![stay_atom()],
                         negated: vec![],
                         conditions: vec![],
                     },
                     Rule {
-                        finds: vec![FindTerm::Duration(VarId(1))],
+                        finds: vec![FindTerm::Measure(VarId(1))],
                         atoms: vec![shift_atom()],
                         negated: vec![],
                         conditions: vec![],
@@ -336,7 +336,7 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
         ],
     };
     let overflow_query = single(
-        vec![FindTerm::AggregateDuration {
+        vec![FindTerm::AggregateMeasure {
             op: AggOp::Sum,
             over: VarId(1),
         }],
@@ -348,17 +348,17 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
     );
     // The i64 boundary measure, filtered from nothing (no i64 rays here).
     let boundary_query = single(
-        vec![FindTerm::Duration(VarId(1))],
+        vec![FindTerm::Measure(VarId(1))],
         vec![shift_atom()],
         vec![],
     );
     let unfiltered = single(
-        vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         vec![stay_atom()],
         vec![],
     );
     let filtered = single(
-        vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         vec![stay_atom()],
         // The ray probe [MAX−1, MAX): an interval intersects it iff its
         // end is MAX — exactly the rays; DISJOINT keeps the bounded.
