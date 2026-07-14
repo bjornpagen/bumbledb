@@ -16,8 +16,9 @@ list). Write such a query `R(X | φ)`; an empty selection is written `R(X)`.
 Dependencies and queries share one representation; a dependency is not a new kind of
 thing, it is a required property of an old kind of thing.
 
-**Functionality (FD).** `R(X) -> R` asserts that the projection πX is injective on
-R: no two distinct facts of R agree on X. X is ordered (the order defines the determinant
+**Functionality (FD).** `R(X) -> R`: at most one fact per determinant tuple
+(`lean/Bumbledb/Dependencies.lean: Functionality`, `functionality_unique_witness`
+— a key proves uniqueness, never existence). X is ordered (the order defines the determinant
 key, `50-storage.md`), non-empty, duplicate-free. The general form `R(X) -> R(Y)`
 with Y ⊊ fields exists in the theory (dependency theory's equality-generating
 dependencies); **only the key form — Y = the whole relation — is accepted**: a
@@ -30,37 +31,41 @@ same determinants). **Why it lost:** every instance surveyed is better said as a
 shape; accepting them sells normalization back as a runtime feature. **Reverses if:**
 a real invariant appears that no relation split can express.
 
-**Containment (IND).** `A(X | φ) <= B(Y | ψ)` asserts πX(σφ(A)) ⊆ πY(σψ(B)) as
-sets of tuples: every projected tuple of A's selected facts occurs among the
-projected tuples of B's selected facts. |X| = |Y| with positional structural type
+**Containment (IND).** `A(X | φ) <= B(Y | ψ)`: subset inclusion of the selected
+projected views (`lean/Bumbledb/Dependencies.lean: Containment`,
+`contains_iff_view_subset`). |X| = |Y| with positional structural type
 equality (`10-data-model.md`). Unselected, this is dependency theory's inclusion
 dependency; with selections it is the conditional inclusion dependency (CIND) of the
 data-quality literature. The bidirectional statement `A(X | φ) == B(Y | ψ)` is
-exactly the two containments, each judged independently.
+exactly the two containments, each judged independently
+(`lean/Bumbledb/Dependencies.lean: containsEq_iff_view_ext`).
 
 **Accepted equality is a keyed bijection.** Each containment direction must
-independently resolve its target projection to a declared key. Mutual inclusion
-makes the projected value sets equal; injectivity of both projections then makes
-that equality a one-to-one correspondence between the selected A- and B-facts:
-every selected fact has exactly one selected witness in the other relation with
-the same projected product. For a composite projection the key applies to the
-whole product; `key_permutation` only reorders its fields for the target key and
-weakens nothing. This is not whole-fact equality — unprojected payloads may differ
-— and it makes no claim about facts outside φ or ψ. The formal evidence is
-`KeyBackedEquality.unique_target`/`.unique_source`; the bare mutual-inclusion
-form without the key premises has the `bare_containsEq_nonunique` countermodel.
+independently resolve its target projection to a declared key; with both keys,
+mutual inclusion is a one-to-one correspondence between the selected A- and
+B-facts, on whole projected products
+(`lean/Bumbledb/Dependencies.lean: keyed_eq_unique_correspondence`; the bare
+mutual-inclusion form without the key premises has the countermodel
+`lean/Bumbledb/Countermodels.lean: bare_eq_not_unique`). This is not whole-fact
+equality — unprojected payloads may differ — and it makes no claim about facts
+outside φ or ψ; `key_permutation` only reorders fields for the target key and
+weakens nothing.
 
 **Judged on final states, only.** A dependency is a property of *committed*
-databases: it is checked once at commit, against the transaction's final state; a
+databases: one judgment per commit, of the transaction's final state — operation
+order inside the transaction is not representable in the judge's input
+(`lean/Bumbledb/Txn.lean: final_state_judgment_order_free`; the per-operation
+alternative judges states nobody can observe —
+`lean/Bumbledb/Countermodels.lean: per_op_judgment_wrong`) — and every committed
+state models its theory (`lean/Bumbledb/Txn.lean: committed_states_model`). A
 violation aborts the whole transaction with a typed error whose payload is the
-**complete violation set** — every violated statement, cited exactly once (per
-direction for a containment: source before target), in materialized statement
-order, each citation carrying the statement id and the offending fact's bytes
-(never storage row ids — `10-data-model.md`). A commit violating several
-statements at once never cites an arbitrary representative: the reject path is
-scan-complete (the accept path already scans everything), and the set is sealed —
-nonempty, sorted, deduplicated — by its only constructor, so an under-reported
-rejection is unrepresentable. One preemption, from the enforcement structure
+**complete violation set** (`lean/Bumbledb/Txn.lean: rejection_is_complete`) —
+every violated statement, cited exactly once (per direction for a containment:
+source before target), in materialized statement order, each citation carrying
+the statement id and the offending fact's bytes (never storage row ids —
+`10-data-model.md`); the set is sealed — nonempty, sorted, deduplicated — by
+its only constructor, so an under-reported rejection is unrepresentable. One
+preemption, from the enforcement structure
 itself: key (`Functionality`) violations preempt the containment judgment, because
 the containment probes are defined over the *keyed* final state (determinants are the
 probe index), which exists only when every key statement holds — so one rejection
@@ -75,9 +80,8 @@ violates any statement, with no way out — stricter than SQL's opt-in deferrabl
 constraints, and the reason the modes died: *deleting a whole dependency-linked
 cluster in one transaction is legal because the final state is clean*, which is what
 cascade was a workaround for, and *dangling references never commit*, which is what
-restrict was a weak spelling of. Operation order inside the transaction remains
-semantically irrelevant (`50-storage.md` delta write path); cyclic references insert
-without any staging concept.
+restrict was a weak spelling of. Cyclic references insert
+without any staging concept (`50-storage.md` delta write path).
 **Decision.** **Alternative:** per-operation checking with staged visibility.
 **Why it lost:** it enforces invariants on states nobody can observe, pushes
 ordering obligations onto the caller, and fights the accumulate-then-commit write
@@ -166,7 +170,8 @@ Concretely, validation demands:
   outright: a declaration the ground axioms refute — a source axiom outside the
   member set, or a declared key two axioms collide under — is a schema error, not
   a latent judgment, because a theory whose axioms refute its own statement has no
-  model to commit.
+  model to commit (`lean/Bumbledb/Schema.lean: den_closed_constant` — a closed
+  relation denotes the same sealed fact set at every instance).
 
 A statement failing the gate is a schema-declaration error naming the missing plan.
 The exact-field-set rule explains itself: `NoMatchingTargetKey` and
@@ -199,40 +204,81 @@ determinant already implies it, so the larger determinant is write amplification
 `Schema::warnings()` is diagnostics only; it changes neither the statement spine
 nor enforcement, and therefore does not enter the fingerprint.
 
+**Decision: the engine judges satisfaction, never implication — the decidability
+firewall.** The engine decides only judgments about finite, present data: a
+commit's final state, a sealed extension (the both-sides-closed case above).
+Consequence *among statements* appears in exactly three sanctioned forms — a
+specific theorem compiled into a witness type (`DisjointDeterminantProof`), a
+conservative optimization that is sound, may answer "unknown", and always has a
+semantics-preserving fallback (`provably_disjoint`/`provably_distinct`, grounding
+elimination), or diagnostics (`RedundantSuperkey`) — and no code path's
+correctness may ever require deciding whether one statement follows from the
+rest. The presumption behind the law is a design input, not a survey: for this
+statement class (composite, cyclic, key-based INDs with selections), implication
+is presumed undecidable, per the classical FD+IND result. Four tripwires name
+the law's edges: acceptance never resolves an implied key — the exact-field-set
+rule above is this law's acceptance face, and the entailment-vs-acceptance gap
+is formal (`lean/Bumbledb/Dependencies.lean: no_closure_superkey_implication` —
+proved, deliberately unspent); enforcement never skips a check as implied;
+schema evolution re-judges instances (`Db::verify_store`, ETL), never proves
+theory-to-theory entailment; statement selections stay equality-to-literal
+(richer σ moves the class toward denial constraints, where even satisfiability
+stops being trivial). **Alternative:** a decidable-fragment implication engine
+(unary INDs, acyclic reference graphs) powering redundancy elimination and
+migration proofs. **Why it lost:** it restricts the schema language to buy a
+feature nothing needs — the delta-restricted checker already makes enforcement
+cheap without it, and an incomplete implication procedure on the enforcement
+path silently accepts or rejects wrong. **Reverses if:** a censused workload
+where provably-redundant re-checking measurably dominates commit cost — and
+even then the feature lands diagnostics-side first, never on enforcement.
+
+**Decision: statements quantify over stored relations, permanently.** By
+representation: a statement's atoms carry `RelationId`, and no predicate
+vocabulary exists — or will exist — in the statement language, including after
+engine recursion lands (the recursion design's one-line `Idb` refusal in both
+grounding rewrites is this law's mechanism, `docs/reference/recursion-design.md`
+§1/§9 row 2). A containment between derived predicates is Datalog query
+containment — undecidable outright — and commit-time enforcement would require
+materializing every constrained view per commit. **Alternative:**
+deductive-database constraints over views. **Why it lost:** the undecidability
+above, plus the acceptance gate's own rule — no O(log n) enforcement plan
+exists for a fixpoint's blast radius. **Reverses if:** never for recursive
+predicates; a non-recursive-view variant re-opens only with its own theory
+review, as a new decision.
+
 ## Pointwise lifting (the interval semantics, derived)
 
 Both judgments read interval positions through the denotation
-(`10-data-model.md`): a fact stands for its point-family, and the judgment holds
-iff it holds of the point-families.
+(`10-data-model.md`): the judgment is of the point-families, position by
+position — a statement with no interval positions is the classical judgment
+unchanged (`lean/Bumbledb/Schema.lean: Header.intervalSplit_scalar`).
 
-- **FD, pointwise:** `R(room, during) -> R` with `during: interval` means no two
-  facts share `room` and any point of `during` — i.e. **every per-room pair
-  satisfies `DISJOINT`**, the Allen composite (before ∪ meets ∪ met-by ∪ after
-  — `20-query-ir.md` § the Allen operator; one vocabulary, both sides of the
-  engine). The "exclusion constraint" is not a feature of this system; it is this
-  judgment on this type. Enforcement is two ordered-neighbor probes per touched
-  fact (`50-storage.md`) — the O(log n) plan for the pairwise statement. Rays (`end == MAX` = `[s, ∞)`, the point-domain law —
-  `10-data-model.md`) need no case of their own: two rays in one group share every
-  point past the later start and always conflict — "at most one ongoing booking
-  per room" is this judgment on this value; a bounded interval abutting a ray's
-  start is legal, exactly as between bounded intervals.
-- **IND, pointwise:** `A(who, span) <= B(who, span)` means every point of every A
-  fact's span is covered by B facts for the same `who` — B's intervals need not
-  match A's bounds, only jointly cover them. Checkable in O(log n + segments)
-  because B's key keeps its intervals per-group disjoint and start-ordered: walk
-  adjacent determinant entries from the span's start, require no gap before its end. A
-  **source ray requires coverage to ∞**: only a target chain reaching a ray
-  satisfies it — bounded targets always leave a gap — while a target ray covers
-  any bounded source above its start; both fall out of the same gap check, since
-  ∞ = MAX is just the largest end word.
-- **Direction law:** that one containment covers only the source support; target
-  overhang is legal. Exact partition is the conjunction of both coverage
-  directions plus pointwise keys on both sides. Cookbook recipe 26 spells the
-  five ordinary statements and locks gap rejection, overhang rejection,
-  adjacency, and a two-scalar-prefix instance; the formal row below ties that
-  construction to `exactTiling_iff_exactPointPartition`.
-- Scalar positions in the same statement are unaffected — lifting is per-position,
-  and a statement with no interval positions is the classical judgment unchanged.
+- **FD, pointwise:** per scalar group, pairwise-disjoint point sets
+  (`lean/Bumbledb/Dependencies.lean: pointwise_key_disjoint`) — every per-group
+  pair satisfies `DISJOINT` (`20-query-ir.md` § the Allen operator; one
+  vocabulary, both sides of the engine). The "exclusion constraint" is not a
+  feature of this system; it is this judgment on this type. Enforcement is two
+  ordered-neighbor probes per touched fact (`50-storage.md`) — the O(log n) plan
+  for the pairwise statement. Rays need no case of their own — "at most one
+  ongoing booking per room" is this judgment on the ray value
+  (`lean/Bumbledb/Values.lean: ray_is_unbounded_tail`).
+- **IND, pointwise:** per group, the source's points are jointly covered by the
+  target's intervals (`lean/Bumbledb/Dependencies.lean:
+  coverage_is_support_inclusion`) — coverage, never bound matching. Checkable in
+  O(log n + segments) because the target's own pointwise key keeps its intervals
+  per-group disjoint and start-ordered — the premise validation seals as the
+  `DisjointDeterminantProof` and the one-pass sweep spends
+  (`lean/Bumbledb/Exec/Sweep.lean: sweep_covered_sound_complete`). A source ray
+  is satisfied only by a target chain reaching a ray
+  (`lean/Bumbledb/Exec/Sweep.lean: ray_needs_ray`); both directions of ∞ fall
+  out of the same gap check.
+- **Direction law:** one containment covers only the source support; target
+  overhang is legal (`lean/Bumbledb/Countermodels.lean: one_way_overhang`).
+  Exact partition is the conjunction of both coverage directions plus pointwise
+  keys on both sides — five ordinary statements, no partition primitive
+  (`lean/Bumbledb/Dependencies.lean: exact_partition_iff`); cookbook recipe 26
+  spells them and locks gap rejection, overhang rejection, adjacency, and a
+  two-scalar-prefix instance.
 
 ## The derivations (where the old words went)
 
@@ -261,17 +307,21 @@ Grading(id | kind == CustomOperator) == CustomOperatorGrading(grading);
 Three theorems fall out, each of which SQL either cannot state or states with
 triggers:
 
-1. **Totality** (`==`, left-to-right): a Deterministic grading *has* its child fact —
-   in the same commit, always. Row-at-a-time engines cannot check parent-implies-
+1. **Totality** (`==`, left-to-right): a Deterministic grading *has* its child
+   fact — in the same commit, always
+   (`lean/Bumbledb/Dependencies.lean: keyed_eq_unique_correspondence`, the
+   forward correspondence). Row-at-a-time engines cannot check parent-implies-
    child at insert; deferrable mutual FKs recover a fixed two-table case and nothing
    conditional.
 2. **Arm validity** (`==`, right-to-left): a child fact's parent exists *with that
-   kind* — this is the composite-FK-plus-CHECK-pin encoding, one statement instead
-   of two mechanisms.
+   kind* (the same correspondence, reversed) — one statement instead of the
+   composite-FK-plus-CHECK-pin pair of mechanisms.
 3. **Exclusivity** (derived): an id in two child relations would force the parent's
-   `kind` to equal two handles; the parent's key on `id` makes that a contradiction,
-   not a rule. Two consumers remain: the checker enforces it and the grounding spends
-   it. Plan introspection can also report that rule heads are provably disjoint, but execution
+   `kind` to equal two handles; the parent's key on `id`
+   (`lean/Bumbledb/Dependencies.lean: functionality_unique_witness`) makes that a
+   contradiction, not a rule. Two consumers remain: the checker enforces it and the
+   grounding spends it. Plan introspection can also report that rule heads are
+   provably disjoint, but execution
    deliberately does not spend that knowledge; the measured refutation is in
    `40-execution.md` § set semantics.
 

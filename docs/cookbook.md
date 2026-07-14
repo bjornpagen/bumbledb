@@ -17,16 +17,18 @@ Every schema below compiles and validates verbatim against the current engine �
 and a sync test pins the duplication, so a recipe edited here without the test
 following breaks the build.
 
-Guarantee labels that name Lean results refer to the checked artifact in
-[`docs/formal/`](formal/README.md) through the theorem-to-evidence table in
-`30-dependencies.md`; the label always names any additional Rust premise.
+Guarantee labels that name Lean results cite the checked spec in `lean/` by
+theorem name (`lean/Bumbledb/….lean: name` — `scripts/spec-census.sh` verifies
+every citation resolves); the label always names any additional Rust premise.
 
 ## Foundations
 
 ## 1. The minimal interval schema
 
-Guarantee: formal predicate + validator/runtime premise — the pointwise key
-enforces per-service disjointness; checked intervals supply nonempty values.
+Guarantee: Lean theorem + validator/runtime premise — the pointwise key
+enforces per-service disjointness (`lean/Bumbledb/Dependencies.lean:
+pointwise_key_disjoint`); checked intervals supply nonempty values
+(`lean/Bumbledb/Values.lean: interval_nonempty`).
 
 One fact per outage window; the pointwise key is the whole temporal design.
 
@@ -57,8 +59,8 @@ bumbledb::schema! {
 ## 2. Discriminated unions
 
 Guarantee: Lean theorem + validator/runtime premises — key-backed equality
-gives unique source/target correspondence (`KeyBackedEquality.unique_target`
-and `.unique_source`); both projections must resolve to declared keys.
+gives unique source/target correspondence (`lean/Bumbledb/Dependencies.lean:
+keyed_eq_unique_correspondence`); both projections must resolve to declared keys.
 
 Sum-typed entities: a closed-relation discriminator plus per-arm child
 relations, glued by bidirectional conditional containments
@@ -92,8 +94,10 @@ bumbledb::schema! {
 
 ## 3. 0..1 optional attributes
 
-Guarantee: definition + validator/runtime premises — the child key proves at
-most one fact and containment requires its parent; absence remains legal.
+Guarantee: Lean theorem + validator/runtime premises — the child key proves at
+most one fact (`lean/Bumbledb/Dependencies.lean: functionality_unique_witness`)
+and containment requires its parent (`lean/Bumbledb/Dependencies.lean:
+contains_iff_view_subset`); absence remains legal.
 
 No nulls, anywhere. Optional data is an absent fact in a child relation; the
 child's key plus a one-way containment *is* "nullable column", done honestly.
@@ -189,8 +193,10 @@ bumbledb::schema! {
 
 ## 6. The vocabulary
 
-Guarantee: validator/runtime premise — the sealed closed extension and compiled
-member-set containment admit only declared priority handles.
+Guarantee: Lean theorem + validator/runtime premise — the sealed closed
+extension is constant at every instance (`lean/Bumbledb/Schema.lean:
+den_closed_constant`) and the compiled member-set containment admits only
+declared priority handles.
 
 The enum idiom's replacement, first-class: a vocabulary is a **closed
 relation** — its ground axioms are declared in the schema, sealed at
@@ -354,7 +360,8 @@ bumbledb::schema! {
 
 ## 10. Trees and ASTs
 
-Guarantee: Lean theorem + validator/runtime premises for key-backed arms; host
+Guarantee: Lean theorem + validator/runtime premises for key-backed arms
+(`lean/Bumbledb/Dependencies.lean: keyed_eq_unique_correspondence`); host
 discipline for acyclicity — statements prove arm/edge shape, never a tree theorem.
 
 Node header + per-kind arms (recipe 2's pattern); every edge resolves; the
@@ -458,7 +465,8 @@ bumbledb::schema! {
 
 ## 13. State machines
 
-Guarantee: Lean theorem + validator/runtime premises for the shipped arm; host
+Guarantee: Lean theorem + validator/runtime premises for the shipped arm
+(`lean/Bumbledb/Dependencies.lean: keyed_eq_unique_correspondence`); host
 discipline for allowed transitions — equality pins state evidence, not paths.
 
 States are a discriminated union; per-state data lives in arms; and the
@@ -497,7 +505,9 @@ bumbledb::schema! {
 ## 14. The calendar core
 
 Guarantee: Lean theorem + validator/runtime premises — accepted equality is
-key-backed correspondence, while pointwise keys/coverage enforce only declared hard policy.
+key-backed correspondence (`lean/Bumbledb/Dependencies.lean:
+keyed_eq_unique_correspondence`), while pointwise keys/coverage enforce only
+declared hard policy.
 
 Policy as schema: hard rules are pointwise keys, soft rules are the statements
 you decline to write.
@@ -555,7 +565,10 @@ bumbledb::schema! {
 ## 15. Effective-dated configuration
 
 Guarantee: Lean theorem/countermodel + validator/runtime premise — pointwise
-keys plus one-way support inclusion form a disjoint cover; target overhang is legal.
+keys plus one-way support inclusion form a disjoint cover
+(`lean/Bumbledb/Dependencies.lean: pointwise_key_disjoint`,
+`coverage_is_support_inclusion`); target overhang is legal
+(`lean/Bumbledb/Countermodels.lean: one_way_overhang`).
 
 Versioned rules: no overlaps (pointwise key), no gaps in the policy's source
 lifetime (one-way coverage; version overhang remains legal), and "in force on
@@ -587,7 +600,9 @@ bumbledb::schema! {
 ## 16. Disjoint covers
 
 Guarantee: Lean theorem/countermodel + validator/runtime premise —
-`intervalContains_iff_support_subset` proves source coverage, not exact partition.
+`lean/Bumbledb/Dependencies.lean: coverage_is_support_inclusion` proves source
+coverage, not exact partition (`lean/Bumbledb/Countermodels.lean:
+one_way_overhang`).
 
 Pay periods, shifts, estimated-tax quarters: a pointwise key plus one-way
 coverage is a **disjoint cover** — no overlaps among pay periods and no holes
@@ -663,8 +678,10 @@ bumbledb::schema! {
 
 ## 18. Free time and coalescing
 
-Guarantee: runtime query semantics — `Pack` coalesces answer intervals; it
-asserts no stored disjointness, completeness, or maintenance behavior.
+Guarantee: Lean theorem + runtime query semantics — `Pack` coalesces answer
+intervals (`lean/Bumbledb/Query/Aggregates.lean: pack_canonical`,
+`pack_extensional`); it asserts no stored disjointness, completeness, or
+maintenance behavior.
 
 `Pack` is Snodgrass's coalesce as an aggregate — maximal disjoint segments per
 group, one answer per (group, segment). Coalescing is never a write rule: the
@@ -695,7 +712,8 @@ bumbledb::schema! {
 
 ## 19. The ledger
 
-Guarantee: Lean theorem + runtime invariant for bounded sums; host discipline
+Guarantee: Lean theorem + runtime invariant for bounded sums
+(`lean/Bumbledb/Query/Aggregates.lean: checkedSum_sound`); host discipline
 for double entry — statements resolve posting references, not arithmetic agreement.
 
 The census workload. Balance is a query, never a column.
@@ -729,8 +747,10 @@ bumbledb::schema! {
 
 ## 20. Conditional writes
 
-Guarantee: generation-witness/runtime premise + host retry discipline —
-snapshot-derived writes detect movement; final-state point reads need no earlier witness.
+Guarantee: Lean theorem + generation-witness/runtime premise + host retry
+discipline — snapshot-derived writes detect movement
+(`lean/Bumbledb/Txn.lean: writeFrom_moved`, `witness_conflict_distinct`);
+final-state point reads need no earlier witness.
 
 The generation witness (`70-api.md` § conditional writes): read the model,
 propose a delta, commit iff the model you read is still the model.
@@ -769,7 +789,8 @@ bumbledb::schema! {
 
 ## 21. Derived relations
 
-Guarantee: Lean theorem + validator/runtime premises for soundness; host
+Guarantee: Lean theorem + validator/runtime premises for soundness
+(`lean/Bumbledb/Txn.lean: derived_soundness_vs_freshness`); host
 discipline for completeness — containment rejects unsupported facts but never refreshes omissions.
 
 The materialized view as a relation under statements — unsoundness the schema
@@ -810,7 +831,9 @@ bumbledb::schema! {
 ## 22. Union reads
 
 Guarantee: Lean theorem + represented planner/runtime premise — rule union is
-set-idempotent; key-backed DU arms justify the disjointness optimization.
+set-idempotent (`lean/Bumbledb/Query/Denotation.lean: union_idempotent`);
+key-backed DU arms justify the disjointness optimization
+(`lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`).
 
 The whole-DU read is a set of rules: one head, one rule per arm — disjunction
 is data at the top, never an execution node.
@@ -937,7 +960,8 @@ design (`docs/reference/recursion-design.md`), not around it.
 ## 25. The chart of accounts
 
 Guarantee: host discipline + runtime aggregate semantics — the host computes
-closure, then one checked `Sum`; no recursive engine plan is claimed.
+closure, then one checked `Sum` (`lean/Bumbledb/Query/Aggregates.lean:
+checkedSum_sound`); no recursive engine plan is claimed.
 
 The ledger workload's real recursion case, handled by explicit host composition
 over the current query engine: a hierarchical chart of accounts and a subtree
@@ -982,7 +1006,8 @@ because the fresh id keeps their bindings distinct.
 ## 26. Exact partition
 
 Guarantee: Lean theorem + validator/runtime premises — mutual point coverage
-plus pointwise keys realizes `exactTiling_iff_exactPointPartition`.
+plus pointwise keys realizes exact partition
+(`lean/Bumbledb/Dependencies.lean: exact_partition_iff`).
 
 An exact partition needs both coverage directions. The first containment below
 is the intent-level reference; the two pointwise keys make each side disjoint;
@@ -1018,7 +1043,8 @@ with any scalar-prefix arity before the final interval position.
 ## 27. Derived facts, maintained
 
 Guarantee: host discipline + validator/runtime premises — freshness comes from
-the generation witness; containment proves surviving rollup facts sound only.
+the generation witness; containment proves surviving rollup facts sound only
+(`lean/Bumbledb/Txn.lean: derived_soundness_vs_freshness`).
 
 A stored rollup is an ordinary relation with an ordinary soundness statement.
 Here `Pack` derives maximal busy spans, while containment prevents any stored
@@ -1065,8 +1091,9 @@ packed span.
 
 ## 28. Migration is ETL
 
-Guarantee: validator/runtime premises + host discipline — fingerprints refuse
-reinterpretation, final-state judgments validate each load, and the host owns
+Guarantee: Lean theorem + validator/runtime premises + host discipline —
+fingerprints refuse reinterpretation, final-state judgments validate each load
+(`lean/Bumbledb/Txn.lean: etl_lands_valid`), and the host owns
 the semantic transform and dependency-safe load order.
 
 There is no in-place migration and never will be: a schema is a theory,

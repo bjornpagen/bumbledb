@@ -18,6 +18,9 @@ Interval(element)        16 bytes: start ‖ end, each the element encoding;
                          element ∈ {U64, I64}; strictly start < end
 ```
 
+The order-preservation claims are the order-embedding theorems
+(`lean/Bumbledb/Values.lean: encode_u64_order_embedding`,
+`encode_i64_order_embedding`).
 Six pure value types (`bytes<N>` replaced variable `bytes`; the enum died —
 its obituary below; a vocabulary is a **closed relation**, § closed relations,
 not a type). The width is part of `bytes<N>`'s type, so `bytes<16>` and
@@ -84,8 +87,8 @@ a bind-time argument (`Value::AllenMask` / `BindValue::AllenMask`,
 Interval<i64>);`) mapped to structural engine types at the boundary. rustc polices
 typos and cross-domain confusion at the application's compile time — stronger than
 engine nominal typing, since it also protects non-database code. The engine will not
-stop a query joining `Posting.account` to `Instrument.id`; both are U64, that query
-means what it says. Inclusion statements document intent; the host prevents the
+stop a query joining `Posting.account` to `Instrument.id`; both are U64, and the
+join is exactly the query written. Inclusion statements document intent; the host prevents the
 mistake. This is the design, not a hole.
 **Decision:** nominal typing rejected everywhere. **Alternative:** nominal
 Fresh/domain wrappers in the engine. **Why it lost:** owner is a hard
@@ -109,40 +112,44 @@ timestamp in it. **Reverses if:** never — the jobs are covered separately and 
 ## Interval: the denotation
 
 An `Interval` value `[s, e)` is **a set of points, written as its bounds** —
-half-open over the element domain. `Interval::new` is the one construction boundary:
+half-open, nonempty (`lean/Bumbledb/Values.lean: Interval.points`,
+`points_halfopen`, `interval_nonempty`). `Interval::new` is the one construction
+boundary:
 `Value` and the encoding layer carry that checked type, so malformed intervals are
 unconstructible in any encodable value. Decoding still rejects stored `s ≥ e` as
-corruption; that check detects damage at rest rather than repairing host input. The
-empty interval is unrepresentable because a fact never denotes nothing. Half-open
-and nonempty are not house conventions but **Allen's algebra's preconditions**: the
-13 basic interval relations
-are jointly exhaustive and pairwise disjoint (JEPD) only over nonempty intervals —
-an empty interval satisfies none of them cleanly — and *meets* (`a.end == b.start`,
-no shared point) is only well-defined half-open; closed intervals would make meeting
-and overlapping collide at the boundary point. Encoding: `start ‖ end`, each in the
+corruption; that check detects damage at rest rather than repairing host input.
+Half-open
+and nonempty are not house conventions but **Allen's algebra's preconditions**
+(`lean/Bumbledb/Query/Aggregates.lean: allen_jepd`; the empty interval's
+degeneracy has its countermodels —
+`lean/Bumbledb/Countermodels.lean: raw_interval_no_points`,
+`empty_interval_vacuous`). Encoding: `start ‖ end`, each in the
 element type's order-preserving encoding, so the 16 bytes sort lexicographically by
-start — the property the storage layer's neighbor probes stand on (`50-storage.md`).
+start (`lean/Bumbledb/Values.lean: encode_interval_order`) — the property the
+storage layer's neighbor probes stand on (`50-storage.md`).
 
-**The denotation rule, normative:** a fact whose interval field holds `[s, e)` *means*
-the family of point-facts obtained by replacing the interval with each `t`, `s ≤ t < e`.
+**The denotation rule:** a fact whose interval field holds `[s, e)` stands for
+its family of point-facts, one per point of the interval.
 Everything temporal in this database is a corollary of this sentence and owns no
 machinery of its own:
 
-- A **functional dependency over an interval position holds pointwise** — no two facts
-  in the key group may share any point: every pair satisfies `DISJOINT`, the
-  Allen composite (`30-dependencies.md`, `20-query-ir.md` § the Allen
-  operator). SQL:2011 spells this `WITHOUT OVERLAPS` and ships it as a
-  keyword; here it is not an option but what the judgment *means* on this type.
-- An **inclusion dependency over an interval position holds pointwise** — every point
-  of the source's interval is covered by the target's intervals (SQL:2011's `PERIOD`
-  referential constraints). The target needs a pointwise key for this to be checkable in
-  logarithmic time; validation demands it (`30-dependencies.md`).
-- **Point membership is a typing rule, not syntax**: a query atom binding an
-  interval-typed field with an element-typed term means `t ∈ interval`
-  (`20-query-ir.md`).
+- A **functional dependency over an interval position holds pointwise** —
+  per-group pairwise disjointness
+  (`lean/Bumbledb/Dependencies.lean: pointwise_key_disjoint`;
+  `30-dependencies.md`). SQL:2011 spells this `WITHOUT OVERLAPS` and ships it
+  as a keyword; here it is not an option but the judgment itself on this type.
+- An **inclusion dependency over an interval position holds pointwise** — source
+  points jointly covered by target intervals
+  (`lean/Bumbledb/Dependencies.lean: coverage_is_support_inclusion`; SQL:2011's
+  `PERIOD` referential constraints). The target needs a pointwise key for this
+  to be checkable in logarithmic time; validation demands it
+  (`30-dependencies.md`).
+- **Point membership is a typing rule, not syntax**
+  (`lean/Bumbledb/Query/Denotation.lean: pointIn_unfold`; `20-query-ir.md`).
 
-**The point-domain law, normative:** the point domain of each element type is
-`MIN ..= MAX−1`, and `end == MAX` **denotes the unbounded ray** `[s, ∞)`. ∞ is a
+**The point-domain law:** the point domain of each element type is
+`MIN ..= MAX−1`, and `end == MAX` is **the unbounded ray** `[s, ∞)`
+(`lean/Bumbledb/Values.lean: ray_is_unbounded_tail`). ∞ is a
 value of the representation, not a hack around it: ongoing employment, the top tax
 bracket, and until-forever recurrence are honest values (`Interval::ray(start)`
 names the constructor; `is_ray()` the predicate; `new` admits `end == MAX`
@@ -153,23 +160,25 @@ special case — there is no branch to take, and no judgment or interval predica
 needs ray awareness. Consequences, typed rather than left to be discovered:
 
 - An **element-typed literal or param equal to the domain ceiling is an error
-  wherever it meets an interval position** (membership bindings, `Contains`
-  operands): a typed validation error for literals, the matching typed bind error
+  wherever it meets an interval position**: a typed validation error for
+  literals, the matching typed bind error
   for point params — never a silently-unmatchable query. Parse, don't validate.
-- A **ray has no finite measure**: `Duration` over a ray is the typed execution
+- A **ray has no finite measure**
+  (`lean/Bumbledb/Values.lean: measure_ray_none`): `Duration` over a ray is the
+  typed execution
   error `MeasureOfRay` — the one runtime type error in the engine, since
   boundedness is not provable at validation. The alternative — silently yield
   MAX — fabricates arithmetic.
-- **Coverage judgments over rays**: a source ray requires target coverage to ∞,
-  satisfiable only by a target chain reaching a ray; the coverage walk's ordinary
-  gap check enforces it with no special case.
+- **Coverage judgments over rays**: a source ray is satisfied only by a target
+  chain reaching a ray (`lean/Bumbledb/Exec/Sweep.lean: ray_needs_ray`); the
+  coverage walk's ordinary gap check enforces it with no special case.
 
 The alternative — first-class ∞ — buys a 17th byte or a stolen sentinel anyway,
 and changes nothing the neighbor probe can observe.
 
-**The denotation defines exactly one arithmetic, and `Duration` is it:** a
-point set has a measure, `|[s, e)| = e − s`, u64-valued for both element
-types — and everything else that looks like interval arithmetic is endpoint
+**The denotation defines exactly one arithmetic, and `Duration` is it** — the
+point-set measure (`lean/Bumbledb/Values.lean: measure_finite`); everything
+else that looks like interval arithmetic is endpoint
 math and stays refused (the README refusals; `Duration` is not the thin end
 of a wedge, it is the entire wedge, provably: the denotation defines nothing
 else). The measure's query positions and the ray error's placement are
@@ -179,7 +188,8 @@ else). The measure's query positions and the ray error's placement are
 `(x, [3,8))` are distinct facts whose denotations overlap; the engine stores what it
 was given (identity is bytes, below). The packed canonical form — maximal disjoint
 intervals per group, the temporal literature's *coalesce*, Postgres's `range_agg` —
-is an aggregate (`Pack`, `20-query-ir.md` § aggregation). A relation that *wants*
+is an aggregate (`Pack`, `20-query-ir.md` § aggregation;
+`lean/Bumbledb/Query/Aggregates.lean: pack_extensional`). A relation that *wants*
 its intervals disjoint declares the pointwise key; the dependency system expresses
 the policy, the engine never imposes it.
 
@@ -250,7 +260,7 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
   question — generation is a per-field-declaration attribute and nothing else.
 - **Fresh ids order within their relation and nowhere else.** A fresh id is monotonic per
   (relation, field); comparing fresh ids across relations compares two unrelated mint
-  sequences and means nothing. Where the application needs cross-relation "happened
+  sequences and signifies nothing. Where the application needs cross-relation "happened
   after", it stores an explicit I64 time or an Interval — the convention exists so
   nobody rediscovers uuid.
 
@@ -281,7 +291,8 @@ check.
 A **closed relation** declares its extension in the schema:
 `RelationDescriptor { name, fields, extension: Option<Extension> }`, where
 `Some(axioms)` is the kind — there is no relation-kind enum; the option *is* it. Its
-elements are **ground axioms** — atomic sentences of the theory. A schema was
+elements are **ground axioms** — atomic sentences of the theory, constants at
+every instance (`lean/Bumbledb/Schema.lean: den_closed_constant`). A schema was
 *signature + axioms* where every axiom was a universally quantified statement; a
 closed relation gives the theory constants, and vocabularies stop being a type to
 become what they always were relationally: unary-plus-payload relations with a
@@ -295,7 +306,7 @@ fixed extension.
   declare it (a hand-built descriptor that tries collides on the field name).
   Compiled sub-vocabulary membership is a typed `MemberSet::contains(AxiomIndex)`
   query; an arbitrary fact word narrows at that boundary, and every out-of-range
-  index means absence rather than a distinct error.
+  index reads as absence rather than a distinct error.
 - **The auto-key.** Closedness materializes `R(id) -> R` exactly as `fresh` does
   (materialized order below) — ordinary in every way and targetable: a reference
   to a closed relation is a plain u64 column plus a declared containment, like any
@@ -356,7 +367,8 @@ survives only for physical layout/stride and for SQLite's external row concept.
   whichever key it names, and fresh is a value-minting convenience that happens to
   materialize one. Nothing anywhere appoints "the" key.
 - `insert(fact)` is an idempotent no-op if the fact exists; `delete(fact)` is an
-  idempotent no-op if it doesn't. Both report whether they changed state. **There is
+  idempotent no-op if it doesn't (set union and difference —
+  `lean/Bumbledb/Txn.lean: Op.apply`). Both report whether they changed state. **There is
   no update operation**; mutation is delete + insert (within one write transaction),
   with explicit fresh re-supply preserving identity across the swap.
 - Nullary (zero-field) relations are legal: a set that is empty or contains the single
@@ -383,12 +395,13 @@ branch.
 
 ## Fact identity: the canonical encoding
 
-This document owns fact equality. **Value equality ≡ `fact_bytes` equality**, where
+This document owns fact equality. **Value equality is `fact_bytes` equality**
+(`lean/Bumbledb/Values.lean: value_eq_iff_encode_eq`), where
 `fact_bytes` is the concatenation of each field's canonical encoding **in declaration
 order**, with **no padding between fields** — facts are dense (1-byte bools sit
 flush against 8- and 16-byte fields; Apple Silicon's near-free unaligned loads make
-intra-row alignment a pure waste, `00-product.md`). Canonical means injective and
-unique: Bool is strictly 0/1 (any other byte is corruption, never a distinct "true");
+intra-row alignment a pure waste, `00-product.md`). Canonical: injective and
+unique — Bool is strictly 0/1 (any other byte is corruption, never a distinct "true");
 integers are their order-preserving encodings;
 Interval is `start ‖ end` with `start < end` (violation is corruption);
 String is its intern id (one byte sequence ⇒ exactly one id, ever); `bytes<N>` is its
@@ -434,8 +447,8 @@ with one interned type there is nothing to segregate. Forward map:
 blake3(bytes) → id (collision axiom above); reverse map: id → bytes. Ids are
 monotonic, never reused, append-only; interning happens only inside write transactions.
 Strings are validated UTF-8 at intern time (parse, don't validate). On the read path,
-query literals resolve by read-only lookup — a dictionary miss means the literal cannot
-match any fact: **empty result, never an insert, never an error** (resolved
+query literals resolve by read-only lookup — a dictionary miss proves the literal can
+match no fact: **empty result, never an insert, never an error** (resolved
 per-execution; see `20-query-ir.md`). Known accepted limitation: no GC — deleted
 facts leak their interned values, and a value interned for an insert that turned
 out to be a storage no-op leaks even though no committed fact ever referenced it
@@ -569,7 +582,7 @@ One fragment, three of the family's queries, three positions: `busy_scan` takes
 it as the positive atom under `Allen` against the param window; `conflict_free`
 pushes the *same* fragment into `negated` with a point-membership binding
 (negation is a position in the query, not a kind of atom — `20-query-ir.md`);
-`free_busy` folds its span variable under `Pack`. Change what "busy" means —
+`free_busy` folds its span variable under `Pack`. Change the definition of "busy" —
 an added arm, an added match arm — and every consumer follows at the next compile.
 **Refusal, permanent: no named-view registry in
 the engine, ever.** A registry would be a second schema with none of the
@@ -589,8 +602,9 @@ BusySpan(person, span) -> BusySpan;                           // packed ⇒ disj
 BusySpan(person, span) <= Claim(person, span | arm == Busy);  // soundness, pointwise
 ```
 
-The `<=` reads through the denotation: every point of every stored span is
-covered by that person's busy claims, so an **unsound** materialization —
+The `<=` reads through the denotation — pointwise coverage
+(`lean/Bumbledb/Dependencies.lean: coverage_is_support_inclusion`) — so an
+**unsound** materialization —
 claiming busy time that isn't, or surviving its sources' deletion — is
 **uncommittable**, judged on every commit that touches either side. Incomplete-
 until-refresh stays representable; that is what a refresh window *is*, and the

@@ -31,20 +31,26 @@ laws).
    documents, or describe previous engines. A measured number may appear as rationale
    for a current mechanism ("measured"); a story may not. Anything else lives in git
    history only.
+7. **The gate law (the covenant).** A change to accepted schemas, query denotation,
+   or execution semantics is not done until the Lean tree moves in the same commit;
+   the CI lean lane enforces buildability (`scripts/lean.sh`) and the census enforces
+   citation integrity (`scripts/spec-census.sh` — every `lean/` citation in these
+   docs must resolve to a real declaration). Semantic facts are never restated in
+   prose: one intuition sentence, then the theorem name.
 
 ## The documents
 
 | Doc | Contents |
 |---|---|
 | `00-product.md` | Thesis, workload census, hardware, durability, deleted vocabulary, success criteria |
-| `10-data-model.md` | Set semantics, the six structural types, the interval denotation, identity, schema |
-| `20-query-ir.md` | The pure-data IR: atoms, negation, membership, param sets, aggregates, validation |
-| `30-dependencies.md` | The two judgments (functionality, containment), statements, pointwise lifting, the acceptance gate |
+| `10-data-model.md` | Reading guide over `lean/Bumbledb/Values.lean`+`Schema.lean`: the six structural types, interval/ray intuition, identity, schema, modeling discipline — decisions whole, semantics by citation |
+| `20-query-ir.md` | Reading guide over `lean/Bumbledb/Query/`: the pure-data IR shape and notation grammar, validation roster, recursion refusal — decisions whole, semantics by citation |
+| `30-dependencies.md` | Reading guide over `lean/Bumbledb/Dependencies.lean`+`Txn.lean`: the two judgments by citation, statement grammar, the acceptance gate, enforcement mechanism, the decidability firewall |
 | `40-execution.md` | Access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation |
 | `50-storage.md` | LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images |
 | `60-validation.md` | The two oracles (SQLite + naive model), ledger benchmark protocol, test families |
 | `70-api.md` | Embedding surface: the schema! grammar, transactions, point reads, results, ETL |
-| `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative (reader: the owner and any agent writing a theory) |
+| `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative; `Guarantee:` labels cite `lean/` theorems, census-checked (reader: the owner and any agent writing a theory) |
 | `../formal/README.md` | Versioned Lean model, provenance, scope, and the bridge from theorems to Rust evidence |
 
 ## OPEN items
@@ -57,7 +63,11 @@ laws).
   censused depth-bounded hierarchies (`../cookbook.md` recipes 24–25), and the full
   design is a paper proof with a seam ledger (`../reference/recursion-design.md`).
   *Trigger: the refusal's three clauses — unbounded/large depth; closure composed
-  into one plan; the chain-window class.*
+  into one plan; the chain-window class.* Four rulings survive the trigger firing
+  (the trigger opens stratified fixpoints over query-sized programs, nothing else):
+  satisfaction-not-implication and statements-over-stored-relations
+  (`30-dependencies.md`), the creation quarantine and queries-stay-query-shaped
+  (`20-query-ir.md`).
 - **Ordering/limit conveniences and top-k pushdown**: presentation-layer; results are
   sets, the host sorts. *Trigger: owner pain, or a measured materialize-then-sort
   latency-budget violation.*
@@ -155,3 +165,15 @@ re-litigated by accident:
 - **Full-width images, pin-at-prepare plans, one process, zero engine threads,
   intra-query parallelism a non-goal, 64-bit only** (`00-product.md`,
   `40-execution.md`, `50-storage.md`).
+- **The engine judges satisfaction, never implication** — consequence among
+  statements is a compiled witness, a conservative optimization, or diagnostics;
+  never a required procedure (`30-dependencies.md`, the decidability firewall).
+- **Statements quantify over stored relations, permanently** — no predicate
+  vocabulary in the statement language, before or after recursion
+  (`30-dependencies.md`).
+- **A created value never re-enters a derivation** — heads bind, filters compare,
+  folds create at the answer boundary only; future interval operators must be
+  lattice-closed (`20-query-ir.md` § the creation quarantine).
+- **Queries stay query-shaped** — the caps are product decisions; no rule-program
+  runtime, no stored rules, no magic sets; a deductive database is a named
+  non-goal (`20-query-ir.md` § engine recursion, `00-product.md`).

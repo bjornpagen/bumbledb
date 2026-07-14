@@ -69,8 +69,9 @@ pre-rules query is a one-rule program.
   atom — that is the recursion trigger firing: go through the recursion
   design's ledger, not around it.
 
-- **Denotation: the query denotes the set union of its rules' denotations.**
-  Set semantics means there is exactly one union — no bag distinction exists
+- **A query's answers are the set union of its rules' answers**
+  (`lean/Bumbledb/Query/Denotation.lean: mem_queryAnswers`). Under set
+  semantics there is exactly one union — no bag distinction exists
   or is representable (there is no UNION ALL to refuse).
 - **Variables are strictly rule-scoped**: the same `VarId` in two rules
   names two unrelated variables (they may resolve to different types). A
@@ -122,45 +123,51 @@ period is the census instrument: reachability needs go through the
 cookbook recipes, and the day one fails on a clause above is the day this
 refusal earns its reversal.
 
+**The ruling that survives the trigger — queries stay query-shaped.** A
+firing trigger opens stratified fixpoints over query-sized programs and
+nothing else. The caps (`MAX_RULES`, and the design's `MAX_PREDICATES`
+when recursion lands) are product decisions, not provisional limits: they
+keep queries query-shaped so pin-at-prepare, the selectivity ladder, and
+the allocation high-water contract stay meaningful. The engine is never a
+rule-program runtime — *deductive database* is a named non-goal
+(`00-product.md`) — so program-level machinery is refused with the
+refusal recorded here: no stored or composable rule artifacts (a query is
+host data, assembled per prepare), no magic sets or demand transformation
+(demand lives in the host loop — the host seeds the frontier), no
+cross-rule join reuse or rule inlining, no incremental maintenance of
+rule programs, and statements never reference predicates
+(`30-dependencies.md`, the stored-relations decision).
+**Alternative:** a full Datalog runtime (the Soufflé/Ascent shape).
+**Why it lost:** program-scale workloads invalidate the prepared-query
+economics wholesale, and every accreted feature pays this project's full
+oracle + differential + fuzz cost — cheap in a Datalog engine, ruinous
+here. **Reverses if:** never — the identity is the thesis; individual
+capabilities re-enter only through this refusal's trigger discipline, one
+recorded decision at a time.
+
 ## Semantics
 
-### Atom matching (normative)
+### Atom matching
 
-For a fact `f`, an atom `a`, and the current partial variable assignment `ρ`,
-matching is the conjunction of the atom's field bindings:
+The matching equation, unification (a repeated variable is the join, never a
+post-filter), and the select-never-bind rule for params are
+`lean/Bumbledb/Query/Denotation.lean: matches_def`, `repeated_var_unifies`,
+`repeated_var_unifies_cross_atom`, and `param_selects_not_binds`; a rule's
+answers are its distinct satisfying bindings projected through the head, and a
+query's are the set union over its rules (`mem_ruleAnswers`,
+`mem_queryAnswers`). The equality throughout is structural value equality, with
+the interval-element membership typing rule below replacing it where
+applicable; a variable occurring only in membership positions is rejected
+(`membership_only_unsafe`; `ir/validate`'s `MembershipOnlyVariable`, the
+exhaustive roster below). Execution implements
+the same equation as occurrence filters plus bound-slot probes
+(`40-execution.md` § the executor). Distinctness is the only behavior — there
+is no DISTINCT concept — and no ordering or limit exists in the IR: results are
+sets; the host sorts (`70-api.md`).
 
-```text
-match(f, a, ρ) = ∧(field, term) ∈ a.bindings
-  Var(v), v ∉ dom(ρ) : extend ρ with v ↦ f[field]
-  Var(v), v ∈ dom(ρ) : f[field] = ρ(v)
-  Param(p)            : f[field] = bind[p]
-  Literal(x)          : f[field] = x
-  ParamSet(p)         : f[field] ∈ bind[p]
-```
-
-The equality in this matching equation is structural value equality, with the
-interval-element membership typing rule below replacing it where applicable.
-Consequently a repeated variable is a unification constraint immediately: within
-one atom it compares fields of the same fact, and across atoms it is the join. It is
-not a post-filter. A variable that occurs only in membership positions is rejected
-because matching can test membership but cannot enumerate the point domain
-(`ir/validate`'s `MembershipOnlyVariable`; the exhaustive roster below). Execution
-implements the same equation as occurrence filters plus bound-slot probes
-(`40-execution.md` § the executor).
-
-- The logical solution of a **rule** is the **set of distinct bindings of
-  the rule's variables** that satisfy every positive atom, every membership
-  binding, every condition, and **no negated atom** (below); projection
-  returns the **set** of projected facts, and the query's solution is the
-  union of its rules' projections.
-- **Existential variables never multiply projection output.** (Scoped to projection —
-  see aggregation below.)
-- Distinctness is the default and only behavior; there is no DISTINCT concept.
-- No ordering or limit in the IR: results are sets; the host sorts (`70-api.md`).
-
-**Answer identity and union.** A query denotes the **set of its answers**: the
-union of its rules' head projections. An answer is identical exactly when its
-canonical head-tuple bytes are identical. The sink is that union—one sink hears
+**Answer identity and union.** An answer is its canonical head-tuple bytes
+(`lean/Bumbledb/Query/Denotation.lean: answer_identity_canonical`,
+`union_idempotent`). The sink is that union—one sink hears
 every rule and its spanning seen-set performs semantic deduplication; no merge node
 exists (`exec/sink.rs`'s module contract and `40-execution.md` § the rule loop).
 That seen-set is elided only when planning supplies a typed
@@ -169,17 +176,18 @@ That seen-set is elided only when planning supplies a typed
 
 **Equality at three types.** Dependency `==` is key-backed correspondence between
 selected projected views (`30-dependencies.md`); selection `==` is σ equality
-inside one view; comparison `Eq` is typed term equality in a query. All three mean
+inside one view; comparison `Eq` is typed term equality in a query. All three are
 equality of denotations, but their operands—and therefore their diagnostics—are
 different and never interchangeable.
 
-### Negation (normative)
+### Negation
 
-A rule carries a list of **negated atoms**. A binding satisfies a negated atom iff
-**no fact** of its relation matches the atom's bindings under that variable
-assignment — plain anti-join over sets; no null trick, no three-valued logic.
-**Safety rule:** every variable occurring in a negated atom must also occur in a
-positive atom (a negated atom binds nothing; it only rejects). Literals, params,
+A rule carries a list of **negated atoms**: plain anti-join over sets — no null
+trick, no three-valued logic. **Safety rule:** every variable in a negated atom
+must also occur in a positive atom — a negated atom binds nothing; it only
+rejects (`lean/Bumbledb/Query/Denotation.lean: Safe`,
+`antijoin_over_active_domain`; the unsafe rule's infinite-answer countermodel
+is `lean/Bumbledb/Countermodels.lean: unsafe_rule_infinite`). Literals, params,
 param sets, and membership bindings are all legal inside negated atoms. There is no
 stratification concern because there is no recursion. Negated atoms contribute no
 find variables and never multiply anything — they are filters with a relation's
@@ -191,38 +199,40 @@ host. Results are sets; the merge is a concatenation. An outer-join concept will
 never enter the IR; an answer that is half-binding, half-absence is a null wearing a
 join costume.
 
-### Aggregation (normative)
+### Aggregation
 
-- **The fold domain of every aggregate is the group's set of distinct full bindings
-  over all the rule's variables.** Group key = the values of the non-aggregated find
-  variables. **Across rules**, aggregates read the head: the fold domain is
-  the union of the rules' binding sets projected to the head (the executor's
-  spanning seen-set keys exactly that head projection —
-  `40-execution.md` § the rule loop; provably disjoint rules elide it,
-  § set semantics). Two postings of amount 100 to one account are two distinct bindings (their
-  fresh ids differ): `Sum(amount) by account` = 200.
+- **Every aggregate folds the group's set of distinct full bindings**; group
+  key = the values of the non-aggregated find variables
+  (`lean/Bumbledb/Query/Aggregates.lean: agg_over_distinct_bindings`,
+  `group_fibers_disjoint`, `group_fibers_exhaust`). **Across rules**, aggregates
+  read the head: the fold domain is the union of the rules' binding sets
+  projected to the head (`lean/Bumbledb/Exec/Dedup.lean:
+  union_regime_head_projection`; the executor's spanning seen-set keys exactly
+  that head projection — `40-execution.md` § the rule loop; provably disjoint
+  rules elide it, § set semantics). Two postings of amount 100 to one account
+  are two distinct bindings (their fresh ids differ): `Sum(amount) by account`
+  = 200.
 - **The footgun, stated loudly:** joining a multiplicity-adding relation into an
   aggregate multiplies the binding set — `Posting ⋈ PostingTag` with 3 tags per posting
   triples the sum, exactly as in SQL. Don't write that query; aggregate first (in v0:
-  aggregate in one query, join its result in the host) or bind nothing from the
-  multiplying relation... which still adds its variables. This is inherent to
+  aggregate in one query, join its result in the host). This is inherent to
   joins+aggregation, not to set semantics.
-- `Sum` accumulates in **i128** and range-checks the final value once: Sum(I64)→I64,
-  Sum(U64)→U64 (accumulator u128), out-of-range = a runtime query error. Deterministic
-  under any fold order — set folds have none.
+- An emitted `Sum` is exact and overflow is a typed runtime error, never a wrap
+  (`lean/Bumbledb/Query/Aggregates.lean: checkedSum_sound`,
+  `wide_accumulator_exact` — the 128-bit accumulator with one finalize range
+  check): Sum(I64)→I64, Sum(U64)→U64; deterministic under any fold order (set
+  folds have none).
 - `Count` is **nullary**: |the group's binding set|, result type U64.
-- `CountDistinct(x)`: |the set of distinct values of x across the group's binding
-  set|, result type U64; legal over every type (equality is all it needs).
-- `Min`/`Max` accept U64 and I64 only (the orderable types — intervals and
-  `bytes<N>` excluded, `10-data-model.md`); result type = input type;
-  deterministic (a set has one minimum).
-- **Arg-restriction (`ArgMax`/`ArgMin`), semantics before shape:** when a find list
-  contains Arg terms, the group's binding set is first **restricted to the bindings
-  attaining the extreme of the key variable** (max for ArgMax, min for ArgMin), and
-  the group's answers are projected from that restricted set. This definition
-  makes multi-carry coherent by construction (all carried values come from the same
-  surviving bindings) and makes ties honest: **a tie yields every attaining answer** —
-  the answer is a set; with fresh keys ties cannot occur. Validation: all Arg terms
+  `CountDistinct(x)`: |the distinct values of x across the group|, U64, legal
+  over every type. `Min`/`Max` accept U64 and I64 only (the orderable types —
+  `10-data-model.md`); result type = input type; deterministic (a set has one
+  minimum).
+- **Arg-restriction (`ArgMax`/`ArgMin`):** the group's binding set is first
+  **restricted to the bindings attaining the extreme of the key variable**, and
+  the group's answers are projected from that restricted set — multi-carry is
+  coherent by construction, and **a tie yields every attaining answer**
+  (`lean/Bumbledb/Query/Aggregates.lean: argmax_ties_all_kept`); with fresh
+  keys ties cannot occur. Validation: all Arg terms
   in one query share one key variable and one direction; the key must be orderable
   (U64/I64); the key variable may itself be projected. Arg terms and fold aggregates
   (Sum/Min/Max/Count/CountDistinct) may not mix in one query in v0 — "sum of the
@@ -235,13 +245,16 @@ join costume.
   `ArgMax(value, key)` / `ArgMin(value, key)`; the renderer emits the same forms,
   including self-carry (`ArgMax(x, x)`). *Trigger* for defining a cross-rule restriction: a real
   query.
-- **`Pack` (the coalescing fold — Snodgrass's coalesce), semantics:** over an
-  interval-typed variable, per group the result is the set of **maximal disjoint
-  half-open segments** of the union of the group's interval point sets. **`Pack`
+- **`Pack` (the coalescing fold — Snodgrass's coalesce):** per group, the
+  maximal disjoint half-open segments of the union of the group's interval
+  point sets (`lean/Bumbledb/Query/Aggregates.lean: pack_canonical`,
+  `pack_extensional`, `pack_adjacency` — canonical output, points preserved,
+  half-open adjacency coalesced); a ray absorbs everything after its start —
+  **the packed ray is a ray** (no measure is taken, so no `MeasureOfRay`
+  interaction). **`Pack`
   is relation-shaped: one answer per (group, maximal segment)** — the
   one-answer-per-group convention was never a law (`ArgMax`'s tie sets were the
-  precedent), and a set-semantic query's result is already a set of answers, which
-  is exactly what dissolved the old OPEN item's "a set per group" blocker. Head
+  precedent). Head
   shape: the group variables plus **one interval-typed result position** (the
   packed segment shares its input's element type); at most one `Pack` per head —
   the multi-`Pack` product has no sighting and is refused with the trigger "a
@@ -249,10 +262,7 @@ join costume.
   other aggregate** (the Arg/fold mixing rule, extended: a fold column repeated
   per segment answer is a join in aggregate costume, and two relation-shaped
   aggregates do not compose in one head); its companions are group-key positions
-  only. Adjacency merges (`end == next.start` — the half-open law), identical
-  claims collapse in the coalesce (set-semantic dedup upstream is unchanged),
-  and a ray absorbs everything after its start — **the packed ray is a ray** (no
-  measure is taken, so no `MeasureOfRay` interaction). **Across rules `Pack`
+  only. **Across rules `Pack`
   folds the union** (unlike Arg-restriction): the head projection carries the
   raw claim, so the spanning seen-set keys (group, claim) pairs and the coalesce
   runs over ∪. Composition refusals, recorded: coalesced-time accounting
@@ -261,11 +271,12 @@ join costume.
   aggregate law) — with the trigger "a measured two-pass budget violation"; free
   time (`Gaps`) stays a two-line host walk over sorted packed output (README
   refusals ledger).
-- **All-aggregate finds are legal** (empty group key, one global group). Over empty
-  input the result is the **empty set** — not a 0 or NULL answer. "The balance of an
-  account with no postings is an absent answer, not 0." This is a documented divergence
-  from SQL's ungrouped-aggregate behavior; the oracle rule lives in
-  `60-validation.md`.
+- **All-aggregate finds are legal** (empty group key, one global group); over
+  empty input the result is the **empty set** — never a 0 or NULL answer
+  (`lean/Bumbledb/Query/Aggregates.lean: empty_global_no_answer`; SQL's
+  zero-row reading is refused with its countermodel,
+  `lean/Bumbledb/Countermodels.lean: sql_zero_row_from_no_binding`; the oracle
+  rule lives in `60-validation.md`).
 - Aggregates over illegal input types, an aggregate whose variable is also a group
   key, and duplicate find terms are validation errors.
 
@@ -343,16 +354,17 @@ validation. Non-UTF-8 strings remain a validation-boundary rejection. Negated at
 reuse `Atom` unchanged — negation is a *position* in the query, not a kind of atom.
 
 **Membership is a typing rule, not a node.** A binding `(field, term)` where the
-field is `Interval(E)` and the term's type is `E` means **point membership**:
-the binding satisfies iff `start ≤ t < end`. A term of type `Interval(E)` in the
-same position means interval **value equality** (identity, `10-data-model.md`).
-Var, Param, ParamSet, and Literal all participate under the same rule. The point
-domain is `MIN ..= MAX−1` (`10-data-model.md`'s point-domain law — `end == MAX`
-denotes the ray `[s, ∞)`): an element-typed literal equal to the domain ceiling
-is a validation error wherever it meets an interval position (membership bindings
-and `PointIn` operands), and a point-position param bound to the ceiling is the
-matching bind-time error — `MAX` is the ray's ∞, never a point, so the mistake is
-typed out instead of silently matching nothing. One
+field is `Interval(E)` and the term's type is `E` is **point membership** — the
+half-open endpoint reading, inclusive at start, exclusive at end
+(`lean/Bumbledb/Query/Denotation.lean: pointIn_unfold`). A term of type
+`Interval(E)` in the
+same position is interval **value equality** (identity, `10-data-model.md`).
+Var, Param, ParamSet, and Literal all participate under the same rule. The
+domain ceiling is the ray's ∞, never a point (`10-data-model.md` § the
+point-domain law): a ceiling literal at any interval position (membership
+bindings and `PointIn` operands) is a validation error, a ceiling-bound point
+param the matching bind-time error — typed out instead of silently matching
+nothing. One
 consequence, enforced by validation: a variable bound *only* by membership bindings
 has no enumerable domain — every point variable must be bound by at least one
 non-membership occurrence (a scalar field binding). Interval-vs-interval
@@ -378,14 +390,17 @@ constant-valued: write the query you mean.
 `PointIn` (point ∈ interval), `Allen(mask)` (interval × interval), and
 containment `<=` (views) are three predicates with three names.
 
-## The Allen operator (normative — the interval-pair coordinate system)
+## The Allen operator (the interval-pair coordinate system)
 
 The 13 Allen basic relations are jointly exhaustive and pairwise disjoint over
 nonempty half-open intervals (the type's preconditions, `10-data-model.md`):
-every configuration of two intervals is **exactly one** of them. The set of all
+every configuration of two intervals is **exactly one** of them
+(`lean/Bumbledb/Query/Aggregates.lean: allen_jepd`). The set of all
 interval-pair predicates is therefore the powerset 2¹³, and the IR carries it as
 exactly that: `Allen { mask }` between two interval terms of one element type,
-satisfied iff `classify(lhs, rhs) ∈ mask`. One operator parameterized by a
+satisfied by mask membership of the pair's classification
+(`lean/Bumbledb/Query/Denotation.lean: allen_mask_denotation`). One operator
+parameterized by a
 13-bit mask replaces an operator vocabulary permanently — the vocabulary can
 never grow again, because nothing exists outside the coordinate system.
 
@@ -393,8 +408,9 @@ never grow again, because nothing exists outside the coordinate system.
   detail**: bit *i* = basic *i* in the **palindromic order** — before, meets,
   overlaps, starts, during, finishes, **equals**, finished-by, contains,
   started-by, overlapped-by, met-by, after. Each basic's converse sits at the
-  mirrored position, so `converse(mask)` — the involution with
-  `Allen(a, b, m) ≡ Allen(b, a, converse(m))` — is the 13-bit reversal: one
+  mirrored position, so `converse(mask)` — the involution that dualizes the
+  operand swap (`lean/Bumbledb/Query/Aggregates.lean:
+  mask_converse_involution`, `allen_swap_mask`) — is the 13-bit reversal: one
   `rbit` plus a shift, scalar or vector. The bits are laid out as the
   algebra's symmetry.
 - **Named constants, not sugar** (they are values of the algebra): the 13
@@ -429,20 +445,22 @@ lowering (§ the input condition grammar, below) recovers it as rules at
 the validation boundary.
 
 Constraint-side unification (no semantics change): the pointwise key
-judgment's meaning — per-group pairwise disjointness — is the statement
+judgment — per-group pairwise disjointness
+(`lean/Bumbledb/Dependencies.lean: pointwise_key_disjoint`) — is the statement
 "every pair satisfies `DISJOINT`" (`30-dependencies.md`); the checker's
 neighbor probe is its O(log n) enforcement plan. One vocabulary, both sides
 of the engine.
 
-## The measure (normative — the denotation's one arithmetic)
+## The measure (the denotation's one arithmetic)
 
 **Vocabulary is pinned:** surface `Duration`, IR `Measure`; the denotation is
-point-set cardinality, and rays are refused at evaluation (`MeasureOfRay`).
-
-`Duration(t)` over an interval-typed rule variable is the measure of its
-point set, `|[s, e)| = e − s`, type u64 (`10-data-model.md`: the one
-arithmetic the denotation defines; everything else that looks like interval
-arithmetic is endpoint math and stays refused). **Legal positions,
+point-set cardinality (`lean/Bumbledb/Values.lean: measure_finite` — for a
+bounded interval, exactly end minus start, type u64 for both element types),
+and rays are refused at evaluation
+(`lean/Bumbledb/Values.lean: measure_ray_none`; `MeasureOfRay`). It is the one
+arithmetic the denotation defines (`10-data-model.md`); everything else that
+looks like interval arithmetic is endpoint math and stays refused.
+**Legal positions,
 exhaustively:** a find term (`FindTerm::Measure` — a group-key position
 under aggregation, exactly like a plain variable find); the aggregated
 input of `Sum`/`Min`/`Max` (`FindTerm::AggregateMeasure` — `Sum` in the
@@ -455,17 +473,21 @@ of one comparison, a non-interval variable, and any fold but the three.
 
 - **Exactness, recorded:** the engine evaluates the measure as one
   subtraction over the encoded column words, exact for both element types —
-  the encodings are unit-spaced order-preserving maps onto u64 words (u64
-  the identity, I64 the +2⁶³ bias, which cancels in the difference), and
+  the encodings are unit-spaced order embeddings onto u64 words
+  (`lean/Bumbledb/Values.lean: encode_u64_order_embedding`,
+  `encode_i64_order_embedding` — the I64 bias cancels in the difference), and
   the constructor invariant `end > start` keeps the difference positive and
   below 2⁶⁴. No overflow, no decode.
-- **The ray error:** a ray has no finite measure (`10-data-model.md`, the
-  point-domain law), and boundedness is not provable at validation, so the
+- **The ray error:** a ray has no finite measure, and boundedness is not
+  provable at validation, so the
   subtraction path tests `end == MAX` and raises the typed execution error
   `MeasureOfRay`, carrying the offending interval's two encoded words —
-  **the engine's one runtime type error**. Hosts exclude rays first: an
-  `Allen(DISJOINT)` predicate against the ray probe `[MAX−1, MAX)` (an interval
-  intersects it iff its end is MAX — exactly the rays), or a bounded-end
+  **the engine's one runtime type error**; one ray in a group poisons the
+  whole group's measure column, never yielding a value
+  (`lean/Bumbledb/Query/Aggregates.lean: measure_fold_laws`). Hosts exclude
+  rays first: an
+  `Allen(DISJOINT)` predicate against the ray probe `[MAX−1, MAX)` (only the
+  rays intersect it), or a bounded-end
   filter (`Allen(COVERED_BY)` a bounded window) on the measured atom.
 - **The filter-order law:** a measure comparison lowered to an atom's
   filter list evaluates only on facts surviving the atom's *other* filters
@@ -512,9 +534,11 @@ are per operator:** a missed value resolves to the never-minted sentinel intern 
 `Ne` use matches every stored value — the complement, per the semantics section above.
 
 **Param sets (`ParamSet`):** a param id used as a set — bound at execution to a slice
-of values of the anchored type. Semantics: the term denotes *any element* — a
-binding position matches iff the field value is **in** the set; membership bindings
-accept point sets (t ∈ set, t ∈ interval — any element satisfying both). Legal in
+of values of the anchored type. The term selects *any element* — a binding
+position matches on set membership, never binding fresh values
+(`lean/Bumbledb/Query/Denotation.lean: paramSet_selects_membership`); membership
+bindings accept point sets (t ∈ set, t ∈ interval — any element satisfying
+both). Legal in
 atom bindings (positive and negated) and as one side of `Eq`; **illegal under every
 other operator** — `Ne(x, set)` reads as ambiguous quantification, and "not in set"
 is a negated atom or the host's complement, written explicitly. A ParamId is scalar
@@ -524,6 +548,36 @@ bind (sets are sets). Intern-miss semantics apply per element. This is the `IN` 
 the surveyed workloads (the second-most-used operator in both — 150 and 3 sites),
 admitted as a term because the alternative is N point queries per batch fetch.
 
+## The creation quarantine (decision record)
+
+**Decision: a created value never re-enters a derivation.** The evaluation
+dataflow is one-way: atoms *select* (every joined value exists in a stored
+column), filters *compare* (a comparison-side measure is created and discarded,
+never bound — a computation, not a bindable value), and heads and folds *create*
+only at the answer boundary — once, over finished binding sets, exiting to the
+host. The operator inventory under the law: `Min`/`Max`/`ArgMax`/`ArgMin`
+select; `Sum`/`Count`/`CountDistinct` and the measure create values outside the
+active domain; `Pack` creates lattice-closed values (a coalesced segment's
+endpoints are *selected* from stored endpoints, never invented —
+`lean/Bumbledb/Query/Aggregates.lean: pack_lattice_closed`) and
+relation-shaped rows; `fresh` mints on the write path, never during evaluation.
+Today the law is enforced by representation — heads are never body atoms, and
+each creating operator's legal positions are enumerated with typed rejections —
+and when engine recursion lands, the design's safety roster
+(`MeasureInRecursiveHead`, `AggregationThroughCycle` —
+`docs/reference/recursion-design.md` §2) is this same law restated for fixpoint
+topology, not a new rule: value invention inside a fixpoint is the
+Turing-completeness door, and it stays shut. The fence for future interval
+operators follows: only lattice-closed, endpoint-selecting operations are ever
+candidates (intersection, someday, under the chain-window fence —
+recursion-design §8); endpoint-inventing operations (shift, widen, arithmetic
+on bounds) are refused categorically. **Alternative:** computed columns /
+general expressions in rule bodies. **Why it lost:** it breaks the pure-data IR,
+the fingerprint, and both oracles today, and becomes undecidable termination the
+day recursion lands. **Reverses if:** never as a general mechanism; individual
+named computations may be admitted one at a time on the measure's precedent —
+typed positions, boundary-only, each a recorded decision.
+
 ## The input condition grammar and DNF lowering (owned here; runs inside validation)
 
 The rule's condition list admits trees: `ConditionTree = Leaf(Comparison) |
@@ -531,7 +585,9 @@ And(Vec) | Or(Vec)`, the list itself conjunctive — the one place the surface
 accepts a nested OR. The engine never sees it: **DNF of a query is a set of
 rules**, so validation distributes every rule's trees to disjunctive normal
 form and **each disjunct becomes a rule** — atoms and finds cloned, the
-rule's conditions that disjunct's leaves — before any per-rule check runs.
+rule's conditions that disjunct's leaves — before any per-rule check runs,
+answer-preservingly (`lean/Bumbledb/Query/Denotation.lean:
+dnf_preserves_denotation`).
 This is the outer-join precedent applied to disjunction: a documented
 decomposition, never a node. The refusal it recovers (README refusals, "OR
 tangled mid-rule across atoms"): a cross-atom disjunction poisons filter
@@ -559,9 +615,11 @@ disjoin by writing rules, which is what rules are for.
   lists as sets — conjunction is idempotent and commutative) keep their
   first occurrence.
 - **The empty combinations keep their algebraic readings**: `And([])` is
-  true (no leaves), `Or([])` is false — its rule lowers to zero rules,
-  accepted exactly as statically contradictory conditions are (the semantics
-  are exact); a program whose *every* rule vanishes is the empty union,
+  true (no leaves), `Or([])` is false
+  (`lean/Bumbledb/Query/Denotation.lean: Condition.allHold_iff`,
+  `Condition.anyHold_iff`, at the empty list) — an `Or([])` rule lowers to
+  zero rules, accepted exactly as statically contradictory conditions are;
+  a program whose *every* rule vanishes is the empty union,
   rejected as the empty rule set.
 - **The validated artifact contains no `Or`** — grep-provable: everything
   downstream of validation carries flat comparison lists (`LoweredRule`),
@@ -609,7 +667,9 @@ three; **normalization lowers IR form to paper form**:
    after sentinel-trim, or refuting an `Eq` constant; an `Allen`
    literal-vs-literal condition `classify` refutes; a failed
    constant-point-in-constant-interval membership — are a **statically
-   empty verdict for the rule**: the rule is marked dead carrying the
+   empty verdict for the rule**, contributing the empty answer set on every
+   instance (`lean/Bumbledb/Exec/Rewrites.lean: statically_empty_sound`):
+   the rule is marked dead carrying the
    rendered killing condition (plan introspection prints it), a dead rule inside a
    live program is deleted at prepare and never runs, and a program of
    only dead rules prepares to the `Empty` plan (`40-execution.md`,
@@ -633,7 +693,7 @@ specified in `40-execution.md`. **Reverses if:** never — the paper's assumptio
 WLOG, not a design.
 
 Degenerate shapes, ruled: a rule with no positive atoms is invalid (negated atoms
-alone bind nothing); an atom with zero bindings is legal and means a nonemptiness
+alone bind nothing); an atom with zero bindings is legal — a nonemptiness
 gate on that relation (Cartesian with the rest, well-defined under the plan
 formalism) — a zero-binding *negated* atom is an emptiness gate, equally legal;
 every find variable must appear in some positive atom (Datalog safety); variables
@@ -788,7 +848,7 @@ statement surface's query side, not an import. One notational family, schema to
 query.
 
 ```text
-query   := rule+                       // two or more rules denote set union
+query   := rule+                       // answers: the set union over rules
 rule    := '(' head ')' '|' body ';'
 head    := headterm (',' headterm)*
 headterm:= var | [name ':'] agg        // named positions become result columns
