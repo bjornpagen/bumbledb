@@ -5,7 +5,9 @@ import Bumbledb.Query.Denotation
 
 The aggregate boundary contracts as theorems: every aggregate folds
 the DISTINCT binding set of its group (grouping is the fibering of
-PRD 04's binding sets, pre-projection), checked sums are the
+PRD 04's binding sets over the EVALUATED head values — answers are
+value tuples, and the group key is what each find term PROJECTS, the
+F4 decision recorded at the grouping section), checked sums are the
 `Overflow(Aggregate)` spec, the measure folds inherit the ray refusal
 as `Option`-poisoning, `pack` is the coalescing fold (sort by start,
 coalesce overlapping-or-adjacent, emit maximal segments), and
@@ -296,7 +298,12 @@ engine's `sort_unstable` pass + windowless sweep
 not core's `mergeSort`: the coalesce examples are kernel-evaluated
 (`decide`), and `mergeSort`'s well-founded recursion does not
 kernel-reduce — a recorded representation choice, not semantics
-(sortedness is all any theorem reads). -/
+(sortedness is all any theorem reads). The engine sorts claims
+lexicographically on `[start, end]` where this sort reads starts
+alone; the tie order among equal starts is provably invisible —
+`pack_input_order_irrelevant` (pack is a function of the point union)
+and the Level-1 transfer `Exec/Sweep.lean:
+sweepRuns_tie_order_irrelevant`. -/
 
 section Pack
 
@@ -378,6 +385,31 @@ theorem mem_sortByStart {jv : Interval α} :
   | iv :: rest => by
     unfold sortByStart
     rw [mem_insertByStart, mem_sortByStart (l := rest), List.mem_cons]
+
+omit [LinearElem α] [DecidableLT α] in
+/-- Inserting below the whole list lands at the head. -/
+theorem insertByStart_of_le {iv : Interval α} :
+    ∀ {l : List (Interval α)}, (∀ jv ∈ l, iv.start ≤ jv.start) →
+      insertByStart iv l = iv :: l
+  | [], _ => rfl
+  | kv :: rest, h => by
+    unfold insertByStart
+    rw [if_pos (h kv (List.mem_cons_self ..))]
+
+omit [LinearElem α] [DecidableLT α] in
+/-- A start-sorted list is `sortByStart`'s fixpoint — the sort seam
+the tie-order transfer crosses (`Exec/Sweep.lean:
+sweepRuns_tie_order_irrelevant`): the engine's sort pass hands the
+fold a start-ordered list, on which the spec's sort changes
+nothing. -/
+theorem sortByStart_id_of_sorted :
+    ∀ {l : List (Interval α)},
+      l.Pairwise (fun a b => a.start ≤ b.start) → sortByStart l = l
+  | [], _ => rfl
+  | iv :: rest, h => by
+    obtain ⟨hhd, hrest⟩ := List.pairwise_cons.mp h
+    unfold sortByStart
+    rw [sortByStart_id_of_sorted hrest, insertByStart_of_le hhd]
 
 /-- The frontier join: the larger bound. -/
 def maxE (a b : α) : α := if a ≤ b then b else a
@@ -654,6 +686,129 @@ theorem pack_extensional (l : List (Interval α)) (x : α) :
     · rintro (hx | hx)
       · exact .inl hx
       · exact .inr hx
+
+/-! ### Canonical-form uniqueness — the input-order theorem -/
+
+omit [DecidableLT α] [DecidableLE α] in
+/-- The head start of a `Separated` list is a lower bound on its
+whole point union — the canonical form's minimum, attained at the
+head. -/
+theorem Separated.start_le_mem {a : Interval α} {l : List (Interval α)}
+    (h : Separated (a :: l)) {x : α}
+    (hx : x ∈ unionPoints (a :: l)) : a.start ≤ x := by
+  obtain ⟨jv, hjv, hxj⟩ := hx
+  have hxj' : jv.start ≤ x ∧ x < jv.«end» := hxj
+  rcases List.mem_cons.mp hjv with rfl | hmem
+  · exact hxj'.1
+  · exact LinearElem.le_of_lt
+      (LinearElem.lt_of_lt_of_le
+        (LinearElem.lt_trans a.h (Separated.head_lt h jv hmem)) hxj'.1)
+
+omit [DecidableLT α] [DecidableLE α] in
+/-- The head end of a `Separated` list is OUTSIDE its point union:
+the head's points stop strictly below it and every later segment
+starts strictly past it — the seam the uniqueness induction pivots
+on. -/
+theorem Separated.end_not_mem {a : Interval α} {l : List (Interval α)}
+    (h : Separated (a :: l)) : a.«end» ∉ unionPoints (a :: l) := by
+  rintro ⟨jv, hjv, hxj⟩
+  have hxj' : jv.start ≤ a.«end» ∧ a.«end» < jv.«end» := hxj
+  rcases List.mem_cons.mp hjv with rfl | hmem
+  · exact LinearElem.lt_irrefl _ hxj'.2
+  · exact LinearElem.lt_irrefl _
+      (LinearElem.lt_of_lt_of_le (Separated.head_lt h jv hmem) hxj'.1)
+
+omit [LE α] [LinearElem α] [DecidableLT α] [DecidableLE α] in
+/-- `Separated` survives beheading. -/
+theorem Separated.tail :
+    ∀ {a : Interval α} {l : List (Interval α)},
+      Separated (a :: l) → Separated l
+  | _, [], _ => trivial
+  | _, _ :: _, h => h.2
+
+omit [DecidableLT α] [DecidableLE α] in
+/-- **Canonical-form uniqueness.** Two `Separated` lists carrying the
+same point union are EQUAL — `pack_canonical`'s output predicate plus
+extensionality pins the representation, which is exactly the
+"maximal segments" reading as an equation. Spent by
+`pack_input_order_irrelevant` and, through it, the tie-order transfer
+(`Exec/Sweep.lean: sweepRuns_tie_order_irrelevant`). -/
+theorem separated_eq_of_unionPoints :
+    ∀ {l₁ l₂ : List (Interval α)}, Separated l₁ → Separated l₂ →
+      (∀ x, x ∈ unionPoints l₁ ↔ x ∈ unionPoints l₂) → l₁ = l₂
+  | [], [], _, _, _ => rfl
+  | [], b :: r₂, _, _, hext => by
+    obtain ⟨jv, hjv, -⟩ := (hext b.start).mpr
+      ⟨b, List.mem_cons_self .., LinearElem.le_refl b.start, b.h⟩
+    nomatch hjv
+  | a :: r₁, [], _, _, hext => by
+    obtain ⟨jv, hjv, -⟩ := (hext a.start).mp
+      ⟨a, List.mem_cons_self .., LinearElem.le_refl a.start, a.h⟩
+    nomatch hjv
+  | a :: r₁, b :: r₂, h₁, h₂, hext => by
+    have hba : b.start ≤ a.start := Separated.start_le_mem h₂
+      ((hext a.start).mp
+        ⟨a, List.mem_cons_self .., LinearElem.le_refl a.start, a.h⟩)
+    have hab : a.start ≤ b.start := Separated.start_le_mem h₁
+      ((hext b.start).mpr
+        ⟨b, List.mem_cons_self .., LinearElem.le_refl b.start, b.h⟩)
+    have hs : a.start = b.start := by
+      rcases LinearElem.trichotomy a.start b.start with hlt | heq | hgt
+      · exact absurd hlt (LinearElem.not_lt_of_le hba)
+      · exact heq
+      · exact absurd hgt (LinearElem.not_lt_of_le hab)
+    have he : a.«end» = b.«end» := by
+      rcases LinearElem.trichotomy a.«end» b.«end» with hlt | heq | hgt
+      · exact absurd ((hext a.«end»).mpr
+          ⟨b, List.mem_cons_self .., hs ▸ LinearElem.le_of_lt a.h, hlt⟩)
+          (Separated.end_not_mem h₁)
+      · exact heq
+      · exact absurd ((hext b.«end»).mp
+          ⟨a, List.mem_cons_self .., hs.symm ▸ LinearElem.le_of_lt b.h,
+            hgt⟩)
+          (Separated.end_not_mem h₂)
+    have hext' : ∀ x, x ∈ unionPoints r₁ ↔ x ∈ unionPoints r₂ := by
+      intro x
+      constructor
+      · rintro ⟨jv, hjv, hxj⟩
+        have hxj' : jv.start ≤ x ∧ x < jv.«end» := hxj
+        have hax : a.«end» < x :=
+          LinearElem.lt_of_lt_of_le (Separated.head_lt h₁ jv hjv) hxj'.1
+        rcases mem_unionPoints_cons.mp
+          ((hext x).mp ⟨jv, List.mem_cons_of_mem _ hjv, hxj⟩) with
+            hxb | hxr
+        · have hxb' : b.start ≤ x ∧ x < b.«end» := hxb
+          exact absurd (he.symm ▸ hxb'.2) (LinearElem.lt_asymm hax)
+        · exact hxr
+      · rintro ⟨jv, hjv, hxj⟩
+        have hxj' : jv.start ≤ x ∧ x < jv.«end» := hxj
+        have hbx : b.«end» < x :=
+          LinearElem.lt_of_lt_of_le (Separated.head_lt h₂ jv hjv) hxj'.1
+        rcases mem_unionPoints_cons.mp
+          ((hext x).mpr ⟨jv, List.mem_cons_of_mem _ hjv, hxj⟩) with
+            hxa | hxr
+        · have hxa' : a.start ≤ x ∧ x < a.«end» := hxa
+          exact absurd (he ▸ hxa'.2) (LinearElem.lt_asymm hbx)
+        · exact hxr
+    rw [Interval.ext hs he,
+      separated_eq_of_unionPoints (Separated.tail h₁) (Separated.tail h₂)
+        hext']
+
+/-- **The input-order theorem (`pack_input_order_irrelevant`).**
+`pack` is a function of the point union alone: inputs carrying the
+same union — permutations, duplications, and re-sorted tie orders
+among them — pack IDENTICALLY. `pack_canonical` + `pack_extensional`
++ canonical-form uniqueness, composed. In particular the engine's
+`sort_unstable` on lexicographic `[start, end]` pairs
+(`finalize.rs::finalize_into`) and this module's start-only insertion
+sort are indistinguishable through `pack` — the Level-1 transfer is
+`Exec/Sweep.lean: sweepRuns_tie_order_irrelevant`. -/
+theorem pack_input_order_irrelevant (l₁ l₂ : List (Interval α))
+    (hext : ∀ x, x ∈ unionPoints l₁ ↔ x ∈ unionPoints l₂) :
+    pack l₁ = pack l₂ :=
+  separated_eq_of_unionPoints (pack_canonical l₁) (pack_canonical l₂)
+    fun x => (pack_extensional l₁ x).trans
+      ((hext x).trans (pack_extensional l₂ x).symm)
 
 /-- **Theorem 7 (`pack_adjacency`).** Half-open adjacency CONTINUES a
 run: `a.«end» = b.start` shares no point yet leaves no hole, so the
@@ -1004,7 +1159,14 @@ end Allen
 
 /-- The converse basic (`allen.rs::Basic::converse` — the mirrored
 bit position `12 − i`; here the table itself, the bit order being the
-encoding's business). -/
+encoding's business). Hazard recorded: the `AllenRel` CONSTRUCTOR
+order here is NOT the encoding's bit order — `allen.rs` places
+`Starts=3 … FinishedBy=7 … StartedBy=9` where this sum's positions
+3↔5 and 7↔9 differ. Both orders are palindromic, so converse is a
+mirror in both, and the modeled mask is name-keyed (a `List AllenRel`
+read by membership) — no theorem reads positions; equating
+constructor index with bit index is the one misuse this note
+forecloses. -/
 def AllenRel.converse : AllenRel → AllenRel
   | .before => .after
   | .meets => .metBy
@@ -1130,7 +1292,23 @@ converse. -/
 example : classifyI (u64Iv 3 7) (u64Iv 0 10) = .during ∧
     classifyI (u64Iv 0 10) (u64Iv 3 7) = .contains := by decide
 
-/-! ## Grouping — the fibering of the distinct binding set -/
+/-! ## Grouping — the fibering of the distinct binding set
+
+The decision, recorded (the F4 alignment): **answers are value
+tuples, and grouping is fibering over head VALUES** — the group key
+of a binding is the EVALUATED value of each non-aggregate find term,
+not the binding's raw variable valuation. A plain `var` position
+contributes its value (unchanged from the variable-keyed reading); a
+`measure` position contributes its evaluated `U64` measure — so two
+bindings over DISTINCT intervals with colliding measures are ONE
+group (`equal_key_values_share_fiber`), exactly as both
+implementations behave (the engine keys its group map on the sink's
+find columns — `groups.rs::probe_group` over the projected words —
+and the naive model keys on the projected measure value,
+`naive/query.rs::project`; the conformance model's `keyOf` is the
+same evaluation). The superseded variable-keyed reading split those
+bindings into two fibers — a spec-only semantics no implementation
+ever had. -/
 
 /-- The distinct binding set a rule denotes — PRD 04's deriving
 assignments, PRE-projection (the fold domain's carrier). A `Set`:
@@ -1140,26 +1318,79 @@ def bindingSet (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv) :
     Set Assignment :=
   fun σ => derives C r I ρ σ
 
-/-- One group: the FIBER of the binding set over a group-key
-valuation — grouping IS fibering (`20-query-ir.md` § aggregation:
-group key = the values of the non-aggregated find variables). -/
+/-- A group-key head position: the non-aggregate faces of the
+head-shape row (`crate::ir::HeadTerm`'s `Var` and `Measure`; the
+conformance model's `CFind.var`/`CFind.measure`). Grouping keys on
+what these positions PROJECT, never on the raw valuation. -/
+inductive KeyTerm where
+  | var (v : VarId)
+  | measure (v : VarId)
+deriving DecidableEq
+
+/-- The value a key position projects under a binding: a plain
+variable its value, a measure position its evaluated `U64` measure.
+`none` is the ray — the MeasureOfRay narrowing again (the engine
+raises the typed error; this level carries no effect), unreachable
+on error-free executions. -/
+def KeyTerm.value? (σ : Assignment) : KeyTerm → Option Value
+  | .var v => some (σ v)
+  | .measure v => (σ v).measure?
+
+/-- The evaluated group key of a binding: the projected values of the
+key positions, in head order — the value tuple the answer row
+carries. -/
+def keyTuple (keys : List KeyTerm) (σ : Assignment) :
+    List (Option Value) :=
+  keys.map (KeyTerm.value? σ)
+
+/-- One group: the FIBER of the binding set over an evaluated
+group-key tuple — grouping IS fibering over head values
+(`20-query-ir.md` § aggregation: group key = the projected values of
+the non-aggregated find terms). -/
 def Group (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv)
-    (keys : List VarId) (g : List Value) : Set Assignment :=
-  fun σ => derives C r I ρ σ ∧ keys.map σ = g
+    (keys : List KeyTerm) (g : List (Option Value)) : Set Assignment :=
+  fun σ => derives C r I ρ σ ∧ keyTuple keys σ = g
 
 /-- Fibers are disjoint: a binding lives in exactly one group. -/
 theorem group_fibers_disjoint {C : Classify} {r : Rule} {I : Instance}
-    {ρ : ParamEnv} {keys : List VarId} {g g' : List Value}
+    {ρ : ParamEnv} {keys : List KeyTerm} {g g' : List (Option Value)}
     {σ : Assignment} (h : σ ∈ Group C r I ρ keys g)
     (h' : σ ∈ Group C r I ρ keys g') : g = g' :=
   h.2.symm.trans h'.2
 
-/-- Fibers exhaust: every deriving binding lands in its key's
-group. -/
+/-- Fibers exhaust: every deriving binding lands in its evaluated
+key's group. -/
 theorem group_fibers_exhaust {C : Classify} {r : Rule} {I : Instance}
-    {ρ : ParamEnv} (keys : List VarId) {σ : Assignment}
-    (h : derives C r I ρ σ) : σ ∈ Group C r I ρ keys (keys.map σ) :=
+    {ρ : ParamEnv} (keys : List KeyTerm) {σ : Assignment}
+    (h : derives C r I ρ σ) :
+    σ ∈ Group C r I ρ keys (keyTuple keys σ) :=
   ⟨h, rfl⟩
+
+/-- **The F4 content, stated positively.** Two deriving bindings with
+equal EVALUATED key tuples share one fiber — in particular two
+bindings over distinct intervals whose measures collide MERGE under a
+measure key, as both implementations group. Under the superseded
+variable-keyed fibering they split. Bridge:
+`groups.rs::probe_group` (group creation keys the projected find
+columns); `naive/query.rs::project` (the key pushes
+`measure_value(...)`, not the interval). -/
+theorem equal_key_values_share_fiber {C : Classify} {r : Rule}
+    {I : Instance} {ρ : ParamEnv} {keys : List KeyTerm}
+    {σ σ' : Assignment} (h : derives C r I ρ σ)
+    (h' : derives C r I ρ σ')
+    (hkey : keyTuple keys σ = keyTuple keys σ') :
+    σ ∈ Group C r I ρ keys (keyTuple keys σ) ∧
+      σ' ∈ Group C r I ρ keys (keyTuple keys σ) :=
+  ⟨⟨h, rfl⟩, ⟨h', hkey.symm⟩⟩
+
+/-- On a plain-variable key list the evaluated tuple IS the valuation
+tuple (each entry `some (σ v)`) — the restatement changed nothing for
+var keys; only measure positions gained their value reading. -/
+theorem keyTuple_vars (vs : List VarId) (σ : Assignment) :
+    keyTuple (vs.map .var) σ = vs.map (fun v => some (σ v)) := by
+  unfold keyTuple
+  rw [List.map_map]
+  rfl
 
 /-! ## The fold domain is distinct — set semantics through
 aggregation -/
@@ -1220,17 +1451,19 @@ theorem agg_over_distinct_bindings {β γ : Type} [DecidableEq β]
 /-! ## Aggregate answers — one row per inhabited fiber -/
 
 /-- The aggregate answer set, fold-abstract: one row per INHABITED
-group fiber — the row is the fold of the group (key projection +
-accumulator finalization, abstracted as `fold`). The witness `σ` is
-the load-bearing shape: a group exists only as the fiber of an ACTUAL
-deriving binding (`groups.rs::probe_group` — a group is created on
-first sight), which is exactly what refuses SQL's zero row. -/
+group fiber — the row is the fold of the evaluated key tuple and the
+group (key columns + accumulator finalization, abstracted as `fold`).
+The witness `σ` is the load-bearing shape: a group exists only as the
+fiber of an ACTUAL deriving binding (`groups.rs::probe_group` — a
+group is created on first sight), which is exactly what refuses SQL's
+zero row. The key handed to the fold is `keyTuple` — head VALUES, the
+F4 decision (module doc). -/
 def aggAnswers (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv)
-    (keys : List VarId)
-    (fold : List Value → Set Assignment → AnswerTuple) :
+    (keys : List KeyTerm)
+    (fold : List (Option Value) → Set Assignment → AnswerTuple) :
     Set AnswerTuple :=
   fun t => ∃ σ, derives C r I ρ σ ∧
-    t = fold (keys.map σ) (Group C r I ρ keys (keys.map σ))
+    t = fold (keyTuple keys σ) (Group C r I ρ keys (keyTuple keys σ))
 
 /-- **Theorem 2 (`empty_global_no_answer`).** An aggregate over the
 empty binding set yields the EMPTY answer set — stated for every
@@ -1243,8 +1476,8 @@ Bridge: `finalize.rs::finalize_into` — "Empty input yields zero
 rows"; the refused reading's countermodel is
 `Countermodels.sql_zero_row_from_no_binding`. -/
 theorem empty_global_no_answer {C : Classify} {r : Rule}
-    {I : Instance} {ρ : ParamEnv} {keys : List VarId}
-    {fold : List Value → Set Assignment → AnswerTuple}
+    {I : Instance} {ρ : ParamEnv} {keys : List KeyTerm}
+    {fold : List (Option Value) → Set Assignment → AnswerTuple}
     (hempty : ∀ σ, ¬ derives C r I ρ σ) :
     ∀ t, t ∉ aggAnswers C r I ρ keys fold := by
   rintro t ⟨σ, hσ, -⟩

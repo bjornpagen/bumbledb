@@ -1,4 +1,5 @@
-import Bumbledb.Schema
+import Bumbledb.Cardinality
+import Bumbledb.Order
 
 /-!
 # Dependencies — the dependency theory (Level 0, PRD 03)
@@ -8,6 +9,11 @@ pointwise), containment, coverage, keyed equality, exact partition,
 and `holds` — what it means for a committed instance to model its
 theory. Statements ported from the audited inventory
 (`docs/formal/GPT55DependencyTheory.lean`) onto the in-tree base.
+The extension forms seat their readings here too:
+`Statement.judgment` dispatches the cardinality-window and order-mark
+forms to their denotations (`Cardinality.lean`, `Order.lean`), and
+the extension-vs-original subsumption theorems live downstream in
+`Subsumption.lean`.
 
 ## Acceptance ≠ denotation (the load-bearing distinction)
 
@@ -53,16 +59,37 @@ model's recorded fact, not an oversight.
 
 ## Narrowings recorded (law 5: narrow and record)
 
-* `Statement.judgment` gives gate-refused shapes (mixed
-  interval/scalar sides, non-final interval positions) the scalar
-  reading — `holds` is consumed on ACCEPTED theories only (Txn,
-  PRD 09), where `Header.intervalSplit` reads the accepted shape.
+* `Statement.judgment` reads interval shape from the field SET
+  (`Header.intervalSplit` — the FieldSet doctrine): exactly one
+  interval-typed field is the pointwise reading at ANY written
+  position, matching the engine's order canonicalization
+  (`resolve_target_key` counts interval positions as a set;
+  `key_permutation` bridges statement order to key order). The gate-
+  refused shapes read truthfully as follows: mixed interval/scalar
+  side pairs and several-interval projections split to `none` and
+  default to the scalar reading; an FD with exactly ONE interval
+  position written NON-FINALLY receives the POINTWISE reading — the
+  set-canonical split is position-blind by design. That reading is
+  moot for accepted theories: the engine refuses the non-final shape
+  at declaration (`FunctionalityIntervalNotLast`,
+  `schema/validate.rs` — the neighbor probe needs the scalar prefix
+  as its determinant group), so no accepted theory reaches it, and
+  `holds` is consumed on ACCEPTED theories only (Txn, PRD 09).
 * The pointwise judgments quantify over the tagged `Point` sum
   (`Schema.lean`), so no typing premise appears; accepted statements
   stay within one tag by positional structural typing.
 * Finiteness is never demanded: the ten items are subset and
   injectivity algebra, valid over arbitrary fact sets; the named token
   (`Set.Finite`) stays unspent in this module.
+* **Closed-target key resolution is STRICTER than
+  `TargetKeyAccepted`.** A containment into a closed relation resolves
+  only the synthetic `[FieldId(0)]` id key
+  (`schema/validate.rs:734-742`); a user-declared non-id key on a
+  closed relation satisfies `TargetKeyAccepted` here yet Rust refuses
+  the containment — acceptance strictly narrower, sound direction.
+  Likewise `ClosedContainmentInterval` (`validate.rs:485-498`) refuses
+  interval-typed projections under a closed target outright — a v0
+  refusal this model does not restate.
 -/
 
 namespace Bumbledb
@@ -213,9 +240,17 @@ def ExactPartition (A : Set Fact) (φ : Selection) (S : List FieldId)
 /-- One statement's judgment over theory `T`'s denotation at instance
 `I` — interval positions read through the denotation (a fact stands
 for its point-family): an all-scalar projection is the classical
-judgment unchanged; a final interval position is the pointwise
-lifting. Gate-refused shapes default to the scalar reading (recorded
-narrowing — `holds` is consumed on accepted theories only). -/
+judgment unchanged; a projection whose field set carries exactly one
+interval field is the pointwise lifting, whatever its written
+position (the FieldSet doctrine — `Header.intervalSplit`).
+Gate-refused shapes default to the scalar reading (recorded
+narrowing — `holds` is consumed on accepted theories only). The
+extension forms read their own denotations: a cardinality statement
+is the per-parent window judgment (`Cardinality.lean` — window
+projections refuse interval positions at the gate, the recorded v0
+trigger, so no split is consulted); an order statement is the
+per-group ordinal discipline, ranked exactly when a `by` chain is
+spelled (`Order.lean`). -/
 def Statement.judgment (T : Theory) (I : Instance) :
     Statement → Prop
   | .functionality R X =>
@@ -231,6 +266,14 @@ def Statement.judgment (T : Theory) (I : Instance) :
     | _, _ =>
       Containment (T.den I src.relation) src.selection src.projection
         (T.den I tgt.relation) tgt.selection tgt.projection
+  | .cardinality src w tgt =>
+    CardinalityWindow (T.den I src.relation) src.selection
+      src.projection w (T.den I tgt.relation) tgt.selection
+      tgt.projection
+  | .order R pos G none =>
+    OrderMark (T.den I R) pos G
+  | .order R pos G (some c) =>
+    RankedOrderMark T I (T.den I R) pos G c
 
 /-- `holds T I` — a committed instance models its theory: every
 declared statement's judgment holds of the final state. This is the

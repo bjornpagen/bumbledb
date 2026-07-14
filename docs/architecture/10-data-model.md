@@ -220,8 +220,10 @@ for this was the last
 SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
 
 - A `Fresh` field must be `U64`. The database mints its values: monotonic per
-  (relation, field), never re-issuing any value observable in a committed state;
-  aborted transactions don't advance the committed sequence.
+  (relation, field), never re-issuing any value observable in a committed state —
+  generator-returned or explicitly supplied alike; aborted transactions don't
+  advance the committed sequence
+  (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
 - **The usage pattern this exists for** — insert a new fact without ever reading a max:
 
   ```rust
@@ -242,7 +244,8 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
   chosen value ≤ or > the high-water mark succeeds and advances the mark past it. This
   is load-bearing: correcting a fresh-keyed fact is `delete(old); insert(new with the
   same id)`. "Never reused" constrains the *generator* only — it never re-issues a
-  value that was ever committed; explicit re-supply of a deleted value is legal. Mixed
+  value that was ever committed; explicit re-supply of a deleted value is legal
+  (`lean/Bumbledb/Txn/Fresh.lean: resupply_legal_monotone`). Mixed
   explicit/generated allocation within one transaction tracks the running maximum.
   A *successful* commit persists every fresh value it issued, even when no facts
   changed — the closure may have returned those ids to the host, and an observed id is
@@ -252,9 +255,11 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
 - **A Fresh field auto-materializes a functional dependency** — the statement
   `R(field) -> R`, first in the relation's materialized statement order, ordinary in
   every way and targetable by inclusions like any declared key. Two Accounts sharing
-  an AccountId is unrepresentable by construction, with zero special enforcement
-  machinery — the generator implies the invariant; the invariant is expressed in the
-  one mechanism that owns invariants.
+  an AccountId can never commit, with zero special enforcement
+  machinery — the statement, not the generator, owns the invariant (ids are
+  writable-by-default, so enforcement is the ordinary final-state judgment —
+  `lean/Bumbledb/Txn/Fresh.lean: materialized_key_ordinary`); the invariant is
+  expressed in the one mechanism that owns invariants.
 - Referencing fields are plain `U64` fields; referential intent is carried entirely by
   an explicit inclusion statement. There is no defining-vs-reference occurrence
   question — generation is a per-field-declaration attribute and nothing else.

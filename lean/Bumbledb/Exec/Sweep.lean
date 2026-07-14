@@ -14,8 +14,9 @@ their theorems here:
   `DisjointDeterminantProof` token before walking.
   `sweep_covered_sound_complete` IS that token's theorem: under
   `Ordered ∧ Disjoint` — exactly what a pointwise key guarantees per
-  prefix group (`pointwise_key_disjoint`, PRD 03) plus the LMDB key
-  order — the one-pass verdict equals the point-subset denotation.
+  prefix group (`pointwise_key_disjoint`, PRD 03) plus the
+  determinant index's key order — the one-pass verdict equals the
+  point-subset denotation.
 * **Pack's finalize** (`exec/sink/aggregate/finalize.rs`, driving the
   windowless sweep) — `pack_is_the_sweep` proves this file's
   run-emitting fold IS PRD 05's `pack`: one fold, two consumers, the
@@ -23,8 +24,8 @@ their theorems here:
 
 ## The seam, recorded (the predecessor probe)
 
-Rust's `check_coverage` enters the walk two-phase: an LMDB seek
-locates the one entry segment that can cover the source start `s`
+Rust's `check_coverage` enters the walk two-phase: an ordered-index
+seek locates the one entry segment that can cover the source start `s`
 (the ≥ probe, else the group predecessor), then the forward chain is
 swept. At the fold level the walk is modeled from a frontier
 INITIALIZED at `s` (Rust's `run = Some((s, s))`) over the whole
@@ -52,11 +53,40 @@ semantics.
   no premises whatsoever, so only the false REJECT exists
   (`Countermodels.sweep_premise_load_bearing` — the unordered list
   the verdict wrongly rejects).
+* **The Pack tie order is closed by theorem, not argument.** The
+  engine sorts claims lexicographically on `[start, end]`
+  (`finalize.rs::finalize_into`); the spec's `sortByStart` reads
+  starts alone. `sweepRuns_tie_order_irrelevant` proves the walk
+  equal on any two start-ordered arrangements of one claim
+  collection — the fidelity record's remaining transfer argument
+  (equal-start tie order), now an equation composed from
+  `sweepRuns_eq_pack_of_ordered` and PRD 05's
+  `pack_input_order_irrelevant`.
 * **`ray_needs_ray` carries the ceiling premise explicitly.** That
   `maxEnd` is the GREATEST element is a fact of the two real domains
   (`ceiling_greatest_u64` / `ceiling_greatest_i64`), not of PRD 02's
   `PointDomain` class; the theorem takes it as a visible hypothesis
   rather than widening the class.
+* **The σ conjunct rides ABOVE the fold.** `check_coverage`'s full
+  verdict is coverage AND every consumed segment satisfies ψ
+  (`GapAt::segment → check_segment`, `judgment.rs:764-776, 864-866`;
+  the hook noted at `sweep.rs:35-37`); `sweepCovered` models pure
+  coverage. The σ semantics belong to the `Coverage` denotation
+  (`Dependencies.lean`, which carries ψ); this file's fold is the
+  coverage half only — delegated, not dropped.
+* **The degenerate window is unstatable here.** Rust declares an
+  empty window (`s = e`) vacuously covered (`sweep.rs:57-58`:
+  `run = (s, s)`, the `frontier ≥ e` exit fires immediately);
+  `Interval` carries `start < end`, so the shape cannot be written at
+  this level — and it is unreachable through `check_coverage`, whose
+  probe intervals are acceptance-gated valid intervals.
+* **The windowed gap verdict is delegated to the continuation.** A
+  windowed continuation that declined to convict would make `sweep`
+  return accept on a gap (`sweep.rs:96-99`) where `sweepFrom`
+  hard-codes `false`; the only windowed continuation, `GapAt`, always
+  errs (`judgment.rs:868-870`), so the divergence is unreachable —
+  the spec does not determine `sweep` for a non-convicting windowed
+  caller.
 
 Mechanism fence: a sweep is a fold, nothing else — batching, buffers,
 scratch, SIMD, pipelining, memos, and LMDB are banned from this file
@@ -84,11 +114,11 @@ namespace Exec
 `Ordered ∧ Disjoint` is precisely what `DisjointDeterminantProof`
 attests: the token is minted when a pointwise key is accepted
 (`pointwise_key_disjoint` gives `Disjoint` per prefix group) and the
-LMDB determinant-key order gives `Ordered` — the checker's
+determinant index's key order gives `Ordered` — the checker's
 `check_coverage` demands the token before entering the walk. -/
 
-/-- `Ordered`: the segment list is start-sorted — what the LMDB
-determinant-key order gives `check_coverage`'s forward chain, and
+/-- `Ordered`: the segment list is start-sorted — what the
+determinant index's key order gives `check_coverage`'s forward chain, and
 what `pack`'s sort pass establishes for the finalize sweep. -/
 def Ordered (l : List (Interval α)) : Prop :=
   l.Pairwise (fun a b => a.start ≤ b.start)
@@ -124,7 +154,7 @@ fold image of `judgment.rs::check_coverage`'s call into the shared
 sweep (`sweep(segments, Some((source_start, source_end)), GapAt)`),
 with the frontier opened at the source start — the
 predecessor-initialized entry (see the seam note in the module doc:
-the LMDB seek skips only segments this fold ignores anyway,
+the ordered-index seek skips only segments this fold ignores anyway,
 `sweep_ignores_spent_segments`). -/
 def sweepCovered (src : Interval α) (segs : List (Interval α)) : Bool :=
   sweepFrom src.«end» src.start segs
@@ -288,9 +318,9 @@ theorem sweep_early_exit_sound {e f : α} (hef : e ≤ f) :
 
 /-- The seam lemma (module doc): a segment already inside the covered
 run (`«end» ≤ frontier`) is a no-op, so dropping any spent prefix —
-what `check_coverage`'s LMDB predecessor seek does — never changes
-the verdict. The seek's licence at the fold's altitude. Bridge:
-`judgment.rs::check_coverage`'s entry location. -/
+what `check_coverage`'s ordered-index predecessor seek does — never
+changes the verdict. The seek's licence at the fold's altitude.
+Bridge: `judgment.rs::check_coverage`'s entry location. -/
 theorem sweep_ignores_spent_segments {e f : α} {iv : Interval α}
     (hspent : iv.«end» ≤ f) (l : List (Interval α)) :
     sweepFrom e f (iv :: l) = sweepFrom e f l := by
@@ -345,6 +375,50 @@ theorem pack_is_the_sweep (l : List (Interval α)) :
   cases sortByStart l with
   | nil => rfl
   | cons iv rest => exact sweepRuns_eq_coalesce rest iv.start iv.«end» iv.h
+
+/-! ### The tie-order transfer — the sort seam, closed
+
+The engine's sort pass is `sort_unstable` on lexicographic
+`[start, end]` pairs (`finalize.rs::finalize_into`); the spec's
+`sortByStart` reads starts alone. Both hand the walk a start-ordered
+list, and the theorem below proves that is ALL the walk can see — the
+tie order among equal starts was an argument in the fidelity record
+and is now an equation. -/
+
+/-- Over a start-ordered input the run-emitting walk IS `pack`:
+`sortByStart` is the identity on it (`sortByStart_id_of_sorted`, the
+sort seam) and the walk is `coalesce` (`sweepRuns_eq_coalesce`). -/
+theorem sweepRuns_eq_pack_of_ordered {iv : Interval α}
+    {rest : List (Interval α)} (hord : Ordered (iv :: rest)) :
+    sweepRuns iv rest = pack (iv :: rest) := by
+  unfold pack
+  rw [sortByStart_id_of_sorted hord]
+  exact sweepRuns_eq_coalesce rest iv.start iv.«end» iv.h
+
+/-- **The tie-order transfer.** The run-emitting walk is invariant
+across start-ordered arrangements: any two start-ordered lists
+carrying the same claims — membership-equal, which every permutation
+of one claim collection is — produce IDENTICAL runs. So the engine's
+`[start, end]` lexicographic sort and the spec's start-only sort
+cannot be told apart through Pack: the tie order among equal starts
+is provably irrelevant. Composes `sweepRuns_eq_pack_of_ordered` with
+PRD 05's input-order theorem (`pack_input_order_irrelevant` —
+canonical-form uniqueness under `pack_canonical` +
+`pack_extensional`). Bridge: `finalize.rs::finalize_into`'s sort pass
+feeding `interval/sweep.rs::sweep`; sampled by
+`packed_output_matches_the_naive_point_set`. -/
+theorem sweepRuns_tie_order_irrelevant {iv₁ iv₂ : Interval α}
+    {l₁ l₂ : List (Interval α)}
+    (h₁ : Ordered (iv₁ :: l₁)) (h₂ : Ordered (iv₂ :: l₂))
+    (hmem : ∀ jv, jv ∈ iv₁ :: l₁ ↔ jv ∈ iv₂ :: l₂) :
+    sweepRuns iv₁ l₁ = sweepRuns iv₂ l₂ := by
+  rw [sweepRuns_eq_pack_of_ordered h₁, sweepRuns_eq_pack_of_ordered h₂]
+  refine pack_input_order_irrelevant _ _ fun x => ?_
+  constructor
+  · rintro ⟨jv, hjv, hx⟩
+    exact ⟨jv, (hmem jv).mp hjv, hx⟩
+  · rintro ⟨jv, hjv, hx⟩
+    exact ⟨jv, (hmem jv).mpr hjv, hx⟩
 
 /-! ## Theorem 5 — coverage to ∞ -/
 

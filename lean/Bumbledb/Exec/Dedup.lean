@@ -45,7 +45,12 @@ multi-rule union regime's head-projection key law
   layout — never the rule's full slot array, because dedup keys must
   be rule-independent (a `VarId` is rule-scoped: the same id in two
   rules names two unrelated variables, so a full-binding key has no
-  cross-rule meaning). `union_regime_head_projection` is the law.
+  cross-rule meaning). `union_regime_head_projection` is the law. One
+  vocabulary gap recorded: the nullary `Count` head position
+  contributes NO words to the union key (`union_span` maps
+  `over_slot: None` to absence, `new.rs:388-390`) — a keyless head
+  position is unrepresentable in the theorem's `VarId` finds; sound,
+  since omitting a constant column never changes key equality.
 
 ## The `provably_distinct` reading (recorded; theorem 2's model)
 
@@ -61,7 +66,15 @@ positive atom list `Rule.atoms` IS the participating set).
 `Term.pins` mirrors the pinned-field screen exactly: `var`, `param`,
 and `lit` pin one value under a fixed `(σ, ρ)`; `paramSet` matches any
 element and pins nothing; `measure` never appears in a binding
-(`Rule.WellTyped`).
+(`Rule.WellTyped`). One asymmetry recorded: the Rust `Eq`-pin arm
+admits `Word | Byte | Interval | Param | PendingIntern` and drops
+`Const::Words` — the multi-word `bytes<N>` literal, a genuine
+single-value pin — to the catch-all (rs:57), so it never counts
+toward key coverage; strictly conservative (fewer witness mints, the
+seen-set retained), while `Term.pins` marks every `lit` as pinning.
+`provably_different` on the disjointness side DOES compare
+`Const::Words` payloads — the asymmetry is the mint's, not the
+model's.
 
 ## The `provably_disjoint` reading (recorded; theorem 6's model)
 
@@ -77,18 +90,24 @@ rs:188-203 — projected variables and fold inputs enter the dedup key;
 the nullary `Count`, Arg terms, and the non-injective measure
 positions witness nothing). Equal head answers would force the two
 pinned facts to agree on the key — one fact whose `f` cannot equal two
-different literals. `ProvablyDisjointRules` models exactly this rule:
-pins are `lit` bindings at the witness field (the model's `Eq`-pin —
-`provably_different` degenerates to `Value` disequality, since only
-concrete literals are representable as pins here), key flow is
-positional agreement on the two find lists (`zip`), and the key itself
-enters as a semantic `Functionality` hypothesis (PRD 03's judgment —
-the schema-declared key the checker consults, discharged on committed
-instances by `holds`). `syntactic_disjointness_sound` is the SOUNDNESS
-direction only; completeness is explicitly a non-goal — the checker
-may refuse truly disjoint rules (any pins it cannot compare, any key
-that fails to reach a common head position), and that conservatism is
-its correctness discipline, not a defect.
+different literals. `ProvablyDisjointRules` models this rule ONE KEY
+AT A TIME: pins are `lit` bindings at the witness field (the model's
+`Eq`-pin — `provably_different` degenerates to `Value` disequality,
+since only concrete literals are representable as pins here), key
+flow is positional agreement on the two find lists (`zip`), and the
+key itself enters as a semantic `Functionality` hypothesis (PRD 03's
+judgment — the schema-declared key the checker consults, discharged
+on committed instances by `holds`). One quantifier gap recorded: the
+model fixes a single `K` program-wide, while `pair_disjoint` picks a
+declared key PER RULE PAIR (`key_flows_to_common_head`, rs:162,
+invoked per pair) — an acceptance discharged by heterogeneous keys
+across pairs is covered pair-by-pair by this theorem's statement but
+not by one instantiation of it; diagnostic-only stakes (the witness
+is never spent by execution). `syntactic_disjointness_sound` is the
+SOUNDNESS direction only; completeness is explicitly a non-goal — the
+checker may refuse truly disjoint rules (any pins it cannot compare,
+any key that fails to reach a common head position), and that
+conservatism is its correctness discipline, not a defect.
 
 ## Narrowings recorded (law 5: narrow and record)
 

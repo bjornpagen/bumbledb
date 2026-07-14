@@ -27,17 +27,21 @@ project needs no build programmability.
 ## The refinement chain
 
 - **Level 0 — denotations**: what every construct means
-  (`Values`, `Schema`, `Dependencies`, `Query/Syntax`,
-  `Query/Denotation`, `Query/Aggregates`).
+  (`Values`, `Schema`, `Cardinality`, `Order`, `Dependencies`,
+  `Subsumption`, `Query/Syntax`, `Query/Denotation`,
+  `Query/Membership`, `Query/Aggregates`).
 - **Level 1 — abstract algorithms**: each semantics-bearing algorithm
   as a small pure Lean function, PROVED equal to its denotation
-  (`Exec/Sweep`, `Exec/Dedup`, `Exec/Rewrites`). Where an algorithm
-  needs a premise the denotation does not supply, Lean forces the
-  premise to be named — those names are exactly the engine's witness
-  types.
+  (`Exec/Sweep`, `Exec/Dedup`, `Exec/Rewrites`, and `Exec/Fixpoint` —
+  which deliberately carries both levels of the one feature: the
+  stratified denotation and the fueled round loop, proved to agree).
+  Where an algorithm needs a premise the denotation does not supply,
+  Lean forces the premise to be named — those names are exactly the
+  engine's witness types.
 - **Level 2 — the lifecycle**: transactions, final-state judgment,
   generation witnesses, ETL — a state machine with its invariance
-  theorems (`Txn`).
+  theorems (`Txn`), plus the fresh-mint allocation model
+  (`Txn/Fresh`).
 - **Level 3 — verified Rust: REFUSED, permanently.** The Rust↔Lean
   link is empirical: the differential, fuzz, and exhaustive estates,
   plus the executable-denotation conformance lane.
@@ -114,6 +118,11 @@ history forever. The port table lives in
 `docs/prd-covenant/14-census-close.md`; the one recorded semantic
 divergence is the empty-global aggregate (the artifact's `sum [] = 0`
 is refused — `Countermodels.lean`, the SQL zero-row countermodel), and
-the artifact's stratification lemma is structurally subsumed (the
-modeled syntax has no head-referencing atoms; recursion is refused
-with `Exec/` as its prepared home).
+the artifact's stratification lemma was structurally subsumed at port
+time (the then-modeled syntax had no head-referencing atoms). The
+stratified fixpoint model has since landed — 2026-07-14, owner
+decision — in `Exec/Fixpoint.lean` over `Query/Syntax.lean`'s program
+cut, the prepared home entered; the ENGINE still refuses recursion
+today, and its discharge campaign is queued (`Bridge.lean` carries no
+rows for the fixpoint model — deliberate: obligations ledger only what
+exists).

@@ -3,11 +3,13 @@ import Bumbledb.Schema
 import Bumbledb.Dependencies
 import Bumbledb.Query.Syntax
 import Bumbledb.Query.Denotation
+import Bumbledb.Query.Membership
 import Bumbledb.Query.Aggregates
 import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
 import Bumbledb.Txn
+import Bumbledb.Txn.Fresh
 import Bumbledb.Countermodels
 
 /-!
@@ -78,8 +80,9 @@ def Obligation.row {α : Sort u} (_checked : α) (theoremName : Lean.Name)
     (premise mechanism instrument : String) : Obligation :=
   { theoremName, premise, mechanism, instrument }
 
-/-- The obligation ledger. Ordered by PRD (02 → 09); collated
-exhaustively from the module docs' `Bridge:` notes. -/
+/-- The obligation ledger. Ordered by PRD (02 → 09, then the fresh
+allocation model); collated exhaustively from the module docs'
+`Bridge:` notes. -/
 def ledger : List Obligation := [
 
   /- ## PRD 02 — Values -/
@@ -222,6 +225,16 @@ def ledger : List Obligation := [
     "Point membership unfolds to the half-open endpoint comparisons — inclusive at start, exclusive at end (i64 companion in-tree beside it)."
     "crate::ir::CmpOp::PointIn (crates/bumbledb/src/ir.rs)"
     "membership_of_the_last_point_in_a_ray_is_true_and_the_ceiling_rejects (crates/bumbledb/src/api/prepared/tests/sets.rs)",
+
+  .row @Query.membership_lowering_preserves `Bumbledb.Query.membership_lowering_preserves
+    "The bivalent surface binding lowers answer-preservingly: an element-typed term at an interval field reads as point membership, and rewriting each such binding to an interval-variable read plus a PointIn condition preserves the rule's answers, over the full term roster."
+    "normalize.rs::is_membership (crates/bumbledb/src/ir/normalize/normalize.rs); normalize.rs::lower_atom (crates/bumbledb/src/ir/normalize/normalize.rs); context.rs::resolve_bivalents (crates/bumbledb/src/ir/validate/context.rs)"
+    "same_atom_membership_variable_lowers_to_the_field_composition (crates/bumbledb/src/ir/normalize/tests.rs); membership_point_var_join_end_to_end (crates/bumbledb/src/api/prepared/tests/sets.rs)",
+
+  .row @Query.surface_antiprobe_filters `Bumbledb.Query.surface_antiprobe_filters
+    "A negated membership binding rejects exactly when no fact passes the occurrence's value bindings and membership filters — the role-blind lowering's negated half, whose normative reading is the surface judgment itself."
+    "normalize.rs::lower_atom (crates/bumbledb/src/ir/normalize/normalize.rs); normalize.rs::AntiProbe (crates/bumbledb/src/ir/normalize/normalize.rs)"
+    "negated_membership_rejects_only_covered_events (crates/bumbledb/src/exec/run/tests/intervals.rs)",
 
   .row @Query.allen_mask_denotation `Bumbledb.Query.allen_mask_denotation
     "The Allen comparison denotes mask membership of the classification (i64 companion in-tree beside it)."
@@ -391,10 +404,20 @@ def ledger : List Obligation := [
     "Role::Eliminated (crates/bumbledb/src/ir/normalize.rs)"
     "fuzz/fuzz_targets/rewrites.rs",
 
+  .row @Query.chained_elimination_sound `Bumbledb.Query.chained_elimination_sound
+    "A discharged occurrence may source a later elimination: the support pair composes answer-preservingly, provided the chain roots in a surviving occurrence — the acyclic-support premise."
+    "chain_reaches (crates/bumbledb/src/plan/ground.rs)"
+    "fuzz/fuzz_targets/rewrites.rs",
+
   .row @Query.keyprobe_equiv_join `Bumbledb.Query.keyprobe_equiv_join
-    "Under the accepted shape and the key's uniqueness, the point-probe evaluation equals the join denotation — one get finds exactly the one deriving fact."
-    "PreparedRule::KeyProbe (crates/bumbledb/src/api/prepared.rs); PreparedRule::KeyProbe (crates/bumbledb/src/api/prepared/build.rs)"
+    "Under the accepted shape and the key's uniqueness, the point-probe evaluation equals the join denotation — one get finds exactly the one deriving fact, and the residual per-field filters only shrink that at-most-one hit."
+    "PreparedRule::KeyProbe (crates/bumbledb/src/api/prepared.rs); PreparedRule::KeyProbe (crates/bumbledb/src/api/prepared/build.rs); remaining_filters (crates/bumbledb/src/exec/dispatch/classify.rs)"
     "key_probe_fast_lane_hits_misses_and_type_errors (crates/bumbledb/src/api/prepared/tests/key_probe.rs); pointwise_key_point_lookup_uses_key_probe_and_is_image_free (crates/bumbledb/src/api/prepared/tests/key_probe.rs)",
+
+  .row @Query.keyprobe_pointwise_key_spent `Bumbledb.Query.keyprobe_pointwise_key_spent
+    "A pointwise key implies exact-tuple functionality — two facts sharing the scalar prefix with identical intervals overlap pointwise — so the key-probe premise closes for interval-final keys too."
+    "key_probe_candidate (crates/bumbledb/src/exec/dispatch/classify.rs)"
+    "pointwise_key_point_lookup_uses_key_probe_and_is_image_free (crates/bumbledb/src/api/prepared/tests/key_probe.rs)",
 
   .row @Query.statically_empty_sound `Bumbledb.Query.statically_empty_sound
     "A statically refuted rule contributes the empty answer set on every instance — the verdict never consulted one."
@@ -414,8 +437,8 @@ def ledger : List Obligation := [
     "clean_store_reports_nothing_and_counts_the_leak (crates/bumbledb/src/verify_store/tests.rs)",
 
   .row @Txn.rejection_is_complete `Bumbledb.Txn.rejection_is_complete
-    "A rejection carries the complete violated-statement set — every violated statement, only violated statements, and at least one."
-    "crate::error::Violations (crates/bumbledb/src/error.rs)"
+    "A rejection carries the failing phase's complete violation set — the violated key statements when any key fails (the preemption: the statement phase's probes are defined over the keyed final state), else the violated non-key statements — sound, nonempty, never a mix."
+    "crate::error::Violations (crates/bumbledb/src/error.rs); apply.rs::apply (crates/bumbledb/src/storage/commit/apply.rs); judgment.rs::judge (crates/bumbledb/src/storage/commit/judgment.rs)"
     "fuzz/trophies/ops/multi-violation-citation-order",
 
   .row @Txn.witness_conflict_distinct `Bumbledb.Txn.witness_conflict_distinct
@@ -436,14 +459,34 @@ def ledger : List Obligation := [
   .row @Txn.etl_lands_valid `Bumbledb.Txn.etl_lands_valid
     "The ETL identity: a migration that lands is already valid — export under one generation, transform, bulk-judge as one final state (the identity round-trip theorem sits beside it)."
     "Snapshot::scan (crates/bumbledb/src/api/db/snapshot.rs); Db::bulk_load (crates/bumbledb/src/api/db/write.rs)"
-    "r28_migration_is_etl (crates/bumbledb-query/tests/cookbook.rs)"
+    "r28_migration_is_etl (crates/bumbledb-query/tests/cookbook.rs)",
+
+  /- ## The fresh allocation model -/
+
+  .row @Txn.Fresh.never_reissue_observable
+    `Bumbledb.Txn.Fresh.never_reissue_observable
+    "The mint is a monotone high-water mark per relation and field: any id a committed transaction made observable — generator-returned or explicitly supplied — sits below the persisted mark and is never returned again; an aborted transaction's run is discarded whole, so nothing it minted was observable."
+    "WriteDelta::alloc (crates/bumbledb/src/storage/delta/alloc.rs); advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs); dirty_fresh_marks (crates/bumbledb/src/storage/delta/accessors.rs)"
+    "alloc_is_strictly_increasing_and_reads_q_once (crates/bumbledb/src/storage/delta/tests.rs); fresh_ids_allocated_in_an_aborted_txn_are_reissued (crates/bumbledb/src/storage/commit/tests/commit.rs); escaped_fresh_ids_survive_noop_commits (crates/bumbledb/tests/api.rs)",
+
+  .row @Txn.Fresh.resupply_legal_monotone
+    `Bumbledb.Txn.Fresh.resupply_legal_monotone
+    "Explicit fresh values are legal on the normal write path and advance the mark past the supplied value — re-supply of a deleted id preserves monotonicity, and the generator never returns a supplied id afterwards."
+    "advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs)"
+    "explicit_value_above_mark_advances_generated_successors (crates/bumbledb/src/storage/delta/tests.rs); mixed_explicit_and_generated_allocation_tracks_running_maximum (crates/bumbledb/src/storage/delta/tests.rs)",
+
+  .row @Txn.Fresh.materialized_key_ordinary
+    `Bumbledb.Txn.Fresh.materialized_key_ordinary
+    "The auto-materialized key statement rides the ordinary final-state judgment — ids are writable-by-default, so the statement, never the generator, owns uniqueness."
+    "SchemaDescriptor::materialized_statements (crates/bumbledb/src/schema.rs)"
+    "statement_ids_are_auto_fds_first_then_declared_order (crates/bumbledb/src/schema/tests/valid.rs); scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs)"
 
 ]
 
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 68 := rfl
+theorem ledger_count : ledger.length = 75 := rfl
 
 end Bridge
 end Bumbledb

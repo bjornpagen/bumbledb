@@ -5,20 +5,35 @@ import Bumbledb.Values
 
 The substrate the dependency judgments quantify over: headers
 (relation signatures), facts, projections over field sets,
-equality-only selections, statements (the two declared forms and
+disjunctive selections, statements (the four declared forms and
 nothing else), theories, instances, and the ground axioms of closed
 relations as instance-independent sealed constants.
 
 ## The acceptance boundary is part of the model
 
-* **Selections are equality-only BY REPRESENTATION.** `Selection` is a
-  finite list of (field, literal) bindings read conjunctively — no
-  other predicate is writable, mirroring the accepted σ fragment
-  (`docs/architecture/30-dependencies.md` § the two judgments;
-  `crates/bumbledb/src/schema/validate.rs::validate_side_selection`).
-* **Statements are the two judgment forms**, functionality and
-  containment, exactly as `StatementDescriptor` — no constraint kinds,
-  no modes, no triggers.
+* **Selections are membership-to-literal-set BY REPRESENTATION
+  (E3, disjunctive selections).** `Selection` is a finite list of
+  (field, literal-set) bindings read conjunctively, each binding a
+  disjunction over its spelled set — no richer predicate is writable
+  at this level. The ENGINE's accepted σ fragment today is the
+  SINGLETON sub-fragment of this representation: equality-to-one-
+  literal bindings (`Side.selection`,
+  `crates/bumbledb/src/schema.rs:184-193`; the macro's `parse_side`
+  parses exactly one literal per binding). A singleton set is exactly
+  that equality binding (`Selection.singleton_satisfies_iff`), so the
+  wider representation re-reads every accepted σ unchanged; the sets
+  are first-class rather than per-literal sugar because counts over a
+  union do not decompose
+  (`Countermodels.disjunctive_window_not_literal_conjunction`). The
+  set form itself is spec-ahead — the record is the "Undischarged"
+  bullet below, and the decidability-firewall tripwire's recorded
+  edge (`docs/architecture/30-dependencies.md` § the decidability
+  firewall) is the same decision docs-side.
+* **Statements are the four judgment forms**: functionality and
+  containment exactly as `StatementDescriptor`, plus the two
+  extension forms — cardinality windows and order marks — with their
+  denotations in `Cardinality.lean` and `Order.lean`. No constraint
+  kinds, no modes, no triggers.
 * **Ground axioms are constants of the THEORY.** A closed relation's
   extension is sealed at declaration and `Instance`-independent by
   type (`Theory.den` never consults the instance for it) —
@@ -26,6 +41,18 @@ relations as instance-independent sealed constants.
 
 ## Narrowings recorded (law 5: narrow and record)
 
+* **Undischarged (spec-ahead): the literal-SET σ form.** The engine's
+  accepted σ fragment today is the singleton sub-fragment — one
+  equality literal per selected field (`Side.selection` is
+  `Box<[(FieldId, Value)]>`, `crates/bumbledb/src/schema.rs:184-193`;
+  `validate_side_selection` and the sealed `CompiledCheck` byte
+  compares consume those single literals). The wider (field,
+  literal-set) disjunctive form is the 2026-07-14 vocabulary
+  campaign's admission; its Rust discharge is decided and queued,
+  which is why no `Bridge.lean` row exists for the set form —
+  deliberate, not an omission. Nothing here claims the engine
+  accepts, mirrors, or enforces a non-singleton binding today;
+  `Selection.singleton_satisfies_iff` is the sub-fragment agreement.
 * **A fact is a total field-indexed value assignment**
   (`Fact := FieldId → Value`). Arity and positional typing are the
   header's concern, and no PRD 03 theorem needs a typing premise —
@@ -43,13 +70,24 @@ relations as instance-independent sealed constants.
   the judgments total without a typing premise: a scalar value denotes
   no points, and positional structural typing keeps accepted
   statements within one tag.
-* **`Header.intervalSplit` reads the ACCEPTED determinant shape** — at
-  most one interval position, final (`validate_functionality`'s gate).
-  Projections outside that shape split to `none` and receive the
-  scalar reading downstream; `holds` is consumed on accepted theories
+* **`Header.intervalSplit` reads the field SET, never the written
+  order** — the FieldSet doctrine: `resolve_target_key` counts
+  interval positions as a set and `key_permutation` bridges statement
+  order to key order, so the engine's pointwise reading is
+  order-canonical and the split matches it. Exactly one interval-typed
+  field splits to the pointwise shape at ANY written position; zero or
+  several split to `none` and receive the scalar reading downstream.
+  The several-interval shape is gate-refused
+  (`FunctionalityMultipleIntervals`; the pointwise gate in
+  `resolve_target_key`); `holds` is consumed on accepted theories
   only.
 * Acceptance's remaining shape checks (duplicate-free projections,
-  arity and positional type match between sides, determinant width)
+  arity and positional type match between sides, determinant width,
+  the FD-side interval-finality demand — the neighbor probe's
+  mechanism, not semantics — and the σ shape refusals
+  `SelectedFieldProjected` and `DuplicateSelectionField`,
+  `validate.rs:645-651`, `:666-671`, which narrow the accepted σ
+  fragment below `Selection`'s representable shapes, sound direction)
   are validator mechanism this level does not restate — only the
   exact-field-set target-key rule is modeled (`Dependencies.lean`),
   because it is the piece the theorems spend.
@@ -129,31 +167,65 @@ THIS, never the order. -/
 def sameFields (X Y : List FieldId) : Prop :=
   ∀ i, i ∈ X ↔ i ∈ Y
 
-/-! ## Selections — the accepted σ fragment -/
+/-! ## Selections — the accepted σ fragment (disjunctive, E3) -/
 
-/-- σ — the accepted selection fragment: a finite list of
-(field, literal) equality bindings, read conjunctively. Equality-only
-BY REPRESENTATION: no other predicate is writable, so the acceptance
-boundary is part of the model (`validate_side_selection`; the sealed
-`CompiledCheck` byte compares in `storage/commit/judgment.rs`). -/
+/-- σ — the spec's selection fragment: a finite list of
+(field, literal-SET) bindings, read conjunctively; each binding is
+the DISJUNCTION over its spelled set (the field's value is a MEMBER).
+Membership-to-literal-set BY REPRESENTATION: no richer predicate is
+writable. The SINGLETON sub-fragment is the engine's whole accepted σ
+today — one equality literal per selected field
+(`crates/bumbledb/src/schema.rs:184-193`; `validate_side_selection`
+and the sealed `CompiledCheck` byte compares consume exactly that
+sub-fragment), and `Selection.singleton_satisfies_iff` proves the
+singleton reading is that equality. The set form is spec-ahead (the
+module doc's Undischarged record: the 2026-07-14 vocabulary
+campaign's admission, Rust discharge queued). The sets are
+first-class, not sugar: a window over a disjunctive selection is not
+any conjunction of per-literal windows
+(`Countermodels.disjunctive_window_not_literal_conjunction`). -/
 structure Selection where
-  bindings : List (FieldId × Value)
+  bindings : List (FieldId × List Value)
 
 /-- The empty selection — `R(X)` with no σ. -/
 def Selection.empty : Selection := ⟨[]⟩
 
-/-- σ over one fact: every binding's field carries its literal. -/
+/-- σ over one fact: every binding's field carries a member of its
+literal set. -/
 def Selection.satisfies (φ : Selection) (f : Fact) : Prop :=
-  ∀ b, b ∈ φ.bindings → f b.1 = b.2
+  ∀ b, b ∈ φ.bindings → f b.1 ∈ b.2
 
 /-- The empty selection accepts every fact. -/
 theorem Selection.empty_satisfies (f : Fact) :
     Selection.empty.satisfies f :=
   fun _ hb => by cases hb
 
+/-- **A singleton set is today's equality.** The one-binding
+one-literal selection satisfies exactly the facts carrying that
+literal — every σ written before the disjunctive extension means what
+it meant. -/
+theorem Selection.singleton_satisfies_iff (i : FieldId) (v : Value)
+    (f : Fact) :
+    (Selection.mk [(i, [v])]).satisfies f ↔ f i = v := by
+  constructor
+  · intro h
+    exact List.mem_singleton.mp (h _ (List.mem_singleton.mpr rfl))
+  · intro heq b hb
+    rcases List.mem_singleton.mp hb with rfl
+    exact List.mem_singleton.mpr heq
+
+/-- A satisfied singleton binding reads as the equality it spells —
+the directional form consumers spend binding by binding. -/
+theorem Selection.satisfies_singleton {φ : Selection} {f : Fact}
+    (h : φ.satisfies f) {i : FieldId} {v : Value}
+    (hb : (i, [v]) ∈ φ.bindings) : f i = v :=
+  List.mem_singleton.mp (h _ hb)
+
 /-- Adding bindings strengthens σ: if every binding of `φ` appears
 among `φ'`'s, then `φ'` implies `φ` — the accepted fragment's only
-strengthening move, spent by `selection_monotonicity`. -/
+syntactic strengthening move, spent by `selection_monotonicity`.
+(Shrinking a binding's literal set is the other strengthening;
+`selection_monotonicity`'s semantic hypotheses carry it already.) -/
 theorem Selection.satisfies_of_superset {φ φ' : Selection}
     (h : ∀ b, b ∈ φ.bindings → b ∈ φ'.bindings) {f : Fact}
     (hf : φ'.satisfies f) : φ.satisfies f :=
@@ -185,6 +257,24 @@ def Value.points : Value → Set Point
       | .u64 _ => False
   | _ => fun _ => False
 
+/-- An interval-typed value denotes a NONEMPTY point family —
+`interval_nonempty` read through the fact-level denotation. This is
+how consumers discharge a "some point exists" premise on
+arity-respecting instances (`keyprobe_pointwise_key_spent`'s typing
+hypothesis): a stored interval column carries interval values, and
+every representable interval is inhabited. -/
+theorem Value.points_nonempty {v : Value} {e : Elem}
+    (h : v.type = .interval e) : ∃ p, p ∈ v.points := by
+  obtain ⟨t, val⟩ := v
+  cases h
+  cases e with
+  | u64 =>
+    obtain ⟨x, hx⟩ := interval_nonempty val
+    exact ⟨.u64 x, hx⟩
+  | i64 =>
+    obtain ⟨x, hx⟩ := interval_nonempty val
+    exact ⟨.i64 x, hx⟩
+
 /-! ## Headers -/
 
 /-- A header: each relation's positional field types — the signature
@@ -198,34 +288,99 @@ def Header.isInterval (h : Header) (R : RelId) (i : FieldId) : Bool :=
   | some (.interval _) => true
   | _ => false
 
-/-- The accepted interval shape of a determinant or projection: the
-scalar prefix and the final interval-typed position, or `none` for an
-all-scalar list. Acceptance (`validate_functionality`, the pointwise
-gate) forces at most one interval position, placed last; this reads
-that accepted shape, and every other shape splits to `none` — the
-scalar-reading default recorded in the module doc. -/
-def Header.intervalSplit (h : Header) (R : RelId) :
-    List FieldId → Option (List FieldId × FieldId)
-  | [] => none
-  | [i] => if h.isInterval R i then some ([], i) else none
-  | i :: j :: rest =>
-    (h.intervalSplit R (j :: rest)).map fun (S, k) => (i :: S, k)
+/-- The set-canonical interval shape of a determinant or projection —
+the FieldSet doctrine (`schema/validate.rs::resolve_target_key` counts
+interval positions as a SET; `key_permutation` bridges written order
+to key order): a projection whose field set carries EXACTLY ONE
+interval-typed field splits to `some` — the scalar rest in written
+order, paired with that interval field, wherever it was written.
+Every other shape splits to `none`, truthfully: zero interval fields
+is the classical reading, and two or more are gate-refused
+(`FunctionalityMultipleIntervals`; the pointwise gate in
+`resolve_target_key`) and take the scalar-reading default recorded in
+the module doc. -/
+def Header.intervalSplit (h : Header) (R : RelId)
+    (X : List FieldId) : Option (List FieldId × FieldId) :=
+  match X.filter (fun i => h.isInterval R i) with
+  | [i] => some (X.filter (fun i => !h.isInterval R i), i)
+  | _ => none
 
 /-- An all-scalar projection splits to `none` — the classical-judgment
 arm of `Statement.judgment`. -/
-theorem Header.intervalSplit_scalar (h : Header) (R : RelId) :
-    ∀ X : List FieldId,
-      (∀ i, i ∈ X → h.isInterval R i = false) →
-      h.intervalSplit R X = none
-  | [], _ => rfl
-  | [i], hall => by
-    simp [Header.intervalSplit, hall i (List.mem_singleton.mpr rfl)]
-  | i :: j :: rest, hall => by
-    have ih := Header.intervalSplit_scalar h R (j :: rest)
-      fun k hk => hall k (List.mem_cons_of_mem i hk)
-    simp [Header.intervalSplit, ih]
+theorem Header.intervalSplit_scalar (h : Header) (R : RelId)
+    (X : List FieldId)
+    (hall : ∀ i, i ∈ X → h.isInterval R i = false) :
+    h.intervalSplit R X = none := by
+  have hfil : X.filter (fun i => h.isInterval R i) = [] :=
+    List.filter_eq_nil_iff.mpr fun i hi => by simp [hall i hi]
+  unfold Header.intervalSplit
+  rw [hfil]
 
-/-! ## Statements — the two declared forms -/
+/-- What a pointwise split PINS — the inversion consumers walk back
+to the field set: the returned interval field is the sole
+interval-typed member of the projection, and the returned scalar
+prefix is exactly its interval-free remainder
+(`keyprobe_pointwise_key_spent` spends both halves). -/
+theorem Header.intervalSplit_some {h : Header} {R : RelId}
+    {X S : List FieldId} {i : FieldId}
+    (hs : h.intervalSplit R X = some (S, i)) :
+    X.filter (fun j => h.isInterval R j) = [i] ∧
+      S = X.filter (fun j => !h.isInterval R j) := by
+  rcases hfil : X.filter (fun j => h.isInterval R j) with
+    _ | ⟨a, _ | ⟨b, l⟩⟩
+  · simp only [Header.intervalSplit, hfil] at hs
+    exact nomatch hs
+  · simp only [Header.intervalSplit, hfil, Option.some.injEq,
+      Prod.mk.injEq] at hs
+    obtain ⟨hS, hai⟩ := hs
+    exact ⟨by rw [hai], hS.symm⟩
+  · simp only [Header.intervalSplit, hfil] at hs
+    exact nomatch hs
+
+/-! ## Extension syntax — windows and rank chains
+
+The two statement forms the dependency-vocabulary extension adds
+carry syntax of their own: the count window of
+`A(X | φ) in n..m per B(Y | ψ)` and the `by` chain of
+`order A(pos) per A(parent) by … -> K(rank)`. Syntax only — the
+denotations live in `Cardinality.lean` and `Order.lean`. -/
+
+/-- A cardinality window `n..m`. `hi = none` is the `*` spelling —
+the ONLY spelling of "no upper bound", and the DEFAULT posture: the
+`0..*` window is provably vacuous and universal (`zero_star_admits`,
+`star_subsumes` in `Cardinality.lean`), so a spelled statement is
+always a strengthening of the default, never a repair of it. -/
+structure Window where
+  /-- The inclusive lower count bound. -/
+  lo : Nat
+  /-- The inclusive upper count bound; `none` is `*`. -/
+  hi : Option Nat
+
+/-- One key-backed hop of an order mark's `by` chain: `-> K(read)` —
+resolve the running value against `K`'s key field, read the payload
+field. Each hop is an already-declared inclusion at acceptance; the
+judgment reads it relationally (`RankHop.eval`, `Order.lean`), and
+the acceptance gate's key premise is what makes the read
+deterministic (`chain_eval_deterministic`, `Subsumption.lean`). -/
+structure RankHop where
+  /-- The relation the hop resolves against. -/
+  relation : RelId
+  /-- The key field the running value probes. -/
+  key : FieldId
+  /-- The payload field the hop reads. -/
+  read : FieldId
+
+/-- The `by` chain of a ranked order mark:
+`by A(link) -> K₁(read₁) -> … -> Kₙ(readₙ)` — the starting field of
+the ordered relation, then the key-backed hops, the final `read`
+being the rank payload. -/
+structure RankChain where
+  /-- The field of the ordered relation the chain starts from. -/
+  link : FieldId
+  /-- The key-backed hops, in chain order. -/
+  hops : List RankHop
+
+/-! ## Statements — the declared forms -/
 
 /-- One side of a containment: the single-atom query `R(X | φ)`.
 Dependencies and queries share one representation — a dependency is a
@@ -235,10 +390,12 @@ structure Atom where
   projection : List FieldId
   selection : Selection
 
-/-- A declared dependency statement — the two judgment forms, nothing
-else (`crate::schema::StatementDescriptor`). `==` is not a form: the
-macro lowers it to two adjacent containments, each judged
-independently. -/
+/-- A declared dependency statement — the two original judgment forms
+(`crate::schema::StatementDescriptor`) plus the two extension forms
+(cardinality windows and order marks), judged in the STATEMENT phase
+like every other statement. `==` is not a form: the macro lowers it
+to two adjacent containments, each judged independently. Readings
+live in `Statement.judgment`. -/
 inductive Statement where
   /-- `R(X) -> R`: functionality, key form only (the acceptance
   gate refuses non-key and selected FDs — they are relation splits
@@ -246,6 +403,21 @@ inductive Statement where
   | functionality (relation : RelId) (projection : List FieldId)
   /-- `A(X | φ) <= B(Y | ψ)`: containment. -/
   | containment (source target : Atom)
+  /-- `A(X | φ) in n..m per B(Y | ψ)`: the cardinality window —
+  per selected target fact, the count of selected source facts
+  sharing its projected tuple lies in the window
+  (`CardinalityWindow`, `Cardinality.lean`). Acceptance gate as for
+  `<=`: `Y` must be a key of `B` — an ACCEPTANCE premise, never a
+  conjunct of the denotation. -/
+  | cardinality (source : Atom) (window : Window) (target : Atom)
+  /-- `order A(pos) per A(parent) [by … -> K(rank)]`: the order
+  mark's judgment — per parent group, positions are exactly `1..k`
+  (1-based, duplicate-free, contiguous), monotone with the `by` ranks
+  when a chain is spelled (`OrderMark` / `RankedOrderMark`,
+  `Order.lean`). A hand-built row set is judged exactly like a
+  generated one. -/
+  | order (relation : RelId) (position : FieldId)
+      (grouping : List FieldId) (ranking : Option RankChain)
 
 /-! ## Theories, instances, ground axioms -/
 

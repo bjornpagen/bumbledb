@@ -2,6 +2,7 @@ import Bumbledb.Query.Aggregates
 import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
+import Bumbledb.Exec.Fixpoint
 import Bumbledb.Txn
 
 /-!
@@ -143,6 +144,42 @@ part of the spec.
   exactly the design decision `api/prepared/bind.rs`'s latch encodes
   (the miss short-circuits one execution; only the fold's refutation
   deletes the rule).
+
+## Spec-fidelity F3 residents (the FieldSet split locks)
+
+* `split_permuted_some` / `split_two_intervals_none` /
+  `split_all_scalar_none` — the shape locks of the set-canonical
+  `Header.intervalSplit` (the F3 fix): a written-order reading gave
+  `[interval, scalar]` the classical judgment where the engine
+  deliberately canonicalizes on the field SET (`resolve_target_key`
+  counts interval positions as a set; `key_permutation` bridges
+  statement order to key order), and it gave `[interval, interval]`
+  a pointwise reading with an interval inside the "scalar" prefix.
+  The three concrete headers pin the corrected split: one interval
+  field splits to `some` at ANY written position, two intervals and
+  all-scalar split to `none`.
+
+## Extension residents (cardinality windows, order marks, E3)
+
+* `unit_window_two_children` — the `1..1` window refuted by one
+  parent with two distinct children (the bare-`==` rows, reread):
+  the upper bound is load-bearing, not decorative — a window is never
+  just its floor (`window_floor_containment` is the floor's half).
+
+* `disjunctive_window_not_literal_conjunction` — why E3's literal
+  sets are FIRST-CLASS, not per-literal sugar: the `1..1` window over
+  `payload ∈ {true, false}` accepts each one-child relation and
+  rejects their union, while ANY conjunction of per-literal windows
+  accepting both one-child relations accepts the union too
+  (`selTrue_group_union` / `selFalse_group_union` — each literal's
+  child group transfers whole). Counts over a union do not decompose;
+  the admitted count-vectors of a union window are not a product set.
+
+* `order_gap` and `order_duplicate` — the two ways a hand-numbered
+  position column lies: positions `{1, 3}` break downward closure at
+  2, and two distinct rows at position 1 break uniqueness. What the
+  order mark's judgment convicts on a store no generator ever
+  touched.
 -/
 
 namespace Bumbledb.Countermodels
@@ -228,6 +265,14 @@ def twoTarget : Set Fact := fun f => f = rowTrue ∨ f = rowFalse
 
 /-- The projection both sides use: field 0, the shared key. -/
 def keyProj : List FieldId := [⟨0⟩]
+
+/-- The two rows are distinct facts — the payload observer refuses.
+Shared by the bare-`==`, unit-window and disjunctive-window
+countermodels. -/
+theorem rowTrue_ne_rowFalse : rowTrue ≠ rowFalse := fun heq => by
+  have hb : (true : Bool) = false :=
+    congrArg (fun f : Fact => Value.asBool (f ⟨1⟩)) heq
+  cases hb
 
 /-- **The countermodel (port).** Bare `==` holds — the views are both
 `{[keyVal]}` — while the target projection is NOT a key: `rowTrue`
@@ -448,8 +493,9 @@ and the artifact's `sum [] = 0` is refused. Bridge:
 the SQL-divergence oracle rule in `60-validation.md`. -/
 theorem sql_zero_row_from_no_binding (C : Query.Classify)
     (ρ : Query.ParamEnv) (fold : Set Query.Assignment → Value)
-    (keys : List Query.VarId)
-    (foldRow : List Value → Set Query.Assignment → Query.AnswerTuple) :
+    (keys : List Query.KeyTerm)
+    (foldRow : List (Option Value) → Set Query.Assignment →
+      Query.AnswerTuple) :
     ([fold (Query.bindingSet C gateRule emptyInstance ρ)] ∈
       sqlGlobalAgg C gateRule emptyInstance ρ fold) ∧
     (∀ t, t ∉ Query.aggAnswers C gateRule emptyInstance ρ keys foldRow) :=
@@ -928,5 +974,492 @@ theorem latch_miss_not_static (C : Query.Classify)
   ⟨.selectionMiss elimSrc (List.mem_singleton.mpr rfl)
       (fun _ hf _ _ => hf),
     [orphanFact ⟨0⟩], elim_survivor_answers C ρ⟩
+
+/-! ## The FieldSet split locks (spec-fidelity F3)
+
+Three concrete headers pin `Header.intervalSplit`'s set-canonical
+reading — the shapes the written-order reading got wrong, locked
+against regression. -/
+
+/-- A header with the interval written FIRST: `[interval u64, bool]`
+— the permuted shape the engine canonicalizes and a written-order
+split misread as classical. -/
+def permHeader : Header := ⟨fun _ => [.interval .u64, .bool]⟩
+
+/-- A header with TWO interval positions — the gate-refused shape a
+written-order split misread as pointwise (an interval inside the
+"scalar" prefix). -/
+def twoIntervalHeader : Header :=
+  ⟨fun _ => [.interval .u64, .interval .u64]⟩
+
+/-- **The permuted-shape lock.** `[interval, scalar]` splits to
+`some ([scalar], interval)` — the pointwise reading at ANY written
+position, exactly the engine's FieldSet canonicalization
+(`judgment.rs` enforces coverage in permuted determinant order). -/
+theorem split_permuted_some :
+    permHeader.intervalSplit ⟨0⟩ [⟨0⟩, ⟨1⟩] = some ([⟨1⟩], ⟨0⟩) := rfl
+
+/-- **The several-interval lock.** `[interval, interval]` splits to
+`none` — under the set-canonical definition "every other shape splits
+to `none`" is TRUE (the D2 spec error, closed). -/
+theorem split_two_intervals_none :
+    twoIntervalHeader.intervalSplit ⟨0⟩ [⟨0⟩, ⟨1⟩] = none := rfl
+
+/-- **The all-scalar lock**, concrete (the general theorem is
+`Header.intervalSplit_scalar`): a scalar projection splits to
+`none` — the classical-judgment arm. -/
+theorem split_all_scalar_none :
+    pcHeader.intervalSplit ⟨0⟩ [⟨0⟩] = none := rfl
+
+/-! ## The violated unit window (extension 1, `Cardinality.lean`)
+
+One parent, two distinct children sharing its key — the bare-`==`
+model's rows, reread as a parent/child pair. -/
+
+/-- The one-fact parent: every field the shared key. -/
+def winParent : Fact := fun _ => keyVal
+
+/-- The one-fact parent relation. -/
+def winParents : Set Fact := fun f => f = winParent
+
+/-- **The countermodel (port).** The `1..1` window FAILS on one
+parent with two distinct children: the two-element duplicate-free
+member list breaks the ceiling. The upper bound is load-bearing — a
+window is never just its floor, which is why `1..1` says strictly
+more than the reverse containment (`window_floor_containment`). -/
+theorem unit_window_two_children :
+    ¬ CardinalityWindow twoTarget Selection.empty keyProj
+        (Window.mk 1 (some 1)) winParents Selection.empty keyProj := by
+  intro h
+  have hmost := (h winParent rfl (Selection.empty_satisfies _)).2 1 rfl
+  refine Set.not_atMost_one_of_two ?_ ?_ rowTrue_ne_rowFalse hmost
+  · exact ⟨Or.inl rfl, Selection.empty_satisfies _, rfl⟩
+  · exact ⟨Or.inr rfl, Selection.empty_satisfies _, rfl⟩
+
+/-! ## The indivisible disjunctive window (E3)
+
+Why literal SETS are first-class rather than per-literal sugar:
+counts over a union do not decompose. The `1..1` window over the
+disjunctive selection `payload ∈ {true, false}` accepts each
+one-child relation and rejects their union — while ANY conjunction of
+per-literal windows that accepts both one-child relations must accept
+the union too, because each literal's child group in the union is
+exactly its group in one of the accepted relations. No conjunction of
+per-literal windows expresses the disjunctive window. -/
+
+/-- The `true` payload literal. -/
+def valTrue : Value := ⟨.bool, true⟩
+
+/-- The `false` payload literal. -/
+def valFalse : Value := ⟨.bool, false⟩
+
+/-- The disjunctive selection: the payload field carries `true` OR
+`false` — one binding, a two-literal set. -/
+def orSel : Selection := ⟨[(⟨1⟩, [valTrue, valFalse])]⟩
+
+/-- The `true` per-literal restriction (a singleton set — the old
+equality binding). -/
+def selTrue : Selection := ⟨[(⟨1⟩, [valTrue])]⟩
+
+/-- The `false` per-literal restriction. -/
+def selFalse : Selection := ⟨[(⟨1⟩, [valFalse])]⟩
+
+/-- The one-fact `false`-child relation (`oneSource` is its `true`
+sibling). -/
+def oneFalse : Set Fact := fun f => f = rowFalse
+
+/-- The `true` literal's child group in the union is exactly its
+group in the `true`-child relation: the `false` child fails the
+singleton selection. -/
+theorem selTrue_group_union (t : List Value) :
+    ChildGroup twoTarget selTrue keyProj t
+      = ChildGroup oneSource selTrue keyProj t := by
+  funext f
+  refine propext ⟨?_, ?_⟩
+  · rintro ⟨hf, hsel, hproj⟩
+    have hf' : f = rowTrue ∨ f = rowFalse := hf
+    rcases hf' with rfl | rfl
+    · exact ⟨rfl, hsel, hproj⟩
+    · have hv : rowFalse ⟨1⟩ = valTrue :=
+        Selection.satisfies_singleton hsel (List.mem_singleton.mpr rfl)
+      have hb : (false : Bool) = true := congrArg Value.asBool hv
+      cases hb
+  · rintro ⟨hf, hsel, hproj⟩
+    exact ⟨Or.inl hf, hsel, hproj⟩
+
+/-- The `false` literal's child group in the union is exactly its
+group in the `false`-child relation — the mirror split. -/
+theorem selFalse_group_union (t : List Value) :
+    ChildGroup twoTarget selFalse keyProj t
+      = ChildGroup oneFalse selFalse keyProj t := by
+  funext f
+  refine propext ⟨?_, ?_⟩
+  · rintro ⟨hf, hsel, hproj⟩
+    have hf' : f = rowTrue ∨ f = rowFalse := hf
+    rcases hf' with rfl | rfl
+    · have hv : rowTrue ⟨1⟩ = valFalse :=
+        Selection.satisfies_singleton hsel (List.mem_singleton.mpr rfl)
+      have hb : (true : Bool) = false := congrArg Value.asBool hv
+      cases hb
+    · exact ⟨rfl, hsel, hproj⟩
+  · rintro ⟨hf, hsel, hproj⟩
+    exact ⟨Or.inr hf, hsel, hproj⟩
+
+/-- **The countermodel (E3).** The `1..1` window over the disjunctive
+selection accepts each one-child relation and rejects their union —
+while ANY pair of per-literal windows accepting both one-child
+relations also accepts the union (each literal's group transfers
+whole, `selTrue_group_union` / `selFalse_group_union`). A count over
+a union is not any conjunction of per-literal counts: the admitted
+count-vectors of a union window are not a product set. This is what
+makes the literal set a first-class selection form rather than
+lowering sugar. -/
+theorem disjunctive_window_not_literal_conjunction :
+    (CardinalityWindow oneSource orSel keyProj (Window.mk 1 (some 1))
+        winParents Selection.empty keyProj ∧
+      CardinalityWindow oneFalse orSel keyProj (Window.mk 1 (some 1))
+        winParents Selection.empty keyProj ∧
+      ¬ CardinalityWindow twoTarget orSel keyProj (Window.mk 1 (some 1))
+        winParents Selection.empty keyProj) ∧
+    (∀ wt wf : Window,
+      (CardinalityWindow oneSource selTrue keyProj wt winParents
+          Selection.empty keyProj ∧
+        CardinalityWindow oneSource selFalse keyProj wf winParents
+          Selection.empty keyProj) →
+      (CardinalityWindow oneFalse selTrue keyProj wt winParents
+          Selection.empty keyProj ∧
+        CardinalityWindow oneFalse selFalse keyProj wf winParents
+          Selection.empty keyProj) →
+      (CardinalityWindow twoTarget selTrue keyProj wt winParents
+          Selection.empty keyProj ∧
+        CardinalityWindow twoTarget selFalse keyProj wf winParents
+          Selection.empty keyProj)) := by
+  refine ⟨⟨?_, ?_, ?_⟩, ?_⟩
+  · -- the true child alone: the union count is one
+    intro g hg hψ
+    have hg' : g = winParent := hg
+    subst hg'
+    refine ⟨⟨[rowTrue],
+      List.Pairwise.cons (fun x hx => nomatch hx) List.Pairwise.nil,
+      ?_, Nat.le_refl 1⟩, ?_⟩
+    · intro a ha
+      rcases List.mem_singleton.mp ha with rfl
+      refine ⟨rfl, ?_, rfl⟩
+      intro bd hbd
+      rcases List.mem_singleton.mp hbd with rfl
+      exact List.mem_cons_self ..
+    · intro m hm
+      injection hm with hm
+      subst hm
+      exact Set.atMost_one_of_subsingleton fun a b ha hb =>
+        (show a = rowTrue from ha.1).trans
+          (show b = rowTrue from hb.1).symm
+  · -- the false child alone: the union count is one
+    intro g hg hψ
+    have hg' : g = winParent := hg
+    subst hg'
+    refine ⟨⟨[rowFalse],
+      List.Pairwise.cons (fun x hx => nomatch hx) List.Pairwise.nil,
+      ?_, Nat.le_refl 1⟩, ?_⟩
+    · intro a ha
+      rcases List.mem_singleton.mp ha with rfl
+      refine ⟨rfl, ?_, rfl⟩
+      intro bd hbd
+      rcases List.mem_singleton.mp hbd with rfl
+      exact List.mem_cons_of_mem _ (List.mem_singleton.mpr rfl)
+    · intro m hm
+      injection hm with hm
+      subst hm
+      exact Set.atMost_one_of_subsingleton fun a b ha hb =>
+        (show a = rowFalse from ha.1).trans
+          (show b = rowFalse from hb.1).symm
+  · -- the union: the disjunctive count is two — the ceiling breaks
+    intro h
+    have hmost :=
+      (h winParent rfl (Selection.empty_satisfies _)).2 1 rfl
+    refine Set.not_atMost_one_of_two ?_ ?_ rowTrue_ne_rowFalse hmost
+    · refine ⟨Or.inl rfl, ?_, rfl⟩
+      intro bd hbd
+      rcases List.mem_singleton.mp hbd with rfl
+      exact List.mem_cons_self ..
+    · refine ⟨Or.inr rfl, ?_, rfl⟩
+      intro bd hbd
+      rcases List.mem_singleton.mp hbd with rfl
+      exact List.mem_cons_of_mem _ (List.mem_singleton.mpr rfl)
+  · -- any per-literal conjunction accepting both singles accepts the
+    -- union: each literal's group transfers whole
+    intro wt wf h10 h01
+    constructor
+    · intro g hg hψ
+      rw [selTrue_group_union]
+      exact h10.1 g hg hψ
+    · intro g hg hψ
+      rw [selFalse_group_union]
+      exact h01.2 g hg hψ
+
+/-! ## The gap and the duplicate (extension 2, `Order.lean`)
+
+The two ways a hand-numbered position column lies: a gap under an
+attained position, and two rows at one position. One group (the
+shared key at field 0), positions at field 1. -/
+
+/-- The position field of the order countermodels. -/
+def ordPosField : FieldId := ⟨1⟩
+
+/-- The gap model's first row: position 1. -/
+def gapRowOne : Fact :=
+  fun i => if i.id = 1 then ⟨.u64, ⟨1, by omega⟩⟩ else keyVal
+
+/-- The gap model's second row: position 3 — position 2 is missing. -/
+def gapRowThree : Fact :=
+  fun i => if i.id = 1 then ⟨.u64, ⟨3, by omega⟩⟩ else keyVal
+
+/-- The gapped relation: one group, positions `{1, 3}`. -/
+def gapRel : Set Fact := fun f => f = gapRowOne ∨ f = gapRowThree
+
+/-- **The gap countermodel (port).** Positions `{1, 3}` refute the
+order mark: downward closure demands a member at 2 below the attained
+3, and none exists. Hand-numbered spacing (`2,3,5,8`-style encodings)
+is exactly this violation. -/
+theorem order_gap : ¬ OrderMark gapRel ordPosField keyProj := by
+  intro h
+  have hgrp := h (gapRowOne.project keyProj)
+  have h3 : gapRowThree ∈
+      GroupOf gapRel keyProj (gapRowOne.project keyProj) :=
+    ⟨Or.inr rfl, rfl⟩
+  obtain ⟨g, hg, hord⟩ :=
+    hgrp.closed gapRowThree h3 2 (by decide) (by decide)
+  cases hg.1 with
+  | inl h1 =>
+    rw [h1] at hord
+    exact absurd hord (by decide)
+  | inr h1 =>
+    rw [h1] at hord
+    exact absurd hord (by decide)
+
+/-- The duplicate model's first row: position 1, payload `true` at
+field 2. -/
+def dupRowTrue : Fact := fun i =>
+  if i.id = 2 then ⟨.bool, true⟩
+  else if i.id = 1 then ⟨.u64, ⟨1, by omega⟩⟩ else keyVal
+
+/-- The duplicate model's second row: position 1 again, payload
+`false`. -/
+def dupRowFalse : Fact := fun i =>
+  if i.id = 2 then ⟨.bool, false⟩
+  else if i.id = 1 then ⟨.u64, ⟨1, by omega⟩⟩ else keyVal
+
+/-- The duplicated relation: one group, two distinct facts at
+position 1. -/
+def dupRel : Set Fact := fun f => f = dupRowTrue ∨ f = dupRowFalse
+
+/-- The two duplicate rows are distinct facts. -/
+theorem dupRows_ne : dupRowTrue ≠ dupRowFalse := by
+  intro heq
+  have hb : (true : Bool) = false :=
+    congrArg (fun f : Fact => Value.asBool (f ⟨2⟩)) heq
+  cases hb
+
+/-- **The duplicate countermodel (port).** Two distinct facts at
+position 1 refute the order mark: uniqueness would force them equal,
+and the payload observer refuses. -/
+theorem order_duplicate :
+    ¬ OrderMark dupRel ordPosField keyProj := by
+  intro h
+  have hgrp := h (dupRowTrue.project keyProj)
+  have hT : dupRowTrue ∈
+      GroupOf dupRel keyProj (dupRowTrue.project keyProj) :=
+    ⟨Or.inl rfl, rfl⟩
+  have hF : dupRowFalse ∈
+      GroupOf dupRel keyProj (dupRowTrue.project keyProj) :=
+    ⟨Or.inr rfl, rfl⟩
+  exact dupRows_ne (hgrp.unique dupRowTrue dupRowFalse hT hF rfl)
+
+/-! ## The recursion walls (Exec/Fixpoint)
+
+Two countermodels fence the stratified fixpoint's two premises:
+
+* **The odd loop** — `p ← ¬p`, negation through the predicate's own
+  SCC. Not stratified (`odd_not_stratified`), and honestly so: the
+  operator is NOT monotone (`odd_not_monotone`), its naive rounds
+  oscillate (`odd_rounds_oscillate` — the empty table derives, the
+  derived table underives), and NO table is a fixpoint
+  (`odd_no_fixpoint`) — there is no consistent semantics to assign,
+  which is why `Exec/Fixpoint.lean: stratumOp_mono` carries
+  `StratifiedBy` as its premise rather than as a convention.
+
+* **The successor operator** — value invention in a rule head,
+  modeled at the OPERATOR level because it is unrepresentable in
+  `PRule` syntax (heads are projected variables — the creation
+  quarantine): `succOp X = {0} ∪ {m + 1 | m ∈ X}` is monotone
+  (`succOp_monotone`) yet its naive chain ascends forever
+  (`succ_chain_ascends`) and every prefixed point is infinite
+  (`succ_prefixed_infinite` — no list enumerates it). Termination's
+  premise (heads project BOUND variables, so candidates live on the
+  finite active domain — `Exec/Fixpoint.lean: program_den_finite`)
+  is load-bearing, exactly the design's §8 chain-window fence. -/
+
+/-- The odd loop's one atom: the program's own predicate, negated,
+zero bindings (the nonemptiness gate). -/
+def oddAtom : Query.PAtom := ⟨.idb ⟨0⟩, []⟩
+
+/-- The odd loop's one rule: `p ← ¬p`. Safe (no variables at all) —
+safety is not the broken premise here. -/
+def oddRule : Query.PRule := ⟨[], [], [oddAtom], []⟩
+
+/-- The odd loop: one zero-arity predicate whose only rule negates
+itself. -/
+def oddProgram : Query.Program := ⟨[⟨0, [oddRule]⟩], ⟨0⟩⟩
+
+/-- **No stratum witness exists**: the self-negation edge demands
+`strat p < strat p`. -/
+theorem odd_not_stratified : ¬ oddProgram.Stratified := by
+  rintro ⟨strat, h⟩
+  have hedge : (⟨⟨0⟩, .negated⟩ : Query.Edge) ∈ oddRule.edges := by
+    decide
+  have := (h 0 ⟨0, [oddRule]⟩ rfl oddRule (List.mem_singleton.mpr rfl)
+    _ hedge).2 rfl
+  exact Nat.lt_irrefl _ this
+
+/-- The odd loop's stratum-0 operator (any classifier, instance, and
+parameter environment — the program reads none of them). -/
+def oddOp (C : Query.Classify) (I : Instance) (ρ : Query.ParamEnv) :
+    Query.PredSets → Query.PredSets :=
+  Query.stratumOp C oddProgram (fun _ => 0) I ρ 0 (fun _ _ => False)
+
+/-- An empty table derives: nothing matches the negated atom. -/
+theorem odd_step_of_empty (C : Query.Classify) (I : Instance)
+    (ρ : Query.ParamEnv) {X : Query.PredSets}
+    (hX : ∀ t, ¬ t ∈ X ⟨0⟩) : [] ∈ oddOp C I ρ X ⟨0⟩ := by
+  refine ⟨rfl, ⟨0, [oddRule]⟩, rfl, oddRule,
+    List.mem_singleton.mpr rfl, fun _ => ⟨.bool, false⟩,
+    ⟨?_, ?_, ?_⟩, rfl⟩
+  · intro a ha
+    exact absurd ha (by simp [oddRule])
+  · intro a ha hex
+    have haa : a = oddAtom := by simpa [oddRule] using ha
+    subst haa
+    obtain ⟨f, hf, -⟩ := hex
+    obtain ⟨t, ht, -⟩ := hf
+    rw [Query.stratumSets_at rfl] at ht
+    exact hX t ht
+  · intro t ht
+    exact absurd ht (by simp [oddRule])
+
+/-- A nonempty table underives: the derived fact refutes the very
+rule that derived it. -/
+theorem odd_step_of_nonempty (C : Query.Classify) (I : Instance)
+    (ρ : Query.ParamEnv) {X : Query.PredSets} {t₀ : Query.AnswerTuple}
+    (h0 : t₀ ∈ X ⟨0⟩) : ∀ t, ¬ t ∈ oddOp C I ρ X ⟨0⟩ := by
+  rintro t ⟨-, d, hd, r, hr, σ, ⟨-, hneg, -⟩, -⟩
+  have hdq : d = ⟨0, [oddRule]⟩ := (Option.some.inj hd).symm
+  subst hdq
+  have hrr : r = oddRule := List.mem_singleton.mp hr
+  subst hrr
+  refine hneg oddAtom (List.mem_singleton.mpr rfl)
+    ⟨Query.tupleFact t₀, ⟨t₀, ?_, rfl⟩, ?_⟩
+  · rw [Query.stratumSets_at rfl]
+    exact h0
+  · intro b hb
+    exact absurd hb (by simp [oddAtom])
+
+/-- **The naive rounds oscillate**: round one derives the head from
+the empty table; round two, fed round one's table, underives it —
+no round-robin ever settles. -/
+theorem odd_rounds_oscillate (C : Query.Classify) (I : Instance)
+    (ρ : Query.ParamEnv) :
+    [] ∈ oddOp C I ρ (fun _ _ => False) ⟨0⟩ ∧
+      ¬ [] ∈ oddOp C I ρ (oddOp C I ρ (fun _ _ => False)) ⟨0⟩ := by
+  have h1 := odd_step_of_empty C I ρ
+    (X := fun _ _ => False) (fun _ ht => ht)
+  exact ⟨h1, odd_step_of_nonempty C I ρ h1 []⟩
+
+/-- **No consistent semantics**: no table is a fixed point of the
+odd loop's operator — an empty answer derives the head, a nonempty
+one refutes its own derivation. -/
+theorem odd_no_fixpoint (C : Query.Classify) (I : Instance)
+    (ρ : Query.ParamEnv) :
+    ∀ X : Query.PredSets,
+      ¬ (∀ t, t ∈ oddOp C I ρ X ⟨0⟩ ↔ t ∈ X ⟨0⟩) := by
+  intro X hfix
+  by_cases hX : ∃ t, t ∈ X ⟨0⟩
+  · obtain ⟨t₀, ht₀⟩ := hX
+    exact odd_step_of_nonempty C I ρ ht₀ t₀ ((hfix t₀).mpr ht₀)
+  · have hempty : ∀ t, ¬ t ∈ X ⟨0⟩ := fun t ht => hX ⟨t, ht⟩
+    exact hempty [] ((hfix []).mp (odd_step_of_empty C I ρ hempty))
+
+/-- **The non-monotonicity witness**: growing the table SHRINKS the
+operator's output — exactly what `Exec/Fixpoint.lean:
+stratumOp_mono`'s stratification premise rules out. -/
+theorem odd_not_monotone (C : Query.Classify) (I : Instance)
+    (ρ : Query.ParamEnv) : ¬ Query.MonoP (oddOp C I ρ) := by
+  intro hm
+  have h1 : [] ∈ oddOp C I ρ (fun _ _ => False) ⟨0⟩ :=
+    odd_step_of_empty C I ρ (fun _ ht => ht)
+  have h2 := hm (fun _ _ => False) (oddOp C I ρ (fun _ _ => False))
+    (fun _ _ ht => absurd ht (fun h => h)) ⟨0⟩ [] h1
+  exact odd_step_of_nonempty C I ρ h1 [] h2
+
+/-- The successor operator: a head-creating rule's immediate
+consequence (`p(0)`; `p(m + 1) ← p(m)`), writable only at the
+operator level — `PRule` heads cannot create values. -/
+def succOp : Set Nat → Set Nat :=
+  fun X n => n = 0 ∨ ∃ m, m ∈ X ∧ n = m + 1
+
+/-- The successor operator is monotone — stratification is NOT the
+broken premise here; head creation is. -/
+theorem succOp_monotone {X Y : Set Nat} (h : ∀ n, n ∈ X → n ∈ Y) :
+    ∀ n, n ∈ succOp X → n ∈ succOp Y := by
+  rintro n (rfl | ⟨m, hm, rfl⟩)
+  · exact Or.inl rfl
+  · exact Or.inr ⟨m, h m hm, rfl⟩
+
+/-- Round `k` of the successor chain stays below `k` … -/
+theorem succ_chain_bound :
+    ∀ k n, n ∈ Query.naiveIter succOp k → n < k
+  | 0, _, h => absurd h (fun h => h)
+  | k + 1, n, h => by
+    rcases h with h | h
+    · exact Nat.lt_succ_of_lt (succ_chain_bound k n h)
+    · rcases h with rfl | ⟨m, hm, rfl⟩
+      · exact Nat.zero_lt_succ k
+      · exact Nat.succ_lt_succ (succ_chain_bound k m hm)
+
+/-- … and every round grows: the ascending chain never stabilizes —
+`n` arrives exactly at round `n + 1`. Termination's premise is
+load-bearing. -/
+theorem succ_chain_ascends :
+    ∀ n, n ∈ Query.naiveIter succOp (n + 1) ∧
+      ¬ n ∈ Query.naiveIter succOp n := by
+  intro n
+  constructor
+  · induction n with
+    | zero => exact Or.inr (Or.inl rfl)
+    | succ n ih => exact Or.inr (Or.inr ⟨n, ih, rfl⟩)
+  · intro h
+    exact Nat.lt_irrefl n (succ_chain_bound n n h)
+
+/-- Every prefixed point of the successor operator holds every
+natural. -/
+theorem succ_prefixed_all (X : Set Nat)
+    (hpre : ∀ n, n ∈ succOp X → n ∈ X) : ∀ n, n ∈ X := by
+  intro n
+  induction n with
+  | zero => exact hpre 0 (Or.inl rfl)
+  | succ n ih => exact hpre (n + 1) (Or.inr ⟨n, ih, rfl⟩)
+
+/-- **The infinite ascending chain's wall**: no prefixed point of the
+successor operator is finite — any candidate list misses the value
+one past its maximum. The safety theorem
+(`Exec/Fixpoint.lean: program_den_finite`) survives on exactly the
+premise this operator breaks: heads project bound variables, never
+created ones. -/
+theorem succ_prefixed_infinite (X : Set Nat)
+    (hpre : ∀ n, n ∈ succOp X → n ∈ X) : ¬ X.Finite := by
+  rintro ⟨l, hl⟩
+  have hmem : l.foldr Nat.max 0 + 1 ∈ l :=
+    (hl _).mp (succ_prefixed_all X hpre _)
+  have := le_foldr_max l _ hmem
+  omega
 
 end Bumbledb.Countermodels

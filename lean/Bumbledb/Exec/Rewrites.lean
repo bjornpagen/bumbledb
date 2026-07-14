@@ -16,12 +16,16 @@ one determinant get, static emptiness is a refuted condition.
   (`ground`: elimination and evaluation interleaved, one action per
   step); `:161-203` (`removable`, the deterministic statement-order
   scan). The elimination conditions: `:214-229`
-  (`join_covers_full_key`, condition 1), `:241-276`
+  (`join_covers_full_key`, condition 1 — including
+  `shared_vars_pair_positions_only`, `:221-227`), `:241-276`
   (`target_otherwise_unused`, condition 2 — Eq-constant filters within
   ψ, φ carried literally, non-Y fields dead), `:281-299`
   (`variables_join_or_dead`, condition 3), `:168`
   (`Enforcement::ScalarProbe`, condition 4 — the interval refusal),
-  `:315-373` (`var_is_dead`).
+  `:315-373` (`var_is_dead`). Chains and support: the module doc at
+  `:66-81` and `chain_reaches` — an ELIMINATED occurrence may source a
+  later elimination so long as its support chain avoids the candidate
+  (`ChainedElimStep`, `chained_elimination_sound` below).
 * **The grounding evaluator** —
   `crates/bumbledb/src/plan/ground/evaluate.rs:109-125` (`fold_step`,
   first foldable occurrence per call); `:128-199` (`fold_positive`:
@@ -33,9 +37,14 @@ one determinant get, static emptiness is a refuted condition.
 * **The key-probe lowering** —
   `crates/bumbledb/src/exec/dispatch/classify.rs:24-130` (`classify`:
   exactly one positive occurrence, no residuals, no measure or
-  set-valued filters, by-value Eq bindings covering a declared key);
-  `:134-161` (`key_probe_candidate`: the key statement, or the
-  full-fact `M` fallback); `crates/bumbledb/src/api/prepared/build.rs:335`
+  set-valued filters, by-value Eq bindings covering a declared key;
+  non-key per-field filters — order compares, `Ne`, `FieldsCompare`,
+  resolved `PointIn`/Allen — pass into `remaining_filters`, `:127`,
+  `:165-188`, applied post-get,
+  `crates/bumbledb/src/exec/dispatch/key_probe_fact.rs:253`);
+  `:134-161` (`key_probe_candidate`: the key statement — pointwise
+  interval-final keys included — or the full-fact `M` fallback);
+  `crates/bumbledb/src/api/prepared/build.rs:335`
   (`PreparedRule::KeyProbe` minted).
 * **The statically-empty fold** —
   `crates/bumbledb/src/ir/normalize/fold.rs:78-96` (`fold`:
@@ -77,11 +86,16 @@ one determinant get, static emptiness is a refuted condition.
 * **`elimination_sound` is the projection-sink face.** For
   set-semantics `ruleAnswers`, containment existence plus deadness
   suffice; the key-ness of Y (condition 1's full-key demand,
-  acceptance-side) is spent by the AGGREGATE face — key-ness keeps a
-  dead non-key variable from multiplying the binding-set fold domain
-  (`ground.rs:44-51`) — which lives with PRD 05's folds, not with this
-  theorem. The full-key coverage premise enters here only through the
-  join-value transfer.
+  acceptance-side) is what the AGGREGATE face spends — key-ness keeps
+  a dead non-key variable from multiplying the binding-set fold domain
+  (`ground.rs:44-51`). The aggregate face is a recorded PENDING
+  obligation: no theorem in this tree yet states removal preserving
+  the binding-set fold domain (it would compose with PRD 05's folds),
+  and it joins the admission-calculus docket — doc claims cite the
+  projection-face theorem only
+  (`docs/architecture/40-execution.md` § the grounding rewrite). The
+  full-key coverage premise enters here only through the join-value
+  transfer.
 * **`var_functional`**: an eliminable occurrence binds each variable at
   one field — repeated variables keep their first binding and lower the
   rest to `FieldsCompare` filters (`normalize.rs:174-187`), which
@@ -93,12 +107,43 @@ one determinant get, static emptiness is a refuted condition.
   narrowing), so whole-fact identity is a storage fact below this
   level; `KeyProbeShape` models the statement-key arm. The
   closed-relation refusal (`classify.rs:94`) and the measure/set-filter
-  refusals (`classify.rs:44-75`) are dispatch mechanism;
-  `conditions = []` models "no residuals".
+  refusals (`classify.rs:44-75`) are dispatch mechanism. Residual
+  per-field filters are MODELED: the rule's conditions ride the probe
+  and filter the at-most-one hit (`keyProbeEval`'s condition check =
+  `remaining_filters` applied post-get) — the model's conditions are
+  the general shape, the engine's per-field filters its instances.
+* **Chained-source eliminations are modeled one link deep.**
+  `chained_elimination_sound` composes a support pair — an ordinary
+  elimination plus one elimination whose pairing source it discharged
+  — into one answer-preserving step, with the acyclic-support premise
+  (`hroot`: the chain roots in a surviving occurrence — exactly what
+  `chain_reaches` forbids the negation of) and the engine's
+  `shared_vars_pair_positions_only` conjunct (`shared_join`) named;
+  `RewriteStep.eliminateChained` makes the pair an instance of the
+  step relation. Deeper support forests (a discharged source whose own
+  source is discharged, or cross-links through other discharged
+  readers) iterate the same existence/uniqueness argument from the
+  roots (`ground.rs:66-81`) but are not stated — the recorded
+  narrowing. The narrowing also covers the SOURCE-ROLE roster: the
+  engine's `removable` excludes only `Role::Negated` as a pairing
+  source (`ground.rs:178`), so a `Role::Folded` occurrence is
+  admissible where the modeled chain step names `Eliminated` sources
+  only. The Folded case is practically unreachable — a folded
+  source's binders all carry the attached `WordSet` membership
+  filter, which condition 2's `selections_within_psi` refuses
+  (Eq-to-ψ-literal filters only, `ground.rs:252-258`) — recorded, not
+  proved.
 * **`StaticallyEmpty` is the kill rule's soundness spec**: a condition
   refuted under EVERY environment. The Rust detector judges constants
-  only (`fold.rs`, rules (a)-(f)) — every verdict it renders is an
-  instance of this refutation; its completeness is not claimed.
+  only (`fold.rs`, rules (a)-(f)); its completeness is not claimed.
+  The "every verdict is an instance" claim is read through the
+  FILTERS-TO-CONDITIONS mapping: rules (b)/(d) kill on
+  occurrence-FILTER contradictions (`fold.rs:247-258`), and an
+  occurrence's Eq filter is this model's equality-condition leaf (the
+  shape `groundCondition` writes), so an Eq-conflict kill refutes the
+  corresponding lifted condition — honest emptiness either way; the
+  claim does NOT say every kill site literally inspects
+  `Rule.conditions`.
 -/
 
 namespace Bumbledb.Query
@@ -492,15 +537,19 @@ structure ElimStep (r r' : Rule) (a b : Atom) (X Y : List FieldId)
   join_covers : ∀ p, p ∈ X.zip Y →
     ∃ v, (p.1, Term.var v) ∈ a.bindings ∧ (p.2, Term.var v) ∈ b.bindings
   /-- Condition 2 — the source occurrence carries φ literally
-  (`source_carries_phi`: (field, encoded literal) set containment,
-  never inference). -/
-  carries_phi : ∀ s, s ∈ φ.bindings → (s.1, Term.lit s.2) ∈ a.bindings
-  /-- Condition 2 — the target carries only variables and ψ-literals
-  (`selections_within_psi`: any other filter shape fails the
-  containment). -/
+  (`source_carries_phi`): each φ binding's field is pinned by the
+  atom to a MEMBER of the binding's literal set — a literal pin is at
+  least as strong as the disjunction it discharges (singleton sets
+  are the old exact-literal containment), never inference. -/
+  carries_phi : ∀ s, s ∈ φ.bindings →
+    ∃ c, c ∈ s.2 ∧ (s.1, Term.lit c) ∈ a.bindings
+  /-- Condition 2 — the target carries only variables and
+  ψ-SINGLETON literals (`selections_within_psi`: any other filter
+  shape fails the containment; a non-singleton ψ binding pins no
+  single witness value, so the shape refuses it). -/
   target_bindings : ∀ bd, bd ∈ b.bindings →
     (∃ v, bd.2 = Term.var v) ∨
-      (∃ c, bd.2 = Term.lit c ∧ (bd.1, c) ∈ ψ.bindings)
+      (∃ c, bd.2 = Term.lit c ∧ (bd.1, [c]) ∈ ψ.bindings)
   /-- The one-field-per-variable discipline: repeated variables lower
   to `FieldsCompare` filters (`normalize.rs:174-187`), which condition
   2 refuses — so an eliminable occurrence binds each variable once. -/
@@ -601,7 +650,8 @@ theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
     obtain ⟨fa, hfa, hma⟩ := hatoms a hs.source
     have hφ : φ.satisfies fa := by
       intro s hsmem
-      exact (hma _ (hs.carries_phi s hsmem)).symm
+      obtain ⟨c, hcmem, hca⟩ := hs.carries_phi s hsmem
+      exact (hma _ hca) ▸ hcmem
     obtain ⟨g, hg, hψ, hgproj⟩ := hcont fa hfa hφ
     -- the extension: live variables keep σ, dead ones read the witness
     have hlive : ∀ v, v ∈ r'.allVars → σ v = elimAssign σ r' b g v :=
@@ -628,7 +678,7 @@ theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
         · exact elimAssign_dead hdead hs.var_functional hvb
       · rw [hc]
         show c = g bd.1
-        exact (hψ _ hcψ).symm
+        exact (Selection.satisfies_singleton hψ hcψ).symm
     -- the original rule derives under the extension
     refine mem_ruleAnswers.mpr ⟨elimAssign σ r' b g, ⟨?_, ?_, ?_⟩, ?_⟩
     · intro x hx
@@ -673,6 +723,256 @@ theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
       fun n hn => hneg n (hs.negated_eq ▸ hn),
       fun c hc => hconds c (hs.conditions_eq ▸ hc)⟩, ?_⟩
     rw [hs.finds_eq]
+
+/-! ### Chained eliminations — the discharged source
+
+The engine deliberately lets an already-`Eliminated` occurrence serve
+as the pairing source of a later elimination (`ground.rs:66-81`): the
+discharged occurrence's witness fact still exists, uniquely, and
+satisfies its whole filter list, so the next containment applies to
+THE WITNESS instead of a live atom. The discipline is the support
+forest — `chain_reaches` refuses any source whose support chain
+passes through the candidate. The composed step below models one
+chain link; its premises name exactly what the engine checks. -/
+
+/-- Answers read atoms by MEMBERSHIP only (`derives` quantifies
+`∈ r.atoms`), so two rules with the same finds, negated atoms and
+conditions and membership-equal atom lists answer alike — the licence
+to reorder atom lists when replaying the engine's mark-based steps
+(`Role` marks never move occurrences; the model's lists may). -/
+theorem ruleAnswers_atoms_congr {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {r s : Rule}
+    (hatoms : ∀ x : Atom, x ∈ r.atoms ↔ x ∈ s.atoms)
+    (hfinds : r.finds = s.finds) (hneg : r.negated = s.negated)
+    (hconds : r.conditions = s.conditions) :
+    ∀ t, t ∈ ruleAnswers C r I ρ ↔ t ∈ ruleAnswers C s I ρ := by
+  intro t
+  constructor
+  · intro ht
+    obtain ⟨σ, ⟨ha, hn, hc⟩, rfl⟩ := mem_ruleAnswers.mp ht
+    exact mem_ruleAnswers.mpr ⟨σ,
+      ⟨fun x hx => ha x ((hatoms x).mpr hx),
+       fun x hx => hn x (hneg ▸ hx),
+       fun x hx => hc x (hconds ▸ hx)⟩, by rw [hfinds]⟩
+  · intro ht
+    obtain ⟨σ, ⟨ha, hn, hc⟩, rfl⟩ := mem_ruleAnswers.mp ht
+    exact mem_ruleAnswers.mpr ⟨σ,
+      ⟨fun x hx => ha x ((hatoms x).mp hx),
+       fun x hx => hn x (hneg ▸ hx),
+       fun x hx => hc x (hconds ▸ hx)⟩, by rw [← hfinds]⟩
+
+/-- The chained elimination shape — `removable`'s conditions with a
+DISCHARGED pairing source: `r'` is `r` with one occurrence of the
+target atom `c` dropped, and the pairing source `b` need NOT be an
+atom of `r` (it was itself eliminated earlier; its witness fact
+stands in). The fields are `ElimStep`'s with two changes: the
+`source` membership is gone — that is the point — and `shared_join`,
+the engine's `shared_vars_pair_positions_only` conjunct
+(`ground.rs:221-227`) that plain `ElimStep` never needed, is
+demanded: with the source discharged, a variable shared with it can
+reach the witness only by riding a projection pair. -/
+structure ChainedElimStep (r r' : Rule) (b c : Atom)
+    (X Y : List FieldId) (φ ψ : Selection) : Prop where
+  /-- The drop: one `c` occurrence removed, everything else kept. -/
+  atoms_split : ∃ pre post, r.atoms = pre ++ c :: post ∧
+    r'.atoms = pre ++ post
+  finds_eq : r'.finds = r.finds
+  negated_eq : r'.negated = r.negated
+  conditions_eq : r'.conditions = r.conditions
+  /-- Condition 1 — every X→Y position pair is join-covered by one
+  variable shared between the discharged source and the target. -/
+  join_covers : ∀ p, p ∈ X.zip Y →
+    ∃ v, (p.1, Term.var v) ∈ b.bindings ∧ (p.2, Term.var v) ∈ c.bindings
+  /-- Condition 2 — the discharged source carries φ literally: its
+  filter list is a subset of the ψ its witness satisfies, so a φ
+  binding pinned there transfers to the witness. -/
+  carries_phi : ∀ s, s ∈ φ.bindings →
+    ∃ w, w ∈ s.2 ∧ (s.1, Term.lit w) ∈ b.bindings
+  /-- Condition 2 — the target carries only variables and ψ-singleton
+  literals (`selections_within_psi`). -/
+  target_bindings : ∀ bd, bd ∈ c.bindings →
+    (∃ v, bd.2 = Term.var v) ∨
+      (∃ w, bd.2 = Term.lit w ∧ (bd.1, [w]) ∈ ψ.bindings)
+  /-- The one-field-per-variable discipline on the target. -/
+  var_functional : ∀ i j v, (i, Term.var v) ∈ c.bindings →
+    (j, Term.var v) ∈ c.bindings → i = j
+  /-- Condition 3 — every variable of `c` joins through a projection
+  pair to the discharged source, or is dead in the surviving rule
+  (deadness judged with the source already discharged, exactly
+  `var_is_dead`'s skip of discharged occurrences). -/
+  join_or_dead : ∀ i v, (i, Term.var v) ∈ c.bindings →
+    (∃ p, p ∈ X.zip Y ∧ p.2 = i ∧ (p.1, Term.var v) ∈ b.bindings) ∨
+      v ∉ r'.allVars
+  /-- Condition 1's second half — `shared_vars_pair_positions_only`:
+  every variable shared between source and target pairs an X position
+  with its corresponding Y position. -/
+  shared_join : ∀ i j v, (i, Term.var v) ∈ b.bindings →
+    (j, Term.var v) ∈ c.bindings →
+    ∃ p, p ∈ X.zip Y ∧ p.1 = i ∧ p.2 = j
+
+/-- **The composed step — `chained_elimination_sound`.** A support
+pair — the ordinary elimination of `b` (source `a`, live) composed
+with the elimination of `c` whose pairing source is the DISCHARGED
+`b` — preserves the rule's answers under both containments, provided
+the support chain roots in a surviving occurrence (`hroot`, the
+acyclic-support premise: `chain_reaches` refuses exactly the
+elimination that would sink this root). Proof by replay in witness
+order: with `shared_join` named, eliminating `c` FIRST (against the
+still-live `b`) is an ordinary `ElimStep` — a target variable read
+only by the discharged source is join-classified, not dead — and the
+elimination of `b` then follows on the smaller rule; `ruleAnswers`
+reads atom lists by membership, so the reordering is invisible to the
+denotation. Bridge: `plan/ground.rs::chain_reaches` and the support
+forest (`ground.rs:66-81`); deeper forests iterate this argument from
+the roots (the recorded narrowing, module doc). -/
+theorem chained_elimination_sound {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {r r₁ r₂ : Rule} {a b c : Atom}
+    {X₁ Y₁ X₂ Y₂ : List FieldId} {φ₁ ψ₁ φ₂ ψ₂ : Selection}
+    (hs₁ : ElimStep r r₁ a b X₁ Y₁ φ₁ ψ₁)
+    (hs₂ : ChainedElimStep r₁ r₂ b c X₂ Y₂ φ₂ ψ₂)
+    (hroot : a ∈ r₂.atoms)
+    (hcont₁ : Containment (I a.relation) φ₁ X₁ (I b.relation) ψ₁ Y₁)
+    (hcont₂ : Containment (I b.relation) φ₂ X₂ (I c.relation) ψ₂ Y₂) :
+    ∀ t, t ∈ ruleAnswers C r₂ I ρ ↔ t ∈ ruleAnswers C r I ρ := by
+  -- The replay rules are built inline from `r₂`'s own items so every
+  -- shared field agrees definitionally: drop `c` first (source `b`
+  -- live), then `b` (source `a`, the surviving root).
+  -- membership bookkeeping for the two recorded splits
+  obtain ⟨pre₁, post₁, hr₁, hr₁'⟩ := hs₁.atoms_split
+  obtain ⟨pre₂, post₂, hr₂, hr₂'⟩ := hs₂.atoms_split
+  have hmem_r : ∀ x : Atom, x ∈ r.atoms ↔ x = b ∨ x ∈ r₁.atoms := by
+    intro x
+    rw [hr₁, hr₁']
+    simp only [List.mem_append, List.mem_cons]
+    constructor
+    · rintro (h | rfl | h)
+      · exact Or.inr (Or.inl h)
+      · exact Or.inl rfl
+      · exact Or.inr (Or.inr h)
+    · rintro (rfl | h | h)
+      · exact Or.inr (Or.inl rfl)
+      · exact Or.inl h
+      · exact Or.inr (Or.inr h)
+  have hmem_r₁ : ∀ x : Atom, x ∈ r₁.atoms ↔ x = c ∨ x ∈ r₂.atoms := by
+    intro x
+    rw [hr₂, hr₂']
+    simp only [List.mem_append, List.mem_cons]
+    constructor
+    · rintro (h | rfl | h)
+      · exact Or.inr (Or.inl h)
+      · exact Or.inl rfl
+      · exact Or.inr (Or.inr h)
+    · rintro (rfl | h | h)
+      · exact Or.inr (Or.inl rfl)
+      · exact Or.inl h
+      · exact Or.inr (Or.inr h)
+  -- the shared item equalities, chained through both steps
+  have hfinds₂ : r₂.finds = r.finds := hs₂.finds_eq.trans hs₁.finds_eq
+  have hneg₂ : r₂.negated = r.negated :=
+    hs₂.negated_eq.trans hs₁.negated_eq
+  have hconds₂ : r₂.conditions = r.conditions :=
+    hs₂.conditions_eq.trans hs₁.conditions_eq
+  -- step A: eliminate `c` against the still-live `b`
+  have stepA : ElimStep
+      ⟨r₂.finds, c :: b :: r₂.atoms, r₂.negated, r₂.conditions⟩
+      ⟨r₂.finds, b :: r₂.atoms, r₂.negated, r₂.conditions⟩
+      b c X₂ Y₂ φ₂ ψ₂ :=
+    { atoms_split := ⟨[], b :: r₂.atoms, rfl, rfl⟩
+      finds_eq := rfl
+      negated_eq := rfl
+      conditions_eq := rfl
+      source := List.mem_cons_self ..
+      join_covers := hs₂.join_covers
+      carries_phi := hs₂.carries_phi
+      target_bindings := hs₂.target_bindings
+      var_functional := hs₂.var_functional
+      join_or_dead := by
+        intro i v hv
+        rcases hs₂.join_or_dead i v hv with hjoin | hdead
+        · exact Or.inl hjoin
+        · by_cases hvb : ∃ j, (j, Term.var v) ∈ b.bindings
+          · -- shared with the source: `shared_join` classifies it
+            obtain ⟨j, hj⟩ := hvb
+            obtain ⟨p, hp, hp1, hp2⟩ := hs₂.shared_join j i v hj hv
+            exact Or.inl ⟨p, hp, hp2, hp1 ▸ hj⟩
+          · -- read by nothing live and not by `b`: dead in `rB` too
+            refine Or.inr fun hmem => ?_
+            rcases mem_allVars.mp hmem with h1 | ⟨x, hx, hvx⟩ |
+              ⟨x, hx, hvx⟩ | ⟨t', ht', hvt⟩
+            · exact hdead (mem_allVars.mpr (Or.inl h1))
+            · rcases List.mem_cons.mp hx with rfl | hx'
+              · -- the `b` occurrence: its bindings are vars and
+                -- literals (step 1's condition 2), so `v` would be a
+                -- var binding of `b` — refused by `hvb`
+                obtain ⟨bd, hbd, hvbd⟩ := List.mem_flatMap.mp hvx
+                rcases hs₁.target_bindings bd hbd with ⟨v', hv'⟩ |
+                  ⟨w, hw, -⟩
+                · rw [hv'] at hvbd
+                  have hvv : v = v' := by
+                    simpa [Term.vars] using hvbd
+                  refine hvb ⟨bd.1, ?_⟩
+                  rw [show Term.var v = bd.2 from by rw [hv', ← hvv]]
+                  exact hbd
+                · rw [hw] at hvbd
+                  simp [Term.vars] at hvbd
+              · exact hdead (mem_allVars.mpr
+                  (Or.inr (Or.inl ⟨x, hx', hvx⟩)))
+            · exact hdead (mem_allVars.mpr
+                (Or.inr (Or.inr (Or.inl ⟨x, hx, hvx⟩))))
+            · exact hdead (mem_allVars.mpr
+                (Or.inr (Or.inr (Or.inr ⟨t', ht', hvt⟩)))) }
+  -- step B: eliminate `b` against the surviving root `a`
+  have stepB : ElimStep
+      ⟨r₂.finds, b :: r₂.atoms, r₂.negated, r₂.conditions⟩
+      r₂ a b X₁ Y₁ φ₁ ψ₁ :=
+    { atoms_split := ⟨[], r₂.atoms, rfl, rfl⟩
+      finds_eq := rfl
+      negated_eq := rfl
+      conditions_eq := rfl
+      source := hroot
+      join_covers := hs₁.join_covers
+      carries_phi := hs₁.carries_phi
+      target_bindings := hs₁.target_bindings
+      var_functional := hs₁.var_functional
+      join_or_dead := by
+        intro i v hv
+        rcases hs₁.join_or_dead i v hv with hjoin | hdead
+        · exact Or.inl hjoin
+        · -- dead in `r₁` (more atoms) ⇒ dead in `r₂`
+          refine Or.inr fun hmem => ?_
+          rcases mem_allVars.mp hmem with h1 | ⟨x, hx, hvx⟩ |
+            ⟨x, hx, hvx⟩ | ⟨t', ht', hvt⟩
+          · exact hdead (mem_allVars.mpr
+              (Or.inl (hs₂.finds_eq ▸ h1)))
+          · exact hdead (mem_allVars.mpr (Or.inr (Or.inl
+              ⟨x, (hmem_r₁ x).mpr (Or.inr hx), hvx⟩)))
+          · exact hdead (mem_allVars.mpr (Or.inr (Or.inr (Or.inl
+              ⟨x, hs₂.negated_eq ▸ hx, hvx⟩))))
+          · exact hdead (mem_allVars.mpr (Or.inr (Or.inr (Or.inr
+              ⟨t', hs₂.conditions_eq ▸ ht', hvt⟩)))) }
+  -- the chain: r₂ ↔ (b live) ↔ (c and b live) ↔ r
+  intro t
+  have hAr : t ∈ ruleAnswers C
+      ⟨r₂.finds, c :: b :: r₂.atoms, r₂.negated, r₂.conditions⟩ I ρ ↔
+      t ∈ ruleAnswers C r I ρ := by
+    refine ruleAnswers_atoms_congr
+      (r := ⟨r₂.finds, c :: b :: r₂.atoms, r₂.negated, r₂.conditions⟩)
+      (s := r) (fun x => ?_) hfinds₂ hneg₂ hconds₂ t
+    constructor
+    · intro hx
+      rcases List.mem_cons.mp hx with rfl | hx'
+      · exact (hmem_r x).mpr (Or.inr ((hmem_r₁ x).mpr (Or.inl rfl)))
+      rcases List.mem_cons.mp hx' with rfl | hx''
+      · exact (hmem_r x).mpr (Or.inl rfl)
+      · exact (hmem_r x).mpr (Or.inr ((hmem_r₁ x).mpr (Or.inr hx'')))
+    · intro hx
+      rcases (hmem_r x).mp hx with rfl | hx'
+      · exact List.mem_cons_of_mem _ (List.mem_cons_self ..)
+      rcases (hmem_r₁ x).mp hx' with rfl | hx''
+      · exact List.mem_cons_self ..
+      · exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ hx'')
+  exact (elimination_sound stepB hcont₁ t).trans
+    ((elimination_sound stepA hcont₂ t).trans hAr)
 
 /-! ## Item 3 — the key probe
 
@@ -794,18 +1094,21 @@ def probeHitB (ρ : ParamEnv) (a : Atom) (K : List FieldId)
     | none => false
 
 /-- **`KeyProbeShape`** — what the lowering ACCEPTS
-(`classify.rs:24-130`): one positive atom, nothing negated, no
-residuals, and a key statement of the theory whose every projection
-field is bound by value. The full-fact `M` fallback
-(`classify.rs:153-160`) is a recorded narrowing (module doc). -/
+(`classify.rs:24-130`): one positive atom, nothing negated, and a key
+statement of the theory whose every projection field is bound by
+value. The rule's CONDITIONS are unconstrained: `classify` accepts
+non-key per-field filters (order compares, `Ne`, `FieldsCompare`,
+resolved `PointIn`/Allen) into `remaining_filters`, applied post-get
+— the model carries them as the rule's conditions, checked on the one
+hit (`keyProbeEval`); the engine's per-field filters are instances of
+the general shape. The full-fact `M` fallback (`classify.rs:153-160`)
+is a recorded narrowing (module doc). -/
 structure KeyProbeShape (T : Theory) (r : Rule) (a : Atom)
     (K : List FieldId) : Prop where
   /-- Exactly one atom occurrence. -/
   atoms : r.atoms = [a]
   /-- Positive only — no anti-joins on the fast path. -/
   negated : r.negated = []
-  /-- No residuals: every constraint is a binding of the one atom. -/
-  conditions : r.conditions = []
   /-- The key resolves against a declared functionality statement
   (`key_probe_candidate`; fresh auto-keys included). -/
   declared : Statement.functionality a.relation K ∈ T.statements
@@ -815,16 +1118,22 @@ structure KeyProbeShape (T : Theory) (r : Rule) (a : Atom)
 
 /-- The point-probe evaluation: ONE determinant get — the first (and,
 under the key, only) tuple-equal fact — then the decoded fact's
-bindings checked and the finds projected, exactly the probe kernel's
-shape (`exec/dispatch/execute_key_probe.rs`). Reuses the `evalList`
-machinery: `bindAtom` is the decode-and-check step. -/
-def keyProbeEval (W : ListInstance) (ρ : ParamEnv) (r : Rule)
-    (a : Atom) (K : List FieldId) : List AnswerTuple :=
+bindings checked, the residual conditions applied to the hit
+(`remaining_filters` post-get, `key_probe_fact.rs:253`), and the
+finds projected, exactly the probe kernel's shape
+(`exec/dispatch/execute_key_probe.rs`). Reuses the `evalList`
+machinery: `bindAtom` is the decode-and-check step, `condHoldsB` the
+residual filter. -/
+def keyProbeEval (C : Classify) (W : ListInstance) (ρ : ParamEnv)
+    (r : Rule) (a : Atom) (K : List FieldId) : List AnswerTuple :=
   match (W.facts a.relation).find? (probeHitB ρ a K) with
   | none => []
   | some f =>
     match bindAtom ρ f a.bindings [] with
-    | some σp => [r.finds.map (totalize σp)]
+    | some σp =>
+      match r.conditions.all (condHoldsB C ρ (totalize σp)) with
+      | true => [r.finds.map (totalize σp)]
+      | false => []
     | none => []
 
 /-- A matching fact hits the probe: the atom's pinned bindings force
@@ -864,18 +1173,24 @@ theorem probeHit_project {ρ : ParamEnv} {a : Atom} {K : List FieldId}
 /-- **Item 3 — `keyprobe_equiv_join`.** Under the accepted shape and
 the key's uniqueness, the point-probe evaluation equals the join
 denotation, membership for membership: soundness is the probe's own
-decode-and-check; completeness pins the probed fact through
-`functionality_unique_witness` — any deriving fact hits the probe, and
-the key allows only one hit, so the ONE get finds exactly it. `Safe`
-and the measure-free binding shape are the same two premises
-`eval_sound` spends (the validator discharges both).
-Bridge: `PreparedRule::KeyProbe`; `api/prepared/build.rs:335`. -/
+decode-and-check plus the residual conditions it verified on the hit;
+completeness pins the probed fact through
+`functionality_unique_witness` — any deriving fact hits the probe, the
+key allows only one hit, so the ONE get finds exactly it, and the
+deriving assignment's conditions transfer to the hit (the residual
+filters only shrink the at-most-one candidate, never widen it).
+`Safe` and the measure-free binding shape are the same two premises
+`eval_sound` spends (the validator discharges both); `Safe` is also
+what makes the residual conditions decidable on the probe's state —
+every condition variable is bound by the one atom.
+Bridge: `PreparedRule::KeyProbe`; `api/prepared/build.rs:335`;
+`remaining_filters` (`classify.rs:127,165-188`). -/
 theorem keyprobe_equiv_join {T : Theory} {C : Classify}
     {W : ListInstance} {ρ : ParamEnv} {r : Rule} {a : Atom}
     {K : List FieldId} (hshape : KeyProbeShape T r a K)
     (hkey : Functionality (W.den a.relation) K) (hsafe : Safe r)
     (hnm : ∀ bd, bd ∈ a.bindings → ¬ bd.2.isMeasure) :
-    ∀ t, t ∈ keyProbeEval W ρ r a K ↔ t ∈ ruleAnswers C r W.den ρ := by
+    ∀ t, t ∈ keyProbeEval C W ρ r a K ↔ t ∈ ruleAnswers C r W.den ρ := by
   intro t
   constructor
   · -- the probe's answer derives
@@ -893,24 +1208,30 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
         cases ht
       | some σp =>
         simp only [hbind] at ht
-        have hteq : t = r.finds.map (totalize σp) :=
-          List.mem_singleton.mp ht
-        obtain ⟨-, hpins⟩ := bindAtom_sound a.bindings [] σp hbind
-        refine mem_ruleAnswers.mpr ⟨totalize σp, ⟨?_, ?_, ?_⟩, hteq⟩
-        · intro x hx
-          rw [hshape.atoms] at hx
-          rcases List.mem_singleton.mp hx with rfl
-          exact ⟨f, List.mem_of_find?_eq_some hfind,
-            fun bd hbd => (hpins bd hbd).selects⟩
-        · intro n hn
-          rw [hshape.negated] at hn
-          cases hn
-        · intro c hc
-          rw [hshape.conditions] at hc
-          cases hc
+        cases hcnd : r.conditions.all (condHoldsB C ρ (totalize σp)) with
+        | false =>
+          simp only [hcnd] at ht
+          cases ht
+        | true =>
+          simp only [hcnd] at ht
+          have hteq : t = r.finds.map (totalize σp) :=
+            List.mem_singleton.mp ht
+          obtain ⟨-, hpins⟩ := bindAtom_sound a.bindings [] σp hbind
+          refine mem_ruleAnswers.mpr ⟨totalize σp, ⟨?_, ?_, ?_⟩, hteq⟩
+          · intro x hx
+            rw [hshape.atoms] at hx
+            rcases List.mem_singleton.mp hx with rfl
+            exact ⟨f, List.mem_of_find?_eq_some hfind,
+              fun bd hbd => (hpins bd hbd).selects⟩
+          · intro n hn
+            rw [hshape.negated] at hn
+            cases hn
+          · intro c hc
+            exact (condHoldsB_iff C ρ (totalize σp) c).mp
+              (List.all_eq_true.mp hcnd c hc)
   · -- every deriving answer is the probe's
     intro ht
-    obtain ⟨σ, ⟨hatoms, -, -⟩, rfl⟩ := mem_ruleAnswers.mp ht
+    obtain ⟨σ, ⟨hatoms, -, hconds⟩, rfl⟩ := mem_ruleAnswers.mp ht
     obtain ⟨f, hfI, hm⟩ := hatoms a (by
       rw [hshape.atoms]
       exact List.mem_singleton.mpr rfl)
@@ -931,21 +1252,34 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
       obtain ⟨σp, hbind, hagp, -⟩ :=
         bindAtom_complete a.bindings []
           (fun v x hx => by cases hx) (fun bd hbd => hm bd hbd) hnm
+      obtain ⟨-, hpins⟩ := bindAtom_sound a.bindings [] σp hbind
+      -- `Safe` pins every rule variable to the one atom, so the
+      -- probe's totalized state agrees with σ everywhere the rule
+      -- reads
+      have hagree : ∀ v, v ∈ r.allVars → totalize σp v = σ v := by
+        intro v hv
+        obtain ⟨x, hx, hbound⟩ := mem_positiveVars.mp (hsafe v hv)
+        rw [hshape.atoms] at hx
+        rw [List.mem_singleton.mp hx] at hbound
+        obtain ⟨bd, hbd, hvbd⟩ := List.mem_flatMap.mp hbound
+        have hpin := hpins bd hbd
+        rw [Term.mem_bindingVars.mp hvbd] at hpin
+        exact totalize_agrees hagp
+          (by rw [show lookupVar σp v = some (g bd.1) from hpin]; rfl)
+      -- the residual conditions transfer from σ to the hit
+      have hcnd : r.conditions.all (condHoldsB C ρ (totalize σp))
+          = true :=
+        List.all_eq_true.mpr fun c hc =>
+          (condHoldsB_iff C ρ (totalize σp) c).mpr
+            ((condHolds_congr C ρ σ (totalize σp) c fun v hv =>
+              (hagree v (mem_allVars.mpr
+                (Or.inr (Or.inr (Or.inr ⟨c, hc, hv⟩))))).symm).mp
+              (hconds c hc))
       unfold keyProbeEval
-      simp only [hfind, hbind]
+      simp only [hfind, hbind, hcnd]
       refine List.mem_singleton.mpr ?_
       refine (List.map_congr_left fun v hv => ?_).symm
-      have hvpos : v ∈ r.positiveVars :=
-        hsafe v (mem_allVars.mpr (Or.inl hv))
-      obtain ⟨x, hx, hbound⟩ := mem_positiveVars.mp hvpos
-      rw [hshape.atoms] at hx
-      rw [List.mem_singleton.mp hx] at hbound
-      obtain ⟨bd, hbd, hvbd⟩ := List.mem_flatMap.mp hbound
-      obtain ⟨-, hpins⟩ := bindAtom_sound a.bindings [] σp hbind
-      have hpin := hpins bd hbd
-      rw [Term.mem_bindingVars.mp hvbd] at hpin
-      exact totalize_agrees hagp
-        (by rw [show lookupVar σp v = some (g bd.1) from hpin]; rfl)
+      exact hagree v (mem_allVars.mpr (Or.inl hv))
 
 /-- The key premise, spent from the theory: on a holding instance an
 accepted scalar key over an open relation IS semantic functionality of
@@ -962,6 +1296,51 @@ theorem keyprobe_key_spent {T : Theory} {I : Instance}
   unfold Theory.den at hj
   rw [hopen] at hj
   exact hj
+
+/-- The pointwise face of the key premise: on a holding instance an
+accepted key whose field set splits pointwise (one interval field, any
+written position) is ALSO semantic functionality — a pointwise key
+implies exact-tuple functionality, because two facts sharing the
+scalar prefix with IDENTICAL intervals overlap pointwise
+(`interval_nonempty` supplies the shared point), which `PointwiseKey`
+forbids of distinct facts. The typing premise `hpts` — every stored
+fact denotes at least one point at the split position — is PRD 03's
+arity-respecting-facts narrowing made a named hypothesis, discharged
+fieldwise by `Value.points_nonempty` on interval-typed columns. This
+closes `keyprobe_equiv_join`'s `hkey` for interval-final pointwise
+keys: the engine key-probes them too (`key_probe_candidate` accepts
+ANY declared key, `classify.rs:134-151`; the lock
+`pointwise_key_point_lookup_uses_key_probe_and_is_image_free`). -/
+theorem keyprobe_pointwise_key_spent {T : Theory} {I : Instance}
+    (hI : holds T I) {R : RelId} {K S : List FieldId} {i : FieldId}
+    (hdecl : Statement.functionality R K ∈ T.statements)
+    (hsplit : T.header.intervalSplit R K = some (S, i))
+    (hopen : T.closed R = none)
+    (hpts : ∀ f, f ∈ I R → ∃ p, p ∈ (f i).points) :
+    Functionality (I R) K := by
+  have hj := hI _ hdecl
+  simp only [Statement.judgment, hsplit] at hj
+  unfold Theory.den at hj
+  rw [hopen] at hj
+  obtain ⟨hfil, hS⟩ := Header.intervalSplit_some hsplit
+  intro f g hf hg hproj
+  -- the interval field is a member of the key's field set
+  have hiK : i ∈ K := by
+    have hmem : i ∈ K.filter (fun j => T.header.isInterval R j) := by
+      rw [hfil]
+      exact List.mem_singleton.mpr rfl
+    exact (List.mem_filter.mp hmem).1
+  -- key-tuple agreement restricts to the scalar prefix…
+  have hSproj : f.project S = g.project S := by
+    refine (Fact.project_eq_iff f g S).mpr fun j hj' => ?_
+    refine (Fact.project_eq_iff f g K).mp hproj j ?_
+    rw [hS] at hj'
+    exact (List.mem_filter.mp hj').1
+  -- …and pins the interval position exactly
+  have hfg : f i = g i := (Fact.project_eq_iff f g K).mp hproj i hiK
+  refine Classical.byContradiction fun hne => ?_
+  obtain ⟨p, hp⟩ := hpts f hf
+  exact hj f g hf hg hSproj hne p hp (hfg ▸ hp)
 
 /-! ## Item 4 — static emptiness and the latch's two constructors -/
 
@@ -1068,6 +1447,25 @@ inductive RewriteStep (T : Theory) (C : Classify) :
       (hsrc : T.header.intervalSplit a.relation X = none)
       (htgt : T.header.intervalSplit b.relation Y = none) :
       RewriteStep T C ⟨n, pre ++ r :: post⟩ ⟨n, pre ++ r' :: post⟩
+  /-- The chained containment elimination — the discharged-source arm
+  (`chain_reaches`, the support forest): the support pair and the
+  elimination it licenses land as ONE composed step, the
+  acyclic-support premise (`hroot`) named. -/
+  | eliminateChained {n : Nat} {pre post : List Rule} {r r₁ r₂ : Rule}
+      {a b c : Atom} {X₁ Y₁ X₂ Y₂ : List FieldId}
+      {φ₁ ψ₁ φ₂ ψ₂ : Selection}
+      (hs₁ : ElimStep r r₁ a b X₁ Y₁ φ₁ ψ₁)
+      (hs₂ : ChainedElimStep r₁ r₂ b c X₂ Y₂ φ₂ ψ₂)
+      (hroot : a ∈ r₂.atoms)
+      (hdecl₁ : Statement.containment ⟨a.relation, X₁, φ₁⟩
+        ⟨b.relation, Y₁, ψ₁⟩ ∈ T.statements)
+      (hdecl₂ : Statement.containment ⟨b.relation, X₂, φ₂⟩
+        ⟨c.relation, Y₂, ψ₂⟩ ∈ T.statements)
+      (hsrc₁ : T.header.intervalSplit a.relation X₁ = none)
+      (htgt₁ : T.header.intervalSplit b.relation Y₁ = none)
+      (hsrc₂ : T.header.intervalSplit b.relation X₂ = none)
+      (htgt₂ : T.header.intervalSplit c.relation Y₂ = none) :
+      RewriteStep T C ⟨n, pre ++ r :: post⟩ ⟨n, pre ++ r₂ :: post⟩
   /-- The statically-empty kill (`NormalizedQuery::dead`). -/
   | kill {n : Nat} {pre post : List Rule} {r : Rule}
       (h : StaticallyEmpty C r) :
@@ -1157,20 +1555,32 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
     exact (elimination_sound hs
       (containment_transfer (den_agrees hax _) (den_agrees hax _) hj)
       t).symm
+  | eliminateChained hs₁ hs₂ hroot hdecl₁ hdecl₂ hsrc₁ htgt₁ hsrc₂ htgt₂ =>
+    refine queryAnswers_congr_at fun t => ?_
+    have hj₁ := hI _ hdecl₁
+    have hj₂ := hI _ hdecl₂
+    simp only [Statement.judgment, hsrc₁, htgt₁] at hj₁
+    simp only [Statement.judgment, hsrc₂, htgt₂] at hj₂
+    exact (chained_elimination_sound hs₁ hs₂ hroot
+      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj₁)
+      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj₂)
+      t).symm
   | kill h =>
     exact queryAnswers_drop_at fun t => statically_empty_sound h I ρ t
 
-/-- A rewrite sequence: any chain of the three rewrites. -/
+/-- A rewrite sequence: any chain of the rewrites (grounding, kill,
+elimination — the chained composed step included). -/
 inductive Rewrites (T : Theory) (C : Classify) : Query → Query → Prop
   | refl (q : Query) : Rewrites T C q q
   | step {q q' q'' : Query} (h : RewriteStep T C q q')
       (rest : Rewrites T C q' q'') : Rewrites T C q q''
 
 /-- **Item 5 — `rewrite_composition`.** ANY sequence of grounding,
-elimination and kill steps preserves `queryAnswers` on every instance
-holding the theory and agreeing with its ground axioms — the prepare
-pipeline's licence to chain. Falls out of items 1, 2 and 4 by
-induction over the chain, one rewrite per step. -/
+elimination (chained-source pairs included) and kill steps preserves
+`queryAnswers` on every instance holding the theory and agreeing with
+its ground axioms — the prepare pipeline's licence to chain. Falls
+out of items 1, 2 and 4 by induction over the chain, one rewrite per
+step. -/
 theorem rewrite_composition {T : Theory} {C : Classify} {q q' : Query}
     (h : Rewrites T C q q') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :

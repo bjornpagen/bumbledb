@@ -59,8 +59,9 @@ alternative judges states nobody can observe —
 `lean/Bumbledb/Countermodels.lean: per_op_judgment_wrong`) — and every committed
 state models its theory (`lean/Bumbledb/Txn.lean: committed_states_model`). A
 violation aborts the whole transaction with a typed error whose payload is the
-**complete violation set** (`lean/Bumbledb/Txn.lean: rejection_is_complete`) —
-every violated statement, cited exactly once (per direction for a containment:
+failing phase's **complete violation set**
+(`lean/Bumbledb/Txn.lean: rejection_is_complete`) —
+every violated statement of that phase, cited exactly once (per direction for a containment:
 source before target), in materialized statement order, each citation carrying
 the statement id and the offending fact's bytes (never storage row ids —
 `10-data-model.md`); the set is sealed — nonempty, sorted, deduplicated — by
@@ -70,7 +71,8 @@ itself: key (`Functionality`) violations preempt the containment judgment, becau
 the containment probes are defined over the *keyed* final state (determinants are the
 probe index), which exists only when every key statement holds — so one rejection
 is the complete set of violated key statements, or the complete set of violated
-containment statements, never a mix. Within the containment set, the two
+containment statements, never a mix
+(`lean/Bumbledb/Txn.lean: rejection_never_mixes`). Within the containment set, the two
 directions partition the final state's source facts: a fact inserted this commit
 is judged source-side only, a pre-existing survivor target-side — one statement is
 never convicted twice through one fact. Since
@@ -221,9 +223,15 @@ rule above is this law's acceptance face, and the entailment-vs-acceptance gap
 is formal (`lean/Bumbledb/Dependencies.lean: no_closure_superkey_implication` —
 proved, deliberately unspent); enforcement never skips a check as implied;
 schema evolution re-judges instances (`Db::verify_store`, ETL), never proves
-theory-to-theory entailment; statement selections stay equality-to-literal
-(richer σ moves the class toward denial constraints, where even satisfiability
-stops being trivial). **Alternative:** a decidable-fragment implication engine
+theory-to-theory entailment; statement selections stay equality-shaped —
+today's accepted surface is the (field, literal) equality binding above, and
+the tripwire's edge is a recorded decision (2026-07-14): it moves to
+equality-to-literal-SET — the disjunctive set fragment is admitted in the spec
+(`lean/Bumbledb/Schema.lean: Selection`; singleton = today's equality,
+`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`) and its engine
+discharge is queued, while the engine today accepts singletons only (richer σ
+than literal sets moves the class toward denial constraints, where even
+satisfiability stops being trivial). **Alternative:** a decidable-fragment implication engine
 (unary INDs, acyclic reference graphs) powering redundancy elimination and
 migration proofs. **Why it lost:** it restricts the schema language to buy a
 feature nothing needs — the delta-restricted checker already makes enforcement
@@ -251,7 +259,11 @@ review, as a new decision.
 Both judgments read interval positions through the denotation
 (`10-data-model.md`): the judgment is of the point-families, position by
 position — a statement with no interval positions is the classical judgment
-unchanged (`lean/Bumbledb/Schema.lean: Header.intervalSplit_scalar`).
+unchanged (`lean/Bumbledb/Schema.lean: Header.intervalSplit_scalar`). The
+pointwise reading is of the field *set*, never the written projection order —
+one interval field written anywhere is the pointwise judgment
+(`lean/Bumbledb/Countermodels.lean: split_permuted_some`), exactly the
+`FieldSet` canonicalization above.
 
 - **FD, pointwise:** per scalar group, pairwise-disjoint point sets
   (`lean/Bumbledb/Dependencies.lean: pointwise_key_disjoint`) — every per-group

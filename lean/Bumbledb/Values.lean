@@ -51,6 +51,42 @@ typing; nominal safety lives in host Rust newtypes, never here.
   justify.
 * `Set` is defined in-tree (`α → Prop` with membership): core Lean
   v4.32.0 has no `Set`, and mathlib is refused.
+* **`Value` mirrors the STORABLE sum, not the literal Rust enum.**
+  `crate::value::Value` carries a seventh, panic-guarded `AllenMask`
+  variant (`encode_literal`'s `unreachable!`,
+  `encoding/encode.rs:96`) that no `TypeDesc` arm admits and no
+  extension row survives `value_matches` carrying; and the str carrier
+  is split across two Rust types — `Value::String` holds raw UTF-8 the
+  encoder refuses, while `encode_fact`'s `ValueRef::String(u64)` arm
+  carries the id encoding modeled here. The mirror of this `Value` is
+  `Value ⊎ ValueRef` with callers peeling first (all three
+  `encode_literal` call sites route `String` elsewhere).
+* **The sentinel intern id is unmodeled.** `StrId.id` is unbounded and
+  every id is a value; Rust reserves `SENTINEL_ID = u64::MAX`
+  (`storage/dict.rs:80`) as never-minted dictionary state —
+  unobservable while the mint invariant holds, so the spec stays
+  silent.
+* **`fixedBytes n` is total over ℕ here; Rust declares `1..=64`
+  only** (`MAX_FIXED_BYTES`, `encoding.rs:27-31`). The extra
+  generality is dead — widths no code implements —
+  and `value_eq_iff_encode_eq` is proved uniformly in `n`, so nothing
+  false rides it.
+* **The decode/corruption boundary is spec-silent SUPPORT.** Only
+  encode is modeled; decode's strictness (`InvalidBool` on any byte
+  ≠ 0/1, `InvalidInterval` on `start ≥ end`, `NonzeroFixedBytesPad`)
+  is behavior the spec does not determine — it makes the canonical
+  encoding the ONLY accepted bytes, supporting (never contradicting)
+  the canonical-bytes theorem.
+* **The str-order refusal is a TYPING fact here, a DYNAMIC fact in
+  Rust.** This tree installs no `LT`/`LE`/`Ord` instance on `StrId`,
+  so an order comparison on strings is unwritable; the engine's
+  intern ids are bare `u64` words (`Ord` in Rust, as any word is),
+  and the refusal is enforced at the validation boundary instead —
+  `Error::OrderComparisonOnString`
+  (`ir/validate/context.rs:292`) rejects the comparison on accepted
+  rules. The model's refusal is strictly stronger (unwritable vs
+  dynamically rejected) — sound direction, recorded like its
+  siblings above.
 -/
 
 namespace Bumbledb

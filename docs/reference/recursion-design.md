@@ -9,9 +9,16 @@
 > refusal stands (`docs/architecture/20-query-ir.md`, the recursion
 > refusal beside the rules shape), and the no-speculative-structure
 > refusals in the crucible set stand with it — no `AtomSource`, no
-> `PredId`, no strata, no frontier hook exists in the tree, because a
-> one-inhabitant sum is a dead arm in every consumer. The cuts live
-> here instead.
+> `PredId`, no strata, no frontier hook exists in the ENGINE tree,
+> because a one-inhabitant sum is a dead arm in every consumer. The
+> cuts live here instead. **The SPEC side landed 2026-07-14**: §1's IR
+> cut, §2's stratification and safety theorem, §3's operator-level
+> delta equivalence, and §5's round loop are now Lean theorems
+> (`lean/Bumbledb/Exec/Fixpoint.lean`; the walls in
+> `lean/Bumbledb/Countermodels.lean`) — there the sums land inhabited,
+> because the fixpoint semantics consumes them. §4 and §5's mechanism
+> rows (images, watermarks, budgets, plan variants) stay paper, per the
+> mechanism fence.
 
 This paper is written against the **post-crucible shapes**: PRD 04's
 `Predicate`/`PredicateColumn` and `ValidatedQuery { predicate, rules }`

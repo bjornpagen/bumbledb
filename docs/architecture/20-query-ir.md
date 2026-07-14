@@ -115,11 +115,26 @@ The execution plan is pre-paid: the full recursion design — IR cut,
 stratification, delta rewrite, transient images, driver, oracles,
 notation — is a paper proof with a seam ledger in
 `docs/reference/recursion-design.md`; a firing trigger goes through that
-ledger, not around it. The spec side is likewise pre-paid:
-`lean/Bumbledb/Exec/` is the fixpoint model's prepared home when the
-trigger fires (the covenant's recursion refusal) — the stratified
-semantics lands beside the proved rewrites, never in a new tree, and
-until then nothing recursion-shaped exists in `lean/` either. The rules shape (§ above) is the landing pad,
+ledger, not around it. The spec side is PAID (2026-07): the stratified
+fixpoint model landed in `lean/Bumbledb/Exec/Fixpoint.lean`, beside the
+proved rewrites as promised — the degenerate one-predicate program is
+today's query (`lean/Bumbledb/Exec/Fixpoint.lean:
+degenerate_embedding`), the per-stratum operator is monotone under the
+stratification witness and only under it
+(`lean/Bumbledb/Exec/Fixpoint.lean: stratumOp_mono`;
+`lean/Bumbledb/Countermodels.lean: odd_not_monotone` is the wall), every
+predicate's fixpoint is finite and executably listed
+(`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite`,
+`program_eval_sound`), the semi-naive frontier loses nothing
+(`lean/Bumbledb/Exec/Fixpoint.lean: semi_naive_agrees`), and the
+head-creation wall is the successor chain
+(`lean/Bumbledb/Countermodels.lean: succ_prefixed_infinite`). The ENGINE
+still refuses recursion today: nothing recursion-shaped exists in
+`crates/`, and the Bridge carries no rows for the fixpoint model —
+deliberate, not an omission: obligations ledger only what exists, and the
+rows land with the engine discharge campaign, which is decided and priced
+(the seam ledger's 6–8 PRD set) and queued behind the trigger below, not
+yet built. The rules shape (§ above) is the landing pad,
 deliberately not entered — a query is already a non-recursive Datalog
 program, one step short of the fixpoint — and nothing in this chapter
 assumes the step is never taken. Until a trigger fires, the dogfooding
@@ -206,9 +221,12 @@ join costume.
 ### Aggregation
 
 - **Every aggregate folds the group's set of distinct full bindings**; group
-  key = the values of the non-aggregated find variables
+  key = the projected VALUES of the non-aggregated find terms — a measure find
+  position keys its evaluated measure, so colliding measures over distinct
+  intervals are one group
   (`lean/Bumbledb/Query/Aggregates.lean: agg_over_distinct_bindings`,
-  `group_fibers_disjoint`, `group_fibers_exhaust`). **Across rules**, aggregates
+  `group_fibers_disjoint`, `group_fibers_exhaust`,
+  `equal_key_values_share_fiber`). **Across rules**, aggregates
   read the head: the fold domain is the union of the rules' binding sets
   projected to the head (`lean/Bumbledb/Exec/Dedup.lean:
   union_regime_head_projection`; the executor's spanning seen-set keys exactly
@@ -363,7 +381,17 @@ half-open endpoint reading, inclusive at start, exclusive at end
 (`lean/Bumbledb/Query/Denotation.lean: pointIn_unfold`). A term of type
 `Interval(E)` in the
 same position is interval **value equality** (identity, `10-data-model.md`).
-Var, Param, ParamSet, and Literal all participate under the same rule. The
+Var, Param, ParamSet, and Literal all participate under the same rule, and the
+rule is a proved lowering, not a convention: rewriting each membership binding
+to the `PointIn` predicate form preserves the rule's answers over the whole
+term roster and repeated variables — positive atoms in full, negated atoms
+under the theorem's membership-free hypothesis
+(`lean/Bumbledb/Query/Membership.lean: membership_lowering_preserves`; a
+negated membership binding has no pre-lowered IR form, so its normative
+semantics is the surface judgment itself, with
+`lean/Bumbledb/Query/Membership.lean: surface_antiprobe_filters` as the filter
+form the engine realizes and the negated-atom answer-preservation extension the
+module's recorded remaining gap). The
 domain ceiling is the ray's ∞, never a point (`10-data-model.md` § the
 point-domain law): a ceiling literal at any interval position (membership
 bindings and `PointIn` operands) is a validation error, a ceiling-bound point

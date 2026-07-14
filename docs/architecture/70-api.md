@@ -270,10 +270,11 @@ Both are emission; the grammar is untouched.
   sugar, not an engine operation (closed decision).
 - **Dependencies are judged at commit against the final state**
   (`30-dependencies.md`): the `CommitRejected` error surfaces from the commit, not
-  from the offending call site, carrying the COMPLETE violation set
-  (`lean/Bumbledb/Txn.lean: rejection_is_complete` — complete, sound, and
+  from the offending call site, carrying the failing phase's COMPLETE violation set
+  (`lean/Bumbledb/Txn.lean: rejection_is_complete` — complete within its phase,
+  sound, and
   nonempty) — every violated
-  statement, cited once (per direction for a containment), in materialized statement
+  statement of that phase, cited once (per direction for a containment), in materialized statement
   order — each citation with the statement id (renderable back to the algebra
   through the schema) and the offending fact's bytes. The whole transaction aborts.
 
@@ -449,7 +450,9 @@ proposition the commit checks in one integer compare.
   error, never a skip — `50-storage.md`). They abort the query; the read transaction
   remains usable.
 - **Write errors:** `CommitRejected` (raised at commit, against the final state,
-  carrying the complete violation set in statement order), `GenerationMoved`
+  carrying the failing phase's COMPLETE violation set in statement order —
+  `lean/Bumbledb/Txn.lean: rejection_is_complete`, complete within its phase,
+  sound, and nonempty), `GenerationMoved`
   (the witness compare, § conditional writes — carrying the two generations),
   `ForeignSnapshot` (a witness of another database), `FreshExhausted`,
   `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write transaction — and
@@ -461,7 +464,8 @@ proposition the commit checks in one integer compare.
 Schema change = ETL into a new database (`10-data-model.md`) — the only path from
 any other format, stated. The laws: export→import of a committed state into the
 same theory is a no-op (`lean/Bumbledb/Txn.lean: etl_identity`), and a transform
-into a new theory either lands already holding it or rejects with the complete
+into a new theory either lands already holding it or rejects with the failing
+phase's complete
 violation set — there is no migrate-now-validate-later state (`etl_lands_valid`).
 The **export
 surface is a full-relation scan**: `snap.scan(relation)` yields *dynamic* facts

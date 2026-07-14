@@ -41,8 +41,18 @@ critical section (write.rs:136-140) is `writeWitnessed`'s one `if`.
   `FinalStateView` (phases 1–2 applied the plan; read-your-writes is
   exactly `base + delta` in final set semantics).
 * `violationSet` / `rejection_is_complete` —
-  `crate::error::Violations`: the complete violation set of one
-  rejected commit, both scan-complete sides.
+  `crate::error::Violations`: one rejected commit's complete violation
+  set OF THE FAILING PHASE — the violated key statements when any key
+  fails (`storage/commit/apply.rs::apply` seals them before the
+  judgment phase runs — this preemption is the engine's, discharged
+  today), else the statement phase's violated statements. The engine's
+  statement phase today judges CONTAINMENTS only
+  (`storage/commit/judgment.rs::judge`), scan-complete on both its
+  sides; the model's statement phase also carries cardinality windows
+  and order marks — Undischarged (spec-ahead): their membership in the
+  statement phase is the 2026-07-14 vocabulary campaign's admission,
+  its Rust discharge decided and queued, which is why no `Bridge.lean`
+  row bridges those two forms — deliberate, not an omission.
 * `writeFrom` / `writeWitnessed` — `api/db/write.rs`'s `Db::write_from`
   / `Db::write` sharing one body; the witness is the `Snapshot` the
   host read its premises on, consumed for its generation alone.
@@ -52,14 +62,44 @@ critical section (write.rs:136-140) is `writeWitnessed`'s one `if`.
   exports under one generation, the host transforms, `bulk_load`
   imports under the new theory's ordinary final-state judgment.
 
+## The two-phase judge (the F2 alignment — deliberate behavior, modeled)
+
+`judge` is key-phase-then-statement-phase. A final state violating any
+functionality statement rejects with exactly the complete set of
+violated KEY statements, and the statement phase never runs
+(`judge_key_preempts`); only a keyed final state is judged for
+containment, cardinality, and order (`judge_statement_phase`). This
+preemption is not a shortcut but a definedness fact: the containment
+probes are DEFINED over the keyed final state — a probe asks "is this
+determinant tuple present", and the coverage walk's
+`DisjointDeterminantProof` premise is minted by the very key
+statements in question — so cross-phase completeness is ill-defined
+when a key fails, and both the engine and the naive model preempt
+(spec-fidelity F2). `rejection_is_complete` is per-phase completeness
+(sound, nonempty, complete within the failing phase);
+`rejection_never_mixes` is the never-a-mix law. Bridge:
+`storage/commit/apply.rs::apply` (the key phase seals first);
+`storage/commit/judgment.rs::judge` (the statement phase).
+
 ## Narrowings recorded (law 5: narrow and record)
 
+* **Which convicting fact a citation carries is representation.** The
+  engine's citation payload names one offending fact per violated
+  statement, selected first-in-scan-order — witness SELECTION is
+  representation mechanism (spec-fidelity report 03 D2), like the
+  seal's sort; the model's rejection payload is the statement set,
+  and the witness theorems quantify over all convicting facts.
+* **`ClosedRelationWrite` is write-surface mechanism.** The engine
+  refuses a write that touches a closed relation before any final
+  state is formed — a preempting singleton OUTSIDE this model:
+  `Delta` here is already a write the surface admitted, and the
+  closed roster never reaches `judge`.
 * **`violationSet` is a `Set Statement`.** The Rust `Violations` seal
   (stable sort by citation, dedup, per-direction citations) is list
   REPRESENTATION mechanism; a set carries no duplicates and no order
   by construction. What the model keeps is the semantic content:
-  membership completeness, membership soundness, and nonemptiness —
-  `rejection_is_complete`, all three.
+  membership completeness within the failing phase, membership
+  soundness, and nonemptiness — `rejection_is_complete`, all three.
 * **`Generation` is an opaque tag with decidable equality only** —
   the protocol is one compare ("unmoved or moved"), never arithmetic;
   mirrors `Snapshot` exposing no `generation()` accessor.
@@ -81,6 +121,18 @@ critical section (write.rs:136-140) is `writeWitnessed`'s one `if`.
 -/
 
 namespace Bumbledb
+
+/-! ## The judge's two phases -/
+
+/-- Whether a statement is a KEY statement — the first phase of the
+two-phase judge: functionality statements (scalar or pointwise; the
+field-set shape is read at judgment, not here) key the final state,
+and containment, cardinality, and order statements are judged only
+over a keyed final state (the module doc's preemption). -/
+def Statement.isKey : Statement → Bool
+  | .functionality _ _ => true
+  | _ => false
+
 namespace Txn
 
 /-! ## States — the holds-carrying instance -/
@@ -135,12 +187,13 @@ def applyOps (I : Instance) : List Op → Instance
   | [] => I
   | op :: rest => applyOps (op.apply I) rest
 
-/-! ## The complete violation set -/
+/-! ## The complete violation set and its two phases -/
 
 /-- The violated statements of one final state — PRD 03's violation
 predicate (the negated `Statement.judgment`), collected over the
-theory's declared statements. Bridge: `crate::error::Violations`, the
-complete violation set of one rejected commit; the narrowing to a
+theory's declared statements. The phase sets below restrict it by
+`Statement.isKey`; a sealed `crate::error::Violations` is one PHASE's
+restriction (the two-phase judge, module doc). The narrowing to a
 `Set` (sortedness and dedup are representation) is recorded in the
 module doc. -/
 def violationSet (T : Theory) (I : Instance) : Set Statement :=
@@ -153,6 +206,44 @@ theorem holds_iff_no_violation (T : Theory) (I : Instance) :
   ⟨fun h st hst => hst.2 (h st hst.1),
    fun h st hmem => Classical.byContradiction fun hj => h st ⟨hmem, hj⟩⟩
 
+/-- The key-phase violations: the violated FUNCTIONALITY statements of
+one final state. Bridge: `storage/commit/apply.rs::apply` — key
+conflicts record during the insert scan and seal into the rejection
+before the judgment phase runs. -/
+def keyViolationSet (T : Theory) (I : Instance) : Set Statement :=
+  fun st => st ∈ violationSet T I ∧ st.isKey = true
+
+/-- The statement-phase violations: the violated non-key statements
+(containment, cardinality, order) of one final state — the set the
+judge cites when every key statement holds. -/
+def statementViolationSet (T : Theory) (I : Instance) : Set Statement :=
+  fun st => st ∈ violationSet T I ∧ st.isKey = false
+
+/-- The phase split partitions the violations — every violation is
+exactly one phase's, by the `Bool`. -/
+theorem violation_phase_split (T : Theory) (I : Instance)
+    (st : Statement) :
+    st ∈ violationSet T I ↔
+      st ∈ keyViolationSet T I ∨ st ∈ statementViolationSet T I := by
+  constructor
+  · intro h
+    cases hk : st.isKey with
+    | true => exact Or.inl ⟨h, hk⟩
+    | false => exact Or.inr ⟨h, hk⟩
+  · intro h
+    rcases h with ⟨h, _⟩ | ⟨h, _⟩ <;> exact h
+
+/-- With no key violation, EVERY violation is a statement-phase
+violation — why the statement phase's citation set is complete over
+the whole theory, not merely over its own phase. -/
+theorem statement_phase_all {T : Theory} {I : Instance}
+    (hk : ¬ (keyViolationSet T I).Nonempty) {st : Statement}
+    (hv : st ∈ violationSet T I) :
+    st ∈ statementViolationSet T I := by
+  cases hkey : st.isKey with
+  | true => exact absurd ⟨st, hv, hkey⟩ hk
+  | false => exact ⟨hv, hkey⟩
+
 /-! ## Judgment — the two-constructor sum -/
 
 /-- The commit verdict: a two-constructor sum, accepted state or
@@ -164,17 +255,26 @@ inductive Result (α : Type u) (ε : Type v) where
   | reject (err : ε)
 
 open Classical in
-/-- **The FinalStateView seam.** Dependency judgment's whole input is
-this signature: a theory and ONE final instance — accept iff `holds`,
-else the COMPLETE violation set. Operation order is not a parameter,
-so no verdict can depend on it. Bridge:
-`storage/commit/judgment.rs::judge(view: &FinalStateView)`, the sole
-judge input; classical choice decides `holds` here because the model
-judges arbitrary (not-necessarily-listable) fact sets — the engine's
-instances are finite and its judge is the decision procedure. -/
+/-- **The FinalStateView seam, two-phase.** Dependency judgment's
+whole input is this signature: a theory and ONE final instance —
+accept iff `holds`; else, if any KEY statement is violated, reject
+with exactly the complete violated-key set (the preemption: the
+statement phase never runs, because its probes are defined over the
+keyed final state — module doc); else reject with exactly the
+complete violated non-key set. Operation order is not a parameter, so
+no verdict can depend on it. Bridge: `storage/commit/apply.rs::apply`
+(the key phase, sealed first) and
+`storage/commit/judgment.rs::judge(view: &FinalStateView)` (the
+statement phase); classical choice decides the propositions here
+because the model judges arbitrary (not-necessarily-listable) fact
+sets — the engine's instances are finite and its two phases are the
+decision procedure. -/
 noncomputable def judge (T : Theory) (I : Instance) :
     Result (State T) (Set Statement) :=
-  if h : holds T I then .ok ⟨I, h⟩ else .reject (violationSet T I)
+  if h : holds T I then .ok ⟨I, h⟩
+  else if (keyViolationSet T I).Nonempty then
+    .reject (keyViolationSet T I)
+  else .reject (statementViolationSet T I)
 
 /-- `judge` on a modeling instance: accept, and the accepted state IS
 the judged instance. -/
@@ -183,18 +283,39 @@ theorem judge_holds {T : Theory} {I : Instance} (h : holds T I) :
   unfold judge
   exact dif_pos h
 
-/-- `judge` on a non-modeling instance: reject with the complete
-violation set — never a representative, never a prefix. -/
-theorem judge_not_holds {T : Theory} {I : Instance} (h : ¬ holds T I) :
-    judge T I = .reject (violationSet T I) := by
+/-- The key phase preempts: on a key-broken instance the rejection is
+exactly the complete violated-KEY set, and the statement phase never
+runs. Bridge: `apply.rs::apply` — "key violations preempt the
+judgment phase". -/
+theorem judge_key_preempts {T : Theory} {I : Instance}
+    (h : ¬ holds T I) (hk : (keyViolationSet T I).Nonempty) :
+    judge T I = .reject (keyViolationSet T I) := by
   unfold judge
-  exact dif_neg h
+  rw [dif_neg h, if_pos hk]
+
+/-- The statement phase: on a keyed-but-broken instance the rejection
+is exactly the complete violated non-key set. -/
+theorem judge_statement_phase {T : Theory} {I : Instance}
+    (h : ¬ holds T I) (hk : ¬ (keyViolationSet T I).Nonempty) :
+    judge T I = .reject (statementViolationSet T I) := by
+  unfold judge
+  rw [dif_neg h, if_neg hk]
+
+/-- `judge` on a non-modeling instance: reject with ONE phase's
+complete set — never a representative, never a prefix, never a mix. -/
+theorem judge_not_holds {T : Theory} {I : Instance} (h : ¬ holds T I) :
+    judge T I = .reject (keyViolationSet T I) ∨
+      judge T I = .reject (statementViolationSet T I) := by
+  by_cases hk : (keyViolationSet T I).Nonempty
+  · exact Or.inl (judge_key_preempts h hk)
+  · exact Or.inr (judge_statement_phase h hk)
 
 /-- `commit` — judge the delta's final state against the theory:
-accept iff `holds`, else the complete violation set. Bridge:
-`Db::write`'s commit phase (`storage/commit`): phases 1–2 apply the
-plan, phase 3 is `judge` over the `FinalStateView`, and a rejection
-aborts the whole transaction (`Error::CommitRejected`). -/
+accept iff `holds`, else the failing phase's complete violation set.
+Bridge: `Db::write`'s commit phase (`storage/commit`): phases 1–2
+apply the plan (and seal any key violations — the key phase), phase 3
+is `judge` over the `FinalStateView` (the statement phase), and a
+rejection aborts the whole transaction (`Error::CommitRejected`). -/
 noncomputable def commit {T : Theory} (s : State T) (d : Delta) :
     Result (State T) (Set Statement) :=
   judge T (apply s d)
@@ -216,8 +337,8 @@ theorem commit_ok_inst {T : Theory} {s : State T} {d : Delta}
     cases h
     rfl
   · unfold commit at h
-    rw [judge_not_holds hh] at h
-    exact nomatch h
+    rcases judge_not_holds hh with hr | hr <;> rw [hr] at h <;>
+      exact nomatch h
 
 /-! ## Item 1 — the final-state judgment is order-free -/
 
@@ -267,34 +388,67 @@ theorem committed_states_model {T : Theory} {s₀ s : State T}
     (_ : Reachable T s₀ s) : holds T s.inst :=
   s.models
 
-/-! ## Item 3 — rejection is complete -/
+/-! ## Item 3 — rejection is complete, per phase -/
 
-/-- **Item 3.** A rejected delta's violation set contains EVERY
-violated statement of the final state (completeness), ONLY violated
-statements (soundness), and at least one (nonemptiness — the accept
-path never rejects). Bridge: `crate::error::Violations` — sealed
-sorted, deduplicated, nonempty; both judgment sides are scan-complete
-(`judgment.rs`: "the reject path runs exactly the checks the accept
-path runs"). -/
+/-- **Item 3, restated per phase (the F2 alignment).** A rejected
+delta's violation set is SOUND (only declared, violated statements),
+NONEMPTY (the accept path never rejects), and COMPLETE WITHIN THE
+FAILING PHASE: either every cited statement is a key statement and
+every violated key statement is cited — the preemption, the statement
+phase never run — or no cited statement is a key statement and every
+violated statement whatsoever is cited (no key was violated, so the
+statement phase's completeness spans the whole theory). Bridge:
+`crate::error::Violations` — sealed sorted, deduplicated, nonempty;
+`apply.rs` seals the key phase whole ("phase 2 finishes the scan
+before the rejection seals"), `judgment.rs` the statement phase ("the
+reject path runs exactly the checks the accept path runs"). -/
 theorem rejection_is_complete {T : Theory} (s : State T) (d : Delta)
     {V : Set Statement} (h : commit s d = .reject V) :
-    (∀ st, st ∈ T.statements → ¬ st.judgment T (apply s d) →
-      st ∈ V) ∧
     (∀ st, st ∈ V →
       st ∈ T.statements ∧ ¬ st.judgment T (apply s d)) ∧
-    (∃ st, st ∈ V) := by
+    (∃ st, st ∈ V) ∧
+    ((∀ st, st ∈ V → st.isKey = true) ∧
+      (∀ st, st ∈ T.statements → st.isKey = true →
+        ¬ st.judgment T (apply s d) → st ∈ V) ∨
+     (∀ st, st ∈ V → st.isKey = false) ∧
+      (∀ st, st ∈ T.statements → ¬ st.judgment T (apply s d) →
+        st ∈ V)) := by
   by_cases hh : holds T (apply s d)
   · unfold commit at h
     rw [judge_holds hh] at h
     exact nomatch h
   · unfold commit at h
-    rw [judge_not_holds hh] at h
-    injection h with hV
-    subst hV
-    refine ⟨fun st hm hj => ⟨hm, hj⟩, fun _ hst => hst, ?_⟩
-    exact Classical.byContradiction fun hne =>
-      hh fun st hm => Classical.byContradiction fun hj =>
-        hne ⟨st, hm, hj⟩
+    by_cases hk : (keyViolationSet T (apply s d)).Nonempty
+    · rw [judge_key_preempts hh hk] at h
+      injection h with hV
+      subst hV
+      exact ⟨fun st hst => hst.1, hk,
+        Or.inl ⟨fun st hst => hst.2,
+          fun st hm hkey hj => ⟨⟨hm, hj⟩, hkey⟩⟩⟩
+    · rw [judge_statement_phase hh hk] at h
+      injection h with hV
+      subst hV
+      have hex : ∃ st, st ∈ violationSet T (apply s d) :=
+        Classical.byContradiction fun hne =>
+          hh fun st hm => Classical.byContradiction fun hj =>
+            hne ⟨st, hm, hj⟩
+      obtain ⟨st, hv⟩ := hex
+      exact ⟨fun st' hst' => hst'.1,
+        ⟨st, statement_phase_all hk hv⟩,
+        Or.inr ⟨fun st' hst' => hst'.2,
+          fun st' hm hj => statement_phase_all hk ⟨hm, hj⟩⟩⟩
+
+/-- **Never a mix.** One rejection cites one phase: any two cited
+statements agree on `isKey` — a rejection is the complete set of
+violated key statements, or the complete set of violated non-key
+statements, never a mix (the doc's sentence, as a theorem). -/
+theorem rejection_never_mixes {T : Theory} (s : State T) (d : Delta)
+    {V : Set Statement} (h : commit s d = .reject V) :
+    ∀ st st', st ∈ V → st' ∈ V → st.isKey = st'.isKey := by
+  intro st st' hst hst'
+  rcases (rejection_is_complete s d h).2.2 with ⟨hall, _⟩ | ⟨hall, _⟩
+  · rw [hall st hst, hall st' hst']
+  · rw [hall st hst, hall st' hst']
 
 /-! ## Snapshots, generations, the witnessed write -/
 
@@ -548,13 +702,16 @@ theorem etl_identity {T : Theory} (s : State T) :
 
 /-- **Item 7b — recipe 28's third law.** A transform into a new theory
 either lands HOLDING the new theory or the load rejects (with the
-complete violation set): "a migration that lands is already valid" —
+failing phase's complete violation set — the two-phase judge, exactly
+as any ordinary commit): "a migration that lands is already valid" —
 there is no migrate-now-validate-later state. -/
 theorem etl_lands_valid {T : Theory} (s : State T) (T' : Theory)
     (t : Fact → Option Fact) :
     (∃ s' : State T', scanLoad s T' t = .ok s' ∧ holds T' s'.inst) ∨
     scanLoad s T' t =
-      .reject (violationSet T' (transform t s.inst)) := by
+      .reject (keyViolationSet T' (transform t s.inst)) ∨
+    scanLoad s T' t =
+      .reject (statementViolationSet T' (transform t s.inst)) := by
   rcases Classical.em (holds T' (transform t s.inst)) with h | h
   · exact .inl ⟨⟨_, h⟩, judge_holds h, h⟩
   · exact .inr (judge_not_holds h)

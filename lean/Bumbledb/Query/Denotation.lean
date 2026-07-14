@@ -29,14 +29,27 @@ all measured against. Plus the EXECUTABLE half: `evalList`, a
   `PointDomain.gap` payload is a bare `Nat`, so the embedding into a
   `U64` value checks the bound it cannot see — the `none` arm is
   unreachable on real intervals and exists for totality alone.
-* **Ill-typed comparisons denote `False`** — order operators on
-  non-scalars, mismatched element domains, `pointIn` on non-intervals
-  all fall through to the empty reading. The validator REJECTS these
-  shapes (`ir/validate/context.rs`, the typed pass); total-and-empty
-  is the honest Level-0 rendering of "unwritable downstream".
+* **Ill-typed comparisons are total, and the validator makes them
+  unreachable.** Order operators on non-scalars, mismatched element
+  domains, and `pointIn` on non-intervals fall through to the empty
+  reading (`False`); `ne` does NOT — `cmpDen .ne a b` is plain value
+  disequality, TRUE on a type-mismatched pair (a `u64` and a `bool`
+  differ as `Value`s). The model does not arbitrate ill-typed pairs:
+  the validator REJECTS every such shape (`ir/validate/context.rs`,
+  the typed pass — `ValidationError::IllegalComparison`), so no
+  accepted rule reaches these arms; totality is for the model's own
+  sake, not a semantic claim.
 * **Finite instances are association lists** (`ListInstance`) for the
   executable half; the `Set`-valued denotation stays over arbitrary
   `Instance`s.
+* **`PendingIntern` string literals are outside the modeled
+  fragment.** Model literals carry `StrId`; the engine's raw-bytes
+  string literal resolves per execution
+  (`ir/normalize/lower_literal.rs:5-21`), a dictionary miss becoming
+  the never-minted sentinel so `Eq` fails and `Ne` passes
+  (`exec/dispatch/key_probe_fact.rs:14-17, 52-55`). That coincides
+  with this model's exclusion reading — an absent string equals no
+  stored value — but no theorem covers the resolution step itself.
 
 ## The decidable instances
 
@@ -369,11 +382,14 @@ to the encoding); order reads the encoded word order (`Value.vlt`,
 with `gt`/`ge` the mirrored reads — validation seals the mirror,
 `OpClass::Order`); `allen` is mask membership of the classification;
 `pointIn` is point membership, interval left, point right
-(`crate::ir::CmpOp`). Ill-typed operand pairs denote `False` — the
-recorded narrowing (the validator rejects them; note interval `eq`
-here is plain value identity, whereas the engine canonicalizes it to
+(`crate::ir::CmpOp`). Ill-typed operand pairs: the order, `allen`,
+and `pointIn` arms fall through to `False`, while `eq`/`ne` stay
+plain value identity/disequality (`ne` holds on a mismatched pair) —
+the validator's `IllegalComparison` makes every ill-typed pair
+unreachable on accepted rules (module doc). Note interval `eq` here
+is plain value identity, whereas the engine canonicalizes it to
 `Allen(EQUALS)` — PRD 05's `classify` refinement makes the two
-readings provably equal). -/
+readings provably equal. -/
 def cmpDen (C : Classify) (ρ : ParamEnv) : CmpOp → Value → Value → Prop
   | .eq, a, b => a = b
   | .ne, a, b => a ≠ b

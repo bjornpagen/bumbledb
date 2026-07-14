@@ -52,9 +52,15 @@ once.
 **Key-probe point lookups.** A single-atom query whose bindings cover a key of the
 relation (an FD statement, including the auto-key on fresh fields —
 `30-dependencies.md`) or the full fact executes as: one `U` determinant (or `M`-membership)
-LMDB get → one `F` fetch → decode. No images, no COLT, no plan search — and the one
-get computes exactly the rule's join denotation
-(`lean/Bumbledb/Exec/Rewrites.lean: keyprobe_equiv_join`). This serves the
+LMDB get → one `F` fetch → decode → the residual per-field filters applied to the
+one hit. No images, no COLT, no plan search — and for the statement-key
+(`U`-determinant) arm the one get computes exactly the rule's join denotation,
+residual filters included
+(`lean/Bumbledb/Exec/Rewrites.lean: keyprobe_equiv_join` — the theorem models
+that arm; the full-fact `M`-membership arm is whole-fact identity below the
+model, the recorded narrowing in that module's doc); an interval-final
+pointwise key closes the same uniqueness premise
+(`lean/Bumbledb/Exec/Rewrites.lean: keyprobe_pointwise_key_spent`). This serves the
 headline "point lookup by key" workload at O(log n), including immediately after a
 commit (no rebuild cost).
 **Decision.** **Alternative:** COLT-only ("the join engine is the only read path") —
@@ -404,12 +410,20 @@ accelerator's trigger discipline.
 
 Chains (`A<=B<=C`) close in the fixpoint; mutual `==` pairs stay acyclic by
 support tracking (each elimination records its source, and a source whose chain
-passes through the candidate is refused — a pair may not certify itself). Sound
+passes through the candidate is refused — a pair may not certify itself). The
+discharged-source composition is a theorem
+(`lean/Bumbledb/Exec/Rewrites.lean: chained_elimination_sound` — one chain
+link, the acyclic-support premise named; deeper forests iterate the argument,
+the module's recorded narrowing). Sound
 here and nowhere like Postgres because no deferral modes exist: every readable
 snapshot satisfies every accepted statement
 (`lean/Bumbledb/Txn.lean: committed_states_model`), which is how
 `elimination_sound`'s containment premise is discharged — removal is
-result-identical under both sinks. The marks' readers: plan introspection
+proved result-identical under the projection sink
+(`lean/Bumbledb/Exec/Rewrites.lean: elimination_sound`); the aggregate face
+(key-ness of Y keeping a dead non-key variable from multiplying the fold
+domain, `plan/ground.rs`'s module-doc argument) is a recorded pending
+obligation on the admission-calculus docket, not yet a theorem. The marks' readers: plan introspection
 and the structured stats (each mark rendered with its licensing statement
 through `schema/render.rs`), and the DP, which sees a smaller problem.
 **Alternative:** no rewrite — leave redundant existence walks to D2's
