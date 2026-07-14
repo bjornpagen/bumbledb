@@ -71,3 +71,67 @@ notation asymmetry).
 `20-query-ir.md`'s aggregate table marks the Arg forms
 notation-writable; the grammar block in the macro's module docs
 follows; cookbook mention optional (no new recipe required).
+
+## Results
+
+The capability audit found one executable/renderer operation absent from the
+macro grammar: Arg restriction, resolved mechanically by this PRD. No further
+operation has a grammar/IR/validator/renderer/planner/executor asymmetry. In the
+table, `A` means the layer accepts and preserves the operation; the evidence test
+names the notation-to-render fixed point (and prepares it, therefore traversing
+validation and planning). Executor semantics remain pinned by the engine suite.
+Raw `ConditionTree::And`/`Or` nodes are decomposition syntax rather than additional
+semantic operations: the macro writes their normal form as comma-conjunction and
+clause union, and validation lowers both representations to the same ordered rules;
+the renderer's `and(..)`/`or(..)` diagnostic form remains total for malformed raw IR.
+
+| Semantic operation | Macro grammar | IR | Validator | Renderer | Planner | Executor | Round-trip evidence |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Positive atom / join | A | A | A | A | A | A | `conflicts_normalized_text_is_a_fixed_point` |
+| Literal or scalar-param selection | A | A | A | A | A | A | `closed_reference_handles_are_a_fixed_point`, `scalar_comparisons_round_trip` |
+| Set-param membership binding | A | A | A | A | A | A | `mask_union_and_set_param_round_trip` |
+| Negated atom | A | A | A | A | A | A | `negation_and_bare_handle_round_trip` |
+| `Eq` / `Ne` comparison | A | A | A | A | A | A | `scalar_comparisons_round_trip` |
+| `Lt` / `Le` / `Gt` / `Ge` comparison | A | A | A | A | A | A | `scalar_comparisons_round_trip` |
+| Allen-mask comparison | A | A | A | A | A | A | `mask_union_and_set_param_round_trip` |
+| Point-in-interval membership | A | A | A | A | A | A | `tax_rate_normalized_text_is_a_fixed_point` |
+| Conjunction | A (`,` items) | A | A | A | A | A | `tax_rate_normalized_text_is_a_fixed_point` |
+| Disjunction / rule union | A (clauses) | A | A | A | A | A | `calendar_union_golden` |
+| Variable find | A | A | A | A | A | A | `tax_rate_normalized_text_is_a_fixed_point` |
+| `Duration` find | A | A | A | A | A | A | `pack_and_duration_round_trip` |
+| `Sum` / `Min` / `Max` | A | A | A | A | A | A | `aggregate_heads_golden` |
+| `Sum` / `Min` / `Max` over `Duration` | A | A | A | A | A | A | `pack_and_duration_round_trip` |
+| `Count` | A | A | A | A | A | A | `aggregate_heads_golden` |
+| `CountDistinct` | A | A | A | A | A | A | `aggregate_heads_golden` |
+| `Pack` | A | A | A | A | A | A | `pack_and_duration_round_trip` |
+| `ArgMax` / `ArgMin` | A | A | A | A | A | A | `arg_heads_round_trip_singleton_composite_and_self_carry` |
+
+Invalid compositions are representable as data (and, where meaningful, notation)
+but stop at the first semantic boundary, validation. None reaches planning or
+execution:
+
+| Refused composition | Earliest phase | Typed error |
+|---|---|---|
+| Arg restriction across rules | validator after DNF | `ArgAcrossRules` |
+| Arg beside a fold | validator | `MixedArgAndFold` |
+| Arg terms with different key or direction | validator | `ArgKeyMismatch` |
+| Arg keyed by an unordered value | validator | `NonOrderableArgKey` |
+| Multiple `Pack` terms | validator | `MultiplePackTerms` |
+| `Pack` beside a fold | validator | `MixedPackAndFold` |
+| `Pack` beside Arg restriction | validator | `MixedPackAndArg` |
+| `Pack` over a non-interval | validator | `PackInputType` |
+| Typed fold over an illegal input | validator | `AggregateInputType` |
+| `Count` carrying a variable | validator | `CountWithVariable` |
+| Non-`Count` aggregate without a variable | validator | `AggregateWithoutVariable` |
+| Aggregate input repeated as a group key | validator | `AggregateOverGroupKey` |
+| Unsafe negation variable | validator | `NegatedVariableUnbound` |
+| Variable bound only by point membership | validator | `MembershipOnlyVariable` |
+| `Duration` in a binding | validator | `DurationInBinding` |
+| `Duration` over a non-interval | validator | `DurationOverNonInterval` |
+| `Duration` under a non-Sum/Min/Max aggregate | validator | `DurationAggregateOp` |
+| `Duration` under a non-order comparison | validator | `DurationComparisonOperator` |
+| `Duration` on both comparison sides | validator | `DurationBothSides` |
+
+`arg_heads_round_trip_singleton_composite_and_self_carry` pins both parse/render
+directions for all decided Arg shapes. `arg_across_rules_is_the_typed_notation_level_refusal`
+pins the cross-rule row from macro notation through the existing typed error.

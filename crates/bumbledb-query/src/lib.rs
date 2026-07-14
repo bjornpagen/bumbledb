@@ -13,6 +13,7 @@
 //! head    := headterm (',' headterm)*
 //! headterm:= var | [name ':'] agg        // named positions become result columns
 //! agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
+//!          | ArgMax(v, key) | ArgMin(v, key)
 //!            where t := v | Duration(v)
 //! body    := item (',' item)*
 //! item    := atom                        // positive occurrence
@@ -237,8 +238,7 @@ enum Item {
     },
 }
 
-/// The aggregate ops the head grammar admits (Arg terms are the
-/// renderer's honest extension, not grammar; the raw IR carries them).
+/// The aggregate ops admitted by both the head grammar and the IR renderer.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AggOp {
     Sum,
@@ -247,6 +247,8 @@ enum AggOp {
     Count,
     CountDistinct,
     Pack,
+    ArgMax,
+    ArgMin,
 }
 
 impl AggOp {
@@ -258,6 +260,8 @@ impl AggOp {
             Self::Count => "Count",
             Self::CountDistinct => "CountDistinct",
             Self::Pack => "Pack",
+            Self::ArgMax => "ArgMax",
+            Self::ArgMin => "ArgMin",
         }
     }
 }
@@ -273,6 +277,8 @@ enum HeadTerm {
         over: Option<Name>,
         /// The aggregated term is `Duration(v)` (Sum/Min/Max only).
         measure: bool,
+        /// Arg-restriction's extremized variable; absent for folds.
+        key: Option<Name>,
     },
 }
 
@@ -478,13 +484,15 @@ fn parse_param(tokens: &mut Tokens, question: Span) -> Parse<Param> {
 // The grammar, production by production.
 // ---------------------------------------------------------------------
 
-const AGG_NAMES: [(&str, AggOp); 6] = [
+const AGG_NAMES: [(&str, AggOp); 8] = [
     ("Sum", AggOp::Sum),
     ("Min", AggOp::Min),
     ("Max", AggOp::Max),
     ("Count", AggOp::Count),
     ("CountDistinct", AggOp::CountDistinct),
     ("Pack", AggOp::Pack),
+    ("ArgMax", AggOp::ArgMax),
+    ("ArgMin", AggOp::ArgMin),
 ];
 
 fn agg_op(name: &str) -> Option<AggOp> {
@@ -503,10 +511,27 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
             op,
             over: None,
             measure: false,
+            key: None,
         });
     }
     let (mut arg, _) = take_paren_group(tokens, "the aggregate's argument")?;
     let first = expect_ident(&mut arg, "a variable")?;
+    if matches!(op, AggOp::ArgMax | AggOp::ArgMin) {
+        expect_punct(&mut arg, ',', "`,` between the Arg value and key")?;
+        let key = expect_ident(&mut arg, "the Arg key variable")?;
+        if let Some(extra) = arg.next() {
+            return fail(
+                extra.span(),
+                "query!: ArgMax/ArgMin take value and key variables",
+            );
+        }
+        return Ok(HeadTerm::Agg {
+            op,
+            over: Some(first),
+            measure: false,
+            key: Some(key),
+        });
+    }
     let measure = first.text == "Duration" && matches!(arg.peek(), Some(TokenTree::Group(_)));
     let over = if measure {
         if !matches!(op, AggOp::Sum | AggOp::Min | AggOp::Max) {
@@ -532,6 +557,7 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
         op,
         over: Some(over),
         measure,
+        key: None,
     })
 }
 
@@ -558,7 +584,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
                 agg_name.span,
                 format!(
                     "query!: `{}` is not an aggregate — a named head position \
-                     takes Sum/Min/Max/Count/CountDistinct/Pack",
+                     takes Sum/Min/Max/Count/CountDistinct/Pack/ArgMax/ArgMin",
                     agg_name.text
                 ),
             );
@@ -1193,8 +1219,20 @@ impl Emitter<'_> {
                 "::bumbledb::FindTerm::Measure(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Agg { op, over, measure } => {
-                let op_expr = format!("::bumbledb::AggOp::{}", op.ir_name());
+            HeadTerm::Agg {
+                op,
+                over,
+                measure,
+                key,
+            } => {
+                let op_expr = match op {
+                    AggOp::ArgMax | AggOp::ArgMin => format!(
+                        "::bumbledb::AggOp::{} {{ key: ::bumbledb::VarId({}) }}",
+                        op.ir_name(),
+                        scope.head_var(key.as_ref().expect("Arg parser seals a key"))?
+                    ),
+                    _ => format!("::bumbledb::AggOp::{}", op.ir_name()),
+                };
                 match over {
                     None => format!(
                         "::bumbledb::FindTerm::Aggregate {{ op: {op_expr}, \

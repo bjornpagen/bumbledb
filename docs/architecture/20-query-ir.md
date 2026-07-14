@@ -230,7 +230,9 @@ join costume.
   programs, DNF-lowered rules included): the restriction key is a rule-scoped
   variable outside the head's vocabulary — rules need not even agree on its type —
   so "the extreme over the union" is undefined. Modeling answer: one Arg query per
-  disjunct, host-merged. *Trigger* for defining a cross-rule restriction: a real
+  disjunct, host-merged. The notation writes these forms directly as
+  `ArgMax(value, key)` / `ArgMin(value, key)`; the renderer emits the same forms,
+  including self-carry (`ArgMax(x, x)`). *Trigger* for defining a cross-rule restriction: a real
   query.
 - **`Pack` (the coalescing fold — Snodgrass's coalesce), semantics:** over an
   interval-typed variable, per group the result is the set of **maximal disjoint
@@ -790,6 +792,7 @@ clause  := '(' head ')' '|' body ';'
 head    := headterm (',' headterm)*
 headterm:= var | [name ':'] agg        // named positions become result columns
 agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
+          | ArgMax(v, key) | ArgMin(v, key)
            where t := v | Duration(v)
 body    := item (',' item)*
 item    := atom                        // positive occurrence
