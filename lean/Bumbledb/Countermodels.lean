@@ -1,5 +1,6 @@
 import Bumbledb.Query.Aggregates
 import Bumbledb.Exec.Sweep
+import Bumbledb.Txn
 
 /-!
 # Countermodels — the design scratchpad (PRD 02 onward, grows all campaign)
@@ -86,6 +87,27 @@ part of the spec.
   `Disjoint` alone cannot produce a wrong verdict
   (`Exec.sweep_complete_of_ordered` spends only `Ordered`) — see the
   section note and `Exec/Sweep.lean`'s module doc.
+
+## PRD 09 residents
+
+* `per_op_judgment_wrong` — the FinalStateView seam's formal
+  justification: a two-deletion transaction (parent and child of a
+  containment) whose FINAL state holds, whose two op orders reach the
+  SAME final state, and whose parent-first order transiently violates
+  mid-sequence. A per-operation judge would reject one order of a
+  valid transaction — which is why judgment reads one final state
+  (`Txn.judge`'s signature; `Txn.final_state_judgment_order_free`)
+  and why `judgment.rs::FinalStateView` is a type, not a discipline.
+
+* `stale_but_sound` — the maintenance protocol's freshness gap: a
+  committed state (it `holds` its theory) whose derived relation is
+  SOUND (its containment backs every derived fact — vacuously, here)
+  yet STALE: the parent fact's derived copy never landed. No
+  dependency statement can demand catch-up, so freshness is not a
+  property of any committed state — it is host discipline (the
+  `write_from` witness loop), exactly
+  `Txn.derived_soundness_vs_freshness`'s other half.
+
 -/
 
 namespace Bumbledb.Countermodels
@@ -474,5 +496,123 @@ sort (LMDB key order for the checker, `sort_unstable` for Pack) is
 exactly what the premise buys. -/
 example : Exec.sweepCovered coveringSrc [segEarly, segLate] = true := by
   decide
+
+/-! ## The per-op-judgment countermodel (PRD 09)
+
+One containment `child([0]) <= parent([0])` over an all-scalar
+header, one linking fact in both relations, one transaction deleting
+both. The shared theory also hosts `stale_but_sound` below. -/
+
+/-- The parent relation. -/
+def parentRel : RelId := ⟨0⟩
+/-- The child (dependent, or derived) relation. -/
+def childRel : RelId := ⟨1⟩
+/-- The one linking fact, present in both relations. -/
+def linkFact : Fact := fun _ => ⟨.bool, true⟩
+
+/-- An all-scalar header: every projection splits to `none`. -/
+def pcHeader : Header := ⟨fun _ => [.bool]⟩
+
+/-- `child([0]) <= parent([0])` — the child needs its parent. -/
+def pcStatement : Statement :=
+  .containment ⟨childRel, [⟨0⟩], Selection.empty⟩
+    ⟨parentRel, [⟨0⟩], Selection.empty⟩
+
+/-- The one-statement theory (no closed relations). -/
+def pcTheory : Theory := ⟨pcHeader, fun _ => none, [pcStatement]⟩
+
+/-- The relations are distinct — the deletes touch different rows. -/
+theorem child_ne_parent : childRel ≠ parentRel := by decide
+
+/-- The starting instance: every relation holds exactly the linking
+fact (only `parentRel` and `childRel` are ever judged). -/
+def pcInst : Instance := fun _ => fun f => f = linkFact
+
+/-- The parent-first deletion order. -/
+def parentFirst : List Txn.Op :=
+  [.delete parentRel linkFact, .delete childRel linkFact]
+
+/-- The child-first deletion order. -/
+def childFirst : List Txn.Op :=
+  [.delete childRel linkFact, .delete parentRel linkFact]
+
+/-- The two orders reach the SAME final state — deletion of distinct
+rows is commutative set algebra. -/
+theorem per_op_orders_agree :
+    Txn.applyOps pcInst parentFirst = Txn.applyOps pcInst childFirst := by
+  funext R g
+  refine propext ⟨?_, ?_⟩
+  · rintro ⟨⟨h1, h2⟩, h3⟩
+    exact ⟨⟨h1, h3⟩, h2⟩
+  · rintro ⟨⟨h1, h2⟩, h3⟩
+    exact ⟨⟨h1, h3⟩, h2⟩
+
+/-- The final state holds: both rows are gone, and the containment is
+vacuous over the emptied child. -/
+theorem per_op_final_holds :
+    holds pcTheory (Txn.applyOps pcInst parentFirst) := by
+  intro st hst
+  cases List.mem_singleton.mp hst
+  intro f hf _
+  exact absurd ⟨rfl, hf.1.1⟩ hf.2
+
+/-- Mid-sequence, parent-first, the state VIOLATES: the parent is gone
+while the child survives — the transient orphan. -/
+theorem per_op_mid_violates :
+    ¬ holds pcTheory
+      (Txn.applyOps pcInst [.delete parentRel linkFact]) := by
+  intro h
+  have hj := h pcStatement (List.mem_singleton.mpr rfl)
+  obtain ⟨g, hg, -, -⟩ :=
+    hj linkFact ⟨rfl, fun hpc => child_ne_parent hpc.1⟩
+      (Selection.empty_satisfies _)
+  exact hg.2 ⟨rfl, hg.1⟩
+
+/-- **The countermodel (item 8).** A delta that is VALID as a final
+state but transiently violates mid-sequence: deleting parent and child
+holds either way as one final state — the two op orders agree — yet
+the parent-first prefix violates the containment. A per-operation
+judge would reject one op order of a valid transaction, and which
+order the host writes is semantically arbitrary; that is why judgment
+is final-state (`Txn.judge` takes ONE instance;
+`Txn.final_state_judgment_order_free`) and why per-operation checking
+is wrong, not merely slow. Bridge: `judgment.rs::FinalStateView`
+("operation order is no longer representable here") — the
+constitution's seam, formally justified. -/
+theorem per_op_judgment_wrong :
+    holds pcTheory (Txn.applyOps pcInst parentFirst) ∧
+    Txn.applyOps pcInst parentFirst = Txn.applyOps pcInst childFirst ∧
+    ¬ holds pcTheory
+      (Txn.applyOps pcInst [.delete parentRel linkFact]) :=
+  ⟨per_op_final_holds, per_op_orders_agree, per_op_mid_violates⟩
+
+/-! ## The stale-but-sound countermodel (PRD 09)
+
+The same theory, read as a maintenance pair: `childRel` a derived
+relation the host maintains as a copy of `parentRel`, the containment
+its soundness constraint. -/
+
+/-- The stale committed state: the parent fact landed, its derived
+copy never did. -/
+def staleInst : Instance := fun R g => R = parentRel ∧ g = linkFact
+
+/-- **The countermodel (item 6's other half).** A committed state with
+a stale-but-sound derived relation: `staleInst` HOLDS the theory (the
+derived relation's containment is vacuously sound — every derived fact
+is backed, there being none), while the parent fact's derived copy is
+missing — the state is stale against the host's derivation contract
+`child = copy of parent`. `holds` is the whole of committedness
+(`Txn.committed_states_model`), so no committed state can attest
+freshness: soundness is the engine's judgment, freshness is host
+discipline — the `write_from` witness loop, and the formal
+host-discipline gap of constitution PRD 20's maintenance protocol. -/
+theorem stale_but_sound :
+    holds pcTheory staleInst ∧
+    linkFact ∈ staleInst parentRel ∧ linkFact ∉ staleInst childRel := by
+  refine ⟨?_, ⟨rfl, rfl⟩, fun h => child_ne_parent h.1⟩
+  intro st hst
+  cases List.mem_singleton.mp hst
+  intro f hf _
+  exact absurd hf.1 child_ne_parent
 
 end Bumbledb.Countermodels
