@@ -928,3 +928,46 @@ Together the mutual containments prove equal point supports for each policy;
 the pointwise keys make those supports genuine partitions rather than overlapping
 covers. Touching half-open segments remain legal, and the same construction works
 with any scalar-prefix arity before the final interval position.
+
+## 27. Derived facts, maintained
+
+A stored rollup is an ordinary relation with an ordinary soundness statement.
+Here `Pack` derives maximal busy spans, while containment prevents any stored
+`BusySpan` point that has no busy claim behind it. That is soundness, not a
+refresh theorem: a missing span remains representable until the host maintenance
+loop fills it.
+
+```rust
+bumbledb::schema! {
+    pub MaintainedRollup;
+
+    closed relation Arm as ArmId = { Busy, Ooo };
+
+    relation Claim {
+        source: u64,
+        person: u64,
+        arm: u64 as ArmId,
+        span: interval<i64>,
+    }
+    relation BusySpan { person: u64, span: interval<i64> }
+
+    Claim(arm) <= Arm(id);
+    Claim(source) -> Claim;
+    Claim(person, span) -> Claim;
+    BusySpan(person, span) -> BusySpan;
+    BusySpan(person, span) <= Claim(person, span | arm == Busy);
+
+    // Derive the desired rollup on the maintenance snapshot:
+    //   (person, busy: Pack(span)) |
+    //       Claim(source, person, arm == Busy, span);
+}
+```
+
+The host loop is snapshot → derive → diff → `write_from(snapshot)`. On
+`GenerationMoved`, it throws away the derived set and diff and starts from a new
+snapshot; it never retries a stale diff. Dependencies prove every surviving
+stored span sound, while the witness proves which source state the derivation
+saw; neither mechanism proves completeness. The compiled copy is
+`maintain_busy_spans` in `cookbook.rs`; its lock moves the source generation
+between derive and commit, observes one retry, and then asserts the recomputed
+packed span.

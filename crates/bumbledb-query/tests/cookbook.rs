@@ -470,6 +470,26 @@ recipe!(r26, ExactPartition, {
     Version(policy, valid) <= Policy(id, live);
 });
 
+recipe!(r27, MaintainedRollup, {
+    pub MaintainedRollup;
+
+    closed relation Arm as ArmId = { Busy, Ooo };
+
+    relation Claim {
+        source: u64,
+        person: u64,
+        arm: u64 as ArmId,
+        span: interval<i64>,
+    }
+    relation BusySpan { person: u64, span: interval<i64> }
+
+    Claim(arm) <= Arm(id);
+    Claim(source) -> Claim;
+    Claim(person, span) -> Claim;
+    BusySpan(person, span) -> BusySpan;
+    BusySpan(person, span) <= Claim(person, span | arm == Busy);
+});
+
 mod composite_partition {
     bumbledb::schema! {
         pub CompositePartition;
@@ -491,7 +511,7 @@ struct Recipe {
     validate: fn() -> Result<Schema, bumbledb::error::SchemaError>,
 }
 
-const ROSTER: [Recipe; 26] = [
+const ROSTER: [Recipe; 27] = [
     Recipe {
         title: "The minimal interval schema",
         source: r01::SOURCE,
@@ -622,6 +642,11 @@ const ROSTER: [Recipe; 26] = [
         source: r26::SOURCE,
         validate: r26::validate,
     },
+    Recipe {
+        title: "Derived facts, maintained",
+        source: r27::SOURCE,
+        validate: r27::validate,
+    },
 ];
 
 /// Comments and whitespace out; what remains is exactly what the token
@@ -679,7 +704,7 @@ fn the_doc_roster_is_exactly_this_roster() {
         "doc recipes and test entries must correspond one-to-one"
     );
     for (i, ((n, title), recipe)) in headings.iter().zip(ROSTER.iter()).enumerate() {
-        assert_eq!(*n, i + 1, "recipe numbering is 1..=26 in order");
+        assert_eq!(*n, i + 1, "recipe numbering is 1..=27 in order");
         assert_eq!(title, recipe.title, "recipe {} title", i + 1);
     }
 }
@@ -1223,4 +1248,131 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
         Ok(())
     })
     .expect("the rollup composes the closure with one Sum");
+}
+
+type BusySpanKey = (u64, i64, i64);
+
+fn derived_busy_spans(
+    snap: &Snapshot<'_, r27::MaintainedRollup>,
+    query: &mut PreparedQuery<'_, r27::MaintainedRollup>,
+) -> bumbledb::Result<BTreeSet<BusySpanKey>> {
+    let answers = snap.execute_collect(query, &[])?;
+    let mut desired = BTreeSet::new();
+    for answer in 0..answers.len() {
+        let AnswerValue::U64(person) = answers.get(answer, 0) else {
+            panic!("the rollup person is u64");
+        };
+        let AnswerValue::IntervalI64(span) = answers.get(answer, 1) else {
+            panic!("Pack returns an i64 interval");
+        };
+        desired.insert((person, span.start(), span.end()));
+    }
+    Ok(desired)
+}
+
+/// Recipe 27's documented host protocol: derive and diff on one snapshot,
+/// commit the diff under that snapshot's witness, and discard the whole attempt
+/// on movement. `before_commit` is the deterministic concurrency seam used by
+/// the lock below; production callers pass a no-op.
+fn maintain_busy_spans(
+    db: &Db<r27::MaintainedRollup>,
+    query: &mut PreparedQuery<'_, r27::MaintainedRollup>,
+    mut before_commit: impl FnMut(usize) -> bumbledb::Result<()>,
+) -> bumbledb::Result<usize> {
+    let mut retries = 0;
+    loop {
+        let attempt = db.read(|snap| {
+            let desired = derived_busy_spans(snap, query)?;
+            let existing: BTreeSet<BusySpanKey> = snap
+                .scan_facts::<r27::BusySpan>()?
+                .map(|fact| fact.map(|span| (span.person, span.span.start(), span.span.end())))
+                .collect::<bumbledb::Result<_>>()?;
+            let removes: Vec<_> = existing.difference(&desired).copied().collect();
+            let inserts: Vec<_> = desired.difference(&existing).copied().collect();
+            before_commit(retries)?;
+            db.write_from(snap, |tx| {
+                for (person, start, end) in &removes {
+                    tx.delete(&r27::BusySpan {
+                        person: *person,
+                        span: span(*start, *end),
+                    })?;
+                }
+                for (person, start, end) in &inserts {
+                    tx.insert(&r27::BusySpan {
+                        person: *person,
+                        span: span(*start, *end),
+                    })?;
+                }
+                Ok(())
+            })
+        });
+        match attempt {
+            Ok(()) => return Ok(retries),
+            Err(bumbledb::Error::GenerationMoved { .. }) => retries += 1,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// The maintained-derived-facts recipe moves the source after the first
+/// derivation. The stale diff is refused by the generation witness; the host
+/// re-derives and lands the packed span from the new source state.
+#[test]
+fn r27_maintenance_rederives_after_generation_movement() {
+    use r27::{Arm, BusySpan, Claim, MaintainedRollup};
+
+    let dir = TempDir::new("r27-maintained-rollup");
+    let db = Db::create(dir.path(), MaintainedRollup).expect("create maintained rollup store");
+    db.write(|tx| {
+        for (source, person, arm, claim_span) in [
+            (1, 7, Arm::Busy.id(), span(0, 2)),
+            (2, 7, Arm::Busy.id(), span(2, 4)),
+            (9, 8, Arm::Ooo.id(), span(100, 110)),
+        ] {
+            tx.insert(&Claim {
+                source,
+                person,
+                arm,
+                span: claim_span,
+            })?;
+        }
+        Ok(())
+    })
+    .expect("seed claims");
+
+    let derive = query!(r27::MaintainedRollup {
+        (person, busy: Pack(claim_span)) |
+            Claim(source, person, arm == Busy, span: claim_span);
+    });
+    let mut prepared = db.prepare(&derive).expect("prepare busy-span derivation");
+    let retries = maintain_busy_spans(&db, &mut prepared, |attempt| {
+        if attempt == 0 {
+            db.write(|tx| {
+                tx.insert(&Claim {
+                    source: 3,
+                    person: 7,
+                    arm: Arm::Busy.id(),
+                    span: span(4, 6),
+                })?;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    })
+    .expect("maintenance retries and commits");
+    assert_eq!(retries, 1, "the moved first derivation must be discarded");
+
+    db.read(|snap| {
+        let spans: Vec<BusySpan> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
+        assert_eq!(
+            spans,
+            vec![BusySpan {
+                person: 7,
+                span: span(0, 6),
+            }],
+            "the retry derives the new complete busy support; Ooo is excluded"
+        );
+        Ok(())
+    })
+    .expect("read maintained rollup");
 }

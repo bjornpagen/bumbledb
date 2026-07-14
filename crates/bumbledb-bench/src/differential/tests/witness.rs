@@ -17,7 +17,7 @@ use super::{BOOKING, MARKER, schema};
 use crate::differential::{
     ConditionalVerdict, Verdict, engine_write, engine_write_from, naive_write_from,
 };
-use crate::fixture::{TempDir, field};
+use crate::fixture::{TempDir, field, side};
 use crate::naive::{Delta, NaiveDb};
 
 /// One consistent Booking+Marker pair insert.
@@ -237,6 +237,211 @@ fn register_schema() -> SchemaDescriptor {
 }
 
 const REGISTER: RelationId = RelationId(0);
+
+const MAINTENANCE_SOURCE: RelationId = RelationId(0);
+const MAINTENANCE_DERIVED: RelationId = RelationId(1);
+
+fn maintenance_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Source".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("selected", ValueType::Bool),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Derived".into(),
+                fields: vec![field("source", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: MAINTENANCE_SOURCE,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: MAINTENANCE_DERIVED,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: side(MAINTENANCE_DERIVED, &[0], &[]),
+                target: side(MAINTENANCE_SOURCE, &[0], &[]),
+            },
+        ],
+    }
+}
+
+fn source(id: u64, selected: bool) -> Vec<Value> {
+    vec![Value::U64(id), Value::Bool(selected)]
+}
+
+fn maintenance_world(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
+    let dir = TempDir::new(tag);
+    let db = Db::create(dir.path(), maintenance_schema()).expect("create maintenance store");
+    (dir, db)
+}
+
+fn assert_generation_moved(error: &Error) {
+    assert!(
+        matches!(error, Error::GenerationMoved { .. }),
+        "expected GenerationMoved, got {error:?}"
+    );
+}
+
+/// Update-where is snapshot-shaped: movement after predicate evaluation
+/// refuses the entire replacement delta before its closure runs.
+#[test]
+fn update_where_refuses_generation_movement() {
+    let (_dir, db) = maintenance_world("witness-update-where");
+    db.write(|tx| {
+        tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, false))?;
+        tx.insert_dyn(MAINTENANCE_SOURCE, &source(2, false))?;
+        Ok(())
+    })
+    .expect("seed sources");
+
+    db.read(|witness| {
+        let matches: Vec<_> = witness
+            .scan(MAINTENANCE_SOURCE)?
+            .collect::<bumbledb::Result<_>>()?;
+        db.write(|tx| {
+            tx.insert_dyn(MAINTENANCE_SOURCE, &source(3, false))?;
+            Ok(())
+        })?;
+        let ran = std::cell::Cell::new(false);
+        let error = db
+            .write_from(witness, |tx| {
+                ran.set(true);
+                for fact in &matches {
+                    let Value::U64(id) = fact[0] else {
+                        unreachable!("source id is u64")
+                    };
+                    tx.delete_dyn(MAINTENANCE_SOURCE, fact)?;
+                    tx.insert_dyn(MAINTENANCE_SOURCE, &source(id, true))?;
+                }
+                Ok(())
+            })
+            .expect_err("movement must refuse update-where");
+        assert_generation_moved(&error);
+        assert!(!ran.get(), "a moved witness must not run the closure");
+        Ok(())
+    })
+    .expect("update-where witness");
+}
+
+/// Insert-select likewise cannot publish answers from a snapshot after the
+/// source generation has moved.
+#[test]
+fn insert_select_refuses_generation_movement() {
+    let (_dir, db) = maintenance_world("witness-insert-select");
+    db.write(|tx| {
+        tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
+        Ok(())
+    })
+    .expect("seed source");
+
+    db.read(|witness| {
+        let selected: Vec<u64> = witness
+            .scan(MAINTENANCE_SOURCE)?
+            .map(|fact| {
+                let fact = fact?;
+                let (Value::U64(id), Value::Bool(true)) = (&fact[0], &fact[1]) else {
+                    unreachable!("the seed is selected")
+                };
+                Ok(*id)
+            })
+            .collect::<bumbledb::Result<_>>()?;
+        db.write(|tx| {
+            tx.insert_dyn(MAINTENANCE_SOURCE, &source(2, true))?;
+            Ok(())
+        })?;
+        let ran = std::cell::Cell::new(false);
+        let error = db
+            .write_from(witness, |tx| {
+                ran.set(true);
+                for id in &selected {
+                    tx.insert_dyn(MAINTENANCE_DERIVED, &[Value::U64(*id)])?;
+                }
+                Ok(())
+            })
+            .expect_err("movement must refuse insert-select");
+        assert_generation_moved(&error);
+        assert!(!ran.get(), "a moved witness must not run the closure");
+        Ok(())
+    })
+    .expect("insert-select witness");
+}
+
+/// A read-modify-write whose read happened on a snapshot is generation-
+/// witnessed; movement refuses the stale replacement. Key-shaped RMW inside
+/// `Db::write` instead uses the final-state point-read class.
+#[test]
+fn snapshot_read_modify_write_refuses_generation_movement() {
+    let (_dir, db) = maintenance_world("witness-read-modify-write");
+    db.write(|tx| {
+        tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, false))?;
+        Ok(())
+    })
+    .expect("seed source");
+
+    db.read(|witness| {
+        let old = witness
+            .scan(MAINTENANCE_SOURCE)?
+            .next()
+            .expect("one source")?;
+        db.write(|tx| {
+            tx.delete_dyn(MAINTENANCE_SOURCE, &old)?;
+            tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
+            Ok(())
+        })?;
+        let ran = std::cell::Cell::new(false);
+        let error = db
+            .write_from(witness, |tx| {
+                ran.set(true);
+                tx.delete_dyn(MAINTENANCE_SOURCE, &old)?;
+                tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
+                Ok(())
+            })
+            .expect_err("movement must refuse stale read-modify-write");
+        assert_generation_moved(&error);
+        assert!(!ran.get(), "a moved witness must not run the closure");
+        Ok(())
+    })
+    .expect("read-modify-write witness");
+}
+
+/// The dependency net owns soundness independently of the witness: deleting
+/// a source while its derived fact survives is rejected by final-state
+/// containment, and the rejected deletion changes nothing.
+#[test]
+fn stale_derived_fact_is_rejected_after_source_movement() {
+    let (_dir, db) = maintenance_world("witness-stale-derived");
+    db.write(|tx| {
+        tx.insert_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
+        tx.insert_dyn(MAINTENANCE_DERIVED, &[Value::U64(1)])?;
+        Ok(())
+    })
+    .expect("seed sound derived fact");
+
+    let error = db
+        .write(|tx| {
+            tx.delete_dyn(MAINTENANCE_SOURCE, &source(1, true))?;
+            Ok(())
+        })
+        .expect_err("a surviving derived fact requires its source");
+    assert!(matches!(error, Error::CommitRejected { .. }));
+    let sources = db
+        .read(|snap| Ok(snap.scan(MAINTENANCE_SOURCE)?.count()))
+        .expect("scan sources");
+    let derived = db
+        .read(|snap| Ok(snap.scan(MAINTENANCE_DERIVED)?.count()))
+        .expect("scan derived");
+    assert_eq!((sources, derived), (1, 1), "the refused delete was atomic");
+}
 
 /// One read-compute-write increment of slot 0, retried on
 /// `GenerationMoved` — the retry loop is HOST policy, living here in

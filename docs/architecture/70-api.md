@@ -280,6 +280,35 @@ never a bare integer in the engine API. The parked-reader cache uses a separate,
 crate-private `CommitSeq` clock that resets at process open. The two clocks have
 different lifetimes and cannot be compared or converted into one another.
 
+### Derived-fact maintenance protocol (normative)
+
+The host protocol is one explicit retry loop:
+
+1. open a snapshot and run the deriving query against that snapshot;
+2. compute the desired derived facts and diff them against the stored derived
+   relation as seen by the same snapshot;
+3. apply that diff with `db.write_from(&snapshot, |tx| ...)`;
+4. on `GenerationMoved`, discard both derivation and diff, open a new snapshot,
+   and start again; every other result ends the attempt.
+
+The public write surface has exactly three epistemic classes:
+
+| class | public path | what makes the premise current |
+|---|---|---|
+| snapshot-derived, generation-witnessed | `Db::write_from` | the snapshot's generation is compared inside the writer critical section before the closure runs |
+| final-state point-read inside the write transaction | `Db::write` plus `WriteTx::{contains,get,get_dyn}` | the point read observes base + pending delta while the single-writer lock is held |
+| unconditional | `Db::write` without a point-read premise; `Db::bulk_load` | there is no read-derived premise to witness |
+
+**Dependencies prove surviving derived facts sound; the WITNESS proves the
+derivation saw the state it claims; nothing proves completeness — recompute
+under a new witness.** In particular, the engine does not retry, secretly run
+a derivation, or claim that a stored relation equals a query result. Automatic
+retries and hidden derivation semantics are host policy disguised as engine
+behavior; query-defined/materialized-view equality remains D5 territory in the
+constitution's refusal ledger. A schema may state one or both ordinary
+containment directions when those projections express the intended invariant,
+but it never gains an implicit refresh theorem.
+
 The writer mutex serializes write *transactions*, not read-compute-write
 *sequences*: query-driven writes — update-where-predicate, insert-select,
 everything SQL spells with data-modifying CTEs — must read on a snapshot first,
