@@ -73,7 +73,14 @@ scratchpad — anything refused or bounded gets its countermodel there.
    SIMD, pipelining, memos, or LMDB, it is modeling mechanism and the
    work is mis-scoped: stop. Performance content NEVER moves to Lean —
    the docs keep Free Join realization, COLT, the kernels, the
-   measured laws, the refutation records, whole.
+   measured laws, the refutation records, whole. **Abstract cost is
+   admissible mathematics** (owner ruling 2026-07-14, the admission
+   calculus): consultation counts over an abstract ordered oracle —
+   complexity, stated and proved — may live here, because "the
+   enforcement plan exists and is oracle-bounded" is a semantic fact
+   of acceptance, not a measurement. Measured cost — pinned numbers,
+   batch sizes, kernel shapes, anything with units — stays in the
+   docs, forever.
 4. **Mathlib-free.** The tree builds on core Lean 4 (`lake build`
    seconds-fast, CI-cheap). `Std`/`Batteries` may be adopted ONLY if a
    PRD records the specific need; heavy automation and mathlib are
