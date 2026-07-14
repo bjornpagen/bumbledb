@@ -3,9 +3,7 @@
 **Depends on:** 14 (the tree is complete, zero-sorry, census-closed).
 The campaign's true terminal — 14 closes the SPEC; this PRD spends it.
 **Modules:** read-everything; write access to `docs/reports/
-spec-fidelity/` (new) and, for any fix that falls out, the normal
-commit discipline (engine fixes are standalone commits, trophy rules
-apply).
+spec-fidelity/` ONLY (new) — reports are this PRD's sole output.
 **Authority:** the owner's directive verbatim: "verify the lean
 version, have fable compare it to the rust version in a full fanout at
 the very end to spot potential bugs. every single one of those fanouts
@@ -71,9 +69,9 @@ Launch all ten in parallel (they are read-only). Each prompt carries:
 the subsection file list, the mandate above, the grade rubric, and
 the house citation discipline. Reports are evidence documents — every
 claim carries file:line on both sides. The consolidation pass
-re-verifies every class-(a) finding before it becomes a fix (the
-adversarial-verify discipline: a plausible-but-wrong finding must not
-survive to a commit).
+adversarially re-verifies every class-(a) finding before it enters
+the summary (a plausible-but-wrong finding must not survive to the
+report).
 
 ## Passing criteria
 
@@ -91,5 +89,6 @@ survive to a commit).
 
 ## Doc amendments
 
-The summary report IS the record; `60-validation.md`'s oracle roster
-gains one line: the fidelity fanout as a repeatable audit instrument.
+None — reports only. (The `60-validation.md` oracle-roster mention of
+the fanout as a repeatable instrument is a recommendation in the
+summary, acted on by the owner if desired.)
