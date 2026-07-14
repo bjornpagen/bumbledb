@@ -60,7 +60,7 @@ pub struct SubsumedRule {
 }
 
 /// The disjointness witness, rendered by name: the relation and field
-/// whose differing pinned literals make the rules' head rows
+/// whose differing pinned literals make the rules' head answers
 /// collision-free (EXPLAIN's `disjoint_rules: proven (R.f)`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisjointRules {

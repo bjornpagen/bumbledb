@@ -21,11 +21,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bumbledb::error::SchemaError;
 use bumbledb::schema::SchemaDescriptor;
 use bumbledb::schema::fingerprint::{self, SchemaFingerprint};
-use bumbledb::{Db, Error, PreparedQuery, Query, RelationId, ResultValue, Value};
+use bumbledb::{AnswerValue, Db, Error, PreparedQuery, Query, RelationId, Value};
 use bumbledb_bench::corpus_gen::Rng;
 use bumbledb_bench::corpus_gen::opgen::{self, FuzzOp, OpScenario};
 use bumbledb_bench::corpus_gen::theorygen;
-use bumbledb_bench::differential::{Rows, Verdict as WriteVerdict};
+use bumbledb_bench::differential::{Answers, Verdict as WriteVerdict};
 use bumbledb_bench::families;
 use bumbledb_bench::naive::query::QueryError;
 use bumbledb_bench::naive::{Delta, NaiveDb, ParamValue, Tuple};
@@ -107,7 +107,7 @@ pub fn theory(data: &[u8]) {
 ///    back to equality per its reactivation clause, and the pinned
 ///    trophy now replays the ORDER end-to-end.
 /// 2. **Query parity** per execution — set-semantic result equality,
-///    the differential's comparator ([`Rows`]).
+///    the differential's comparator ([`Answers`]).
 /// 3. **Reopen equivalence** — after every reopen, every ordinary
 ///    relation's full contents equal the model's.
 /// 4. **`verify_store` green** after every commit and every reopen
@@ -202,9 +202,9 @@ fn epoch(db: &Db<target::Target>, naive: &mut NaiveDb, scenario: &OpScenario, op
                 // errors included.
                 let engine = execute(db, &mut pool[*slot], params);
                 let model = match naive.query(&scenario.queries[*slot], params) {
-                    Ok(rows) => Rows::Ok(rows),
-                    Err(QueryError::Overflow { .. }) => Rows::Overflow,
-                    Err(QueryError::MeasureOfRay) => Rows::MeasureOfRay,
+                    Ok(answers) => Answers::Ok(answers),
+                    Err(QueryError::Overflow { .. }) => Answers::Overflow,
+                    Err(QueryError::MeasureOfRay) => Answers::MeasureOfRay,
                 };
                 assert_eq!(engine, model, "query parity (pool slot {slot})");
             }
@@ -285,23 +285,23 @@ fn engine_write(db: &Db<target::Target>, delta: &Delta) -> WriteVerdict {
     }
 }
 
-/// One prepared execution as a [`Rows`] verdict — the pooled sibling of
+/// One prepared execution as a [`Answers`] verdict — the pooled sibling of
 /// the differential's per-op query path (that one re-prepares; this one
 /// exercises the prepared-state lifecycle).
 fn execute(
     db: &Db<target::Target>,
     prepared: &mut PreparedQuery<'_, target::Target>,
     params: &[ParamValue],
-) -> Rows {
+) -> Answers {
     let args = families::param_args(params);
     match db.read(|snap| snap.execute_collect_args(prepared, &args)) {
-        Ok(buffer) => Rows::Ok(
+        Ok(buffer) => Answers::Ok(
             buffer
-                .rows()
-                .map(|row| {
+                .answers()
+                .map(|answer| {
                     Tuple(
                         (0..buffer.arity())
-                            .map(|column| owned(row.get(column)))
+                            .map(|column| owned(answer.get(column)))
                             .collect(),
                     )
                 })
@@ -314,10 +314,10 @@ fn execute(
 /// The boundary: a generated query's execution refuses through the two
 /// defined runtime errors and nothing else. Every other variant is
 /// named — never a catch-all — and is a finding on this path.
-fn query_refusal(err: Error) -> Rows {
+fn query_refusal(err: Error) -> Answers {
     match err {
-        Error::Overflow(_) => Rows::Overflow,
-        Error::MeasureOfRay { .. } => Rows::MeasureOfRay,
+        Error::Overflow(_) => Answers::Overflow,
+        Error::MeasureOfRay { .. } => Answers::MeasureOfRay,
         other @ (Error::Schema(_)
         | Error::FormatMismatch { .. }
         | Error::SchemaMismatch { .. }
@@ -353,16 +353,16 @@ fn query_refusal(err: Error) -> Rows {
 }
 
 /// One result value, owned — the harness's copy of the differential's
-/// total mapping (a new `ResultValue` variant is a compile error here).
-fn owned(value: ResultValue<'_>) -> Value {
+/// total mapping (a new `AnswerValue` variant is a compile error here).
+fn owned(value: AnswerValue<'_>) -> Value {
     match value {
-        ResultValue::Bool(v) => Value::Bool(v),
-        ResultValue::U64(v) => Value::U64(v),
-        ResultValue::I64(v) => Value::I64(v),
-        ResultValue::String(v) => Value::String(Box::from(v.as_bytes())),
-        ResultValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
-        ResultValue::IntervalU64(iv) => Value::IntervalU64(iv),
-        ResultValue::IntervalI64(iv) => Value::IntervalI64(iv),
+        AnswerValue::Bool(v) => Value::Bool(v),
+        AnswerValue::U64(v) => Value::U64(v),
+        AnswerValue::I64(v) => Value::I64(v),
+        AnswerValue::String(v) => Value::String(Box::from(v.as_bytes())),
+        AnswerValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
+        AnswerValue::IntervalU64(iv) => Value::IntervalU64(iv),
+        AnswerValue::IntervalI64(iv) => Value::IntervalI64(iv),
     }
 }
 

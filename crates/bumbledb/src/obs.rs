@@ -82,7 +82,7 @@ pub mod names {
     /// COLT construction at prepare. (-, -)
     pub const BUILD_COLTS: &str = "build_colts";
 
-    /// One prepared execution. (result rows, -)
+    /// One prepared execution. (answers, -)
     pub const EXECUTE: &str = "execute";
     /// One rule of the loop, under the execute span — the index rides in
     /// the name (`RULE[index]`; the validation cap `crate::ir::MAX_RULES`

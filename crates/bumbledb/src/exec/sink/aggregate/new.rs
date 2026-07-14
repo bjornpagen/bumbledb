@@ -211,7 +211,7 @@ impl AggregateSink {
             value_sets_live: 0,
             arg,
             arg_best: Vec::new(),
-            arg_rows: Vec::new(),
+            arg_answers: Vec::new(),
             carry_words,
             carry_scratch: Vec::with_capacity(carry_words),
             pack,

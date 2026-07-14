@@ -398,7 +398,7 @@ fn run_aggregate_distinct(
             &mut crate::exec::run::NoopCounters,
         )
         .expect("execute");
-    let mut rows = sink.into_rows()?;
+    let mut rows = sink.into_answers()?;
     rows.sort_unstable();
     Ok(rows)
 }

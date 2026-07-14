@@ -141,16 +141,16 @@ fn plan_roles(prepared: &PreparedQuery<'_, ()>, rule: usize) -> Vec<Role> {
     rule.plan.occurrences().iter().map(|o| o.role).collect()
 }
 
-fn rows(buffer: &ResultBuffer) -> Vec<Vec<ResultValue<'_>>> {
-    let mut rows: Vec<Vec<ResultValue<'_>>> = (0..buffer.len())
-        .map(|row| {
+fn answers(buffer: &Answers) -> Vec<Vec<AnswerValue<'_>>> {
+    let mut answers: Vec<Vec<AnswerValue<'_>>> = (0..buffer.len())
+        .map(|answer| {
             (0..buffer.arity)
-                .map(|column| buffer.get(row, column))
+                .map(|column| buffer.get(answer, column))
                 .collect::<Vec<_>>()
         })
         .collect();
-    rows.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
-    rows
+    answers.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    answers
 }
 
 /// Grading(id fresh, kind u64 — 0 = Det); Det(grading u64, rate
@@ -286,8 +286,8 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 
-    let (rows, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
-    assert_eq!(rows.len(), 2, "the two Det rates");
+    let (answers, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    assert_eq!(answers.len(), 2, "the two Det rates");
     assert!(
         report.contains("eliminated: Grading via Grading(id | kind == 0) == Det(grading)\n"),
         "the golden eliminated line is missing:\n{report}"
@@ -365,8 +365,8 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
             .execute_collect(&txn, &cache, &[])
             .expect("execute");
         assert_eq!(
-            rows(&with_grounding),
-            rows(&without),
+            answers(&with_grounding),
+            answers(&without),
             "elimination is result-identical"
         );
         assert!(!with_grounding.is_empty(), "the fixture produces rows");
@@ -444,8 +444,8 @@ fn per_rule_elimination_marks_one_rule_only() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(
-        rows(&with_grounding),
-        rows(&without),
+        answers(&with_grounding),
+        answers(&without),
         "per-rule elimination is result-identical"
     );
     assert!(!with_grounding.is_empty(), "the fixture produces rows");
@@ -539,8 +539,8 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(
-        rows(&with_passes),
-        rows(&without),
+        answers(&with_passes),
+        answers(&without),
         "subsumption is result-identical"
     );
     assert!(!with_passes.is_empty(), "the fixture produces rows");

@@ -14,7 +14,7 @@ impl Predicate {
     /// Derives the signature from one rule's find terms and resolved
     /// typing — called exactly once, at validation, on rule 0 (the
     /// per-rule alignment already proved every rule derives the same
-    /// predicate). No other derivation of the output row exists.
+    /// predicate). No other derivation of the answer tuple exists.
     pub(super) fn derive(rule: &LoweredRule, typing: &RuleTyping) -> Self {
         let var_type = |var: &VarId| typing.var_types[var].clone();
         let columns = rule

@@ -1,11 +1,11 @@
-use super::{Cell, ResolveMemo, ResultBuffer, ResultValue, Row, ValueType};
+use super::{Answer, AnswerValue, Answers, Cell, ResolveMemo, ValueType};
 
 use crate::error::Result;
 use crate::interval::Interval;
 use crate::schema::IntervalElement;
 use crate::storage::env::ReadTxn;
 
-impl ResultBuffer {
+impl Answers {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -17,7 +17,7 @@ impl ResultBuffer {
         self.bytes.clear();
     }
 
-    /// Number of result rows.
+    /// Number of answers.
     #[must_use]
     pub fn len(&self) -> usize {
         self.cells.len().checked_div(self.arity).unwrap_or(0)
@@ -36,42 +36,45 @@ impl ResultBuffer {
 
     /// The byte heap's length — memory observability (each distinct
     /// String value is stored once per buffer; bytes<N> cells copy their
-    /// N bytes per row — docs/architecture/40-execution.md).
+    /// N bytes per answer — docs/architecture/40-execution.md).
     #[must_use]
     pub fn byte_len(&self) -> usize {
         self.bytes.len()
     }
 
-    /// The value at `(row, column)`.
+    /// The value at `(answer, column)`.
     ///
     /// # Panics
     ///
     /// On out-of-range coordinates, and on a programmer-invariant violation
     /// (string cells are UTF-8-validated at materialization).
     #[must_use]
-    pub fn get(&self, row: usize, column: usize) -> ResultValue<'_> {
-        assert!(column < self.arity && row < self.len());
-        match self.cells[row * self.arity + column] {
-            Cell::Bool(v) => ResultValue::Bool(v),
-            Cell::U64(v) => ResultValue::U64(v),
-            Cell::I64(v) => ResultValue::I64(v),
-            Cell::String { start, len } => ResultValue::String(
+    pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
+        assert!(column < self.arity && answer < self.len());
+        match self.cells[answer * self.arity + column] {
+            Cell::Bool(v) => AnswerValue::Bool(v),
+            Cell::U64(v) => AnswerValue::U64(v),
+            Cell::I64(v) => AnswerValue::I64(v),
+            Cell::String { start, len } => AnswerValue::String(
                 std::str::from_utf8(&self.bytes[start..start + len])
                     .expect("validated at materialization"),
             ),
             Cell::FixedBytes { start, len } => {
-                ResultValue::FixedBytes(&self.bytes[start..start + len])
+                AnswerValue::FixedBytes(&self.bytes[start..start + len])
             }
-            Cell::IntervalU64(interval) => ResultValue::IntervalU64(interval),
-            Cell::IntervalI64(interval) => ResultValue::IntervalI64(interval),
+            Cell::IntervalU64(interval) => AnswerValue::IntervalU64(interval),
+            Cell::IntervalI64(interval) => AnswerValue::IntervalI64(interval),
         }
     }
 
-    /// Iterates the rows. Order is arbitrary (results are sets — the
+    /// Iterates the answers. Order is arbitrary (query denotations are sets — the
     /// host sorts); the iterator exists so consumers stop hand-writing
-    /// the index arithmetic around [`ResultBuffer::get`].
-    pub fn rows(&self) -> impl Iterator<Item = Row<'_>> {
-        (0..self.len()).map(move |row| Row { buffer: self, row })
+    /// the index arithmetic around [`Answers::get`].
+    pub fn answers(&self) -> impl Iterator<Item = Answer<'_>> {
+        (0..self.len()).map(move |answer| Answer {
+            buffer: self,
+            answer,
+        })
     }
 
     /// Converts a fixed-width word to its cell — infallible by schema
@@ -161,14 +164,14 @@ impl ResultBuffer {
     }
 }
 
-impl<'a> Row<'a> {
+impl<'a> Answer<'a> {
     /// The value in `column` (a find-term index).
     ///
     /// # Panics
     ///
     /// On an out-of-range column.
     #[must_use]
-    pub fn get(&self, column: usize) -> ResultValue<'a> {
-        self.buffer.get(self.row, column)
+    pub fn get(&self, column: usize) -> AnswerValue<'a> {
+        self.buffer.get(self.answer, column)
     }
 }

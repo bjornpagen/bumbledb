@@ -18,7 +18,7 @@
 //!   state, an abort never touched disk. `delete(old); insert(new)` in
 //!   either order is the blessed mutation idiom.
 //! - Query through [`Db::prepare`] ([`ir::Query`] is the IR) and execute
-//!   inside [`Db::read`] snapshots into a reusable [`ResultBuffer`] —
+//!   inside [`Db::read`] snapshots into a reusable [`Answers`] —
 //!   results are sets; the host sorts.
 //! - Migrate by ETL: [`Snapshot::scan`] exports, [`Db::bulk_load`] imports
 //!   (schema change = a new database, never in place).
@@ -113,7 +113,7 @@ mod verify_store;
 pub use allen::{AllenMask, Basic, classify};
 pub use api::db::{BulkLoadError, Db, Fact, Fresh, FreshKeyed, Snapshot, WriteTx};
 pub use api::prepared::{
-    BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
+    Answer, AnswerValue, Answers, BindValue, OccurrenceDrift, ParamArg, PreparedQuery, Staleness,
 };
 pub use api::stats::{
     CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,

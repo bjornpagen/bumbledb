@@ -2,13 +2,13 @@
 //! `Ord` (the engine orders encoded words, never decoded values), so the
 //! model wraps its rows in [`Tuple`] and spells the order out — variant
 //! rank first, then contents. Any total order works; it only has to be a
-//! total order so `BTreeSet` can hold facts and result rows.
+//! total order so `BTreeSet` can hold facts and answers.
 
 use std::cmp::Ordering;
 
 use bumbledb::Value;
 
-/// One decoded fact or result row: a value per field (or per variable),
+/// One decoded fact or answer: a value per field (or per variable),
 /// ordered lexicographically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tuple(pub Vec<Value>);

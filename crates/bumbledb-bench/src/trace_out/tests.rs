@@ -152,7 +152,7 @@ fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
         .expect("registered");
     let mut prepared = db.prepare(&(family.query)()).expect("prepare");
     let mut rotation = Rotation::new((family.params)(&cfg));
-    let mut buffer = bumbledb::ResultBuffer::new();
+    let mut buffer = bumbledb::Answers::new();
     let mut run = || {
         let args = crate::families::param_args(rotation.next_set());
         db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))

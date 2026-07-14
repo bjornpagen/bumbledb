@@ -45,15 +45,15 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
         ),
         "plain-variable key_probe takes the fast lane"
     );
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     // Hit: every cell decoded straight from the fact.
     prepared
         .execute(&txn, &cache, &[BindValue::U64(2)], &mut out)
         .expect("hit");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), ResultValue::U64(8));
-    assert_eq!(out.get(0, 1), ResultValue::String("memo-b"));
-    assert_eq!(out.get(0, 2), ResultValue::I64(42));
+    assert_eq!(out.get(0, 0), AnswerValue::U64(8));
+    assert_eq!(out.get(0, 1), AnswerValue::String("memo-b"));
+    assert_eq!(out.get(0, 2), AnswerValue::I64(42));
     // Miss: clean empty buffer.
     prepared
         .execute(&txn, &cache, &[BindValue::U64(999)], &mut out)
@@ -107,7 +107,7 @@ fn a_key_probe_prepare_and_execute_build_no_image() {
         ),
         "the fast lane classified"
     );
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     prepared
         .execute(&txn, &cache, &[BindValue::U64(1)], &mut out)
         .expect("hit");
@@ -150,11 +150,11 @@ fn key_probe_queries_flow_through_the_same_surface() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), ResultValue::I64(42));
+    assert_eq!(out.get(0, 0), AnswerValue::I64(42));
 
     // EXPLAIN reports the classification alongside the rows.
-    let (rows, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
-    assert_eq!(rows.len(), 1);
+    let (answers, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    assert_eq!(answers.len(), 1);
     assert!(report.contains("key probe"));
 }
 
@@ -266,7 +266,7 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), ResultValue::U64(100));
+    assert_eq!(out.get(0, 0), AnswerValue::U64(100));
     #[cfg(feature = "trace")]
     assert_eq!(
         cache.resident(),
@@ -276,8 +276,8 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
 
     // The classification is observable through profile stats, and the
     // 16-byte determinant is exact: a one-off interval misses.
-    let (rows, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(rows.len(), 1);
+    let (answers, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    assert_eq!(answers.len(), 1);
     assert_eq!(
         stats.rules[0].key_probe,
         Some(crate::api::stats::KeyProbeStats { hit: true })
@@ -286,8 +286,8 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
         crate::Interval::<u64>::new(5, 11).expect("nonempty interval"),
     )));
     let mut near = prepare(&txn, &cache, &schema, &near).expect("prepare");
-    let (rows, stats) = near.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(rows.len(), 0);
+    let (answers, stats) = near.profile(&txn, &cache, &[]).expect("profile");
+    assert_eq!(answers.len(), 0);
     assert_eq!(
         stats.rules[0].key_probe,
         Some(crate::api::stats::KeyProbeStats { hit: false })
@@ -322,14 +322,14 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
         "membership binding is not a key cover"
     );
 
-    let (rows, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    let (answers, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert!(
         stats.rules[0].key_probe.is_none(),
         "the scan+filter path, not the key_probe"
     );
     assert!(!stats.rules[0].nodes.is_empty());
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows.get(0, 0), ResultValue::U64(100));
+    assert_eq!(answers.len(), 1);
+    assert_eq!(answers.get(0, 0), AnswerValue::U64(100));
 
     // Correct across points: 25 hits the other booking, 15 hits none.
     let query = booking_query(Term::Literal(Value::U64(25)));
@@ -338,7 +338,7 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), ResultValue::U64(200));
+    assert_eq!(out.get(0, 0), AnswerValue::U64(200));
     let query = booking_query(Term::Literal(Value::U64(15)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
@@ -430,7 +430,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), ResultValue::U64(1));
+    assert_eq!(out.get(0, 0), AnswerValue::U64(1));
     #[cfg(feature = "trace")]
     assert_eq!(
         cache.resident(),
@@ -526,5 +526,5 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
         .execute_collect(&txn, &cache, &[BindValue::Str("alice")])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), ResultValue::U64(7));
+    assert_eq!(out.get(0, 0), AnswerValue::U64(7));
 }

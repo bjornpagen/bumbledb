@@ -618,7 +618,7 @@ pub enum ValidationError {
     /// `Pack` is relation-shaped — a fold column repeated per segment row
     /// is a join in aggregate costume. Coalesced-time accounting
     /// (`Sum∘Duration∘Pack`) is two prepared queries or a host fold over
-    /// packed rows; *trigger* for a composed form: a measured two-pass
+    /// packed answers; *trigger* for a composed form: a measured two-pass
     /// budget violation.
     MixedPackAndFold {
         find: usize,

@@ -120,7 +120,7 @@ re-litigated by accident:
   `50-storage.md`).
 - **The IR carries** negation (anti-join atoms with the safety rule), point membership
   (a typing rule), param sets (`IN`), `CountDistinct`, Arg-restriction with
-  set-honest ties, and the relation-shaped `Pack` (one row per (group, maximal
+  set-honest ties, and the relation-shaped `Pack` (one answer per (group, maximal
   segment) — the coalescing fold); the outer join is a documented decomposition,
   never a node (`20-query-ir.md`).
 - **The query surface is the IR, permanently — pure data** (the text-language OPEN

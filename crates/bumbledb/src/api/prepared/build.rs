@@ -147,7 +147,7 @@ pub(crate) fn prepare<'s, S>(
         missed_params: Vec::new(),
         sink,
         bindings,
-        row_scratch: Vec::new(),
+        answer_scratch: Vec::new(),
         all_words,
         resolve_memo: ResolveMemo::new(),
         determinant_key: Vec::new(),

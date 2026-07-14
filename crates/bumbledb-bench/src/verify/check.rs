@@ -1,6 +1,6 @@
 use super::{Case, MAX_BUNDLES, Run};
 
-use bumbledb::ResultBuffer;
+use bumbledb::Answers;
 use bumbledb::schema::ValueType;
 
 use crate::compare;
@@ -18,7 +18,7 @@ impl<S> Run<'_, S> {
     /// Divergence-by-error is a mismatch, not a panic: if either side
     /// errors at prepare or execute where the other answers, that is an
     /// arbitration bundle with the erring side's `ERROR: <text>` in
-    /// place of its rows — the audit confirmed a real divergence class
+    /// place of its answers — the audit confirmed a real divergence class
     /// here (`SQLite`'s transient SUM overflow vs the i128 accumulator).
     /// Both-sides-error is a bundle too: no case is *expected* to error
     /// today, so agreement-in-error would hide a tool defect as
@@ -30,12 +30,12 @@ impl<S> Run<'_, S> {
         params: &[ParamValue],
     ) -> bool {
         // Column types come from the engine's prepared query; without
-        // them the oracle's rows cannot even be decoded, so a prepare
+        // them the oracle's answers cannot even be decoded, so a prepare
         // failure is an engine-side error and the oracle records "not
         // executed" rather than a fabricated second error.
         let (ours, theirs): (
-            Result<Vec<compare::Row>, String>,
-            Result<Vec<compare::Row>, String>,
+            Result<Vec<compare::Answer>, String>,
+            Result<Vec<compare::Answer>, String>,
         ) = match self.db.prepare(case.query) {
             Err(e) => (
                 Err(format!("{e}")),
@@ -48,12 +48,12 @@ impl<S> Run<'_, S> {
                     .iter()
                     .map(|column| column.ty.clone())
                     .collect();
-                let mut buffer = ResultBuffer::new();
+                let mut buffer = Answers::new();
                 let args = param_args(params);
                 let ours = self
                     .db
                     .read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
-                    .map(|()| compare::from_buffer(&buffer, &types))
+                    .map(|()| compare::from_answers(&buffer, &types))
                     .map_err(|e| format!("{e}"));
                 let theirs = self
                     .conn
@@ -72,16 +72,23 @@ impl<S> Run<'_, S> {
         }
 
         let verdict: Result<(), (String, String, String)> = match (ours, theirs) {
-            (Ok(ours), Ok(theirs)) => compare::multisets(ours.clone(), theirs.clone())
-                .map_err(|m| (m.to_string(), render_rows(&ours), render_rows(&theirs))),
+            (Ok(ours), Ok(theirs)) => {
+                compare::multisets(ours.clone(), theirs.clone()).map_err(|m| {
+                    (
+                        m.to_string(),
+                        render_answers(&ours),
+                        render_answers(&theirs),
+                    )
+                })
+            }
             (Err(engine), Ok(theirs)) => Err((
                 "divergence by error: the engine errored where the oracle answered".to_owned(),
                 format!("ERROR: {engine}"),
-                render_rows(&theirs),
+                render_answers(&theirs),
             )),
             (Ok(ours), Err(oracle)) => Err((
                 "divergence by error: the oracle errored where the engine answered".to_owned(),
-                render_rows(&ours),
+                render_answers(&ours),
                 format!("ERROR: {oracle}"),
             )),
             (Err(engine), Err(oracle)) => Err((
@@ -125,12 +132,12 @@ impl<S> Run<'_, S> {
 }
 
 /// Renders a comparison multiset for a bundle artifact.
-fn render_rows(rows: &[compare::Row]) -> String {
+fn render_answers(answers: &[compare::Answer]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
-    let _ = writeln!(out, "{} row(s)", rows.len());
-    for row in rows {
-        let _ = writeln!(out, "{row:?}");
+    let _ = writeln!(out, "{} answer(s)", answers.len());
+    for answer in answers {
+        let _ = writeln!(out, "{answer:?}");
     }
     out
 }

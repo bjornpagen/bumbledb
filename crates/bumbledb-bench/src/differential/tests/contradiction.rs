@@ -153,7 +153,7 @@ fn contradiction_draws_are_empty_on_both_sides() {
         negated: vec![],
         conditions: vec![],
     });
-    let crate::differential::Rows::Ok(rows) = engine_query(&db, &control, &[]) else {
+    let crate::differential::Answers::Ok(rows) = engine_query(&db, &control, &[]) else {
         panic!("the control scan errors");
     };
     assert!(!rows.is_empty(), "the control scan sees the seed");

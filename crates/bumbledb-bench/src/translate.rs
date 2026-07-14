@@ -144,7 +144,7 @@ pub enum Inexpressible {
     /// included.
     ContainmentJudgment,
     /// A `Pack` head: `SQLite` has no coalescing aggregate — a
-    /// relation-shaped GROUP BY (one row per (group, maximal segment))
+    /// relation-shaped GROUP BY (one answer per (group, maximal segment))
     /// is not a SQL fold, and a recursive-CTE emulation would test the
     /// emulation, not the engine. Naive-only by decision; the verify
     /// harness consumes this enumeration to route and report it.

@@ -45,7 +45,7 @@ that equality a one-to-one correspondence between the selected A- and B-facts:
 every selected fact has exactly one selected witness in the other relation with
 the same projected product. For a composite projection the key applies to the
 whole product; `key_permutation` only reorders its fields for the target key and
-weakens nothing. This is not whole-row equality — unprojected payloads may differ
+weakens nothing. This is not whole-fact equality — unprojected payloads may differ
 — and it makes no claim about facts outside φ or ψ. The formal evidence is
 `KeyBackedEquality.unique_target`/`.unique_source`; the bare mutual-inclusion
 form without the key premises has the `bare_containsEq_nonunique` countermodel.
@@ -155,7 +155,7 @@ Concretely, validation demands:
   key search and no probe strategy — the enforcement plan is **the answer set
   itself**. Y must be exactly the synthetic id (the handle is the one probe-able
   identity of a closed relation); ψ is applied to the sealed extension at validate
-  and the surviving row ids compile to a 256-bit member set (the ≤256 roster cap
+  and the surviving declaration ids compile to a 256-bit member set (the ≤256 roster cap
   exists exactly to fix this width). The ψ-selected form gives sub-vocabularies —
   `Escalation(severity) <= Severity(id | pages == true)` — the same O(1) plan.
   Interval positions on a containment with a closed side (either side) are
@@ -247,11 +247,11 @@ Grading(id | kind == CustomOperator) == CustomOperatorGrading(grading);
 Three theorems fall out, each of which SQL either cannot state or states with
 triggers:
 
-1. **Totality** (`==`, left-to-right): a Deterministic grading *has* its child row —
+1. **Totality** (`==`, left-to-right): a Deterministic grading *has* its child fact —
    in the same commit, always. Row-at-a-time engines cannot check parent-implies-
    child at insert; deferrable mutual FKs recover a fixed two-table case and nothing
    conditional.
-2. **Arm validity** (`==`, right-to-left): a child row's parent exists *with that
+2. **Arm validity** (`==`, right-to-left): a child fact's parent exists *with that
    kind* — this is the composite-FK-plus-CHECK-pin encoding, one statement instead
    of two mechanisms.
 3. **Exclusivity** (derived): an id in two child relations would force the parent's
@@ -309,14 +309,14 @@ untouched by it. The phases:
 - IND from a closed source (**domain quantification** — the worked example below):
   the source side never fires (no closed inserts exist); the target side fires
   only on a B-key disestablishment, where the surviving sources ARE the sealed
-  extension's φ-rows — an honest ≤256-row scan on the delete path replaces the
+  extension's selected ground axioms — an honest ≤256-element scan on the delete path replaces the
   `R`-prefix probe, since a constant source stored no edges.
 - `==`: both directions, symmetric machinery.
 
 **Domain quantification, worked.** `Severity(id) <= Handler(severity)` with
 `Severity` closed and `Handler(severity) -> Handler` declared says *every severity
 has a handler*. Inserting handlers never fires it (the source is constant);
-deleting the last `Handler` row for severity 2 disestablishes the `(2)` key tuple,
+deleting the last `Handler` fact for severity 2 disestablishes the `(2)` key tuple,
 the dependent statement scans the extension, finds the severity-2 axiom projecting
 to the lost tuple, and aborts — while a delete whose tuple re-lands in the same
 commit (a handler *replacement*) is dropped by the plain set difference before any

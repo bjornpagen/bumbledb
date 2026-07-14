@@ -106,10 +106,10 @@ fn contradiction() -> Vec<Comparison> {
     vec![score_cmp(CmpOp::Gt, 5), score_cmp(CmpOp::Lt, 3)]
 }
 
-fn scores_of(buffer: &ResultBuffer) -> Vec<i64> {
+fn scores_of(buffer: &Answers) -> Vec<i64> {
     let mut scores: Vec<i64> = (0..buffer.len())
-        .map(|row| {
-            let ResultValue::I64(score) = buffer.get(row, 0) else {
+        .map(|answer| {
+            let AnswerValue::I64(score) = buffer.get(answer, 0) else {
                 panic!("column 0 is an i64");
             };
             score
@@ -368,14 +368,14 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
         let mut folded = prepare(&txn, &cache, &schema, &query).expect("prepare folded");
         let mut unfolded =
             with_fold_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare raw");
-        let folded_rows = scores_of(&folded.execute_collect(&txn, &cache, &[]).expect("folded"));
-        let unfolded_rows = scores_of(
+        let folded_answers = scores_of(&folded.execute_collect(&txn, &cache, &[]).expect("folded"));
+        let unfolded_answers = scores_of(
             &unfolded
                 .execute_collect(&txn, &cache, &[])
                 .expect("unfolded"),
         );
         assert_eq!(
-            folded_rows, unfolded_rows,
+            folded_answers, unfolded_answers,
             "round {round}: the fold changed the denotation"
         );
     }

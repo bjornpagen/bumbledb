@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use bumbledb::ir::Value;
 use bumbledb::ir::render::render;
 use bumbledb::{
-    Db, ParamArg, PreparedQuery, Query, ResultBuffer, ResultValue, Schema, Snapshot, Theory,
+    AnswerValue, Answers, Db, ParamArg, PreparedQuery, Query, Schema, Snapshot, Theory,
 };
 use bumbledb_query::query;
 
@@ -1074,13 +1074,13 @@ fn reachable<S>(
 ) -> bumbledb::Result<BTreeSet<u64>> {
     let mut seen = BTreeSet::from([root]);
     let mut frontier = vec![root];
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     loop {
         let params: Vec<Value> = frontier.iter().map(|&n| Value::U64(n)).collect();
         snap.execute_args(children, &[ParamArg::Set(&params)], &mut out)?;
         frontier.clear();
-        for row in 0..out.len() {
-            let ResultValue::U64(child) = out.get(row, 0) else {
+        for answer in 0..out.len() {
+            let AnswerValue::U64(child) = out.get(answer, 0) else {
                 panic!("the frontier query finds one u64 column");
             };
             if seen.insert(child) {
@@ -1201,10 +1201,10 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
                     subtree: &BTreeSet<u64>|
      -> bumbledb::Result<i64> {
         let set: Vec<Value> = subtree.iter().map(|&a| Value::U64(a)).collect();
-        let mut out = ResultBuffer::new();
+        let mut out = Answers::new();
         snap.execute_args(rollup_q, &[ParamArg::Set(&set)], &mut out)?;
-        assert_eq!(out.len(), 1, "one all-aggregate row");
-        let ResultValue::I64(total) = out.get(0, 0) else {
+        assert_eq!(out.len(), 1, "one all-aggregate answer");
+        let AnswerValue::I64(total) = out.get(0, 0) else {
             panic!("the rollup sums an i64 column");
         };
         Ok(total)

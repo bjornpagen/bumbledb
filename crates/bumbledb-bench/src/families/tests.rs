@@ -263,7 +263,7 @@ fn balance_counts_equal_amounts_separately() {
     assert_eq!(out.len(), 1);
     assert_eq!(
         out.get(0, 1),
-        bumbledb::ResultValue::I64(10),
+        bumbledb::AnswerValue::I64(10),
         "both amount-5 postings count"
     );
 

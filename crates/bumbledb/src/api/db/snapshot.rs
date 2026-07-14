@@ -1,5 +1,5 @@
 use super::{Fact, Snapshot};
-use crate::api::prepared::{BindValue, ParamArg, PreparedQuery, ResultBuffer};
+use crate::api::prepared::{Answers, BindValue, ParamArg, PreparedQuery};
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
 use crate::schema::RelationId;
@@ -18,7 +18,7 @@ impl<S> Snapshot<'_, S> {
         &self,
         prepared: &mut PreparedQuery<'_, S>,
         params: &[BindValue<'_>],
-        out: &mut ResultBuffer,
+        out: &mut Answers,
     ) -> Result<()> {
         prepared.execute(&self.txn, self.cache, params, out)
     }
@@ -32,7 +32,7 @@ impl<S> Snapshot<'_, S> {
         &self,
         prepared: &mut PreparedQuery<'_, S>,
         params: &[BindValue<'_>],
-    ) -> Result<ResultBuffer> {
+    ) -> Result<Answers> {
         prepared.execute_collect(&self.txn, self.cache, params)
     }
 
@@ -52,7 +52,7 @@ impl<S> Snapshot<'_, S> {
         &self,
         prepared: &mut PreparedQuery<'_, S>,
         args: &[ParamArg<'_>],
-        out: &mut ResultBuffer,
+        out: &mut Answers,
     ) -> Result<()> {
         prepared.execute_args(&self.txn, self.cache, args, out)
     }
@@ -66,12 +66,12 @@ impl<S> Snapshot<'_, S> {
         &self,
         prepared: &mut PreparedQuery<'_, S>,
         args: &[ParamArg<'_>],
-    ) -> Result<ResultBuffer> {
+    ) -> Result<Answers> {
         prepared.execute_collect_args(&self.txn, self.cache, args)
     }
 
     /// EXPLAIN ANALYZE (docs/architecture/40-execution.md): executes with counting instrumentation
-    /// and returns the rows alongside the rendered report.
+    /// and returns the answers alongside the rendered report.
     ///
     /// # Errors
     ///
@@ -80,11 +80,11 @@ impl<S> Snapshot<'_, S> {
         &self,
         prepared: &mut PreparedQuery<'_, S>,
         params: &[BindValue<'_>],
-    ) -> Result<(ResultBuffer, String)> {
+    ) -> Result<(Answers, String)> {
         prepared.explain(&self.txn, self.cache, params)
     }
 
-    /// ANALYZE with structured output: the rows alongside
+    /// ANALYZE with structured output: the answers alongside
     /// [`crate::api::stats::ExecutionStats`] — what `explain` renders,
     /// as data.
     ///
@@ -95,7 +95,7 @@ impl<S> Snapshot<'_, S> {
         &self,
         prepared: &mut PreparedQuery<'_, S>,
         params: &[BindValue<'_>],
-    ) -> Result<(ResultBuffer, crate::api::stats::ExecutionStats)> {
+    ) -> Result<(Answers, crate::api::stats::ExecutionStats)> {
         prepared.profile(&self.txn, self.cache, params)
     }
 

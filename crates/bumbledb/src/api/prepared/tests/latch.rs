@@ -26,11 +26,11 @@ fn literal_query(memo: &str) -> Query {
     })
 }
 
-fn amounts(out: &ResultBuffer) -> Vec<i64> {
+fn amounts(out: &Answers) -> Vec<i64> {
     let mut amounts: Vec<i64> = out
-        .rows()
-        .map(|row| match row.get(0) {
-            ResultValue::I64(v) => v,
+        .answers()
+        .map(|answer| match answer.get(0) {
+            AnswerValue::I64(v) => v,
             other => panic!("i64 find, got {other:?}"),
         })
         .collect();
@@ -49,7 +49,7 @@ fn a_str_literal_latches_on_first_execution() {
     let mut prepared = prepare(&txn, &cache, &schema, &literal_query("alice")).expect("prepare");
     assert_eq!(prepared.unresolved_literals, 1, "counted at prepare");
 
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     prepared
         .execute(&txn, &cache, &[], &mut out)
         .expect("execute");
@@ -97,7 +97,7 @@ fn a_miss_stays_live_and_latches_after_interning() {
 
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &literal_query("carol")).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     prepared
         .execute(&txn, &cache, &[], &mut out)
         .expect("execute");
@@ -149,7 +149,7 @@ fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &literal_query("alice")).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
 
     obs::start_capture();
     prepared

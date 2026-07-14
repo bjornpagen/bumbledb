@@ -235,7 +235,7 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
         match find {
             FindTerm::Var(_) | FindTerm::Measure(_) => {
                 // Interval group positions carry two columns; the pinned
-                // head row names which (validation aligns rules).
+                // head answer names which (validation aligns rules).
                 let names = if matches!(find, FindTerm::Var(_)) {
                     // The arm aliased scalar vars `hN` and interval vars
                     // `hN_start`/`hN_end`; group by whichever exists —

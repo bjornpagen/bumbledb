@@ -325,7 +325,7 @@ struct RuleTyping {
 impl ValidatedQuery {
     /// The predicate this query defines (see [`Predicate`]): the sealed
     /// signature every downstream consumer reads — no other derivation
-    /// of the output row types exists.
+    /// of the answer types exists.
     #[must_use]
     pub fn predicate(&self) -> &Predicate {
         &self.predicate

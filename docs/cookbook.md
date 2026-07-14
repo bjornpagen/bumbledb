@@ -57,7 +57,7 @@ relations, glued by bidirectional conditional containments
 bumbledb::schema! {
     pub Grading;
 
-    // The discriminator vocabulary is a closed relation: rows are ground
+    // The discriminator vocabulary is a closed relation: its ground axioms are
     // axioms, and the host enum `Kind` is emitted for rustc's matching.
     closed relation Kind as KindId = { Deterministic, CustomOperator };
 
@@ -66,10 +66,10 @@ bumbledb::schema! {
     relation CustomOperatorGrading { task: u64 as TaskId, operator: str }
 
     Task(kind) <= Kind(id);                                // the discriminator resolves
-    DeterministicGrading(task)  -> DeterministicGrading;   // one arm row per parent
+    DeterministicGrading(task)  -> DeterministicGrading;   // one arm fact per parent
     CustomOperatorGrading(task) -> CustomOperatorGrading;
-    // Totality (==, left to right): a Deterministic task HAS its arm row —
-    // same commit, always. Arm validity (right to left): an arm row's parent
+    // Totality (==, left to right): a Deterministic task HAS its arm fact —
+    // same commit, always. Arm validity (right to left): an arm fact's parent
     // exists WITH that kind — composite-FK-plus-CHECK, one statement.
     Task(id | kind == Deterministic)  == DeterministicGrading(task);
     Task(id | kind == CustomOperator) == CustomOperatorGrading(task);
@@ -170,7 +170,7 @@ bumbledb::schema! {
 ## 6. The vocabulary
 
 The enum idiom's replacement, first-class: a vocabulary is a **closed
-relation** — its rows are ground axioms declared in the schema, sealed at
+relation** — its ground axioms are declared in the schema, sealed at
 validate, frozen by the fingerprint, virtual in storage
 (`10-data-model.md` § closed relations). The store holds zero vocabulary
 bytes, and handles are the literals on every surface: statements, queries,
@@ -181,7 +181,7 @@ bumbledb::schema! {
     pub Tickets;
 
     // Tier 1: handles only. The macro emits the host enum `Priority`,
-    // welded to the declaration-order row ids — an emission, not a type:
+    // welded to declaration-order ids — an emission, not a type:
     // the engine's vocabulary stays relational; rustc's pattern matching
     // keeps working on the projection.
     closed relation Priority as PriorityId = { Low, Normal, Urgent };
@@ -211,7 +211,7 @@ bumbledb::schema! {
 ## 7. The classification
 
 The fused form: the vocabulary carries its intrinsic facts as **payload
-columns** — one row per handle, values sealed with the schema, read by
+columns** — one ground axiom per handle, values sealed with the schema, read by
 ψ-selections. The old shape — an ordinary relation the application wrote at
 startup and every deployment re-verified — is deleted outright: axioms are
 declared, never written.
@@ -253,7 +253,7 @@ bumbledb::schema! {
 
 ## 8. The sub-vocabulary
 
-The ψ-selected containment: a reference constrained to the rows of a
+The ψ-selected containment: a reference constrained to the facts of a
 vocabulary that satisfy a payload selection. Because the target is closed,
 the enforcement plan is not a probe strategy — it is **the answer set
 itself**, compiled at validate (`30-dependencies.md` § enforcement, whose
@@ -373,7 +373,7 @@ bumbledb::schema! {
     relation Maintains { person: u64 as PersonId, repo: u64 as RepoId }
 
     Follows(follower) <= Person(id);        // a Person→Person edge, by statement —
-    Follows(followee) <= Person(id);        // a Follows row cannot touch a Repo
+    Follows(followee) <= Person(id);        // a Follows fact cannot touch a Repo
     Follows(follower, followee) -> Follows; // at most one edge per pair
     Maintains(person) <= Person(id);
     Maintains(repo)   <= Repo(id);
@@ -390,7 +390,7 @@ bumbledb::schema! {
 
 The 0..1 idiom (recipe 3) at scale: components are sidecar relations; an
 entity has a component iff the fact exists; a new component kind is a new
-relation, not a wider row.
+relation, not a wider fact.
 
 ```rust
 bumbledb::schema! {
@@ -608,7 +608,7 @@ bumbledb::schema! {
 ## 18. Free time and coalescing
 
 `Pack` is Snodgrass's coalesce as an aggregate — maximal disjoint segments per
-group, one row per (group, segment). Coalescing is never a write rule: the
+group, one answer per (group, segment). Coalescing is never a write rule: the
 engine stores the claims it was given.
 
 ```rust
@@ -628,7 +628,7 @@ bumbledb::schema! {
     //     (person, Sum(Duration(span))) | Claim(person, span);
     // Coalesced totals = the two-query composition (Pack, then a host fold) —
     // aggregates never nest; free time (gaps) is the two-line host walk over
-    // sorted packed rows — both refusals recorded in the ledger.
+    // sorted packed answers — both refusals recorded in the ledger.
 }
 ```
 
@@ -694,7 +694,7 @@ bumbledb::schema! {
     //   update-where: query the premise on a snapshot, then delete(old) +
     //     insert(new) per matched fact — "still Queued" is the witness:
     //       (id, payload) | Job(id, state == Queued, payload);
-    //   insert-select: query source rows, insert the derived facts — the
+    //   insert-select: query source answers, insert the derived facts — the
     //     data-modifying CTE with its premises witnessed instead of locked.
     //   read-modify-write, key-shaped: WriteTx point reads (get/contains) see
     //     the final state — per-fact premises need no witness, never retry.

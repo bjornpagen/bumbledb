@@ -54,7 +54,7 @@ and embeds the conjunctive query unchanged (`Query::single`); every
 pre-rules query is a one-rule program.
 
 - **A query defines one anonymous predicate; rules derive it.** The head is
-  its definition, and its typed **signature** is the result-type row: one
+  its definition, and its typed **signature** is the answer-type tuple: one
   column per head position, each carrying the type that lands in the buffer
   (`Count`/`CountDistinct` are U64 whatever they counted; the measure is
   U64; `Sum`/`Min`/`Max` carry their input's type; `Pack` its interval
@@ -62,7 +62,7 @@ pre-rules query is a one-rule program.
   producing it. It is derived **once**, at validation, and sealed in the
   witness (`ir/validate`'s `Predicate`); sink construction, result-buffer
   typing, finalize's all-words decision, and EXPLAIN's header all read that
-  one object — no second derivation of the output row exists anywhere.
+  one object — no second derivation of the answer exists anywhere.
   The fence: the predicate is anonymous and engine-internal, **referenced
   by nothing** (names live in the host, exactly like relations pre-`as`).
   The moment something REFERENCES a predicate — a head usable as a body
@@ -124,6 +124,30 @@ refusal earns its reversal.
 
 ## Semantics
 
+### Atom matching (normative)
+
+For a fact `f`, an atom `a`, and the current partial variable assignment `ρ`,
+matching is the conjunction of the atom's field bindings:
+
+```text
+match(f, a, ρ) = ∧(field, term) ∈ a.bindings
+  Var(v), v ∉ dom(ρ) : extend ρ with v ↦ f[field]
+  Var(v), v ∈ dom(ρ) : f[field] = ρ(v)
+  Param(p)            : f[field] = bind[p]
+  Literal(x)          : f[field] = x
+  ParamSet(p)         : f[field] ∈ bind[p]
+```
+
+The equality in this matching equation is structural value equality, with the
+interval-element membership typing rule below replacing it where applicable.
+Consequently a repeated variable is a unification constraint immediately: within
+one atom it compares fields of the same fact, and across atoms it is the join. It is
+not a post-filter. A variable that occurs only in membership positions is rejected
+because matching can test membership but cannot enumerate the point domain
+(`ir/validate`'s `MembershipOnlyVariable`; the exhaustive roster below). Execution
+implements the same equation as occurrence filters plus bound-slot probes
+(`40-execution.md` § the executor).
+
 - The logical solution of a **rule** is the **set of distinct bindings of
   the rule's variables** that satisfy every positive atom, every membership
   binding, every condition, and **no negated atom** (below); projection
@@ -133,6 +157,20 @@ refusal earns its reversal.
   see aggregation below.)
 - Distinctness is the default and only behavior; there is no DISTINCT concept.
 - No ordering or limit in the IR: results are sets; the host sorts (`70-api.md`).
+
+**Answer identity and union.** A query denotes the **set of its answers**: the
+union of its rules' head projections. An answer is identical exactly when its
+canonical head-tuple bytes are identical. The sink is that union—one sink hears
+every rule and its spanning seen-set performs semantic deduplication; no merge node
+exists (`exec/sink.rs`'s module contract and `40-execution.md` § the rule loop).
+That seen-set is elided only when validation and planning supply the
+distinct-bindings proof whose witness is specified in PRD 17.
+
+**Equality at three types.** Dependency `==` is key-backed correspondence between
+selected projected views (`30-dependencies.md`); selection `==` is σ equality
+inside one view; comparison `Eq` is typed term equality in a query. All three mean
+equality of denotations, but their operands—and therefore their diagnostics—are
+different and never interchangeable.
 
 ### Negation (normative)
 
@@ -149,7 +187,7 @@ worth of vocabulary.
 **The outer-join idiom, documented (the sanctioned decomposition):** "A with its B,
 if any" is two queries — `A ⋈ B`, and `A` with a negated `B` atom — merged by the
 host. Results are sets; the merge is a concatenation. An outer-join concept will
-never enter the IR; a row that is half-binding, half-absence is a null wearing a
+never enter the IR; an answer that is half-binding, half-absence is a null wearing a
 join costume.
 
 ### Aggregation (normative)
@@ -180,9 +218,9 @@ join costume.
 - **Arg-restriction (`ArgMax`/`ArgMin`), semantics before shape:** when a find list
   contains Arg terms, the group's binding set is first **restricted to the bindings
   attaining the extreme of the key variable** (max for ArgMax, min for ArgMin), and
-  the group's output rows are projected from that restricted set. This definition
+  the group's answers are projected from that restricted set. This definition
   makes multi-carry coherent by construction (all carried values come from the same
-  surviving bindings) and makes ties honest: **a tie yields every attaining row** —
+  surviving bindings) and makes ties honest: **a tie yields every attaining answer** —
   the answer is a set; with fresh keys ties cannot occur. Validation: all Arg terms
   in one query share one key variable and one direction; the key must be orderable
   (U64/I64); the key variable may itself be projected. Arg terms and fold aggregates
@@ -197,16 +235,16 @@ join costume.
 - **`Pack` (the coalescing fold — Snodgrass's coalesce), semantics:** over an
   interval-typed variable, per group the result is the set of **maximal disjoint
   half-open segments** of the union of the group's interval point sets. **`Pack`
-  is relation-shaped: one result row per (group, maximal segment)** — the
-  one-row-per-group convention was never a law (`ArgMax`'s tie sets were the
-  precedent), and a set-semantic query's result is already a set of rows, which
+  is relation-shaped: one answer per (group, maximal segment)** — the
+  one-answer-per-group convention was never a law (`ArgMax`'s tie sets were the
+  precedent), and a set-semantic query's result is already a set of answers, which
   is exactly what dissolved the old OPEN item's "a set per group" blocker. Head
   shape: the group variables plus **one interval-typed result position** (the
   packed segment shares its input's element type); at most one `Pack` per head —
   the multi-`Pack` product has no sighting and is refused with the trigger "a
-  real query needing two coalesced columns in one row". `Pack` mixes with **no
+  real query needing two coalesced columns in one answer". `Pack` mixes with **no
   other aggregate** (the Arg/fold mixing rule, extended: a fold column repeated
-  per segment row is a join in aggregate costume, and two relation-shaped
+  per segment answer is a join in aggregate costume, and two relation-shaped
   aggregates do not compose in one head); its companions are group-key positions
   only. Adjacency merges (`end == next.start` — the half-open law), identical
   claims collapse in the coalesce (set-semantic dedup upstream is unchanged),
@@ -216,13 +254,13 @@ join costume.
   raw claim, so the spanning seen-set keys (group, claim) pairs and the coalesce
   runs over ∪. Composition refusals, recorded: coalesced-time accounting
   (`Sum∘Duration∘Pack`) is **two prepared queries or a host fold over packed
-  rows** — aggregates of aggregates stay refused (no nesting; the standing
+  answers** — aggregates of aggregates stay refused (no nesting; the standing
   aggregate law) — with the trigger "a measured two-pass budget violation"; free
   time (`Gaps`) stays a two-line host walk over sorted packed output (README
   refusals ledger).
 - **All-aggregate finds are legal** (empty group key, one global group). Over empty
-  input the result is the **empty set** — not a 0 or NULL row. "The balance of an
-  account with no postings is an absent row, not 0." This is a documented divergence
+  input the result is the **empty set** — not a 0 or NULL answer. "The balance of an
+  account with no postings is an absent answer, not 0." This is a documented divergence
   from SQL's ungrouped-aggregate behavior; the oracle rule lives in
   `60-validation.md`.
 - Aggregates over illegal input types, an aggregate whose variable is also a group
@@ -436,7 +474,7 @@ of one comparison, a non-interval variable, and any fold but the three.
 - **Lowering:** normalization lowers the measure to a two-slot read +
   subtraction feeding the existing word machinery — a constant or same-atom
   comparison becomes an occurrence filter, a cross-atom comparison a
-  measure residual, and the sink positions a derived word in the sink's row
+  measure residual, and the sink positions a derived word in the sink's answer
   representation. At sink construction, symbolic measure finds parse into a
   measure-free execution vocabulary; no sink consumer re-checks whether that
   lowering happened. The one new executor shape is the fused gather+subtract
@@ -449,7 +487,7 @@ of one comparison, a non-interval variable, and any fold but the three.
 - The measure position weakens no proof silently: rule-disjointness treats
   a measure head position as non-witnessing
   (`end − start` is a non-injective map of its variable, so distinct
-  bindings may project equal head rows).
+  bindings may project equal head answers).
 
 **Params:** a param's type is inferred from its anchors — the fields it binds and the
 typed terms it compares against. `ir::Value` stays owned by decision: IR literals are
@@ -627,8 +665,8 @@ the per-rule occurrence cap — rules are planned one at a time, so the
 program's breadth is bounded here and each rule's width there); and **head
 misalignment** — a rule whose find-term count differs from the head's arity,
 whose term shape (variable vs aggregate-op kind) differs at a position, or
-whose resolved positional type differs from the pinned row (rule 0's
-resolved input types pin the head's positional row; every later rule must
+whose resolved positional type differs from the pinned answer tuple (rule 0's
+resolved input types pin the head's positional tuple; every later rule must
 agree position by position — that alignment is *how* every rule derives
 the one predicate, whose signature the witness then seals from rule 0). Between the program shape and
 the per-rule roster, the **nesting boundary check** (trees deeper than
@@ -718,7 +756,7 @@ out-of-range word renders visibly wrong as `Kind(7?)` (the relation's name — t
 engine never learns host newtype names), because rendering hides nothing. The
 statement renderer (`schema/render.rs`) prints selection literals through the same
 convention, and EXPLAIN's fold lines print surviving sets as handle sets
-(`{DirectPass, JudgedPass}`) — one vocabulary of names on every surface a row id
+(`{DirectPass, JudgedPass}`) — one vocabulary of names on every surface a declaration id
 reaches. Comparison terms carry no field position, so a literal there renders by
 value; the selection form is the handle's home.
 
@@ -824,7 +862,7 @@ every rule's plan into that sink, whose seen-set spanning rules is the
 union (`40-execution.md` § the rule loop). **Plans pin the
 statistics read at prepare time and are never invalidated by writes**; stale plans are
 accepted at this scale, and re-preparation is explicit. The compensating control is
-`PreparedQuery::staleness` (`70-api.md`): the pinned per-occurrence row counts survive
+`PreparedQuery::staleness` (`70-api.md`): the pinned per-occurrence fact counts survive
 on the prepared query as a cold record, and the host — never the engine — can pull the
 drift against a snapshot's live `S` counters and decide to re-prepare; no engine-side
 threshold, trigger, or background anything exists. (Literal values are part of the

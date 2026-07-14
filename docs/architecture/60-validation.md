@@ -75,12 +75,12 @@ silently coerces everything and is the oracle-corrupting bug class:
 | Interval | two INTEGER columns (start, end) | value equality = pairwise; an `Allen` mask translates to its basics' endpoint formulas OR'd (under the query's SELECT DISTINCT); membership is the endpoint pair — fully expressible in SQL; the *judgments* over intervals are the naive model's lane |
 | String | TEXT | intern ids decoded to bytes **before** comparison, outside any timed region |
 | Bytes(N) | BLOB (fixed-length content) | never TEXT — DISTINCT distinguishes `X'41'` from `'A'`; the N raw bytes, unpadded (the word pad is bumbledb encoding, not data) |
-| closed relation (references and payload) | an ordinary mirrored table: INTEGER `id` (PRIMARY KEY — the row's declaration index) plus payload columns per this table, INSERTed from the sealed extension at mirror-build time | the extension rides with the schema DDL, never the corpus — a closed relation is never empty, so empty-store pairs carry the axioms too; closed atoms are then ordinary tables on the `SQLite` side (what makes the differential meaningful for the folds), while the ψ-subset WRITE judgments stay naive-only (the division of labor below) |
+| closed relation (references and payload) | an ordinary mirrored table: INTEGER `id` (PRIMARY KEY — the ground axiom's declaration index) plus payload columns per this table, INSERTed from the sealed extension at mirror-build time | the extension rides with the schema DDL, never the corpus — a closed relation is never empty, so empty-store pairs carry the axioms too; closed atoms are then ordinary tables on the `SQLite` side (what makes the differential meaningful for the folds), while the ψ-subset WRITE judgments stay naive-only (the division of labor below) |
 
 **Projection queries:** `SELECT DISTINCT` over the join with all find variables.
 **Rules:** one `SELECT DISTINCT` per rule joined by `UNION` — SQLite's `UNION` is
 exactly ∪ under `DISTINCT` discipline; a multi-rule *aggregate* head folds over the
-`UNION` of the rules' head-projected distinct rows (the union-fold template,
+`UNION` of the rules' head-projected distinct answers (the union-fold template,
 mirroring the rules-IR definition: per-rule dedup at head granularity, one set
 union, then the fold), while the single-rule fold domain stays the distinct full
 binding set. **The measure:** `Duration` = `(end − start)` on the two stored
@@ -102,7 +102,7 @@ ungrouped aggregates to drop the empty-input row — a documented translation ru
 not an ad-hoc comparison patch.
 
 **`Pack` is naive-only by decision.** SQLite has no coalescing aggregate — a
-relation-shaped fold (one row per (group, maximal segment)) is not a SQL fold, and
+relation-shaped fold (one answer per (group, maximal segment)) is not a SQL fold, and
 a recursive-CTE emulation would test the emulation, not the engine. The
 expressibility gate is the enumerated `Inexpressible` set (`translate::
 sqlite_expressible`): `Pack` heads plus the two dependency judgments, consumed by
@@ -114,7 +114,7 @@ the division of labor**: ψ-subset write judgments (containments into a closed
 target, `Escalation(severity) <= Severity(id | pages == true)`-shaped) are the
 naive model's alone — `SQLite` does not express commit-time CINDs, and the
 judgment kinds are already inside the enumerated set — while the naive check is
-**definitional**: σψ applied to the extension rows by value comparison on the
+**definitional**: σψ applied to the extension's ground axioms by value comparison on the
 shared `Value` sum, never the engine's compiled member set (the independence
 law). Closed *reads* are fully three-way: mirrored extension tables on the
 `SQLite` side, the seeded extension on the naive side.
@@ -275,7 +275,7 @@ window-function coalesce (order each person's distinct claim windows, cut
 islands where a start exceeds the running max end, fold each island to
 `(MIN(start), MAX(end))`) — SQLite's honest best shot at Snodgrass coalescing
 (measured faster than the recursive-CTE row walk, so the fairer opponent),
-verified row-identical against the engine's `Pack` and the naive model before
+verified answer-identical against the engine's `Pack` and the naive model before
 any timing.
 
 **Verify lanes.** The calendar corpus joins the verify pass before any timing:
@@ -287,7 +287,7 @@ arm validity, working-hours coverage — each violating exactly one statement,
 verdicts compared whole), and every family query against the brute-force
 model. The stamp digests both theories' family lists and both corpora.
 
-**The witnessed-write row** (`commit_witnessed`): `commit_single` through
+**The witnessed-write case** (`commit_witnessed`): `commit_single` through
 `Db::write_from` with a fresh snapshot witness per sample — the delta against
 `commit_single` prices the witness mechanism (a snapshot generation read plus
 one integer compare). SQLite-unpaired by decision: SQLite has no
@@ -329,7 +329,7 @@ time the emulation, not the engine.
   counts 2–4 — provably-disjoint arms (distinct closed-reference selections on one
   discriminant, with the proof visible diagnostically and the spanning union
   exercised against the oracles' plain union), overlapping arms with duplicate
-  head rows across rules (the union's
+  head answers across rules (the union's
   teeth), and the multi-rule aggregate union fold (`rules ∧ aggregate`, at least
   once per run); **the measure** in all three construct kinds — find position,
   order condition, and `Sum`/`Min`/`Max` fold (`Sum` under a duration bound, the
@@ -342,7 +342,7 @@ time the emulation, not the engine.
   interval literal the generator draws (shape literals, dressing literals, and
   interval-typed param draws alike), each rung asserted per run.
   Empty relations are covered by the verify run's **empty-store pass**: every
-  family plus a seeded randomized slice runs against a zero-row store pair each
+  family plus a seeded randomized slice runs against a zero-fact store pair each
   verify — every gate false, every scan empty, every aggregate folding nothing.
 - **The entropy seam** (`corpus_gen::rng`): every generator draw goes through
   one closed sum — `Rng::Seeded` (the bench/differential arm, the seeded
@@ -356,7 +356,7 @@ time the emulation, not the engine.
   build-store → ops → oracles iteration is milliseconds; Tiny is a
   first-class scale under the same by-construction invariants, not a
   special-cased path.
-- **The algebra oracle rows in every verify run** (the naive lane's extension):
+- **The algebra oracle cases in every verify run** (the naive lane's extension):
   multi-rule programs replayed engine-vs-naive, the naive model evaluating rules
   **directly** — the union of per-rule binding sets from the definition, sharing
   no lowering, kernel, or sweep code with the engine (the independence law: the
@@ -364,10 +364,10 @@ time the emulation, not the engine.
   depth 3**, the naive model evaluating the *input tree* while the engine
   evaluates the lowered rules — the differential is the DNF-lowering proof — with
   the cap-exceeders and vanished programs in the error-parity cases above;
-  **`Pack`** rows (grouped, global, and the multi-rule union fold) naive-only per
+  **`Pack`** answers (grouped, global, and the multi-rule union fold) naive-only per
   the expressibility gate; the **measure's rays** (`MeasureOfRay` on both sides,
-  typed, and the `Allen(DISJOINT)` ray predicate keeping the same query answering
-  rows); and the **converse-property lane**: for every generated Allen-bearing
+  typed, and the `Allen(DISJOINT)` ray predicate keeping the same query
+  answers); and the **converse-property lane**: for every generated Allen-bearing
   query, the converse twin — operands swapped, mask conversed per leaf — must
   produce the identical result set on the engine (`Allen(a, b, m) ≡
   Allen(b, a, converse(m))`, the coordinate system's own theorem, quantified over

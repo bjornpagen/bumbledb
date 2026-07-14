@@ -27,7 +27,7 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
-use bumbledb::{BindValue, ConditionTree, Db, PreparedQuery, ResultBuffer, Snapshot};
+use bumbledb::{Answers, BindValue, ConditionTree, Db, PreparedQuery, Snapshot};
 
 mod common;
 
@@ -572,7 +572,7 @@ fn gate(
     snap: &Snapshot<'_, SchemaDescriptor>,
     param_set: &[Vec<BindValue<'_>>],
 ) {
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     // N = 8 warmup runs over the fixed param set.
     for _ in 0..8 {
         for params in param_set {
@@ -613,7 +613,7 @@ fn silent(
     prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
     snap: &Snapshot<'_, SchemaDescriptor>,
     params: &[BindValue<'_>],
-    out: &mut ResultBuffer,
+    out: &mut Answers,
 ) {
     alloc_counter::reset();
     snap.execute(prepared, params, out).expect(label);
@@ -660,7 +660,7 @@ fn escalation_gate(
     snap: &Snapshot<'_, SchemaDescriptor>,
     params: &[Vec<BindValue<'_>>],
 ) {
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     // Warm the coldest parameter to its fixpoint — first-execution
     // allocations are sanctioned and stay outside the measured window.
     for _ in 0..8 {
@@ -816,7 +816,7 @@ fn zero_warm_allocation_gate() {
         // Warmup convergence: allocation is finite — by the third warmup
         // round a run allocates nothing.
         let mut fresh = db.prepare(&join_query())?;
-        let mut out = ResultBuffer::new();
+        let mut out = Answers::new();
         let mut per_round = Vec::new();
         for _ in 0..3 {
             alloc_counter::reset();

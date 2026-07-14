@@ -462,7 +462,7 @@ fn run_key_probe(
         &mut crate::exec::run::NoopCounters,
     )
     .expect("execute");
-    sink.rows().map(<[u64]>::to_vec).collect()
+    sink.answers().map(<[u64]>::to_vec).collect()
 }
 
 #[test]
@@ -702,7 +702,7 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
         &mut crate::exec::run::NoopCounters,
     )
     .expect("execute");
-    assert_eq!(sink.into_rows().expect("rows"), vec![vec![1]]);
+    assert_eq!(sink.into_answers().expect("rows"), vec![vec![1]]);
 }
 
 // No image build can occur on the key-probe path: `execute_key_probe` takes no

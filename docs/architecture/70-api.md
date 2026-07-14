@@ -71,14 +71,14 @@ bumbledb::schema! {
 
   `closed` is a leading keyword on the `relation` production; `as NewType` is
   **required** (the handle needs a host type); the column block is optional;
-  the `= { … }` extension block is required and non-empty. Each row is
+  the `= { … }` extension block is required and non-empty. Each ground axiom is
   `Handle` or `Handle { column: literal, … }` with every declared column
   present exactly once — duplicate handles, missing/extra/duplicate columns,
-  and type-mismatched literals are expansion errors naming the offender. Row
+  and type-mismatched literals are expansion errors naming the offender. Ground-axiom
   literals ride the selection-literal machine (same typing, same errors). In
   statement selections a bare handle is legal on any field whose newtype is a
   closed relation's handle newtype (`| status == Frozen`), resolving to the
-  handle's declaration-order row id at expansion exactly as field names
+  handle's declaration-order id at expansion exactly as field names
   resolve to ordinals; a handle on any other field is an expansion error.
 
   **The emission per closed relation:** the **host enum** (`pub enum Status {
@@ -158,7 +158,7 @@ The theory renders a **manifest** (`Theory::manifest()` → `schema::Manifest`):
 name → id pairing as a plain Rust value straight off the descriptor — relations and
 fields with their ids stated explicitly, each field's structural type, and each
 closed relation's **extension table**
-(relation → handle → declaration-order row id → (column, value) pairs), so foreign
+(relation → handle → declaration-order id → (column, value) pairs), so foreign
 surfaces see the vocabulary without touching Rust. A foreign host gets the same
 numbers as data. No serde anywhere (the dependency law): a downstream binding
 serializes the value however it likes; the engine never learns the wire format.
@@ -197,7 +197,7 @@ Both are emission; the grammar is untouched.
   returns `ForeignPreparedQuery` on a foreign snapshot (plan, statistics, and view
   memo all belong to the preparing environment).
 - `prepared.staleness(&snap)` — the plan-drift signal, the pin-at-prepare decision's
-  compensating control (`20-query-ir.md`): per participating occurrence, the row
+  compensating control (`20-query-ir.md`): per participating occurrence, the fact
   count the plan was costed with against the snapshot's live `S` counter (one O(1)
   get each, ≤ 20 by the roster cap), each ratio
   `max(live, pinned) / max(1, min(live, pinned))` so shrink and growth both read as
@@ -211,7 +211,7 @@ Both are emission; the grammar is untouched.
   warm-path call. Negated and grounding-eliminated occurrences earn no statistics read
   at prepare and so carry no pin; key probes pin nothing. The stats/EXPLAIN
   surface (`Snapshot::profile`) carries the same pin record per occurrence —
-  "estimated from (pinned rows at prepare)" — so a drifted plan is visible in one
+  "estimated from (pinned facts at prepare)" — so a drifted plan is visible in one
   read of the existing report.
 - `db.write(|tx| ...)` — the single writer; commits on `Ok`, aborts on `Err`/panic.
   Non-reentrant: a nested `write` from within a write closure on the same thread
@@ -220,7 +220,7 @@ Both are emission; the grammar is untouched.
   Write operations: typed `alloc::<NewType>()` via the generated `Fresh` newtypes
   (untyped: `alloc_at(FreshField) -> u64`, taking the witness
   `Schema::fresh_field(relation, field)` resolves — see the ETL section) — fresh
-  minting, insert new rows
+  minting, insert new facts
   without reading a max (`10-data-model.md`); `insert(&fact) -> bool` (changed-state
   report); `delete(&fact) -> bool`; `_dyn` forms of both for ETL tooling.
   `FreshExhausted` raises eagerly at the `alloc` call (the sequence state is knowable
@@ -321,7 +321,7 @@ proposition the commit checks in one integer compare.
 - **The three idioms**, each query → compute → `write_from` → host retry:
   - *Update-where:* query the matching facts on a snapshot, compute their
     replacements, `write_from(&snap)` doing `delete(old); insert(new)` per fact.
-  - *Insert-select:* query the source rows, compute the derived facts,
+  - *Insert-select:* query the source answers, compute the derived facts,
     `write_from(&snap)` inserting them — the data-modifying-CTE shapes with the
     premises witnessed instead of locked.
   - *Derived-relation maintenance:* re-run the deriving query, diff against the
@@ -366,11 +366,11 @@ proposition the commit checks in one integer compare.
   cross-schema `RelationId`-aliasing hole that a width mismatch only caught by
   luck. Inference hides the parameter at call sites; same-schema/different-
   environment confusion stays a runtime check (`ForeignPreparedQuery`).
-- Query results: one concrete `ResultBuffer` (decided: columnar cells + a byte heap,
-  no caller-buffer trait) — rows of decoded values (String decoded from intern
+- Query answers: one concrete `Answers` carrier (decided: columnar cells + a byte heap,
+  no caller-buffer trait) — answers of decoded values (String decoded from intern
   ids at materialization, into the buffer's byte heap; `bytes<N>` re-assembled
   from its inline slot words with no dictionary touch; intervals as start/end word
-  pairs), a `rows()` iterator, and column metadata via
+  pairs), an `answers()` iterator, and column metadata via
   `PreparedQuery::predicate()` — the predicate the query defines
   (`20-query-ir.md` § the query shape) is the **buffer-typing authority**:
   one signature column per head position, result type plus producing fold,
@@ -378,7 +378,7 @@ proposition the commit checks in one integer compare.
   typeless: stamping owned types per execution would allocate on the warm
   path). Contract on `Err`: the
   buffer's contents are unspecified — ignore `out` when `execute` errors; the
-  snapshot stays usable. Results are **sets**: unordered; the host sorts. Zero-alloc
+  snapshot stays usable. Answers form a **set**: unordered; the host sorts. Zero-alloc
   path: caller-provided reusable buffer (`40-execution.md`); convenience path
   allocates a fresh buffer.
 - Params are supplied positionally by `ParamId` at execution — scalars as
@@ -431,7 +431,7 @@ are typed `FactShape` errors (decided: ETL input is data, not code — no panics
 import path). Interval fields accept only the checked `Interval<T>` carried by
 `Value`, so `start ≥ end` cannot enter this path. Explicit fresh values preserve
 identity (high-water advances past them). Untyped fresh minting is
-resolve-once/mint-per-row:
+resolve-once/mint-per-fact:
 `Schema::fresh_field(relation, field) -> Result<FreshField, FactShapeError>`
 validates the ids and the `Fresh` generation once and returns a `Copy` witness
 (private fields, one construction site — the type is the proof);
@@ -472,7 +472,7 @@ names — so roster errors print beside the query they reject.
   `10-data-model.md` § derived relations.
 - The outer-join merge: run the positive and the negated query, concatenate — the
   sanctioned decomposition (`20-query-ir.md`), a two-line host function.
-- Zero-default aggregates: the host maps an absent aggregate row to 0 where the
+- Zero-default aggregates: the host maps an absent aggregate answer to 0 where the
   domain wants it (`20-query-ir.md` empty-set semantics).
 - Downstream query sugar — in any language — lowers to IR data; the engine never
   knows it exists (the permanent surface ruling, `20-query-ir.md`; the
@@ -500,14 +500,14 @@ errors are the portable half of the API.
 
 ## OPEN (this doc's honest list)
 
-Resolved by ruling or implementation (recorded above): the `ResultBuffer` shape;
+Resolved by ruling or implementation (recorded above): the `Answers` shape;
 the dynamic-fact ETL form; EXPLAIN's surface (`snap.explain(&mut prepared, params)
--> (ResultBuffer, String)` — ANALYZE semantics, rendered-text report); WriteTx point
+-> (Answers, String)` — ANALYZE semantics, rendered-text report); WriteTx point
 reads (decided).
 
 Still open:
 
-- Ordering/limit conveniences on results (host-side; shape undecided).
+- Ordering/limit conveniences on answers (host-side; shape undecided).
 - The typed signature for multi-key `tx.get` disambiguation when a relation carries
   several key FDs over the same newtype (the `_dyn` form is unambiguous today;
   the typed sugar waits for real usage).

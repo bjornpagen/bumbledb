@@ -59,7 +59,7 @@ fn constant_group_batches_fold_once_per_run() {
                 "one probe per group run, memoized across batches"
             );
         }
-        let mut rows = sink.into_rows().expect("in range");
+        let mut rows = sink.into_answers().expect("in range");
         rows.sort_unstable();
         // Per account: Sum = -150, Count = 300, Min = -150, Max = 149.
         assert_eq!(rows.len(), 8, "batch {batch} distinct {distinct}");
@@ -127,7 +127,7 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let mut rows = sink.into_rows().expect("in range");
+        let mut rows = sink.into_answers().expect("in range");
         rows.sort_unstable();
         assert_eq!(
             rows,
@@ -184,7 +184,7 @@ fn constant_over_slot_folds_value_times_count() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let err = sink.into_rows().unwrap_err();
+        let err = sink.into_answers().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -209,7 +209,7 @@ fn constant_over_slot_folds_value_times_count() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let rows = sink.into_rows().expect("in range");
+        let rows = sink.into_answers().expect("in range");
         assert_eq!(rows, vec![vec![7, 21]], "distinct {distinct}");
     }
 }
@@ -260,7 +260,7 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
             .expect("execute");
         // Account 8's Sum overflows: the error is deterministic and
         // carries the find index, at every batch size.
-        let err = sink.into_rows().unwrap_err();
+        let err = sink.into_answers().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -286,7 +286,7 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let mut rows = sink.into_rows().expect("in range");
+        let mut rows = sink.into_answers().expect("in range");
         rows.sort_unstable();
         assert_eq!(
             rows,
@@ -339,7 +339,7 @@ fn count_distinct_collapses_multiplicities_per_group() {
                     &mut crate::exec::run::NoopCounters,
                 )
                 .expect("execute");
-            let mut rows = sink.into_rows().expect("rows");
+            let mut rows = sink.into_answers().expect("rows");
             rows.sort_unstable();
             assert_eq!(
                 rows,
@@ -390,7 +390,7 @@ fn elision_skips_the_seen_set_but_never_the_value_sets() {
         2,
         "3 bindings folded, 2 distinct amounts held — the value set dedups"
     );
-    let rows = sink.into_rows().expect("rows");
+    let rows = sink.into_answers().expect("rows");
     assert_eq!(rows, vec![vec![7, 2]]);
 }
 
@@ -432,7 +432,7 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let mut rows = sink.into_rows().expect("rows");
+        let mut rows = sink.into_answers().expect("rows");
         rows.sort_unstable();
         assert_eq!(
             rows,
@@ -453,7 +453,7 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let mut rows = sink.into_rows().expect("rows");
+        let mut rows = sink.into_answers().expect("rows");
         rows.sort_unstable();
         assert_eq!(
             rows,
@@ -474,7 +474,7 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let rows = sink.into_rows().expect("rows");
+        let rows = sink.into_answers().expect("rows");
         assert_eq!(
             rows,
             vec![vec![i64_to_word(-1)]],
@@ -517,7 +517,7 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let mut rows = sink.into_rows().expect("rows");
+        let mut rows = sink.into_answers().expect("rows");
         rows.sort_unstable();
         assert_eq!(
             rows,
@@ -525,7 +525,7 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
             "batch {batch}: a tie yields every attaining row"
         );
 
-        // Equal projected rows: the tie collapses to one row —
+        // Equal projected answers: the tie collapses to one answer —
         // key-also-projected (the carry IS the key variable).
         let mut colts = colts_for(&plan, &views);
         let finds = vec![var_spec(&plan, 1), arg_spec(&plan, 2, 2, true)];
@@ -539,7 +539,7 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let mut rows = sink.into_rows().expect("rows");
+        let mut rows = sink.into_answers().expect("rows");
         rows.sort_unstable();
         assert_eq!(
             rows,
@@ -566,7 +566,7 @@ fn arg_ties_keep_every_attaining_row_as_a_set() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let mut rows = sink.into_rows().expect("rows");
+        let mut rows = sink.into_answers().expect("rows");
         rows.sort_unstable();
         assert_eq!(
             rows,
@@ -732,7 +732,7 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
         "the cross-layout duplicate was absorbed by the head-shaped key"
     );
 
-    let rows = sink.into_rows().expect("in range");
+    let rows = sink.into_answers().expect("in range");
     assert_eq!(
         rows,
         vec![vec![7, 650, 3]],

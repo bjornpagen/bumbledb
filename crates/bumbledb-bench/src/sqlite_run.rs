@@ -4,7 +4,7 @@
 //! as a strawman.
 //!
 //! Symmetry argument for the timed path: bumbledb materializes every row
-//! into a `ResultBuffer`; the `SQLite` side does typed `get_ref` reads on
+//! into a `Answers`; the `SQLite` side does typed `get_ref` reads on
 //! every column of every row (a full drain — no lazy-cursor discounts).
 //! Both engines touch every value; decoding into `compare::Owned` is
 //! verify's job, never the timed path's.

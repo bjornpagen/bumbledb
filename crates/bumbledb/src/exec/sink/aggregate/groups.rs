@@ -132,10 +132,10 @@ impl AggregateSink {
         let arg = self.arg.expect("callers check");
         self.arg_best
             .push(if arg.max { u64::MIN } else { u64::MAX });
-        if group_idx < self.arg_rows.len() {
-            self.arg_rows[group_idx].clear();
+        if group_idx < self.arg_answers.len() {
+            self.arg_answers[group_idx].clear();
         } else {
-            self.arg_rows.push(WordMap::new(self.carry_words));
+            self.arg_answers.push(WordMap::new(self.carry_words));
         }
     }
 }

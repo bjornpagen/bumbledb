@@ -262,7 +262,7 @@ idiom; *SELECT FOR UPDATE / row locks / SERIALIZABLE retry* → the generation w
 (snapshot-witnessed `write_from`) plus WriteTx point reads under final-state
 judgment — locks protect what you remembered to lock; the witness protects
 everything the snapshot saw; *enum* → closed relation (a vocabulary is a relation
-whose rows are ground axioms; the type died when the schema macro began emitting
+whose elements are ground axioms; the type died when the schema macro began emitting
 closed-relation handles, as recorded by `10-data-model.md`'s obituary, and the
 value-type roster is six).
 

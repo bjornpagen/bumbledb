@@ -22,7 +22,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bumbledb::{with_grounding_disabled, with_fold_disabled};
+use bumbledb::{with_fold_disabled, with_grounding_disabled};
 use bumbledb_bench::corpus_gen::Rng;
 use bumbledb_bench::families;
 use bumbledb_bench::querygen;

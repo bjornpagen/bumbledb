@@ -1,4 +1,4 @@
-use super::{BindValue, PreparedQuery, PreparedRule, Program, ResultBuffer};
+use super::{Answers, BindValue, PreparedQuery, PreparedRule, Program};
 
 use crate::api::stats::{ExecutionStats, KeyProbeStats, RuleStats};
 use crate::error::Result;
@@ -11,7 +11,7 @@ use super::finalize::finalize;
 
 impl<S> PreparedQuery<'_, S> {
     /// EXPLAIN (docs/architecture/40-execution.md): executes the query with counting instrumentation
-    /// (ANALYZE semantics) and returns the rows alongside the rendered
+    /// (ANALYZE semantics) and returns the answers alongside the rendered
     /// report — per-rule plans and node stats under the head-level union
     /// accounting.
     ///
@@ -27,7 +27,7 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         params: &[BindValue<'_>],
-    ) -> Result<(ResultBuffer, String)> {
+    ) -> Result<(Answers, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
         let report = Report {
             rules: match &self.program {
@@ -65,7 +65,7 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// ANALYZE with structured output: executes with counting
-    /// instrumentation and returns the rows alongside [`ExecutionStats`]
+    /// instrumentation and returns the answers alongside [`ExecutionStats`]
     /// — the data `explain` renders. Allocation-sanctioned exactly like
     /// `explain`.
     ///
@@ -81,9 +81,9 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         params: &[BindValue<'_>],
-    ) -> Result<(ResultBuffer, ExecutionStats)> {
+    ) -> Result<(Answers, ExecutionStats)> {
         self.check_snapshot(txn)?;
-        let mut out = ResultBuffer::new();
+        let mut out = Answers::new();
         out.arity = self.predicate.columns.len();
         // The statically-empty program mirrors `run_bound`'s
         // short-circuit: bind (errors surface), then nothing runs and
@@ -172,7 +172,7 @@ impl<S> PreparedQuery<'_, S> {
         if ran {
             finalize(
                 &mut self.sink,
-                &mut self.row_scratch,
+                &mut self.answer_scratch,
                 &mut self.resolve_memo,
                 txn,
                 &self.predicate.columns,

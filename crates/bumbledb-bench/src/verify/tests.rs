@@ -78,7 +78,10 @@ fn divergence_by_error_is_a_bundle_not_a_panic() {
     let theirs = std::fs::read_to_string(failure.bundles[0].join("theirs.txt")).expect("artifact");
     assert!(theirs.starts_with("ERROR:"), "{theirs}");
     let ours = std::fs::read_to_string(failure.bundles[0].join("ours.txt")).expect("artifact");
-    assert!(ours.contains("row(s)"), "the engine's rows render: {ours}");
+    assert!(
+        ours.contains("answer(s)"),
+        "the engine's answers render: {ours}"
+    );
     let mismatch =
         std::fs::read_to_string(failure.bundles[0].join("mismatch.txt")).expect("artifact");
     assert!(mismatch.contains("divergence by error"), "{mismatch}");

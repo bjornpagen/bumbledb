@@ -106,7 +106,7 @@ enum Shape {
     DuWalk,
     /// Multi-rule programs (`shapes_rules.rs`): rule counts 2–4,
     /// overlapping and provably-disjoint arm sets (DU-arm unions),
-    /// duplicate head rows across
+    /// duplicate head answers across
     /// rules, and the rules ∧ aggregate union fold.
     Rules,
     /// The measure over the U64 window lane: `Duration` in a find
@@ -256,7 +256,7 @@ enum RulesVariant {
     /// Provably-disjoint arms: one relation, distinct vocabulary selections on
     /// the discriminant field.
     Disjoint,
-    /// Overlapping arms with duplicate head rows across rules (the
+    /// Overlapping arms with duplicate head answers across rules (the
     /// union's teeth) — including the DU twin (`JournalEntry` import
     /// arm vs `ImportBatch`, equal denotations by the `==` statement).
     Overlap,

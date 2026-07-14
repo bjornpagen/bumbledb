@@ -61,7 +61,7 @@ operator), and point membership** (below) — never `Lt`-family order or
 `Min`/`Max`: the value order that
 exists (lexicographic by start) is an encoding accident, and offering it would invite
 queries that mean intersection and say "less than". Everything else is equality-only:
-a closed reference's row-id order is a declaration-order accident, not semantics
+a closed reference's declaration-id order is a declaration-order accident, not semantics
 (order on it is refused exactly as the enum's ordinal order was); String intern ids
 are meaningless to order; Bool ordering is noise. **`bytes<N>` is identity-only by
 refusal** (`Eq`/`Ne` and membership; order comparisons and `Min`/`Max` are typed
@@ -212,7 +212,7 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
 - A `Fresh` field must be `U64`. The database mints its values: monotonic per
   (relation, field), never re-issuing any value observable in a committed state;
   aborted transactions don't advance the committed sequence.
-- **The usage pattern this exists for** — insert a new row without ever reading a max:
+- **The usage pattern this exists for** — insert a new fact without ever reading a max:
 
   ```rust
   db.write(|tx| {
@@ -280,14 +280,14 @@ check.
 
 A **closed relation** declares its extension in the schema:
 `RelationDescriptor { name, fields, extension: Option<Extension> }`, where
-`Some(rows)` is the kind — there is no relation-kind enum; the option *is* it. Its
-rows are **ground axioms** — atomic sentences of the theory. A schema was
+`Some(axioms)` is the kind — there is no relation-kind enum; the option *is* it. Its
+elements are **ground axioms** — atomic sentences of the theory. A schema was
 *signature + axioms* where every axiom was a universally quantified statement; a
 closed relation gives the theory constants, and vocabularies stop being a type to
 become what they always were relationally: unary-plus-payload relations with a
 fixed extension.
 
-- **Identity is the handle.** Each row declares a handle (`Usd`, `Q1`); its row id
+- **Identity is the handle.** Each ground axiom declares a handle (`Usd`, `Q1`); its id
   is the declaration index — exactly the declaration-order rule relations, fields,
   and statements already obey. The handle is NOT a column: the sealed relation
   opens with a synthetic first field (`id`, U64), so determinants, statements, and
@@ -318,14 +318,14 @@ fixed extension.
   ray `[s, ∞)` says the theory's constant is still running, and a still-running
   span is policy, not an intrinsic property (the ray refusal,
   recorded here; rays stay honest values in ordinary relations);
-  1..=256 rows (an empty extension is a vocabulary of nothing — write no
+  1..=256 ground axioms (an empty extension is a vocabulary of nothing — write no
   relation; a larger one is policy data wearing a vocabulary costume). Values are
-  canonically encoded ONCE, at validate — the sealed rows carry fact bytes and
+  canonically encoded ONCE, at validate — the sealed ground axioms carry fact bytes and
   are never re-encoded (the staging law applied to the feature itself).
 - **Writes are refused.** Any delta operation naming a closed relation —
   insert/delete, typed or dynamic, `bulk_load`, `alloc` — is the typed
   `ClosedRelationWrite`, checked at the write-surface entry before any encoding
-  runs. The store holds no rows for a closed relation, and the sweeper
+  runs. The store holds no facts for a closed relation, and the sweeper
   (`verify_store`) convicts any `F`/`M`/`U`/`R` entry naming one as corruption.
 
 **The intrinsic-vs-policy law, normative.** Intrinsic properties of a vocabulary
@@ -339,11 +339,18 @@ ordinary relation (the open-extension refusal, recorded here).
 
 ## Relations are sets of facts; the fact is its own identity
 
+**Language-law glossary.** A **fact** is one stored full tuple; its identity is its
+canonical bytes (§ fact identity below). An **answer** is one output tuple of a
+query—the Datalog word used throughout the API and query chapters. A **ground
+axiom** is one sealed element of a closed relation. A **tuple** is the mathematical
+product used in notation. “Row” is not a logical-model synonym for any of these; it
+survives only for physical layout/stride and for SQLite's external row concept.
+
 - Every relation is a set of full, typed facts. Canonical membership is implicit for
   every relation; storage's row ids never surface into the logical model.
 - **There is no primary key, and this is doctrine, not omission.** "Primary key" is a
-  bag-semantics crutch: when duplicate rows are possible, some column set must be
-  *appointed* to give rows identity. Here the fact is its own identity — identity is
+  bag-semantics crutch: when duplicate records are possible, some column set must be
+  *appointed* to give records identity. Here the fact is its own identity — identity is
   the canonical bytes (below). Keys (functional dependencies, `30-dependencies.md`)
   are invariants a relation *satisfies*, plural and unprivileged; an inclusion targets
   whichever key it names, and fresh is a value-minting convenience that happens to
@@ -357,7 +364,7 @@ ordinary relation (the open-extension refusal, recorded here).
   behavior for it because it falls out of the representation.
 
 **Decision: no primary keys.** **Alternative:** entity relations with appointed PKs
-and whole-row `replace`. **Why it lost:** one identity concept (the fact), one mutation
+and whole-fact `replace`. **Why it lost:** one identity concept (the fact), one mutation
 algebra (insert/delete), no PK-vs-key duality. Consequences now explicit: mutating a
 referenced fact needs dependency-timing rules (commit-time, against the final state —
 `30-dependencies.md`) and fresh re-supply (specified above). **Reverses if:** the
@@ -481,7 +488,7 @@ declaration order — for each: name and fields in declaration order (name, stru
 type description — including the element type for intervals — and generation
 flag; the enum's retired type tag is never reissued), then the closedness tag (ordinary = 0;
 closed = 1 followed by the ground axioms in declaration order — handle, then the
-row's canonical fact bytes); then the **dependency statements in
+fact's canonical bytes); then the **dependency statements in
 materialized order** — for each: the judgment form (functionality or containment,
 with direction count) and both sides' (relation id, projection field-id list in
 statement order, selection list as (field id, literal value) pairs in statement
@@ -506,7 +513,7 @@ never, absent a second consumer.
 ## The modeling discipline (BCNF by discipline, temporality by type)
 
 Natural n-ary relations for domain facts; natural edge relations (`OrgParent(child,
-parent)`) welcome; closed relations for closed domains instead of two-row
+parent)`) welcome; closed relations for closed domains instead of two-fact
 mutable lookup tables;
 **intervals for validity, sessions, periods, and lifetimes** instead of
 start/end column pairs or status-plus-nullable-timestamp machines; optional
@@ -600,7 +607,7 @@ the witness — the derived relation cannot commit against sources it didn't
 actually read (`GenerationMoved` otherwise).
 
 **The honest limit: statements prove presence and topology, never arithmetic
-agreement.** Containment proves every derived row justified and — reversed —
+agreement.** Containment proves every derived fact justified and — reversed —
 every source represented; keys prove shape; selections pin arms; pointwise
 lifting proves coverage. What no statement can say is that a *value* equals a
 *computation* over its sources: the calendar's `Attendance(id | rsvp ==

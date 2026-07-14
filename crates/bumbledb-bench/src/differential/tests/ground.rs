@@ -16,7 +16,7 @@ use bumbledb::{
     AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId, with_grounding_disabled,
 };
 
-use crate::differential::{Rows, engine_query};
+use crate::differential::{Answers, engine_query};
 use crate::fixture::{TempDir, atom, field, fresh, side, var};
 use crate::naive::{Delta, NaiveDb};
 
@@ -62,10 +62,10 @@ fn eliminated(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::Elimina
 fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: &str) {
     let on = engine_query(db, query, &[]);
     let off = with_grounding_disabled(|| engine_query(db, query, &[]));
-    let model = Rows::Ok(naive.query(query, &[]).expect("the model executes"));
+    let model = Answers::Ok(naive.query(query, &[]).expect("the model executes"));
     assert_eq!(on, off, "grounding-on and ground-off disagree ({fallen})");
     assert_eq!(on, model, "engine and model disagree ({fallen})");
-    let Rows::Ok(rows) = &on else {
+    let Answers::Ok(rows) = &on else {
         unreachable!("fixture queries never overflow")
     };
     assert!(!rows.is_empty(), "the fixture produces rows ({fallen})");
@@ -310,6 +310,6 @@ fn the_missing_phi_near_miss_refuses_and_still_agrees() {
         "without φ the grounding must refuse"
     );
     let engine = engine_query(&db, &query, &[]);
-    let model = Rows::Ok(naive.query(&query, &[]).expect("the model executes"));
+    let model = Answers::Ok(naive.query(&query, &[]).expect("the model executes"));
     assert_eq!(engine, model, "engine and model disagree on the near-miss");
 }

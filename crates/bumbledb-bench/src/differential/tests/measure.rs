@@ -5,7 +5,7 @@
 //! (`[x, x+1)`, `[MIN, MAX−1)`), the `Sum(Duration)` overflow verdict,
 //! and the ray: both oracles raise `MeasureOfRay` on the unfiltered query
 //! while the `Allen(DISJOINT`-from-rays`)` filter keeps the same query
-//! answering rows.
+//! answers.
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
@@ -300,7 +300,7 @@ fn measure_queries_agree_with_the_naive_model() {
 /// `u64::MAX` is the overflow verdict on both oracles (the boundary
 /// interval `[MIN, MAX−1)` twice), and a ray reaching `Duration` is
 /// `MeasureOfRay` on both — while the `Allen(DISJOINT`-from-rays`)`
-/// filter keeps the same query answering rows on both.
+/// filter keeps the same query answers on both.
 #[test]
 fn measure_error_verdicts_agree_with_the_naive_model() {
     let descriptor = schema();

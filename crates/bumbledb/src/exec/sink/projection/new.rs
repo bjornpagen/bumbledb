@@ -87,7 +87,7 @@ impl ProjectionSink {
 
     /// The distinct projected tuples, unordered (results are sets; the
     /// host sorts).
-    pub fn rows(&self) -> impl Iterator<Item = &[u64]> {
+    pub fn answers(&self) -> impl Iterator<Item = &[u64]> {
         self.seen.iter().map(|(key, ())| key)
     }
 

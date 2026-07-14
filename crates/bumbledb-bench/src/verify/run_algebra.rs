@@ -4,7 +4,7 @@
 //! - **Rules**: multi-rule programs replayed engine-vs-naive — the
 //!   naive model evaluates the rules *directly* (union of per-rule
 //!   binding sets, no engine sink mechanics) — disjoint vocabulary-selected
-//!   arms, overlapping arms with duplicate head rows,
+//!   arms, overlapping arms with duplicate head answers,
 //!   and the multi-rule aggregate union fold.
 //! - **DNF**: seeded random predicate trees to depth 3 — the naive
 //!   model evaluates the *input tree*; the engine evaluates the lowered
@@ -16,8 +16,8 @@
 //!   silently dropped.
 //! - **The measure's rays**: `Duration` over the ray-bearing mandate
 //!   corpus — `MeasureOfRay` on both sides (typed identity through the
-//!   differential runner's `Rows` verdict), and the `Allen(DISJOINT)`
-//!   ray filter keeping the same query answering rows.
+//!   differential runner's `Answers` verdict), and the `Allen(DISJOINT)`
+//!   ray filter keeping the same query answers.
 //! - **Error parity** ([`error_parity`]): cap-exceeding DNF, the
 //!   vanished program (every disjunct empty), and the vacuous masks
 //!   (EMPTY and FULL) — the engine's typed validation verdict compared
@@ -294,7 +294,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
     // The measure over the ray-bearing corpus (even accounts carry a
     // `[s, ∞)` segment by construction): unfiltered, both sides raise
     // `MeasureOfRay` — the typed verdict compared whole by the
-    // differential runner; filtered by the ray probe, both answer rows.
+    // differential runner; filtered by the ray probe, both answers.
     let ray_filter = leaf(
         CmpOp::Allen {
             mask: MaskTerm::Literal(AllenMask::DISJOINT),

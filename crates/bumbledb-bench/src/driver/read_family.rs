@@ -1,4 +1,4 @@
-use bumbledb::{Db, Query, ResultBuffer};
+use bumbledb::{Answers, Db, Query};
 
 use crate::calendar;
 use crate::families::{Draw, Kind, has_sets, param_args, scalar_values, set_bindings};
@@ -132,7 +132,7 @@ impl BenchRun<'_> {
             .collect();
 
         let mut rotation = Rotation::new(sets.clone());
-        let mut buffer = ResultBuffer::new();
+        let mut buffer = Answers::new();
         let mut run_ours = move |prepared: &mut bumbledb::PreparedQuery<'_, S>| {
             let args = param_args(rotation.next_set());
             db.read(|snap| snap.execute_args(prepared, &args, &mut buffer))

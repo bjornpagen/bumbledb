@@ -110,8 +110,8 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
             &mut crate::exec::run::NoopCounters,
         )
         .expect("execute");
-    let mut a = elided.into_rows().expect("rows");
-    let mut b = checked.into_rows().expect("rows");
+    let mut a = elided.into_answers().expect("rows");
+    let mut b = checked.into_answers().expect("rows");
     a.sort_unstable();
     b.sort_unstable();
     assert_eq!(a, b);
@@ -163,7 +163,7 @@ fn sum_is_order_independent_near_the_boundary() {
             bindings.set(0, i64_to_word(values[idx]));
             assert_eq!(sink.emit(&bindings), Flow::Continue);
         }
-        let rows = sink.into_rows().expect("in range");
+        let rows = sink.into_answers().expect("in range");
         assert_eq!(rows, vec![vec![i64_to_word(i64::MAX - 1)]]);
     }
     for order in [[0usize, 1], [1, 0]] {
@@ -175,7 +175,7 @@ fn sum_is_order_independent_near_the_boundary() {
             bindings.set(0, i64_to_word(values[idx]));
             sink.emit(&bindings);
         }
-        let err = sink.into_rows().unwrap_err();
+        let err = sink.into_answers().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -212,7 +212,7 @@ fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
         bindings.set(0, i64_to_word(v));
         sink.emit(&bindings);
     }
-    let rows = sink.into_rows().expect("rows");
+    let rows = sink.into_answers().expect("rows");
     assert_eq!(rows, vec![vec![i64_to_word(-100), i64_to_word(42)]]);
 }
 
@@ -236,6 +236,6 @@ fn arg_keys_honor_logical_i64_order_across_the_sign_boundary() {
         bindings.set(1, carry);
         sink.emit(&bindings);
     }
-    let rows = sink.into_rows().expect("rows");
+    let rows = sink.into_answers().expect("rows");
     assert_eq!(rows, vec![vec![20]], "key 3 is the logical maximum");
 }

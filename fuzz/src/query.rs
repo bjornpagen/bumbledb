@@ -231,6 +231,8 @@ fn validation_variant(rejection: &ValidationError) -> &'static str {
         ValidationError::IllegalComparison { .. } => "IllegalComparison",
         ValidationError::OrderComparisonOnInterval { .. } => "OrderComparisonOnInterval",
         ValidationError::OrderComparisonOnFixedBytes { .. } => "OrderComparisonOnFixedBytes",
+        ValidationError::OrderComparisonOnString { .. } => "OrderComparisonOnString",
+        ValidationError::OrderComparisonOnBool { .. } => "OrderComparisonOnBool",
         ValidationError::ConstantComparison { .. } => "ConstantComparison",
         ValidationError::SelfComparison { .. } => "SelfComparison",
         ValidationError::ComparisonPointLiteralAtCeiling { .. } => {

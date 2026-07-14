@@ -1,4 +1,4 @@
-use bumbledb::{Db, Interval, ResultBuffer};
+use bumbledb::{Answers, Db, Interval};
 
 use crate::calendar::corpus_gen::{CAL_BASE, CAL_HORIZON, CalSizes, chain, work_chain};
 use crate::calendar::{Scheduling, corpus, families, ids, schema};
@@ -199,7 +199,7 @@ fn every_family_has_witnesses_on_the_unit_corpus() {
         let mut prepared = db.prepare(&query).expect("prepare");
         let draw = families::unit_draw(family.name, CFG.seed, &sizes);
         let args = param_args(&draw);
-        let mut buffer = ResultBuffer::new();
+        let mut buffer = Answers::new();
         db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
             .expect("execute");
         assert!(
@@ -238,10 +238,10 @@ fn the_hand_coalesce_matches_pack() {
         .collect();
     let draw = families::unit_draw("free_busy", CFG.seed, &sizes);
     let args = param_args(&draw);
-    let mut buffer = ResultBuffer::new();
+    let mut buffer = Answers::new();
     db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
         .expect("execute");
-    let ours = crate::compare::from_buffer(&buffer, &types);
+    let ours = crate::compare::from_answers(&buffer, &types);
 
     let translated = family.sql_for(&query, &draw).expect("hand SQL");
     let mut stmt = conn.prepare(&translated.sql).expect("prepare oracle");

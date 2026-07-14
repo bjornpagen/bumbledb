@@ -63,19 +63,19 @@ fn count_distinct_collapses_multiplicities_per_group_and_over_strings() {
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
-    let mut rows: Vec<(u64, u64, u64)> = (0..out.len())
+    let mut answers: Vec<(u64, u64, u64)> = (0..out.len())
         .map(
-            |row| match (out.get(row, 0), out.get(row, 1), out.get(row, 2)) {
-                (ResultValue::U64(a), ResultValue::U64(n), ResultValue::U64(m)) => (a, n, m),
-                other => panic!("all-U64 row: {other:?}"),
+            |answer| match (out.get(answer, 0), out.get(answer, 1), out.get(answer, 2)) {
+                (AnswerValue::U64(a), AnswerValue::U64(n), AnswerValue::U64(m)) => (a, n, m),
+                other => panic!("all-U64 answer: {other:?}"),
             },
         )
         .collect();
-    rows.sort_unstable();
+    answers.sort_unstable();
     // Account 3: 3 postings, 2 distinct amounts, 2 distinct memos;
     // account 7: 1 each. Amount 25 and memo "a" appearing in both
     // groups counts per group (scoping).
-    assert_eq!(rows, vec![(3, 2, 2), (7, 1, 1)]);
+    assert_eq!(answers, vec![(3, 2, 2), (7, 1, 1)]);
 }
 
 /// The elision fixture (PRD 18): a fresh-keyed query proves distinct
@@ -130,7 +130,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
     );
     assert_eq!(out.len(), 1);
     match (out.get(0, 0), out.get(0, 1)) {
-        (ResultValue::U64(3), ResultValue::U64(2)) => {}
+        (AnswerValue::U64(3), AnswerValue::U64(2)) => {}
         other => panic!("CountDistinct still collapsed 3 bindings to 2 values: {other:?}"),
     }
 }
@@ -173,15 +173,15 @@ fn arg_max_picks_the_latest_posting_per_account() {
         })
     };
 
-    let amounts = |out: &ResultBuffer| {
-        let mut rows: Vec<(u64, i64)> = (0..out.len())
-            .map(|row| match (out.get(row, 0), out.get(row, 1)) {
-                (ResultValue::U64(a), ResultValue::I64(v)) => (a, v),
-                other => panic!("(u64, i64) row: {other:?}"),
+    let amounts = |out: &Answers| {
+        let mut answers: Vec<(u64, i64)> = (0..out.len())
+            .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+                (AnswerValue::U64(a), AnswerValue::I64(v)) => (a, v),
+                other => panic!("(u64, i64) answer: {other:?}"),
             })
             .collect();
-        rows.sort_unstable();
-        rows
+        answers.sort_unstable();
+        answers
     };
 
     // Latest per account: id 3 (amount 25) and id 4 (amount 25).
@@ -219,7 +219,7 @@ fn arg_max_picks_the_latest_posting_per_account() {
     assert_eq!(out.len(), 1);
     assert_eq!(
         out.get(0, 0),
-        ResultValue::I64(25),
+        AnswerValue::I64(25),
         "id 4 is globally latest"
     );
 }
@@ -273,25 +273,25 @@ fn arg_ties_are_set_honest() {
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
-    let mut rows: Vec<(u64, String)> = (0..out.len())
-        .map(|row| match (out.get(row, 0), out.get(row, 1)) {
-            (ResultValue::U64(a), ResultValue::String(m)) => (a, m.to_owned()),
-            other => panic!("(u64, string) row: {other:?}"),
+    let mut answers: Vec<(u64, String)> = (0..out.len())
+        .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+            (AnswerValue::U64(a), AnswerValue::String(m)) => (a, m.to_owned()),
+            other => panic!("(u64, string) answer: {other:?}"),
         })
         .collect();
-    rows.sort();
+    answers.sort();
     assert_eq!(
-        rows,
+        answers,
         vec![
             (3, "x".to_owned()),
             (3, "y".to_owned()),
             (7, "dup".to_owned()),
         ],
-        "different carries keep both attaining rows; equal rows collapse to one"
+        "different carries keep both attaining answers; equal answers collapse to one"
     );
 
     // Key-also-projected: the carry IS the key variable — ties project
-    // equal rows and collapse.
+    // equal answers and collapse.
     let carry_key = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -315,14 +315,18 @@ fn arg_ties_are_set_honest() {
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
-    let mut rows: Vec<(u64, i64)> = (0..out.len())
-        .map(|row| match (out.get(row, 0), out.get(row, 1)) {
-            (ResultValue::U64(a), ResultValue::I64(v)) => (a, v),
-            other => panic!("(u64, i64) row: {other:?}"),
+    let mut answers: Vec<(u64, i64)> = (0..out.len())
+        .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+            (AnswerValue::U64(a), AnswerValue::I64(v)) => (a, v),
+            other => panic!("(u64, i64) answer: {other:?}"),
         })
         .collect();
-    rows.sort_unstable();
-    assert_eq!(rows, vec![(3, 25), (7, 9)], "key-projected ties collapse");
+    answers.sort_unstable();
+    assert_eq!(
+        answers,
+        vec![(3, 25), (7, 9)],
+        "key-projected ties collapse"
+    );
 }
 
 /// Payroll(id fresh u64, emp u64, during Interval<I64>).
@@ -385,7 +389,7 @@ fn insert_payroll(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i
 /// materializes as `Value::IntervalI64` rows equal to the stored
 /// facts', and the predicate's signature reports the interval type.
 #[test]
-fn interval_find_round_trips_through_the_result_buffer() {
+fn interval_find_round_trips_through_answers() {
     let dir = TempDir::new("prepared-interval-roundtrip");
     let schema = interval_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -431,19 +435,19 @@ fn interval_find_round_trips_through_the_result_buffer() {
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
-    let mut rows: Vec<(u64, i64, i64)> = (0..out.len())
-        .map(|row| match (out.get(row, 0), out.get(row, 1)) {
-            (ResultValue::U64(emp), ResultValue::IntervalI64(iv)) => (emp, iv.start(), iv.end()),
-            other => panic!("(u64, interval) row: {other:?}"),
+    let mut answers: Vec<(u64, i64, i64)> = (0..out.len())
+        .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+            (AnswerValue::U64(emp), AnswerValue::IntervalI64(iv)) => (emp, iv.start(), iv.end()),
+            other => panic!("(u64, interval) answer: {other:?}"),
         })
         .collect();
-    rows.sort_unstable();
+    answers.sort_unstable();
     let mut expected: Vec<(u64, i64, i64)> = stored
         .iter()
         .map(|(_, emp, (start, end))| (*emp, *start, *end))
         .collect();
     expected.sort_unstable();
-    assert_eq!(rows, expected, "stored bounds round-trip exactly");
+    assert_eq!(answers, expected, "stored bounds round-trip exactly");
 }
 
 /// `CountDistinct` over an interval variable end to end: value identity
@@ -491,12 +495,12 @@ fn count_distinct_over_intervals_uses_value_identity() {
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
-    let mut rows: Vec<(u64, u64)> = (0..out.len())
-        .map(|row| match (out.get(row, 0), out.get(row, 1)) {
-            (ResultValue::U64(emp), ResultValue::U64(n)) => (emp, n),
-            other => panic!("(u64, u64) row: {other:?}"),
+    let mut answers: Vec<(u64, u64)> = (0..out.len())
+        .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+            (AnswerValue::U64(emp), AnswerValue::U64(n)) => (emp, n),
+            other => panic!("(u64, u64) answer: {other:?}"),
         })
         .collect();
-    rows.sort_unstable();
-    assert_eq!(rows, vec![(10, 2), (11, 1)]);
+    answers.sort_unstable();
+    assert_eq!(answers, vec![(10, 2), (11, 1)]);
 }

@@ -17,7 +17,7 @@ fn prepare_once_execute_many_with_varying_params() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
 
     prepared
         .execute(
@@ -27,7 +27,7 @@ fn prepare_once_execute_many_with_varying_params() {
             &mut out,
         )
         .expect("execute");
-    assert_eq!(rows_of(&out), vec![("salary".to_owned(), 5000)]);
+    assert_eq!(answers_of(&out), vec![("salary".to_owned(), 5000)]);
 
     prepared
         .execute(
@@ -38,7 +38,7 @@ fn prepare_once_execute_many_with_varying_params() {
         )
         .expect("execute");
     assert_eq!(
-        rows_of(&out),
+        answers_of(&out),
         vec![("rent".to_owned(), -1200), ("salary".to_owned(), 5000)]
     );
 
@@ -50,7 +50,7 @@ fn prepare_once_execute_many_with_varying_params() {
             &mut out,
         )
         .expect("execute");
-    assert_eq!(rows_of(&out), vec![("coffee".to_owned(), -4)]);
+    assert_eq!(answers_of(&out), vec![("coffee".to_owned(), -4)]);
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn bind_time_checks_reject_bad_params() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
 
     let err = prepared
         .execute(&txn, &cache, &[BindValue::U64(7)], &mut out)
@@ -114,7 +114,7 @@ fn string_params_resolve_per_execution() {
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
 
     // Never-interned value: empty, not an error.
     prepared
@@ -131,7 +131,7 @@ fn string_params_resolve_per_execution() {
         .execute(&txn, &cache, &[BindValue::Str("groceries")], &mut out)
         .expect("execute");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), ResultValue::I64(-55));
+    assert_eq!(out.get(0, 0), AnswerValue::I64(-55));
 }
 
 /// Mandate(account u64, active interval<u64>) — the mask-param fixture.
@@ -182,10 +182,10 @@ fn insert_mandates(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64)])
     commit(delta, env).expect("commit");
 }
 
-fn accounts_of(buffer: &ResultBuffer) -> Vec<u64> {
+fn accounts_of(buffer: &Answers) -> Vec<u64> {
     let mut accounts: Vec<u64> = (0..buffer.len())
-        .map(|row| match buffer.get(row, 0) {
-            ResultValue::U64(v) => v,
+        .map(|answer| match buffer.get(answer, 0) {
+            AnswerValue::U64(v) => v,
             other => panic!("expected u64, got {other:?}"),
         })
         .collect();
@@ -237,7 +237,7 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
 
     let mut run = |mask: AllenMask| {
         prepared
@@ -327,14 +327,14 @@ fn a_cross_atom_mask_param_resolves_into_the_executors_residual() {
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     let mut run = |mask: AllenMask| {
         prepared
             .execute(&txn, &cache, &[BindValue::AllenMask(mask)], &mut out)
             .expect("execute");
         let mut pairs: Vec<(u64, u64)> = (0..out.len())
-            .map(|row| match (out.get(row, 0), out.get(row, 1)) {
-                (ResultValue::U64(a), ResultValue::U64(b)) => (a, b),
+            .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+                (AnswerValue::U64(a), AnswerValue::U64(b)) => (a, b),
                 other => panic!("expected u64 pair, got {other:?}"),
             })
             .collect();

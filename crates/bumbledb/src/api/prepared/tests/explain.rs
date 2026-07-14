@@ -9,10 +9,10 @@ fn explain_reports_the_join_plan_with_actuals() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let (rows, report) = prepared
+    let (answers, report) = prepared
         .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
         .expect("explain");
-    assert_eq!(rows.len(), 2);
+    assert_eq!(answers.len(), 2);
     assert!(report.contains("free join"));
     assert!(report.contains("emitted bindings: 2"));
 }
@@ -140,10 +140,10 @@ fn profile_returns_structured_stats_matching_the_execution() {
     let txn = env.read_txn().expect("txn");
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let (rows, stats) = prepared
+    let (answers, stats) = prepared
         .profile(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
         .expect("profile");
-    assert_eq!(rows.len(), 2);
+    assert_eq!(answers.len(), 2);
     assert_eq!(stats.emits, 2);
     let rule = &stats.rules[0];
     assert!(rule.key_probe.is_none());
@@ -179,10 +179,10 @@ fn profile_returns_structured_stats_matching_the_execution() {
         conditions: vec![],
     });
     let mut key_probe = prepare(&txn, &cache, &schema, &key_probe_query).expect("prepare");
-    let (rows, stats) = key_probe
+    let (answers, stats) = key_probe
         .profile(&txn, &cache, &[BindValue::U64(1)])
         .expect("profile");
-    assert_eq!(rows.len(), 1);
+    assert_eq!(answers.len(), 1);
     assert!(stats.rules[0].nodes.is_empty());
     assert_eq!(
         stats.rules[0].key_probe,

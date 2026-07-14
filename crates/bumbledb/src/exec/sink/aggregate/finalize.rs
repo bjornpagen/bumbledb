@@ -24,7 +24,7 @@ impl AggregateSink {
     /// from `emit` propagate.
     pub fn finalize_into(
         &mut self,
-        row_scratch: &mut Vec<u64>,
+        answer_scratch: &mut Vec<u64>,
         mut emit: impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
         // Pack's sort pass, ahead of the emit loop (which iterates the
@@ -41,25 +41,25 @@ impl AggregateSink {
         }
         for (key, group_idx) in self.groups.iter() {
             if self.pack.is_some() {
-                self.emit_pack_group(key, *group_idx, row_scratch, &mut emit)?;
+                self.emit_pack_group(key, *group_idx, answer_scratch, &mut emit)?;
                 continue;
             }
             if self.arg.is_some() {
-                self.emit_arg_group(key, *group_idx, row_scratch, &mut emit)?;
+                self.emit_arg_group(key, *group_idx, answer_scratch, &mut emit)?;
                 continue;
             }
             let accs = &self.accs[group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs];
-            row_scratch.clear();
+            answer_scratch.clear();
             let mut key_cursor = 0;
             let mut acc_cursor = 0;
             for (find_idx, find) in self.finds.iter().enumerate() {
                 match find {
                     SinkSpec::Var { width, .. } => {
-                        row_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
+                        answer_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
                         key_cursor += width;
                     }
                     SinkSpec::Agg { .. } => {
-                        row_scratch.push(self.finalize_acc(accs[acc_cursor], find_idx)?);
+                        answer_scratch.push(self.finalize_acc(accs[acc_cursor], find_idx)?);
                         acc_cursor += 1;
                     }
                     SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => {
@@ -67,14 +67,14 @@ impl AggregateSink {
                     }
                 }
             }
-            emit(row_scratch)?;
+            emit(answer_scratch)?;
         }
         Ok(())
     }
 
     /// One Pack group's emission: the sweep's maximal-run continuation
     /// (`crate::interval::sweep` — the one segment walk, this is its
-    /// second caller) over the group's start-sorted claims, one head row
+    /// second caller) over the group's start-sorted claims, one head answer
     /// per maximal segment — group key interleaved per find order, the
     /// segment's two words at the Pack position. Adjacency merges,
     /// identical claims collapse, and a ray (`end == MAX`) is the
@@ -84,15 +84,15 @@ impl AggregateSink {
         &self,
         key: &[u64],
         group_idx: usize,
-        row_scratch: &mut Vec<u64>,
+        answer_scratch: &mut Vec<u64>,
         emit: &mut impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
         /// The emit continuation: consumed segments need nothing; a
-        /// maximal run is one result row.
+        /// maximal run is one answer.
         struct PackEmit<'a, F> {
             finds: &'a [SinkSpec],
             key: &'a [u64],
-            row_scratch: &'a mut Vec<u64>,
+            answer_scratch: &'a mut Vec<u64>,
             emit: &'a mut F,
         }
 
@@ -104,25 +104,25 @@ impl AggregateSink {
             }
 
             fn maximal(&mut self, start: u64, frontier: u64) -> Result<()> {
-                self.row_scratch.clear();
+                self.answer_scratch.clear();
                 let mut key_cursor = 0;
                 for find in self.finds {
                     match find {
                         SinkSpec::Var { width, .. } => {
-                            self.row_scratch
+                            self.answer_scratch
                                 .extend_from_slice(&self.key[key_cursor..key_cursor + width]);
                             key_cursor += width;
                         }
                         SinkSpec::Pack { .. } => {
-                            self.row_scratch.push(start);
-                            self.row_scratch.push(frontier);
+                            self.answer_scratch.push(start);
+                            self.answer_scratch.push(frontier);
                         }
                         SinkSpec::Agg { .. } | SinkSpec::Arg { .. } => {
                             unreachable!("validated: Pack mixes with no other aggregate")
                         }
                     }
                 }
-                (self.emit)(self.row_scratch)
+                (self.emit)(self.answer_scratch)
             }
         }
 
@@ -135,7 +135,7 @@ impl AggregateSink {
             &mut PackEmit {
                 finds: &self.finds,
                 key,
-                row_scratch,
+                answer_scratch,
                 emit,
             },
         )
@@ -149,21 +149,21 @@ impl AggregateSink {
         &self,
         key: &[u64],
         group_idx: usize,
-        row_scratch: &mut Vec<u64>,
+        answer_scratch: &mut Vec<u64>,
         emit: &mut impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
-        for (carry_row, ()) in self.arg_rows[group_idx].iter() {
-            row_scratch.clear();
+        for (carry_row, ()) in self.arg_answers[group_idx].iter() {
+            answer_scratch.clear();
             let mut key_cursor = 0;
             let mut carry_cursor = 0;
             for find in &self.finds {
                 match find {
                     SinkSpec::Var { width, .. } => {
-                        row_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
+                        answer_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
                         key_cursor += width;
                     }
                     SinkSpec::Arg { width, .. } => {
-                        row_scratch
+                        answer_scratch
                             .extend_from_slice(&carry_row[carry_cursor..carry_cursor + width]);
                         carry_cursor += width;
                     }
@@ -172,7 +172,7 @@ impl AggregateSink {
                     }
                 }
             }
-            emit(row_scratch)?;
+            emit(answer_scratch)?;
         }
         Ok(())
     }
@@ -197,7 +197,7 @@ impl AggregateSink {
     ///
     /// As [`Self::finalize_into`].
     #[cfg(test)]
-    pub fn into_rows(mut self) -> Result<Vec<Vec<u64>>> {
+    pub fn into_answers(mut self) -> Result<Vec<Vec<u64>>> {
         let mut rows = Vec::with_capacity(self.groups.len());
         let mut scratch = Vec::new();
         self.finalize_into(&mut scratch, |row| {

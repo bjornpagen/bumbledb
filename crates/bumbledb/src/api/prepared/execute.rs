@@ -1,6 +1,4 @@
-use super::{
-    BindValue, KeyProbeRule, PreparedQuery, PreparedRule, Program, ResultBuffer, ValueType,
-};
+use super::{Answers, BindValue, KeyProbeRule, PreparedQuery, PreparedRule, Program, ValueType};
 
 use crate::error::Result;
 use crate::exec::dispatch::execute_key_probe;
@@ -30,7 +28,7 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         params: &[BindValue<'_>],
-        out: &mut ResultBuffer,
+        out: &mut Answers,
     ) -> Result<()> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
@@ -58,7 +56,7 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         args: &[super::ParamArg<'_>],
-        out: &mut ResultBuffer,
+        out: &mut Answers,
     ) -> Result<()> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
@@ -79,7 +77,7 @@ impl<S> PreparedQuery<'_, S> {
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        out: &mut ResultBuffer,
+        out: &mut Answers,
     ) -> Result<()> {
         // The statically-empty program (ir/normalize/fold.rs): params
         // were bound above — bind errors surfaced, a vacuous mask param
@@ -132,7 +130,7 @@ impl<S> PreparedQuery<'_, S> {
         let _s = obs::span(obs::names::FINALIZE, obs::Category::Execute);
         finalize(
             &mut self.sink,
-            &mut self.row_scratch,
+            &mut self.answer_scratch,
             &mut self.resolve_memo,
             txn,
             &self.predicate.columns,
@@ -276,11 +274,7 @@ impl<S> PreparedQuery<'_, S> {
 
     /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery.
-    fn execute_key_probe_direct(
-        &mut self,
-        txn: &ReadTxn<'_>,
-        out: &mut ResultBuffer,
-    ) -> Result<()> {
+    fn execute_key_probe_direct(&mut self, txn: &ReadTxn<'_>, out: &mut Answers) -> Result<()> {
         let [
             PreparedRule::KeyProbe(KeyProbeRule {
                 plan: key_probe,
@@ -315,8 +309,7 @@ impl<S> PreparedQuery<'_, S> {
                 else {
                     unreachable!("validated: interval finds read interval fields")
                 };
-                out.cells
-                    .push(ResultBuffer::interval_cell(*element, start, end));
+                out.cells.push(Answers::interval_cell(*element, start, end));
                 continue;
             }
             if let ValueType::FixedBytes { len } = ty {
@@ -345,7 +338,7 @@ impl<S> PreparedQuery<'_, S> {
                 ValueType::String => {
                     out.push_word(txn, ty, word, &mut self.resolve_memo)?;
                 }
-                _ => out.cells.push(ResultBuffer::word_cell(ty, word)),
+                _ => out.cells.push(Answers::word_cell(ty, word)),
             }
         }
         Ok(())
@@ -361,8 +354,8 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         params: &[BindValue<'_>],
-    ) -> Result<ResultBuffer> {
-        let mut out = ResultBuffer::new();
+    ) -> Result<Answers> {
+        let mut out = Answers::new();
         self.execute(txn, cache, params, &mut out)?;
         Ok(out)
     }
@@ -377,8 +370,8 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         args: &[super::ParamArg<'_>],
-    ) -> Result<ResultBuffer> {
-        let mut out = ResultBuffer::new();
+    ) -> Result<Answers> {
+        let mut out = Answers::new();
         self.execute_args(txn, cache, args, &mut out)?;
         Ok(out)
     }

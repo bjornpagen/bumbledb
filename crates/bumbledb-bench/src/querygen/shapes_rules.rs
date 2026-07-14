@@ -6,12 +6,12 @@
 //!   vocabulary row id on the discriminant field — provably disjoint,
 //!   exercised against the oracles' plain set union.
 //! - **Overlapping arms**: nested selections over one relation whose
-//!   arm denotations share rows — duplicate head rows across rules, the
+//!   arm denotations share answers — duplicate head answers across rules, the
 //!   union's teeth — including the **DU twin**: the `JournalEntry`
 //!   import arm vs `ImportBatch`, equal denotations by the corpus's
 //!   `==` statement, total duplication.
 //! - **The union fold**: a multi-rule aggregate head (`Sum`/`Count`/
-//!   `CountDistinct`) — the fold over the union of head-projected rows.
+//!   `CountDistinct`) — the fold over the union of head-projected answers.
 //!
 //! Rules bind literals only (no params): variables are rule-scoped and
 //! restart per arm; the head aligns positionally by construction. Like
@@ -89,7 +89,7 @@ fn disjoint_arms(rng: &mut Rng) -> Query {
 
 /// The DU twin: the import arm of `JournalEntry` vs `ImportBatch` — the
 /// corpus's `==` statement makes the two denotations equal, so every
-/// head row is a cross-rule duplicate.
+/// head answer is a cross-rule duplicate.
 fn du_twin() -> Query {
     assemble(vec![
         Rule {
@@ -141,7 +141,7 @@ fn posting_arm(finds: Vec<FindTerm>, floor: i64) -> Rule {
 }
 
 /// Overlapping `Posting` arms, 2–4: ascending `at` floors nest the arm
-/// denotations, so every later arm's head rows duplicate earlier ones —
+/// denotations, so every later arm's head answers duplicate earlier ones —
 /// the union's dedup is load-bearing, not incidental.
 fn overlapping_arms(rng: &mut Rng, domains: &Domains) -> Query {
     let arms = 2 + rng.range(3);

@@ -133,7 +133,7 @@ pub enum AggOp {
     /// The coalescing fold (Snodgrass coalesce) over an interval-typed
     /// variable: per group, the result is the set of **maximal disjoint
     /// half-open segments** of the union of the group's interval point
-    /// sets. `Pack` is **relation-shaped** — one result row per (group,
+    /// sets. `Pack` is **relation-shaped** — one answer per (group,
     /// maximal segment); the result position is interval-typed
     /// (`docs/architecture/20-query-ir.md` § aggregation). Adjacency
     /// merges (`end == next.start` — the half-open law), a packed ray is

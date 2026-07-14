@@ -31,20 +31,20 @@ fn by_account_scalar_query() -> Query {
     query
 }
 
-fn id_amount_rows(buffer: &ResultBuffer) -> Vec<(u64, i64)> {
-    let mut rows: Vec<(u64, i64)> = (0..buffer.len())
-        .map(|row| {
-            let ResultValue::U64(id) = buffer.get(row, 0) else {
+fn id_amount_answers(buffer: &Answers) -> Vec<(u64, i64)> {
+    let mut answers: Vec<(u64, i64)> = (0..buffer.len())
+        .map(|answer| {
+            let AnswerValue::U64(id) = buffer.get(answer, 0) else {
                 panic!("column 0 is a u64 id");
             };
-            let ResultValue::I64(amount) = buffer.get(row, 1) else {
+            let AnswerValue::I64(amount) = buffer.get(answer, 1) else {
                 panic!("column 1 is an i64 amount");
             };
             (id, amount)
         })
         .collect();
-    rows.sort_unstable();
-    rows
+    answers.sort_unstable();
+    answers
 }
 
 /// The `IN` family criterion: over set sizes {0, 1, 2, 200}, the
@@ -94,11 +94,11 @@ fn in_family_equals_the_union_of_per_element_executions() {
             let per = scalar_query
                 .execute_collect(&txn, &cache, &[BindValue::U64(*account)])
                 .expect("scalar execution");
-            union.extend(id_amount_rows(&per));
+            union.extend(id_amount_answers(&per));
         }
         union.sort_unstable();
         union.dedup();
-        assert_eq!(id_amount_rows(&got), union, "size {size}");
+        assert_eq!(id_amount_answers(&got), union, "size {size}");
         if size == 0 {
             assert!(got.is_empty(), "the empty set matches nothing");
         }
@@ -113,7 +113,7 @@ fn in_family_equals_the_union_of_per_element_executions() {
     let got_once = set_query
         .execute_collect_args(&txn, &cache, &[ParamArg::Set(&once)])
         .expect("execute");
-    assert_eq!(id_amount_rows(&got_dup), id_amount_rows(&got_once));
+    assert_eq!(id_amount_answers(&got_dup), id_amount_answers(&got_once));
 
     // A scalar value where the set is expected is a precise bind-time
     // error (a ParamId is scalar or set, never both).
@@ -258,20 +258,20 @@ fn insert_interval_fixture(env: &Environment, schema: &Schema) {
     commit(delta, env).expect("commit");
 }
 
-fn u64_pairs(buffer: &ResultBuffer) -> Vec<(u64, u64)> {
-    let mut rows: Vec<(u64, u64)> = (0..buffer.len())
-        .map(|row| {
-            let ResultValue::U64(a) = buffer.get(row, 0) else {
+fn u64_pairs(buffer: &Answers) -> Vec<(u64, u64)> {
+    let mut answers: Vec<(u64, u64)> = (0..buffer.len())
+        .map(|answer| {
+            let AnswerValue::U64(a) = buffer.get(answer, 0) else {
                 panic!("column 0 is u64");
             };
-            let ResultValue::U64(b) = buffer.get(row, 1) else {
+            let AnswerValue::U64(b) = buffer.get(answer, 1) else {
                 panic!("column 1 is u64");
             };
             (a, b)
         })
         .collect();
-    rows.sort_unstable();
-    rows
+    answers.sort_unstable();
+    answers
 }
 
 /// The membership point-var join, whole pipeline: IR membership binding
@@ -346,10 +346,10 @@ fn set_membership_matches_any_element() {
         conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let emps = |buffer: &ResultBuffer| {
+    let emps = |buffer: &Answers| {
         let mut out: Vec<u64> = (0..buffer.len())
-            .map(|row| {
-                let ResultValue::U64(emp) = buffer.get(row, 0) else {
+            .map(|answer| {
+                let AnswerValue::U64(emp) = buffer.get(answer, 0) else {
                     panic!("column 0 is u64");
                 };
                 emp

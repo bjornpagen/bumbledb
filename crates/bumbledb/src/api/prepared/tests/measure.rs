@@ -138,19 +138,19 @@ fn insert_windows(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64)]) 
     commit(delta, env).expect("commit");
 }
 
-fn u64_rows(out: &ResultBuffer, arity: usize) -> Vec<Vec<u64>> {
-    let mut rows: Vec<Vec<u64>> = (0..out.len())
-        .map(|row| {
+fn u64_answers(out: &Answers, arity: usize) -> Vec<Vec<u64>> {
+    let mut answers: Vec<Vec<u64>> = (0..out.len())
+        .map(|answer| {
             (0..arity)
-                .map(|column| match out.get(row, column) {
-                    ResultValue::U64(v) => v,
+                .map(|column| match out.get(answer, column) {
+                    AnswerValue::U64(v) => v,
                     other => panic!("all-U64 row: {other:?}"),
                 })
                 .collect()
         })
         .collect();
-    rows.sort_unstable();
-    rows
+    answers.sort_unstable();
+    answers
 }
 
 /// Q(tag, Duration(span)) :- Session(tag, span) — the measure in a find
@@ -189,7 +189,7 @@ fn duration_find_projects_the_measure_u64() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(
-        u64_rows(&out, 2),
+        u64_answers(&out, 2),
         vec![vec![10, 1], vec![20, u64::MAX - 1], vec![30, 250]]
     );
 }
@@ -230,7 +230,7 @@ fn duration_find_projects_the_measure_i64() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(
-        u64_rows(&out, 2),
+        u64_answers(&out, 2),
         vec![vec![10, 10], vec![20, u64::MAX - 1], vec![30, 1]]
     );
 }
@@ -277,7 +277,7 @@ fn sum_min_max_over_the_measure() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(
-        u64_rows(&out, 4),
+        u64_answers(&out, 4),
         vec![vec![10, 7, 3, 4], vec![20, 1, 1, 1]]
     );
 }
@@ -315,7 +315,7 @@ fn duration_comparisons_filter_and_join() {
         let out = prepared
             .execute_collect(&txn, &cache, &[])
             .expect("execute");
-        u64_rows(&out, 1)
+        u64_answers(&out, 1)
     };
     let single = |conditions: Vec<ConditionTree>| {
         Query::single(Rule {
@@ -350,7 +350,7 @@ fn duration_comparisons_filter_and_join() {
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::U64(4)])
         .expect("execute");
-    assert_eq!(u64_rows(&out, 1), vec![vec![20], vec![30]]);
+    assert_eq!(u64_answers(&out, 1), vec![vec![20], vec![30]]);
 
     // Same-atom u64 variable: measure vs the fact's own cap.
     let same_atom = single(vec![ConditionTree::Leaf(Comparison {
@@ -454,7 +454,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
         let out = prepared
             .execute_collect(&txn, &cache, &[])
             .expect("filtered execute");
-        u64_rows(&out, out.arity())
+        u64_answers(&out, out.arity())
     };
 
     // The find position.
@@ -514,7 +514,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("bounded-end execute");
-    assert_eq!(u64_rows(&out, 1), vec![vec![10]]);
+    assert_eq!(u64_answers(&out, 1), vec![vec![10]]);
 
     // The cross-atom residual: the ray reaches the subtraction inside
     // the join (the executor's poison path).

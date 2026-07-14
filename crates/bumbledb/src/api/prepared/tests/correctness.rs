@@ -43,8 +43,8 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     let mut got: Vec<u64> = (0..out.len())
-        .map(|row| match out.get(row, 0) {
-            ResultValue::U64(id) => id,
+        .map(|answer| match out.get(answer, 0) {
+            AnswerValue::U64(id) => id,
             other => panic!("column 0 is u64: {other:?}"),
         })
         .collect();
@@ -86,8 +86,8 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     let mut got: Vec<(i64, i64)> = (0..out.len())
-        .map(|row| match (out.get(row, 0), out.get(row, 1)) {
-            (ResultValue::I64(x), ResultValue::I64(y)) => (x, y),
+        .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+            (AnswerValue::I64(x), AnswerValue::I64(y)) => (x, y),
             other => panic!("two i64 columns: {other:?}"),
         })
         .collect();
@@ -179,11 +179,11 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     let mut got: Vec<(u64, i64)> = (0..out.len())
-        .map(|row| {
-            let ResultValue::U64(account) = out.get(row, 0) else {
+        .map(|answer| {
+            let AnswerValue::U64(account) = out.get(answer, 0) else {
                 panic!("column 0 is u64");
             };
-            let ResultValue::I64(sum) = out.get(row, 1) else {
+            let AnswerValue::I64(sum) = out.get(answer, 1) else {
                 panic!("column 1 is i64");
             };
             (account, sum)
@@ -257,7 +257,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
         .execute_collect(&txn, &cache, &[BindValue::Str("rent")])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), ResultValue::I64(-55));
+    assert_eq!(out.get(0, 0), AnswerValue::I64(-55));
 }
 
 #[test]
@@ -274,6 +274,6 @@ fn results_decode_intern_ids_to_original_bytes() {
         .expect("execute");
     assert_eq!(
         out.get(0, 0),
-        ResultValue::String("a rather long memo text")
+        AnswerValue::String("a rather long memo text")
     );
 }

@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::Path;
 
-use bumbledb::{Db, RelationId, ResultBuffer};
+use bumbledb::{Answers, Db, RelationId};
 
 use crate::corpus_gen::{self, GenConfig, Rng, Sizes};
 use crate::families::{self, param_args};
@@ -190,7 +190,7 @@ pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
     let query = (family.query)();
     let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
     let mut rotation = Rotation::new((family.params)(&cfg));
-    let mut buffer = ResultBuffer::new();
+    let mut buffer = Answers::new();
     harness::measure_cold(
         write_protocol("cold_containment_walk"),
         harness::org_touch(db),
@@ -311,7 +311,7 @@ mod tests {
         let query = (family.query)();
         let mut prepared = db.prepare(&query).expect("prepare");
         let mut rotation = Rotation::new((family.params)(&CFG));
-        let mut buffer = ResultBuffer::new();
+        let mut buffer = Answers::new();
         let warm = harness::measure(Protocol::WARM, || {
             let args = param_args(rotation.next_set());
             db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))

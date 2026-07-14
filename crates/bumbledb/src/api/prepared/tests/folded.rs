@@ -128,10 +128,10 @@ fn fold_query(rank: u64) -> Query {
     })
 }
 
-fn values_of(buffer: &ResultBuffer) -> Vec<i64> {
+fn values_of(buffer: &Answers) -> Vec<i64> {
     let mut values: Vec<i64> = (0..buffer.len())
-        .map(|row| {
-            let ResultValue::I64(value) = buffer.get(row, 1) else {
+        .map(|answer| {
+            let AnswerValue::I64(value) = buffer.get(answer, 1) else {
                 panic!("column 1 is an i64");
             };
             value

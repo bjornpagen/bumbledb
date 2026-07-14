@@ -277,7 +277,7 @@ fn negation_under_an_aggregate_excludes_rejected_bindings() {
                 &mut NoopCounters,
             )
             .expect("execute");
-        let rows = sink.into_rows().expect("in range");
+        let rows = sink.into_answers().expect("in range");
         assert_eq!(rows, vec![vec![sum, count]], "batch size {batch}");
     }
 }

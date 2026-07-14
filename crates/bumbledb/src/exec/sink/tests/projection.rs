@@ -48,7 +48,7 @@ fn projection_scan_filters_residuals_like_the_oracle() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let got: BTreeSet<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+        let got: BTreeSet<Vec<u64>> = sink.answers().map(<[u64]>::to_vec).collect();
         assert_eq!(got, expected, "batch {batch}");
     }
 }
@@ -84,7 +84,7 @@ fn pinned_leaf_skips_preserve_d2() {
         Executor::with_batch_size(&plan, batch)
             .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
             .expect("execute");
-        let mut rows: Vec<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+        let mut rows: Vec<Vec<u64>> = sink.answers().map(<[u64]>::to_vec).collect();
         rows.sort_unstable();
         assert_eq!(
             rows,
@@ -128,7 +128,7 @@ fn duplicate_witness_projection_dedups_and_skips_suffixes() {
             .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
             .expect("execute");
 
-        let rows: Vec<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+        let rows: Vec<Vec<u64>> = sink.answers().map(<[u64]>::to_vec).collect();
         assert_eq!(rows, vec![vec![7]], "batch {batch}");
         assert!(
             counters.skips > 0,
@@ -177,7 +177,7 @@ fn interval_projection_carries_both_slot_words() {
                 &mut crate::exec::run::NoopCounters,
             )
             .expect("execute");
-        let got: BTreeSet<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+        let got: BTreeSet<Vec<u64>> = sink.answers().map(<[u64]>::to_vec).collect();
         assert_eq!(got, expected, "batch {batch}");
     }
 }

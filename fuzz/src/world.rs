@@ -12,7 +12,7 @@ use std::rc::Rc;
 use bumbledb::schema::ValueType;
 use bumbledb::{Db, Error, Query, RelationId};
 use bumbledb_bench::corpus_gen::{GenConfig, Scale};
-use bumbledb_bench::differential::Rows;
+use bumbledb_bench::differential::Answers;
 use bumbledb_bench::naive::{Delta, NaiveDb, ParamValue, Tuple};
 use bumbledb_bench::querygen::{ParamDraw, target};
 use bumbledb_bench::{compare, corpus, families, sqlmap};
@@ -73,7 +73,7 @@ fn build(cfg: GenConfig) -> World {
     for statement in sqlmap::schema_ddl(target::schema()) {
         conn.execute(&statement, []).expect("target ddl");
     }
-    // Closed vocabularies are schema surface, not corpus: their rows
+    // Closed vocabularies are schema surface, not corpus: their ground axioms
     // ride with the DDL.
     for statement in sqlmap::extension_ddl(&target::descriptor()) {
         conn.execute(&statement, []).expect("target extension");
@@ -116,8 +116,8 @@ fn build(cfg: GenConfig) -> World {
             target::corpus_relation_rows(cfg, rel),
         )
         .expect("target mirror insert");
-        for row in target::corpus_relation_rows(cfg, rel) {
-            delta.inserts.push((rel, row));
+        for fact in target::corpus_relation_rows(cfg, rel) {
+            delta.inserts.push((rel, fact));
         }
     }
     conn.execute_batch("ANALYZE").expect("analyze");
@@ -148,12 +148,12 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: GenConfig) {
         let end = (start + CHUNK).min(entries);
         db.write(|tx| {
             for i in start..end {
-                let row = target::corpus_row(cfg, &domains, target::ids::JOURNAL_ENTRY, i);
-                tx.insert_dyn(target::ids::JOURNAL_ENTRY, &row)?;
+                let fact = target::corpus_row(cfg, &domains, target::ids::JOURNAL_ENTRY, i);
+                tx.insert_dyn(target::ids::JOURNAL_ENTRY, &fact)?;
             }
             while next_batch < batches && target::import_batch_entry(next_batch) < end {
-                let row = target::corpus_row(cfg, &domains, target::ids::IMPORT_BATCH, next_batch);
-                tx.insert_dyn(target::ids::IMPORT_BATCH, &row)?;
+                let fact = target::corpus_row(cfg, &domains, target::ids::IMPORT_BATCH, next_batch);
+                tx.insert_dyn(target::ids::IMPORT_BATCH, &fact)?;
                 next_batch += 1;
             }
             Ok(())
@@ -163,13 +163,13 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: GenConfig) {
     }
 }
 
-/// One engine execution: the differential's [`Rows`] verdict plus — when
-/// the query answered — the canonical row form the `SQLite` lane
+/// One engine execution: the differential's [`Answers`] verdict plus — when
+/// the query answered — the canonical answer form the `SQLite` lane
 /// compares, and the prepared predicate's column types (the decode
-/// authority for the oracle's rows).
+/// authority for the oracle's answers).
 pub(crate) struct Execution {
-    pub(crate) verdict: Rows,
-    pub(crate) canonical: Option<Vec<compare::Row>>,
+    pub(crate) verdict: Answers,
+    pub(crate) canonical: Option<Vec<compare::Answer>>,
     pub(crate) types: Vec<ValueType>,
 }
 
@@ -190,19 +190,19 @@ pub(crate) fn execute(db: &Db<target::Target>, query: &Query, params: &[ParamVal
     let args = families::param_args(params);
     match db.read(|snap| snap.execute_collect_args(&mut prepared, &args)) {
         Ok(buffer) => Execution {
-            verdict: Rows::Ok(
+            verdict: Answers::Ok(
                 buffer
-                    .rows()
-                    .map(|row| {
+                    .answers()
+                    .map(|answer| {
                         Tuple(
                             (0..buffer.arity())
-                                .map(|column| owned_value(row.get(column)))
+                                .map(|column| owned_value(answer.get(column)))
                                 .collect(),
                         )
                     })
                     .collect(),
             ),
-            canonical: Some(compare::from_buffer(&buffer, &types)),
+            canonical: Some(compare::from_answers(&buffer, &types)),
             types,
         },
         Err(err) => Execution {
@@ -215,22 +215,22 @@ pub(crate) fn execute(db: &Db<target::Target>, query: &Query, params: &[ParamVal
 
 /// The naive model's verdict for the same query × draw, in the same
 /// comparable shape (typed runtime errors included — error parity).
-pub(crate) fn model(naive: &NaiveDb, query: &Query, params: &[ParamValue]) -> Rows {
+pub(crate) fn model(naive: &NaiveDb, query: &Query, params: &[ParamValue]) -> Answers {
     use bumbledb_bench::naive::query::QueryError;
     match naive.query(query, params) {
-        Ok(rows) => Rows::Ok(rows),
-        Err(QueryError::Overflow { .. }) => Rows::Overflow,
-        Err(QueryError::MeasureOfRay) => Rows::MeasureOfRay,
+        Ok(answers) => Answers::Ok(answers),
+        Err(QueryError::Overflow { .. }) => Answers::Overflow,
+        Err(QueryError::MeasureOfRay) => Answers::MeasureOfRay,
     }
 }
 
 /// The boundary: a validated query's execution refuses through the two
 /// defined runtime errors and nothing else. Every other variant is named
 /// — never a catch-all — and is a finding on this path.
-fn runtime_refusal(err: Error) -> Rows {
+fn runtime_refusal(err: Error) -> Answers {
     match err {
-        Error::Overflow(_) => Rows::Overflow,
-        Error::MeasureOfRay { .. } => Rows::MeasureOfRay,
+        Error::Overflow(_) => Answers::Overflow,
+        Error::MeasureOfRay { .. } => Answers::MeasureOfRay,
         other @ (Error::Schema(_)
         | Error::FormatMismatch { .. }
         | Error::SchemaMismatch { .. }
@@ -266,17 +266,17 @@ fn runtime_refusal(err: Error) -> Rows {
 }
 
 /// One result value, owned — the world's copy of the differential's
-/// total mapping (a new `ResultValue` variant is a compile error here).
-fn owned_value(value: bumbledb::ResultValue<'_>) -> bumbledb::Value {
-    use bumbledb::{ResultValue, Value};
+/// total mapping (a new `AnswerValue` variant is a compile error here).
+fn owned_value(value: bumbledb::AnswerValue<'_>) -> bumbledb::Value {
+    use bumbledb::{AnswerValue, Value};
     match value {
-        ResultValue::Bool(v) => Value::Bool(v),
-        ResultValue::U64(v) => Value::U64(v),
-        ResultValue::I64(v) => Value::I64(v),
-        ResultValue::String(v) => Value::String(Box::from(v.as_bytes())),
-        ResultValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
-        ResultValue::IntervalU64(iv) => Value::IntervalU64(iv),
-        ResultValue::IntervalI64(iv) => Value::IntervalI64(iv),
+        AnswerValue::Bool(v) => Value::Bool(v),
+        AnswerValue::U64(v) => Value::U64(v),
+        AnswerValue::I64(v) => Value::I64(v),
+        AnswerValue::String(v) => Value::String(Box::from(v.as_bytes())),
+        AnswerValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
+        AnswerValue::IntervalU64(iv) => Value::IntervalU64(iv),
+        AnswerValue::IntervalI64(iv) => Value::IntervalI64(iv),
     }
 }
 

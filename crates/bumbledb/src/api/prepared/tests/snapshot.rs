@@ -9,7 +9,7 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     prepared
         .execute(
             &txn,

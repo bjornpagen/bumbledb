@@ -80,7 +80,7 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
             .map(|column| &column.ty)
             .collect::<Vec<_>>(),
         vec![&ValueType::String, &ValueType::I64],
-        "the head's result row types the program once"
+        "the head's answer tuple types the program once"
     );
 }
 
@@ -103,7 +103,7 @@ fn an_overlapping_union_has_no_duplicates_and_host_concatenation_does() {
         .execute_collect(&txn, &cache, &floor)
         .expect("execute");
     assert_eq!(
-        rows_of(&union),
+        answers_of(&union),
         vec![
             ("a".to_owned(), 10),
             ("b".to_owned(), 25),
@@ -126,14 +126,14 @@ fn an_overlapping_union_has_no_duplicates_and_host_concatenation_does() {
         let out = single
             .execute_collect(&txn, &cache, &floor)
             .expect("execute");
-        concatenated.extend(rows_of(&out));
+        concatenated.extend(answers_of(&out));
     }
     concatenated.sort();
     assert_eq!(concatenated.len(), union.len() + 1, "one duplicate");
     assert_eq!(
         concatenated
             .iter()
-            .filter(|row| **row == ("b".to_owned(), 25))
+            .filter(|answer| **answer == ("b".to_owned(), 25))
             .count(),
         2,
         "host concatenation is not a union"
@@ -156,7 +156,7 @@ fn params_bind_once_and_reach_all_rules() {
         .execute_collect(&txn, &cache, &[BindValue::I64(20)])
         .expect("execute");
     assert_eq!(
-        rows_of(&out),
+        answers_of(&out),
         vec![("b".to_owned(), 25), ("c".to_owned(), 40)],
         "the floor filtered account 3's 10 AND account 7's nothing-below-20"
     );
@@ -164,7 +164,7 @@ fn params_bind_once_and_reach_all_rules() {
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::I64(30)])
         .expect("execute");
-    assert_eq!(rows_of(&out), vec![("c".to_owned(), 40)]);
+    assert_eq!(answers_of(&out), vec![("c".to_owned(), 40)]);
 }
 
 /// Aggregates over rules read the head (20-query-ir § aggregation): the
@@ -218,8 +218,8 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
     // Head projection per binding = (amount): {10, 25} ∪ {25, 40} =
     // {10, 25, 40}. Sum = 75 (the duplicate 25 folded once), Count = 3
     // — NOT the per-rule sums 35 + 65 = 100 / counts 2 + 2 = 4.
-    assert_eq!(out.get(0, 0), ResultValue::I64(75), "Sum over the union");
-    assert_eq!(out.get(0, 1), ResultValue::U64(3), "Count counts the union");
+    assert_eq!(out.get(0, 0), AnswerValue::I64(75), "Sum over the union");
+    assert_eq!(out.get(0, 1), AnswerValue::U64(3), "Count counts the union");
 }
 
 /// Grouped fold across rules: the duplicate head binding ("b", 25)
@@ -262,20 +262,20 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
-    let mut rows: Vec<(String, i64)> = (0..out.len())
-        .map(|row| {
-            let ResultValue::String(memo) = out.get(row, 0) else {
+    let mut answers: Vec<(String, i64)> = (0..out.len())
+        .map(|answer| {
+            let AnswerValue::String(memo) = out.get(answer, 0) else {
                 panic!("column 0 is a string");
             };
-            let ResultValue::I64(sum) = out.get(row, 1) else {
+            let AnswerValue::I64(sum) = out.get(answer, 1) else {
                 panic!("column 1 is an i64");
             };
             (memo.to_owned(), sum)
         })
         .collect();
-    rows.sort();
+    answers.sort();
     assert_eq!(
-        rows,
+        answers,
         vec![
             ("a".to_owned(), 10),
             // Both rules derive ("b", 25); the union folds it once —
@@ -323,7 +323,7 @@ fn the_all_count_head_counts_the_singleton_union() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), ResultValue::U64(1));
+    assert_eq!(out.get(0, 0), AnswerValue::U64(1));
 }
 
 /// EXPLAIN over a program: per-rule node stats plus the head-level union
@@ -417,7 +417,7 @@ fn a_key_probe_rule_unions_through_the_sink() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(
-        rows_of(&out),
+        answers_of(&out),
         vec![("a".to_owned(), 10), ("b".to_owned(), 25)],
         "the key_probe's re-derivation is absorbed by the spanning seen-set"
     );

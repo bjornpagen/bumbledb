@@ -43,7 +43,7 @@ fn residual_bindings_memoize_under_lru() {
             .iter()
             .filter(|e| e.name == obs::names::VIEW_MEMO_HIT)
             .count();
-        (builds, hits, rows_of(&out))
+        (builds, hits, answers_of(&out))
     };
     let expected = |floor: i64| -> Vec<(String, i64)> {
         let rows = [
@@ -208,7 +208,7 @@ fn a_generation_bump_invalidates_the_memo() {
         "the stale binding rebuilds in place"
     );
     assert_eq!(
-        rows_of(&out),
+        answers_of(&out),
         vec![("new".to_owned(), 20), ("old".to_owned(), 10)],
         "the rebuilt view carries the new fact"
     );

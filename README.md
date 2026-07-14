@@ -9,7 +9,7 @@ a macro, write plain structs, and run queries — rule programs with joins,
 negation, the full Allen interval algebra (one 13-bit mask, one branchless
 kernel), point membership, `Duration`, and the coalescing `Pack` aggregate —
 planned once and executed over columnar in-memory images with a lazy trie
-join. Results are sets; a multi-rule query's union *is* the sink's dedup.
+join. Answers are sets; a multi-rule query's union *is* the sink's dedup.
 Invariants are dependency statements — functional and inclusion dependencies,
 judged at commit against the final state — and read-compute-write is
 optimistic, witnessed by snapshots, checked in one compare at commit.
@@ -20,9 +20,9 @@ measurement with two differential oracles standing behind it.
 bumbledb::schema! {
     pub Ledger;
 
-    // A vocabulary is a closed relation: rows are ground axioms, frozen
+    // A vocabulary is a closed relation: its ground axioms are frozen
     // by the fingerprint, virtual in storage — the store holds zero
-    // vocabulary bytes. The macro emits a host enum welded to the row ids.
+    // vocabulary bytes. The macro emits a host enum welded to declaration ids.
     closed relation Region as RegionId = { Na, Eu, Apac, Latam };
     closed relation Status as StatusId = { Open, Frozen, Closed };
 
@@ -59,7 +59,7 @@ db.write(|tx| {
 
 // Queries are rule programs in set-builder notation (the `query!` macro
 // lowers to plain-data IR at compile time; the raw IR remains the contract).
-// Prepared once, executed on snapshots into a reusable buffer — zero
+// Prepared once, executed on snapshots into reusable `Answers` — zero
 // allocations per execution after warmup.
 let q = bumbledb_query::query!(Ledger {
     (h, name) | Holder(id: h, name), Account(holder: h, status == Status::Open);
@@ -107,7 +107,7 @@ engines, and bulk load favors SQLite's write path; we publish it anyway:
 
 ![writes and cold](assets/bench-writes.svg)
 
-**Context that keeps these numbers honest:** S-scale corpora (a 10⁵-row-
+**Context that keeps these numbers honest:** S-scale corpora (a 10⁵-fact-
 fact-table ledger and a calendar world of interval claims, RSVP arms, and
 ray horizons), Apple M2 Max, engine-favorable workload class (point lookups
 through multi-way joins, interval algebra, and aggregates — exactly what a
@@ -182,11 +182,11 @@ statement form enters when it carries an enforcement plan, never before.
 | `str` | `s: str` | intern id — the dictionary maps repeated text to words; UTF-8 parsed at intern | text under reuse | `==` `!=`, ∈-sets; **order/prefix refused** |
 | `bytes<N>` | `h: bytes<32>` | N raw bytes inline, word-padded; never interned | an identity (digest) | `==` `!=`, ∈-sets; **order refused** (a hash's order is an encoding artifact) |
 | `interval<E>` | `d: interval<i64>` | two order-preserving words `(start, end)`, half-open `[s, e)`, `s < e`; `end = MAX` denotes the ray `[s, ∞)` | **the set of points** `{p : s ≤ p < e}` | `p ∈ d` (membership), `Allen(mask)` (all 8,192 pair relations), `Duration` (the measure), `Pack` (coalesce) |
-| `closed relation` | `closed relation Status as StatusId = { Open, Frozen }` | virtual — rows are **ground axioms** sealed at validate, handle id = declaration order; the store holds zero vocabulary bytes | a vocabulary: the theory's named constants | referenced as a `u64` + containment to its key; handles resolve at expansion; `==` `!=`, ∈-sets; **order refused** |
+| `closed relation` | `closed relation Status as StatusId = { Open, Frozen }` | virtual — **ground axioms** sealed at validate, handle id = declaration order; the store holds zero vocabulary bytes | a vocabulary: the theory's named constants | referenced as a `u64` + containment to its key; handles resolve at expansion; `==` `!=`, ∈-sets; **order refused** |
 
-`closed relation` is a relation form, not a seventh value type: its rows
+`closed relation` is a relation form, not a seventh value type: its ground axioms
 live in the schema (frozen by the fingerprint, never written), the macro
-emits a **host enum** welded to the row ids — an emission, not a type —
+emits a **host enum** welded to declaration ids — an emission, not a type —
 and a reference to it is an ordinary `u64` field under the handle newtype
 plus a containment statement. Two tiers, one production — handles only,
 or handles with **payload columns** stating what each word means, read by
@@ -256,18 +256,20 @@ independently. Read `==` as *exactly*. Because each direction's target must
 be a declared key, accepted `==` is a key-backed one-to-one correspondence
 on the selected projections: every selected A-fact has exactly one selected
 B-witness with the same projected value, and vice versa. It is not literal
-row equality (unprojected payloads may differ) and says nothing about
+whole-fact equality (unprojected payloads may differ) and says nothing about
 unselected facts — which is the discriminated-union idiom's whole point.
 `Parent(id | kind == V) == Arm(parent)` buys totality (a V-kinded parent
-*has* its arm row, same commit), arm validity (an arm row's parent exists
+*has* its arm fact, same commit), arm validity (an arm fact's parent exists
 *with that kind*), and exclusivity (an id in two arms would force `kind` to
 equal two variants — a contradiction, not a rule).
 
 **Selections `| f == v`** are σ with equality only — the same restriction
 the CIND literature imposes — and a selected field may not also be
-projected. `|` reads as *such that*, the set-builder bar. The two levels of
-`==` (sets between atoms, values inside selections) are one concept —
-equality of denotations — at two types, exactly as mathematics uses `=`.
+projected. `|` reads as *such that*, the set-builder bar. The three equality
+levels are one concept—equality of denotations—at three
+different types: dependency `==` relates key-backed selected views, selection `==`
+tests values inside σ, and query comparison `Eq` tests typed terms. They are never
+interchangeable in diagnostics (`20-query-ir.md` § atom matching).
 
 **The judgment discipline**, which is what makes the notation load-bearing:
 a statement is accepted only if the checker holds an

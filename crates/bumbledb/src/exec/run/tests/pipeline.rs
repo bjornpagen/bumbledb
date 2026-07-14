@@ -202,7 +202,7 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
     }
 
     let schema = schema(3);
-    // R0 ⋈ R2 on y: 300 result rows; the gate holds 500 rows the
+    // R0 ⋈ R2 on y: 300 answers; the gate holds 500 facts the
     // executor must never enumerate (emits stay at the join's own 300).
     let r: Vec<(u64, u64)> = (0..300u64).map(|i| (i, i % 7)).collect();
     let t: Vec<(u64, u64)> = (0..7u64).map(|i| (i, i + 100)).collect();

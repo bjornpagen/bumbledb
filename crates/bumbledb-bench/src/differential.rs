@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 #[cfg(test)]
 use bumbledb::Snapshot;
-use bumbledb::{Db, Error, Query, ResultValue, Value};
+use bumbledb::{AnswerValue, Db, Error, Query, Value};
 
 #[cfg(test)]
 use crate::naive::ConditionalAbort;
@@ -55,11 +55,11 @@ pub enum ConditionalVerdict {
     Moved { witnessed: u64, current: u64 },
 }
 
-/// One query's outcome, on either side: the result set, or one of the
+/// One query's outcome, on either side: the answer set, or one of the
 /// two defined runtime errors (aggregate overflow, and the measure of a
 /// ray — the engine's one runtime type error).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Rows {
+pub enum Answers {
     Ok(BTreeSet<Tuple>),
     Overflow,
     MeasureOfRay,
@@ -75,8 +75,8 @@ pub enum Divergence {
     },
     Query {
         op: usize,
-        engine: Rows,
-        naive: Rows,
+        engine: Answers,
+        naive: Answers,
     },
 }
 
@@ -124,9 +124,9 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
             Op::Query { query, params } => {
                 let engine = engine_query(db, query, params);
                 let model = match naive.query(query, params) {
-                    Ok(rows) => Rows::Ok(rows),
-                    Err(QueryError::Overflow { .. }) => Rows::Overflow,
-                    Err(QueryError::MeasureOfRay) => Rows::MeasureOfRay,
+                    Ok(answers) => Answers::Ok(answers),
+                    Err(QueryError::Overflow { .. }) => Answers::Overflow,
+                    Err(QueryError::MeasureOfRay) => Answers::MeasureOfRay,
                 };
                 if engine != model {
                     return Err(Divergence::Query {
@@ -244,40 +244,40 @@ pub(crate) fn naive_write_from(
     }
 }
 
-/// One query through the engine as a [`Rows`] verdict — shared with the
+/// One query through the engine as a [`Answers`] verdict — shared with the
 /// dual-run grounding differential (`tests/ground.rs`), which compares
-/// grounding-on, ground-off, and model rows three ways.
-pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) -> Rows {
+/// grounding-on, ground-off, and model answers three ways.
+pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) -> Answers {
     let mut prepared = db.prepare(query).expect("differential queries validate");
     let args = crate::families::param_args(params);
     let outcome = db.read(|snap| snap.execute_collect_args(&mut prepared, &args));
     match outcome {
-        Ok(buffer) => Rows::Ok(
+        Ok(buffer) => Answers::Ok(
             buffer
-                .rows()
-                .map(|row| {
+                .answers()
+                .map(|answer| {
                     Tuple(
                         (0..buffer.arity())
-                            .map(|column| owned_value(row.get(column)))
+                            .map(|column| owned_value(answer.get(column)))
                             .collect(),
                     )
                 })
                 .collect(),
         ),
-        Err(Error::Overflow { .. }) => Rows::Overflow,
-        Err(Error::MeasureOfRay { .. }) => Rows::MeasureOfRay,
+        Err(Error::Overflow { .. }) => Answers::Overflow,
+        Err(Error::MeasureOfRay { .. }) => Answers::MeasureOfRay,
         Err(other) => panic!("engine refused a differential query: {other:?}"),
     }
 }
 
-fn owned_value(value: ResultValue<'_>) -> Value {
+fn owned_value(value: AnswerValue<'_>) -> Value {
     match value {
-        ResultValue::Bool(v) => Value::Bool(v),
-        ResultValue::U64(v) => Value::U64(v),
-        ResultValue::I64(v) => Value::I64(v),
-        ResultValue::String(v) => Value::String(Box::from(v.as_bytes())),
-        ResultValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
-        ResultValue::IntervalU64(iv) => Value::IntervalU64(iv),
-        ResultValue::IntervalI64(iv) => Value::IntervalI64(iv),
+        AnswerValue::Bool(v) => Value::Bool(v),
+        AnswerValue::U64(v) => Value::U64(v),
+        AnswerValue::I64(v) => Value::I64(v),
+        AnswerValue::String(v) => Value::String(Box::from(v.as_bytes())),
+        AnswerValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
+        AnswerValue::IntervalU64(iv) => Value::IntervalU64(iv),
+        AnswerValue::IntervalI64(iv) => Value::IntervalI64(iv),
     }
 }
