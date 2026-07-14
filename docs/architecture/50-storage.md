@@ -65,13 +65,18 @@ facts, never interned, so the key hash carries no type tag: forward
   fact-op derivation (`keys::debug_assert_ordinary`), and `Db::verify_store`
   convicts any stored entry (`ClosedRelationEntry` — the entry's existence is the
   finding).
-- `fact_bytes` = the canonical encoding owned by `10-data-model.md`; identity = bytes.
+- `fact_bytes` = the canonical encoding owned by `10-data-model.md`; identity =
+  bytes — the encoding is injective, so byte equality IS value equality
+  (`lean/Bumbledb/Values.lean: value_eq_iff_encode_eq`).
 - `fact_hash` = full 32-byte blake3 of `fact_bytes`; an `M` hit is trusted without
   verification (collision axiom, recorded in `10-data-model.md`).
-- **`U` determinant index keys** are the FD statement's projected fields' canonical encodings,
-  concatenated in statement order. An interval field (always last —
+- **`U` determinant index keys** are the FD statement's projected fields' canonical
+  encodings, concatenated in statement order — order embeddings, so key order is
+  value order (`lean/Bumbledb/Values.lean: encode_u64_order_embedding`,
+  `encode_i64_order_embedding`). An interval field (always last —
   `30-dependencies.md` gate) contributes its 16 bytes, so within one scalar-prefix
-  group the determinant B-tree is **ordered by interval start**: the property the
+  group the determinant B-tree is **ordered by interval start**
+  (`lean/Bumbledb/Values.lean: encode_interval_order`): the property the
   pointwise check and the coverage walk stand on. A `bytes<N>` field contributes
   its ⌈N/8⌉ padded words — memcmp order over the uniform-width padded encodings is
   value-byte order, which is all the determinant needs (order *operations* on `bytes<N>`
@@ -188,7 +193,10 @@ variant agreement.
      validator-minted `DisjointDeterminantProof` that the target's pointwise key keeps
      its prefix group disjoint and start-ordered; `check_coverage` requires that
      token, so the soundness premise is represented rather than assumed
-     (`30-dependencies.md`). The frontier loop is the shared
+     (`30-dependencies.md`) — and under exactly that premise the one-pass verdict
+     equals the point-subset denotation
+     (`lean/Bumbledb/Exec/Sweep.lean: sweep_covered_sound_complete`; a source ray
+     demands a target ray, `ray_needs_ray`). The frontier loop is the shared
      segment sweep (`interval/sweep.rs`, one walk for the checker's gap verdict and
      `Pack`'s coalescing fold); the commit site owns only entry-segment location
      and the key-shape trust checks.
@@ -228,7 +236,8 @@ variant agreement.
    untouched: a retry re-runs the full write-and-sync, so every commit that
    reports success fsynced — no sync mode exists, and none may be born.
 
-User operation order inside the closure is therefore semantically irrelevant; the
+User operation order inside the closure is therefore semantically irrelevant
+(`lean/Bumbledb/Txn.lean: final_state_judgment_order_free`); the
 delete-before-insert trap and reference-insertion-ordering are unrepresentable. Crash
 consistency is LMDB atomicity — *tested* (the kill-during-commit crash/reopen family,
 `60-validation.md`, plus the crashpoint table below, exercised adversarially by the

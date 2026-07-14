@@ -191,7 +191,9 @@ Both are emission; the grammar is untouched.
 
 - `db.read(|snap| ...)` — one LMDB read snapshot; executes *prepared* queries
   (`db.prepare(&Query)` is the sole entry — pin-at-prepare, `40-execution.md`); sees
-  a consistent generation (the snapshot-sourced tx id, `50-storage.md`). A prepared
+  a consistent generation (the snapshot-sourced tx id, `50-storage.md`) — every
+  read is a function of that one state and nothing else
+  (`lean/Bumbledb/Txn.lean: snapshot_reads_one_state`). A prepared
   query executes only against snapshots of the database that prepared it — every
   execution entry checks the environment's process-unique instance id first and
   returns `ForeignPreparedQuery` on a foreign snapshot (plan, statistics, and view
@@ -261,13 +263,16 @@ Both are emission; the grammar is untouched.
   query-driven writes** is the generation witness (§ conditional writes below):
   read on a snapshot, write through `write_from`.
 - **The transaction is a delta** (`50-storage.md`): operations are in-memory set
-  arithmetic; operation order is semantically irrelevant; nothing touches LMDB until
+  arithmetic; operation order is semantically irrelevant
+  (`lean/Bumbledb/Txn.lean: final_state_judgment_order_free`); nothing touches LMDB until
   commit, and an abort never wrote anything. `delete(old); insert(new)` in either
   order is the blessed mutation idiom — a host-side `replace()` helper is optional
   sugar, not an engine operation (closed decision).
 - **Dependencies are judged at commit against the final state**
   (`30-dependencies.md`): the `CommitRejected` error surfaces from the commit, not
-  from the offending call site, carrying the COMPLETE violation set — every violated
+  from the offending call site, carrying the COMPLETE violation set
+  (`lean/Bumbledb/Txn.lean: rejection_is_complete` — complete, sound, and
+  nonempty) — every violated
   statement, cited once (per direction for a containment), in materialized statement
   order — each citation with the statement id (renderable back to the algebra
   through the schema) and the offending fact's bytes. The whole transaction aborts.
@@ -301,7 +306,9 @@ The public write surface has exactly three epistemic classes:
 
 **Dependencies prove surviving derived facts sound; the WITNESS proves the
 derivation saw the state it claims; nothing proves completeness — recompute
-under a new witness.** In particular, the engine does not retry, secretly run
+under a new witness** (`lean/Bumbledb/Txn.lean: derived_soundness_vs_freshness`
+— soundness holds in every committed state; freshness is not a property any
+committed state can carry). In particular, the engine does not retry, secretly run
 a derivation, or claim that a stored relation equals a query result. Automatic
 retries and hidden derivation semantics are host policy disguised as engine
 behavior; query-defined/materialized-view equality remains D5 territory in the
@@ -319,10 +326,15 @@ proposition the commit checks in one integer compare.
 
 - `db.write_from(&snap, |tx| ...)` — `db.write`, conditional on a witness:
   identical in every respect except one compare inside the writer's critical
-  section. If a state-changing commit has landed since the witness snapshot's
+  section (`lean/Bumbledb/Txn.lean: writeFrom_unmoved` — the compare is
+  invisible on the success path). If a state-changing commit has landed since
+  the witness snapshot's
   generation, the transaction aborts **before any page is touched** with the typed
   `GenerationMoved { witnessed, current }` (ids, never strings); the delta drops
-  exactly as any abort does, and the closure never ran. The environment-identity
+  exactly as any abort does, and the closure never ran
+  (`lean/Bumbledb/Txn.lean: writeFrom_moved`; a witness conflict is never a
+  dependency failure and vice versa — `witness_conflict_distinct`, the two
+  verdicts distinct by constructor). The environment-identity
   check runs first, exactly as prepared queries run it at every execution entry —
   a witness snapshot of another database is the typed `ForeignSnapshot`.
 - **The witness is the snapshot, never an integer** (recorded refusal,
@@ -346,7 +358,7 @@ proposition the commit checks in one integer compare.
   precision), WriteTx point reads remain the key-shaped condition (per-fact
   precision, zero retries, race-free by construction inside one transaction).
   *Read the model, propose a delta, commit iff the model you read is still the
-  model.*
+  model* (`lean/Bumbledb/Txn.lean: writeFrom_unmoved`, `writeFrom_moved`).
 - **The three idioms**, each query → compute → `write_from` → host retry:
   - *Update-where:* query the matching facts on a snapshot, compute their
     replacements, `write_from(&snap)` doing `delete(old); insert(new)` per fact.
@@ -368,7 +380,7 @@ proposition the commit checks in one integer compare.
   parse, don't validate, in the host too). A dynamic (untyped) fact form exists for
   ETL tooling.
 - **Borrowed structs:** generated structs carry `str` fields by reference
-  (`str` → `&'a str`; one lifetime iff the relation has one — `bytes<N>` is
+  (`str` → `&'a str`; a `str`-carrying relation gains one lifetime — `bytes<N>` is
   `[u8; N]`, owned and `Copy`). Insert takes the struct at any lifetime — the encode path
   reads the fields as borrows into the engine's arena copy. Typed reads
   (`tx.get`, `snap.scan_facts`) return views at the resolver's lifetime, UTF-8
@@ -447,7 +459,11 @@ proposition the commit checks in one integer compare.
 ## ETL / migration surface
 
 Schema change = ETL into a new database (`10-data-model.md`) — the only path from
-any other format, stated. The **export
+any other format, stated. The laws: export→import of a committed state into the
+same theory is a no-op (`lean/Bumbledb/Txn.lean: etl_identity`), and a transform
+into a new theory either lands already holding it or rejects with the complete
+violation set — there is no migrate-now-validate-later state (`etl_lands_valid`).
+The **export
 surface is a full-relation scan**: `snap.scan(relation)` yields *dynamic* facts
 (`Result<Vec<Value>>` — per-item corruption is a hard error and the stream fuses)
 over `F` in row_id order (a storage iteration, not a query — streams, not sets); the

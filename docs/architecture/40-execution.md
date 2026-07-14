@@ -52,7 +52,9 @@ once.
 **Key-probe point lookups.** A single-atom query whose bindings cover a key of the
 relation (an FD statement, including the auto-key on fresh fields —
 `30-dependencies.md`) or the full fact executes as: one `U` determinant (or `M`-membership)
-LMDB get → one `F` fetch → decode. No images, no COLT, no plan search. This serves the
+LMDB get → one `F` fetch → decode. No images, no COLT, no plan search — and the one
+get computes exactly the rule's join denotation
+(`lean/Bumbledb/Exec/Rewrites.lean: keyprobe_equiv_join`). This serves the
 headline "point lookup by key" workload at O(log n), including immediately after a
 commit (no rebuild cost).
 **Decision.** **Alternative:** COLT-only ("the join engine is the only read path") —
@@ -61,9 +63,11 @@ and loses the benchmark family outright; the paper itself lists index-blindness 
 open limitation (§6). **Reverses if:** never — the determinants exist anyway (rule: every
 mechanism names its reader; this is `U`/`M`'s read-side reader).
 
-**Statically empty programs.** A program whose every rule the normalization
-fold refuted on constants (`20-query-ir.md`, § normalization — mutually
-unsatisfiable constant conditions) prepares to the empty program. Prepared
+**Statically empty programs.** A rule the normalization fold refuted on
+constants (`20-query-ir.md`, § normalization) is deleted at prepare — sound on
+every instance, the verdict never consulted one
+(`lean/Bumbledb/Exec/Rewrites.lean: statically_empty_sound`); a program whose
+every rule dies prepares to the empty program. Prepared
 execution has two rule kinds — key probe and Free Join — plus this
 program-level empty variant. Execution binds params first — bind errors still surface, a
 vacuous Allen mask param is rejected exactly as on a live plan — then
@@ -92,11 +96,9 @@ start/end column pair (`50-storage.md` image layout), and interval-pair
 predicates classify through the configuration kernel (§ vectorized
 execution — masks, not ops); both are the existing 8-byte shapes and no
 new NEON widths exist. The membership kernel (`s ≤ t < e`, two unsigned
-word compares) needs no ray awareness: a ray's end (`MAX` = ∞, the point-domain
-law — `10-data-model.md`) is just the largest word, so `t = MAX−1` — the last
-point — passes against `[s, MAX)` through the same two compares, and validation
-has already rejected `t = MAX` (the ceiling is not a point), so the kernel never
-sees it.
+word compares) needs no ray awareness: a ray's end is just the largest end word
+(`lean/Bumbledb/Values.lean: ray_is_unbounded_tail`), and validation has already
+rejected `t = MAX` (the ceiling is not a point), so the kernel never sees it.
 
 Everything else executes as Free Join.
 
@@ -214,8 +216,9 @@ words: an interval variable occupies two consecutive slots (start, end) and a
 group keys, and probe keys as word tuples, the wordmap's native shape, and every
 consumer walks widths rather than assuming one.
 
-Two facts identical on all *bound* variables produce the same binding; the solution is a
-**set** of bindings, so duplicates must collapse before folding:
+Duplicates must collapse before folding — the seen-set fold over the emitted
+stream computes exactly the answer set
+(`lean/Bumbledb/Exec/Dedup.lean: seenfold_is_set_semantics`):
 
 - The **projection sink** dedups projected answers (its job anyway).
 - The **aggregate sink** folds a binding only on first occurrence, using a seen-set of
@@ -226,39 +229,44 @@ Two facts identical on all *bound* variables produce the same binding; the solut
 - **Arg-restriction (`ArgMax`/`ArgMin`)** is a group-state fold, not a
   post-materialization pass: per group the sink keeps the current extreme key and
   the set of surviving projected answers; a strictly-better key clears the set, an
-  equal key inserts (ties are set-honest, `20-query-ir.md`), a worse key is a
+  equal key inserts (ties are set-honest —
+  `lean/Bumbledb/Query/Aggregates.lean: argmax_ties_all_kept`), a worse key is a
   no-op. Memory is O(groups × ties), and ties are structurally rare (fresh keys
   cannot tie).
 - **`Pack`** is a group-state fold with a **relation-shaped finalize**
-  (semantics in `20-query-ir.md` § aggregation): per group the sink accumulates
+  (the coalesce spec: `lean/Bumbledb/Query/Aggregates.lean: pack_extensional`,
+  `pack_canonical`): per group the sink accumulates
   the claim list — `[start, end]` encoded word pairs appended raw, pooled by
   group index (the Arg answer-set precedent, capacity retained across executions);
   finalize sorts each group's list by start word (`sort_unstable` — the in-place
   machinery, allocation-free; a pooled radix stays unearned until the bench
   shows the sort on a profile) and drives the shared segment sweep's
   (`interval/sweep.rs` — the coverage judgment's walk, `Pack`'s finalize is its
-  second continuation) maximal-run emission: one head answer per maximal segment.
+  second continuation; one fold, two consumers, proved:
+  `lean/Bumbledb/Exec/Sweep.lean: pack_is_the_sweep`) maximal-run emission:
+  one head answer per maximal segment.
   Identical and overlapping claims collapse in the sweep, never at fold time;
   memory is O(the group's claims) — retained high-water scratch under the
   allocation contract, gated like every sink pool. Like `CountDistinct` and
   Arg, the set-valued group state folds per binding (no gather kernel or scan
   pushdown applies).
-- **Elision optimization:** if every atom occurrence's bound fields cover a key of
-  its relation (typical for ledger queries that bind fresh ids), distinct facts ⇒
-  distinct bindings. `provably_distinct` is the only mint for
+- **Elision optimization:** the seen-set is elided when every atom occurrence's
+  bound fields cover a key of its relation (typical for ledger queries that bind
+  fresh ids) — the licence is
+  `lean/Bumbledb/Exec/Dedup.lean: distinct_witness_licence`.
+  `provably_distinct` is the only mint for
   `DistinctWitness`; `AggregateSink::without_seen_set` requires that witness by
-  value, and the ordinary/union constructors cannot omit the set. This is a
-  single-rule proof: the multi-rule union keeps its spanning head-projection
-  seen-set even when every rule has its own witness. That is deliberately distinct
+  value, and the ordinary/union constructors cannot omit the set. Single-rule
+  only: the multi-rule union keeps its spanning head-projection
+  seen-set even when every rule has its own witness — deliberately distinct
   from the measured cross-rule elision refutation below.
 - **Rule-disjointness knowledge:** `plan/fj/provably_disjoint.rs` recognizes a
-  multi-rule program whose heads are provably pairwise disjoint. **Witness form**:
-  a relation R and field f such that both rules bind a positive R occurrence whose
-  filters pin f to different concrete literals, while that occurrence's bound key
-  columns flow to the same head positions. Equal head answers would force the pinned
-  facts to agree on R's key — one fact whose f cannot equal two literals. The
-  DU-arm union is exactly this shape. The proof is conservative and pairwise;
-  params, sets, and mixed constant forms pin nothing. Plan introspection retains the knowledge
+  multi-rule program whose heads are provably pairwise disjoint — the witness
+  form and its soundness are
+  `lean/Bumbledb/Exec/Dedup.lean: syntactic_disjointness_sound` (conservative
+  and pairwise by design: params, sets, and mixed constant forms pin nothing;
+  the elision the witness could license is `disjoint_witness_licence`). The
+  DU-arm union is exactly this shape. Plan introspection retains the knowledge
   as `disjoint_rules: proven (R.f)`, but execution always keeps one head-projection
   seen-set spanning a multi-rule program.
 
@@ -304,21 +312,24 @@ key probe or a Free Join rule carrying its own `ValidatedPlan` (the whole planni
 pipeline runs for each non-key-probe rule at prepare). Execution runs the
 rules **sequentially** into **one sink**: the sink resets once per execution, never
 per rule, and its dedup machinery spanning rules is the *entire* implementation of set
-union. **Union is not an operator** — no merge node, no concat-then-dedup pass exists
-anywhere in the executor; disjunction at the top is the rule list, and what one sink
-hearing several rules *means* under set semantics is exactly ∪. Inter-rule parallelism
+union — one sink hearing several rules computes exactly the query union
+(`lean/Bumbledb/Exec/Dedup.lean: union_regime_head_projection`). **Union is not an
+operator** — no merge node, no concat-then-dedup pass exists
+anywhere in the executor; disjunction at the top is the rule list. Inter-rule parallelism
 is not attempted: it is inter-query parallelism's job (the concurrency contract below)
 and stays a non-goal.
 
 - **Dedup keys are head-shaped, never rule-slot-shaped** — the representation that
-  makes cross-rule dedup work at all, since binding-slot layouts are per-rule. The
+  makes cross-rule dedup work at all, since binding-slot layouts are per-rule (a
+  `VarId` is rule-scoped, so a full-binding key has no cross-rule meaning); the
+  key law is `lean/Bumbledb/Exec/Dedup.lean: union_regime_head_projection`. The
   projection sink keys the projected find tuple (head-shaped already); the multi-rule
   aggregate sink keys the **head projection** — per head position, the words the
   position reads from the rule's binding (group variables and fold inputs; the nullary
-  `Count` contributes nothing), which is `20-query-ir.md`'s "aggregates read the head:
-  the fold domain is the union of the rules' binding sets projected to the head".
+  `Count` contributes nothing).
   The single-rule aggregate keys the full slot array (its fold domain is the rule's
-  distinct full bindings — the normative single-rule semantics, unchanged).
+  distinct full bindings —
+  `lean/Bumbledb/Query/Aggregates.lean: agg_over_distinct_bindings`).
   The spanning set remains under the rule-disjointness proof (§ set semantics):
   `DisjointWitness` is diagnostic knowledge, and the measured refutation above
   rejects the slower per-rule drain representation.
@@ -347,8 +358,9 @@ and stays a non-goal.
 - **`Pack` does cross rules**: its head position reads the raw claim's two
   words, so the spanning head-projection seen-set keys (group, claim) pairs —
   a claim two rules derive folds once — and the coalesce runs over the union:
-  ∪ first, maximal segments at finalize (`20-query-ir.md` § aggregation,
-  "across rules `Pack` folds the union").
+  ∪ first, maximal segments at finalize
+  (`lean/Bumbledb/Exec/Sweep.lean: pack_is_the_sweep` over the union regime's
+  head-projection key).
 
 ## Planner
 
@@ -368,39 +380,36 @@ never removals, so occurrence ids never move. Elimination removes atoms that
 statements prove redundant; evaluation removes atoms whose extension is
 stage-0-known by *running them at prepare*: `Kind(id: k, mastered == true)` is
 not a join to plan — it is a three-element id-set computed before the DP ever
-sees the query, residual cost zero. Both rewrites are continuously verified
-semantics-preserving by the rewrites fuzz target (`60-validation.md` § the
+sees the query, residual cost zero. Both rewrites — and any chain of them with
+the statically-empty kill, in any order — preserve the query's answers
+(`lean/Bumbledb/Exec/Rewrites.lean: grounding_preserves_answers`,
+`elimination_sound`, composed by `rewrite_composition`), and the rewrites fuzz
+target checks the same statement empirically (`60-validation.md` § the
 fuzzing charter — the dual-pipeline differential through the `ground-off`
 switch).
 
 *Elimination.* An accepted containment
 `A(X | φ) <= B(Y | ψ)` makes the query's join of `A` to `B` on X→Y redundant
-when four conditions hold:
-
-1. **Full-key join** — every X→Y position pair is join-covered, and every
-   variable shared between the two occurrences pairs a statement position
-   (uniqueness needs the whole key; the acceptance gate made Y a key of B, so a
-   partial-key join refuses).
-2. **B otherwise unused** — no non-Y field of B is projected, filtered, compared
-   in a residual, or referenced by any other occurrence (anti-probe bindings and
-   membership points included); B's own selections are a **literal subset** of ψ
-   and the A occurrence's filters carry φ **literally** — (field, encoded
-   literal) set containment, never inference.
-3. **Variables join or die** — every variable of B is either unified with A's at
-   an X→Y pair or dead in condition 2's sense.
-4. **Scalar positions only** — an interval-typed pair refuses in v0: pointwise
-   coverage proves covering facts exist, not a joinable equal fact. OPEN
-   trigger: a census-style query that would benefit from interval-pair
-   elimination — until one exists the refusal stands, like the range
-   accelerator's trigger discipline.
+when the B occurrence contributes nothing else. The licensing conditions and
+the answer-preservation proof are
+`lean/Bumbledb/Exec/Rewrites.lean: ElimStep` and `elimination_sound` —
+`plan/ground.rs::removable` checks them condition for condition, and every
+literal carriage is (field, encoded literal) set containment, never inference.
+The one condition that is a recorded v0 refusal rather than a theorem
+premise: **scalar positions only** — an interval-typed pair refuses (pointwise
+coverage proves covering facts exist, not a joinable equal fact). OPEN
+trigger: a census-style query that would benefit from interval-pair
+elimination — until one exists the refusal stands, like the range
+accelerator's trigger discipline.
 
 Chains (`A<=B<=C`) close in the fixpoint; mutual `==` pairs stay acyclic by
 support tracking (each elimination records its source, and a source whose chain
 passes through the candidate is refused — a pair may not certify itself). Sound
 here and nowhere like Postgres because no deferral modes exist: every readable
-snapshot satisfies every accepted statement (`30-dependencies.md`), and Y's
-key-ness maps the surviving binding set 1:1, so removal is result-identical
-under both sinks — projection and aggregate alike. The marks' readers: plan introspection
+snapshot satisfies every accepted statement
+(`lean/Bumbledb/Txn.lean: committed_states_model`), which is how
+`elimination_sound`'s containment premise is discharged — removal is
+result-identical under both sinks. The marks' readers: plan introspection
 and the structured stats (each mark rendered with its licensing statement
 through `schema/render.rs`), and the DP, which sees a smaller problem.
 **Alternative:** no rewrite — leave redundant existence walks to D2's
@@ -440,7 +449,9 @@ today. **Nothing new executes**, and a plan-constant set never counts as an
 unresolved literal (the literal latch's fully-resolved fast path stays open).
 `|S| == 0`: the rule is **statically empty** — the fold's rule-death channel
 (`NormalizedQuery::dead`, rendered `folded to ∅: Kind{mastered == true}`),
-deleted at prepare exactly like a normalize-time death. No live `k` (a pure
+deleted at prepare exactly like a normalize-time death, and honestly: a
+refuted rule answers nothing on any agreeing instance
+(`lean/Bumbledb/Exec/Rewrites.lean: ground_refuted_empty`). No live `k` (a pure
 constant gate): `|S| ≥ 1` deletes the atom outright and `|S| == 0` kills the
 rule — but only a **var-less** gate may delete: a dead-but-bound variable
 still multiplies an aggregate's fold domain (the binding set is over all query
@@ -468,14 +479,18 @@ probe yet fail the membership. Two witnesses: `k` bound at the id position of
 another participating occurrence of the same closed relation, or a binder
 whose field carries an accepted containment into the closed relation's id
 (with the statement's φ carried literally by that occurrence). No witness →
-the fold refuses and the anti-probe stays.
+the fold refuses and the anti-probe stays. (The complement fold is deliberately
+unmodeled in the spec — the recorded narrowing in
+`lean/Bumbledb/Exec/Rewrites.lean`; until it is, this block is the semantic
+authority and the grounding differential is its empirical check.)
 
 Plan introspection reports folds beside eliminations, off the `Role::Folded` marks — the
 surviving set as **handles**, the vocabulary's names (the handle set IS the
 payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated:
 `folded: !Kind{…} → {…} rejected`); the differential off-switch
 (`with_grounding_disabled`) covers the evaluator inside the same fixpoint, and the
-dual-run corpus pins byte-identical results — the fold is never semantic.
+dual-run corpus pins byte-identical results — the fold is never semantic
+(`lean/Bumbledb/Exec/Rewrites.lean: grounding_preserves_answers`).
 The normalization fold's narrower `with_fold_disabled` switch is compiled under
 `cfg(any(test, feature = "fold-off"))` — the engine unit suites and, through the
 revived `fold-off` fuzz-oracle feature, the fuzz crate's rewrites dual-pipeline
@@ -817,7 +832,10 @@ Six measured decisions, enforced structurally by
   resolution state), decrementing the prepared query's pending-literal
   count; `literal_latch` fires once per distinct literal, ever. A miss
   stays live: the template keeps its bytes and re-checks each execution,
-  with the miss semantics (`Eq` short-circuit, `Ne` sentinel) verbatim.
+  with the miss semantics (`Eq` short-circuit, `Ne` sentinel) verbatim — a
+  per-execution empty verdict, never a plan verdict: the miss and the fold's
+  instance-independent refutation are two distinct constructors
+  (`lean/Bumbledb/Exec/Rewrites.lean: EmptyAt`).
   When the count is zero and the query has no params of any shape,
   `resolve_filters` is **skipped entirely** — the resolved tables were
   written once and are final (one cold branch at rule entry). Sound

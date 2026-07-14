@@ -52,7 +52,7 @@ globally** over the full committed state through the commit path's own probe
 and coverage walk — the class no incremental check can see: an incremental form
 wrong once, long ago, preserved by every commit since. Findings are report
 data, never errors; CLI-wrapped as `bumbledb-bench verify-store` (nonzero exit
-iff findings are non-empty).
+on non-empty findings, zero otherwise).
 
 **Durability parity under `synchronous=FULL`.** Both engines flush **to media** on
 the timing machine: LMDB does unconditionally on macOS (`lmdb-master-sys`
@@ -109,7 +109,8 @@ sqlite_expressible`): `Pack` heads plus the two dependency judgments, consumed b
 the harness so nothing is ever *silently* skipped — the verify run counts and
 reports its naive-only cases. The naive model packs **from the point-set
 definition** (union of point sets → maximal segments, sort-and-merge over logical
-endpoints), independent of the engine's word sweep. **The compiled subsets share
+endpoints — the definition `lean/Bumbledb/Query/Aggregates.lean:
+pack_extensional` states), independent of the engine's word sweep. **The compiled subsets share
 the division of labor**: ψ-subset write judgments (containments into a closed
 target, `Escalation(severity) <= Severity(id | pages == true)`-shaped) are the
 naive model's alone — `SQLite` does not express commit-time CINDs, and the
@@ -374,7 +375,8 @@ time the emulation, not the engine.
   answers); and the **converse-property lane**: for every generated Allen-bearing
   query, the converse twin — operands swapped, mask conversed per leaf — must
   produce the identical result set on the engine (`Allen(a, b, m) ≡
-  Allen(b, a, converse(m))`, the coordinate system's own theorem, quantified over
+  Allen(b, a, converse(m))` — the coordinate system's own theorem,
+  `lean/Bumbledb/Query/Aggregates.lean: allen_swap_mask` — quantified over
   the generator's whole mask distribution).
 - **Dependency-judgment property family** (new, the redesign's write-side core):
   random statement sets over random schemas (within the acceptance gate), random
@@ -382,12 +384,14 @@ time the emulation, not the engine.
   pin the theorems — union exclusivity (two arms fighting over one id must abort),
   totality (parent without child must abort; parent-with-child in one delta must
   commit), same-delta cluster demolition (must commit), pointwise-key
-  adjacent-vs-overlapping boundaries, coverage with exact-abutment segment chains,
-  the ray end (`MAX` = ∞, the point-domain law) at every boundary position, and **the net-disposition
+  adjacent-vs-overlapping boundaries, coverage with exact-abutment segment chains
+  (sampling `lean/Bumbledb/Exec/Sweep.lean: adjacent_segments_cover`),
+  the ray end (`MAX` = ∞, the point-domain law; `ray_needs_ray` is the
+  coverage-to-∞ theorem) at every boundary position, and **the net-disposition
   pattern class** — a redundant insert (plain, or a delete + re-insert netting to
   nothing) alongside a delete of its containment target must abort **target-side
   on both oracles, `Direction` compared as part of the verdict**: "source side"
-  means facts the transaction actually added, the naive model is normative, and
+  = facts the transaction actually added, the naive model is normative, and
   the delta's net dispositions (`50-storage.md`) make the engine agree by
   representation. The `==`/totality corner (no-op parent re-insert + child
   delete) is the same class, caught via the parent's standing reverse edge.
@@ -444,7 +448,8 @@ runner.
   against the live engine with the naive model in lockstep, under five
   oracles — commit-verdict parity by strict equality of the COMPLETE
   violation sets, order included (a rejection IS the sealed set on both
-  sides — `30-dependencies.md`), set-semantic query parity, reopen equivalence
+  sides — `30-dependencies.md`; the theorem this oracle samples is
+  `lean/Bumbledb/Txn.lean: rejection_is_complete`), set-semantic query parity, reopen equivalence
   over full relation contents, `verify_store` green after every commit
   and reopen, and rejected-commits-change-nothing. `query` — three-way parity per iteration over a
   cached Tiny target corpus: querygen's valid-by-construction arm
@@ -458,7 +463,9 @@ runner.
   thread-local switches, one build — cargo refuses a dual-build
   dependency on one package), demanding identical result sets: the
   rewrite layers continuously proven semantics-preserving, never
-  assumed. `crash` — durability under torn commits: an ops prefix plus
+  assumed — the empirical arm of
+  `lean/Bumbledb/Exec/Rewrites.lean: grounding_preserves_answers` (and its
+  chain form, `rewrite_composition`). `crash` — durability under torn commits: an ops prefix plus
   one victim commit, replayed in a CHILD process that aborts at a drawn
   crashpoint (the commit pipeline's named phase boundaries,
   `50-storage.md` § crashpoints — engine hooks under the `crashpoint`
