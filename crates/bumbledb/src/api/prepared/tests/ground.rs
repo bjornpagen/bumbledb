@@ -248,7 +248,7 @@ fn populate_du(env: &Environment, schema: &Schema) {
     commit(delta, env).expect("commit");
 }
 
-/// The EXPLAIN golden on the DU fixture
+/// The introspection golden on the DU fixture
 /// (`docs/architecture/40-execution.md` § the grounding):
 /// the one-sided walk `Q(rate) :- Det(grading = g, rate),
 /// Grading(id = g, kind == 0)` reports the header's elimination with
@@ -256,7 +256,7 @@ fn populate_du(env: &Environment, schema: &Schema) {
 /// mirrored pair renders `==` once — and the structured stats carry the
 /// same mark as data.
 #[test]
-fn the_du_fixture_explain_pins_the_eliminated_line() {
+fn the_du_fixture_introspection_pins_the_eliminated_line() {
     let dir = TempDir::new("grounding-du-golden");
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -286,7 +286,7 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 
-    let (answers, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (answers, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert_eq!(answers.len(), 2, "the two Det rates");
     assert!(
         report.contains("eliminated: Grading via Grading(id | kind == 0) == Det(grading)\n"),
@@ -456,7 +456,7 @@ fn per_rule_elimination_marks_one_rule_only() {
 /// disjunct's `kind` filter with the Grading occurrence itself — the
 /// filterless rule subsumes the rate-filtered one, the subsumed rule is
 /// deleted at prepare, results are identical with the passes off, and
-/// EXPLAIN names the deletion with the subsuming rule's index.
+/// introspection names the deletion with the subsuming rule's index.
 #[test]
 fn dnf_residue_subsumption_deletes_the_filtered_rule() {
     let dir = TempDir::new("grounding-subsume");
@@ -512,11 +512,11 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
         "the survivor still carries its own elimination mark"
     );
 
-    let (results, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (results, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert_eq!(results.len(), 2, "the two Det rates");
     assert!(
         report.contains("subsumed: rule 0 by rule 1\n"),
-        "EXPLAIN names the deletion with the subsuming rule's index:\n{report}"
+        "introspection names the deletion with the subsuming rule's index:\n{report}"
     );
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(

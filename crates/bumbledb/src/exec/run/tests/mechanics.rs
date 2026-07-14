@@ -238,7 +238,7 @@ fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
 }
 
 /// A pinned sibling (`Cursor::Row`) probes
-/// by field equality — phase 1 computes no hash for it, and EXPLAIN's
+/// by field equality — phase 1 computes no hash for it, and introspection's
 /// `hashes` counts only hashes computed for map probes. Probes still
 /// count; results are unchanged.
 #[test]

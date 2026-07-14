@@ -117,7 +117,7 @@ pub use api::prepared::{
 };
 pub use api::stats::{
     CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
-    KeyProbeStats, NodeStats, PinnedRows, RuleStats,
+    INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats,
 };
 pub use error::{Direction, Error, OverflowKind, Result, Violation, Violations};
 pub use interval::Interval;

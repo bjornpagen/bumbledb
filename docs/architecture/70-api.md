@@ -209,7 +209,7 @@ Both are emission; the grammar is untouched.
   generations using workload-specific evidence. Same
   foreign-snapshot check as execution; it allocates — a diagnostic surface, never a
   warm-path call. Negated and grounding-eliminated occurrences earn no statistics read
-  at prepare and so carry no pin; key probes pin nothing. The stats/EXPLAIN
+  at prepare and so carry no pin; key probes pin nothing. The stats/plan introspection
   surface (`Snapshot::profile`) carries the same pin record per occurrence —
   "estimated from (pinned facts at prepare)" — so a drifted plan is visible in one
   read of the existing report.
@@ -458,11 +458,21 @@ Two feature-gated surfaces, both compiling to nothing under default features
 feature registers the counting allocator (events + bytes + current live bytes, the gate's and
 the benchmark's memory truth), and the `trace` feature enables `bumbledb::obs` —
 explicit per-thread capture of nanosecond spans and point events over every prepare/
-execute/commit phase, drained by tooling into Chrome-trace artifacts. Always
-available: `snap.explain(..)` (rendered report — it opens with the query in the
-rule notation, `20-query-ir.md` § the renderer; `PreparedQuery::rendered_query`
-exposes the same string) and the structured execution-stats surface it is built
-from. When a String literal still awaits interning, EXPLAIN names every pending
+execute/commit phase, drained by tooling into Chrome-trace artifacts. Plan
+introspection — EXPLAIN, colloquially — is always available through
+`snap.introspect(..)`. It returns an ANALYZE-semantics rendered artifact beginning
+with `introspection v1`, then the query in rule notation (`20-query-ir.md` § the
+renderer; `PreparedQuery::rendered_query` exposes the same query string), predicate,
+plan sections, and diagnostics. `Snapshot::profile` returns the same execution as
+structured `ExecutionStats`, carrying `introspection_version: 1` and the same
+program/node ordering.
+
+Within one version, identical schema fingerprint, canonical query, parameter types,
+and feature set produce byte-identical rendered output. Sections are fixed; rules
+remain in program order, nodes in plan order, and dead, subsumed, and unresolved-
+literal diagnostics in statement order. Any content or ordering change increments
+the version in both surfaces. When a String literal still awaits interning, plan
+introspection names every pending
 literal and states the latch consequence: an unresolved `Eq` literal empties its
 rule at execution until latched. The line is derived from the live plan templates
 after execution, so it disappears on the execution that resolves and rewrites the
@@ -510,7 +520,7 @@ errors are the portable half of the API.
 ## OPEN (this doc's honest list)
 
 Resolved by ruling or implementation (recorded above): the `Answers` shape;
-the dynamic-fact ETL form; EXPLAIN's surface (`snap.explain(&mut prepared, params)
+the dynamic-fact ETL form; plan introspection's versioned surface (`snap.introspect(&mut prepared, params)
 -> (Answers, String)` — ANALYZE semantics, rendered-text report); WriteTx point
 reads (decided).
 

@@ -1,8 +1,8 @@
-//! COLT, the executor, sinks, kernels, dispatch, and EXPLAIN (docs/architecture).
+//! COLT, the executor, sinks, kernels, dispatch, and introspection (docs/architecture).
 
 pub mod colt;
 pub mod dispatch;
-pub mod explain;
+pub mod introspection;
 pub mod kernel;
 pub mod run;
 pub mod sink;

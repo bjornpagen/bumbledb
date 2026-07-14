@@ -1,5 +1,5 @@
 //! Prepare-time cardinality estimation (docs/architecture/40-execution.md): per-occurrence
-//! input estimates for the join-order DP and the EXPLAIN/report
+//! input estimates for the join-order DP and the introspection/report
 //! honesty numbers. Three sources, strongest first — schema structure
 //! (free and exact), resident-image exact distinct counts, documented
 //! constant floors. Prepare **never builds** an image for statistics
@@ -827,7 +827,7 @@ mod tests {
     /// P3 diagnosis: a three-edge cycle with exact resident distincts and a
     /// three-row closed vocabulary on `x`. The full head shows the inherent
     /// independence error at the closing two-variable probe; the narrow head
-    /// additionally shows that EXPLAIN's final-node `actual` is emitted set
+    /// additionally shows that introspection's final-node `actual` is emitted set
     /// witnesses after D2 cancellation, not the cycle's full binding count.
     /// P1 is pinned by the closed-domain fanout, and P2 is absent by
     /// construction (there are no range conditions).

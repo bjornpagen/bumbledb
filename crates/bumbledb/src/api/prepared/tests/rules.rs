@@ -326,12 +326,12 @@ fn the_all_count_head_counts_the_singleton_union() {
     assert_eq!(out.get(0, 0), AnswerValue::U64(1));
 }
 
-/// EXPLAIN over a program: per-rule node stats plus the head-level union
+/// introspection over a program: per-rule node stats plus the head-level union
 /// accounting — rule 1 re-derives the overlap and the report shows the
 /// absorption.
 #[test]
-fn explain_reports_per_rule_stats_and_the_union_accounting() {
-    let dir = TempDir::new("prepared-rules-explain");
+fn introspection_reports_per_rule_stats_and_the_union_accounting() {
+    let dir = TempDir::new("prepared-rules-introspect");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &overlap_postings());
@@ -360,8 +360,8 @@ fn explain_reports_per_rule_stats_and_the_union_accounting() {
     }
 
     let (_, report) = prepared
-        .explain(&txn, &cache, &[BindValue::I64(0)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::I64(0)])
+        .expect("introspect");
     assert!(report.contains("rule 0:"), "{report}");
     assert!(report.contains("rule 1:"), "{report}");
     assert!(

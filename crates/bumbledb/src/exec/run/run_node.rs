@@ -194,7 +194,7 @@ impl Executor {
                 // Phase 1: gather every probe key and compute every hash —
                 // pure ALU, no bucket loads. A pinned sibling
                 // (`Cursor::Row`) probes by field equality, never by
-                // hash: skip the hash work and its counter, so EXPLAIN's
+                // hash: skip the hash work and its counter, so introspection's
                 // `hashes` counts hashes actually computed for map
                 // probes (one branch per sibling per batch).
                 let pinned = matches!(s_cursor, Cursor::Row(_));
@@ -490,7 +490,7 @@ impl Executor {
             };
             let stop_on_skip = !plan.nodes()[node_idx].sink_relevant && sink.may_skip();
             let batch_flow = sink.emit_batch(&batch, stop_on_skip);
-            // EXPLAIN's `emits` counts rows the sink consumed: the
+            // introspection's `emits` counts rows the sink consumed: the
             // whole batch, or exactly one when the first emit's skip
             // stopped it (identical to the recursive path's counts).
             let emitted = if batch_flow == Flow::SkipSuffix {

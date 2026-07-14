@@ -139,7 +139,7 @@ pub trait Sink {
     }
 
     /// Closes an open scan (accumulator write-back). Returns the number
-    /// of rows the scan consumed (EXPLAIN's `emits` accounting).
+    /// of rows the scan consumed (introspection's `emits` accounting).
     fn end_scan(&mut self, scan: &LeafScan<'_>) -> u64 {
         let _ = scan;
         unreachable!("end_scan without begin_scan == true");
@@ -172,10 +172,10 @@ pub enum JoinPhase {
 
 /// Execution observability seam (40-execution): the normal path
 /// instantiates [`NoopCounters`] — zero-sized, compiled to nothing; the
-/// EXPLAIN entry point (docs/architecture/40-execution.md) instantiates the counting variant.
+/// introspection entry point (docs/architecture/40-execution.md) instantiates the counting variant.
 pub trait Counters {
     fn node_entry(&mut self, node: usize);
-    /// One cover batch was drawn (`len` entries) — EXPLAIN's "batching
+    /// One cover batch was drawn (`len` entries) — introspection's "batching
     /// engaged" observable: at batch size B over N tuples this fires
     /// ~N/B times, not N times.
     fn batch(&mut self, node: usize, len: usize);

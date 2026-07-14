@@ -270,7 +270,7 @@ triggers:
 3. **Exclusivity** (derived): an id in two child relations would force the parent's
    `kind` to equal two handles; the parent's key on `id` makes that a contradiction,
    not a rule. Two consumers remain: the checker enforces it and the grounding spends
-   it. EXPLAIN can also report that rule heads are provably disjoint, but execution
+   it. Plan introspection can also report that rule heads are provably disjoint, but execution
    deliberately does not spend that knowledge; the measured refutation is in
    `40-execution.md` § set semantics.
 

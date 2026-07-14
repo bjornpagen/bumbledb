@@ -113,7 +113,7 @@ fn build_occurrences(
             // are implied by the containment and the key, so nothing is
             // resolved, probed, or scanned for it (`plan/ground.rs`). A
             // grounding-FOLDED occurrence keeps its filter list but empties
-            // its selections: the filters are EXPLAIN's fold picture
+            // its selections: the filters are introspection's fold picture
             // (`plan/ground/evaluate.rs::folded_picture`) — never
             // resolved, probed, or scanned (`Role::discharged`, read by
             // every execution-side loop).
@@ -353,7 +353,7 @@ pub fn validate(
     // is a debug_assert too. `check_selections` judges participating
     // occurrences only: a negated occurrence's Eq-constants legitimately
     // live in its filter list, a folded occurrence retains its
-    // pre-split list for EXPLAIN, and an eliminated occurrence's lists
+    // pre-split list for introspection, and an eliminated occurrence's lists
     // are empty (see `build_occurrences`).
     debug_assert!(check_selections(&occurrences).is_ok());
 

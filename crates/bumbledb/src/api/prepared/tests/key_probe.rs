@@ -152,8 +152,8 @@ fn key_probe_queries_flow_through_the_same_surface() {
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), AnswerValue::I64(42));
 
-    // EXPLAIN reports the classification alongside the rows.
-    let (answers, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    // introspection reports the classification alongside the rows.
+    let (answers, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert_eq!(answers.len(), 1);
     assert!(report.contains("key probe"));
 }
@@ -423,7 +423,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
         prepared.program.rules(),
         [PreparedRule::KeyProbe(_)]
     ));
-    let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(report.contains("full-fact membership probe"), "{report}");
 
     let out = prepared

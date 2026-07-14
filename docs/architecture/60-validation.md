@@ -584,9 +584,9 @@ window (allocations only on executions setting a new intermediate high-water; ev
 repeat of a seen parameter silent; at least one growth event observed, else the run
 is vacuous). It is a boolean, not a budget file.
 
-## EXPLAIN assertions
+## Plan introspection assertions
 
-One small family: on constructed skew fixtures, EXPLAIN's counted execution asserts
+One small family: on constructed skew fixtures, plan introspection's counted execution asserts
 the expected cover choice and that batching engaged — the cheap detector for
 correct-but-slow regressions, the class no functional test can see.
 Beyond this, the benchmark's timing is knowingly the only performance detector; stated.
@@ -650,5 +650,5 @@ Allocation budget *tables*. Filesystem fault injection (LMDB owns that layer; th
 crashpoint table and the crash/reopen family kill the process between logical phases
 instead — fewer, sharper tests). Trigger-emulated constraints in the oracle. The gate
 surface is: `cargo fmt` / `clippy -D warnings` / `cargo test`, the two oracles, the
-differential suite, the allocation boolean, and the EXPLAIN family. A gate earns its
+differential suite, the allocation boolean, and the plan introspection family. A gate earns its
 place by catching a real bug class.

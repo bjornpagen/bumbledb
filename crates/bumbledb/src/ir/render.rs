@@ -18,7 +18,7 @@
 //!
 //! Deterministic and **total on plain data** — its consumers are
 //! diagnostics (roster errors print the offending query, so malformed
-//! shapes must render, not panic) and the EXPLAIN/stats surface:
+//! shapes must render, not panic) and the introspection/stats surface:
 //!
 //! - variables render as `v{id}` and params as `?{id}` (the IR carries
 //!   dense ids only; names are a debugging sidecar the engine never
@@ -44,7 +44,7 @@
 //!   appear only when diagnostics picture an input tree.
 //!
 //! Rendering allocates; it runs only in diagnostic contexts (roster
-//! errors, EXPLAIN, arbitration bundles), never on a warm path.
+//! errors, introspection, arbitration bundles), never on a warm path.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

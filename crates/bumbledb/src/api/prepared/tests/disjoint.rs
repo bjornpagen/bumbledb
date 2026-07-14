@@ -1,6 +1,6 @@
 //! The rule-disjointness proof (docs/architecture/40-execution.md § set
 //! semantics): rules selecting different values of one discriminator are
-//! provably disjoint. The proof remains visible in EXPLAIN, while execution
+//! provably disjoint. The proof remains visible in introspection, while execution
 //! deliberately keeps one seen-set spanning the rules. These tests pin the
 //! proof and show that the spanning set absorbs nothing across proven arms.
 
@@ -141,12 +141,12 @@ fn the_du_arm_union_proves_and_an_unselected_arm_unproves() {
     assert!(!same.disjoint_rules(), "equal literals are not different");
 }
 
-/// EXPLAIN names the proof — `disjoint_rules: proven (Item.kind)` — and
+/// introspection names the proof — `disjoint_rules: proven (Item.kind)` — and
 /// the structured stats carry the same witness; the unproven program
 /// says so.
 #[test]
-fn explain_names_the_disjointness_witness() {
-    let dir = TempDir::new("prepared-disjoint-explain");
+fn introspection_names_the_disjointness_witness() {
+    let dir = TempDir::new("prepared-disjoint-introspect");
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_items(&env, &schema, &item_rows());
@@ -160,7 +160,7 @@ fn explain_names_the_disjointness_witness() {
         &du_query(vec![arm_rule(0), arm_rule(1)]),
     )
     .expect("prepare");
-    let (out, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (out, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert_eq!(out.len(), 4, "both arms, the task excluded");
     assert!(
         report.contains("disjoint_rules: proven (Item.kind)"),
@@ -184,7 +184,7 @@ fn explain_names_the_disjointness_witness() {
     open.atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(2)));
     let mut unproven =
         prepare(&txn, &cache, &schema, &du_query(vec![arm_rule(0), open])).expect("prepare");
-    let (_, report) = unproven.explain(&txn, &cache, &[]).expect("explain");
+    let (_, report) = unproven.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(report.contains("disjoint_rules: unproven"), "{report}");
 }
 

@@ -11,7 +11,7 @@ use crate::ir::CmpOp;
 /// filtered view the anti-probe runs against
 /// (docs/architecture/40-execution.md, § anti-probe filters) — and a
 /// grounding-folded occurrence retains its pre-split list purely as
-/// EXPLAIN's fold picture (`plan/ground/evaluate.rs`), never resolved or
+/// introspection's fold picture (`plan/ground/evaluate.rs`), never resolved or
 /// scanned.
 pub(crate) fn check_selections(occurrences: &[PlanOccurrence]) -> Result<(), PlanError> {
     for occurrence in occurrences {

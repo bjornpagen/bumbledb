@@ -61,7 +61,7 @@ pre-rules query is a one-rule program.
   type; the Arg forms the carried payload's type) together with the fold
   producing it. It is derived **once**, at validation, and sealed in the
   witness (`ir/validate`'s `Predicate`); sink construction, result-buffer
-  typing, finalize's all-words decision, and EXPLAIN's header all read that
+  typing, finalize's all-words decision, and plan introspection's header all read that
   one object — no second derivation of the answer exists anywhere.
   The fence: the predicate is anonymous and engine-internal, **referenced
   by nothing** (names live in the host, exactly like relations pre-`as`).
@@ -607,7 +607,7 @@ three; **normalization lowers IR form to paper form**:
    literal-vs-literal condition `classify` refutes; a failed
    constant-point-in-constant-interval membership — are a **statically
    empty verdict for the rule**: the rule is marked dead carrying the
-   rendered killing condition (EXPLAIN prints it), a dead rule inside a
+   rendered killing condition (plan introspection prints it), a dead rule inside a
    live program is deleted at prepare and never runs, and a program of
    only dead rules prepares to the `Empty` plan (`40-execution.md`,
    § access paths). `Ne` and param-bearing conditions never fold (params
@@ -755,7 +755,7 @@ DirectPass`), the vocabulary's name resolved through the sealed extension; an
 out-of-range word renders visibly wrong as `Kind(7?)` (the relation's name — the
 engine never learns host newtype names), because rendering hides nothing. The
 statement renderer (`schema/render.rs`) prints selection literals through the same
-convention, and EXPLAIN's fold lines print surviving sets as handle sets
+convention, and plan introspection's fold lines print surviving sets as handle sets
 (`{DirectPass, JudgedPass}`) — one vocabulary of names on every surface a declaration id
 reaches. Comparison terms carry no field position, so a literal there renders by
 value; the selection form is the handle's home.
@@ -767,7 +767,7 @@ variables render as `v{id}` and params as
 placeholders, and a nested condition tree functionally (`and(..)`/`or(..)`, depth-
 budgeted at `MAX_CONDITION_DEPTH`) — malformed queries must render, because the
 renderer's consumers are diagnostics: roster errors print the offending query
-(`Db::render_query` — prepare rejected it, so no prepared handle exists), EXPLAIN's
+(`Db::render_query` — prepare rejected it, so no prepared handle exists), plan introspection's
 report opens with the query it explains (`PreparedQuery::rendered_query` is the
 same string), and the oracle's arbitration bundles carry the notation beside the
 raw IR. Rendering allocates; it runs on no warm path.

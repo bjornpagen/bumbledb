@@ -1,9 +1,12 @@
 //! Structured per-execution statistics (docs/architecture/60-validation.md): the data
-//! behind EXPLAIN, as plain structs — estimates vs actuals, cover
+//! behind plan introspection, as plain structs — estimates vs actuals, cover
 //! choices, probe hit rates, batching, skips — for tooling that wants
 //! numbers, not a rendered string. Obtained via `Snapshot::profile`
 //! (ANALYZE semantics: the query really executes, with counting
-//! instrumentation; allocation-sanctioned exactly like `explain`).
+//! instrumentation; allocation-sanctioned exactly like `introspect`).
+
+/// The version shared by rendered and structured plan introspection.
+pub const INTROSPECTION_VERSION: u16 = 1;
 
 /// One execution's counted statistics: per-rule node stats under the
 /// head-level union accounting (docs/architecture/40-execution.md § the
@@ -11,6 +14,9 @@
 /// the union). The single-rule program is the one-element list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionStats {
+    /// The introspection contract version. Any content or ordering change
+    /// to either surface increments this value and the rendered marker.
+    pub introspection_version: u16,
     /// Per rule, in rule order.
     pub rules: Vec<RuleStats>,
     /// Bindings emitted to the sink across all rules (the sum of the
@@ -31,7 +37,7 @@ pub struct ExecutionStats {
     pub subsumed: Vec<SubsumedRule>,
     /// Rules the statically-empty fold refuted at prepare
     /// (`ir/normalize/fold.rs`): each carries its killing condition —
-    /// EXPLAIN's `statically empty: rule N: <picture>` line. Indices are
+    /// introspection's `statically empty: rule N: <picture>` line. Indices are
     /// lowered-rule indices, exactly as `subsumed`; a program of only
     /// dead rules represented by an empty prepared program.
     pub dead: Vec<DeadRule>,
@@ -49,7 +55,7 @@ pub struct DeadRule {
     pub rendered: String,
 }
 
-/// One deleted rule with its subsumer (EXPLAIN's `subsumed: rule D by
+/// One deleted rule with its subsumer (introspection's `subsumed: rule D by
 /// rule K`). Both indices are lowered-rule indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubsumedRule {
@@ -61,7 +67,7 @@ pub struct SubsumedRule {
 
 /// The disjointness witness, rendered by name: the relation and field
 /// whose differing pinned literals make the rules' head answers
-/// collision-free (EXPLAIN's `disjoint_rules: proven (R.f)`).
+/// collision-free (introspection's `disjoint_rules: proven (R.f)`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisjointRules {
     /// The witness relation's name.
@@ -122,7 +128,7 @@ pub struct EliminatedOccurrence {
 /// atom evaluated against its sealed extension at prepare — never
 /// joined, its view never bound, its image never built; the surviving
 /// id-set rides the siblings' selection machinery as a plan constant.
-/// EXPLAIN's line: `folded: Kind{mastered == true} → {DirectPass,
+/// introspection's line: `folded: Kind{mastered == true} → {DirectPass,
 /// JudgedPass}` (negated: `folded: !Kind{…} → {…} rejected` — the
 /// attached set is then the complement). The handle set IS the payload:
 /// handles are the vocabulary's names, and `|S|` is its length.

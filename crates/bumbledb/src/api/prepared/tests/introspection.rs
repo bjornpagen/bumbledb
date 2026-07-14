@@ -1,8 +1,8 @@
 use super::*;
 
 #[test]
-fn explain_reports_the_join_plan_with_actuals() {
-    let dir = TempDir::new("prepared-explain");
+fn introspection_reports_the_join_plan_with_actuals() {
+    let dir = TempDir::new("prepared-introspect");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a", 1), (2, 7, "b", 2)]);
@@ -10,8 +10,8 @@ fn explain_reports_the_join_plan_with_actuals() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (answers, report) = prepared
-        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .expect("introspect");
     assert_eq!(answers.len(), 2);
     assert!(report.contains("free join"));
     assert!(report.contains("emitted bindings: 2"));
@@ -21,8 +21,8 @@ fn explain_reports_the_join_plan_with_actuals() {
 /// signature authority (`ir/validate`), one column per head position,
 /// fold kinds by their rule-notation names.
 #[test]
-fn the_explain_header_renders_the_predicate() {
-    let dir = TempDir::new("prepared-explain-predicate");
+fn the_introspection_header_renders_the_predicate() {
+    let dir = TempDir::new("prepared-introspect-predicate");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a", 1), (2, 7, "b", 2)]);
@@ -31,8 +31,8 @@ fn the_explain_header_renders_the_predicate() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (_, report) = prepared
-        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .expect("introspect");
     assert!(report.contains("predicate: (string, i64)"), "{report}");
 
     // The fold-bearing head: the column renders its producing kind.
@@ -52,11 +52,11 @@ fn the_explain_header_renders_the_predicate() {
         conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &count_query).expect("prepare");
-    let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(report.contains("predicate: (u64, Count u64)"), "{report}");
 }
 
-/// The stats surface carries the pin record — golden on one EXPLAIN
+/// The stats surface carries the pin record — golden on one introspection
 /// report: every node estimate is "estimated from (pinned rows at
 /// prepare)", and a key probe (which reads no statistics) pins
 /// nothing.
@@ -92,8 +92,8 @@ fn the_stats_surface_carries_the_pinned_rows() {
     );
 
     let (_, report) = prepared
-        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .expect("introspect");
     assert!(
         report.contains("estimated from (pinned rows at prepare): 3"),
         "{report}"
@@ -157,11 +157,11 @@ fn profile_returns_structured_stats_matching_the_execution() {
         "batching counters populated: {stats:?}"
     );
 
-    // The rendered explain is built from the same struct — spot-pin
+    // The rendered introspect is built from the same struct — spot-pin
     // the format so the golden contract holds.
     let (_, report) = prepared
-        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
+        .expect("introspect");
     assert!(report.contains("access path: free join"), "{report}");
     assert!(report.contains("emitted bindings: 2"), "{report}");
 

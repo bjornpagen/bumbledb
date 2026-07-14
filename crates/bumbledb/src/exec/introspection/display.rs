@@ -1,10 +1,22 @@
-use super::{Report, RulePlan};
+use super::{IntrospectionReport, RulePlan};
 use crate::exec::dispatch::KeyProbePlan;
 use crate::plan::fj::ValidatedPlan;
 use std::fmt;
 
-impl fmt::Display for Report<'_> {
+impl fmt::Display for IntrospectionReport<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "introspection v{}",
+            crate::api::stats::INTROSPECTION_VERSION
+        )?;
+        if let Some(header) = &self.header {
+            writeln!(f, "query:\n{}", header.query)?;
+            writeln!(f, "predicate: {}", header.predicate)?;
+            if let Some(pending) = &header.pending_literal {
+                write!(f, "{pending}")?;
+            }
+        }
         let multi = self.rules.len() > 1;
         for (rule_idx, rule) in self.rules.iter().enumerate() {
             let stats = &self.stats.rules[rule_idx];

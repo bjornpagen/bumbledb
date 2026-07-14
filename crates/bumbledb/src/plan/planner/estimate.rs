@@ -6,7 +6,7 @@ use super::OccInfo;
 /// `rows / distinct(field of v)` for its most selective join variable —
 /// reference walks fan out by rows-per-key instead of the old
 /// `min(prefix, rows)` rule, which priced a 200-postings-per-account
-/// walk as 1 and misled EXPLAIN by 12,703x on the balance family. A
+/// walk as 1 and misled introspection by 12,703x on the balance family. A
 /// key (`Functionality` statement) whose projection is covered by the
 /// join variables pins the fanout to 1 (compound keys included —
 /// per-var distincts cannot see those). Coverage means the FULL

@@ -68,7 +68,7 @@ execution has two rule kinds — key probe and Free Join — plus this
 program-level empty variant. Execution binds params first — bind errors still surface, a
 vacuous Allen mask param is rejected exactly as on a live plan — then
 touches no images, binds no views, runs no join, and the result is the
-empty buffer. EXPLAIN prints `access path: statically empty` plus each dead
+empty buffer. Plan introspection prints `access path: statically empty` plus each dead
 rule's killing condition; a dead rule inside a live program was deleted at
 prepare and its record prints the same way.
 
@@ -255,7 +255,7 @@ Two facts identical on all *bound* variables produce the same binding; the solut
   columns flow to the same head positions. Equal head answers would force the pinned
   facts to agree on R's key — one fact whose f cannot equal two literals. The
   DU-arm union is exactly this shape. The proof is conservative and pairwise;
-  params, sets, and mixed constant forms pin nothing. EXPLAIN retains the knowledge
+  params, sets, and mixed constant forms pin nothing. Plan introspection retains the knowledge
   as `disjoint_rules: proven (R.f)`, but execution always keeps one head-projection
   seen-set spanning a multi-rule program.
 
@@ -397,7 +397,7 @@ passes through the candidate is refused — a pair may not certify itself). Soun
 here and nowhere like Postgres because no deferral modes exist: every readable
 snapshot satisfies every accepted statement (`30-dependencies.md`), and Y's
 key-ness maps the surviving binding set 1:1, so removal is result-identical
-under both sinks — projection and aggregate alike. The marks' readers: EXPLAIN
+under both sinks — projection and aggregate alike. The marks' readers: plan introspection
 and the structured stats (each mark rendered with its licensing statement
 through `schema/render.rs`), and the DP, which sees a smaller problem.
 **Alternative:** no rewrite — leave redundant existence walks to D2's
@@ -467,7 +467,7 @@ whose field carries an accepted containment into the closed relation's id
 (with the statement's φ carried literally by that occurrence). No witness →
 the fold refuses and the anti-probe stays.
 
-EXPLAIN reports folds beside eliminations, off the `Role::Folded` marks — the
+Plan introspection reports folds beside eliminations, off the `Role::Folded` marks — the
 surviving set as **handles**, the vocabulary's names (the handle set IS the
 payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated:
 `folded: !Kind{…} → {…} rejected`); the differential off-switch
@@ -494,7 +494,7 @@ NP-hard, so the witness never searches variable mappings — `VarId`s must
 already agree, which is exactly what DNF-cloned rules provide. Deleting a rule
 never changes the head (the head-alignment invariant is re-checked after
 deletion), a program shrunk to one rule sheds its union machinery like any
-single-rule program, EXPLAIN reports deleted rules with the subsuming rule's
+single-rule program, plan introspection reports deleted rules with the subsuming rule's
 index (lowered-rule indices) beside the per-rule eliminated atoms, and the
 differential off-switch covers both passes.
 
@@ -722,10 +722,10 @@ consumes it exactly like any image; only its source and lifetime differ.
 
 ## Observability
 
-**EXPLAIN exists from day one** and is the debugging story. Mechanism — a
+**Plan introspection exists from day one** and is the debugging story. Mechanism — a
 representation, not a mode: the executor is generic over a `Counters` trait;
 the normal path instantiates `NoopCounters` (zero-sized, compiled to nothing — no
-runtime branch, no hot-loop cost), and the EXPLAIN entry point instantiates the
+runtime branch, no hot-loop cost), and the plan introspection entry point instantiates the
 counting implementation and **executes the query** (ANALYZE semantics), reporting **per
 rule** the plan, per-node estimated vs actual cardinalities, residual and anti-probe
 selectivity, cover-choice histograms (choices aggregated per node, not per entry),
@@ -742,7 +742,10 @@ with its subsuming rule's index (`subsumed: rule 0 by rule 1`, lowered-rule
 indices — the per-rule sections are the survivors). The obs registry mirrors it: one `RULE` span
 per rule under the execute span (`rule_N` — the index rides in the name,
 `MAX_RULES`-bounded), args (emitted, absorbed), populated on counted paths.
-Output shape: OPEN. Release builds contain no other instrumentation: no per-tuple labels, no
+The output contract is `introspection v1`: byte-identical within the version for
+identical schema fingerprint, canonical query, parameter types, and features, with
+the fixed ordering specified in `70-api.md`. Any content or ordering change bumps
+the rendered and structured version together. Release builds contain no other instrumentation: no per-tuple labels, no
 always-on counters, no diagnostics allocation anywhere in the join loops.
 
 ## Measured mechanisms
@@ -827,7 +830,7 @@ per-binding fanout `rows / distinct(join field)` with key coverage pinning
 fanout to 1.
 
 **Estimator record (2026-07-12, scale-S read-family reports):** the observed
-EXPLAIN estimate/executed-actual factor is classed by query hypergraph, not
+Plan introspection estimate/executed-actual factor is classed by query hypergraph, not
 presented as one estimator-accuracy bound. Among profiled acyclic ledger and
 calendar families the worst was 691.2× (`conflict_free`); the cyclic class was
 4761.9× (`triangle`, its only member). The derivation is the three regenerated

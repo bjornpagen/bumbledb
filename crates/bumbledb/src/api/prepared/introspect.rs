@@ -2,7 +2,9 @@ use super::{Answers, BindValue, PreparedQuery, PreparedRule, Program};
 
 use crate::api::stats::{ExecutionStats, KeyProbeStats, RuleStats};
 use crate::error::Result;
-use crate::exec::explain::{CountingCounters, Report, RulePlan};
+use crate::exec::introspection::{
+    CountingCounters, IntrospectionHeader, IntrospectionReport, RulePlan,
+};
 use crate::exec::run::Counters;
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
@@ -11,7 +13,7 @@ use crate::storage::env::ReadTxn;
 use super::finalize::finalize;
 
 impl<S> PreparedQuery<'_, S> {
-    /// EXPLAIN (docs/architecture/40-execution.md): executes the query with counting instrumentation
+    /// Plan introspection (docs/architecture/40-execution.md): executes the query with counting instrumentation
     /// (ANALYZE semantics) and returns the answers alongside the rendered
     /// report — per-rule plans and node stats under the head-level union
     /// accounting.
@@ -23,7 +25,7 @@ impl<S> PreparedQuery<'_, S> {
     /// # Panics
     ///
     /// Only on programmer-invariant violations (plan/executor pairing).
-    pub(crate) fn explain(
+    pub(crate) fn introspect(
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
@@ -31,7 +33,12 @@ impl<S> PreparedQuery<'_, S> {
     ) -> Result<(Answers, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
         let pending = self.pending_literal_note();
-        let report = Report {
+        let report = IntrospectionReport {
+            header: Some(IntrospectionHeader {
+                query: self.rendered.clone(),
+                predicate: self.predicate.to_string(),
+                pending_literal: pending,
+            }),
             rules: match &self.program {
                 Program::Empty => vec![RulePlan::Empty],
                 Program::Rules(rules) => rules
@@ -44,19 +51,11 @@ impl<S> PreparedQuery<'_, S> {
             },
             stats,
         };
-        // The report opens with the query in the rule notation
+        // After the version marker, the report opens with the query in the rule notation
         // (`crate::ir::render` — the read-side syntax) and the predicate
-        // it defines (`ir/validate` — the signature authority): EXPLAIN
+        // it defines (`ir/validate` — the signature authority): introspection
         // prints what it explains.
-        Ok((
-            out,
-            format!(
-                "query:\n{}\npredicate: {}\n{}{report}",
-                self.rendered,
-                self.predicate,
-                pending.as_deref().unwrap_or("")
-            ),
-        ))
+        Ok((out, report.to_string()))
     }
 
     /// The pending-literal explanation is derived from the mutable plan
@@ -79,7 +78,10 @@ impl<S> PreparedQuery<'_, S> {
             {
                 for selection in &occurrence.selections {
                     if let Const::PendingIntern { bytes } = &selection.value {
-                        literals.push(pending_literal_label(bytes));
+                        let label = pending_literal_label(bytes);
+                        if !literals.contains(&label) {
+                            literals.push(label);
+                        }
                     }
                 }
                 for filter in &occurrence.filters {
@@ -88,13 +90,14 @@ impl<S> PreparedQuery<'_, S> {
                         ..
                     } = filter
                     {
-                        literals.push(pending_literal_label(bytes));
+                        let label = pending_literal_label(bytes);
+                        if !literals.contains(&label) {
+                            literals.push(label);
+                        }
                     }
                 }
             }
         }
-        literals.sort();
-        literals.dedup();
         Some(format!(
             "pending literals: {} — an unresolved Eq literal empties its rule at execution until latched\n",
             literals.join(", ")
@@ -103,7 +106,7 @@ impl<S> PreparedQuery<'_, S> {
 
     /// The query in the rule notation, rendered at prepare
     /// ([`crate::ir::render`] — one clause per rule, `;`-terminated):
-    /// the diagnostic twin of the EXPLAIN report's header, for hosts
+    /// the diagnostic twin of the introspection report's header, for hosts
     /// that log or display the query a prepared handle answers.
     #[must_use]
     pub fn rendered_query(&self) -> &str {
@@ -112,8 +115,8 @@ impl<S> PreparedQuery<'_, S> {
 
     /// ANALYZE with structured output: executes with counting
     /// instrumentation and returns the answers alongside [`ExecutionStats`]
-    /// — the data `explain` renders. Allocation-sanctioned exactly like
-    /// `explain`.
+    /// — the data `introspect` renders. Allocation-sanctioned exactly like
+    /// `introspect`.
     ///
     /// # Errors
     ///
@@ -144,6 +147,7 @@ impl<S> PreparedQuery<'_, S> {
             self.execute(txn, cache, params, &mut out)?;
             let emitted = out.len() as u64;
             let stats = ExecutionStats {
+                introspection_version: crate::api::stats::INTROSPECTION_VERSION,
                 rules: vec![RuleStats {
                     nodes: Vec::new(),
                     // A key probe is a single-atom query: the grounding has
@@ -230,6 +234,7 @@ impl<S> PreparedQuery<'_, S> {
         Ok((
             out,
             ExecutionStats {
+                introspection_version: crate::api::stats::INTROSPECTION_VERSION,
                 rules: rule_stats,
                 emits,
                 disjoint_rules: self.disjoint_rules_stat(),
@@ -244,6 +249,7 @@ impl<S> PreparedQuery<'_, S> {
     /// record (`stats.dead`) carries the per-rule killing conditions.
     fn empty_stats(&self) -> ExecutionStats {
         ExecutionStats {
+            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
             rules: vec![RuleStats {
                 nodes: Vec::new(),
                 eliminated: Vec::new(),
@@ -279,7 +285,7 @@ impl<S> PreparedQuery<'_, S> {
     /// diagnostic knowledge, not an executor switch: the measured
     /// cross-rule optimization was reverted. Always `false` for
     /// single-rule programs (no pair exists). The witness is reported by
-    /// EXPLAIN and
+    /// introspection and
     /// [`crate::api::stats::ExecutionStats::disjoint_rules`].
     #[must_use]
     pub fn disjoint_rules(&self) -> bool {

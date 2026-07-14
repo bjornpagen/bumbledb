@@ -27,7 +27,7 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// The identity check at every execution entry (`execute` and
-    /// `profile`; `execute_collect` and `explain` route through them):
+    /// `profile`; `execute_collect` and `introspect` route through them):
     /// a snapshot of any environment other than the preparing one is a
     /// typed error before anything else runs. One u64 compare — with the
     /// entry protected, the view memo needs no environment epoch in its
@@ -294,7 +294,7 @@ pub(super) fn resolve_filters(
     for (occ_idx, occurrence) in plan.occurrences_mut().iter_mut().enumerate() {
         // A discharged occurrence (grounding-eliminated or grounding-folded)
         // resolves nothing: an eliminated occurrence's lists are empty,
-        // and a folded occurrence's retained filter list is EXPLAIN's
+        // and a folded occurrence's retained filter list is introspection's
         // picture only — plan-constant by the fold's own conditions,
         // never evaluated, so its slots stay empty and never count
         // toward the latch (`plan/ground/evaluate.rs`).

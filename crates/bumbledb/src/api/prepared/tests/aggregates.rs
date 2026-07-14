@@ -79,7 +79,7 @@ fn count_distinct_collapses_multiplicities_per_group_and_over_strings() {
 }
 
 /// The elision fixture (PRD 18): a fresh-keyed query proves distinct
-/// bindings, so the plan elides the binding seen-set — the EXPLAIN
+/// bindings, so the plan elides the binding seen-set — the introspection
 /// regime observable — while `CountDistinct` still collapses values. The
 /// stats counters carry both halves: `emits` counts every binding
 /// (nothing was deduped upstream), the result holds the collapsed

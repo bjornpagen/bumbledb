@@ -433,7 +433,7 @@ untouched — the review criterion for the future PRD, written today.
 | 9 | the per-stratum driver | the rule loop (one sink hears every rule; sink resets once per execution) | new `api/prepared/fixpoint.rs`, `api/prepared/execute.rs` | +260 | union is the sink — no merge node, no worklist; D2 skip per-rule, within-round |
 | 10 | frontier watermark | `WordMap`'s dense insertion-order rule | `exec/wordmap.rs`, `exec/sink.rs`, `exec/sink/projection/sink.rs` | +60 | zero hot-path cost when unused (a cold method, no emit-path branch); dedup keys stay head-shaped |
 | 11 | the budget | the typed-execution-error convention (`MeasureOfRay`'s model) | `error.rs`, `api/prepared/execute.rs` | +50 | error payloads are ids and counts; policy host-owned (the staleness doctrine); the v0 no-limits stance amended for fixpoints only, recorded |
-| 12 | EXPLAIN + stats | the `Counters` seam; the `rule_N` span precedent | `exec/explain.rs`, `api/stats.rs`, `obs.rs` names | +120 | `NoopCounters` compiles to nothing; no always-on instrumentation |
+| 12 | plan introspection + stats | the `Counters` seam; the `rule_N` span precedent | `exec/introspection.rs`, `api/stats.rs`, `obs.rs` names | +120 | `NoopCounters` compiles to nothing; no always-on instrumentation |
 | 13 | naive fixpoint oracle | the naive model's definitional evaluator | `crates/bumbledb-bench/src/naive/query.rs` | +80 | the independence law (types only); the trust root stays definitional — naive, never semi-naive |
 | 14 | SQLite lane + gate | the IR→SQL translator + the enumerated `Inexpressible` set | `bumbledb-bench/src/translate/query.rs`, `translate/types.rs`, `translate/goldens.rs` | +150 | nothing silently skipped; typed-identity error parity; linear-only, division of labor recorded |
 | 15 | generator arm | the coverage-contract convention + the entropy seam | new `bumbledb-bench/src/querygen/shapes_recursive.rs`, `querygen/coverage.rs`, `querygen/shapes.rs` | +260 | coverage asserted per run; the cost-bound rule (closure size bounded by construction); `corpus_gen::rng` untouched |
@@ -458,7 +458,7 @@ shipping law's order):
 - **R5 — the images**: rows 7–8 (transient synthesis, `Idb` binding).
 - **R6 — the driver**: rows 9–11 (the loop, the watermark, the
   budget).
-- **R7 — the surfaces**: rows 12 + 16 (EXPLAIN/stats, notation,
+- **R7 — the surfaces**: rows 12 + 16 (plan introspection/stats, notation,
   cookbook and chapter amendments).
 
 Seven PRDs; six if R4 and R5 merge (they share `build.rs`), eight if

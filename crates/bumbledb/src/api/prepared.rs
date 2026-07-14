@@ -173,19 +173,19 @@ pub struct PreparedQuery<'s, S> {
     /// pairwise disjoint, carrying the witness — the (relation, field)
     /// whose differing pinned literals forbid cross-rule head
     /// collisions. `None` for single-rule programs and unproven pairs.
-    /// Readers: EXPLAIN and the structured stats. The executor deliberately
+    /// Readers: introspection and the structured stats. The executor deliberately
     /// does not spend this proof; see the measured refutation in
     /// `docs/architecture/40-execution.md`.
     disjoint_rules: Option<crate::plan::fj::DisjointWitness>,
     /// The subsumption record (`plan/ground.rs`): rules deleted at
     /// prepare, each with its subsuming rule, in lowered-rule indices —
     /// `rules` below holds only the survivors, in order. Readers:
-    /// EXPLAIN and the structured stats.
+    /// introspection and the structured stats.
     subsumed: Vec<crate::api::stats::SubsumedRule>,
     /// The statically-empty record (`ir/normalize/fold.rs`): rules whose
     /// constant conditions refuted themselves at normalize, deleted at
     /// prepare with the killing condition — `rules` below holds only the
-    /// live ones. Readers: EXPLAIN and the structured stats.
+    /// live ones. Readers: introspection and the structured stats.
     dead: Vec<crate::api::stats::DeadRule>,
     /// Per rule, in rule order: the rule's validated plan plus its
     /// plan-shaped execution scratch — the whole plan pipeline ran per
@@ -245,7 +245,7 @@ pub struct PreparedQuery<'s, S> {
     /// KeyProbe-key byte scratch.
     determinant_key: Vec<u8>,
     /// The query in the rule notation ([`crate::ir::render`]), rendered
-    /// once at prepare — the EXPLAIN report's header and the
+    /// once at prepare — the introspection report's header and the
     /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
     /// on diagnostic surfaces, never on the warm path.
     rendered: String,

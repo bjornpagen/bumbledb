@@ -58,7 +58,7 @@
 //!   projection-sink-only win.
 //!
 //! The fold mark remains `Copy`, so it cannot carry the parsed filter
-//! set. EXPLAIN reparses the retained original filters on its cold path;
+//! set. introspection reparses the retained original filters on its cold path;
 //! a failed reparse maps to an empty handle list after a debug assertion,
 //! never to a production panic. The rendered picture always uses those
 //! originals so diagnostics preserve the user's spelling.
@@ -571,7 +571,7 @@ fn containment_into_id(
 /// comparison paths — encoded-word compares, the scalar `Allen`
 /// classify, never a batch kernel. Its narrowed input was minted by
 /// [`parse_resolvable`], so evaluation is total over the vocabulary.
-/// Crate-visible for the EXPLAIN surface (`exec/explain/into_stats.rs`),
+/// Crate-visible for the introspection surface (`exec/introspection/into_stats.rs`),
 /// which re-runs the σ to name the surviving handles.
 pub(crate) fn surviving_ids(relation: &Relation, filters: &[ResolvableFilter]) -> Vec<u64> {
     let layout = relation.layout();
@@ -707,8 +707,8 @@ fn remove_anti_probe(normalized: &mut NormalizedQuery, c_idx: usize) {
 /// The fold's rendered picture — `Kind{mastered == true}` — in the rule
 /// notation's value formats (`ir/render`, one notation on every
 /// diagnostic surface). Two readers: the rule-death verdict
-/// (`folded to ∅: …`) and EXPLAIN's fold line
-/// (`exec/explain/into_stats.rs`), off the folded occurrence's retained
+/// (`folded to ∅: …`) and introspection's fold line
+/// (`exec/introspect/into_stats.rs`), off the folded occurrence's retained
 /// filter list. A word at the relation's own id position prints its
 /// handle (a handle set for an attached membership) — the vocabulary's
 /// names on every surface a row id reaches.

@@ -58,7 +58,7 @@ pub struct OccId(pub u16);
 ///   § normalization step 4).
 /// - `Eliminated`: a positive occurrence the grounding removed — the mark
 ///   carries the containment statement that justified it and doubles
-///   as the EXPLAIN record; no separate eliminated-list exists.
+///   as the introspection record; no separate eliminated-list exists.
 /// - `Folded`: a closed-relation occurrence the grounding **evaluated at
 ///   prepare** (`plan/ground/evaluate.rs`): its filters ran against the
 ///   sealed extension and the atom's whole contribution became a
@@ -66,7 +66,7 @@ pub struct OccId(pub u16);
 ///   for a satisfied check). Unlike `Eliminated`, a folded occurrence
 ///   may have been negated — the mark records the polarity because the
 ///   occurrence's own role no longer does. The filters stay on the
-///   occurrence (EXPLAIN renders them); nothing downstream resolves,
+///   occurrence (introspection renders them); nothing downstream resolves,
 ///   probes, or scans them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -76,7 +76,7 @@ pub enum Role {
     Folded(FoldedMark),
 }
 
-/// The evaluator's mark (`plan/ground/evaluate.rs`): the EXPLAIN record
+/// The evaluator's mark (`plan/ground/evaluate.rs`): the introspection record
 /// of a fold, kept `Copy`-small — the id set itself was attached to the
 /// sibling occurrences' filter lists at fold time and needs no second
 /// home here.
@@ -86,7 +86,7 @@ pub struct FoldedMark {
     /// filters (≤ the 256-row extension cap, hence `u16`).
     pub ids: u16,
     /// Whether the folded occurrence was negated: the attached set is
-    /// then the COMPLEMENT (extension minus `S`) and EXPLAIN prints the
+    /// then the COMPLEMENT (extension minus `S`) and introspection prints the
     /// `!` polarity the role no longer carries.
     pub negated: bool,
 }
@@ -319,7 +319,7 @@ pub struct NormalizedQuery {
     pub slot_widths: BTreeMap<VarId, SlotWidth>,
     /// The statically-empty verdict: `Some` iff the rule provably
     /// denotes ∅ on constants alone — the rendered killing condition
-    /// (e.g. `R: a ∈ [8, 19] ∧ a == 3`), because EXPLAIN must print what
+    /// (e.g. `R: a ∈ [8, 19] ∧ a == 3`), because introspection must print what
     /// refuted the rule. Two writers, one channel: the normalization
     /// fold (`fold.rs`, mutually unsatisfiable constant conditions) and
     /// the grounding-evaluator (`plan/ground/evaluate.rs`, a closed atom

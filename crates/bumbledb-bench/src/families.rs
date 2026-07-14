@@ -80,7 +80,7 @@ pub fn param_args(draw: &[ParamValue]) -> Vec<ParamArg<'_>> {
         .collect()
 }
 
-/// One draw's scalar positions, positionally — the profile/explain path
+/// One draw's scalar positions, positionally — the profile/introspect path
 /// (scalar params only).
 ///
 /// # Panics

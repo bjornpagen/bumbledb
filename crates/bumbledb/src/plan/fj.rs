@@ -143,7 +143,7 @@ pub struct PlanOccurrence {
     pub relation: RelationId,
     /// The occurrence's planning state, carried from normalization —
     /// execution's view-bind and filter-resolution loops read it to
-    /// skip eliminated occurrences, and PRD 12's EXPLAIN reads the
+    /// skip eliminated occurrences, and PRD 12's introspection reads the
     /// `Eliminated` marks directly.
     pub role: Role,
     /// The field each variable reads from.
@@ -265,7 +265,7 @@ pub struct ValidatedPlan {
     /// distinct facts imply distinct bindings and the aggregate sink may
     /// skip its seen-set (40-execution, elision).
     distinct_bindings: bool,
-    /// The planner's per-step estimates (EXPLAIN's reader, the 40-execution doc).
+    /// The planner's per-step estimates (introspection's reader, the 40-execution doc).
     estimates: Vec<u64>,
 }
 

@@ -162,7 +162,7 @@ fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
 
 #[test]
 fn estimates_and_actuals_populate_for_a_join_fixture() {
-    let dir = TempDir::new("explain-join");
+    let dir = TempDir::new("introspect-join");
     let schema = schema(2);
     // R0: 5 rows; R1: joins on R0's fresh (reference-walk shape).
     let r0: Vec<(u64, u64)> = (0..5).map(|i| (i, i * 10)).collect();
@@ -204,9 +204,11 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
     assert_eq!(counters.emits(), 20);
     assert!(counters.actual_after(0) > 0);
     let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
-    let report = Report {
+    let report = IntrospectionReport {
+        header: None,
         rules: vec![RulePlan::FreeJoin(&plan)],
         stats: ExecutionStats {
+            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
             emits: rule.emitted,
             rules: vec![rule],
             disjoint_rules: None,
@@ -224,7 +226,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
     // The correct-but-slow regression detector (50-validation): on a
     // constructed skew fixture, the histogram must show the forced
     // small side chosen with an Exact label.
-    let dir = TempDir::new("explain-skew");
+    let dir = TempDir::new("introspect-skew");
     let schema = schema(2);
     let r: Vec<(u64, u64)> = (0..500).map(|i| (i, i % 250)).collect();
     let s: Vec<(u64, u64)> = vec![(0, 0), (1, 1)];
@@ -279,9 +281,11 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
     assert_eq!(counters.cover_histogram(0, 1)[0], 1);
     assert_eq!(counters.cover_histogram(0, 0), [0, 0]);
     let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
-    let report = Report {
+    let report = IntrospectionReport {
+        header: None,
         rules: vec![RulePlan::FreeJoin(&plan)],
         stats: ExecutionStats {
+            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
             emits: rule.emitted,
             rules: vec![rule],
             disjoint_rules: None,
@@ -307,9 +311,11 @@ fn key_probe_queries_report_their_classification() {
         }],
     }]);
     let key_probe = classify(&normalized, &schema).expect("key probe");
-    let report = Report {
+    let report = IntrospectionReport {
+        header: None,
         rules: vec![RulePlan::KeyProbe(&key_probe)],
         stats: ExecutionStats {
+            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
             rules: vec![crate::api::stats::RuleStats {
                 nodes: Vec::new(),
                 eliminated: Vec::new(),
@@ -344,7 +350,7 @@ fn noop_counters_are_zero_sized_and_the_normal_path_carries_no_state() {
 /// path is live, not silently degenerate.
 #[test]
 fn the_counted_execution_shows_batching_engaged() {
-    let dir = TempDir::new("explain-batching");
+    let dir = TempDir::new("introspect-batching");
     let schema = schema(2);
     let r0: Vec<(u64, u64)> = (0..300).map(|i| (i, i % 7)).collect();
     let r1: Vec<(u64, u64)> = (0..7).map(|i| (i, i)).collect();
@@ -396,7 +402,7 @@ fn the_counted_execution_shows_batching_engaged() {
 /// counts populate the stats and render in the report.
 #[test]
 fn anti_probe_selectivity_populates_the_counted_execution() {
-    let dir = TempDir::new("explain-anti-probe");
+    let dir = TempDir::new("introspect-anti-probe");
     let schema = schema(2);
     // R0 = postings (fresh, payload); R1 = tags (fresh, posting id):
     // postings 1, 2, 3 are tagged (2 and 3 multiply).
@@ -436,9 +442,11 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
     let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
     assert_eq!(rule.nodes[0].anti_probe_probed, 10);
     assert_eq!(rule.nodes[0].anti_probe_rejected, 3);
-    let report = Report {
+    let report = IntrospectionReport {
+        header: None,
         rules: vec![RulePlan::FreeJoin(&plan)],
         stats: ExecutionStats {
+            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
             emits: rule.emitted,
             rules: vec![rule],
             disjoint_rules: None,

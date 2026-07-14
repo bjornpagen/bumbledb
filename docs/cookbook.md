@@ -174,7 +174,7 @@ relation** — its ground axioms are declared in the schema, sealed at
 validate, frozen by the fingerprint, virtual in storage
 (`10-data-model.md` § closed relations). The store holds zero vocabulary
 bytes, and handles are the literals on every surface: statements, queries,
-EXPLAIN, errors.
+Plan introspection, errors.
 
 ```rust
 bumbledb::schema! {
@@ -246,7 +246,7 @@ bumbledb::schema! {
     // the vocabulary's payload in the query too:
     //   (a) | Attempt(id: a, kind: k), Kind(id: k, mastered == true);
     // The Kind atom folds at prepare into a plan-constant handle set on
-    // its sibling; EXPLAIN prints the set, not a count:
+    // its sibling; plan introspection prints the set, not a count:
     //   folded: Kind{mastered == true} → {DirectPass, JudgedPass}
 }
 ```

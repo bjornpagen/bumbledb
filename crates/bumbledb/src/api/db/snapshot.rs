@@ -70,22 +70,22 @@ impl<S> Snapshot<'_, S> {
         prepared.execute_collect_args(&self.txn, self.cache, args)
     }
 
-    /// EXPLAIN ANALYZE (docs/architecture/40-execution.md): executes with counting instrumentation
+    /// Plan introspection with ANALYZE semantics: executes with counting instrumentation
     /// and returns the answers alongside the rendered report.
     ///
     /// # Errors
     ///
     /// As [`Snapshot::execute`].
-    pub fn explain(
+    pub fn introspect(
         &self,
         prepared: &mut PreparedQuery<'_, S>,
         params: &[BindValue<'_>],
     ) -> Result<(Answers, String)> {
-        prepared.explain(&self.txn, self.cache, params)
+        prepared.introspect(&self.txn, self.cache, params)
     }
 
     /// ANALYZE with structured output: the answers alongside
-    /// [`crate::api::stats::ExecutionStats`] — what `explain` renders,
+    /// [`crate::api::stats::ExecutionStats`] — what `introspect` renders,
     /// as data.
     ///
     /// # Errors

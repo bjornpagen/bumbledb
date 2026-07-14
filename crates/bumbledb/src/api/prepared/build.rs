@@ -65,7 +65,7 @@ pub(crate) fn prepare<'s, S>(
         // Rule death (ir/normalize/fold.rs): a statically-empty rule is
         // deleted here — no statistics read, no DP, no plan; the union
         // loses nothing because the rule denotes the empty set. The
-        // record keeps the killing condition for EXPLAIN.
+        // record keeps the killing condition for introspection.
         if let Some(reason) = &normalized_rule.dead {
             dead.push(crate::api::stats::DeadRule {
                 rule: u16::try_from(rule_idx).expect("rule count fits u16"),
@@ -264,7 +264,7 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
 /// subsumption: a rule whose post-elimination body a sibling contains
 /// modulo eliminated filters is deleted — the union loses nothing.
 /// Returns the surviving rules with their lowered-rule indices plus
-/// the deletion record (the EXPLAIN surface).
+/// the deletion record (the introspection surface).
 fn ground_program(
     mut normalized: Vec<NormalizedQuery>,
     witness: &crate::ir::validate::ValidatedQuery,
@@ -616,7 +616,7 @@ fn key_probe_find_table(
 }
 
 /// The rule-disjointness proof (docs/architecture/40-execution.md § set
-/// semantics) — retained as diagnostic knowledge for EXPLAIN, run over the
+/// semantics) — retained as diagnostic knowledge for introspection, run over the
 /// whole program before the pipeline goes per-rule (the grounding rewrites
 /// occurrences but never the denotation, so the pre-grounding proof stands).
 /// Single-rule programs have no pair to prove.

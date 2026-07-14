@@ -25,7 +25,7 @@
 # Exclusions, each with its reason:
 #   * every Db/Environment/TempDir-touching test module (api::,
 #     image::, storage::, verify_store::, exec::run, exec::sink,
-#     exec::dispatch, exec::colt, exec::explain, ir::normalize::tests,
+#     exec::dispatch, exec::colt, exec::introspection, ir::normalize::tests,
 #     ir::validate/render (schema fixtures only, but they sit beside
 #     Db-touching siblings and add no pure kernel coverage), plan::,
 #     digest, arena, the tests/ integration binaries) — FFI: they open

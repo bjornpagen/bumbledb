@@ -24,7 +24,7 @@
 //! occurrence can make another removable (chains `A<=B<=C` are real),
 //! and ≤20 occurrences make the loop trivially cheap. Elimination is a
 //! [`Role`] mark, never a removal: occurrence ids never move, and the
-//! `Eliminated(StatementId)` mark doubles as the record EXPLAIN and the
+//! `Eliminated(StatementId)` mark doubles as the record introspection and the
 //! tests read.
 //!
 //! # Why it is sound

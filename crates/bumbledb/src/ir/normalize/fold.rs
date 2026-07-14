@@ -18,7 +18,7 @@
 //! 2. **Contradiction detection** — each rule judged on **constants
 //!    only**, each producing a statically-empty verdict for the RULE
 //!    ([`super::NormalizedQuery::dead`]), with the killing condition
-//!    rendered for EXPLAIN: an empty range summary; `Eq` to two distinct
+//!    rendered for introspection: an empty range summary; `Eq` to two distinct
 //!    constants on one slot; an `Eq` constant outside the range summary;
 //!    a membership set empty after sentinel-trim, or intersected with an
 //!    `Eq` constant not in it; an `Allen` literal-vs-literal condition
@@ -471,7 +471,7 @@ fn emit(
     }
 }
 
-// The verdict pictures — EXPLAIN's `statically empty:` payloads, in the
+// The verdict pictures — introspection's `statically empty:` payloads, in the
 // rule notation's value formats (`ir::render`): decoded values, `..`
 // intervals, named masks. Rendered here, at the one point where the
 // schema, the killing constants, and the field types coexist.

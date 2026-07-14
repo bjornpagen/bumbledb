@@ -93,8 +93,6 @@ documents themselves describe **only the current reality**.
   violating the latency budget despite the cache — recorded with D1's reversal.*
 - **Vectorized batch size**: 64–256 starting range decided; the number is
   measurement-owned. *Trigger: the ledger benchmark.*
-- **EXPLAIN output shape**: ANALYZE semantics shipped; text stability not promised.
-  *Remaining open: nothing structural.*
 - **`70-api.md` open sub-items**: see that doc's own OPEN list (result ordering,
   multi-key typed `get` sugar, multi-process future).
 
@@ -132,6 +130,9 @@ re-litigated by accident:
   the read-side syntax (`20-query-ir.md`, `70-api.md`).
 - **WriteTx point reads** (`contains`/`get` against the delta-overlaid final-state
   view); full queries in write transactions are forbidden (`70-api.md`).
+- **Plan introspection output** is the versioned `introspection v1` contract:
+  deterministic content and ordering within a version, with rendered and structured
+  surfaces incremented together (`40-execution.md`, `70-api.md`).
 - **The naive model is required infrastructure** — the second oracle, judging
   dependency semantics SQLite cannot express (`60-validation.md`).
 - **No prior on-disk format opens; no migration path exists** — ETL is the story

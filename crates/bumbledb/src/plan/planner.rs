@@ -47,7 +47,7 @@ pub struct OccStats {
 }
 
 /// The chosen left-deep join order, with per-step estimates retained for
-/// EXPLAIN (docs/architecture/40-execution.md). Participating occurrences
+/// introspection (docs/architecture/40-execution.md). Participating occurrences
 /// only — negated occurrences join nothing and reach execution as
 /// anti-probes, and grounding-eliminated occurrences left planning entirely
 /// (`plan/ground.rs`).

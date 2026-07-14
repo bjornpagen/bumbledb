@@ -103,7 +103,7 @@ pub use validate::validate;
 /// exactly like relations pre-`as`), its typed output signature derived
 /// ONCE at validation and sealed. The single authority for sink
 /// construction, result-buffer typing, finalize's all-words decision,
-/// and EXPLAIN's header. Referenced by NOTHING — the named-view refusal
+/// and introspection's header. Referenced by NOTHING — the named-view refusal
 /// stands; a reference to a predicate is the recursion trigger firing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Predicate {
@@ -112,7 +112,7 @@ pub struct Predicate {
 }
 
 impl std::fmt::Display for Predicate {
-    /// The signature in one line — EXPLAIN's header (`(u64, Sum i64)`:
+    /// The signature in one line — introspection's header (`(u64, Sum i64)`:
     /// declaration type spellings, rule-notation fold names).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("(")?;

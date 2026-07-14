@@ -5,7 +5,7 @@ use crate::schema::{FieldId, RelationId, Schema};
 
 /// The rule-disjointness proof's witness (docs/architecture/40-execution.md
 /// § set semantics): the relation and field whose differing pinned
-/// literals make the rules' head answers collision-free. EXPLAIN renders it
+/// literals make the rules' head answers collision-free. introspection renders it
 /// as diagnostic knowledge: `disjoint_rules: proven (R.f)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DisjointWitness {
@@ -13,7 +13,7 @@ pub struct DisjointWitness {
     pub field: FieldId,
 }
 
-/// The rule-disjointness check — EXPLAIN's direct proof producer. A pair of
+/// The rule-disjointness check — introspection's direct proof producer. A pair of
 /// rules is **provably disjoint** when there is a relation R and a field
 /// f such that both rules bind a positive occurrence of R whose filters
 /// pin f to *different* concrete literals, **and** that occurrence's
@@ -29,7 +29,7 @@ pub struct DisjointWitness {
 ///   unprovable pair (under every candidate) returns `None` and the
 ///   seen-set stays. The single shared witness is the workload's own
 ///   shape (every DU arm selects the one discriminator) and keeps the
-///   EXPLAIN line honest.
+///   introspection line honest.
 /// - **Concrete literals only**: params resolve at bind and pin nothing
 ///   here; a set matches any element and pins nothing; mixed constant
 ///   forms (a resolved word against a pending intern) stay unknown. Two

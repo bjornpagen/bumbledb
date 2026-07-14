@@ -157,13 +157,13 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
         .expect("execute");
     assert_eq!(scores_of(&out), vec![40], "kind 7's row; kind 3 never ran");
 
-    // The death record names the killing condition — EXPLAIN's line.
+    // The death record names the killing condition — introspection's line.
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(stats.rules.len(), 1, "stats cover the live rule only");
     assert_eq!(stats.dead.len(), 1);
     assert_eq!(stats.dead[0].rule, 0);
     assert_eq!(stats.dead[0].rendered, "Event: score > 5 ∧ score < 3");
-    let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(
         report.contains("statically empty: rule 0: Event: score > 5 ∧ score < 3"),
         "{report}"
@@ -258,10 +258,10 @@ fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
     assert_eq!(out.len(), 0, "stage-2-known empty");
     assert_eq!(out.arity(), 1, "the predicate shapes the empty buffer");
 
-    // EXPLAIN prints the program kind and both killing conditions.
+    // introspection prints the program kind and both killing conditions.
     let (out, report) = prepared
-        .explain(&txn, &cache, &[BindValue::AllenMask(AllenMask::INTERSECTS)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::AllenMask(AllenMask::INTERSECTS)])
+        .expect("introspect");
     assert_eq!(out.len(), 0);
     assert!(report.contains("access path: statically empty"), "{report}");
     assert!(

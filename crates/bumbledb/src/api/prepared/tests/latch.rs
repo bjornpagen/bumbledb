@@ -104,7 +104,7 @@ fn a_miss_stays_live_and_latches_after_interning() {
     assert!(out.is_empty(), "an uninterned Eq literal empties the rule");
     assert_eq!(prepared.unresolved_literals, 1, "a miss never latches");
     let (_, report) = prepared
-        .explain(&txn, &cache, &[])
+        .introspect(&txn, &cache, &[])
         .expect("the missed query explains");
     assert!(
         report.contains(
@@ -130,7 +130,7 @@ fn a_miss_stays_live_and_latches_after_interning() {
     cache.evict_older_than(crate::GenerationId::from_storage(2));
     let txn = env.read_txn().expect("txn");
     let (latched, report) = prepared
-        .explain(&txn, &cache, &[])
+        .introspect(&txn, &cache, &[])
         .expect("the newly interned literal explains and latches");
     assert_eq!(amounts(&latched), vec![30]);
     assert_eq!(prepared.unresolved_literals, 0);

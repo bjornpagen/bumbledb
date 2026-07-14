@@ -214,9 +214,9 @@ fn usage_shapes_end_to_end() {
                 ("bob".to_owned(), 40),
             ]
         );
-        let (answers, report) = snap.explain(&mut join, &[])?;
+        let (answers, report) = snap.introspect(&mut join, &[])?;
         assert_eq!(answers.len(), 3);
-        assert!(!report.is_empty(), "explain renders a report");
+        assert!(!report.is_empty(), "introspect renders a report");
         Ok(())
     })
     .expect("read after mutate");
@@ -940,7 +940,7 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
         );
-        let err = snap.explain(&mut prepared, &[]).unwrap_err();
+        let err = snap.introspect(&mut prepared, &[]).unwrap_err();
         assert!(
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
