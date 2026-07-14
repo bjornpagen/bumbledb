@@ -110,9 +110,12 @@ jobs:
           key: miri-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
       - run: scripts/miri.sh
 
-  # Lane 4 — the Lean gate (the covenant campaign, PRD 01): elan
-  # installs the toolchain pinned in lean/lean-toolchain, then
-  # scripts/lean.sh runs `lake build` plus the placeholder battery.
+  # Lane 4 — the Lean gate (the covenant campaign, PRD 01; census
+  # added by PRD 10): elan installs the toolchain pinned in
+  # lean/lean-toolchain, then scripts/lean.sh runs `lake build`, the
+  # placeholder battery, and scripts/spec-census.sh (the Bridge
+  # ledger's mechanism/instrument tokens against crates/ and fuzz/,
+  # the docs' lean/ citations against the tree).
   # Per push — the build is seconds at this size; if it exceeds
   # 2 minutes by campaign end, PRD 14 moves it to the Miri cron and
   # records the number. First-run verification on a real push:

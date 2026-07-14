@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# The Lean gate (the covenant campaign, PRD 01): build the spec tree,
-# then run the placeholder battery. Exit nonzero on any failure.
+# The Lean gate (the covenant campaign, PRD 01; census added by PRD 10):
+# build the spec tree, run the placeholder battery, then run the spec
+# census (scripts/spec-census.sh — the Bridge's grep-checked half).
+# Exit nonzero on any failure. One entry point: CI's lean job runs
+# exactly this script.
 #
 # The battery's shaping (recorded per PRD 01):
 #   * `sorry` and `admit` are term-level proof escapes that can appear
@@ -44,4 +47,10 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "lean.sh: OK — build green, placeholder battery clean"
+# Battery 3 (PRD 10): the spec census — the Bridge ledger's mechanism
+# and instrument tokens resolve against crates/ and fuzz/, and the
+# docs' lean/ citations resolve against the tree.
+cd ..
+scripts/spec-census.sh
+
+echo "lean.sh: OK — build green, placeholder battery clean, census resolved"
