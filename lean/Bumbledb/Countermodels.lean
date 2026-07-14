@@ -1,4 +1,5 @@
 import Bumbledb.Query.Aggregates
+import Bumbledb.Exec.Sweep
 
 /-!
 # Countermodels — the design scratchpad (PRD 02 onward, grows all campaign)
@@ -73,6 +74,18 @@ part of the spec.
   equality; exact partition needs both directions
   (`exact_partition_iff`), which is exactly recipe 26's five-statement
   construction and its commit matrix's one-way-overhang-accepted row.
+
+## PRD 06 resident
+
+* `sweep_premise_load_bearing` — the sweep's REQUIRED premise
+  countermodel: an unordered segment list that jointly covers its
+  source window while the one-pass walk convicts — the false REJECT,
+  the "wrong verdict without erroring". Two recorded boundaries: the
+  false-ACCEPT direction is NOT constructible
+  (`Exec.sweep_never_false_accepts` is premise-free), and violating
+  `Disjoint` alone cannot produce a wrong verdict
+  (`Exec.sweep_complete_of_ordered` spends only `Ordered`) — see the
+  section note and `Exec/Sweep.lean`'s module doc.
 -/
 
 namespace Bumbledb.Countermodels
@@ -384,5 +397,82 @@ theorem sql_zero_row_from_no_binding (C : Query.Classify)
       sqlGlobalAgg C gateRule emptyInstance ρ fold) ∧
     (∀ t, t ∉ Query.aggAnswers C gateRule emptyInstance ρ keys foldRow) :=
   ⟨rfl, Query.empty_global_no_answer (gateRule_derives_nothing C ρ)⟩
+
+/-! ## The sweep-premise countermodel (PRD 06)
+
+The REQUIRED premise countermodel of `Exec/Sweep.lean`: the one-pass
+coverage walk returns a WRONG VERDICT — without erroring — the moment
+its `Ordered` premise is violated. The claims `[5, 9), [1, 5)` (start
+order broken) jointly cover the source window `[1, 9)`, yet the walk
+opens its frontier at 1, meets start 5 first, reads a gap, and
+convicts: a FALSE REJECT.
+
+Two recorded boundaries of the countermodel (the design findings of
+PRD 06, `Exec/Sweep.lean` module doc):
+
+* **The false-ACCEPT direction is NOT constructible.** The PRD asked
+  for both directions "if constructible";
+  `Exec.sweep_never_false_accepts` proves acceptance sound with NO
+  premises at all — the frontier only ever advances across points a
+  consumed segment holds — so a violated premise can only convict the
+  innocent, never acquit the guilty. The checker's failure mode off
+  its witness is spurious `CommitRejected`, never a silently accepted
+  violation.
+* **Violating `Disjoint` alone cannot produce a wrong verdict.**
+  Completeness needs only `Ordered` (`Exec.sweep_complete_of_ordered`)
+  — max-frontier tracking subsumes overlap, exactly the Rust module's
+  claim. `Disjoint` licences the predecessor-seek entry below the
+  fold's altitude (`judgment.rs::check_coverage`), and it is what the
+  verifier's `pointwise_overlap_is_found_by_the_ordered_walk` fixture
+  guards: the ordered walk is also how a broken disjointness premise
+  is DETECTED, so the witness must stay minted at key acceptance.
+
+This is the audit's "wrong verdict without erroring" made concrete —
+the theorem-shaped reason `check_coverage` demands the
+`DisjointDeterminantProof` token (order + disjointness minted at
+pointwise-key acceptance) before entering the walk. -/
+
+/-- The later claim `[5, 9)` — listed FIRST: the order violation. -/
+def segLate : Interval U64 := ⟨⟨5, by omega⟩, ⟨9, by omega⟩, by decide⟩
+
+/-- The earlier claim `[1, 5)` — listed second. -/
+def segEarly : Interval U64 := ⟨⟨1, by omega⟩, ⟨5, by omega⟩, by decide⟩
+
+/-- The premise-violating segment list: start-sorted it is NOT. -/
+def unorderedSegs : List (Interval U64) := [segLate, segEarly]
+
+/-- The source window `[1, 9)` the two claims jointly cover. -/
+def coveringSrc : Interval U64 := ⟨⟨1, by omega⟩, ⟨9, by omega⟩, by decide⟩
+
+/-- **The countermodel (`sweep_premise_load_bearing`).** On the
+unordered list the premise-free denotation HOLDS (the claims cover
+the window) while the walk's verdict is `false` — the false reject,
+kernel-evaluated. The `Ordered` premise of
+`Exec.sweep_covered_sound_complete` is load-bearing; see the section
+note for why this is the ONLY constructible wrong-verdict direction.
+Bridge: `DisjointDeterminantProof` + `judgment.rs::check_coverage`;
+the verifier's `pointwise_overlap_is_found_by_the_ordered_walk`
+fixture. -/
+theorem sweep_premise_load_bearing :
+    ¬ Exec.Ordered unorderedSegs ∧
+      (∀ x ∈ coveringSrc.points, x ∈ unionPoints unorderedSegs) ∧
+      Exec.sweepCovered coveringSrc unorderedSegs = false := by
+  refine ⟨?_, ?_, by decide⟩
+  · intro h
+    have h51 := (List.pairwise_cons.mp h).1 segEarly (List.mem_cons_self ..)
+    exact absurd h51 (by decide)
+  · intro x hx
+    have hx' : coveringSrc.start ≤ x ∧ x < coveringSrc.«end» := hx
+    by_cases h5 : x < segEarly.«end»
+    · exact ⟨segEarly, List.mem_cons_of_mem _ (List.mem_cons_self ..),
+        hx'.1, h5⟩
+    · exact ⟨segLate, List.mem_cons_self ..,
+        LinearElem.le_of_not_lt h5, hx'.2⟩
+
+/-- The same claims start-sorted flip the verdict to the truth — the
+sort (LMDB key order for the checker, `sort_unstable` for Pack) is
+exactly what the premise buys. -/
+example : Exec.sweepCovered coveringSrc [segEarly, segLate] = true := by
+  decide
 
 end Bumbledb.Countermodels
