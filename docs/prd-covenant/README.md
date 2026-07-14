@@ -61,13 +61,16 @@ The refinement chain the spec maintains:
 - `13-conformance.md` — the executable denotation: Lean evaluates
   Tiny worlds as the third differential oracle.
 - `14-census-close.md` — zero-duplication batteries, zero-sorry, the
-  bridge resolves, doc line-deltas recorded, gates cashed. Always last.
+  bridge resolves, doc line-deltas recorded, gates cashed.
+- `15-fanout.md` — the spec judges the implementation: ten parallel
+  blind reviews, one graded fidelity report per subsection, findings
+  reconciled under trophy discipline. The true terminal.
 
 Dependency spine: 01 first. 02→03→04→05 in order (each imports the
 prior). 06/07/08 after 04+05 (parallel-safe among themselves).
 09 after 03. 10 after 02–09 (it indexes every theorem). 11/12 after 10
 (docs cite what exists). 13 after 04+05 (needs computable denotations).
-14 last, always.
+14 closes the spec; 15 spends it — last, always.
 
 ## Laws
 
