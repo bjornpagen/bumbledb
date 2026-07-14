@@ -239,7 +239,11 @@ IR — `20-query-ir.md`). Nulls. Floats in
 persistent data. Bag semantics. Nominal typing. Runtime DDL. Migrations (ETL into a
 new database is the schema-change story; export surface in `70-api.md`). Async API.
 Multiple writers. Multi-process access. Data beyond RAM. Intra-query parallelism.
-Encryption/access control. Compatibility with any prior on-disk format.
+Encryption/access control. Compatibility with any prior on-disk format. A deductive
+database / logic-programming runtime: queries are query-sized programs against a
+theory-governed store, never the unit of an application — Turing-completeness lives
+in the host, and the closure idiom is the covenant, not a workaround
+(`20-query-ir.md` § engine recursion, the ruling that survives the trigger).
 
 **Anticipated, not built:** JS/N-API bindings are punted with zero deliverable and
 a recorded quarantine shape — a downstream crate on the bench-crate precedent (it
@@ -264,7 +268,10 @@ judgment — locks protect what you remembered to lock; the witness protects
 everything the snapshot saw; *enum* → closed relation (a vocabulary is a relation
 whose elements are ground axioms; the type died when the schema macro began emitting
 closed-relation handles, as recorded by `10-data-model.md`'s obituary, and the
-value-type roster is six).
+value-type roster is six); *rule program / stored rules* → the host loop over
+prepared queries (queries are host data, assembled per prepare); *magic sets /
+demand transformation* → the host seeds the frontier (`20-query-ir.md` § engine
+recursion).
 
 ## Success criteria
 

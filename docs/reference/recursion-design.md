@@ -103,7 +103,7 @@ stays deferred — five consumers, none free):
 |---|---|---|---|
 | validation typing | the per-rule bivalent anchor fixpoint (`ir/validate.rs`, `validate/context.rs`) | `Idb` anchors resolve against `Predicate.columns` instead of the schema relation; roster items for unknown `PredId` and arity mismatch | ~40 lines |
 | normalize | the occurrence table (`ir/normalize/normalize.rs`) | `Occurrence.relation` → `source`; filters and residuals are slot/word-shaped and indifferent | ~30 lines |
-| grounding | elimination + evaluation (`plan/ground.rs`, `plan/ground/evaluate.rs`) | one guard each: both rewrites refuse `Idb` occurrences — statements quantify over stored relations (`30-dependencies.md`) and sealed extensions exist only for closed relations, so elimination has no licensing statement and evaluation no stage-0 rows | ~10 lines |
+| grounding | elimination + evaluation (`plan/ground.rs`, `plan/ground/evaluate.rs`) | one guard each: both rewrites refuse `Idb` occurrences — statements quantify over stored relations *permanently* (`30-dependencies.md`, the stored-relations decision record — undecidable predicate containment is the rationale, so this guard discharges a law, not a convenience) and sealed extensions exist only for closed relations, so elimination has no licensing statement and evaluation no stage-0 rows | ~10 lines |
 | view binding | the per-occurrence bind loop (`api/prepared/run_join.rs`, `view_memo.rs`) | `Idb` occurrences take the transient-image bind (§4) instead of `ImageCache::get_or_build` | ~40 lines |
 | statistics | the selectivity ladder (`plan/selectivity.rs`) | `Idb` occurrences pin no row counts and cost on the ladder's floors (§3); the staleness surface already knows the shape — negated and grounding-discharged occurrences carry no pin today (`70-api.md` § transactions) | ~30 lines |
 
@@ -158,7 +158,10 @@ therefore a subset of a finite product of active-domain words, the
 per-stratum immediate-consequence operator is monotone on a finite
 powerset lattice, and the least fixpoint is reached in finitely many
 rounds, each round finitely many Free Join executions. Termination is
-a theorem of the roster, not a runtime hope.
+a theorem of the roster, not a runtime hope. The roster is not a new
+law: it is the creation quarantine (`20-query-ir.md` § the creation
+quarantine — a created value never re-enters a derivation) restated
+for fixpoint topology — one law, two enforcement sites.
 
 ## 3. The delta rewrite
 
@@ -393,7 +396,12 @@ the intersection's endpoints are *selected* from stored endpoints,
 never invented, so the representable windows over a finite store are a
 finite set (≤ n² endpoint pairs) and the immediate-consequence
 operator stays monotone on a finite lattice — termination survives
-value creation of this lattice-closed shape. What keeps it open
+value creation of this lattice-closed shape. That observation is now
+the architecture's standing fence for every future interval operator
+(`20-query-ir.md` § the creation quarantine): lattice-closed,
+endpoint-selecting operations are the only candidates ever;
+endpoint-inventing ones (shift, widen, arithmetic on bounds) are
+refused categorically. What keeps it open
 anyway: (a) **emptiness** — `max(starts) ≥ min(ends)` must kill the
 tuple by a typed rule rather than construct the unrepresentable
 `start ≥ end` interval (the constructor invariant is a boundary law,
