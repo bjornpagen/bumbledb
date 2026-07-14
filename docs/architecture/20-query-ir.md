@@ -115,7 +115,11 @@ The execution plan is pre-paid: the full recursion design — IR cut,
 stratification, delta rewrite, transient images, driver, oracles,
 notation — is a paper proof with a seam ledger in
 `docs/reference/recursion-design.md`; a firing trigger goes through that
-ledger, not around it. The rules shape (§ above) is the landing pad,
+ledger, not around it. The spec side is likewise pre-paid:
+`lean/Bumbledb/Exec/` is the fixpoint model's prepared home when the
+trigger fires (the covenant's recursion refusal) — the stratified
+semantics lands beside the proved rewrites, never in a new tree, and
+until then nothing recursion-shaped exists in `lean/` either. The rules shape (§ above) is the landing pad,
 deliberately not entered — a query is already a non-recursive Datalog
 program, one step short of the fixpoint — and nothing in this chapter
 assumes the step is never taken. Until a trigger fires, the dogfooding

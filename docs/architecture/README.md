@@ -46,12 +46,12 @@ laws).
 | `10-data-model.md` | Reading guide over `lean/Bumbledb/Values.lean`+`Schema.lean`: the six structural types, interval/ray intuition, identity, schema, modeling discipline — decisions whole, semantics by citation |
 | `20-query-ir.md` | Reading guide over `lean/Bumbledb/Query/`: the pure-data IR shape and notation grammar, validation roster, recursion refusal — decisions whole, semantics by citation |
 | `30-dependencies.md` | Reading guide over `lean/Bumbledb/Dependencies.lean`+`Txn.lean`: the two judgments by citation, statement grammar, the acceptance gate, enforcement mechanism, the decidability firewall |
-| `40-execution.md` | Access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation |
-| `50-storage.md` | LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images |
-| `60-validation.md` | The two oracles (SQLite + naive model), ledger benchmark protocol, test families |
-| `70-api.md` | Embedding surface: the schema! grammar, transactions, point reads, results, ETL |
+| `40-execution.md` | Mechanism only: access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation — every semantic sentence cites its `lean/Bumbledb/Exec/` theorem |
+| `50-storage.md` | Mechanism only: LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images — encoding laws by citation |
+| `60-validation.md` | The three oracles (SQLite + naive model + the Lean denotation, `lean/conformance/`), ledger benchmark protocol, test families |
+| `70-api.md` | Embedding surface: the schema! grammar, transactions (semantics by `lean/Bumbledb/Txn.lean` citation), point reads, results, ETL |
 | `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative; `Guarantee:` labels cite `lean/` theorems, census-checked (reader: the owner and any agent writing a theory) |
-| `../formal/README.md` | Versioned Lean model, provenance, scope, and the bridge from theorems to Rust evidence |
+| `../../lean/` | The specification itself: the value universe through the lifecycle, `Bridge.lean` (the obligation ledger), `Countermodels.lean` (the design scratchpad), the conformance corpus — `lean/README.md` carries the laws and the provenance history |
 
 ## OPEN items
 

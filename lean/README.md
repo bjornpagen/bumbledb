@@ -93,3 +93,27 @@ kernels, LMDB layout, every pinned number), durability and crash (the
 crashpoint estate owns those; Level 2 models committed-state
 transitions only), the notation grammar (a host-surface fact), and
 operations. Those live in `docs/architecture/`, whole.
+
+## History — the seed artifact's provenance
+
+This tree was built from a statement inventory, not a working seed:
+`GPT55DependencyTheory.lean`, produced by the gpt55 audit on
+2026-07-13, pinned against repository commit `98f1103`, checked under
+`leanprover/lean4:v4.32.0` with no `axiom` declarations and no proof
+escapes. Its two imported precursor modules (`LeanQuerySemantics`,
+which imported `DependencyTheory`) were supplied by the audit
+environment and were never in this repository, so the artifact did not
+check standalone here. The campaign REBUILT the base definitions
+in-tree (PRDs 02–05) and PORTED the artifact's theorem statements and
+proofs onto them, adapting names to the language law; the census
+(PRD 14) verified every artifact theorem against the tree and retired
+`docs/formal/` — the byte-pinned copy (SHA-256
+`e1f09501079feb23ad93be9ab98aeba3b6b5f50a6a84cbbbf78af095c048a576`,
+byte-identical to the source artifact) remains reachable in git
+history forever. The port table lives in
+`docs/prd-covenant/14-census-close.md`; the one recorded semantic
+divergence is the empty-global aggregate (the artifact's `sum [] = 0`
+is refused — `Countermodels.lean`, the SQL zero-row countermodel), and
+the artifact's stratification lemma is structurally subsumed (the
+modeled syntax has no head-referencing atoms; recursion is refused
+with `Exec/` as its prepared home).

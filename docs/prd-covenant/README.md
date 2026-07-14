@@ -1,5 +1,14 @@
 # The covenant campaign
 
+> **LEDGERS CLOSED (PRD 14, 2026-07-14).** PRDs 01–13 landed as
+> `78845f98..072d3a7b`; the census (PRD 14) counted the campaign and
+> closed it in the commit that carries this note — seven batteries
+> green, `docs/formal/` retired, three census rulings recorded
+> (`14-census-close.md` § Results). The final content commit of the
+> pre-census campaign is `072d3a7b`. Only PRD 15 (the fanout — the
+> true terminal, reports-only per the owner directive) remains open;
+> it spends the spec, it does not change it.
+
 The formal specification becomes a living Lean development in `lean/`,
 and the architecture docs are aggressively thinned to ZERO duplication:
 every semantic and execution-semantic fact lives in exactly one place —
