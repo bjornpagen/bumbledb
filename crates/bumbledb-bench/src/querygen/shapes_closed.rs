@@ -6,7 +6,7 @@
 //!   ψ-shaped literal on `Currency.minor_units`), plus the two
 //!   handle-binding classes: a handle **literal** and a handle **param
 //!   set** on a referencing field.
-//! - [`closed_fold`] — the fold-shaped pattern PRD 07 targets, under its
+//! - [`ground_fold`] — the fold-shaped grounding pattern, under its
 //!   own family knob: a closed atom whose only escaping variable is the
 //!   join id (an id-position variable join; any payload variable it
 //!   binds is dead — bound, never projected, never compared).
@@ -116,7 +116,7 @@ pub(super) fn closed_join(b: &mut Builder, rng: &mut Rng) {
 /// rows counted per handle through an
 /// id-position variable join, the closed atom contributing nothing but
 /// the join id — its payload, when bound, is a dead variable.
-pub(super) fn closed_fold(b: &mut Builder, rng: &mut Rng) {
+pub(super) fn ground_fold(b: &mut Builder, rng: &mut Rng) {
     let (source, reference, closed, row, _) = pair(rng);
     let atom = b.add_atom(*source);
     let handle = b.bind_var(atom, *reference);

@@ -4,7 +4,7 @@ use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::dress::dress;
 use crate::querygen::negate::negate;
 use crate::querygen::shapes::{aggregate, chain, key_probe, self_join, star};
-use crate::querygen::shapes_closed::{closed_fold, closed_join};
+use crate::querygen::shapes_closed::{closed_join, ground_fold};
 use crate::querygen::shapes_ground::{du_walk, existence_walk};
 use crate::querygen::shapes_interval::{boundary, interval_join, measure, membership};
 use crate::querygen::shapes_rules::rules;
@@ -59,7 +59,7 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::DuWalk => du_walk(&mut b, rng),
         Shape::Measure => measure(&mut b, rng, cfg, domains),
         Shape::ClosedJoin => closed_join(&mut b, rng),
-        Shape::ClosedFold => closed_fold(&mut b, rng),
+        Shape::GroundFold => ground_fold(&mut b, rng),
         Shape::Rules => unreachable!("multi-rule programs assemble their own query"),
     }
     // The grounding and closed shapes are their own deliberate dressing: a
@@ -69,7 +69,7 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
     // asserts each variant per run (shapes_ground.rs, shapes_closed.rs).
     if !matches!(
         shape,
-        Shape::ExistenceWalk | Shape::DuWalk | Shape::ClosedJoin | Shape::ClosedFold
+        Shape::ExistenceWalk | Shape::DuWalk | Shape::ClosedJoin | Shape::GroundFold
     ) {
         dress(&mut b, rng, cfg, domains);
         // Negation last: its templates draw on every anchor the shape

@@ -244,7 +244,7 @@ a theorem rather than a feature.
 πX(σφ(A)) ⊆ πY(σψ(B)). Read `<=` as *is contained in* — it is `⊆` written
 in the tokens Rust lexes, and the choice is principled: the subset order is
 an order. The acceptance gate requires Y to be a key of B (one key probe
-answers "is this tuple present"). SQL's foreign key is the unselected
+answers "is this tuple present"). SQL's referential constraint is the unselected
 special case; the selected form is the CIND of the data-quality
 literature. **Pointwise lifting:** an interval position turns containment
 into *coverage* — every point of A's interval lies under B's segments,

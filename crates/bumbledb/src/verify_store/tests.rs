@@ -476,7 +476,7 @@ fn namespace_schema_ownership_is_rechecked() {
             &s,
         ] {
             data.put(txn.raw_mut(), key, &[])
-                .expect("plant foreign key");
+                .expect("plant foreign namespace key");
         }
     });
     assert_eq!(

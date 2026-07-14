@@ -530,7 +530,7 @@ loop bound is the claim, never a sample — and are therefore **never fuzzed**
   laws over the exhaustively enumerated 13 × 13 table (46,656 triples on a
   9-value grid — a witness needs at most 6 distinct endpoints, so the
   enumerated table is the whole table, not a sample).
-- **The closed-target bitset** (`schema/tests/closed_member.rs`): every
+- **The closed-target bitset** (`schema/tests/member_set.rs`): every
   in-range id 0..=255 plus the out-of-range probes × 834 structured `[u64; 4]`
   patterns — the prefix and suffix families (covering empty, all-set, and the
   63/64, 127/128, 191/192 word boundaries), every singleton, and random fill —

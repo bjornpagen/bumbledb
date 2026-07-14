@@ -105,7 +105,7 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// The query in the rule notation, rendered at prepare
-    /// ([`crate::ir::render`] — one clause per rule, `;`-terminated):
+    /// ([`crate::ir::render`] — one rendered block per rule, `;`-terminated):
     /// the diagnostic twin of the introspection report's header, for hosts
     /// that log or display the query a prepared handle answers.
     #[must_use]

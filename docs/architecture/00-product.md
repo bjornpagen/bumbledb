@@ -9,7 +9,7 @@ no nulls, no layer cake — and a constraint system Postgres cannot follow:
 **invariants are two judgments about queries** (functionality and containment,
 `30-dependencies.md`), judged once per commit against the transaction's final state,
 which makes totality of sum types, conditional reference targets, and pointwise
-temporal keys *statable* — and makes the SQL constraint zoo (unique, foreign key,
+temporal keys *statable* — and makes the SQL constraint zoo (unique, referential,
 primary key, check, exclusion, cascade, restrict, deferrable) **deleted
 vocabulary**, each word replaced by a derivation. BCNF is a modeling discipline the
 owner enforces; temporality is not a discipline but a type (`Interval`,
@@ -249,7 +249,7 @@ IR-as-data in, result copies out (`70-api.md` § anticipated bindings).
 
 **Deleted vocabulary** (each word's replacement, one line, normative in
 `30-dependencies.md` and `10-data-model.md`): *primary key* → the fact is its own
-identity; *unique* → functional dependency statement; *foreign key* → containment
+identity; *unique* → functional dependency statement; *referential constraint* → containment
 statement; *check constraint* → host newtype constructors; *exclusion constraint* →
 functional dependency over an interval position; *cascade* → same-transaction
 cluster demolition under final-state judgment; *restrict / no action / deferrable* →

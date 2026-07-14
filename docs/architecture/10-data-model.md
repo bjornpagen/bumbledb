@@ -135,7 +135,7 @@ machinery of its own:
   keyword; here it is not an option but what the judgment *means* on this type.
 - An **inclusion dependency over an interval position holds pointwise** — every point
   of the source's interval is covered by the target's intervals (SQL:2011's `PERIOD`
-  foreign keys). The target needs a pointwise key for this to be checkable in
+  referential constraints). The target needs a pointwise key for this to be checkable in
   logarithmic time; validation demands it (`30-dependencies.md`).
 - **Point membership is a typing rule, not syntax**: a query atom binding an
   interval-typed field with an element-typed term means `t ∈ interval`
@@ -462,7 +462,7 @@ text indexes, not de-interning).
 Owned entirely by `30-dependencies.md`. The one sentence this chapter contributes:
 **dependencies are judgments about queries, checked once at commit against the
 transaction's final state** — there are no constraint modes, no per-operation
-enforcement, no deferral opt-in, and the words *unique*, *foreign key*, *primary key*,
+enforcement, no deferral opt-in, and the words *unique*, *referential constraint*, *primary key*,
 *cascade*, and *restrict* do not name anything in this system.
 
 **Glossary — determinant:** the ordered projection on the left side of a

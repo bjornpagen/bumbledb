@@ -209,7 +209,7 @@ fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
 }
 
 /// The calendar union example: Busy ∪ Ooo is
-/// the Claim relation's two arms — two clauses, one head, a window param.
+/// the Claim relation's two arms — two rules, one head, a window param.
 /// The qualified handle spelling (`ClaimKind::Busy`) resolves through the
 /// host enum's welded row id; the renderer prints the row id back as its
 /// BARE handle, resolved through the theory's sealed extension (a
@@ -387,7 +387,7 @@ fn closed_reference_handles_are_a_fixed_point() {
     assert_eq!(qualified, reparsed);
 }
 
-/// Every named-aggregate head form in one clause; the names stay at the
+/// Every named-aggregate head form in one rule; the names stay at the
 /// call site (result columns are positional — the render drops them).
 #[test]
 fn aggregate_heads_golden() {

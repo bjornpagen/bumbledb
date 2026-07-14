@@ -831,7 +831,7 @@ bumbledb::schema! {
     Payment(id | kind == Card) == Card(payment);
     Payment(id | kind == Ach)  == Ach(payment);
 
-    // One query, two clauses (set union). The exclusivity theorem (recipe 2)
+    // One query, two rules (set union). The exclusivity theorem (recipe 2)
     // is spent a third time here: rules selecting different `kind` values are
     // provably disjoint, so the executor elides cross-rule dedup — the free
     // lunch (40-execution.md § set semantics).

@@ -67,7 +67,7 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::Rules, 10),
     (Shape::Measure, 8),
     (Shape::ClosedJoin, 8),
-    (Shape::ClosedFold, 7),
+    (Shape::GroundFold, 7),
 ];
 
 /// Filter dressing applies to every shape with this percent chance…
@@ -121,11 +121,11 @@ enum Shape {
     ClosedJoin,
     /// The fold-shaped pattern PRD 07 targets, under its own family
     /// knob: a closed atom whose only escaping variable is the join id.
-    ClosedFold,
+    GroundFold,
 }
 
 /// Which closed-relation class a query is ([`Shape::ClosedJoin`] /
-/// [`Shape::ClosedFold`]) — the generator's intent, counted by the
+/// [`Shape::GroundFold`]) — the generator's intent, counted by the
 /// closed-class self-test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClosedVariant {
@@ -303,7 +303,7 @@ pub struct Coverage {
     pub rules: u64,
     pub measure: u64,
     pub closed_join: u64,
-    pub closed_fold: u64,
+    pub ground_fold: u64,
     /// The closed-relation pattern classes (`shapes_closed.rs`): the
     /// plain join, the payload-column selection, the handle literal,
     /// and the handle param set — all four counted by the closed-class

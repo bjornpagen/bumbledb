@@ -835,7 +835,7 @@ impl<'a> IntoIterator for &'a Violations {
 pub enum OverflowKind {
     /// An aggregate's final value exceeds its result type (the once-at-
     /// finalization range check; deterministic under any fold order).
-    /// Carries the find-clause index.
+    /// Carries the find-position index.
     Aggregate { find: usize },
     /// The executor's D2 origin counter would cross u32 — more than 2³²
     /// absorb-node survivors in one execution. Beyond the scale axiom,

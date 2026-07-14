@@ -133,8 +133,8 @@ predicates iterate jointly under one round loop (§5).
   a head whose rule body reads the head's own SCC. Aggregation *of*
   lower strata is legal for the same reason: an `Idb` atom under a
   fold reads a finished set.
-- `ValidationError::MeasureInRecursiveHead { pred }` — a
-  `Duration`/`AggregateDuration` find in a recursive predicate's head.
+- `ValidationError::MeasureInRecursiveHead { pred }` — a `Measure` find in a
+  recursive predicate's head.
   Two derivations. First, the safety theorem below requires heads to
   project **bound** variables, and the measure is a computation, not a
   binding — value creation in a head exits the theorem (it is §8's
@@ -202,7 +202,7 @@ which is `ResolvableFilter`'s discipline exactly
 totally by `surviving_ids`) and PRD 08's `ClassifiedComparison` law
 (classification carries its proof; no consumer re-derives).
 `PreparedRule` grows one arm — `Recursive(RecursiveRule)` beside
-`FreeJoin`/`Guard` (`api/prepared.rs`) — and the arm lands **inhabited
+`FreeJoin`/`KeyProbe` (`api/prepared.rs`) — and the arm lands **inhabited
 on the day it lands**, never before: the one-inhabitant refusal is why
 this paper exists.
 
@@ -213,7 +213,7 @@ this paper exists.
 source-agnostic after decode: allocate → decode plan → fill → seal,
 and `synthesize_closed` (`image/build.rs`) proves a non-LMDB source
 rides it whole — the sealed extension synthesizes through exactly the
-plan a stored fact would, column layout, pitch padding, and distinct
+plan a stored fact would, column layout, stride padding, and cardinality
 counters untouched. The delta builder is the same shape with a cheaper
 source: the round's frontier rows are already encoded column words in
 the seen-set (§5), so the build is a columnar transpose of a dense
@@ -349,7 +349,7 @@ under both disciplines or not at all.
 
 ## 7. The notation
 
-**Named heads; bare clauses remain the output predicate.**
+**Named heads; bare rules remain the output predicate.**
 
 ```text
 path(x, z) | edge(x, y), path(y, z);
@@ -357,11 +357,11 @@ path(x, z) | edge(x, z);
 (x, z)     | path(x, z), Root(id: x);
 ```
 
-Grammar delta over `20-query-ir.md` § the query notation: `clause :=
+Grammar delta over `20-query-ir.md` § the query notation: `rule :=
 [name] '(' head ')' '|' body ';'`, and a body atom may name a
 predicate where it names a relation. **Text-level backward
 compatible:** every existing query parses unchanged and denotes what
-it denoted — a program whose every clause is bare is today's one-
+it denoted — a program whose every rule is bare is today's one-
 predicate program.
 
 Predicate names are a text-layer sidecar, exactly as variable names
@@ -373,7 +373,7 @@ schema emissions — so a typo is a macro error at the literal, and a
 predicate spelled like a relation is a macro error too (unwritable
 ambiguity, the punning law's discipline). The renderer prints interior
 predicates with synthesized names (`p0`, `p1` — the `v{id}`/`?{id}`
-convention extended) and output clauses bare; the round-trip goldens
+convention extended) and output rules bare; the round-trip goldens
 (`bumbledb-query/tests/notation.rs`, `render(lower(text))` byte-equal)
 extend with named-head cases, and the anti-drift discipline — one
 grammar, three consumers, renderer as spec — inherits unamended.
@@ -437,7 +437,7 @@ untouched — the review criterion for the future PRD, written today.
 | 13 | naive fixpoint oracle | the naive model's definitional evaluator | `crates/bumbledb-bench/src/naive/query.rs` | +80 | the independence law (types only); the trust root stays definitional — naive, never semi-naive |
 | 14 | SQLite lane + gate | the IR→SQL translator + the enumerated `Inexpressible` set | `bumbledb-bench/src/translate/query.rs`, `translate/types.rs`, `translate/goldens.rs` | +150 | nothing silently skipped; typed-identity error parity; linear-only, division of labor recorded |
 | 15 | generator arm | the coverage-contract convention + the entropy seam | new `bumbledb-bench/src/querygen/shapes_recursive.rs`, `querygen/coverage.rs`, `querygen/shapes.rs` | +260 | coverage asserted per run; the cost-bound rule (closure size bounded by construction); `corpus_gen::rng` untouched |
-| 16 | notation + renderer | the render grammar; round-trip goldens; the macro's local names | `ir/render.rs`, `crates/bumbledb-query/src/lib.rs`, `bumbledb-query/tests/notation.rs`, `docs/cookbook.md` | +200 | one grammar, three consumers, byte-exact goldens; bare clauses = the output predicate (text-level compatibility); names never fingerprinted |
+| 16 | notation + renderer | the render grammar; round-trip goldens; the macro's local names | `ir/render.rs`, `crates/bumbledb-query/src/lib.rs`, `bumbledb-query/tests/notation.rs`, `docs/cookbook.md` | +200 | one grammar, three consumers, byte-exact goldens; bare rules = the output predicate (text-level compatibility); names never fingerprinted |
 
 Total ≈ +2,300 lines across engine, bench, and macro crates; the
 largest single-file diff ≈ 300 lines; **zero rows invent a mechanism

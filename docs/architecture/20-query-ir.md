@@ -734,7 +734,7 @@ never part of the input IR, never in the public API, never serialized.
 ## The renderer — `ir::render`, the read-side syntax
 
 The statement renderer's sibling (`schema/render.rs`): `ir::render::render` prints
-a query in the **rule notation** — one clause per rule, set-builder shaped,
+a query in the **rule notation** — one block per rule, set-builder shaped,
 `;`-terminated —
 
 ```text
@@ -745,7 +745,7 @@ a query in the **rule notation** — one clause per rule, set-builder shaped,
 — the schema grammar's own query side, promoted: atoms as statements write them,
 in-atom selections `field == literal` (params admitted as `?N`), `!` negation,
 membership as `in`, `Allen(term, MASK, term)` with masks as named basics joined by
-`|` or the workload composites, clause-level `|` reading *such that*. (The
+`|` or the workload composites, rule-level `|` reading *such that*. (The
 notation's normative grammar block is § the query notation, below; the renderer
 emits it.) When the write-side surface is data, the renderer **is** the pretty
 syntax — ergonomics on the side that costs nothing and crosses every boundary.
@@ -788,8 +788,8 @@ statement surface's query side, not an import. One notational family, schema to
 query.
 
 ```text
-query   := clause+                     // two or more clauses denote set union
-clause  := '(' head ')' '|' body ';'
+query   := rule+                       // two or more rules denote set union
+rule    := '(' head ')' '|' body ';'
 head    := headterm (',' headterm)*
 headterm:= var | [name ':'] agg        // named positions become result columns
 agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
@@ -813,24 +813,24 @@ Every token is either the schema grammar's own or Rust's: atoms are `Relation(..
 as statements write them; in-atom selections are the schema's selections with
 params admitted (and a set-bound param is the binding's membership spelling, `field
 in ?N`); membership is the Rust keyword `in` (∈ is not a lexable token); negation
-is `!`; params keep `?`; `;` terminates clauses as it terminates statements.
+is `!`; params keep `?`; `;` terminates rules as it terminates statements.
 Selection values admit closed-relation **handles** exactly as statement selections
 do — bare (`kind == DirectPass`, resolving through the field-named host enum) or
 qualified (`arm == ClaimKind::Busy`); the renderer prints handles bare, so the
 rendered text is its own fixed point wherever the closed relation is named
 `UpperCamel` of its referencing field (the naming convention's dividend — a theory
 named otherwise reparses through the qualified spelling). The
-two bars are the two the audit already upheld: clause-level `|` is *such that*;
+two bars are the two the audit already upheld: rule-level `|` is *such that*;
 mask-level `|` is set union over the 13 basics — set-builder and set-union,
 context-separated exactly as the two levels of `==` are.
 
 **The punning law (B, decided; alternative (A) is in the refusals ledger).** A bare
-field name binds a **clause-local variable named after the field** — Rust's
+field name binds a **rule-local variable named after the field** — Rust's
 struct-shorthand instinct, used for projection. The same punned name appearing in
-two atoms of one clause is a macro error, spanned at the second occurrence
+two atoms of one rule is a macro error, spanned at the second occurrence
 ("ambiguous punning — rename explicitly"); joins are always written `field: v` on
 both ends. Under the refused alternative — same-name-same-variable across the
-clause — every relation naming its key `id` makes a forgotten rename a *silent*
+rule — every relation naming its key `id` makes a forgotten rename a *silent*
 join the roster cannot object to (structurally both u64); under (B) the wrong query
 is unwritable at the call site.
 

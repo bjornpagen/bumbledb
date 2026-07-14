@@ -254,7 +254,7 @@ impl Coverage {
             Shape::Rules => self.rules += 1,
             Shape::Measure => self.measure += 1,
             Shape::ClosedJoin => self.closed_join += 1,
-            Shape::ClosedFold => self.closed_fold += 1,
+            Shape::GroundFold => self.ground_fold += 1,
         }
     }
 

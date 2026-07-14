@@ -154,7 +154,7 @@ mod tests {
             Ok(())
         }
 
-        fn maximal(&mut self, _start: u64, _frontier: u64) -> Result<(), ()> {
+        fn maximal(&mut self, _: u64, _: u64) -> Result<(), ()> {
             Err(())
         }
     }
@@ -329,7 +329,7 @@ mod tests {
             Ok(())
         }
 
-        fn maximal(&mut self, _start: u64, _frontier: u64) -> Result<(), ()> {
+        fn maximal(&mut self, _: u64, _: u64) -> Result<(), ()> {
             Err(())
         }
     }

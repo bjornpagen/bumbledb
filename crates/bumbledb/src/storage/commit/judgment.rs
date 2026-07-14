@@ -865,7 +865,7 @@ impl<'v> Continuation<[u8; 8], &'v [u8]> for GapAt<'_, '_, '_> {
         self.checker.check_segment(self.probe, value)
     }
 
-    fn maximal(&mut self, _start: [u8; 8], _frontier: [u8; 8]) -> Result<()> {
+    fn maximal(&mut self, _: [u8; 8], _: [u8; 8]) -> Result<()> {
         Err(self.probe.unsatisfied())
     }
 }

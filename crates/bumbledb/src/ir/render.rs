@@ -2,7 +2,7 @@
 //! sibling (`crate::schema::render`), on the read side of the data
 //! surface: **when the write-side query surface is data, the renderer is
 //! the pretty syntax** (`docs/architecture/20-query-ir.md` § the data
-//! surface). One clause per rule, set-builder shaped:
+//! surface). One rendered block per rule, set-builder shaped:
 //!
 //! ```text
 //! (v0, v1) | Busy(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);
@@ -14,7 +14,7 @@
 //! (schema-grammar-verbatim, params admitted as `?N`), `!` negation,
 //! membership as `in`, `Allen(term, MASK, term)` with masks as named
 //! basics joined by `|` (set union) or the workload composites, `;`
-//! terminating each clause exactly as it terminates statements.
+//! terminating each rule exactly as it terminates statements.
 //!
 //! Deterministic and **total on plain data** — its consumers are
 //! diagnostics (roster errors print the offending query, so malformed
@@ -121,8 +121,8 @@ impl ClosedRefs {
     }
 }
 
-/// Renders a query in the rule notation, one clause per rule, newline-
-/// separated, each clause `;`-terminated. Deterministic (two calls yield
+/// Renders a query in the rule notation, one block per rule, newline-
+/// separated, each rule `;`-terminated. Deterministic (two calls yield
 /// one string) and total: malformed queries render with placeholder
 /// names — this is the diagnostic surface for the roster's rejections.
 #[must_use]
@@ -133,13 +133,13 @@ pub fn render(schema: &Schema, query: &Query) -> String {
         if index > 0 {
             out.push('\n');
         }
-        clause(&mut out, schema, &refs, rule);
+        render_rule(&mut out, schema, &refs, rule);
     }
     out
 }
 
-/// One rule as one clause: `(head) | body;`.
-fn clause(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
+/// One rule as `(head) | body;`.
+fn render_rule(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
     out.push('(');
     for (index, term) in rule.finds.iter().enumerate() {
         if index > 0 {
@@ -165,7 +165,7 @@ fn clause(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
     out.push(';');
 }
 
-/// One head position of a clause. `Count` is nullary; a malformed
+/// One head position of a rule. `Count` is nullary; a malformed
 /// `Count(v)` renders its variable anyway (totality over the shapes the
 /// roster rejects).
 fn find_term(out: &mut String, term: &FindTerm) {

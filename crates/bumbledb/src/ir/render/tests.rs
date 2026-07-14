@@ -104,7 +104,7 @@ fn projection_rule(relation: RelationId) -> Rule {
 }
 
 /// The calendar union query, golden: unavailability is Busy ∪ Ooo
-/// against a window param — two clauses, one per rule, `;`-terminated,
+/// against a window param — two rules, each `;`-terminated,
 /// newline-separated (the mask is a param here; the literal-mask spelling
 /// is pinned below).
 #[test]

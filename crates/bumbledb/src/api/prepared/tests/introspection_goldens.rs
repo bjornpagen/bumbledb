@@ -4,7 +4,7 @@
 use super::*;
 use crate::ir::{AggOp, HeadOp, HeadTerm};
 
-const JOIN_WITH_CLOSED_FOLD: &str = r"introspection v2
+const JOIN_WITH_GROUND_FOLD: &str = r"introspection v2
 query:
 (v0, v2) | Reading(id: v0, kind: v1, value: v2), Kind(id: v1, rank == 20);
 predicate: (u64, i64)
@@ -118,7 +118,7 @@ fn assert_golden(
 }
 
 #[test]
-fn join_with_closed_fold_golden() {
+fn join_with_ground_fold_golden() {
     let dir = TempDir::new("introspection-golden-fold");
     let schema = super::folded::closed_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -127,7 +127,7 @@ fn join_with_closed_fold_golden() {
     let txn = env.read_txn().expect("txn");
     let mut prepared =
         prepare(&txn, &cache, &schema, &super::folded::fold_query(20)).expect("prepare");
-    assert_golden(&mut prepared, &txn, &cache, JOIN_WITH_CLOSED_FOLD);
+    assert_golden(&mut prepared, &txn, &cache, JOIN_WITH_GROUND_FOLD);
 }
 
 #[test]

@@ -13,7 +13,7 @@
 #   interval::tests/sweep   the interval parse and the sweep (pure Ord)
 #   encoding::tests         the canonical codecs (blake3's portable
 #                           body interprets fine under Miri)
-#   schema::tests::closed_member  the closed-target bitset judgment
+#   schema::tests::member_set     the closed-target bitset judgment
 #   exec::kernel::tests     the portable std::simd kernels and their
 #                           scalar reference twins (Miri interprets
 #                           std::simd)
@@ -63,7 +63,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 FILTERS="allen::tests:: interval::tests:: interval::sweep:: \
-encoding::tests:: schema::tests::closed_member exec::kernel::tests:: \
+encoding::tests:: schema::tests::member_set exec::kernel::tests:: \
 exec::wordmap:: ir::normalize::fold::tests::"
 
 SKIPS="--skip exhaustive_ \

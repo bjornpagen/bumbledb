@@ -3,7 +3,7 @@
 This chapter owns every invariant the engine enforces on committed states. There are
 exactly **two judgment forms**, both statements *about queries*, and nothing else:
 no constraint kinds, no modes, no triggers, no deferral. The words *unique key*,
-*foreign key*, *primary key*, *check constraint*, *exclusion constraint*, *cascade*,
+*referential constraint*, *primary key*, *check constraint*, *exclusion constraint*, *cascade*,
 and *restrict* name nothing here; where one of them used to name something, this
 chapter derives that something as an instance and the word is retired.
 
@@ -236,9 +236,10 @@ iff it holds of the point-families.
 
 ## The derivations (where the old words went)
 
-**Foreign key** = `A(x⃗) <= B(y⃗)`, unselected, one direction, y⃗ a key of B. All 99
-FKs in the surveyed Postgres workload and all 4 in the surveyed SQLite workload are
-this statement. *Restrict* is subsumed by final-state judgment; *cascade* is the
+**SQL referential-constraint special case** = `A(x⃗) <= B(y⃗)`, unselected, one
+direction, y⃗ a key of B. All 99 references in the surveyed Postgres workload and
+all 4 in the surveyed SQLite workload are this statement. *Restrict* is subsumed by
+final-state judgment; *cascade* is the
 host deleting the cluster in one transaction (2 uses in 99 surveyed — the mode never
 earned its semantics).
 

@@ -230,14 +230,14 @@ fn redundant_superkeys(keys: &[KeyStatement]) -> Box<[SchemaWarning]> {
         .map(|key| FieldSet::new(&key.projection).expect("sealed key projection is a set"))
         .collect();
     let mut warnings = Vec::new();
-    for (key_index, key) in keys.iter().enumerate() {
+    for (key_position, key) in keys.iter().enumerate() {
         for (smaller_index, smaller) in keys.iter().enumerate() {
             if key.relation == smaller.relation
-                && field_sets[smaller_index].is_strict_subset_of(&field_sets[key_index])
+                && field_sets[smaller_index].is_strict_subset_of(&field_sets[key_position])
             {
                 warnings.push(SchemaWarning::RedundantSuperkey {
                     relation: key.relation,
-                    key: KeyId(u16::try_from(key_index).expect("statement count fits u16")),
+                    key: KeyId(u16::try_from(key_position).expect("statement count fits u16")),
                     implied_by: KeyId(
                         u16::try_from(smaller_index).expect("statement count fits u16"),
                     ),

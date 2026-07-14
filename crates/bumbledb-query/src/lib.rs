@@ -8,8 +8,8 @@
 //! it, round-trip goldens pin the two together):
 //!
 //! ```text
-//! query   := clause+                     // two or more clauses denote set union
-//! clause  := '(' head ')' '|' body ';'
+//! query   := rule+                       // two or more rules denote set union
+//! rule    := '(' head ')' '|' body ';'
 //! head    := headterm (',' headterm)*
 //! headterm:= var | [name ':'] agg        // named positions become result columns
 //! agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
@@ -34,9 +34,9 @@
 //! point-set cardinality `end − start`, and a ray has no measure.
 //!
 //! **Punning law (B, decided; the alternative is ledgered in
-//! docs/architecture/70-api.md):** a bare field name binds a **clause-local variable
+//! docs/architecture/70-api.md):** a bare field name binds a **rule-local variable
 //! named after the field** — projection shorthand, Rust's struct-shorthand
-//! instinct. The same punned name in two atoms of one clause is a compile
+//! instinct. The same punned name in two atoms of one rule is a compile
 //! error, spanned at the second occurrence ("ambiguous punning — rename
 //! explicitly"); joins are always written `field: v` on both ends.
 //!
@@ -282,7 +282,7 @@ enum HeadTerm {
     },
 }
 
-struct Clause {
+struct ParsedRule {
     head: Vec<HeadTerm>,
     items: Vec<Item>,
 }
@@ -876,9 +876,9 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
     finish_term_item(tokens, lhs)
 }
 
-/// Parses one clause: `(head) | body ;`.
-fn parse_clause(tokens: &mut Tokens) -> Parse<Clause> {
-    let (head_group, head_span) = take_paren_group(tokens, "a clause head `(…)`")?;
+/// Parses one rule: `(head) | body ;`.
+fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
+    let (head_group, head_span) = take_paren_group(tokens, "a rule head `(…)`")?;
     let head = parse_head(head_group)?;
     if head.is_empty() {
         return fail(head_span, "query!: a head needs at least one term");
@@ -906,20 +906,20 @@ fn parse_clause(tokens: &mut Tokens) -> Parse<Clause> {
         if peek_punct(tokens, ';') {
             let span = peek_span(tokens);
             if items.is_empty() {
-                return fail(span, "query!: a clause body needs at least one atom");
+                return fail(span, "query!: a rule body needs at least one atom");
             }
             tokens.next();
             break;
         }
         if tokens.peek().is_none() {
-            return fail(Span::call_site(), "query!: a clause ends with `;`");
+            return fail(Span::call_site(), "query!: a rule ends with `;`");
         }
         items.push(parse_item(tokens)?);
         if peek_punct(tokens, ',') {
             tokens.next();
         }
     }
-    Ok(Clause { head, items })
+    Ok(ParsedRule { head, items })
 }
 
 // ---------------------------------------------------------------------
@@ -1012,7 +1012,7 @@ impl Params {
     }
 }
 
-/// One clause's variable scope: dense ids by first occurrence, plus the
+/// One rule's variable scope: dense ids by first occurrence, plus the
 /// punning ledger (law B: the same punned name twice is ambiguous, and
 /// the error points at the second occurrence).
 #[derive(Default)]
@@ -1051,7 +1051,7 @@ impl Scope {
                     fail(
                         name.span,
                         format!(
-                            "query!: head variable `{}` is not bound in the clause body",
+                            "query!: head variable `{}` is not bound in the rule body",
                             name.text
                         ),
                     )
@@ -1253,15 +1253,15 @@ impl Emitter<'_> {
         })
     }
 
-    /// One clause as a `Rule` expression. Items lower in source order;
+    /// One parsed rule as a `Rule` expression. Items lower in source order;
     /// the IR buckets them (atoms, negated, conditions) — the renderer's
     /// normalized order.
-    fn rule(&mut self, clause: &Clause) -> Parse<String> {
+    fn rule(&mut self, rule: &ParsedRule) -> Parse<String> {
         let mut scope = Scope::default();
         let mut atoms = String::new();
         let mut negated = String::new();
         let mut conditions = String::new();
-        for item in &clause.items {
+        for item in &rule.items {
             match item {
                 Item::Atom(atom) => {
                     let _ = write!(atoms, "{},", self.atom(&mut scope, atom)?);
@@ -1296,7 +1296,7 @@ impl Emitter<'_> {
             }
         }
         let mut finds = String::new();
-        for term in &clause.head {
+        for term in &rule.head {
             let _ = write!(finds, "{},", Self::find(&scope, term)?);
         }
         Ok(format!(
@@ -1328,13 +1328,13 @@ fn expand(input: TokenStream) -> Parse<String> {
             Some(other) => {
                 return fail(
                     other.span(),
-                    "query!: the shape is `query!(Theory { clauses })`",
+                    "query!: the shape is `query!(Theory { rules })`",
                 );
             }
             None => {
                 return fail(
                     Span::call_site(),
-                    "query!: the shape is `query!(Theory { clauses })`",
+                    "query!: the shape is `query!(Theory { rules })`",
                 );
             }
         }
@@ -1346,20 +1346,20 @@ fn expand(input: TokenStream) -> Parse<String> {
         unreachable!("peeked the brace group");
     };
     if let Some(extra) = tokens.next() {
-        return fail(extra.span(), "query!: nothing follows the clause block");
+        return fail(extra.span(), "query!: nothing follows the rule block");
     }
-    let mut clause_tokens: Tokens = group.stream().into_iter().peekable();
+    let mut rule_tokens: Tokens = group.stream().into_iter().peekable();
     let mut emitter = Emitter {
         theory: &theory,
         params: Params::default(),
     };
     let mut rules = String::new();
-    while clause_tokens.peek().is_some() {
-        let clause = parse_clause(&mut clause_tokens)?;
-        let _ = write!(rules, "{},", emitter.rule(&clause)?);
+    while rule_tokens.peek().is_some() {
+        let rule = parse_rule(&mut rule_tokens)?;
+        let _ = write!(rules, "{},", emitter.rule(&rule)?);
     }
     if rules.is_empty() {
-        return fail(group.span(), "query!: a query needs at least one clause");
+        return fail(group.span(), "query!: a query needs at least one rule");
     }
     Ok(format!(
         "{{ let rules = ::std::vec![{rules}]; \

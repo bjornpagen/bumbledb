@@ -453,7 +453,7 @@ pub struct SpanGuard;
 impl SpanGuard {
     /// Sets the payload args (no-op: the `trace` feature is off).
     #[inline]
-    pub fn set_args(&mut self, _a0: u64, _a1: u64) {}
+    pub fn set_args(&mut self, _: u64, _: u64) {}
 
     /// Ends the span (no-op: the `trace` feature is off).
     #[inline]
@@ -485,7 +485,7 @@ pub fn finish_capture() -> Vec<TraceEvent> {
 #[cfg(not(feature = "trace"))]
 #[inline]
 #[must_use]
-pub fn span(_name: &'static str, _cat: Category) -> SpanGuard {
+pub fn span(_: &'static str, _: Category) -> SpanGuard {
     SpanGuard
 }
 
@@ -493,14 +493,14 @@ pub fn span(_name: &'static str, _cat: Category) -> SpanGuard {
 #[cfg(not(feature = "trace"))]
 #[inline]
 #[must_use]
-pub fn span_args(_name: &'static str, _cat: Category, _a0: u64, _a1: u64) -> SpanGuard {
+pub fn span_args(_: &'static str, _: Category, _: u64, _: u64) -> SpanGuard {
     SpanGuard
 }
 
 /// Records a point event (no-op: the `trace` feature is off).
 #[cfg(not(feature = "trace"))]
 #[inline]
-pub fn event(_name: &'static str, _cat: Category, _a0: u64, _a1: u64) {}
+pub fn event(_: &'static str, _: Category, _: u64, _: u64) {}
 
 #[cfg(all(test, feature = "trace"))]
 mod tests;

@@ -102,7 +102,7 @@ Each recorded with its rationale in the owning doc; listed here so nothing is
 re-litigated by accident:
 
 - **Invariants are two judgments about queries** (functionality, containment);
-  *unique / foreign key / primary key / check / exclusion / cascade / restrict /
+  *unique / referential / primary key / check / exclusion / cascade / restrict /
   trigger / deferrable* are deleted vocabulary (`30-dependencies.md`, `00-product.md`).
 - **No sugar** — the schema surface is raw statements (`->`, `<=`, `==`); no
   field-level constraint modifiers, no `union` keyword (the pattern is derived, its

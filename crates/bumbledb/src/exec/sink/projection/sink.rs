@@ -171,7 +171,7 @@ impl Sink for ProjectionSink {
         }
     }
 
-    fn end_scan(&mut self, _scan: &LeafScan<'_>) -> u64 {
+    fn end_scan(&mut self, _: &LeafScan<'_>) -> u64 {
         self.scan_count
     }
 }

@@ -79,7 +79,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
     band("rules", cov.rules, 10);
     band("measure", cov.measure, 8);
     band("closed_join", cov.closed_join, 8);
-    band("closed_fold", cov.closed_fold, 7);
+    band("ground_fold", cov.ground_fold, 7);
     for (name, count) in [
         ("gates", cov.gates),
         ("misses", cov.misses),
@@ -292,7 +292,7 @@ fn the_closed_relation_classes_are_emitted() {
     assert!(cov.closed_handle_literal > 0, "handle literals");
     assert!(cov.closed_handle_set > 0, "handle param sets");
     // (c) the fold-shaped pattern — its own family knob.
-    assert!(cov.closed_fold > 0, "the PRD 07 fold shape");
+    assert!(cov.ground_fold > 0, "the PRD 07 grounding fold shape");
 
     // (d) the judgment write scenarios, all six kinds per batch.
     let mut rng = Rng::new(SEED);
