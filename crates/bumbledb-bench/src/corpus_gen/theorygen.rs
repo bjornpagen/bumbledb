@@ -18,6 +18,14 @@ use bumbledb::schema::{
 
 use super::Rng;
 
+mod arity;
+
+pub use arity::{
+    ARITY_WIDTH_BOUND, ArityCoverage, ArityDescriptorCase, ArityExpectation, ArityOpsCase,
+    MAX_MIXED_ARITY, SelectionPlacement, arity_descriptor, random_arity_descriptor,
+    random_valid_arity_descriptor, random_valid_arity_ops,
+};
+
 /// The ledger's relation vocabulary — shared names, so mutated inputs
 /// collide meaningfully instead of drifting into gibberish.
 const RELATION_NAMES: &[&str] = &[

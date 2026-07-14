@@ -356,6 +356,10 @@ time the emulation, not the engine.
   build-store → ops → oracles iteration is milliseconds; Tiny is a
   first-class scale under the same by-construction invariants, not a
   special-cased path.
+  After those legacy decisions, the descriptor arms continue through the same
+  seam to sweep mixed-scalar projection arities through the encoded determinant
+  width bound (plus the first over-width diagnostic), including reordered keys,
+  selections on either side, and keyed-equality refusal shapes.
 - **The algebra oracle cases in every verify run** (the naive lane's extension):
   multi-rule programs replayed engine-vs-naive, the naive model evaluating rules
   **directly** — the union of per-rule binding sets from the definition, sharing

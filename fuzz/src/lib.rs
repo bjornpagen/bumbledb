@@ -17,6 +17,7 @@ pub(crate) mod world;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use bumbledb::error::SchemaError;
 use bumbledb::schema::SchemaDescriptor;
@@ -25,7 +26,7 @@ use bumbledb::{AnswerValue, Db, Error, PreparedQuery, Query, RelationId, Value};
 use bumbledb_bench::corpus_gen::Rng;
 use bumbledb_bench::corpus_gen::opgen::{self, FuzzOp, OpScenario};
 use bumbledb_bench::corpus_gen::theorygen;
-use bumbledb_bench::differential::{Answers, Verdict as WriteVerdict};
+use bumbledb_bench::differential::{self, Answers, Op, Verdict as WriteVerdict};
 use bumbledb_bench::families;
 use bumbledb_bench::naive::query::QueryError;
 use bumbledb_bench::naive::{Delta, NaiveDb, ParamValue, Tuple};
@@ -40,20 +41,32 @@ pub fn theory(data: &[u8]) {
     let mut rng = Rng::from_bytes(data);
     let descriptor = theorygen::random_descriptor(&mut rng);
 
+    theory_oracles(&descriptor);
+
+    // The arity arm is an extension: every legacy decision and all three
+    // legacy oracles have completed before the first new entropy draw.
+    let mut arity_rng = Rng::from_bytes(data);
+    let case = theorygen::random_arity_descriptor(&mut arity_rng);
+    let verdict = theory_oracles(&case.descriptor);
+    assert_arity_expectation(case.coverage.expectation, &verdict);
+    record_arity(ArityLane::Theory, case.coverage);
+}
+
+fn theory_oracles(descriptor: &SchemaDescriptor) -> Verdict {
     // Oracle 3: judgment determinism — the same descriptor against two
     // fresh stores yields the identical verdict (rejections compared
     // payload-exact, acceptances by schema fingerprint).
     let store = StoreDir::new();
-    let first = judge(&descriptor, store.path());
+    let first = judge(descriptor, store.path());
     let twin = StoreDir::new();
-    let second = judge(&descriptor, twin.path());
+    let second = judge(descriptor, twin.path());
     assert_eq!(first, second, "judgment determinism");
 
-    if let Verdict::Accepted(created) = first {
+    if let Verdict::Accepted(created) = &first {
         // Oracle 3, continued: an accepted schema re-opens cleanly on the
         // store it created, to the same sealed theory, and `verify_store`
         // passes on the empty store.
-        let db = match Db::open(store.path(), descriptor) {
+        let db = match Db::open(store.path(), descriptor.clone()) {
             Ok(db) => db,
             Err(err) => panic!("accepted schema failed to reopen: {err:?}"),
         };
@@ -67,6 +80,7 @@ pub fn theory(data: &[u8]) {
             report.findings
         );
     }
+    first
 }
 
 /// The ops runner — the flagship lifecycle target
@@ -144,6 +158,28 @@ pub fn ops(data: &[u8]) {
         assert_green(&db, "reopen");
         epoch(&db, &mut naive, &scenario, segment);
     }
+
+    // As in the theory lane, the existing scenario's generation and replay
+    // finish before the extension consumes entropy.
+    let mut arity_rng = Rng::from_bytes(data);
+    let case = theorygen::random_valid_arity_ops(&mut arity_rng);
+    arity_ops(case);
+}
+
+fn arity_ops(case: theorygen::ArityOpsCase) {
+    let store = StoreDir::new();
+    let db = match Db::create(store.path(), case.descriptor.clone()) {
+        Ok(db) => db,
+        Err(err) => panic!("valid arity theory failed to create: {err:?}"),
+    };
+    let mut naive = NaiveDb::new(&case.descriptor);
+    let ops: Vec<Op> = case.deltas.into_iter().map(Op::Write).collect();
+    let summary = differential::run(&db, &mut naive, &ops)
+        .unwrap_or_else(|finding| panic!("high-arity verdict divergence: {finding:?}"));
+    assert_eq!(summary.commits, 1, "the matching seed pair must commit");
+    assert_eq!(summary.aborts, 3, "all three enforcement probes must abort");
+    assert_green(&db, "high-arity parity stream");
+    record_arity(ArityLane::Ops, case.coverage);
 }
 
 /// One epoch: the ops between two reopens, against one live env. The
@@ -397,7 +433,7 @@ fn assert_contents(db: &Db<target::Target>, naive: &NaiveDb, when: &str) {
 }
 
 /// Oracle 4: the store's own internal auditor agrees, continuously.
-fn assert_green(db: &Db<target::Target>, when: &str) {
+fn assert_green<S>(db: &Db<S>, when: &str) {
     let report = match db.verify_store() {
         Ok(report) => report,
         Err(err) => panic!("verify_store errored after {when}: {err:?}"),
@@ -458,6 +494,96 @@ enum Verdict {
     /// Rejected: the variant name (the total-match token) plus the full
     /// typed payload.
     Rejected(&'static str, SchemaError),
+}
+
+fn assert_arity_expectation(expectation: theorygen::ArityExpectation, verdict: &Verdict) {
+    use theorygen::ArityExpectation;
+    match (expectation, verdict) {
+        (ArityExpectation::Accepted, Verdict::Accepted(_)) => {}
+        (
+            ArityExpectation::DeterminantKeyTooWide { width: expected },
+            Verdict::Rejected(
+                "DeterminantKeyTooWide",
+                SchemaError::DeterminantKeyTooWide { width, .. },
+            ),
+        ) if *width == expected => {}
+        (
+            ArityExpectation::MissingSourceKey,
+            Verdict::Rejected(
+                "NoMatchingTargetKey",
+                SchemaError::NoMatchingTargetKey { target, .. },
+            ),
+        ) if *target == RelationId(0) => {}
+        (
+            ArityExpectation::MissingTargetKey,
+            Verdict::Rejected(
+                "NoMatchingTargetKey",
+                SchemaError::NoMatchingTargetKey { target, .. },
+            ),
+        ) if *target == RelationId(1) => {}
+        _ => panic!("arity-case verdict mismatch: expected {expectation:?}, got {verdict:?}"),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ArityLane {
+    Theory,
+    Ops,
+}
+
+#[derive(Debug, Default)]
+struct ArityHistogram {
+    runs: u64,
+    arities: [u64; theorygen::MAX_MIXED_ARITY + 2],
+    type_occurrences: [u64; 5],
+    selections: [u64; 3],
+    equalities: u64,
+    reordered_keys: u64,
+    width_rejections: u64,
+    missing_source_keys: u64,
+    missing_target_keys: u64,
+}
+
+static THEORY_ARITY_HISTOGRAM: OnceLock<Mutex<ArityHistogram>> = OnceLock::new();
+static OPS_ARITY_HISTOGRAM: OnceLock<Mutex<ArityHistogram>> = OnceLock::new();
+
+fn record_arity(lane: ArityLane, coverage: theorygen::ArityCoverage) {
+    let histogram = match lane {
+        ArityLane::Theory => &THEORY_ARITY_HISTOGRAM,
+        ArityLane::Ops => &OPS_ARITY_HISTOGRAM,
+    };
+    let mut histogram = histogram
+        .get_or_init(|| Mutex::new(ArityHistogram::default()))
+        .lock()
+        .expect("arity histogram lock");
+    histogram.runs += 1;
+    histogram.arities[coverage.arity] += 1;
+    for (total, count) in histogram
+        .type_occurrences
+        .iter_mut()
+        .zip(coverage.type_counts)
+    {
+        *total += count as u64;
+    }
+    let selection = match coverage.selection {
+        theorygen::SelectionPlacement::Source => 0,
+        theorygen::SelectionPlacement::Target => 1,
+        theorygen::SelectionPlacement::Both => 2,
+    };
+    histogram.selections[selection] += 1;
+    histogram.equalities += u64::from(coverage.equality);
+    histogram.reordered_keys += u64::from(coverage.reordered_key);
+    match coverage.expectation {
+        theorygen::ArityExpectation::Accepted => {}
+        theorygen::ArityExpectation::DeterminantKeyTooWide { .. } => {
+            histogram.width_rejections += 1;
+        }
+        theorygen::ArityExpectation::MissingSourceKey => histogram.missing_source_keys += 1,
+        theorygen::ArityExpectation::MissingTargetKey => histogram.missing_target_keys += 1,
+    }
+    if histogram.runs % 5_000 == 0 {
+        eprintln!("{lane:?} arity histogram: {histogram:?}");
+    }
 }
 
 /// One acceptance pass through the REAL public API: `Db::create` on a
