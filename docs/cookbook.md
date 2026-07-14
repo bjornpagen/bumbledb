@@ -448,7 +448,7 @@ bumbledb::schema! {
 }
 ```
 
-## Time and tilings
+## Time and coverage
 
 ## 14. The calendar core
 
@@ -507,8 +507,9 @@ bumbledb::schema! {
 
 ## 15. Effective-dated configuration
 
-Versioned rules: no overlaps (pointwise key), no gaps (coverage), and "in
-force on date t" is one membership probe.
+Versioned rules: no overlaps (pointwise key), no gaps in the policy's source
+lifetime (one-way coverage; version overhang remains legal), and "in force on
+date t" is one membership probe.
 
 ```rust
 bumbledb::schema! {
@@ -520,8 +521,9 @@ bumbledb::schema! {
     Version(policy) <= Policy(id);
     // No overlapping versions: at any instant, at most one rate is the law.
     Version(policy, valid) -> Version;
-    // No gaps: every point of the policy's lifetime is covered by versions —
-    // together with the key above, versions TILE the lifetime (recipe 16).
+    // No gaps in the policy lifetime: every source point is covered by versions.
+    // Together with the key above this is a disjoint cover, not an exact
+    // partition: Version intervals may overhang the Policy lifetime (recipe 16).
     Policy(id, live) <= Version(policy, valid);
 
     //   in force on date t — one membership probe:
@@ -532,10 +534,13 @@ bumbledb::schema! {
 }
 ```
 
-## 16. Tilings
+## 16. Disjoint covers
 
-Pay periods, shifts, estimated-tax quarters: **disjoint + covering = a
-tiling** — no overlaps, no holes, two statements.
+Pay periods, shifts, estimated-tax quarters: a pointwise key plus one-way
+coverage is a **disjoint cover** — no overlaps among pay periods and no holes
+in the fiscal year's source span. Pay periods may extend beyond that span;
+target overhang is legal under this statement. Historically this pattern was
+called a tiling here; that was stronger than the judgment actually proved.
 
 ```rust
 bumbledb::schema! {
@@ -547,7 +552,8 @@ bumbledb::schema! {
     PayPeriod(year) <= FiscalYear(id);
     PayPeriod(year, seq)  -> PayPeriod;     // sequence numbers stay unique
     PayPeriod(year, span) -> PayPeriod;     // disjoint: no shared instant
-    FiscalYear(id, span) <= PayPeriod(year, span);  // covering: no holes
+    // Covering: no holes in the fiscal year's span; pay-period overhang is legal.
+    FiscalYear(id, span) <= PayPeriod(year, span);
 
     //   the period holding date t:
     //     (seq) | PayPeriod(year == ?y, seq, span: s), ?t in s;
@@ -572,7 +578,7 @@ bumbledb::schema! {
     }
     relation Bracket { regime: u64 as RegimeId, income: interval<i64>, rate_bps: i64 }
     relation Residency { person: u64, span: interval<i64> }
-    // Tile at write: an Earned fact never spans a year boundary — writers
+    // Split at write: an Earned fact never spans a year boundary — writers
     // split (prorate) at the boundary, so no reader ever clips. The
     // representation move that deletes clip-at-query (gravestone, recipe 23).
     relation Earned { person: u64, regime: u64 as RegimeId, span: interval<i64>, minor: i64 }
@@ -580,9 +586,10 @@ bumbledb::schema! {
     Regime(status) <= Status(id);
     Regime(year, status) -> Regime;         // one regime per (year, filing status)
     Bracket(regime) <= Regime(id);
-    // Brackets tile [0, ∞): disjoint per regime, and the TOP BRACKET IS A RAY —
-    // end == MAX denotes [s, ∞), an honest value of the representation, not a
-    // sentinel (the point-domain law, 10-data-model.md).
+    // Brackets are disjoint per regime. Seed data conventionally covers [0, ∞)
+    // and the top bracket is a ray, but this key proves disjointness only — it
+    // does not prove coverage. end == MAX denotes [s, ∞), an honest value of
+    // the representation, not a sentinel (the point-domain law, 10-data-model.md).
     Bracket(regime, income) -> Bracket;
     Earned(regime) <= Regime(id);
     Residency(person, span) -> Residency;
@@ -590,7 +597,7 @@ bumbledb::schema! {
     // period — pointwise coverage, the same judgment as recipe 15's.
     Earned(person, span) <= Residency(person, span);
 
-    //   the marginal bracket (membership walks the tiling):
+    //   the marginal bracket (membership probes the disjoint bracket set):
     //     (rate_bps) | Regime(id: r, year == ?y, status == ?s),
     //                  Bracket(regime: r, income: b, rate_bps), ?taxable in b;
     // Tax owed is host arithmetic over the bracket walk — arithmetic beyond
@@ -781,7 +788,7 @@ bumbledb::schema! {
     // the invariant (30-dependencies.md; recipe 13's arm shape).
     relation ActiveRun { student: u64, run: u64 }
     // GRAVESTONE: clip-at-query intervals (facts spanning period boundaries,
-    // every reader clipping). REPLACEMENT: tile at write (recipe 17) — split
+    // every reader clipping). REPLACEMENT: split at write (recipe 17) — split
     // the fact at the boundary; readers stop clipping because nothing spans.
     relation Usage { meter: u64, period: u64, used: interval<i64> }
     // GRAVESTONE: uuid keys. uuidv7 is identity + clash-avoidance + clock in
@@ -888,3 +895,36 @@ The rollup is two prepared queries with the recipe-24 loop between them;
 the test drives a three-level hierarchy with postings and asserts the
 hand-computed subtree sum — equal postings to one account both count,
 because the fresh id keeps their bindings distinct.
+
+## 26. Exact partition
+
+An exact partition needs both coverage directions. The first containment below
+is the intent-level reference; the two pointwise keys make each side disjoint;
+the final pair proves equal point supports per policy — forward coverage forbids
+gaps and reverse coverage forbids overhang. This is not mere tiling language:
+it is the five ordinary statements witnessing
+`exactTiling_iff_exactPointPartition`.
+
+The explicit `Policy(id, live) -> Policy` is load-bearing. Containment targets
+resolve by their exact projected field set, so the fresh `{id}` key cannot serve
+the `{id, live}` target and the engine infers no key closure.
+
+```rust
+bumbledb::schema! {
+    pub ExactPartition;
+
+    relation Policy  { id: u64 as PolicyId, fresh, live: interval<i64> }
+    relation Version { policy: u64 as PolicyId, valid: interval<i64> }
+
+    Version(policy) <= Policy(id);             // reference intent
+    Version(policy, valid) -> Version;          // disjoint versions
+    Policy(id, live) -> Policy;                 // exact target key, not implied by {id}
+    Policy(id, live) <= Version(policy, valid); // no gaps in the policy source span
+    Version(policy, valid) <= Policy(id, live); // no version overhang
+}
+```
+
+Together the mutual containments prove equal point supports for each policy;
+the pointwise keys make those supports genuine partitions rather than overlapping
+covers. Touching half-open segments remain legal, and the same construction works
+with any scalar-prefix arity before the final interval position.

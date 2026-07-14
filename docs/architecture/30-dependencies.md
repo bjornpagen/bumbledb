@@ -200,6 +200,12 @@ iff it holds of the point-families.
   satisfies it — bounded targets always leave a gap — while a target ray covers
   any bounded source above its start; both fall out of the same gap check, since
   ∞ = MAX is just the largest end word.
+- **Direction law:** that one containment covers only the source support; target
+  overhang is legal. Exact partition is the conjunction of both coverage
+  directions plus pointwise keys on both sides. Cookbook recipe 26 spells the
+  five ordinary statements and locks gap rejection, overhang rejection,
+  adjacency, and a two-scalar-prefix instance; the formal row below ties that
+  construction to `exactTiling_iff_exactPointPartition`.
 - Scalar positions in the same statement are unaffected — lifting is per-position,
   and a statement with no interval positions is the classical judgment unchanged.
 
@@ -380,7 +386,7 @@ not prove that stored bytes or unchecked host input satisfy the Rust premise.
 | A key proves uniqueness, not existence. | `Key.uniqueness` (the imported dependency model's `Key` field) | `schema/validate.rs::validate_functionality` accepts the declaration; `storage/commit/applier.rs::Applier` rejects colliding determinant images but never manufactures a fact. | Definition + validator and runtime premises |
 | An interval-position key proves per-scalar-group pointwise disjointness. | `IntervalFacts.PointwiseKey`; exercised by `overshoot_pointwiseKey` | `validate_functionality` admits one final interval position; `storage/commit/applier.rs::Applier::probe_neighbors` rejects overlap with predecessor or successor. | Formal predicate + validator and runtime premises |
 | One-way interval coverage is source-support inclusion; target overhang is legal. | `intervalContains_iff_support_subset`; `overshoot_isTiling_not_exact` | `validate_functionality` alone mints `DisjointDeterminantProof` after accepting one final interval position; `Enforcement::IntervalCoverage` carries it into `Checker::check_coverage`, whose signature requires the proof and advances only across the demanded source interval. | Lean theorem/countermodel + represented validator/runtime premise |
-| Exact partition is mutual point coverage plus pointwise keys. | `exactTiling_iff_exactPointPartition` | The five ordinary statements and gap/overhang locks are delivered by PRD 11; no special partition primitive exists. | Lean theorem + validator premises |
+| Exact partition is mutual point coverage plus pointwise keys. | `exactTiling_iff_exactPointPartition` | Cookbook recipe 26 gives the five ordinary statements; `r26_exact_partition_commit_matrix` locks exact acceptance, forward-gap rejection, reverse-overhang rejection, one-way overhang acceptance, half-open adjacency, and a two-scalar-prefix instance. No special partition primitive exists. | Lean theorem + validator/runtime premises |
 | Empty or reversed intervals have empty support, so admitting them would make coverage vacuous. | `empty_nat_interval_has_no_points` | `interval.rs::Interval::new` rejects `start >= end`; `Value` and `ValueRef` carry `Interval<T>`, making both literal and fact encoding total. `encoding::decode_interval_*` and `image::decode` independently reject damaged stored bytes. | Lean countermodel + representation/runtime premises |
 | Negation safety is positive range restriction and is independent of textual order. | `positive_range_restriction_implies_wellscoped` | `ir/validate/context.rs` derives binders only from positive atoms and emits `ValidationError::NegatedVariableUnbound` for every other occurrence. | Lean theorem + validator acceptance rule |
 | Rule union is set-idempotent. | `ruleUnion_set_idempotent` | Projection and aggregate sinks own canonical-head-tuple seen sets across rules; the distinct-bindings elision is justified by the typed witness delivered by PRD 17. | Lean theorem + runtime representation premise |

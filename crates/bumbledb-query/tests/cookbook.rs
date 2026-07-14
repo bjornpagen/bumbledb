@@ -457,6 +457,33 @@ recipe!(r25, Accounts, {
     Posting(account) <= Account(id);
 });
 
+recipe!(r26, ExactPartition, {
+    pub ExactPartition;
+
+    relation Policy  { id: u64 as PolicyId, fresh, live: interval<i64> }
+    relation Version { policy: u64 as PolicyId, valid: interval<i64> }
+
+    Version(policy) <= Policy(id);
+    Version(policy, valid) -> Version;
+    Policy(id, live) -> Policy;
+    Policy(id, live) <= Version(policy, valid);
+    Version(policy, valid) <= Policy(id, live);
+});
+
+mod composite_partition {
+    bumbledb::schema! {
+        pub CompositePartition;
+
+        relation Domain  { group: u64, lane: u64, live: interval<i64> }
+        relation Segment { group: u64, lane: u64, valid: interval<i64> }
+
+        Segment(group, lane, valid) -> Segment;
+        Domain(group, lane, live) -> Domain;
+        Domain(group, lane, live) <= Segment(group, lane, valid);
+        Segment(group, lane, valid) <= Domain(group, lane, live);
+    }
+}
+
 /// The roster, exhaustively — one entry per doc recipe, in doc order.
 struct Recipe {
     title: &'static str,
@@ -464,7 +491,7 @@ struct Recipe {
     validate: fn() -> Result<Schema, bumbledb::error::SchemaError>,
 }
 
-const ROSTER: [Recipe; 25] = [
+const ROSTER: [Recipe; 26] = [
     Recipe {
         title: "The minimal interval schema",
         source: r01::SOURCE,
@@ -541,7 +568,7 @@ const ROSTER: [Recipe; 25] = [
         validate: r15::validate,
     },
     Recipe {
-        title: "Tilings",
+        title: "Disjoint covers",
         source: r16::SOURCE,
         validate: r16::validate,
     },
@@ -589,6 +616,11 @@ const ROSTER: [Recipe; 25] = [
         title: "The chart of accounts",
         source: r25::SOURCE,
         validate: r25::validate,
+    },
+    Recipe {
+        title: "Exact partition",
+        source: r26::SOURCE,
+        validate: r26::validate,
     },
 ];
 
@@ -647,7 +679,7 @@ fn the_doc_roster_is_exactly_this_roster() {
         "doc recipes and test entries must correspond one-to-one"
     );
     for (i, ((n, title), recipe)) in headings.iter().zip(ROSTER.iter()).enumerate() {
-        assert_eq!(*n, i + 1, "recipe numbering is 1..=25 in order");
+        assert_eq!(*n, i + 1, "recipe numbering is 1..=26 in order");
         assert_eq!(title, recipe.title, "recipe {} title", i + 1);
     }
 }
@@ -686,6 +718,159 @@ fn every_recipe_schema_validates() {
             )
         });
     }
+}
+
+fn span(start: i64, end: i64) -> bumbledb::Interval<i64> {
+    bumbledb::Interval::<i64>::new(start, end).expect("nonempty half-open interval")
+}
+
+fn assert_containment_statement(error: bumbledb::Error, expected: bumbledb::schema::StatementId) {
+    let bumbledb::Error::CommitRejected { violations } = error else {
+        panic!("expected a containment rejection, got {error}");
+    };
+    let [
+        bumbledb::Violation::Containment {
+            statement,
+            direction,
+            ..
+        },
+    ] = violations.as_slice()
+    else {
+        panic!("expected one containment citation, got {violations:?}");
+    };
+    assert_eq!(*statement, expected);
+    assert_eq!(*direction, bumbledb::error::Direction::SourceUnsatisfied);
+}
+
+/// Recipe 26's theorem-to-runtime matrix. Point sets are written out in
+/// each arm: forward coverage rejects source gaps, reverse coverage rejects
+/// target overhang, and the one-way recipe deliberately accepts that overhang.
+#[test]
+fn r26_exact_partition_commit_matrix() {
+    use bumbledb::schema::{StatementId, StatementView};
+    use r26::{ExactPartition, Policy, PolicyId, Version};
+
+    // The fresh {id} key coexists with two distinct pointwise keys. Both
+    // interval containments validate because their exact target field sets
+    // resolve independently; no key closure is inferred.
+    let schema = r26::validate().expect("the five-statement schema validates");
+    assert_eq!(schema.keys().len(), 3);
+    assert_eq!(schema.keys().iter().filter(|key| key.pointwise).count(), 2);
+    assert!(matches!(
+        schema.statement(StatementId(4)),
+        StatementView::Containment(..)
+    ));
+    assert!(matches!(
+        schema.statement(StatementId(5)),
+        StatementView::Containment(..)
+    ));
+
+    // Exact and adjacent: [0,2) ∪ [2,5) = [0,5). Half-open adjacency
+    // shares no point, so the Version pointwise key accepts the touching pair.
+    let dir = TempDir::new("r26-exact-adjacent");
+    let db = Db::create(dir.path(), ExactPartition).expect("create exact partition store");
+    db.write(|tx| {
+        let policy = PolicyId(1);
+        tx.insert(&Policy {
+            id: policy,
+            live: span(0, 5),
+        })?;
+        tx.insert(&Version {
+            policy,
+            valid: span(0, 2),
+        })?;
+        tx.insert(&Version {
+            policy,
+            valid: span(2, 5),
+        })
+    })
+    .expect("adjacent segments form an exact partition");
+
+    // Gap only: [0,4) ∪ [5,10) leaves point support [4,5) uncovered.
+    // Each Version remains inside [0,10), so only forward statement 4 fails.
+    let dir = TempDir::new("r26-gap");
+    let db = Db::create(dir.path(), ExactPartition).expect("create gap store");
+    let error = db
+        .write(|tx| {
+            let policy = PolicyId(2);
+            tx.insert(&Policy {
+                id: policy,
+                live: span(0, 10),
+            })?;
+            tx.insert(&Version {
+                policy,
+                valid: span(0, 4),
+            })?;
+            tx.insert(&Version {
+                policy,
+                valid: span(5, 10),
+            })
+        })
+        .expect_err("the forward coverage statement rejects the gap");
+    assert_containment_statement(error, StatementId(4));
+
+    // Overhang only, the audit countermodel: source [0,10), target [0,20).
+    // Forward coverage holds; reverse statement 5 rejects escaping support [10,20).
+    let dir = TempDir::new("r26-overhang");
+    let db = Db::create(dir.path(), ExactPartition).expect("create overhang store");
+    let error = db
+        .write(|tx| {
+            let policy = PolicyId(3);
+            tx.insert(&Policy {
+                id: policy,
+                live: span(0, 10),
+            })?;
+            tx.insert(&Version {
+                policy,
+                valid: span(0, 20),
+            })
+        })
+        .expect_err("reverse coverage rejects target overhang");
+    assert_containment_statement(error, StatementId(5));
+
+    // The corrected one-way recipe pins the opposite result for that same
+    // point set: FiscalYear [0,10) is covered by PayPeriod [0,20), and the
+    // absent reverse statement means overhang is legal.
+    use r16::{FiscalYear, FiscalYearId, PayPeriod, Payroll};
+    let dir = TempDir::new("r16-one-way-overhang");
+    let db = Db::create(dir.path(), Payroll).expect("create one-way cover store");
+    db.write(|tx| {
+        let year = FiscalYearId(4);
+        tx.insert(&FiscalYear {
+            id: year,
+            span: span(0, 10),
+        })?;
+        tx.insert(&PayPeriod {
+            year,
+            seq: 1,
+            span: span(0, 20),
+        })
+    })
+    .expect("one-way source coverage permits target overhang");
+
+    // Arity-general lock: the scalar prefix is (group, lane), followed by
+    // the interval. [0,2) and [2,5) exactly partition [0,5) for (7,3).
+    use composite_partition::{CompositePartition, Domain, Segment};
+    let dir = TempDir::new("r26-composite-prefix");
+    let db = Db::create(dir.path(), CompositePartition).expect("create composite store");
+    db.write(|tx| {
+        tx.insert(&Domain {
+            group: 7,
+            lane: 3,
+            live: span(0, 5),
+        })?;
+        tx.insert(&Segment {
+            group: 7,
+            lane: 3,
+            valid: span(0, 2),
+        })?;
+        tx.insert(&Segment {
+            group: 7,
+            lane: 3,
+            valid: span(2, 5),
+        })
+    })
+    .expect("two-field scalar prefixes support exact partitions");
 }
 
 /// Renders after proving the query real: prepared against a `Db` of the
@@ -746,7 +931,7 @@ fn r15_in_force_round_trips() {
     );
 }
 
-/// Recipe 17: the marginal bracket — membership walks the tiling.
+/// Recipe 17: the marginal bracket — membership probes the disjoint bracket set.
 #[test]
 fn r17_marginal_bracket_round_trips() {
     let marginal = query!(r17::Tax {
