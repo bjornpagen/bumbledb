@@ -105,6 +105,74 @@ fn two_relations(
     }
 }
 
+#[test]
+fn equality_rejects_a_singleton_reverse_projection_without_a_left_key() {
+    // `S(a) == T(x)` lowers to statements 1 and 2 after T's key. The
+    // forward half resolves T(x); the reverse half targets unkeyed S(a)
+    // and must cite that reverse statement and relation.
+    let decl = two_relations(
+        vec![field("a", ValueType::U64)],
+        vec![field("x", ValueType::U64)],
+        vec![
+            fd(RelationId(1), &[FieldId(0)]),
+            containment(
+                side(RelationId(0), &[FieldId(0)]),
+                side(RelationId(1), &[FieldId(0)]),
+            ),
+            containment(
+                side(RelationId(1), &[FieldId(0)]),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+        ],
+    );
+    let StatementDescriptor::Containment { target, .. } = &decl.statements[2] else {
+        panic!("the cited reverse half is a containment");
+    };
+    assert_eq!(target.relation, RelationId(0));
+    assert_eq!(&*target.projection, &[FieldId(0)]);
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::NoMatchingTargetKey {
+            statement: StatementId(2),
+            relation: RelationId(0),
+        }
+    );
+}
+
+#[test]
+fn equality_rejects_a_composite_reverse_projection_without_a_left_key() {
+    // Mixed (u64, i64) product. T's key is declared in reordered (y, x)
+    // order, proving the forward half resolves by exact field set and a
+    // permutation; only the reverse half targeting unkeyed S(a, b) fails.
+    let decl = two_relations(
+        vec![field("a", ValueType::U64), field("b", ValueType::I64)],
+        vec![field("x", ValueType::U64), field("y", ValueType::I64)],
+        vec![
+            fd(RelationId(1), &[FieldId(1), FieldId(0)]),
+            containment(
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+            ),
+            containment(
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+            ),
+        ],
+    );
+    let StatementDescriptor::Containment { target, .. } = &decl.statements[2] else {
+        panic!("the cited reverse half is a containment");
+    };
+    assert_eq!(target.relation, RelationId(0));
+    assert_eq!(&*target.projection, &[FieldId(0), FieldId(1)]);
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::NoMatchingTargetKey {
+            statement: StatementId(2),
+            relation: RelationId(0),
+        }
+    );
+}
+
 /// Roster "unknown relation … ids".
 #[test]
 fn rejects_statement_unknown_relation() {

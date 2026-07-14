@@ -742,13 +742,8 @@ fn assert_containment_statement(error: bumbledb::Error, expected: bumbledb::sche
     assert_eq!(*direction, bumbledb::error::Direction::SourceUnsatisfied);
 }
 
-/// Recipe 26's theorem-to-runtime matrix. Point sets are written out in
-/// each arm: forward coverage rejects source gaps, reverse coverage rejects
-/// target overhang, and the one-way recipe deliberately accepts that overhang.
-#[test]
-fn r26_exact_partition_commit_matrix() {
+fn assert_r26_schema_shape() {
     use bumbledb::schema::{StatementId, StatementView};
-    use r26::{ExactPartition, Policy, PolicyId, Version};
 
     // The fresh {id} key coexists with two distinct pointwise keys. Both
     // interval containments validate because their exact target field sets
@@ -756,14 +751,25 @@ fn r26_exact_partition_commit_matrix() {
     let schema = r26::validate().expect("the five-statement schema validates");
     assert_eq!(schema.keys().len(), 3);
     assert_eq!(schema.keys().iter().filter(|key| key.pointwise).count(), 2);
-    assert!(matches!(
-        schema.statement(StatementId(4)),
-        StatementView::Containment(..)
-    ));
-    assert!(matches!(
-        schema.statement(StatementId(5)),
-        StatementView::Containment(..)
-    ));
+    for statement in [StatementId(4), StatementId(5)] {
+        assert!(matches!(
+            schema.statement(statement),
+            StatementView::Containment(..)
+        ));
+    }
+}
+
+/// Recipe 26's theorem-to-runtime matrix. Point sets are written out in
+/// each arm: forward coverage rejects source gaps, reverse coverage rejects
+/// target overhang, and the one-way recipe deliberately accepts that overhang.
+#[test]
+fn r26_exact_partition_commit_matrix() {
+    use bumbledb::schema::StatementId;
+    use composite_partition::{CompositePartition, Domain, Segment};
+    use r16::{FiscalYear, FiscalYearId, PayPeriod, Payroll};
+    use r26::{ExactPartition, Policy, PolicyId, Version};
+
+    assert_r26_schema_shape();
 
     // Exact and adjacent: [0,2) ∪ [2,5) = [0,5). Half-open adjacency
     // shares no point, so the Version pointwise key accepts the touching pair.
@@ -831,7 +837,6 @@ fn r26_exact_partition_commit_matrix() {
     // The corrected one-way recipe pins the opposite result for that same
     // point set: FiscalYear [0,10) is covered by PayPeriod [0,20), and the
     // absent reverse statement means overhang is legal.
-    use r16::{FiscalYear, FiscalYearId, PayPeriod, Payroll};
     let dir = TempDir::new("r16-one-way-overhang");
     let db = Db::create(dir.path(), Payroll).expect("create one-way cover store");
     db.write(|tx| {
@@ -850,7 +855,6 @@ fn r26_exact_partition_commit_matrix() {
 
     // Arity-general lock: the scalar prefix is (group, lane), followed by
     // the interval. [0,2) and [2,5) exactly partition [0,5) for (7,3).
-    use composite_partition::{CompositePartition, Domain, Segment};
     let dir = TempDir::new("r26-composite-prefix");
     let db = Db::create(dir.path(), CompositePartition).expect("create composite store");
     db.write(|tx| {

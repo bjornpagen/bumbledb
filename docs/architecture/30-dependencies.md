@@ -38,6 +38,18 @@ dependency; with selections it is the conditional inclusion dependency (CIND) of
 data-quality literature. The bidirectional statement `A(X | φ) == B(Y | ψ)` is
 exactly the two containments, each judged independently.
 
+**Accepted equality is a keyed bijection.** Each containment direction must
+independently resolve its target projection to a declared key. Mutual inclusion
+makes the projected value sets equal; injectivity of both projections then makes
+that equality a one-to-one correspondence between the selected A- and B-facts:
+every selected fact has exactly one selected witness in the other relation with
+the same projected product. For a composite projection the key applies to the
+whole product; `key_permutation` only reorders its fields for the target key and
+weakens nothing. This is not whole-row equality — unprojected payloads may differ
+— and it makes no claim about facts outside φ or ψ. The formal evidence is
+`KeyBackedEquality.unique_target`/`.unique_source`; the bare mutual-inclusion
+form without the key premises has the `bare_containsEq_nonunique` countermodel.
+
 **Judged on final states, only.** A dependency is a property of *committed*
 databases: it is checked once at commit, against the transaction's final state; a
 violation aborts the whole transaction with a typed error whose payload is the
@@ -381,8 +393,8 @@ not prove that stored bytes or unchecked host input satisfy the Rust premise.
 | Public claim | Lean theorem or countermodel | Rust evidence | Epistemic label |
 |---|---|---|---|
 | Containment is subset inclusion between selected projected views. | `contains_iff_view_subset` | `schema/validate.rs::resolve_target_key` requires the target projection's exact field set to resolve to a declared key; `storage/commit/judgment.rs::Checker` checks each delta-touched source against the final state. | Lean theorem + validator and runtime premises |
-| Bare `==` is projected view equality, not unique correspondence. | `containsEq_iff_view_ext`; `bare_containsEq_nonunique` | `bumbledb-macros::parse_statement` lowers `==` to two adjacent `StatementDescriptor::Containment` values; `schema/validate.rs::mirror_of` recognizes the pair. | Lean theorem + lowering rule |
-| Accepted `==` is key-backed unique correspondence in both directions. | `KeyBackedEquality.unique_target`; `KeyBackedEquality.unique_source` | Both lowered containments independently pass `resolve_target_key`; `schema::ContainmentStatement::mirror` records the accepted pair. PRD 12 adds the dedicated reverse-key rejection locks. | Lean theorem + validator premises |
+| Bare `==` is projected view equality, not unique correspondence. | `containsEq_iff_view_ext`; `bare_containsEq_nonunique` | `bumbledb-macros::parse_statement` lowers `==` to two adjacent `StatementDescriptor::Containment` values; `schema_macro::statements_land_in_source_order_with_equality_lowered` and `the_equality_pair_seals_mirror_links` pin their order and pairing. | Lean theorem + lowering rule |
+| Accepted `==` is key-backed one-to-one correspondence in both directions. | `KeyBackedEquality.unique_target`; `KeyBackedEquality.unique_source` | Both lowered containments independently pass `resolve_target_key`; `equality_rejects_a_singleton_reverse_projection_without_a_left_key`, its composite sibling, and `macro_equality_rejects_the_reverse_half_when_the_left_projection_is_not_a_key` pin the reverse requirement. `three_field_reordered_key_equality_validates_and_enforces_both_directions` pins a mixed-type composite product, permutation, both existence directions, uniqueness, and differing payloads. | Lean theorem + validator/runtime premises |
 | A key proves uniqueness, not existence. | `Key.uniqueness` (the imported dependency model's `Key` field) | `schema/validate.rs::validate_functionality` accepts the declaration; `storage/commit/applier.rs::Applier` rejects colliding determinant images but never manufactures a fact. | Definition + validator and runtime premises |
 | An interval-position key proves per-scalar-group pointwise disjointness. | `IntervalFacts.PointwiseKey`; exercised by `overshoot_pointwiseKey` | `validate_functionality` admits one final interval position; `storage/commit/applier.rs::Applier::probe_neighbors` rejects overlap with predecessor or successor. | Formal predicate + validator and runtime premises |
 | One-way interval coverage is source-support inclusion; target overhang is legal. | `intervalContains_iff_support_subset`; `overshoot_isTiling_not_exact` | `validate_functionality` alone mints `DisjointDeterminantProof` after accepting one final interval position; `Enforcement::IntervalCoverage` carries it into `Checker::check_coverage`, whose signature requires the proof and advances only across the demanded source interval. | Lean theorem/countermodel + represented validator/runtime premise |

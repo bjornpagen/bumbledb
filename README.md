@@ -252,11 +252,16 @@ checkable in O(log n + segments) because B's own key keeps its segments
 disjoint and ordered.
 
 **`A(..) == B(..)` — mutual inclusion**: both containments, each judged
-independently. Read `==` as *exactly*. This is the discriminated-union
-operator: `Parent(id | kind == V) == Arm(parent)` buys totality (a V-kinded
-parent *has* its arm row, same commit), arm validity (an arm row's parent
-exists *with that kind*), and exclusivity (an id in two arms would force
-`kind` to equal two variants — a contradiction, not a rule).
+independently. Read `==` as *exactly*. Because each direction's target must
+be a declared key, accepted `==` is a key-backed one-to-one correspondence
+on the selected projections: every selected A-fact has exactly one selected
+B-witness with the same projected value, and vice versa. It is not literal
+row equality (unprojected payloads may differ) and says nothing about
+unselected facts — which is the discriminated-union idiom's whole point.
+`Parent(id | kind == V) == Arm(parent)` buys totality (a V-kinded parent
+*has* its arm row, same commit), arm validity (an arm row's parent exists
+*with that kind*), and exclusivity (an id in two arms would force `kind` to
+equal two variants — a contradiction, not a rule).
 
 **Selections `| f == v`** are σ with equality only — the same restriction
 the CIND literature imposes — and a selected field may not also be

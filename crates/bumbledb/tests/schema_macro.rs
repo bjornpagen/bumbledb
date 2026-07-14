@@ -905,3 +905,150 @@ mod invalid_declaration {
         );
     }
 }
+
+mod equality_reverse_key {
+    use bumbledb::error::SchemaError;
+    use bumbledb::schema::{FieldId, StatementDescriptor, StatementId};
+    use bumbledb::{Db, Fact as _, Theory as _};
+
+    bumbledb::schema! {
+        pub InvalidEquality;
+
+        relation Source { a: u64 }
+        relation Target { x: u64 }
+
+        Target(x) -> Target;
+        Source(a) == Target(x);
+    }
+
+    #[test]
+    fn macro_equality_rejects_the_reverse_half_when_the_left_projection_is_not_a_key() {
+        let descriptor = InvalidEquality.descriptor();
+        let StatementDescriptor::Containment { target, .. } = &descriptor.statements[2] else {
+            panic!("the cited reverse half is a containment");
+        };
+        assert_eq!(target.relation, Source::RELATION);
+        assert_eq!(&*target.projection, &[FieldId(0)]);
+
+        let dir = crate::common::TempDir::new("macro-equality-reverse-key");
+        let Err(error) = Db::create(dir.path(), InvalidEquality).map(|_| ()) else {
+            panic!("the reverse equality half must require Source(a) as a key");
+        };
+        assert!(matches!(
+            error,
+            bumbledb::Error::Schema(SchemaError::NoMatchingTargetKey {
+                statement: StatementId(2),
+                relation,
+            }) if relation == Source::RELATION
+        ));
+    }
+}
+
+mod keyed_equality {
+    use bumbledb::error::Direction;
+    use bumbledb::schema::StatementId;
+    use bumbledb::{Db, Error, Violation};
+
+    bumbledb::schema! {
+        pub KeyedEquality;
+
+        relation Source { a: u64, b: i64, c: bool, note: str }
+        relation Target { x: u64, y: i64, z: bool, weight: i64 }
+
+        Source(a, b, c) -> Source;
+        // Same exact target field set, deliberately declared in another order.
+        Target(z, x, y) -> Target;
+        Source(a, b, c) == Target(x, y, z);
+    }
+
+    fn assert_containment(error: Error, expected: StatementId) {
+        let Error::CommitRejected { violations } = error else {
+            panic!("expected containment rejection, got {error}");
+        };
+        let [
+            Violation::Containment {
+                statement,
+                direction,
+                ..
+            },
+        ] = violations.as_slice()
+        else {
+            panic!("expected one containment violation, got {violations:?}");
+        };
+        assert_eq!(*statement, expected);
+        assert_eq!(*direction, Direction::SourceUnsatisfied);
+    }
+
+    #[test]
+    fn three_field_reordered_key_equality_validates_and_enforces_both_directions() {
+        let dir = crate::common::TempDir::new("macro-keyed-equality");
+        let db = Db::create(dir.path(), KeyedEquality)
+            .expect("both projected products resolve to declared keys");
+
+        // Forward existence: Source's projected tuple has no Target witness.
+        let error = db
+            .write(|tx| {
+                tx.insert(&Source {
+                    a: 7,
+                    b: -3,
+                    c: true,
+                    note: "source-only",
+                })
+            })
+            .expect_err("forward equality containment is enforced");
+        assert_containment(error, StatementId(2));
+
+        // Reverse existence: Target's projected tuple has no Source witness.
+        let error = db
+            .write(|tx| {
+                tx.insert(&Target {
+                    x: 7,
+                    y: -3,
+                    z: true,
+                    weight: 99,
+                })
+            })
+            .expect_err("reverse equality containment is enforced");
+        assert_containment(error, StatementId(3));
+
+        // The selected projections correspond; whole facts do not. Their
+        // unprojected payloads even have different structural types, which is
+        // legal because `==` is projected-view equality, not row equality.
+        db.write(|tx| {
+            tx.insert(&Source {
+                a: 7,
+                b: -3,
+                c: true,
+                note: "payloads may differ",
+            })?;
+            tx.insert(&Target {
+                x: 7,
+                y: -3,
+                z: true,
+                weight: 99,
+            })
+        })
+        .expect("one witness on each keyed projection commits");
+
+        // Injectivity: another Target fact with the same projected product
+        // but a different payload is rejected by Target's reordered key.
+        let error = db
+            .write(|tx| {
+                tx.insert(&Target {
+                    x: 7,
+                    y: -3,
+                    z: true,
+                    weight: 100,
+                })
+            })
+            .expect_err("the key makes the witness unique");
+        assert!(matches!(
+            error,
+            Error::CommitRejected { violations }
+                if matches!(violations.as_slice(), [Violation::Functionality {
+                    statement: StatementId(1),
+                    ..
+                }])
+        ));
+    }
+}
