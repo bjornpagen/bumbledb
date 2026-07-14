@@ -97,22 +97,31 @@ fn rejects_conflicting_param_anchors() {
 }
 
 #[test]
-fn rejects_order_comparison_on_non_integer() {
-    // Holder.name is a String: Lt is illegal (equality-only type).
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![atom(HOLDER, vec![(0, var(1)), (1, var(0))])],
-        negated: vec![],
-        conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Lt,
-            lhs: var(0),
-            rhs: Term::Literal(Value::String(Box::from(&b"x"[..]))),
-        })],
-    });
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::IllegalComparison { index: 0 }
-    ));
+fn rejects_order_comparison_on_string_in_both_written_orders() {
+    // Holder.name is a String: both written orders get the dedicated
+    // equality-only refusal before generic classification.
+    for literal_on_left in [false, true] {
+        let literal = Term::Literal(Value::String(Box::from(&b"x"[..])));
+        let (lhs, rhs) = if literal_on_left {
+            (literal, var(0))
+        } else {
+            (var(0), literal)
+        };
+        let query = Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![atom(HOLDER, vec![(0, var(1)), (1, var(0))])],
+            negated: vec![],
+            conditions: vec![ConditionTree::Leaf(Comparison {
+                op: CmpOp::Lt,
+                lhs,
+                rhs,
+            })],
+        });
+        assert_eq!(
+            expect_err(&query),
+            ValidationError::OrderComparisonOnString { index: 0 }
+        );
+    }
 }
 
 #[test]
@@ -135,26 +144,31 @@ fn rejects_self_comparison() {
 }
 
 #[test]
-fn rejects_order_operators_on_bool() {
-    // Posting.flag is Bool (field 5): Lt is illegal (equality-only type).
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![
-            atom(POSTING, vec![(5, var(0)), (0, var(1))]),
-            atom(POSTING, vec![(5, var(2)), (0, var(3))]),
-        ],
-        negated: vec![],
-        conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Lt,
-            lhs: var(0),
-            rhs: var(2),
-        })],
-    });
-    let err = expect_err(&query);
-    assert!(
-        matches!(err, ValidationError::IllegalComparison { index: 0 }),
-        "order ops are integer-only; got {err:?}"
-    );
+fn rejects_order_comparison_on_bool_in_both_written_orders() {
+    // Posting.flag is Bool (field 5): both written orders get the dedicated
+    // equality-only refusal before generic classification.
+    for literal_on_left in [false, true] {
+        let literal = Term::Literal(Value::Bool(true));
+        let (lhs, rhs) = if literal_on_left {
+            (literal, var(0))
+        } else {
+            (var(0), literal)
+        };
+        let query = Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(1))],
+            atoms: vec![atom(POSTING, vec![(5, var(0)), (0, var(1))])],
+            negated: vec![],
+            conditions: vec![ConditionTree::Leaf(Comparison {
+                op: CmpOp::Lt,
+                lhs,
+                rhs,
+            })],
+        });
+        assert_eq!(
+            expect_err(&query),
+            ValidationError::OrderComparisonOnBool { index: 0 }
+        );
+    }
 }
 
 #[test]

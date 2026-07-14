@@ -1,6 +1,6 @@
 use super::R;
 use crate::encoding::{ValueRef, encode_fact};
-use crate::image::{ColumnView, LINE, PAD_MIN_PITCH, PAD_TOLERANCE, SET_STRIDE, build};
+use crate::image::{ColumnView, LINE, PAD_MIN_STRIDE, PAD_TOLERANCE, SET_STRIDE, build};
 use crate::schema::{FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
@@ -8,8 +8,8 @@ use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 
 #[test]
-fn twelve_column_bases_are_aligned_and_stagger_distinctly() {
-    let dir = TempDir::new("image-stagger");
+fn twelve_column_bases_are_aligned_and_stride_padded() {
+    let dir = TempDir::new("image-stride-small");
     // 12 columns, mixed widths.
     let fields: Vec<FieldDescriptor> = (0..12)
         .map(|i| FieldDescriptor {
@@ -65,31 +65,31 @@ fn twelve_column_bases_are_aligned_and_stagger_distinctly() {
     for (i, addr) in addrs.iter().enumerate() {
         assert_eq!(addr % LINE, 0, "column {i} base must be 128-byte aligned");
     }
-    // The pitch rule (measured): no big same-slab pitch lands
+    // The stride rule (measured): no big same-slab stride lands
     // within the tracker-aliasing tolerance of a 16 KiB multiple.
-    // (At 100 rows every pitch is far below PAD_MIN_PITCH — assert
+    // (At 100 rows every stride is far below PAD_MIN_STRIDE — assert
     // the rule vacuously holds here and structurally in
-    // `big_column_pitches_avoid_the_tracker_band`.)
+    // `big_column_strides_avoid_the_tracker_band`.)
     for window in addrs.windows(2) {
-        let pitch = window[1].abs_diff(window[0]);
-        if pitch >= PAD_MIN_PITCH {
-            let residue = pitch % SET_STRIDE;
+        let stride = window[1].abs_diff(window[0]);
+        if stride >= PAD_MIN_STRIDE {
+            let residue = stride % SET_STRIDE;
             assert!(
                 residue == 0 || (residue > PAD_TOLERANCE && residue < SET_STRIDE - PAD_TOLERANCE),
-                "pitch {pitch} sits in the tracker-aliasing band"
+                "stride {stride} sits in the tracker-aliasing band"
             );
         }
     }
 }
 
-/// The pitch rule under DRAM-scale spans (measured): a
+/// The stride rule under DRAM-scale spans (measured): a
 /// power-of-two row span — the exact shape the old stagger rule
 /// turned into a 4–6× DRAM-scan pathology — lays out with every
-/// same-slab pitch clear of the 16 KiB tracker band.
+/// same-slab stride clear of the 16 KiB tracker band.
 #[test]
-fn big_column_pitches_avoid_the_tracker_band() {
+fn big_column_strides_avoid_the_tracker_band() {
     // 4 u64 columns × 16384 rows: span = 128 KiB exactly (pow-2,
-    // 16 KiB-multiple) — unpadded pitches would land at residue 0.
+    // 16 KiB-multiple) — unpadded strides would land at residue 0.
     let fields: Vec<FieldDescriptor> = (0..4)
         .map(|i| FieldDescriptor {
             name: format!("c{i}").into(),
@@ -107,7 +107,7 @@ fn big_column_pitches_avoid_the_tracker_band() {
     }
     .validate()
     .expect("valid fixture");
-    let dir = TempDir::new("image-pitch");
+    let dir = TempDir::new("image-stride");
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
@@ -133,12 +133,12 @@ fn big_column_pitches_avoid_the_tracker_band() {
         })
         .collect();
     for (i, window) in addrs.windows(2).enumerate() {
-        let pitch = window[1] - window[0];
-        assert!(pitch >= PAD_MIN_PITCH, "spans are DRAM-scale here");
-        let residue = pitch % SET_STRIDE;
+        let stride = window[1] - window[0];
+        assert!(stride >= PAD_MIN_STRIDE, "spans are DRAM-scale here");
+        let residue = stride % SET_STRIDE;
         assert!(
             residue == 0 || (residue > PAD_TOLERANCE && residue < SET_STRIDE - PAD_TOLERANCE),
-            "pitch {i}→{} = {pitch} sits in the tracker band (residue {residue})",
+            "stride {i}→{} = {stride} sits in the tracker band (residue {residue})",
             i + 1
         );
     }

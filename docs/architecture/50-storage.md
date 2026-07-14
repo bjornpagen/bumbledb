@@ -330,14 +330,14 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   decode. The multi-byte unit exists only in `fact_bytes` and determinant keys, where
   ordering needs it.
   At ~60 GB/s of single-core scan bandwidth a build is single-digit milliseconds per
-  100 MB — the number that makes the whole cache design sound. **Column pitches are
+  100 MB — the number that makes the whole cache design sound. **Column strides are
   padded off 16 KiB multiples** (measured): L1D set congruence (256 sets × 64 B
   lines, bits 6–13) costs at most 1.55× on real lockstep scans — never the folklore
   10–20×, which requires a fully dependent load chain — while the hazard that
   actually matters is stream-prefetch trackers aliasing on low 16 KiB page-number
-  bits: power-of-two-ish pitches with small (1–3 line) staggers cost 4–6× on
+  bits: power-of-two-ish strides with small (1–3 line) staggers cost 4–6× on
   DRAM-tier lockstep scans (8.13 vs 1.78 ns/row). The rule:
-  when a column-to-column pitch within a slab is ≥ 64 KiB and lands within 384 B of a
+  when a column-to-column stride within a slab is ≥ 64 KiB and lands within 384 B of a
   16 KiB multiple, round it up to the next exact multiple (exact multiples measured
   clean — the poison is the small offset). Immutable once built. Positions in the
   image are **dense scan ordinals**; `row_id`s exist only in LMDB keys and never
@@ -379,7 +379,7 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
 A closed relation's image is **synthesized, not built**: the sealed extension —
 values canonically encoded ONCE, at validate — decodes through the ordinary
 decode plan into the ordinary SoA layout (implicit `id` column `0..rows` first,
-interval = two word columns, pitch padding, lazy exact distinct counters), with
+interval = two word columns, stride padding, lazy exact cardinality counters), with
 **no LMDB transaction anywhere** (`image::synthesize_closed` takes none;
 synthesis is pure). The fingerprint's preimage IS the storage: vocabulary can
 never desync, never bloat, and never needs the sweeper — its "generation" is

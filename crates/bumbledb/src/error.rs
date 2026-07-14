@@ -490,8 +490,8 @@ pub enum ValidationError {
     IntervalParamSet {
         param: ParamId,
     },
-    /// Type rules violated: cross-type comparison, an order operator on a
-    /// non-integer type, or an interval operator over non-interval sides.
+    /// Type rules violated: mixed-type operands or an interval operator over
+    /// non-interval sides. Single-type order refusals have dedicated variants.
     IllegalComparison {
         index: usize,
     },
@@ -507,6 +507,16 @@ pub enum ValidationError {
     /// only: `Eq`/`Ne` and membership (`docs/architecture/10-data-model.md`,
     /// the order-on-bytes refusal).
     OrderComparisonOnFixedBytes {
+        index: usize,
+    },
+    /// An order operator with a String operand. Intern ids are an equality
+    /// representation, not a collation; String is equality-only.
+    OrderComparisonOnString {
+        index: usize,
+    },
+    /// An order operator with a Bool operand. Boolean ordering is noise;
+    /// Bool is equality-only.
+    OrderComparisonOnBool {
         index: usize,
     },
     /// Neither side is a variable — write the query you mean.
@@ -818,7 +828,7 @@ pub enum OverflowKind {
     /// absorb-node survivors in one execution. Beyond the scale axiom,
     /// but valid input, so it errors; checked at batch granularity
     /// (`exec/run/probe_pass.rs`).
-    Origins,
+    OriginCapacity,
 }
 
 /// The one workspace error type, categorized per

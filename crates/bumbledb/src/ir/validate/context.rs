@@ -279,10 +279,8 @@ fn sealed_mask(mask: MaskTerm, mirrored: bool) -> MaskConst {
     }
 }
 
-/// The order operators' operand screen: an interval operand and a digest
-/// operand get their dedicated diagnostics — the predictable mistake
-/// gets the good error (order on bytes is an encoding artifact, identity
-/// only: `docs/architecture/10-data-model.md`).
+/// The order operators' operand screen: every equality-only type gets its
+/// dedicated diagnostic before accepted comparison classification.
 fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(), ValidationError> {
     match operand {
         Some(ValueType::Interval { .. }) => {
@@ -291,6 +289,8 @@ fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(),
         Some(ValueType::FixedBytes { .. }) => {
             Err(ValidationError::OrderComparisonOnFixedBytes { index })
         }
+        Some(ValueType::String) => Err(ValidationError::OrderComparisonOnString { index }),
+        Some(ValueType::Bool) => Err(ValidationError::OrderComparisonOnBool { index }),
         _ => Ok(()),
     }
 }

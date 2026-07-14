@@ -14,22 +14,22 @@ impl RelationImage {
     /// Computed on first demand and memoized on the image; a plan that
     /// never asks — every key probe — never pays the walk.
     #[must_use]
-    pub fn distinct(&self, column: usize) -> u64 {
+    pub fn cardinality(&self, column: usize) -> u64 {
         *self.distincts[column].get_or_init(|| match self.column(column) {
-            ColumnView::Words(words) => DistinctCounter::new(self.row_count).count_words(words),
-            ColumnView::Bytes(bytes) => DistinctCounter::count_bytes(bytes),
+            ColumnView::Words(words) => CardinalityCounter::new(self.row_count).count_words(words),
+            ColumnView::Bytes(bytes) => CardinalityCounter::count_bytes(bytes),
         })
     }
 }
 
 /// The build-time distinct counter: a power-of-two open-addressed word
 /// set sized once for the row count and memset-cleared per column.
-struct DistinctCounter {
+struct CardinalityCounter {
     slots: Vec<u64>,
     occupied: Vec<bool>,
 }
 
-impl DistinctCounter {
+impl CardinalityCounter {
     fn new(row_count: usize) -> Self {
         let capacity = (row_count.max(1) * 2).next_power_of_two();
         Self {

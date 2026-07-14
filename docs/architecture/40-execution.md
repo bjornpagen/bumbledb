@@ -617,7 +617,7 @@ portable lane form when it measured at or above the scalar-unrolled bodies
 for irregular control flow —
 the law is about reductions, not loops in general (`00-product.md` machine
 model; unsafe policy there too). Columns are 128-byte-aligned SoA
-with pitch-padded bases (`50-storage.md`). Scalar fallback everywhere, equal results by
+with stride-padded bases (`50-storage.md`). Scalar fallback everywhere, equal results by
 test across batch sizes. **Vectorized execution is the default and only path** — a
 scalar "mode" exists solely as the degenerate batch size where useful for testing; a
 "vectorized mode" that wraps scalar loops without batching is the failure shape this

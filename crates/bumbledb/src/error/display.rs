@@ -486,6 +486,14 @@ impl fmt::Display for ValidationError {
                 "comparison {index}: order operator on bytes<N> — a digest's \
                  lexicographic order is an encoding artifact; identity only"
             ),
+            Self::OrderComparisonOnString { index } => write!(
+                f,
+                "comparison {index}: order operator on String — strings are equality-only"
+            ),
+            Self::OrderComparisonOnBool { index } => write!(
+                f,
+                "comparison {index}: order operator on Bool — booleans are equality-only"
+            ),
             Self::ConstantComparison { index } => {
                 write!(f, "comparison {index}: neither side is a variable")
             }
@@ -731,11 +739,8 @@ impl fmt::Display for Error {
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")
             }
-            Self::Overflow(super::OverflowKind::Origins) => {
-                write!(
-                    f,
-                    "origin mint space exhausted: more than 2^32 absorb-node survivors in one execution"
-                )
+            Self::Overflow(super::OverflowKind::OriginCapacity) => {
+                write!(f, "origin capacity exceeded")
             }
             Self::BulkLoad { committed, error } => {
                 write!(
