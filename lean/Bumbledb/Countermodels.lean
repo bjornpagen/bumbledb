@@ -1,4 +1,4 @@
-import Bumbledb.Dependencies
+import Bumbledb.Query.Denotation
 
 /-!
 # Countermodels — the design scratchpad (PRD 02 onward, grows all campaign)
@@ -37,6 +37,19 @@ part of the spec.
   correspondence; the key premises of `KeyBackedEquality` are load-
   bearing, which is why each `==` direction must independently pass
   `resolve_target_key` (the ==-reverse-key locks).
+
+## PRD 04 residents
+
+* `unsafe_rule_infinite` — the unsafe rule whose "denotation" is
+  INFINITE: one head variable bound by no positive atom, one
+  nonemptiness-gate atom, a one-fact instance — and the answer set
+  contains one tuple per intern id, so no list can enumerate it.
+  This is what `Safe` (positive range restriction) refuses, and why
+  `antijoin_over_active_domain` carries `Safe` as a hypothesis:
+  negation and projection are only meaningful over the active domain,
+  never over the infinite complement. The validator's mechanisms:
+  `NegatedVariableUnbound`, `ComparisonOnlyVariable`, and the
+  find-side binding check.
 
 * `one_way_overhang` — the [0,10)/[0,20) overshoot (port): one-way
   coverage of a [0,10) source by a [0,20) target HOLDS (with the
@@ -227,5 +240,87 @@ theorem one_way_overhang :
     have hf' : f = domFact := hf
     subst hf'
     exact absurd hx.2 (by decide)
+
+/-! ## The unsafe-rule countermodel (PRD 04)
+
+One rule: `finds [v₀]`, one zero-binding gate atom, nothing else. The
+head variable is bound by NO positive atom — the rule is unsafe — and
+over a one-fact instance its answer set holds one tuple per intern id:
+an infinite family no list enumerates. -/
+
+/-- The gate fact: any single fact will do. -/
+def gateFact : Fact := fun _ => ⟨.bool, false⟩
+
+/-- A one-fact instance: every relation holds exactly the gate fact
+(only the gate atom's relation is ever read). -/
+def gateInstance : Instance := fun _ => fun f => f = gateFact
+
+/-- The unsafe rule: project `v₀`, gate on a relation, bind nothing —
+`v₀ ∈ allVars` (a find) but `positiveVars = []`. -/
+def unsafeRule : Query.Rule where
+  finds := [⟨0⟩]
+  atoms := [{ relation := ⟨0⟩, bindings := [] }]
+  negated := []
+  conditions := []
+
+/-- The rule is UNSAFE: its head variable has no positive binding —
+exactly what the validator's find-side binding check refuses. -/
+theorem unsafe_rule_not_safe : ¬ Query.Safe unsafeRule :=
+  Query.membership_only_unsafe
+    (Query.mem_allVars.mpr (Or.inl (List.mem_singleton.mpr rfl)))
+    (fun h => by
+      rcases Query.mem_positiveVars.mp h with ⟨a, ha, hv⟩
+      rcases List.mem_singleton.mp ha with rfl
+      simp [Query.Atom.boundVars] at hv)
+
+/-- One answer per intern id: the unconstrained head variable takes
+EVERY value. -/
+theorem unsafe_rule_answers (C : Query.Classify) (ρ : Query.ParamEnv)
+    (n : Nat) :
+    [(⟨.str, ⟨n⟩⟩ : Value)] ∈
+      Query.ruleAnswers C unsafeRule gateInstance ρ := by
+  refine Query.mem_ruleAnswers.mpr
+    ⟨fun _ => ⟨.str, ⟨n⟩⟩, ⟨?_, ?_, ?_⟩, rfl⟩
+  · intro a ha
+    rcases List.mem_singleton.mp ha with rfl
+    exact ⟨gateFact, rfl, fun b hb => by cases hb⟩
+  · intro a ha
+    cases ha
+  · intro t ht
+    cases ht
+
+/-- The head intern id of a singleton str answer — the observer the
+infinitude argument counts with. -/
+def headStrId : List Value → Option Nat
+  | [{ type := .str, val := s }] => some s.id
+  | _ => none
+
+/-- Every member of a `Nat` list is bounded by its `foldr max`. -/
+theorem le_foldr_max : ∀ (l : List Nat) (n : Nat), n ∈ l →
+    n ≤ l.foldr Nat.max 0
+  | a :: l, n, h => by
+    rcases List.mem_cons.mp h with rfl | h
+    · exact Nat.le_max_left _ _
+    · exact Nat.le_trans (le_foldr_max l n h) (Nat.le_max_right _ _)
+
+/-- **The countermodel.** The unsafe rule's "denotation" is INFINITE:
+no list enumerates its answer set — any candidate list misses the
+intern id one past its maximum. This is the theorem-shaped reason
+`Safe` exists and is a HYPOTHESIS of `antijoin_over_active_domain`
+and `eval_sound`: without positive range restriction there is no
+active domain to evaluate over, and the anti-join's complement
+reading would be this infinity. Bridge:
+`ValidationError::NegatedVariableUnbound` /
+`ComparisonOnlyVariable` / `MembershipOnlyVariable` — the acceptance
+boundary that keeps this rule unwritable downstream. -/
+theorem unsafe_rule_infinite (C : Query.Classify) (ρ : Query.ParamEnv) :
+    ¬ (Query.ruleAnswers C unsafeRule gateInstance ρ).Finite := by
+  rintro ⟨l, hl⟩
+  have hmem := unsafe_rule_answers C ρ ((l.filterMap headStrId).foldr Nat.max 0 + 1)
+  have hinl := (hl _).mp hmem
+  have hid : (l.filterMap headStrId).foldr Nat.max 0 + 1 ∈
+      l.filterMap headStrId :=
+    List.mem_filterMap.mpr ⟨_, hinl, rfl⟩
+  exact Nat.not_succ_le_self _ (le_foldr_max _ _ hid)
 
 end Bumbledb.Countermodels
