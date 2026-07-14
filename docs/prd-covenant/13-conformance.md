@@ -90,3 +90,71 @@ visibility change.
 `60-validation.md`'s oracle roster gains the third lane (one
 paragraph: what it sees that the others cannot, citing
 `eval_sound`); the fuzzing charter cross-references it.
+
+## Results
+
+Executed 2026-07-14. The three-way comparison ran and is GREEN: all 217
+checked-in cases agree across the engine, the naive model, and the Lean
+denotation — no trophies this build (the lane's teeth were verified by
+mutation: a single altered answer value is caught and the case file
+named with the differing rows).
+
+* **Corpus**: 217 cases checked in (`lean/conformance/cases/`, ~22 MB)
+  = 200 seeded (querygen valid arm, `Rng::new(case_seed)` recorded in
+  each file's provenance, two Tiny worlds) + 17 hand cases (Pack over
+  the exactly-partitioned Mandate groups with rays, empty-global
+  Count+Sum, ArgMax ties, composite Allen mask, Allen mask PARAM,
+  negation, overlapping-rule union, multi-rule aggregate union fold,
+  CountDistinct over strings, measure find/predicate/fold, var+literal
+  membership, interval-param equality, param set, closed join).
+  Shape census over the files: 65 aggregate cases, 28 Allen, 46
+  negation, 26 `point_in`, 19 multi-rule, 14 param-set, 13 measure,
+  10 Arg, 5 measure-fold.
+* **Fragment coverage**: 217/323 expressible, logged by the builder and
+  comparator (`Report::coverage_line`): 31 unresolved-literal (the
+  recorded intern-dictionary exclusion), 5 negated-membership,
+  0 set-membership, 0 engine-error, 61 slow (naive > 25 ms — the Lean
+  evaluator's cost proxy), 9 wide (> 512 answer rows). All recorded in
+  `lean/conformance/README.md`; the hostile arm was never drawn.
+* **Wall time** (pinned M2 Max, 2026-07-14): `lake exe conformance`
+  over the corpus ≈ 1.0 s (948 ms evaluation) — wired into
+  `scripts/lean.sh` as battery 4, comfortably per-push. The full
+  three-way comparator (`cargo test -p bumbledb-bench
+  three_way_conformance -- --ignored`) = 12.4 s engine+naive
+  provenance replay/byte-comparison + 1.2 s Lean, debug build; placed
+  in the CI lean job (numbers in the workflow comment), the
+  byte-replay half (`the_corpus_replays_byte_identical`) runs in the
+  plain workspace suite.
+* **Determinism note** (a design finding during landing): the builder's
+  slow/wide budgets are wall-clock measurements, so re-deriving the
+  exclusion stream inside the comparator was flaky under parallel test
+  load. The comparator therefore replays each checked-in file FROM ITS
+  RECORDED PROVENANCE (hand name, or `case_seed` + draw) and never
+  re-measures — its verdict is load-independent; the budgets bind only
+  the deliberate `regenerate_the_conformance_corpus` run (quiet-machine
+  note on the test).
+* **Engine `pub` needs**: none — `differential::engine_query` and the
+  public `Answers` surface sufficed, as expected.
+* **The membership lowering** (recorded): the serializer performs the
+  validator's bivalent resolution — an element-typed term on an
+  interval field becomes a fresh interval variable + `PointIn`
+  condition (the predicate form the typing rule licenses); the engine
+  runs the original query, Lean the lowered one. Two shapes have no
+  lowering and are the counted exclusions above: membership inside a
+  negated atom, and element-typed param-set membership (the lowered
+  set-`PointIn` would break the `WellTyped` premise `eval_sound`
+  names).
+* **Law 4 record**: core `Lean.Data.Json` adopted for decoding
+  (`lean/Bumbledb/Conformance.lean`, module doc) — core Lean, no
+  package dependency.
+* **Aggregate glue** (recorded in the module doc): head shapes beyond
+  plain projection evaluate as compositions of PRD 04/05's proved
+  pieces — `evalList` join states, `dedup` distinct bindings, fibered
+  grouping, `checkedSum`, `pack`, `classifyRefined`, encoded-word order
+  keys, tie-keeping Arg restriction; the multi-rule aggregate head
+  folds the union of head-projected binding sets (the rules-IR
+  definition).
+* **Bridge**: the `Query.eval_sound` row's instrument (pending this
+  lane since PRD 10) now names
+  `three_way_conformance_over_the_checked_in_corpus` — 68 rows, 188
+  tokens, census green.

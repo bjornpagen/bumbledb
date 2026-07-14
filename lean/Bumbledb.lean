@@ -10,6 +10,7 @@ import Bumbledb.Exec.Rewrites
 import Bumbledb.Txn
 import Bumbledb.Bridge
 import Bumbledb.Countermodels
+import Bumbledb.Conformance
 
 /-!
 # Bumbledb — the formal specification

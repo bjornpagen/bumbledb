@@ -1,0 +1,22 @@
+{
+"case":"seeded-0145",
+"provenance":{"world_seed":12603137,"case_seed":1245402,"draw":2},
+"strings":[],
+"theory":{"relations":[{"id":1,"name":"Account","closed":false,"fields":["u64","u64","u64"]}],
+"ground_axioms":[]},
+"instance":[{"relation":1,"facts":[
+[{"u64":0},{"u64":0},{"u64":0}],
+[{"u64":1},{"u64":0},{"u64":2}],
+[{"u64":2},{"u64":0},{"u64":2}],
+[{"u64":3},{"u64":0},{"u64":2}],
+[{"u64":4},{"u64":0},{"u64":1}]
+]}],
+"query":{"rules":[
+{"finds":[{"agg":{"op":"count_distinct","over":0}}],
+ "atoms":[{"relation":1,"bindings":[[2,{"var":0}],[1,{"var":1}]]}],
+ "negated":[],
+ "conditions":[{"cmp":{"op":"gt","lhs":{"var":1},"rhs":{"param":0}}},{"cmp":{"op":"eq","lhs":{"var":0},"rhs":{"lit":{"u64":2}}}},{"cmp":{"op":"ne","lhs":{"var":0},"rhs":{"lit":{"u64":0}}}}]}
+]},
+"params":[{"scalar":{"u64":0}}],
+"answers":[]
+}

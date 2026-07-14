@@ -1,0 +1,26 @@
+{
+"case":"seeded-0196",
+"provenance":{"world_seed":12603138,"case_seed":1245485,"draw":1},
+"strings":[[0,"holder-2178"]],
+"theory":{"relations":[{"id":0,"name":"Holder","closed":false,"fields":["u64","str"]},
+{"id":1,"name":"Account","closed":false,"fields":["u64","u64","u64"]}],
+"ground_axioms":[]},
+"instance":[{"relation":0,"facts":[
+[{"u64":0},{"str":0}]
+]},
+{"relation":1,"facts":[
+[{"u64":0},{"u64":0},{"u64":1}],
+[{"u64":1},{"u64":0},{"u64":2}],
+[{"u64":2},{"u64":0},{"u64":2}],
+[{"u64":3},{"u64":0},{"u64":0}],
+[{"u64":4},{"u64":0},{"u64":0}]
+]}],
+"query":{"rules":[
+{"finds":[{"var":0},{"var":1}],
+ "atoms":[{"relation":1,"bindings":[[0,{"param":0}],[1,{"var":0}],[2,{"var":1}]]}],
+ "negated":[{"relation":0,"bindings":[[0,{"var":0}]]},{"relation":0,"bindings":[[0,{"var":0}]]}],
+ "conditions":[{"cmp":{"op":"gt","lhs":{"var":0},"rhs":{"param":1}}},{"cmp":{"op":"ne","lhs":{"var":1},"rhs":{"param":2}}}]}
+]},
+"params":[{"scalar":{"u64":3}},{"scalar":{"u64":0}},{"scalar":{"u64":2}}],
+"answers":[]
+}

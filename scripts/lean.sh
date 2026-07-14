@@ -53,4 +53,15 @@ fi
 cd ..
 scripts/spec-census.sh
 
-echo "lean.sh: OK — build green, placeholder battery clean, census resolved"
+# Battery 4 (PRD 13): the conformance corpus run — the executable
+# denotation (`lake exe conformance`, built by the `lake build` above:
+# the exe is a default target) evaluates every checked-in case and
+# compares against the recorded engine answers. Measured 2026-07-14 on
+# the pinned M2 Max: ~1.0 s for the 217-case corpus — comfortably
+# per-push; the full three-way comparator (engine + naive + Lean) is
+# the CI lean job's cargo step.
+cd lean
+lake exe conformance conformance/cases
+cd ..
+
+echo "lean.sh: OK — build green, placeholder battery clean, census resolved, conformance corpus green"

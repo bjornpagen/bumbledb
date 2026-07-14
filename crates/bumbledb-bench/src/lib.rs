@@ -10,6 +10,7 @@ pub mod calendar;
 pub mod cli;
 pub mod clockproxy;
 pub mod compare;
+pub mod conformance;
 pub mod corpus;
 pub mod corpus_gen;
 pub mod differential;

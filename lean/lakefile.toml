@@ -1,5 +1,11 @@
 name = "bumbledb"
-defaultTargets = ["Bumbledb"]
+defaultTargets = ["Bumbledb", "conformance"]
 
 [[lean_lib]]
 name = "Bumbledb"
+
+# The conformance driver (PRD 13): `lake exe conformance cases/` runs
+# the executable denotation over the checked-in corpus.
+[[lean_exe]]
+name = "conformance"
+root = "Main"

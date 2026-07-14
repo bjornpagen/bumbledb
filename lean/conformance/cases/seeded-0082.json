@@ -1,0 +1,31 @@
+{
+"case":"seeded-0082",
+"provenance":{"world_seed":12603137,"case_seed":1245306,"draw":2},
+"strings":[],
+"theory":{"relations":[{"id":1,"name":"Account","closed":false,"fields":["u64","u64","u64"]},
+{"id":13,"name":"Currency","closed":true,"fields":["u64","u64"]}],
+"ground_axioms":[{"relation":13,"facts":[
+[{"u64":0},{"u64":2}],
+[{"u64":1},{"u64":2}],
+[{"u64":2},{"u64":0}]
+]}]},
+"instance":[{"relation":1,"facts":[
+[{"u64":0},{"u64":0},{"u64":0}],
+[{"u64":1},{"u64":0},{"u64":2}],
+[{"u64":2},{"u64":0},{"u64":2}],
+[{"u64":3},{"u64":0},{"u64":2}],
+[{"u64":4},{"u64":0},{"u64":1}]
+]}],
+"query":{"rules":[
+{"finds":[{"var":0},{"agg":{"op":"count"}}],
+ "atoms":[{"relation":1,"bindings":[[2,{"var":0}],[0,{"var":1}]]},{"relation":13,"bindings":[[0,{"var":0}],[1,{"var":2}]]}],
+ "negated":[],
+ "conditions":[]}
+]},
+"params":[],
+"answers":[
+[{"u64":0},{"u64":1}],
+[{"u64":1},{"u64":1}],
+[{"u64":2},{"u64":3}]
+]
+}

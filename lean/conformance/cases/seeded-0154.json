@@ -1,0 +1,30 @@
+{
+"case":"seeded-0154",
+"provenance":{"world_seed":12603137,"case_seed":1245420,"draw":0},
+"strings":[[0,"holder-2622"]],
+"theory":{"relations":[{"id":0,"name":"Holder","closed":false,"fields":["u64","str"]},
+{"id":1,"name":"Account","closed":false,"fields":["u64","u64","u64"]}],
+"ground_axioms":[]},
+"instance":[{"relation":0,"facts":[
+[{"u64":0},{"str":0}]
+]},
+{"relation":1,"facts":[
+[{"u64":0},{"u64":0},{"u64":0}],
+[{"u64":1},{"u64":0},{"u64":2}],
+[{"u64":2},{"u64":0},{"u64":2}],
+[{"u64":3},{"u64":0},{"u64":2}],
+[{"u64":4},{"u64":0},{"u64":1}]
+]}],
+"query":{"rules":[
+{"finds":[{"var":1}],
+ "atoms":[{"relation":1,"bindings":[[1,{"var":0}],[2,{"var":1}]]},{"relation":0,"bindings":[[0,{"var":0}]]}],
+ "negated":[],
+ "conditions":[]}
+]},
+"params":[],
+"answers":[
+[{"u64":0}],
+[{"u64":1}],
+[{"u64":2}]
+]
+}

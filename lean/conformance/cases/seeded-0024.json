@@ -1,0 +1,33 @@
+{
+"case":"seeded-0024",
+"provenance":{"world_seed":12603138,"case_seed":1245215,"draw":3},
+"strings":[[952,"org-00"],[953,"org-01"],[954,"org-02"],[955,"org-03"],[956,"org-04"],[957,"org-05"],[958,"org-06"],[959,"org-07"]],
+"theory":{"relations":[{"id":1,"name":"Account","closed":false,"fields":["u64","u64","u64"]},
+{"id":6,"name":"Org","closed":false,"fields":["u64","str"]}],
+"ground_axioms":[]},
+"instance":[{"relation":1,"facts":[
+[{"u64":0},{"u64":0},{"u64":1}],
+[{"u64":1},{"u64":0},{"u64":2}],
+[{"u64":2},{"u64":0},{"u64":2}],
+[{"u64":3},{"u64":0},{"u64":0}],
+[{"u64":4},{"u64":0},{"u64":0}]
+]},
+{"relation":6,"facts":[
+[{"u64":0},{"str":952}],
+[{"u64":1},{"str":953}],
+[{"u64":2},{"str":954}],
+[{"u64":3},{"str":955}],
+[{"u64":4},{"str":956}],
+[{"u64":5},{"str":957}],
+[{"u64":6},{"str":958}],
+[{"u64":7},{"str":959}]
+]}],
+"query":{"rules":[
+{"finds":[{"var":0}],
+ "atoms":[{"relation":1,"bindings":[[0,{"param_set":0}],[2,{"var":0}]]}],
+ "negated":[{"relation":6,"bindings":[]}],
+ "conditions":[{"cmp":{"op":"ne","lhs":{"var":0},"rhs":{"lit":{"u64":0}}}}]}
+]},
+"params":[{"set":[]}],
+"answers":[]
+}

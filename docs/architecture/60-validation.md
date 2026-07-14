@@ -43,6 +43,22 @@ lost:** trigger emulation is a second nontrivial implementation of the semantics
 smaller than its triggers would be and doubles as the query-gap oracle.
 **Reverses if:** never — three-way beats two-way.
 
+**The Lean denotation is the third oracle for the query fragment** (the
+conformance lane, the covenant campaign's PRD 13). What it sees that the other
+two cannot: the engine and the naive model were written from the same docs, so
+a shared misreading passes every two-way differential forever — the Lean tree
+is derived from the mathematics, and its executable evaluator is *proved* equal
+to the set denotation (`lean/Bumbledb/Query/Denotation.lean: eval_sound`), so
+running it is a check against the spec itself, not a third same-author
+implementation. The lane: `crates/bumbledb-bench/src/conformance.rs` serializes
+Tiny worlds + queries + engine answers into the checked-in replay corpus
+(`lean/conformance/cases/`, format and recorded exclusions in
+`lean/conformance/README.md`), and the three-way comparator
+(`three_way_conformance_over_the_checked_in_corpus`) holds engine, naive model,
+and `lake exe conformance` to agreement per case — any disagreement names the
+case file and is a trophy triaged per the fuzzing charter (below), whichever
+oracle turns out wrong.
+
 **The store sweeper is the third leg: the oracles judge semantics; the sweeper
 judges the store.** `Db::verify_store` takes one read snapshot and sweeps
 O(store): every namespace pairing re-verified against the schema (F↔M↔U↔R plus

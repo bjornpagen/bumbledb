@@ -1,0 +1,24 @@
+{
+"case":"seeded-0102",
+"provenance":{"world_seed":12603138,"case_seed":1245333,"draw":1},
+"strings":[],
+"theory":{"relations":[{"id":1,"name":"Account","closed":false,"fields":["u64","u64","u64"]}],
+"ground_axioms":[]},
+"instance":[{"relation":1,"facts":[
+[{"u64":0},{"u64":0},{"u64":1}],
+[{"u64":1},{"u64":0},{"u64":2}],
+[{"u64":2},{"u64":0},{"u64":2}],
+[{"u64":3},{"u64":0},{"u64":0}],
+[{"u64":4},{"u64":0},{"u64":0}]
+]}],
+"query":{"rules":[
+{"finds":[{"var":0}],
+ "atoms":[{"relation":1,"bindings":[[2,{"param_set":0}],[1,{"var":0}]]}],
+ "negated":[],
+ "conditions":[]}
+]},
+"params":[{"set":[{"u64":0}]}],
+"answers":[
+[{"u64":0}]
+]
+}

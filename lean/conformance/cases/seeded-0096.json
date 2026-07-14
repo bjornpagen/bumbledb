@@ -1,0 +1,20 @@
+{
+"case":"seeded-0096",
+"provenance":{"world_seed":12603138,"case_seed":1245327,"draw":3},
+"strings":[[0,"holder-2178"]],
+"theory":{"relations":[{"id":0,"name":"Holder","closed":false,"fields":["u64","str"]}],
+"ground_axioms":[]},
+"instance":[{"relation":0,"facts":[
+[{"u64":0},{"str":0}]
+]}],
+"query":{"rules":[
+{"finds":[{"agg":{"op":"count_distinct","over":0}}],
+ "atoms":[{"relation":0,"bindings":[[1,{"var":0}]]}],
+ "negated":[],
+ "conditions":[]}
+]},
+"params":[],
+"answers":[
+[{"u64":1}]
+]
+}

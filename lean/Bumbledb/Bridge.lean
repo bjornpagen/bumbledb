@@ -251,7 +251,7 @@ def ledger : List Obligation := [
   .row @Query.eval_sound `Bumbledb.Query.eval_sound
     "The refinement theorem: list-backed evaluation over a concrete finite world equals the set denotation, under exactly the two premises the validator discharges — safety and the measure-free binding shape."
     "context.rs::check_atoms (crates/bumbledb/src/ir/validate/context.rs)"
-    "fuzz/fuzz_targets/query.rs",
+    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); fuzz/fuzz_targets/query.rs",
 
   /- ## PRD 05 — Aggregates -/
 
