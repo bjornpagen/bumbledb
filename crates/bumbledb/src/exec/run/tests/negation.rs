@@ -267,7 +267,7 @@ fn negation_under_an_aggregate_excludes_rejected_bindings() {
     for batch in [1usize, 2, 7, 64, 256] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = Bindings::new(plan.slot_count());
-        let mut sink = AggregateSink::new(finds.clone(), plan.slot_count(), false);
+        let mut sink = AggregateSink::new(finds.clone(), plan.slot_count());
         Executor::with_batch_size(&plan, batch)
             .execute(
                 &plan,
@@ -277,7 +277,7 @@ fn negation_under_an_aggregate_excludes_rejected_bindings() {
                 &mut NoopCounters,
             )
             .expect("execute");
-        let rows = sink.into_rows().expect("in range");
+        let rows = sink.into_answers().expect("in range");
         assert_eq!(rows, vec![vec![sum, count]], "batch size {batch}");
     }
 }

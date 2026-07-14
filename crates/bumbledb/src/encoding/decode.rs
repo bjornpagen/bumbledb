@@ -2,7 +2,7 @@
 //! corruption-checked field decoder.
 
 use super::{FactLayout, FixedBytesValue, I64_SIGN_BIT, IntervalElement, TypeDesc, ValueRef};
-use crate::error::CorruptionError;
+use crate::{Interval, error::CorruptionError};
 
 /// Decodes a canonical Bool byte.
 ///
@@ -109,10 +109,10 @@ pub fn field_bytes<'a>(fact_bytes: &'a [u8], layout: &FactLayout, field_idx: usi
 }
 
 /// [`field_bytes`] with the width in the type: one word-width field's
-/// canonical 8 bytes. The one surviving fixed-width guard for word
+/// canonical 8 bytes. The one surviving fixed-width determinant for word
 /// fields — a field's width is a runtime layout fact the slice type
 /// cannot carry, so every word-field consumer funnels through this
-/// single check instead of guarding locally.
+/// single check instead of checking locally.
 ///
 /// # Panics
 ///
@@ -152,18 +152,24 @@ pub fn decode_field(
         TypeDesc::FixedBytes { len } => decode_fixed_bytes(bytes, len).map(ValueRef::FixedBytes),
         TypeDesc::Interval { element } => {
             // The 16-byte width is layout-derived — the same
-            // single-guard ruling as [`field_word_bytes`], inline for
+            // single-determinant ruling as [`field_word_bytes`], inline for
             // the one wide shape.
             let bytes: [u8; 16] = bytes
                 .try_into()
                 .expect("interval field: the layout derives the width");
             match element {
-                IntervalElement::U64 => {
-                    decode_interval_u64(bytes).map(|(s, e)| ValueRef::IntervalU64(s, e))
-                }
-                IntervalElement::I64 => {
-                    decode_interval_i64(bytes).map(|(s, e)| ValueRef::IntervalI64(s, e))
-                }
+                IntervalElement::U64 => decode_interval_u64(bytes).map(|(start, end)| {
+                    ValueRef::IntervalU64(
+                        Interval::<u64>::new(start, end)
+                            .expect("decode_interval_u64 accepted these bounds"),
+                    )
+                }),
+                IntervalElement::I64 => decode_interval_i64(bytes).map(|(start, end)| {
+                    ValueRef::IntervalI64(
+                        Interval::<i64>::new(start, end)
+                            .expect("decode_interval_i64 accepted these bounds"),
+                    )
+                }),
             }
         }
     }

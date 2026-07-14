@@ -60,8 +60,8 @@ fn at_domain_ceiling(value: &Value) -> bool {
 }
 
 /// A literal in an interval-field binding: element-typed means point
-/// membership, interval-typed (same element) means value equality — and
-/// an interval literal with `start >= end` denotes no points.
+/// membership, while interval-typed (same element) means value equality.
+/// Interval literals are nonempty by construction.
 fn check_interval_field_literal(
     atom: usize,
     field: FieldId,
@@ -79,20 +79,8 @@ fn check_interval_field_literal(
             }
         }
         // Value equality against the field's intervals.
-        (Value::IntervalU64(start, end), IntervalElement::U64) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(ValidationError::EmptyIntervalLiteral { atom, field })
-            }
-        }
-        (Value::IntervalI64(start, end), IntervalElement::I64) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(ValidationError::EmptyIntervalLiteral { atom, field })
-            }
-        }
+        (Value::IntervalU64(_), IntervalElement::U64)
+        | (Value::IntervalI64(_), IntervalElement::I64) => Ok(()),
         _ => Err(ValidationError::LiteralTypeMismatch { atom, field }),
     }
 }
@@ -109,8 +97,8 @@ enum OpClass {
     Order { op: CmpOp, mirror: CmpOp },
     /// `Allen { mask }`.
     Allen { mask: MaskTerm },
-    /// `Contains`.
-    Contains,
+    /// `PointIn`.
+    PointIn,
 }
 
 impl OpClass {
@@ -135,7 +123,7 @@ impl OpClass {
                 mirror: CmpOp::Le,
             },
             CmpOp::Allen { mask } => Self::Allen { mask },
-            CmpOp::Contains => Self::Contains,
+            CmpOp::PointIn => Self::PointIn,
         }
     }
 }
@@ -204,15 +192,15 @@ enum Shaped<'rule> {
         var_on_left: bool,
         constant: ConstSide<'rule>,
     },
-    /// `Contains` over two variables, written order (`lhs ∋ rhs`).
-    ContainsVarVar { lhs: VarId, rhs: VarId },
+    /// `PointIn` over two variables, written order (`lhs ∋ rhs`).
+    PointInVarVar { lhs: VarId, rhs: VarId },
     /// `var ∋ constant`.
-    ContainsVarConst {
+    PointInVarConst {
         var: VarId,
         constant: ConstSide<'rule>,
     },
     /// `constant ∋ var`.
-    ContainsConstVar {
+    PointInConstVar {
         constant: ConstSide<'rule>,
         var: VarId,
     },
@@ -254,8 +242,8 @@ fn shaped_var_const(
             var_on_left,
             constant,
         },
-        OpClass::Contains if var_on_left => Shaped::ContainsVarConst { var, constant },
-        OpClass::Contains => Shaped::ContainsConstVar { constant, var },
+        OpClass::PointIn if var_on_left => Shaped::PointInVarConst { var, constant },
+        OpClass::PointIn => Shaped::PointInConstVar { constant, var },
     }
 }
 
@@ -291,10 +279,8 @@ fn sealed_mask(mask: MaskTerm, mirrored: bool) -> MaskConst {
     }
 }
 
-/// The order operators' operand screen: an interval operand and a digest
-/// operand get their dedicated diagnostics — the predictable mistake
-/// gets the good error (order on bytes is an encoding artifact, identity
-/// only: `docs/architecture/10-data-model.md`).
+/// The order operators' operand screen: every equality-only type gets its
+/// dedicated diagnostic before accepted comparison classification.
 fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(), ValidationError> {
     match operand {
         Some(ValueType::Interval { .. }) => {
@@ -303,6 +289,8 @@ fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(),
         Some(ValueType::FixedBytes { .. }) => {
             Err(ValidationError::OrderComparisonOnFixedBytes { index })
         }
+        Some(ValueType::String) => Err(ValidationError::OrderComparisonOnString { index }),
+        Some(ValueType::Bool) => Err(ValidationError::OrderComparisonOnBool { index }),
         _ => Ok(()),
     }
 }
@@ -535,7 +523,7 @@ impl Context {
             // The measure is a computation over a bound variable, not a
             // bindable value (docs/architecture/20-query-ir.md, § the
             // measure).
-            Term::Duration(_) => {
+            Term::Measure(_) => {
                 return Err(ValidationError::DurationInBinding {
                     atom: occ_idx,
                     field,
@@ -573,7 +561,7 @@ impl Context {
                 self.note_param_kind(*param, ParamKind::Set)?;
                 self.anchor_param_mono(*param, field_type)?;
             }
-            Term::Duration(_) => {
+            Term::Measure(_) => {
                 return Err(ValidationError::DurationInBinding {
                     atom: occ_idx,
                     field,
@@ -585,14 +573,6 @@ impl Context {
                 // `Value::String` documents the UTF-8 contract.
                 Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
                     return Err(ValidationError::LiteralTypeMismatch {
-                        atom: occ_idx,
-                        field,
-                    });
-                }
-                // Unreachable for a scalar field (kind is checked
-                // first), kept total for the mapping.
-                Err(LiteralMismatch::IntervalEmpty) => {
-                    return Err(ValidationError::EmptyIntervalLiteral {
                         atom: occ_idx,
                         field,
                     });
@@ -707,22 +687,22 @@ impl Context {
                         lhs: *l,
                         rhs: *r,
                     },
-                    OpClass::Contains => Shaped::ContainsVarVar { lhs: *l, rhs: *r },
+                    OpClass::PointIn => Shaped::PointInVarVar { lhs: *l, rhs: *r },
                 })
             }
             // The measure's comparison discipline (20-query-ir, § the
             // measure): one `Duration` side at most, and only under the
             // order operators — sealed measure-on-left (a comparison
             // written measure-second mirrors its operator).
-            (Term::Duration(_), Term::Duration(_)) => {
+            (Term::Measure(_), Term::Measure(_)) => {
                 Err(ValidationError::DurationBothSides { index })
             }
-            (Term::Duration(interval), Term::Var(scalar))
-            | (Term::Var(scalar), Term::Duration(interval)) => {
+            (Term::Measure(interval), Term::Var(scalar))
+            | (Term::Var(scalar), Term::Measure(interval)) => {
                 let OpClass::Order { op, mirror } = class else {
                     return Err(ValidationError::DurationComparisonOperator { index });
                 };
-                let measure_on_left = matches!(lhs, Term::Duration(_));
+                let measure_on_left = matches!(lhs, Term::Measure(_));
                 if measure_on_left {
                     self.comparison_var(*interval)?;
                     self.comparison_var(*scalar)?;
@@ -736,12 +716,12 @@ impl Context {
                     scalar: *scalar,
                 })
             }
-            (Term::Duration(interval), Term::Param(param))
-            | (Term::Param(param), Term::Duration(interval)) => {
+            (Term::Measure(interval), Term::Param(param))
+            | (Term::Param(param), Term::Measure(interval)) => {
                 let OpClass::Order { op, mirror } = class else {
                     return Err(ValidationError::DurationComparisonOperator { index });
                 };
-                let measure_on_left = matches!(lhs, Term::Duration(_));
+                let measure_on_left = matches!(lhs, Term::Measure(_));
                 if measure_on_left {
                     self.comparison_var(*interval)?;
                     self.note_param_kind(*param, ParamKind::Scalar)?;
@@ -755,14 +735,14 @@ impl Context {
                     constant: ConstSide::Param(*param),
                 })
             }
-            (Term::Duration(interval), Term::Literal(value))
-            | (Term::Literal(value), Term::Duration(interval)) => {
+            (Term::Measure(interval), Term::Literal(value))
+            | (Term::Literal(value), Term::Measure(interval)) => {
                 let OpClass::Order { op, mirror } = class else {
                     return Err(ValidationError::DurationComparisonOperator { index });
                 };
                 self.comparison_var(*interval)?;
                 Ok(Shaped::OrdMeasureConst {
-                    op: if matches!(lhs, Term::Duration(_)) {
+                    op: if matches!(lhs, Term::Measure(_)) {
                         op
                     } else {
                         mirror
@@ -771,15 +751,15 @@ impl Context {
                     constant: ConstSide::Literal(value),
                 })
             }
-            (Term::Duration(interval), Term::ParamSet(param))
-            | (Term::ParamSet(param), Term::Duration(interval)) => {
+            (Term::Measure(interval), Term::ParamSet(param))
+            | (Term::ParamSet(param), Term::Measure(interval)) => {
                 if !matches!(class, OpClass::Order { .. }) {
                     return Err(ValidationError::DurationComparisonOperator { index });
                 }
                 // An order operator is never `Eq`, so the set side is
                 // illegal whichever side it was written on — after the
                 // written-order checks that outrank it.
-                if matches!(lhs, Term::Duration(_)) {
+                if matches!(lhs, Term::Measure(_)) {
                     self.comparison_var(*interval)?;
                 }
                 self.note_param_kind(*param, ParamKind::Set)?;
@@ -851,14 +831,14 @@ impl Context {
     /// bivalent variable and anchoring an unanchored param. Runs to a
     /// fixpoint so comparison order cannot matter. Incompatibilities are
     /// left standing (never overwritten): `comparison_types` diagnoses
-    /// them against final types. `Contains` propagates nothing — its
+    /// them against final types. `PointIn` propagates nothing — its
     /// right side is legally either reading of the left (the predicate
     /// form of the membership rule), so neither side names the other.
     fn propagate_comparison_anchors(&mut self, rule: &LoweredRule) -> Result<(), ValidationError> {
         loop {
             let mut changed = false;
             for Comparison { op, lhs, rhs } in &rule.conditions {
-                if matches!(op, CmpOp::Contains) {
+                if matches!(op, CmpOp::PointIn) {
                     continue;
                 }
                 let known_lhs = self.term_mono_type(lhs);
@@ -891,7 +871,7 @@ impl Context {
             // The measure is u64-valued by definition, whatever its
             // variable resolves to (the interval requirement is checked
             // in `check_order` against final types).
-            Term::Duration(_) => Some(ValueType::U64),
+            Term::Measure(_) => Some(ValueType::U64),
         }
     }
 
@@ -924,7 +904,7 @@ impl Context {
             // A set never takes an interval type; its collapse would be
             // its own error, diagnosed in `comparison_types` — and a
             // measure names its own type (u64), never its variable's.
-            Term::ParamSet(_) | Term::Literal(_) | Term::Duration(_) => false,
+            Term::ParamSet(_) | Term::Literal(_) | Term::Measure(_) => false,
         }
     }
 
@@ -1191,37 +1171,37 @@ impl Context {
                     mask: sealed_mask(*mask, !var_on_left),
                 })
             }
-            // `Contains`: point membership as a predicate — an interval
+            // `PointIn`: point membership as a predicate — an interval
             // side, an **element-typed** point side (the predicate form
             // of the membership binding rule, for terms already bound
             // elsewhere). The interval⊇interval form is gone: that
             // predicate is `Allen(COVERS)`, and an interval-typed point
             // side is an illegal comparison.
-            Shaped::ContainsVarVar { lhs, rhs } => {
+            Shaped::PointInVarVar { lhs, rhs } => {
                 let ValueType::Interval { element } = *self.resolved_var_type(*lhs) else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 if *self.resolved_var_type(*rhs) != element_type(element) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
-                Ok(ClassifiedComparison::ContainsVarVar {
+                Ok(ClassifiedComparison::PointInVarVar {
                     interval: *lhs,
                     point: *rhs,
                 })
             }
-            Shaped::ContainsVarConst { var, constant } => {
+            Shaped::PointInVarConst { var, constant } => {
                 let ValueType::Interval { element } = *self.resolved_var_type(*var) else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 match constant {
                     ConstSide::Param(param) => {
-                        // A `Contains` point side is a point at an
+                        // A `PointIn` point side is a point at an
                         // interval position: the ceiling rule applies at
                         // bind, where the value exists (the point-domain
                         // law).
                         self.interval_position_params.insert(*param);
                         self.anchor_param_mono(*param, &element_type(element))?;
-                        Ok(ClassifiedComparison::ContainsVarPoint {
+                        Ok(ClassifiedComparison::PointInVarPoint {
                             interval: *var,
                             point: SealedConst::Param(*param),
                         })
@@ -1235,7 +1215,7 @@ impl Context {
                                     index,
                                 });
                             }
-                            Ok(ClassifiedComparison::ContainsVarPoint {
+                            Ok(ClassifiedComparison::PointInVarPoint {
                                 interval: *var,
                                 point: SealedConst::Literal((*value).clone()),
                             })
@@ -1244,7 +1224,7 @@ impl Context {
                     },
                 }
             }
-            Shaped::ContainsConstVar { constant, var } => match constant {
+            Shaped::PointInConstVar { constant, var } => match constant {
                 ConstSide::Param(param) => {
                     // The point side is the variable: its element type
                     // names the param's interval domain.
@@ -1263,9 +1243,6 @@ impl Context {
                     let Some(ValueType::Interval { element }) = literal_anchor_type(value) else {
                         return Err(ValidationError::IllegalComparison { index });
                     };
-                    if literal_matches(value, &ValueType::Interval { element }).is_err() {
-                        return Err(ValidationError::ComparisonEmptyIntervalLiteral { index });
-                    }
                     if *self.resolved_var_type(*var) != element_type(element) {
                         return Err(ValidationError::IllegalComparison { index });
                     }
@@ -1327,9 +1304,6 @@ impl Context {
     ) -> Result<(), ValidationError> {
         match literal_matches(value, expected) {
             Ok(()) => Ok(()),
-            Err(LiteralMismatch::IntervalEmpty) => {
-                Err(ValidationError::ComparisonEmptyIntervalLiteral { index })
-            }
             Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
                 Err(ValidationError::IllegalComparison { index })
             }

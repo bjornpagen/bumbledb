@@ -1,6 +1,6 @@
 //! The point-lookup scenario: a key-value-shaped store where every
 //! query touches a handful of rows. This is `SQLite`'s home turf — one
-//! B-tree descent per point — and the regime where bumbledb's guard
+//! B-tree descent per point — and the regime where bumbledb’s determinant index
 //! probe and per-execution overhead (snapshot open, bind, memo check)
 //! either hold up or drown the win. String keys stress the interning
 //! dictionary on every lookup.
@@ -89,7 +89,7 @@ fn param(id: u16) -> Term {
     Term::Param(ParamId(id))
 }
 
-/// p1 — point by fresh id (the guard probe vs one B-tree descent).
+/// p1 — point by fresh id (the key probe vs one B-tree descent).
 fn by_id() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -237,13 +237,13 @@ pub fn scenario() -> Scenario {
                     name: "p1_by_id",
                     query: by_id,
                     params: |seed| id_params(seed, 1),
-                    about: "fresh-id point: guard probe vs B-tree descent",
+                    about: "fresh-id point: key probe vs B-tree descent",
                 },
                 ScenarioQuery {
                     name: "p2_by_key",
                     query: by_key,
                     params: key_params,
-                    about: "keyed string point: dictionary + guard",
+                    about: "keyed string point: dictionary + determinant index",
                 },
                 ScenarioQuery {
                     name: "p3_bucket_fetch",

@@ -14,7 +14,7 @@ use crate::storage::read;
 
 use super::decode::{decode_fact, decode_plan, fill_columns};
 use super::{
-    Column, ColumnSpan, ColumnWidth, LINE, PitchPadder, RelationImage, SET_STRIDE, column_spans,
+    Column, ColumnSpan, ColumnWidth, LINE, RelationImage, SET_STRIDE, StridePadder, column_spans,
 };
 
 /// Checked slab lengths (in words and bytes) for the stored row count.
@@ -47,8 +47,8 @@ struct Frame {
 }
 
 /// Allocates the frame: one up-front allocation per backing store, sized
-/// from the row count plus per-column alignment/stagger slack, column
-/// bases 128-byte aligned with pitches padded off 16 KiB multiples (the
+/// from the row count plus per-column alignment/stride slack, column
+/// bases 128-byte aligned with strides padded off 16 KiB multiples (the
 /// tracker-aliasing rule, measured). Every slab-size computation is
 /// checked; overflow is typed Corruption *before* any allocation is
 /// attempted.
@@ -72,7 +72,7 @@ fn allocate(field_types: &[TypeDesc], row_count: usize) -> Result<Frame> {
 
     let words_addr = words.as_ptr().addr();
     let bytes_addr = bytes.as_ptr().addr();
-    let mut stagger = PitchPadder::new();
+    let mut padder = StridePadder::new();
     let mut word_cursor = 0usize;
     let mut byte_cursor = 0usize;
     let mut columns: Vec<Column> = Vec::with_capacity(column_count);
@@ -84,7 +84,7 @@ fn allocate(field_types: &[TypeDesc], row_count: usize) -> Result<Frame> {
         );
         let word_columns = match span.width {
             ColumnWidth::Byte => {
-                let start = stagger.place(bytes_addr, 1, byte_cursor);
+                let start = padder.place(bytes_addr, 1, byte_cursor);
                 byte_cursor = start + row_count;
                 columns.push(Column::Bytes { start });
                 continue;
@@ -94,7 +94,7 @@ fn allocate(field_types: &[TypeDesc], row_count: usize) -> Result<Frame> {
             ColumnWidth::Words { count } => usize::from(count),
         };
         for _ in 0..word_columns {
-            let start = stagger.place(words_addr, 8, word_cursor);
+            let start = padder.place(words_addr, 8, word_cursor);
             word_cursor = start + row_count;
             columns.push(Column::Words { start });
         }
@@ -209,7 +209,7 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
 /// rows' canonical fact bytes (encoded ONCE, at validate) decode through
 /// exactly the plan a stored fact would, so the column layout, the
 /// implicit `id` column (`0..rows`, first — the synthetic field opens the
-/// sealed field list), pitch padding, and the lazy distinct counters are
+/// sealed field list), stride padding, and the lazy distinct counters are
 /// all the ordinary image machinery, untouched.
 ///
 /// # Panics

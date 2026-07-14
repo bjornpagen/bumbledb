@@ -1,4 +1,4 @@
-use bumbledb::{Db, ResultBuffer};
+use bumbledb::{Answers, Db};
 
 use crate::cli::CorpusArgs;
 use crate::harness::{self, Rotation};
@@ -41,7 +41,7 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
     let query = (family.query)();
     let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
     let mut rotation = Rotation::new((family.params)(&cfg));
-    let mut buffer = ResultBuffer::new();
+    let mut buffer = Answers::new();
     let mut run = || {
         let args = crate::families::param_args(rotation.next_set());
         db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))

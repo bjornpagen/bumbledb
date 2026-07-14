@@ -18,7 +18,7 @@ use super::{Applied, Applier};
 ///
 /// # Errors
 ///
-/// `CommitRejected` when two live facts claim one key — the same guard
+/// `CommitRejected` when two live facts claim one key — the same determinant
 /// (scalar) or overlapping intervals in one scalar-prefix group
 /// (pointwise) — carrying the COMPLETE set of violated key statements:
 /// conflicts record and phase 2 finishes the scan before the rejection

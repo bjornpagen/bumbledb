@@ -14,11 +14,11 @@ inputs fixed there — the ladder the comptime pass implemented end to end:
 1. **Expansion** (the macros): names resolve to declaration-order ids, handles to
    row ids, the theory to descriptors — everything the source text fixes.
 2. **Open** (`Db::create`/`open`): the schema validates and seals — closed
-   extensions encode once into sealed rows, σ-literal checks compile
+   extensions encode once into sealed ground axioms, σ-literal checks compile
    (`CompiledCheck`), statements into closed relations compile to their member
    word-sets (`Resolved::ClosedContainment` — the enforcement plan IS the answer
    set), the fingerprint pins it all.
-3. **Prepare**: normalization, the chase (elimination and evaluation — closed
+3. **Prepare**: normalization, the grounding (elimination and evaluation — closed
    atoms fold against their sealed extensions into plan-constant handle sets),
    subsumption, the DP, and the statistics pin. A prepared plan is the theory's
    judgment of the query, not the data's.
@@ -49,26 +49,26 @@ once.
 
 ## Access paths (before any join machinery)
 
-**Guard-probe point lookups.** A single-atom query whose bindings cover a key of the
+**Key-probe point lookups.** A single-atom query whose bindings cover a key of the
 relation (an FD statement, including the auto-key on fresh fields —
-`30-dependencies.md`) or the full fact executes as: one `U`-guard (or `M`-membership)
+`30-dependencies.md`) or the full fact executes as: one `U` determinant (or `M`-membership)
 LMDB get → one `F` fetch → decode. No images, no COLT, no plan search. This serves the
 headline "point lookup by key" workload at O(log n), including immediately after a
 commit (no rebuild cost).
 **Decision.** **Alternative:** COLT-only ("the join engine is the only read path") —
-lost because a fully-bound lookup through images pays an O(n) scan for a one-row answer
+lost because a fully-bound lookup through images pays an O(n) scan for a one-answer result
 and loses the benchmark family outright; the paper itself lists index-blindness as an
-open limitation (§6). **Reverses if:** never — the guards exist anyway (rule: every
+open limitation (§6). **Reverses if:** never — the determinants exist anyway (rule: every
 mechanism names its reader; this is `U`/`M`'s read-side reader).
 
 **Statically empty programs.** A program whose every rule the normalization
 fold refuted on constants (`20-query-ir.md`, § normalization — mutually
 unsatisfiable constant conditions) prepares to the empty program. Prepared
-execution has two rule kinds — guard probe and Free Join — plus this
+execution has two rule kinds — key probe and Free Join — plus this
 program-level empty variant. Execution binds params first — bind errors still surface, a
 vacuous Allen mask param is rejected exactly as on a live plan — then
 touches no images, binds no views, runs no join, and the result is the
-empty buffer. EXPLAIN prints `access path: statically empty` plus each dead
+empty buffer. Plan introspection prints `access path: statically empty` plus each dead
 rule's killing condition; a dead rule inside a live program was deleted at
 prepare and its record prints the same way.
 
@@ -81,9 +81,9 @@ interval occurrence shares **no equality variable** with the rest of the query i
 Cartesian with a filter — O(bindings × n), like any Cartesian, and only a stabbing
 structure could do better. Real interval workloads carry their group key
 (per-account, per-room); the randomized generator bounds itself to that shape
-(`60-validation.md`). Candidate mechanism recorded for trigger day: **guard skip
-scan** — `U` guards are already ordered composite keys of fixed per-statement
-width, so a non-prefix guard lookup or a range scan under a low-cardinality
+(`60-validation.md`). Candidate mechanism recorded for trigger day: **determinant skip
+scan** — `U` determinants are already ordered composite keys of fixed per-statement
+width, so a non-prefix determinant lookup or a range scan under a low-cardinality
 leading field (closed-reference discriminators) is servable with zero new structures by
 cursor `set_range` prefix-hopping (O(distinct-leading-prefixes × log n)); not
 applicable to interval stabbing, whose pointwise layout needs the coverage-walk
@@ -121,7 +121,7 @@ filters** (lowered negated atoms).
   which every variable of the negated atom is bound — and evaluate as: probe the
   negated occurrence for any matching fact; a hit **rejects** the binding. The
   negated occurrence is never a cover, contributes no plan variables, and its COLT
-  (or, when its bindings cover a key, its `U`/`M` guard — the same access-path
+  (or, when its bindings cover a key, its `U`/`M` determinant index — the same access-path
   hierarchy as positive lookups) is forced only to the levels the probe needs.
   In batches, anti-probe misses are survivors and hits are compacted away —
   branchless, identical machinery to residual failure. **This probe is the same
@@ -150,18 +150,18 @@ no residual concept; we own filter placement because there is no external optimi
   single-variable covers all qualify. The alternative — equality-checking a mixed
   cover's old variables per iterated entry — buys generality no plan shape here needs.
 - **Execution** (§3.3 vocabulary, pipelined implementation): the root or an absorb
-  node supplies pending binding rows plus carried cursor sets. Each middle node
-  `pump`s those rows, chooses a cover per parent entry, and `probe_pass` batches
+  node supplies pending binding tuples plus carried cursor sets. Each middle node
+  `pump`s those tuples, chooses a cover per parent entry, and `probe_pass` batches
   sibling probes across parents: hash, prefetch, load, then branchlessly compact
-  survivors. Survivors become the next node's pending rows; the leaf runs its batch
+  survivors. Survivors become the next node's pending tuples; the leaf runs its batch
   paths and emits complete bindings to the sink. D2 suffix skips cancel the origin
   below the absorb node instead of unwinding a call stack.
 
   **The zero-arity cover collapses to one entry.** A zero-binding nonemptiness gate
   (a positive atom with no variables) reaches the executor as a zero-arity cover —
-  every position yields the same empty key row, so under set semantics one entry
+  every position yields the same empty key tuple, so under set semantics one entry
   stands for the whole suffix and `pump`/`run_node` stop after a single yield.
-  Enumerating instead multiplies the join by the gate relation's row count for zero
+  Enumerating instead multiplies the join by the gate relation's fact count for zero
   distinguishable bindings; a projection's D2 first-emit skip masked that, an
   aggregate (never skips, and a gate defeats the distinct-bindings elision, so the
   seen-set runs) folded |join| × |gate| duplicate bindings — the S-scale crucible
@@ -173,7 +173,7 @@ no residual concept; we own filter placement because there is no external optimi
   **Deviation (paper §3.3):** the paper presents per-tuple recursive descent with
   backtracking. BumbleDB accumulates work across node entries in the pipeline above
   so deep nodes receive full batches. Origin cancellation is sound because a late
-  cancellation can only re-emit a row already held by the spanning seen-set:
+  cancellation can only re-emit an answer already held by the spanning seen-set:
   cancellation skips work but cannot change the result under set semantics. The
   paper's cross-node-entry-accumulation caveat is therefore retired, not pending.
 - **COLT** (§4.2): lazy tries — a node is offsets into the base columns or a forced
@@ -188,7 +188,7 @@ no residual concept; we own filter placement because there is no external optimi
   bounds on iteration cost. v0 rule, **magnitude-first**: the smaller magnitude wins
   regardless of label; on a tie `Exact` wins (it cannot shrink); a full tie keeps the
   lowest subatom index (deterministic). A label-first rule ("an Exact
-  always displaces an Estimate") iterated a 500-key forced map while a 7-row
+  always displaces an Estimate") iterated a 500-key forced map while a 7-fact
   param-filtered view sat unforced beside it — the measured balance wrong-cover.
 - **`binary2fj` + conservative `factor()`** (§4.1): the paper's construction over the
   DP planner's left-deep output, with one correction required by its own worked
@@ -199,8 +199,8 @@ no residual concept; we own filter placement because there is no external optimi
 **`ValidatedPlan` contents** (the witness type execution trusts): atom occurrences with
 field→column maps; the node list with subatom partitions; per-node cover sets; per-
 occurrence trie schemas derived per §3.3; per-node residual **and anti-probe** lists;
-per-atom filter lists; the binding-slot layout (below); and the
-provably-distinct-bindings flag (below). Validated once at construction; nothing
+per-atom filter lists; the binding-slot layout (below); and the optional
+`DistinctWitness` (below). Validated once at construction; nothing
 downstream re-checks.
 
 ## Set semantics in the executor
@@ -217,7 +217,7 @@ consumer walks widths rather than assuming one.
 Two facts identical on all *bound* variables produce the same binding; the solution is a
 **set** of bindings, so duplicates must collapse before folding:
 
-- The **projection sink** dedups projected facts (its job anyway).
+- The **projection sink** dedups projected answers (its job anyway).
 - The **aggregate sink** folds a binding only on first occurrence, using a seen-set of
   full binding tuples — the same arena-backed mechanism as projection dedup.
 - **`CountDistinct`** folds through a per-group distinct-value set (one word per
@@ -225,37 +225,40 @@ Two facts identical on all *bound* variables produce the same binding; the solut
   like the group map.
 - **Arg-restriction (`ArgMax`/`ArgMin`)** is a group-state fold, not a
   post-materialization pass: per group the sink keeps the current extreme key and
-  the set of surviving projected rows; a strictly-better key clears the set, an
+  the set of surviving projected answers; a strictly-better key clears the set, an
   equal key inserts (ties are set-honest, `20-query-ir.md`), a worse key is a
   no-op. Memory is O(groups × ties), and ties are structurally rare (fresh keys
   cannot tie).
 - **`Pack`** is a group-state fold with a **relation-shaped finalize**
   (semantics in `20-query-ir.md` § aggregation): per group the sink accumulates
   the claim list — `[start, end]` encoded word pairs appended raw, pooled by
-  group index (the Arg row-set precedent, capacity retained across executions);
+  group index (the Arg answer-set precedent, capacity retained across executions);
   finalize sorts each group's list by start word (`sort_unstable` — the in-place
   machinery, allocation-free; a pooled radix stays unearned until the bench
   shows the sort on a profile) and drives the shared segment sweep's
   (`interval/sweep.rs` — the coverage judgment's walk, `Pack`'s finalize is its
-  second continuation) maximal-run emission: one head row per maximal segment.
+  second continuation) maximal-run emission: one head answer per maximal segment.
   Identical and overlapping claims collapse in the sweep, never at fold time;
   memory is O(the group's claims) — retained high-water scratch under the
   allocation contract, gated like every sink pool. Like `CountDistinct` and
-  Arg, the set-valued group state folds per row (no gather kernel or scan
+  Arg, the set-valued group state folds per binding (no gather kernel or scan
   pushdown applies).
 - **Elision optimization:** if every atom occurrence's bound fields cover a key of
   its relation (typical for ledger queries that bind fresh ids), distinct facts ⇒
-  distinct bindings, and the plan carries a proof flag that lets the aggregate sink
-  skip the seen-set entirely. Provable at plan time from the schema's FD statements —
-  a representation-level fix, not a runtime branch per binding.
+  distinct bindings. `provably_distinct` is the only mint for
+  `DistinctWitness`; `AggregateSink::without_seen_set` requires that witness by
+  value, and the ordinary/union constructors cannot omit the set. This is a
+  single-rule proof: the multi-rule union keeps its spanning head-projection
+  seen-set even when every rule has its own witness. That is deliberately distinct
+  from the measured cross-rule elision refutation below.
 - **Rule-disjointness knowledge:** `plan/fj/provably_disjoint.rs` recognizes a
   multi-rule program whose heads are provably pairwise disjoint. **Witness form**:
   a relation R and field f such that both rules bind a positive R occurrence whose
   filters pin f to different concrete literals, while that occurrence's bound key
-  columns flow to the same head positions. Equal head rows would force the pinned
+  columns flow to the same head positions. Equal head answers would force the pinned
   facts to agree on R's key — one fact whose f cannot equal two literals. The
   DU-arm union is exactly this shape. The proof is conservative and pairwise;
-  params, sets, and mixed constant forms pin nothing. EXPLAIN retains the knowledge
+  params, sets, and mixed constant forms pin nothing. Plan introspection retains the knowledge
   as `disjoint_rules: proven (R.f)`, but execution always keeps one head-projection
   seen-set spanning a multi-rule program.
 
@@ -266,7 +269,7 @@ Two facts identical on all *bound* variables produce the same binding; the solut
   loss: 1376.9 µs versus 937.2 µs, −31.9%; per-repetition clock-normalized p50s
   were 1375.2 and 936.8 µs, both clean. Both arms emitted 82,983 bindings and
   absorbed zero, excluding D2 cancellation as the cause. The failed representation
-  still built a per-rule dedup map, then copied every entry to a row buffer and
+  still built a per-rule dedup map, then copied every entry to an answer carrier and
   cleared the map at each rule boundary — extra O(n) drain/copy passes versus the
   spanning map's single final walk. It was deleted. Reconsider only for a workload
   where spanning-map probe cost measurably dominates and D2 skip provably never
@@ -277,7 +280,7 @@ Two facts identical on all *bound* variables produce the same binding; the solut
 are membership; binding dedup as above; and the executor may **skip a plan suffix after
 the first witness** when (a) the active sink is the projection sink and (b) the suffix
 binds only variables outside the projection set — the emitted fact cannot change, so
-the pipeline cancels that row's origin below its absorb node on the sink's first-emit
+the pipeline cancels that binding's origin below its absorb node on the sink's first-emit
 signal. The skip is **never legal under
 an aggregate sink** (any new bound variable multiplies the binding set the fold is
 defined over). **The skip is per-rule**: each rule of a program executes its own plan,
@@ -297,8 +300,8 @@ interval type. **Reverses if:** never structurally.
 ## The rule loop
 
 A prepared query is a program — one head, a list of prepared rules, each either a
-guard probe or a Free Join rule carrying its own `ValidatedPlan` (the whole planning
-pipeline runs for each non-guard rule at prepare). Execution runs the
+key probe or a Free Join rule carrying its own `ValidatedPlan` (the whole planning
+pipeline runs for each non-key-probe rule at prepare). Execution runs the
 rules **sequentially** into **one sink**: the sink resets once per execution, never
 per rule, and its dedup machinery spanning rules is the *entire* implementation of set
 union. **Union is not an operator** — no merge node, no concat-then-dedup pass exists
@@ -316,13 +319,13 @@ and stays a non-goal.
   the fold domain is the union of the rules' binding sets projected to the head".
   The single-rule aggregate keys the full slot array (its fold domain is the rule's
   distinct full bindings — the normative single-rule semantics, unchanged).
-  Under the rule-disjointness proof (§ set semantics) the spanning guard is
-  dropped: the projection map drains per rule and the composed aggregate
-  seen-set is elided — a collision the theorem forbids needs no set to absorb it.
+  The spanning set remains under the rule-disjointness proof (§ set semantics):
+  `DisjointWitness` is diagnostic knowledge, and the measured refutation above
+  rejects the slower per-rule drain representation.
 - **Per-rule re-aiming:** the sink's slot tables (projection slots; aggregate finds,
   group spans, head-projection spans) re-aim to each rule's binding layout at rule
   entry — head positions are fixed (arity, ops, widths, types), slots are the rule's.
-  The shared maps (rows, groups, seen-sets, value sets) carry across rules untouched:
+  The shared maps (answers, groups, seen-sets, value sets) carry across rules untouched:
   the spanning is the point. Binding-slot scratch is shared across rules, re-sized to
   each rule's layout at rule entry; executor scratch stays per-rule (it is
   plan-shaped: slot maps, node buffers).
@@ -330,8 +333,8 @@ and stays a non-goal.
   reads; per-rule state is only what is plan-shaped (resolved filters, selections,
   the view memo). A rule whose `Eq`-anchored constant misses the dictionary
   short-circuits **that rule only** — a rule is one disjunct.
-- **Guard-probe rules** union through the sink like any other rule; the direct
-  no-sink decode lane applies only to the single-rule guard program (the union must
+- **Key-probe rules** union through the sink like any other rule; the direct
+  no-sink decode lane applies only to the single-rule key-probe program (the union must
   hear every rule).
 - **The view memo under rules:** occurrences of one relation in different rules share
   the image `Arc` by construction (one `ImageCache`, one build per
@@ -349,14 +352,17 @@ and stays a non-goal.
 
 ## Planner
 
-**The chase: elimination and evaluation.** Placement: after normalization,
+**Grounding: elimination and evaluation.** This is not dependency-theory
+fresh-witness repair: it creates no values and repairs no database. The pass
+GROUNDS sealed atoms by evaluating their fixed finite extensions at plan time,
+the Datalog term. Placement: after normalization,
 before statistics and the DP, **per rule and independently** — a union's rules
-are independent conjunctive bodies, so the chase distributes over them with no
+are independent conjunctive bodies, so the grounding distributes over them with no
 cross-rule state and no new theory, and a rule shrinking below its cover
 requirements re-validates like any rule — one fixpoint over the occurrence
-table's `Role` sum (`plan/chase.rs`) running two rewrites that expose each
+table's `Role` sum (`plan/ground.rs`) running two rewrites that expose each
 other: **elimination** marks provably redundant positive occurrences
-`Role::Eliminated(statement)`, and **evaluation** (`plan/chase/evaluate.rs`)
+`Role::Eliminated(statement)`, and **evaluation** (`plan/ground/evaluate.rs`)
 marks prepare-evaluable closed-relation occurrences `Role::Folded` — marks,
 never removals, so occurrence ids never move. Elimination removes atoms that
 statements prove redundant; evaluation removes atoms whose extension is
@@ -364,7 +370,7 @@ stage-0-known by *running them at prepare*: `Kind(id: k, mastered == true)` is
 not a join to plan — it is a three-element id-set computed before the DP ever
 sees the query, residual cost zero. Both rewrites are continuously verified
 semantics-preserving by the rewrites fuzz target (`60-validation.md` § the
-fuzzing charter — the dual-pipeline differential through the `chase-off`
+fuzzing charter — the dual-pipeline differential through the `ground-off`
 switch).
 
 *Elimination.* An accepted containment
@@ -394,7 +400,7 @@ passes through the candidate is refused — a pair may not certify itself). Soun
 here and nowhere like Postgres because no deferral modes exist: every readable
 snapshot satisfies every accepted statement (`30-dependencies.md`), and Y's
 key-ness maps the surviving binding set 1:1, so removal is result-identical
-under both sinks — projection and aggregate alike. The marks' readers: EXPLAIN
+under both sinks — projection and aggregate alike. The marks' readers: plan introspection
 and the structured stats (each mark rendered with its licensing statement
 through `schema/render.rs`), and the DP, which sees a smaller problem.
 **Alternative:** no rewrite — leave redundant existence walks to D2's
@@ -422,7 +428,7 @@ to join against its virtual image, which is L1-resident and always correct):
    is a per-execution error, and evaluation would move it to prepare.
 3. `C` is not negated (negated atoms fold to the complement — below).
 
-The fold evaluates `C`'s filters against the sealed extension rows at prepare
+The fold evaluates `C`'s filters against the sealed extension's ground axioms at prepare
 (n ≤ 256, encoded-word compares and the scalar Allen classify — never a batch
 kernel), producing the surviving id-set `S`. `|S| ≥ 1` with a live `k`: `C` is
 marked `Role::Folded` and `S` attaches to every other occurrence binding `k`
@@ -438,7 +444,7 @@ deleted at prepare exactly like a normalize-time death. No live `k` (a pure
 constant gate): `|S| ≥ 1` deletes the atom outright and `|S| == 0` kills the
 rule — but only a **var-less** gate may delete: a dead-but-bound variable
 still multiplies an aggregate's fold domain (the binding set is over all query
-variables — D2), so a var-binding guard refuses.
+variables — D2), so a variable-binding gate refuses.
 
 **The payload refusal, recorded:** a closed atom with a live non-id variable —
 payload escaping to the head ("return each event's severity rank") — keeps its
@@ -464,16 +470,16 @@ whose field carries an accepted containment into the closed relation's id
 (with the statement's φ carried literally by that occurrence). No witness →
 the fold refuses and the anti-probe stays.
 
-EXPLAIN reports folds beside eliminations, off the `Role::Folded` marks — the
+Plan introspection reports folds beside eliminations, off the `Role::Folded` marks — the
 surviving set as **handles**, the vocabulary's names (the handle set IS the
 payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated:
 `folded: !Kind{…} → {…} rejected`); the differential off-switch
-(`with_chase_disabled`) covers the evaluator inside the same fixpoint, and the
+(`with_grounding_disabled`) covers the evaluator inside the same fixpoint, and the
 dual-run corpus pins byte-identical results — the fold is never semantic.
 The normalization fold's narrower `with_fold_disabled` switch is compiled under
 `cfg(any(test, feature = "fold-off"))` — the engine unit suites and, through the
 revived `fold-off` fuzz-oracle feature, the fuzz crate's rewrites dual-pipeline
-differential reach it; the bench differential deliberately uses the chase switch
+differential reach it; the bench differential deliberately uses the grounding switch
 because that switch covers the evaluator in the same fixpoint.
 
 **Rule subsumption, the restricted witness.** After elimination, if one rule's
@@ -485,17 +491,17 @@ mapping) and the subsumed rule is **deleted** at prepare: classical UCQ
 minimization, restricted to the cheap witness the DNF path actually produces
 (a lowered `(φ ∨ true-by-elimination)` pair whose second disjunct's filter
 rode the eliminated occurrence). The check is normalized-form containment
-(`plan/chase.rs::subsume`), O(rules²) at prepare with rules ≤ 16, and nothing
+(`plan/ground.rs::subsume`), O(rules²) at prepare with rules ≤ 16, and nothing
 recursive. **Refused, the general form:** full CQ-homomorphism minimization is
 NP-hard, so the witness never searches variable mappings — `VarId`s must
 already agree, which is exactly what DNF-cloned rules provide. Deleting a rule
 never changes the head (the head-alignment invariant is re-checked after
 deletion), a program shrunk to one rule sheds its union machinery like any
-single-rule program, EXPLAIN reports deleted rules with the subsuming rule's
+single-rule program, plan introspection reports deleted rules with the subsuming rule's
 index (lowered-rule indices) beside the per-rule eliminated atoms, and the
 differential off-switch covers both passes.
 
-**Statistics** (all real, nothing else exists): exact per-relation row counts
+**Statistics** (all real, nothing else exists): exact per-relation fact counts
 (maintained on write, stored in `S`); schema dependency knowledge (keys and
 containments — `30-dependencies.md`); filter survivor counts — *measured, not
 estimated*: filtered views are built before planning completes for the atoms whose
@@ -512,16 +518,16 @@ and each is documented at its definition.
 **Join cardinality estimator, written down:** for `L ⋈ R` on join variables J —
 - J covers a key of R (incl. fresh auto-keys): estimate = |L| (reference walk; exact
   upper bound).
-- J covers a key of L: estimate = min(est(P), |R|) — each R row matches at most one
-  prefix row, and each prefix row matches at most |R|; the min is the correct bound.
+- J covers a key of L: estimate = min(est(P), |R|) — each R fact matches at most one
+  prefix binding, and each prefix binding matches at most |R|; the min is the correct bound.
 - Neither: estimate = |L| × |R| — **no estimate exists, so pessimism**, which pushes
   non-key joins last; that is the correct behavior, not a modeling failure.
-|X| is the row count or the filtered-view survivor count. Negated occurrences enter
+|X| is the fact count or the filtered-view survivor count. Negated occurrences enter
 no estimate — they only shrink results, and the planner treats them as free filters
 (pessimistic in the right direction).
 
 **Search:** exhaustive DP over positive atom occurrences, **left-deep only**,
-minimizing the sum of prefix estimates *including the base relation's rows* (counting
+minimizing the sum of prefix estimates *including the base relation's facts* (counting
 the root iteration breaks ties toward iterating the small side). The cap is 20
 occurrences (a 2²⁰-state table, ~32 MB transient plus a 16 MB per-mask
 prefix-variables memo; the cap is enforced at the validation boundary as a roster
@@ -614,7 +620,7 @@ portable lane form when it measured at or above the scalar-unrolled bodies
 for irregular control flow —
 the law is about reductions, not loops in general (`00-product.md` machine
 model; unsafe policy there too). Columns are 128-byte-aligned SoA
-with pitch-padded bases (`50-storage.md`). Scalar fallback everywhere, equal results by
+with stride-padded bases (`50-storage.md`). Scalar fallback everywhere, equal results by
 test across batch sizes. **Vectorized execution is the default and only path** — a
 scalar "mode" exists solely as the degenerate batch size where useful for testing; a
 "vectorized mode" that wraps scalar loops without batching is the failure shape this
@@ -637,7 +643,7 @@ so no fixed-width scratch and no eligibility branch exist to cap them. Short
 
 **COLT force is single-pass with chunked child lists:** forcing pushes each offset into
 its key's child list, chunked (64 offsets per arena chunk, chained by chunk — bounded
-pointer-chase, independent loads within a chunk), rather than the paper's growable
+bounded pointer traversal, independent loads within a chunk), rather than the paper's growable
 per-key vectors or a two-pass contiguous layout (which decodes and hashes every row
 twice). **Deviation:** the paper's leaves are plain vectors; ours are
 chunked. **Reverses if:** a force+iterate microbenchmark shows two-pass-contiguous
@@ -680,7 +686,7 @@ caller-provided. **High-water:** after warmup on the coldest parameter, a
 parameter sequence of strictly increasing selectivity — each parameter binds a
 strictly hotter key — asserts that allocations occur **only** on executions
 setting a new intermediate high-water: every repeat of a previously-seen
-parameter, immediate or later, is allocation-silent, and the window guards its
+parameter, immediate or later, is allocation-silent, and the window protects its
 own vacuousness — the harness must observe at least one growth event across the
 escalation, or the run proves nothing. First-execution and post-commit rebuild
 allocations are sanctioned and outside both windows. Param sets draw from the
@@ -719,14 +725,14 @@ consumes it exactly like any image; only its source and lifetime differ.
 
 ## Observability
 
-**EXPLAIN exists from day one** and is the debugging story. Mechanism — a
+**Plan introspection exists from day one** and is the debugging story. Mechanism — a
 representation, not a mode: the executor is generic over a `Counters` trait;
 the normal path instantiates `NoopCounters` (zero-sized, compiled to nothing — no
-runtime branch, no hot-loop cost), and the EXPLAIN entry point instantiates the
+runtime branch, no hot-loop cost), and the plan introspection entry point instantiates the
 counting implementation and **executes the query** (ANALYZE semantics), reporting **per
 rule** the plan, per-node estimated vs actual cardinalities, residual and anti-probe
 selectivity, cover-choice histograms (choices aggregated per node, not per entry),
-and the chase's eliminated occurrences — read straight off the plan's
+and the grounding's eliminated occurrences — read straight off the plan's
 `Role::Eliminated` marks, each rendered with its licensing statement through
 `schema/render.rs` (e.g. `eliminated: Grading via Grading(id | kind == Det) ==
 Det(grading)`) — plus the **head-level union accounting**: per rule, bindings
@@ -739,7 +745,10 @@ with its subsuming rule's index (`subsumed: rule 0 by rule 1`, lowered-rule
 indices — the per-rule sections are the survivors). The obs registry mirrors it: one `RULE` span
 per rule under the execute span (`rule_N` — the index rides in the name,
 `MAX_RULES`-bounded), args (emitted, absorbed), populated on counted paths.
-Output shape: OPEN. Release builds contain no other instrumentation: no per-tuple labels, no
+The output contract is `introspection v2`: byte-identical within the version for
+identical schema fingerprint, canonical query, parameter types, and features, with
+the fixed ordering specified in `70-api.md`. Any content or ordering change bumps
+the rendered and structured version together. Release builds contain no other instrumentation: no per-tuple labels, no
 always-on counters, no diagnostics allocation anywhere in the join loops.
 
 ## Measured mechanisms
@@ -784,7 +793,7 @@ Six measured decisions, enforced structurally by
   positions-upper-bound; both are admissible iteration-cost bounds, so
   `better_cover` compares magnitudes and uses the label only on ties. A
   label-first "Exact displaces Estimate" rule iterates a 500-key forced map over a
-  7-row view — the measured wrong-cover this rule exists to prevent.
+  7-fact view — the measured wrong-cover this rule exists to prevent.
 - **Dense map iteration and occupancy sizing.** Forced maps carry a dense
   occupied-slot list (iteration is O(keys), never O(capacity); the map
   `BatchToken` is a dense index) and size from
@@ -812,7 +821,7 @@ Six measured decisions, enforced structurally by
   When the count is zero and the query has no params of any shape,
   `resolve_filters` is **skipped entirely** — the resolved tables were
   written once and are final (one cold branch at rule entry). Sound
-  because the prepared query owns its plan (`!Sync`, env-instance-guarded)
+  because the prepared query owns its plan (`!Sync`, environment-instance-pinned)
   and generational immutability never invalidates a word. The latch writes
   fixed-size words into existing slots — the alloc gate's `literal-latch`
   scenario pins zero allocation across the crossing.
@@ -824,7 +833,7 @@ per-binding fanout `rows / distinct(join field)` with key coverage pinning
 fanout to 1.
 
 **Estimator record (2026-07-12, scale-S read-family reports):** the observed
-EXPLAIN estimate/executed-actual factor is classed by query hypergraph, not
+Plan introspection estimate/executed-actual factor is classed by query hypergraph, not
 presented as one estimator-accuracy bound. Among profiled acyclic ledger and
 calendar families the worst was 691.2× (`conflict_free`); the cyclic class was
 4761.9× (`triangle`, its only member). The derivation is the three regenerated
@@ -833,7 +842,7 @@ execution-work ratios: a node's `actual` is the next executed-node entry count,
 or final sink emissions, after legal D2 cancellation. They are therefore not
 pure denotation-cardinality error. The fixture
 `cyclic_estimate_diagnosis_is_p3_not_a_domain_or_range_defect` separates the
-premises: with exact resident distincts and a three-row closed domain, a toy
+premises: with exact resident distincts and a three-axiom closed domain, a toy
 cycle's full-head estimates/actuals are `24/24, 192/192, 576/192` (P3's closing
 two-variable independence error); its narrow projected head executes
 `24/24, 192/24, 576/24`, with 21 emissions absorbed, because D2 stops existential

@@ -12,7 +12,7 @@
 //! execution.
 
 use crate::exec::colt::Colt;
-use crate::exec::dispatch::GuardPlan;
+use crate::exec::dispatch::KeyProbePlan;
 use crate::exec::run::{Bindings, Executor};
 use crate::exec::sink::{AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::{Const, FilterPredicate};
@@ -20,6 +20,7 @@ use crate::ir::validate::Predicate;
 use crate::plan::fj::ValidatedPlan;
 use crate::schema::{Schema, ValueType};
 
+mod answers;
 mod bind;
 mod build;
 mod either_sink;
@@ -27,7 +28,6 @@ mod execute;
 mod finalize;
 mod introspect;
 mod resolve_memo;
-mod result_buffer;
 mod run_join;
 mod staleness;
 mod view_memo;
@@ -82,9 +82,9 @@ pub enum ParamArg<'a> {
     Set(&'a [crate::ir::Value]),
 }
 
-/// One decoded output cell, borrowed from a [`ResultBuffer`].
+/// One decoded answer cell, borrowed from [`Answers`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResultValue<'a> {
+pub enum AnswerValue<'a> {
     Bool(bool),
     U64(u64),
     I64(i64),
@@ -113,12 +113,12 @@ enum Cell {
     IntervalI64(crate::interval::Interval<i64>),
 }
 
-/// The caller-owned, reusable result buffer: columns are the find terms in
-/// order; rows are unordered (results are sets — the host sorts). The byte
+/// The caller-owned, reusable answer set: columns are the find terms in
+/// order; answers are unordered (query denotations are sets — the host sorts). The byte
 /// heap is the single sanctioned allocation site of a warm execution, and
 /// `clear` retains every capacity.
 #[derive(Debug, Default)]
-pub struct ResultBuffer {
+pub struct Answers {
     arity: usize,
     cells: Vec<Cell>,
     bytes: Vec<u8>,
@@ -126,8 +126,8 @@ pub struct ResultBuffer {
 
 /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md): each
 /// distinct string intern word is resolved through LMDB exactly once per
-/// finalize, and its bytes land in the output buffer exactly once — K
-/// rows sharing one memo string cost one B-tree lookup and one byte
+/// finalize, and its bytes land in the answer carrier exactly once — K
+/// answers sharing one memo string cost one B-tree lookup and one byte
 /// copy, not K. Cleared per finalize (the ranges point into that call's
 /// buffer); capacity is retained, growing to the distinct-string
 /// high-water like every other execution scratch. Keys are bare words:
@@ -138,22 +138,22 @@ struct ResolveMemo {
     /// word → packed `(start, len)` into the buffer's bytes.
     ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
     /// The last resolution: run-coherent columns
-    /// (few distinct interns, clustered rows) skip even the map probe.
+    /// (few distinct interns, clustered answers) skip even the map probe.
     last: Option<(u64, (usize, usize))>,
 }
 
-/// One result row, borrowed from a [`ResultBuffer`].
+/// One query answer, borrowed from [`Answers`].
 #[derive(Clone, Copy)]
-pub struct Row<'a> {
-    buffer: &'a ResultBuffer,
-    row: usize,
+pub struct Answer<'a> {
+    buffer: &'a Answers,
+    answer: usize,
 }
 
 /// The reusable execution object. `!Sync` by construction (interior
 /// scratch); executes from one thread at a time; owns its scratch.
 /// Carries the preparing database's schema typestate `S`, so it executes
 /// only against same-schema snapshots (the same-environment check stays
-/// a runtime guard — `env_instance`).
+/// a runtime key-probe check — `env_instance`).
 ///
 /// Not shareable across threads:
 ///
@@ -173,19 +173,19 @@ pub struct PreparedQuery<'s, S> {
     /// pairwise disjoint, carrying the witness — the (relation, field)
     /// whose differing pinned literals forbid cross-rule head
     /// collisions. `None` for single-rule programs and unproven pairs.
-    /// Readers: EXPLAIN and the structured stats. The executor deliberately
+    /// Readers: introspection and the structured stats. The executor deliberately
     /// does not spend this proof; see the measured refutation in
     /// `docs/architecture/40-execution.md`.
     disjoint_rules: Option<crate::plan::fj::DisjointWitness>,
-    /// The subsumption record (`plan/chase.rs`): rules deleted at
+    /// The subsumption record (`plan/ground.rs`): rules deleted at
     /// prepare, each with its subsuming rule, in lowered-rule indices —
     /// `rules` below holds only the survivors, in order. Readers:
-    /// EXPLAIN and the structured stats.
+    /// introspection and the structured stats.
     subsumed: Vec<crate::api::stats::SubsumedRule>,
     /// The statically-empty record (`ir/normalize/fold.rs`): rules whose
     /// constant conditions refuted themselves at normalize, deleted at
     /// prepare with the killing condition — `rules` below holds only the
-    /// live ones. Readers: EXPLAIN and the structured stats.
+    /// live ones. Readers: introspection and the structured stats.
     dead: Vec<crate::api::stats::DeadRule>,
     /// Per rule, in rule order: the rule's validated plan plus its
     /// plan-shaped execution scratch — the whole plan pipeline ran per
@@ -235,17 +235,16 @@ pub struct PreparedQuery<'s, S> {
     /// recursion, re-sized to the rule's slot layout at rule entry —
     /// capacity is the high-water across all rules.
     bindings: Bindings,
-    /// Aggregate-finalization row scratch.
-    row_scratch: Vec<u64>,
-    /// No interned finds: finalize takes the
-    /// infallible all-words blit.
-    all_words: bool,
+    /// Aggregate-finalization answer scratch.
+    answer_scratch: Vec<u64>,
+    /// Final answer materialization regime, sealed from the predicate.
+    answer_heap: AnswerHeap,
     /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md).
     resolve_memo: ResolveMemo,
-    /// Guard-key byte scratch.
-    guard_key: Vec<u8>,
+    /// KeyProbe-key byte scratch.
+    determinant_key: Vec<u8>,
     /// The query in the rule notation ([`crate::ir::render`]), rendered
-    /// once at prepare — the EXPLAIN report's header and the
+    /// once at prepare — the introspection report's header and the
     /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
     /// on diagnostic surfaces, never on the warm path.
     rendered: String,
@@ -272,7 +271,7 @@ enum Program {
 )]
 enum PreparedRule {
     FreeJoin(FreeJoinRule),
-    Guard(GuardRule),
+    KeyProbe(KeyProbeRule),
 }
 
 struct FreeJoinRule {
@@ -295,7 +294,7 @@ struct FreeJoinRule {
     /// `resolve_filters` pass (a short-circuited pass leaves later
     /// slots unwritten and does not set it) — one leg of the
     /// fully-latched fast path.
-    resolved_complete: bool,
+    resolution: ResolutionState,
     /// The view memo (docs/architecture/40-execution.md): per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
@@ -307,12 +306,13 @@ struct FreeJoinRule {
     pinned: Box<[OccurrencePin]>,
 }
 
-struct GuardRule {
-    plan: GuardPlan,
+struct KeyProbeRule {
+    plan: KeyProbePlan,
+    distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     finds: Vec<FindSpec>,
     /// The direct point lane's find table. `Some` iff every find is a plain
-    /// variable; aggregate and measure guard rules keep the shared sink.
-    guard_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
+    /// variable; aggregate and measure key-probe rules keep the shared sink.
+    key_probe_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
 }
 
 impl Program {
@@ -335,28 +335,28 @@ impl PreparedRule {
     fn finds(&self) -> &[FindSpec] {
         match self {
             Self::FreeJoin(rule) => &rule.finds,
-            Self::Guard(rule) => &rule.finds,
+            Self::KeyProbe(rule) => &rule.finds,
         }
     }
 
     fn slot_count(&self) -> usize {
         match self {
             Self::FreeJoin(rule) => rule.plan.slot_count(),
-            Self::Guard(rule) => rule.plan.slot_count(),
+            Self::KeyProbe(rule) => rule.plan.slot_count(),
         }
     }
 
-    fn distinct_bindings(&self) -> bool {
+    fn distinct_witness(&self) -> Option<crate::plan::fj::DistinctWitness> {
         match self {
-            Self::FreeJoin(rule) => rule.plan.distinct_bindings(),
-            Self::Guard(_) => true,
+            Self::FreeJoin(rule) => rule.plan.distinct_witness(),
+            Self::KeyProbe(rule) => rule.distinct_witness,
         }
     }
 
     fn pinned(&self) -> &[OccurrencePin] {
         match self {
             Self::FreeJoin(rule) => &rule.pinned,
-            Self::Guard(_) => &[],
+            Self::KeyProbe(_) => &[],
         }
     }
 }
@@ -378,6 +378,22 @@ enum ParamSpec {
     Mask,
 }
 
+/// Whether finalization can blit words directly or must populate the
+/// owned byte heap for string/fixed-byte answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnswerHeap {
+    Words,
+    Bytes,
+}
+
+/// Whether every symbolic filter/selection slot was written by a complete
+/// resolution pass. Only `Complete` licenses the warm resolution skip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolutionState {
+    Pending,
+    Complete,
+}
+
 /// How many (generation, resolved residual filters) bindings each
 /// occurrence memoizes: the active one plus [`PARKED_SLOTS`] parked.
 /// Four covers the bench rotation and the handful of bindings real
@@ -392,7 +408,7 @@ const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 /// Parked bindings always carry a real generation: only executed
 /// bindings park (prepare leaves every slot empty).
 struct ParkedView {
-    generation: u64,
+    generation: ViewGeneration,
     filters: Vec<FilterPredicate>,
     colt: Colt,
     last_used: u64,
@@ -411,7 +427,7 @@ struct ViewMemo {
     colts: Vec<Colt>,
     /// The active binding's generation, per occurrence (`None` =
     /// unbound).
-    generation: Vec<Option<u64>>,
+    generation: Vec<Option<ViewGeneration>>,
     /// The active binding's resolved residual filters, per occurrence.
     filters: Vec<Vec<FilterPredicate>>,
     /// Parked bindings, [`PARKED_SLOTS`] per occurrence, empty at
@@ -425,6 +441,15 @@ struct ViewMemo {
     tick: u64,
 }
 
+/// The immutable identity of one executable view. Closed relations are
+/// keyed by the theory itself rather than by fabricating a storage
+/// generation sentinel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ViewGeneration {
+    Storage(crate::GenerationId),
+    Closed,
+}
+
 /// The two sink shapes behind one monomorphized dispatch (an enum, not
 /// `dyn` — the variant is fixed per prepared query).
 #[expect(
@@ -432,12 +457,12 @@ struct ViewMemo {
     reason = "boxing the hot sink would add indirection to every emit"
 )] // Projection stays unboxed: it is
 // the hot variant (per-item emit paths reach through it), one prepared
-// query holds exactly one sink, and the pipeline scratch rows
+// query holds exactly one sink, and the pipeline scratch answers
 // that tripped the lint are the working set itself.
 enum EitherSink {
     Projection(ProjectionSink),
     /// Boxed: the batch-fold scratch grew the sink past the
     /// variant-size lint; one prepared query holds one sink, and the
-    /// indirection is paid once per batch, never per row.
+    /// indirection is paid once per batch, never per answer.
     Aggregate(Box<AggregateSink>),
 }

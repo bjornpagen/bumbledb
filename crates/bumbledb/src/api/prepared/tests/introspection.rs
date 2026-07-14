@@ -1,18 +1,18 @@
 use super::*;
 
 #[test]
-fn explain_reports_the_join_plan_with_actuals() {
-    let dir = TempDir::new("prepared-explain");
+fn introspection_reports_the_join_plan_with_actuals() {
+    let dir = TempDir::new("prepared-introspect");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a", 1), (2, 7, "b", 2)]);
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let (rows, report) = prepared
-        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
-        .expect("explain");
-    assert_eq!(rows.len(), 2);
+    let (answers, report) = prepared
+        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .expect("introspect");
+    assert_eq!(answers.len(), 2);
     assert!(report.contains("free join"));
     assert!(report.contains("emitted bindings: 2"));
 }
@@ -21,8 +21,8 @@ fn explain_reports_the_join_plan_with_actuals() {
 /// signature authority (`ir/validate`), one column per head position,
 /// fold kinds by their rule-notation names.
 #[test]
-fn the_explain_header_renders_the_predicate() {
-    let dir = TempDir::new("prepared-explain-predicate");
+fn the_introspection_header_renders_the_predicate() {
+    let dir = TempDir::new("prepared-introspect-predicate");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a", 1), (2, 7, "b", 2)]);
@@ -31,8 +31,8 @@ fn the_explain_header_renders_the_predicate() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (_, report) = prepared
-        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .expect("introspect");
     assert!(report.contains("predicate: (string, i64)"), "{report}");
 
     // The fold-bearing head: the column renders its producing kind.
@@ -52,13 +52,13 @@ fn the_explain_header_renders_the_predicate() {
         conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &count_query).expect("prepare");
-    let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(report.contains("predicate: (u64, Count u64)"), "{report}");
 }
 
-/// The stats surface carries the pin record — golden on one EXPLAIN
+/// The stats surface carries the pin record — golden on one introspection
 /// report: every node estimate is "estimated from (pinned rows at
-/// prepare)", and a guard probe (which reads no statistics) pins
+/// prepare)", and a key probe (which reads no statistics) pins
 /// nothing.
 #[test]
 fn the_stats_surface_carries_the_pinned_rows() {
@@ -92,15 +92,15 @@ fn the_stats_surface_carries_the_pinned_rows() {
     );
 
     let (_, report) = prepared
-        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .expect("introspect");
     assert!(
         report.contains("estimated from (pinned rows at prepare): 3"),
         "{report}"
     );
 
-    // A guard probe classifies before statistics: nothing is pinned.
-    let guard_query = Query::single(Rule {
+    // A key probe classifies before statistics: nothing is pinned.
+    let key_probe_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -112,13 +112,13 @@ fn the_stats_surface_carries_the_pinned_rows() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
-    let (_, stats) = guard
+    let mut key_probe = prepare(&txn, &cache, &schema, &key_probe_query).expect("prepare");
+    let (_, stats) = key_probe
         .profile(&txn, &cache, &[BindValue::U64(1)])
         .expect("profile");
     assert!(
         stats.rules[0].pinned.is_empty(),
-        "guard probes read no statistics"
+        "key probes read no statistics"
     );
 }
 
@@ -140,13 +140,13 @@ fn profile_returns_structured_stats_matching_the_execution() {
     let txn = env.read_txn().expect("txn");
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let (rows, stats) = prepared
+    let (answers, stats) = prepared
         .profile(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
         .expect("profile");
-    assert_eq!(rows.len(), 2);
+    assert_eq!(answers.len(), 2);
     assert_eq!(stats.emits, 2);
     let rule = &stats.rules[0];
-    assert!(rule.guard.is_none());
+    assert!(rule.key_probe.is_none());
     assert_eq!(rule.emitted, 2);
     assert_eq!(rule.absorbed, 0, "distinct rows: nothing absorbed");
     assert!(!rule.nodes.is_empty());
@@ -157,16 +157,16 @@ fn profile_returns_structured_stats_matching_the_execution() {
         "batching counters populated: {stats:?}"
     );
 
-    // The rendered explain is built from the same struct — spot-pin
+    // The rendered introspect is built from the same struct — spot-pin
     // the format so the golden contract holds.
     let (_, report) = prepared
-        .explain(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
+        .expect("introspect");
     assert!(report.contains("access path: free join"), "{report}");
     assert!(report.contains("emitted bindings: 2"), "{report}");
 
-    // Guard profile: no nodes, a hit flag.
-    let guard_query = Query::single(Rule {
+    // KeyProbe profile: no nodes, a hit flag.
+    let key_probe_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -178,21 +178,21 @@ fn profile_returns_structured_stats_matching_the_execution() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
-    let (rows, stats) = guard
+    let mut key_probe = prepare(&txn, &cache, &schema, &key_probe_query).expect("prepare");
+    let (answers, stats) = key_probe
         .profile(&txn, &cache, &[BindValue::U64(1)])
         .expect("profile");
-    assert_eq!(rows.len(), 1);
+    assert_eq!(answers.len(), 1);
     assert!(stats.rules[0].nodes.is_empty());
     assert_eq!(
-        stats.rules[0].guard,
-        Some(crate::api::stats::GuardStats { hit: true })
+        stats.rules[0].key_probe,
+        Some(crate::api::stats::KeyProbeStats { hit: true })
     );
-    let (_, stats) = guard
+    let (_, stats) = key_probe
         .profile(&txn, &cache, &[BindValue::U64(999)])
         .expect("profile");
     assert_eq!(
-        stats.rules[0].guard,
-        Some(crate::api::stats::GuardStats { hit: false })
+        stats.rules[0].key_probe,
+        Some(crate::api::stats::KeyProbeStats { hit: false })
     );
 }

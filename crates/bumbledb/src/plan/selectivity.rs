@@ -1,5 +1,5 @@
 //! Prepare-time cardinality estimation (docs/architecture/40-execution.md): per-occurrence
-//! input estimates for the join-order DP and the EXPLAIN/report
+//! input estimates for the join-order DP and the introspection/report
 //! honesty numbers. Three sources, strongest first — schema structure
 //! (free and exact), resident-image exact distinct counts, documented
 //! constant floors. Prepare **never builds** an image for statistics
@@ -171,7 +171,7 @@ fn occurrence_estimate(
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
                 CmpOp::Eq => unreachable!("split_filters routed Eq into selections"),
-                CmpOp::Allen { .. } | CmpOp::Contains => {
+                CmpOp::Allen { .. } | CmpOp::PointIn => {
                     unreachable!("interval conditions lower to their fixed shapes")
                 }
             },
@@ -179,7 +179,7 @@ fn occurrence_estimate(
                 CmpOp::Eq => FIELDS_EQ_KEEP_DEN,
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
-                CmpOp::Allen { .. } | CmpOp::Contains => {
+                CmpOp::Allen { .. } | CmpOp::PointIn => {
                     unreachable!("same-atom interval conditions lower to their fixed shapes")
                 }
             },
@@ -191,7 +191,7 @@ fn occurrence_estimate(
             // is exact, not a default).
             FilterPredicate::PointIn { .. }
             | FilterPredicate::AnyPointIn { .. }
-            | FilterPredicate::FieldsContainPoint { .. }
+            | FilterPredicate::FieldsPointIn { .. }
             | FilterPredicate::FieldWithin { .. }
             | FilterPredicate::DurationCompare { .. }
             | FilterPredicate::DurationFieldsCompare { .. } => RANGE_KEEP_DEN,
@@ -244,14 +244,14 @@ fn distinct_of(
         let span = image.span(field);
         let first = usize::from(span.first_column);
         let distinct = match span.width {
-            ColumnWidth::Byte | ColumnWidth::Word => image.distinct(first),
+            ColumnWidth::Byte | ColumnWidth::Word => image.cardinality(first),
             // Multi-word fields: each column's distinct count lower-
             // bounds the tuple's, so the max is the tightest sound
             // estimate one-column counters give (exact tuple distincts
             // stay the sinks' k-word map job, not the planner's).
             ColumnWidth::WordPair | ColumnWidth::Words { .. } => (first
                 ..first + usize::from(span.width.column_count()))
-                .map(|column| image.distinct(column))
+                .map(|column| image.cardinality(column))
                 .max()
                 .expect("at least one column"),
         };
@@ -827,7 +827,7 @@ mod tests {
     /// P3 diagnosis: a three-edge cycle with exact resident distincts and a
     /// three-row closed vocabulary on `x`. The full head shows the inherent
     /// independence error at the closing two-variable probe; the narrow head
-    /// additionally shows that EXPLAIN's final-node `actual` is emitted set
+    /// additionally shows that introspection's final-node `actual` is emitted set
     /// witnesses after D2 cancellation, not the cycle's full binding count.
     /// P1 is pinned by the closed-domain fanout, and P2 is absent by
     /// construction (there are no range conditions).

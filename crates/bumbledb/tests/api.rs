@@ -7,7 +7,7 @@
 
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, Value, VarId};
 use bumbledb::schema::FieldId;
-use bumbledb::{BindValue, Db, Direction, Fact, ResultBuffer, ResultValue, StatementId, Theory};
+use bumbledb::{AnswerValue, Answers, BindValue, Db, Direction, Fact, StatementId, Theory};
 
 mod common;
 
@@ -93,7 +93,7 @@ fn aggregate_query() -> Query {
     })
 }
 
-/// Q(balance) :- Account(id = ?0, balance) — the point-lookup (guard) shape.
+/// Q(balance) :- Account(id = ?0, balance) — the point-lookup (key probe) shape.
 fn point_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -111,20 +111,20 @@ fn point_query() -> Query {
 
 /// Collects a two-column (String, I64) result buffer into a sorted vec —
 /// results are sets; the host sorts.
-fn name_amount_rows(out: &ResultBuffer) -> Vec<(String, i64)> {
-    let mut rows: Vec<(String, i64)> = (0..out.len())
-        .map(|row| {
-            let ResultValue::String(name) = out.get(row, 0) else {
+fn name_amount_answers(out: &Answers) -> Vec<(String, i64)> {
+    let mut answers: Vec<(String, i64)> = (0..out.len())
+        .map(|answer| {
+            let AnswerValue::String(name) = out.get(answer, 0) else {
                 panic!("column 0 is a string");
             };
-            let ResultValue::I64(amount) = out.get(row, 1) else {
+            let AnswerValue::I64(amount) = out.get(answer, 1) else {
                 panic!("column 1 is an i64");
             };
             (name.to_owned(), amount)
         })
         .collect();
-    rows.sort();
-    rows
+    answers.sort();
+    answers
 }
 
 #[test]
@@ -163,18 +163,18 @@ fn usage_shapes_end_to_end() {
         })
         .expect("write");
 
-    // Read: point lookup (guard probe), join, aggregate.
+    // Read: point lookup (key probe), join, aggregate.
     let mut point = db.prepare(&point_query()).expect("prepare point");
     let mut join = db.prepare(&join_query()).expect("prepare join");
     let mut aggregate = db.prepare(&aggregate_query()).expect("prepare agg");
     db.read(|snap| {
-        let rows = snap.execute_collect(&mut point, &[BindValue::U64(accounts[2].id.0)])?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows.get(0, 0), ResultValue::I64(40));
+        let answers = snap.execute_collect(&mut point, &[BindValue::U64(accounts[2].id.0)])?;
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers.get(0, 0), AnswerValue::I64(40));
 
-        let rows = snap.execute_collect(&mut join, &[])?;
+        let answers = snap.execute_collect(&mut join, &[])?;
         assert_eq!(
-            name_amount_rows(&rows),
+            name_amount_answers(&answers),
             vec![
                 ("alice".to_owned(), -25),
                 ("alice".to_owned(), 100),
@@ -182,9 +182,9 @@ fn usage_shapes_end_to_end() {
             ]
         );
 
-        let rows = snap.execute_collect(&mut aggregate, &[])?;
+        let answers = snap.execute_collect(&mut aggregate, &[])?;
         assert_eq!(
-            name_amount_rows(&rows),
+            name_amount_answers(&answers),
             vec![("alice".to_owned(), 75), ("bob".to_owned(), 40)]
         );
         Ok(())
@@ -205,18 +205,18 @@ fn usage_shapes_end_to_end() {
     .expect("mutate");
 
     db.read(|snap| {
-        let rows = snap.execute_collect(&mut join, &[])?;
+        let answers = snap.execute_collect(&mut join, &[])?;
         assert_eq!(
-            name_amount_rows(&rows),
+            name_amount_answers(&answers),
             vec![
                 ("alice".to_owned(), -25),
                 ("alice".to_owned(), 90),
                 ("bob".to_owned(), 40),
             ]
         );
-        let (rows, report) = snap.explain(&mut join, &[])?;
-        assert_eq!(rows.len(), 3);
-        assert!(!report.is_empty(), "explain renders a report");
+        let (answers, report) = snap.introspect(&mut join, &[])?;
+        assert_eq!(answers.len(), 3);
+        assert!(!report.is_empty(), "introspect renders a report");
         Ok(())
     })
     .expect("read after mutate");
@@ -395,14 +395,17 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
 
     // Identity: both databases answer the join identically.
     let mut join_old = old.prepare(&join_query()).expect("prepare");
-    let rows_old = old
+    let answers_old = old
         .read(|snap| snap.execute_collect(&mut join_old, &[]))
         .expect("query old");
     let mut join_new = new.prepare(&join_query()).expect("prepare");
-    let rows_new = new
+    let answers_new = new
         .read(|snap| snap.execute_collect(&mut join_new, &[]))
         .expect("query new");
-    assert_eq!(name_amount_rows(&rows_old), name_amount_rows(&rows_new));
+    assert_eq!(
+        name_amount_answers(&answers_old),
+        name_amount_answers(&answers_new)
+    );
 
     // The fresh high-water advanced past the explicit imports.
     new.write(|tx| {
@@ -585,7 +588,7 @@ fn open_mismatches_and_snapshot_usability() {
     .expect("seed");
     let mut join = db.prepare(&join_query()).expect("prepare");
     db.read(|snap| {
-        let mut out = ResultBuffer::new();
+        let mut out = Answers::new();
         // Wrong param count: a typed error...
         let err = snap
             .execute(&mut join, &[BindValue::U64(1)], &mut out)
@@ -626,8 +629,8 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
         }
         // The pinned snapshot still answers at its own generation.
         assert_eq!(snap.scan_facts::<Holder>()?.count(), 1);
-        let rows = snap.execute_collect(&mut join, &[])?;
-        assert_eq!(rows.len(), 0);
+        let answers = snap.execute_collect(&mut join, &[])?;
+        assert_eq!(answers.len(), 0);
         Ok(())
     })
     .expect("pinned read");
@@ -712,7 +715,7 @@ fn disk_size_and_generation_report_store_state() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let empty = db.disk_size().expect("size");
     assert!(empty > 0, "a fresh environment still has pages");
-    assert_eq!(db.generation().expect("gen"), 0);
+    assert_eq!(db.generation().expect("gen").value(), 0);
 
     db.write(|tx| {
         for _ in 0..10_000u64 {
@@ -727,7 +730,7 @@ fn disk_size_and_generation_report_store_state() {
     .expect("bulk write");
     let grown = db.disk_size().expect("size");
     assert!(grown > empty, "10k facts grow the file: {empty} -> {grown}");
-    assert_eq!(db.generation().expect("gen"), 1);
+    assert_eq!(db.generation().expect("gen").value(), 1);
 }
 
 /// The magnitude-first cover choice (docs/architecture/40-execution.md), end to end: the
@@ -908,13 +911,17 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
         })
         .expect("seed one distinct fact pair");
     }
-    assert_eq!(db_a.generation().expect("gen a"), 1);
-    assert_eq!(db_b.generation().expect("gen b"), 1, "both clocks read 1");
+    assert_eq!(db_a.generation().expect("gen a").value(), 1);
+    assert_eq!(
+        db_b.generation().expect("gen b").value(),
+        1,
+        "both clocks read 1"
+    );
 
     let mut prepared = db_a.prepare(&join_query()).expect("prepare on A");
     db_a.read(|snap| {
         let out = snap.execute_collect(&mut prepared, &[])?;
-        assert_eq!(name_amount_rows(&out), vec![("alice".to_owned(), 10)]);
+        assert_eq!(name_amount_answers(&out), vec![("alice".to_owned(), 10)]);
         Ok(())
     })
     .expect("execute on the preparing db");
@@ -927,13 +934,13 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
         );
-        let mut out = ResultBuffer::new();
+        let mut out = Answers::new();
         let err = snap.execute(&mut prepared, &[], &mut out).unwrap_err();
         assert!(
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
         );
-        let err = snap.explain(&mut prepared, &[]).unwrap_err();
+        let err = snap.introspect(&mut prepared, &[]).unwrap_err();
         assert!(
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
@@ -943,7 +950,7 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
             matches!(err, bumbledb::Error::ForeignPreparedQuery),
             "{err:?}"
         );
-        // The staleness signal guards its entry identically: pinned
+        // The staleness signal checks its entry identically: pinned
         // statistics belong to the preparing environment.
         let err = prepared.staleness(snap).unwrap_err();
         assert!(
@@ -957,7 +964,7 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
     // The preparing db still executes fine afterward.
     db_a.read(|snap| {
         let out = snap.execute_collect(&mut prepared, &[])?;
-        assert_eq!(name_amount_rows(&out), vec![("alice".to_owned(), 10)]);
+        assert_eq!(name_amount_answers(&out), vec![("alice".to_owned(), 10)]);
         Ok(())
     })
     .expect("A unaffected");
@@ -1031,7 +1038,7 @@ fn create_refuses_a_foreign_lmdb_environment() {
 
 /// `Db::write` is non-reentrant — a nested call on the same
 /// thread panics with the named message instead of deadlocking forever,
-/// and the guard clears for the next (sequential) write.
+/// and the write lock clears for the next (sequential) write.
 #[test]
 fn nested_write_panics_instead_of_deadlocking() {
     let dir = common::TempDir::new("api-nested-write");
@@ -1047,7 +1054,7 @@ fn nested_write_panics_instead_of_deadlocking() {
         .expect("string panic payload");
     assert!(message.contains("nested Db::write"), "{message}");
 
-    // Sequential writes on the same thread still work: the guard cleared.
+    // Sequential writes on the same thread still work: the write lock cleared.
     db.write(|tx| {
         let id: HolderId = tx.alloc()?;
         tx.insert(&Holder {
@@ -1060,7 +1067,7 @@ fn nested_write_panics_instead_of_deadlocking() {
 
 /// The concurrency family: prepared queries on
 /// reader threads race a writer that moves two facts together every
-/// commit. Every execution must observe both rows at one generation —
+/// commit. Every execution must observe both answers at one generation —
 /// equal balances, always — never a torn mix of two generations.
 #[test]
 fn prepared_executions_observe_exactly_one_generation() {
@@ -1120,15 +1127,15 @@ fn prepared_executions_observe_exactly_one_generation() {
         for _ in 0..3 {
             scope.spawn(|| {
                 let mut prepared = db.prepare(&join_query()).expect("prepare");
-                let mut out = ResultBuffer::new();
+                let mut out = Answers::new();
                 for _ in 0..80 {
                     db.read(|snap| {
                         snap.execute(&mut prepared, &[], &mut out)?;
-                        let rows = name_amount_rows(&out);
-                        assert_eq!(rows.len(), 2, "both facts, always: {rows:?}");
+                        let answers = name_amount_answers(&out);
+                        assert_eq!(answers.len(), 2, "both facts, always: {answers:?}");
                         assert_eq!(
-                            rows[0].1, rows[1].1,
-                            "a torn read mixed two generations: {rows:?}"
+                            answers[0].1, answers[1].1,
+                            "a torn read mixed two generations: {answers:?}"
                         );
                         Ok(())
                     })
@@ -1195,9 +1202,14 @@ fn escaped_fresh_ids_survive_noop_commits() {
 
     // Neither no-op moved the generation: Q marks are write-path
     // bookkeeping, not query-visible state.
-    assert_eq!(generation_after_a, 0, "a bare alloc is not a state change");
     assert_eq!(
-        generation_after_c, 1,
+        generation_after_a.value(),
+        0,
+        "a bare alloc is not a state change"
+    );
+    assert_eq!(
+        generation_after_c.value(),
+        1,
         "a nets-to-nothing write is not a state change"
     );
 }

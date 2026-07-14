@@ -76,13 +76,13 @@ pub struct Scenario {
     pub queries: fn() -> Vec<ScenarioQuery>,
 }
 
-/// One measured query row of the scenario report.
+/// One measured query entry of the scenario report.
 pub struct QueryReport {
     pub scenario: &'static str,
     pub name: &'static str,
     pub about: &'static str,
-    /// Median result rows across the rotation (the work sanity check).
-    pub rows: u64,
+    /// Median answers across the rotation (the work sanity check).
+    pub answers: u64,
     pub ours: harness::Stats,
     pub theirs: harness::Stats,
     pub ratio_p50: f64,

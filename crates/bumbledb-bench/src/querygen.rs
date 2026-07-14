@@ -30,8 +30,8 @@ pub mod interval_data;
 mod negate;
 mod oracle;
 mod shapes;
-mod shapes_chase;
 mod shapes_closed;
+mod shapes_ground;
 mod shapes_interval;
 mod shapes_rules;
 mod shapes_sink;
@@ -51,7 +51,7 @@ pub use oracle::{ParamDraw, params_for};
 /// adjacent-touching boundary probes, `CountDistinct` over every type,
 /// and Arg-restriction.
 const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
-    (Shape::Guard, 10),
+    (Shape::KeyProbe, 10),
     (Shape::Star, 15),
     (Shape::Chain, 15),
     (Shape::SelfJoin, 8),
@@ -67,7 +67,7 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::Rules, 10),
     (Shape::Measure, 8),
     (Shape::ClosedJoin, 8),
-    (Shape::ClosedFold, 7),
+    (Shape::GroundFold, 7),
 ];
 
 /// Filter dressing applies to every shape with this percent chance…
@@ -77,7 +77,7 @@ const REPEAT_VAR_PCT: u64 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Shape {
-    Guard,
+    KeyProbe,
     Star,
     Chain,
     SelfJoin,
@@ -87,7 +87,7 @@ enum Shape {
     /// var points (the var case constructs its scalar anchor first).
     Membership,
     /// `Allen` masks (composites and random singletons) and `Eq`/`Ne`
-    /// between interval terms, plus the point form of `Contains`.
+    /// between interval terms, plus the `PointIn` predicate.
     IntervalJoin,
     /// The adjacent-touching boundary: query literals recomputed to touch
     /// a corpus interval exactly at its endpoint, both polarities.
@@ -97,7 +97,7 @@ enum Shape {
     /// Arg-restriction: `ArgMax`/`ArgMin` over tie-rich and tie-free
     /// keys, key-projected and multi-carry variants.
     Arg,
-    /// The chase's existence walk (`shapes_chase.rs`): the containment
+    /// The grounding's existence walk (`shapes_ground.rs`): the containment
     /// target joined on its full key with nothing else read from it —
     /// eliminable — plus the extra-projected-field near-miss.
     ExistenceWalk,
@@ -106,7 +106,7 @@ enum Shape {
     DuWalk,
     /// Multi-rule programs (`shapes_rules.rs`): rule counts 2–4,
     /// overlapping and provably-disjoint arm sets (DU-arm unions),
-    /// duplicate head rows across
+    /// duplicate head answers across
     /// rules, and the rules ∧ aggregate union fold.
     Rules,
     /// The measure over the U64 window lane: `Duration` in a find
@@ -121,11 +121,11 @@ enum Shape {
     ClosedJoin,
     /// The fold-shaped pattern PRD 07 targets, under its own family
     /// knob: a closed atom whose only escaping variable is the join id.
-    ClosedFold,
+    GroundFold,
 }
 
 /// Which closed-relation class a query is ([`Shape::ClosedJoin`] /
-/// [`Shape::ClosedFold`]) — the generator's intent, counted by the
+/// [`Shape::GroundFold`]) — the generator's intent, counted by the
 /// closed-class self-test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClosedVariant {
@@ -141,11 +141,11 @@ enum ClosedVariant {
     Fold,
 }
 
-/// Which chase-shape variant a query is ([`Shape::ExistenceWalk`] /
+/// Which grounding-shape variant a query is ([`Shape::ExistenceWalk`] /
 /// [`Shape::DuWalk`]) — the generator's intent, which the coverage
 /// contract and the engine-backed structural test hold it to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChaseVariant {
+enum GroundVariant {
     /// Eliminable existence walk (projection or aggregate sink).
     Walk,
     /// Near-miss: one extra projected target field — must refuse.
@@ -209,8 +209,8 @@ struct Builder {
     ladder: [bool; 4],
     /// Whether an `Allen` predicate carries a random (unnamed) mask.
     random_mask: bool,
-    /// Which chase-shape variant this query is, when the shape is one.
-    chase: Option<ChaseVariant>,
+    /// Which grounding-shape variant this query is, when the shape is one.
+    ground: Option<GroundVariant>,
     /// Which closed-relation class this query is, when the shape is one.
     closed: Option<ClosedVariant>,
 }
@@ -228,7 +228,7 @@ impl Builder {
 }
 
 /// Generation facts the query alone cannot reveal (hit-vs-miss and the
-/// boundary polarities are corpus-content properties; the chase variant
+/// boundary polarities are corpus-content properties; the grounding variant
 /// is the generator's intent, engine-verified in the tests).
 #[expect(
     clippy::struct_excessive_bools,
@@ -243,7 +243,7 @@ struct GenTags {
     adjacent_right: bool,
     ladder: [bool; 4],
     random_mask: bool,
-    chase: Option<ChaseVariant>,
+    ground: Option<GroundVariant>,
     rules: Option<RulesVariant>,
     closed: Option<ClosedVariant>,
 }
@@ -256,7 +256,7 @@ enum RulesVariant {
     /// Provably-disjoint arms: one relation, distinct vocabulary selections on
     /// the discriminant field.
     Disjoint,
-    /// Overlapping arms with duplicate head rows across rules (the
+    /// Overlapping arms with duplicate head answers across rules (the
     /// union's teeth) — including the DU twin (`JournalEntry` import
     /// arm vs `ImportBatch`, equal denotations by the `==` statement).
     Overlap,
@@ -278,7 +278,7 @@ pub const CMP_OPS: [CmpOp; 8] = [
     CmpOp::Allen {
         mask: MaskTerm::Literal(AllenMask::INTERSECTS),
     },
-    CmpOp::Contains,
+    CmpOp::PointIn,
 ];
 
 /// Construct counts over a generated batch — the coverage contract's
@@ -287,7 +287,7 @@ pub const CMP_OPS: [CmpOp; 8] = [
 /// structural type).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Coverage {
-    pub guard: u64,
+    pub key_probe: u64,
     pub star: u64,
     pub chain: u64,
     pub self_join: u64,
@@ -303,7 +303,7 @@ pub struct Coverage {
     pub rules: u64,
     pub measure: u64,
     pub closed_join: u64,
-    pub closed_fold: u64,
+    pub ground_fold: u64,
     /// The closed-relation pattern classes (`shapes_closed.rs`): the
     /// plain join, the payload-column selection, the handle literal,
     /// and the handle param set — all four counted by the closed-class
@@ -312,13 +312,13 @@ pub struct Coverage {
     pub closed_join_selected: u64,
     pub closed_handle_literal: u64,
     pub closed_handle_set: u64,
-    /// The chase variants (`shapes_chase.rs`): eliminable shapes
+    /// The grounding variants (`shapes_ground.rs`): eliminable shapes
     /// (existence walks and both DU `==` directions) vs the near-miss
     /// refusals — the coverage contract asserts both appear per run,
     /// and the engine-backed test holds each tag to its verdict.
-    pub chase_eliminable: u64,
-    pub chase_extra_field: u64,
-    pub chase_missing_phi: u64,
+    pub ground_eliminable: u64,
+    pub ground_extra_field: u64,
+    pub ground_missing_phi: u64,
     pub du_header_falls: u64,
     pub du_child_falls: u64,
     pub gates: u64,
@@ -357,15 +357,15 @@ pub struct Coverage {
     /// Interval comparisons by element type: `Allen` masks per lane,
     /// composite (≥2 basics) vs singleton mask draws, random (unnamed)
     /// masks, per-basic occurrence across every literal mask (all 13
-    /// reachable per run), and the point form of `Contains` per lane.
+    /// reachable per run), and `PointIn` per lane.
     pub allen_u64: u64,
     pub allen_i64: u64,
     pub allen_composite: u64,
     pub allen_singleton: u64,
     pub allen_random_mask: u64,
     pub allen_basics: [u64; 13],
-    pub contains_u64: u64,
-    pub contains_i64: u64,
+    pub point_in_u64: u64,
+    pub point_in_i64: u64,
     /// Boundary-shape polarities (corpus-adjacent query literals).
     pub adjacent_left: u64,
     pub adjacent_right: u64,
@@ -417,7 +417,7 @@ pub struct Coverage {
     /// Equality-spine cost-bound violations
     /// (`docs/architecture/60-validation.md` § the generator contract):
     /// an atom carrying a var-point membership or a cross-atom
-    /// `Allen`/`Contains` occurrence with neither an equality join
+    /// `Allen`/`PointIn` occurrence with neither an equality join
     /// variable nor an equality selection, or a negated atom whose only
     /// bindings are memberships. Asserted **zero** — the Cartesian
     /// degenerate (`40-execution.md`) must be unemittable.

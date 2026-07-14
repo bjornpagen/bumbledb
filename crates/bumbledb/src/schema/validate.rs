@@ -13,14 +13,15 @@
 //! rejected.
 
 use super::{
-    CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement, Enforcement, FactLayout,
-    FieldDescriptor, FieldId, Generation, KeyId, KeyStatement, Relation, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor, StatementId, StatementRef,
-    ValueMismatch, ValueType, closed_member, value_matches,
+    AxiomIndex, CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement,
+    DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId,
+    KeyStatement, MemberSet, Relation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
+    SchemaWarning, Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
+    value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
-use crate::error::SchemaError;
-use crate::storage::keys::MAX_GUARD_WIDTH;
+use crate::error::{SchemaError, TargetKeyCandidate};
+use crate::storage::keys::MAX_DETERMINANT_WIDTH;
 use crate::value::Value;
 
 impl SchemaDescriptor {
@@ -79,7 +80,7 @@ impl SchemaDescriptor {
                     relation,
                     projection,
                 } => {
-                    let pointwise = validate_functionality(
+                    let evidence = validate_functionality(
                         id,
                         *relation,
                         projection,
@@ -93,7 +94,7 @@ impl SchemaDescriptor {
                         id,
                         relation: *relation,
                         projection: projection.clone(),
-                        pointwise,
+                        pointwise: matches!(evidence, FunctionalityEvidence::Pointwise(_)),
                     });
                     StatementRef::Key(key_id)
                 }
@@ -103,7 +104,7 @@ impl SchemaDescriptor {
                     let containment_id = ContainmentId(
                         u16::try_from(containments.len()).expect("statement count fits u16"),
                     );
-                    if let Enforcement::Probe { target_key, .. } = &enforcement {
+                    if let Some(target_key) = enforcement.target_key() {
                         dependents[usize::from(target_key.0)].push(containment_id);
                     }
                     relation_outgoing[source.relation.0 as usize].push(containment_id);
@@ -146,6 +147,7 @@ impl SchemaDescriptor {
         }
 
         Ok(Schema {
+            warnings: redundant_superkeys(&keys),
             relations: relations.into_boxed_slice(),
             keys: keys.into_boxed_slice(),
             containments: containments.into_boxed_slice(),
@@ -192,12 +194,81 @@ fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
 }
 
-/// A projection as its sorted field set — FD identity is the field *set*
-/// (the duplicate-FD rule and target-key resolution both match on it).
-fn field_set(projection: &[FieldId]) -> Vec<FieldId> {
-    let mut set = projection.to_vec();
-    set.sort_unstable();
-    set
+/// Canonical projection identity. Construction sorts once and refuses
+/// duplicates, so equality cannot accidentally compare written order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FieldSet(Box<[FieldId]>);
+
+impl FieldSet {
+    fn new(fields: &[FieldId]) -> Result<Self, FieldId> {
+        let mut canonical = fields.to_vec();
+        canonical.sort_unstable();
+        if let Some(duplicate) = canonical
+            .windows(2)
+            .find_map(|pair| (pair[0] == pair[1]).then_some(pair[0]))
+        {
+            return Err(duplicate);
+        }
+        Ok(Self(canonical.into_boxed_slice()))
+    }
+
+    fn is_strict_subset_of(&self, other: &Self) -> bool {
+        self.0.len() < other.0.len()
+            && self
+                .0
+                .iter()
+                .all(|field| other.0.binary_search(field).is_ok())
+    }
+}
+
+/// Non-fatal key diagnostics, derived only after every accepted key has a
+/// stable [`KeyId`]. A strict superkey remains fully sealed and enforced;
+/// the warning records its determinant-write amplification.
+fn redundant_superkeys(keys: &[KeyStatement]) -> Box<[SchemaWarning]> {
+    let field_sets: Vec<FieldSet> = keys
+        .iter()
+        .map(|key| FieldSet::new(&key.projection).expect("sealed key projection is a set"))
+        .collect();
+    let mut warnings = Vec::new();
+    for (key_position, key) in keys.iter().enumerate() {
+        for (smaller_index, smaller) in keys.iter().enumerate() {
+            if key.relation == smaller.relation
+                && field_sets[smaller_index].is_strict_subset_of(&field_sets[key_position])
+            {
+                warnings.push(SchemaWarning::RedundantSuperkey {
+                    relation: key.relation,
+                    key: KeyId(u16::try_from(key_position).expect("statement count fits u16")),
+                    implied_by: KeyId(
+                        u16::try_from(smaller_index).expect("statement count fits u16"),
+                    ),
+                });
+            }
+        }
+    }
+    warnings.into_boxed_slice()
+}
+
+/// A validated projection carries both statement order (execution and key
+/// permutation) and its canonical set (identity and key resolution).
+struct Projection<'a> {
+    ordered: &'a [FieldId],
+    fields: FieldSet,
+}
+
+impl Projection<'_> {
+    fn ordered(&self) -> &[FieldId] {
+        self.ordered
+    }
+
+    fn fields(&self) -> &FieldSet {
+        &self.fields
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FunctionalityEvidence {
+    Scalar,
+    Pointwise(DisjointDeterminantProof),
 }
 
 /// The projection positions holding interval-typed fields — the one scan
@@ -239,52 +310,52 @@ fn normalize(descriptor: &StatementDescriptor) -> StatementDescriptor {
 }
 
 /// Roster "FD …" lines: `R(X) -> R` under the acceptance gate. Returns the
-/// whether the key is pointwise (its interval position stays local here).
+/// sealed scalar shape or the proof minted by the accepted pointwise arm.
 fn validate_functionality(
     id: StatementId,
     relation_id: RelationId,
     projection: &[FieldId],
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
-) -> Result<bool, SchemaError> {
+) -> Result<FunctionalityEvidence, SchemaError> {
     let relation = known_relation(id, relation_id, relations)?;
-    validate_projection(id, relation_id, projection, relation)?;
+    let projection = validate_projection(id, relation_id, projection, relation)?;
 
     // Roster ">1 interval position" and "interval not in final position":
     // the neighbor probe needs the scalar prefix as its group; two interval
-    // positions would be 2-D exclusion, which the ordered guard cannot
+    // positions would be 2-D exclusion, which the ordered determinant cannot
     // answer.
-    let positions = interval_positions(&relation.fields, projection);
+    let positions = interval_positions(&relation.fields, projection.ordered());
     if positions.len() > 1 {
         return Err(SchemaError::FunctionalityMultipleIntervals {
             statement: id,
             relation: relation_id,
-            field: projection[positions[1]],
+            field: projection.ordered()[positions[1]],
         });
     }
     let interval_position = positions.first().copied();
     if let Some(pos) = interval_position
-        && pos != projection.len() - 1
+        && pos != projection.ordered().len() - 1
     {
         return Err(SchemaError::FunctionalityIntervalNotLast {
             statement: id,
             relation: relation_id,
-            field: projection[pos],
+            field: projection.ordered()[pos],
         });
     }
 
     // Roster "duplicate statements", FD form: one field *set* per relation
     // — a second FD over the same set (any order) asserts the same
-    // judgment, so its guard is pure write amplification, and rejecting it
+    // judgment, so its determinant is pure write amplification, and rejecting it
     // is what makes containment target-key resolution unambiguous.
-    let this_set = field_set(projection);
+    let this_set = projection.fields();
     for (idx, earlier) in descriptors[..usize::from(id.0)].iter().enumerate() {
         if let StatementDescriptor::Functionality {
             relation: r,
             projection: p,
         } = earlier
             && *r == relation_id
-            && field_set(p) == this_set
+            && FieldSet::new(p).is_ok_and(|set| &set == this_set)
         {
             return Err(SchemaError::DuplicateFunctionality {
                 statement: id,
@@ -293,10 +364,11 @@ fn validate_functionality(
         }
     }
 
-    // Roster "guard width overflow": Σ field widths (intervals count 16)
-    // must fit `MAX_GUARD_WIDTH` — rejected at declaration, never
+    // Roster "determinant width overflow": Σ field widths (intervals count 16)
+    // must fit `MAX_DETERMINANT_WIDTH` — rejected at declaration, never
     // discovered at write time.
     let width: usize = projection
+        .ordered()
         .iter()
         .map(|field| {
             relation.fields[usize::from(field.0)]
@@ -305,8 +377,8 @@ fn validate_functionality(
                 .width()
         })
         .sum();
-    if width > MAX_GUARD_WIDTH {
-        return Err(SchemaError::GuardKeyTooWide {
+    if width > MAX_DETERMINANT_WIDTH {
+        return Err(SchemaError::DeterminantKeyTooWide {
             statement: id,
             width,
         });
@@ -317,13 +389,13 @@ fn validate_functionality(
     // pair refutes the statement now or never. Scalar keys collide on
     // equal projected bytes; a pointwise key collides when the scalar
     // prefix agrees and the intervals share a point — the ordered-neighbor
-    // probe's judgment, run over ≤256 sealed rows instead of a guard.
+    // probe's judgment, run over ≤256 sealed rows instead of a determinant.
     if let Some(rows) = relation.extension.as_deref() {
         let layout = &relation.layout;
-        let scalar_len = projection.len() - usize::from(interval_position.is_some());
+        let scalar_len = projection.ordered().len() - usize::from(interval_position.is_some());
         for (row_idx, row) in rows.iter().enumerate() {
             for earlier in &rows[..row_idx] {
-                let scalars_agree = projection[..scalar_len].iter().all(|field| {
+                let scalars_agree = projection.ordered()[..scalar_len].iter().all(|field| {
                     let idx = usize::from(field.0);
                     field_bytes(&row.fact, layout, idx) == field_bytes(&earlier.fact, layout, idx)
                 });
@@ -333,7 +405,7 @@ fn validate_functionality(
                 let collide = match interval_position {
                     None => true,
                     Some(pos) => {
-                        let idx = usize::from(projection[pos].0);
+                        let idx = usize::from(projection.ordered()[pos].0);
                         let a = field_bytes(&row.fact, layout, idx);
                         let b = field_bytes(&earlier.fact, layout, idx);
                         // Half-open `[s, e)` intersection on the 8-byte
@@ -352,7 +424,10 @@ fn validate_functionality(
         }
     }
 
-    Ok(interval_position.is_some())
+    Ok(match interval_position {
+        Some(_) => FunctionalityEvidence::Pointwise(DisjointDeterminantProof(())),
+        None => FunctionalityEvidence::Scalar,
+    })
 }
 
 /// Roster "IND …" lines: `A(X | φ) <= B(Y | ψ)` under the acceptance gate.
@@ -366,7 +441,7 @@ fn validate_containment(
     descriptors: &[StatementDescriptor],
 ) -> Result<Enforcement, SchemaError> {
     validate_side_shape(id, source, relations)?;
-    validate_side_shape(id, target, relations)?;
+    let target_projection = validate_side_shape(id, target, relations)?;
 
     // Roster "arity mismatch between sides": |X| = |Y|.
     if source.projection.len() != target.projection.len() {
@@ -422,7 +497,7 @@ fn validate_containment(
         });
     }
 
-    let resolved = resolve_target_key(id, target, relations, descriptors)?;
+    let resolved = resolve_target_key(id, target, &target_projection, relations, descriptors)?;
 
     // Both sides constant: the judgment is decidable here, and a theory
     // whose axioms refute its own statement has no model to commit — the
@@ -440,7 +515,8 @@ fn validate_containment(
                 continue;
             }
             let word = decoded_word(layout, source.projection[0], &row.fact);
-            if !closed_member(members, word) {
+            let index = AxiomIndex::try_from(word).expect("sealed axiom index fits u16");
+            if !members.contains(index) {
                 return Err(SchemaError::ClosedStatementRefuted {
                     statement: id,
                     relation: source.relation,
@@ -516,19 +592,19 @@ fn known_relation(
 
 /// Roster "unknown … field ids" and "empty or duplicate-carrying
 /// projections" for one projection.
-fn validate_projection(
+fn validate_projection<'p>(
     id: StatementId,
     relation_id: RelationId,
-    projection: &[FieldId],
+    projection: &'p [FieldId],
     relation: &Relation,
-) -> Result<(), SchemaError> {
+) -> Result<Projection<'p>, SchemaError> {
     if projection.is_empty() {
         return Err(SchemaError::EmptyProjection {
             statement: id,
             relation: relation_id,
         });
     }
-    for (idx, field) in projection.iter().enumerate() {
+    for field in projection {
         if usize::from(field.0) >= relation.fields.len() {
             return Err(SchemaError::StatementUnknownField {
                 statement: id,
@@ -536,26 +612,28 @@ fn validate_projection(
                 field: *field,
             });
         }
-        if projection[..idx].contains(field) {
-            return Err(SchemaError::DuplicateProjectionField {
-                statement: id,
-                relation: relation_id,
-                field: *field,
-            });
-        }
     }
-    Ok(())
+    let fields =
+        FieldSet::new(projection).map_err(|field| SchemaError::DuplicateProjectionField {
+            statement: id,
+            relation: relation_id,
+            field,
+        })?;
+    Ok(Projection {
+        ordered: projection,
+        fields,
+    })
 }
 
 /// One side's id and duplication shape: unknown relation/field ids, empty
 /// or duplicate projection, duplicate selection binding (σ is a set).
-fn validate_side_shape(
+fn validate_side_shape<'s>(
     id: StatementId,
-    side: &Side,
+    side: &'s Side,
     relations: &[Relation],
-) -> Result<(), SchemaError> {
+) -> Result<Projection<'s>, SchemaError> {
     let relation = known_relation(id, side.relation, relations)?;
-    validate_projection(id, side.relation, &side.projection, relation)?;
+    let projection = validate_projection(id, side.relation, &side.projection, relation)?;
     for (idx, (field, _)) in side.selection.iter().enumerate() {
         if usize::from(field.0) >= relation.fields.len() {
             return Err(SchemaError::StatementUnknownField {
@@ -572,7 +650,7 @@ fn validate_side_shape(
             });
         }
     }
-    Ok(())
+    Ok(projection)
 }
 
 /// One side's selection semantics: roster "a selected field also projected"
@@ -606,10 +684,10 @@ fn validate_side_selection(
 }
 
 /// Roster "selection literal type mismatch (including out-of-range enum
-/// ordinals and non-UTF-8 string literals)", plus the interval bound rule
-/// `start < end` (an empty interval denotes no points, and a fact never
-/// denotes nothing) — the one shared [`value_matches`] check, so the σ
-/// rules cannot drift from the query-literal and dynamic-fact boundaries.
+/// ordinals and non-UTF-8 string literals)" — the one shared
+/// [`value_matches`] check, so the σ rules cannot drift from the
+/// query-literal and dynamic-fact boundaries. Interval literals already
+/// carry the checked [`crate::Interval`] representation.
 fn validate_selection_literal(
     id: StatementId,
     relation: RelationId,
@@ -628,11 +706,6 @@ fn validate_selection_literal(
             relation,
             field,
         },
-        ValueMismatch::IntervalEmpty => SchemaError::SelectionIntervalEmpty {
-            statement: id,
-            relation,
-            field,
-        },
     })
 }
 
@@ -640,11 +713,12 @@ fn validate_selection_literal(
 /// (`docs/architecture/30-dependencies.md` § the acceptance gate): the
 /// target projection, as a set, must equal the field set of some
 /// `Functionality` statement on the target relation — probe-ability, one
-/// guard get answers "is this tuple present". Unambiguous because duplicate
+/// determinant get answers "is this tuple present". Unambiguous because duplicate
 /// field sets are rejected by [`SchemaError::DuplicateFunctionality`].
 fn resolve_target_key(
     id: StatementId,
     target: &Side,
+    target_projection: &Projection<'_>,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<Enforcement, SchemaError> {
@@ -652,26 +726,18 @@ fn resolve_target_key(
 
     // The compiled-subset branch (`docs/architecture/30-dependencies.md`):
     // a closed target is stage-1-known, so there is no key search, no
-    // permutation, and no guard-width concern — the enforcement plan is
+    // permutation, and no determinant-width concern — the enforcement plan is
     // the answer set itself. The handle id is the one probe-able identity
     // of a closed relation (the auto-key `R(id) -> R`), so the target
     // projection must be exactly the synthetic id; ψ folds against the
     // sealed extension here and never exists at commit.
     if let Some(rows) = target_relation.extension.as_deref() {
         if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
-            return Err(SchemaError::NoMatchingTargetKey {
-                statement: id,
-                relation: target.relation,
-            });
+            return Err(missing_target_key(id, target, descriptors, false));
         }
-        let psi = compiled_checks(&target.selection);
-        let mut members = [0u64; 4];
-        for (idx, row) in rows.iter().enumerate() {
-            if sealed_satisfies(&psi, &target_relation.layout, &row.fact) {
-                members[idx / 64] |= 1 << (idx % 64);
-            }
-        }
-        return Ok(Enforcement::Closed { members });
+        return Ok(Enforcement::Closed {
+            members: compile_member_set(target_relation, target, rows),
+        });
     }
 
     let target_fields = &target_relation.fields;
@@ -681,14 +747,11 @@ fn resolve_target_key(
     // two intervals (the FD gate rejects them), so with two or more there
     // is no pointwise key to resolve — reject without searching.
     if positions.len() > 1 {
-        return Err(SchemaError::NoPointwiseTargetKey {
-            statement: id,
-            relation: target.relation,
-        });
+        return Err(missing_target_key(id, target, descriptors, true));
     }
     let interval_position = positions.first().copied();
 
-    let want = field_set(&target.projection);
+    let want = target_projection.fields();
     let found = descriptors
         .iter()
         .enumerate()
@@ -696,7 +759,9 @@ fn resolve_target_key(
             StatementDescriptor::Functionality {
                 relation,
                 projection,
-            } if *relation == target.relation && field_set(projection) == want => {
+            } if *relation == target.relation
+                && FieldSet::new(projection).is_ok_and(|set| &set == want) =>
+            {
                 Some((index, projection.as_ref()))
             }
             StatementDescriptor::Functionality { .. } | StatementDescriptor::Containment { .. } => {
@@ -707,32 +772,27 @@ fn resolve_target_key(
     // Roster "IND whose target projection matches no key of the target
     // (or, with an interval position, no pointwise key carrying it)".
     let Some((key_idx, key_projection)) = found else {
-        return Err(if interval_position.is_some() {
-            SchemaError::NoPointwiseTargetKey {
-                statement: id,
-                relation: target.relation,
-            }
-        } else {
-            SchemaError::NoMatchingTargetKey {
-                statement: id,
-                relation: target.relation,
-            }
-        });
+        return Err(missing_target_key(
+            id,
+            target,
+            descriptors,
+            interval_position.is_some(),
+        ));
     };
     // Set equality means the resolved key carries the interval field, and
     // the key's own FD gate forces it last — the key *is* pointwise; the
     // gate's "key carries its interval" demand is discharged by
     // construction, not re-checked.
 
-    let key_permutation = target
-        .projection
+    let key_permutation = target_projection
+        .ordered()
         .iter()
         .map(|field| {
-            let guard_pos = key_projection
+            let determinant_pos = key_projection
                 .iter()
                 .position(|k| k == field)
                 .expect("set-equal key contains every projected field");
-            u16::try_from(guard_pos).expect("field count fits u16")
+            u16::try_from(determinant_pos).expect("field count fits u16")
         })
         .collect();
 
@@ -748,11 +808,98 @@ fn resolve_target_key(
         .expect("statement count fits u16"),
     );
 
-    Ok(Enforcement::Probe {
-        target_key,
-        key_permutation,
-        coverage: interval_position.is_some(),
-    })
+    if interval_position.is_some() {
+        let FunctionalityEvidence::Pointwise(disjoint) = validate_functionality(
+            statement_id(key_idx),
+            target.relation,
+            key_projection,
+            relations,
+            descriptors,
+        )?
+        else {
+            unreachable!("a set-equal interval projection resolves to a pointwise key")
+        };
+        Ok(Enforcement::IntervalCoverage {
+            target_key,
+            key_permutation,
+            disjoint,
+        })
+    } else {
+        Ok(Enforcement::ScalarProbe {
+            target_key,
+            key_permutation,
+        })
+    }
+}
+
+/// Owned evidence for an exact-target-key rejection. Key ids follow the
+/// functionality-only typed arena order, exactly as successful sealing.
+fn target_key_candidates(
+    target: RelationId,
+    descriptors: &[StatementDescriptor],
+) -> Box<[TargetKeyCandidate]> {
+    let mut next_key = 0usize;
+    let mut available = Vec::new();
+    for descriptor in descriptors {
+        if let StatementDescriptor::Functionality {
+            relation,
+            projection,
+        } = descriptor
+        {
+            let key = KeyId(u16::try_from(next_key).expect("statement count fits u16"));
+            next_key += 1;
+            if *relation == target {
+                available.push(TargetKeyCandidate {
+                    key,
+                    projection: projection.clone(),
+                });
+            }
+        }
+    }
+    available.into_boxed_slice()
+}
+
+fn missing_target_key(
+    statement: StatementId,
+    side: &Side,
+    descriptors: &[StatementDescriptor],
+    pointwise: bool,
+) -> SchemaError {
+    let target = side.relation;
+    let projection = side.projection.clone();
+    let available = target_key_candidates(target, descriptors);
+    if pointwise {
+        SchemaError::NoPointwiseTargetKey {
+            statement,
+            target,
+            projection,
+            available,
+        }
+    } else {
+        SchemaError::NoMatchingTargetKey {
+            statement,
+            target,
+            projection,
+            available,
+        }
+    }
+}
+
+/// Compiles ψ over one sealed extension into its typed axiom set. The
+/// extension passed validation before statement resolution, so every
+/// declaration index is below [`super::MAX_EXTENSION_ROWS`].
+fn compile_member_set(target: &Relation, side: &Side, rows: &[super::SealedRow]) -> MemberSet {
+    let psi = compiled_checks(&side.selection);
+    let mut members = MemberSet::empty();
+    for (idx, row) in rows.iter().enumerate() {
+        if sealed_satisfies(&psi, &target.layout, &row.fact) {
+            let index = AxiomIndex(
+                u16::try_from(idx).expect("the validated extension cap is below u16::MAX"),
+            );
+            members.insert(index);
+        }
+    }
+    members
 }
 
 /// One relation: field checks (duplicate names, enum shape, fresh typing,
@@ -770,7 +917,7 @@ fn validate_relation(
     } = decl;
 
     // A closed relation's sealed field list opens with the synthetic
-    // (`id`, U64) field — the handle's declaration index — so guards,
+    // (`id`, U64) field — the handle's declaration index — so determinants,
     // statements, and queries address it uniformly at `FieldId(0)`. The
     // macro (the emission) never lets the user declare it; a hand-built
     // descriptor declaring its own `id` collides here
@@ -906,13 +1053,6 @@ fn validate_extension(
         {
             let field_id = FieldId(u16::try_from(field_idx).expect("field count fits u16"));
             value_matches(value, &field.value_type).map_err(|mismatch| match mismatch {
-                // The constructor law holds for axioms too: a malformed
-                // ground axiom is a schema error, not corruption.
-                ValueMismatch::IntervalEmpty => SchemaError::ExtensionIntervalEmpty {
-                    relation: rel_id,
-                    row: row_idx,
-                    field: field_id,
-                },
                 // `str` columns are refused above, so Utf8 cannot arise;
                 // the match stays total and maps malformed internal data
                 // to the ordinary type-mismatch error.
@@ -930,8 +1070,8 @@ fn validate_extension(
             // the witnessed write that eventually closes it needs an
             // ordinary relation. Rays stay honest values everywhere else.
             let is_ray = match value {
-                Value::IntervalU64(_, end) => *end == crate::Interval::<u64>::MAX_END,
-                Value::IntervalI64(_, end) => *end == crate::Interval::<i64>::MAX_END,
+                Value::IntervalU64(interval) => interval.is_ray(),
+                Value::IntervalI64(interval) => interval.is_ray(),
                 _ => false,
             };
             if is_ray {

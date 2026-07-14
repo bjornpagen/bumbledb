@@ -67,7 +67,7 @@ fn joining_a_three_tag_relation_triples_the_sum() {
 }
 
 #[test]
-fn distinct_flag_elision_matches_the_seen_set_path() {
+fn witnessed_elision_matches_the_seen_set_path() {
     let dir = TempDir::new("sink-elision");
     let schema = schema();
     let postings = vec![(1u64, 7u64, 10i64), (2, 7, 20), (3, 8, 30)];
@@ -78,7 +78,7 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
         vec![],
     );
     let plan = planned(&schema, &normalized, &[0], &[1]);
-    assert!(plan.distinct_bindings(), "fresh ids are bound");
+    assert!(plan.distinct_witness().is_some(), "fresh ids are bound");
     let finds = |plan: &ValidatedPlan| {
         vec![
             var_spec(plan, 1),
@@ -89,7 +89,12 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
     // Elided path (as the plan proves) vs forced seen-set path.
     let mut colts = colts_for(&plan, &views);
     let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-    let mut elided = AggregateSink::new(finds(&plan), plan.slot_count(), true);
+    let mut elided = AggregateSink::new_distinct(
+        finds(&plan),
+        plan.slot_count(),
+        plan.distinct_witness()
+            .expect("fresh ids prove distinctness"),
+    );
     Executor::new(&plan)
         .execute(
             &plan,
@@ -100,7 +105,7 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
         )
         .expect("execute");
     let mut colts = colts_for(&plan, &views);
-    let mut checked = AggregateSink::new(finds(&plan), plan.slot_count(), false);
+    let mut checked = AggregateSink::new(finds(&plan), plan.slot_count());
     Executor::new(&plan)
         .execute(
             &plan,
@@ -110,8 +115,8 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
             &mut crate::exec::run::NoopCounters,
         )
         .expect("execute");
-    let mut a = elided.into_rows().expect("rows");
-    let mut b = checked.into_rows().expect("rows");
+    let mut a = elided.into_answers().expect("rows");
+    let mut b = checked.into_answers().expect("rows");
     a.sort_unstable();
     b.sort_unstable();
     assert_eq!(a, b);
@@ -156,26 +161,26 @@ fn sum_is_order_independent_near_the_boundary() {
     };
     for order in [[0usize, 1, 2], [2, 1, 0], [1, 2, 0]] {
         let values = [i64::MAX, 1, -2];
-        let mut sink = AggregateSink::new(vec![sum_find], 1, true);
+        let mut sink = AggregateSink::new(vec![sum_find], 1);
         let mut bindings = Bindings::new(1);
         bindings.reset();
         for idx in order {
             bindings.set(0, i64_to_word(values[idx]));
             assert_eq!(sink.emit(&bindings), Flow::Continue);
         }
-        let rows = sink.into_rows().expect("in range");
+        let rows = sink.into_answers().expect("in range");
         assert_eq!(rows, vec![vec![i64_to_word(i64::MAX - 1)]]);
     }
     for order in [[0usize, 1], [1, 0]] {
         let values = [i64::MAX, 1];
-        let mut sink = AggregateSink::new(vec![sum_find], 1, true);
+        let mut sink = AggregateSink::new(vec![sum_find], 1);
         let mut bindings = Bindings::new(1);
         bindings.reset();
         for idx in order {
             bindings.set(0, i64_to_word(values[idx]));
             sink.emit(&bindings);
         }
-        let err = sink.into_rows().unwrap_err();
+        let err = sink.into_answers().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -204,7 +209,6 @@ fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
             },
         ],
         1,
-        true,
     );
     let mut bindings = Bindings::new(1);
     bindings.reset();
@@ -212,7 +216,7 @@ fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
         bindings.set(0, i64_to_word(v));
         sink.emit(&bindings);
     }
-    let rows = sink.into_rows().expect("rows");
+    let rows = sink.into_answers().expect("rows");
     assert_eq!(rows, vec![vec![i64_to_word(-100), i64_to_word(42)]]);
 }
 
@@ -228,7 +232,7 @@ fn arg_keys_honor_logical_i64_order_across_the_sign_boundary() {
         key_slot: 0,
         max: true,
     }];
-    let mut sink = AggregateSink::new(finds, 2, true);
+    let mut sink = AggregateSink::new(finds, 2);
     let mut bindings = Bindings::new(2);
     bindings.reset();
     for (key, carry) in [(-5i64, 10u64), (3, 20), (-100, 30), (0, 40)] {
@@ -236,6 +240,6 @@ fn arg_keys_honor_logical_i64_order_across_the_sign_boundary() {
         bindings.set(1, carry);
         sink.emit(&bindings);
     }
-    let rows = sink.into_rows().expect("rows");
+    let rows = sink.into_answers().expect("rows");
     assert_eq!(rows, vec![vec![20]], "key 3 is the logical maximum");
 }

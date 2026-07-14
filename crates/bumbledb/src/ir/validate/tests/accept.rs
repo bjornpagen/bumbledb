@@ -174,7 +174,12 @@ fn accepts_a_ray_literal_and_the_last_point() {
             ACCOUNT,
             vec![
                 (0, var(0)),
-                (VALIDITY, Term::Literal(Value::IntervalU64(5, u64::MAX))),
+                (
+                    VALIDITY,
+                    Term::Literal(Value::IntervalU64(
+                        crate::Interval::<u64>::new(5, u64::MAX).expect("nonempty interval"),
+                    )),
+                ),
             ],
         )],
     );

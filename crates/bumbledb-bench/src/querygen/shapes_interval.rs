@@ -1,6 +1,6 @@
 //! The interval-surface shapes: point membership (literal, param, and
 //! var points), interval joins (`Allen` masks — the composites, random
-//! singleton basics, and the `Eq`/`Ne` derived facts — plus `Contains`'
+//! singleton basics, and the `Eq`/`Ne` derived facts — plus `PointIn`'s
 //! point form), and the adjacent-touching boundary probes whose literals
 //! are recomputed from the corpus interval generator — the query touches
 //! a corpus interval at exactly its endpoint, both polarities.
@@ -13,7 +13,7 @@
 //!
 //! **The equality-spine cost bound** (`docs/architecture/60-validation.md`
 //! § the generator contract; `40-execution.md` names the degenerate): a
-//! var-point membership binding or a cross-atom `Allen`/`Contains`
+//! var-point membership binding or a cross-atom `Allen`/`PointIn`
 //! join whose interval occurrence shares **no** equality variable with
 //! the rest of the query is a Cartesian with a filter — O(bindings × n).
 //! Every such construct here is built on a spine: the Mandate lane joins
@@ -89,13 +89,13 @@ fn u64_point(cfg: GenConfig, rng: &mut Rng) -> u64 {
 fn i64_interval(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
     let ((start, end), drawn) = interval_data::ladder_i64(cfg.seed, rng.range(GROUP_POOL), rng);
     b.saw_rung(drawn);
-    Value::IntervalI64(start, end)
+    Value::IntervalI64(bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"))
 }
 
 fn u64_interval(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
     let ((start, end), drawn) = interval_data::ladder_u64(cfg.seed, rng.range(GROUP_POOL), rng);
     b.saw_rung(drawn);
-    Value::IntervalU64(start, end)
+    Value::IntervalU64(bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"))
 }
 
 /// The cost-bound rule's equality selection for a Transfer occurrence
@@ -284,7 +284,7 @@ enum Right {
 /// reachable over the run), **random masks** (any nonempty proper
 /// subset of the 13 — the coordinate space itself), and the `Eq`/`Ne`
 /// derived facts (the (Eq/Ne, interval) matrix cells) — plus
-/// `Contains`' point form. Var-vs-var joins build the second occurrence
+/// `PointIn`. Var-vs-var joins build the second occurrence
 /// **on the spine**: the Mandate lane equality-joins on account; the
 /// Transfer lane pins each occurrence. Var-vs-literal filters build no
 /// second occurrence at all; their literals draw from the
@@ -300,8 +300,8 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
         // A random singleton basic — every classify branch is reachable.
         7 => (allen(singleton_mask(rng)), Right::Var),
         8 => (allen(singleton_mask(rng)), Right::Literal),
-        // Contains' point form: point membership as a predicate.
-        9 => (CmpOp::Contains, Right::Element),
+        // PointIn: point membership as a predicate.
+        9 => (CmpOp::PointIn, Right::Element),
         10 => (CmpOp::Eq, Right::Var),
         11 => (CmpOp::Ne, Right::Var),
         // Random masks, both operand shapes.
@@ -400,7 +400,7 @@ fn wide_mandate_join(b: &mut Builder) -> (VarId, Term) {
 /// query — in both polarities (the literal ends at a corpus start;
 /// the literal starts at a corpus end). Half the probes are
 /// `Allen(INTERSECTS)` (adjacency must NOT intersect — *meets* shares
-/// no point); half are `Contains` with the touch point itself
+/// no point); half are `PointIn` with the touch point itself
 /// (`b ∉ [a,b)`, `b ∈ [b,c)`). Single-occurrence filters: the accepted
 /// O(n) scan, not the Cartesian shape.
 pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
@@ -418,9 +418,13 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
         let (_, e1) = interval_data::group_i64(cfg.seed, group, 1);
         let width = i64::try_from(TOUCH_WIDTH).expect("small");
         let literal = if left {
-            Value::IntervalI64(s0 - width, s0)
+            Value::IntervalI64(
+                bumbledb::Interval::<i64>::new(s0 - width, s0).expect("nonempty interval"),
+            )
         } else {
-            Value::IntervalI64(e1, e1 + width)
+            Value::IntervalI64(
+                bumbledb::Interval::<i64>::new(e1, e1 + width).expect("nonempty interval"),
+            )
         };
         let point = Value::I64(if left { s0 } else { e1 });
         let mandate = b.add_atom(ids::MANDATE);
@@ -439,9 +443,13 @@ pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: 
         let (s0, _) = interval_data::group_u64(cfg.seed, group, 0);
         let (_, e1) = interval_data::group_u64(cfg.seed, group, 1);
         let literal = if left {
-            Value::IntervalU64(s0 - TOUCH_WIDTH, s0)
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(s0 - TOUCH_WIDTH, s0).expect("nonempty interval"),
+            )
         } else {
-            Value::IntervalU64(e1, e1 + TOUCH_WIDTH)
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(e1, e1 + TOUCH_WIDTH).expect("nonempty interval"),
+            )
         };
         let point = Value::U64(if left { s0 } else { e1 });
         let transfer = b.add_atom(ids::TRANSFER);
@@ -475,7 +483,7 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
                 b.find_var(id);
             }
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
-            b.finds.push(bumbledb::FindTerm::Duration(window));
+            b.finds.push(bumbledb::FindTerm::Measure(window));
         }
         // Predicate: `Duration(window) <op> literal` — an order
         // comparison over the measure word, the selection form.
@@ -485,7 +493,7 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
             let window = b.bind_var(transfer, ids::transfer::WINDOW);
             b.conditions.push(Comparison {
                 op: crate::querygen::shapes::order_op(rng),
-                lhs: Term::Duration(window),
+                lhs: Term::Measure(window),
                 rhs: Term::Literal(Value::U64(rng.range(3 * interval_data::GROUP_SPAN))),
             });
         }
@@ -502,12 +510,12 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
                 // the sum tops out near transfers × 4096 ≪ 2⁶³.
                 b.conditions.push(Comparison {
                     op: bumbledb::CmpOp::Le,
-                    lhs: Term::Duration(window),
+                    lhs: Term::Measure(window),
                     rhs: Term::Literal(Value::U64(4 * interval_data::GROUP_SPAN)),
                 });
             }
             b.finds
-                .push(bumbledb::FindTerm::AggregateDuration { op, over: window });
+                .push(bumbledb::FindTerm::AggregateMeasure { op, over: window });
         }
     }
 }
@@ -516,7 +524,7 @@ fn push_boundary_cmp(b: &mut Builder, rng: &mut Rng, var: VarId, literal: Value,
     let (op, rhs) = if rng.chance(1, 2) {
         (allen(AllenMask::INTERSECTS), Term::Literal(literal))
     } else {
-        (CmpOp::Contains, Term::Literal(point))
+        (CmpOp::PointIn, Term::Literal(point))
     };
     b.conditions.push(Comparison {
         op,

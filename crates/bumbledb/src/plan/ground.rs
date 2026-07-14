@@ -1,8 +1,8 @@
-//! The chase: containment-implied occurrence **elimination** and
+//! Grounding: containment-implied occurrence **elimination** and
 //! closed-relation **evaluation**
 //! (docs/architecture/30-dependencies.md, docs/architecture/40-execution.md).
 //!
-//! Two rewrites share one fixpoint. Elimination (below) removes atoms
+//! Two rewrites share one loop. Elimination (below) removes atoms
 //! that statements prove redundant; evaluation ([`evaluate`]) removes
 //! closed-relation atoms whose extension is stage-0-known by *running
 //! them at prepare* — `Kind(id: k, mastered == true)` is not a join to
@@ -24,7 +24,7 @@
 //! occurrence can make another removable (chains `A<=B<=C` are real),
 //! and ≤20 occurrences make the loop trivially cheap. Elimination is a
 //! [`Role`] mark, never a removal: occurrence ids never move, and the
-//! `Eliminated(StatementId)` mark doubles as the record EXPLAIN and the
+//! `Eliminated(StatementId)` mark doubles as the record introspection and the
 //! tests read.
 //!
 //! # Why it is sound
@@ -53,8 +53,8 @@
 //! aggregate alike.
 //!
 //! **Per rule, and the rule-level pass.** Since the rules cutover the
-//! fixpoint runs per rule, independently — a union's rules are
-//! independent conjunctive bodies, so the chase distributes over them
+//! rewrite loop runs per rule, independently — a union's rules are
+//! independent conjunctive bodies, so the grounding distributes over them
 //! with no cross-rule state, and a rule shrinking below its cover
 //! requirements re-validates like any rule (the per-rule pipeline
 //! re-runs plan validation regardless). A second pass follows at
@@ -88,11 +88,11 @@ use crate::schema::{Enforcement, FieldId, Schema, Side, StatementId};
 
 pub(crate) mod evaluate;
 
-#[cfg(any(test, feature = "chase-off"))]
+#[cfg(any(test, feature = "ground-off"))]
 thread_local! {
     /// The test-only off switch: differential tests run the same query
     /// with and without the rewrite. Reachable from this crate's own
-    /// tests and — through the `chase-off` test-support feature, enabled
+    /// tests and — through the `ground-off` test-support feature, enabled
     /// only as the bench crate's dev-dependency for its dual-run
     /// differential — from nowhere a production build can see: no
     /// runtime mode ships (no public default-features API, no env var).
@@ -100,10 +100,10 @@ thread_local! {
     static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Runs `f` with the chase bypassed on this thread — the differential
+/// Runs `f` with the grounding bypassed on this thread — the differential
 /// tests' off switch. Restores on unwind.
-#[cfg(any(test, feature = "chase-off"))]
-pub fn with_chase_disabled<T>(f: impl FnOnce() -> T) -> T {
+#[cfg(any(test, feature = "ground-off"))]
+pub fn with_grounding_disabled<T>(f: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -115,7 +115,7 @@ pub fn with_chase_disabled<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
-/// The chase fixpoint: marks every provably redundant positive
+/// The grounding loop: marks every provably redundant positive
 /// occurrence [`Role::Eliminated`], and every prepare-evaluable closed
 /// occurrence [`Role::Folded`] (`evaluate` — the second rewrite in the
 /// same loop, because each can expose the other). `finds` is the
@@ -124,10 +124,10 @@ pub fn with_chase_disabled<T>(f: impl FnOnce() -> T) -> T {
 /// Arg key are outputs exactly like a projected variable). An
 /// evaluation may instead prove the whole rule statically empty —
 /// `normalized.dead` is set (the fold's rule-death channel,
-/// `ir/normalize/fold.rs`) and the chase stops: a dead rule is deleted
+/// `ir/normalize/fold.rs`) and the grounding stops: a dead rule is deleted
 /// at prepare and plans nothing.
-pub(crate) fn chase(normalized: &mut NormalizedQuery, schema: &Schema, finds: &[FindTerm]) {
-    #[cfg(any(test, feature = "chase-off"))]
+pub(crate) fn ground(normalized: &mut NormalizedQuery, schema: &Schema, finds: &[FindTerm]) {
+    #[cfg(any(test, feature = "ground-off"))]
     if DISABLED.with(std::cell::Cell::get) {
         return;
     }
@@ -165,13 +165,7 @@ fn removable(
     support: &[Option<usize>],
 ) -> Option<(usize, usize, StatementId)> {
     for statement in schema.containments() {
-        if !matches!(
-            statement.enforcement,
-            Enforcement::Probe {
-                coverage: false,
-                ..
-            }
-        ) {
+        if !matches!(statement.enforcement, Enforcement::ScalarProbe { .. }) {
             continue; // condition 4
         }
         let source = &statement.source;
@@ -305,10 +299,9 @@ fn variables_join_or_dead(
 }
 
 /// **Condition 4** — interval refusal (v0): no paired position is
-/// interval-typed. The gate's resolution seals the coverage flag
-/// (`Enforcement::Probe::coverage` — an accepted containment with an
-/// interval position always resolves it, 30-dependencies acceptance
-/// gate), so `coverage: false` *is* the condition. Pointwise coverage is
+/// interval-typed. The gate seals scalar and interval enforcement as
+/// distinct variants, so [`Enforcement::ScalarProbe`] is the condition.
+/// Pointwise coverage is
 /// not 1:1 fact-to-fact; the OPEN sub-question rides the doc amendment
 /// (trigger: a census query that would benefit).
 /// Whether `var` is dead outside occurrence `b_idx`: not an output
@@ -388,7 +381,7 @@ pub(crate) struct Subsumption {
     pub by: usize,
 }
 
-/// Rule subsumption over the chased program — classical UCQ
+/// Rule subsumption over the grounded program — classical UCQ
 /// minimization restricted to the cheap witness the DNF path actually
 /// produces (docs/architecture/40-execution.md § planner): rule K
 /// subsumes rule D when, after elimination, K's normalized body equals
@@ -408,7 +401,7 @@ pub(crate) struct Subsumption {
 /// a rule never changes the head — the caller re-checks the alignment
 /// invariant. `finds` is per rule, aligned with `rules`.
 pub(crate) fn subsume(rules: &[NormalizedQuery], finds: &[&[FindTerm]]) -> Vec<Subsumption> {
-    #[cfg(any(test, feature = "chase-off"))]
+    #[cfg(any(test, feature = "ground-off"))]
     if DISABLED.with(std::cell::Cell::get) {
         return Vec::new();
     }
@@ -577,7 +570,7 @@ fn encoded_selection(side: &Side) -> Vec<(FieldId, Const)> {
 /// The output-variable set: every variable whose value reaches the
 /// result — projected finds, aggregate `over` variables, and Arg keys.
 /// (Not the D2 `sink_vars` set: under an aggregate that set is every
-/// query variable, which gates suffix *skipping*; the chase's
+/// query variable, which gates suffix *skipping*; the grounding's
 /// aggregate-safety proof is exactly why a dead variable may vanish
 /// under a fold — module doc.)
 fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
@@ -587,8 +580,8 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
             // A projected variable, and the measure positions' interval
             // variable (the measure reads it).
             FindTerm::Var(var)
-            | FindTerm::Duration(var)
-            | FindTerm::AggregateDuration { over: var, .. } => {
+            | FindTerm::Measure(var)
+            | FindTerm::AggregateMeasure { over: var, .. } => {
                 vars.insert(*var);
             }
             FindTerm::Aggregate { op, over } => {

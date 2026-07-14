@@ -336,14 +336,18 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
             ConditionTree::Leaf(Comparison {
                 op: CmpOp::Eq,
                 lhs: Term::Var(VarId(0)),
-                rhs: Term::Literal(Value::IntervalI64(2, 5)),
+                rhs: Term::Literal(Value::IntervalI64(
+                    crate::Interval::<i64>::new(2, 5).expect("nonempty interval"),
+                )),
             }),
             ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
                     mask: MaskTerm::Literal(AllenMask::AFTER),
                 },
                 lhs: Term::Var(VarId(0)),
-                rhs: Term::Literal(Value::IntervalI64(7, 9)),
+                rhs: Term::Literal(Value::IntervalI64(
+                    crate::Interval::<i64>::new(7, 9).expect("nonempty interval"),
+                )),
             }),
         ],
     });
@@ -354,7 +358,7 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
 
 #[test]
 fn a_pinned_point_outside_a_constant_interval_kills_the_rule() {
-    // R(a: v0), v0 == 7 ∧ Contains([2, 5), v0): the reversed membership
+    // R(a: v0), v0 == 7 ∧ PointIn([2, 5), v0): the reversed membership
     // (`FieldWithin`) against the Eq pin — rule (f).
     let schema = schema();
     let normalized = one_rule(
@@ -362,8 +366,10 @@ fn a_pinned_point_outside_a_constant_interval_kills_the_rule() {
         &range_query(vec![
             cmp(CmpOp::Eq, Term::Literal(Value::I64(7))),
             Comparison {
-                op: CmpOp::Contains,
-                lhs: Term::Literal(Value::IntervalI64(2, 5)),
+                op: CmpOp::PointIn,
+                lhs: Term::Literal(Value::IntervalI64(
+                    crate::Interval::<i64>::new(2, 5).expect("nonempty interval"),
+                )),
                 rhs: Term::Var(VarId(0)),
             },
         ]),
@@ -403,7 +409,7 @@ fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
 
 #[test]
 fn the_off_switch_keeps_constituents_and_verdicts_away() {
-    // The fold-preservation differential's switch (the chase-off
+    // The fold-preservation differential's switch (the ground-off
     // precedent): the same contradictory query lowers verbatim.
     let schema = schema();
     let query = range_query(vec![

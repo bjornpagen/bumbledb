@@ -30,17 +30,17 @@ fn insert_lands_exactly_the_expected_key_set() {
         let expected: BTreeSet<Vec<u8>> = [
             key(|b| keys::fact_key(b, TARGET, 0)),
             key(|b| keys::membership_key(b, TARGET, &t_hash)),
-            key(|b| keys::guard_key(b, TARGET, TARGET_KEY, &encode_u64(5))),
+            key(|b| keys::determinant_key(b, TARGET, TARGET_KEY, &encode_u64(5))),
             key(|b| keys::fact_key(b, KEYED, 0)),
             key(|b| keys::membership_key(b, KEYED, &k_hash)),
-            key(|b| keys::guard_key(b, KEYED, KEYED_KEY, &encode_u64(9))),
+            key(|b| keys::determinant_key(b, KEYED, KEYED_KEY, &encode_u64(9))),
         ]
         .into_iter()
         .collect();
         assert_eq!(all_data_keys(&applied.txn, &env), expected);
 
         // Bookkeeping: nothing deleted, so the plan's target-side check
-        // set is empty; the insert-side guard and edge material is pinned
+        // set is empty; the insert-side determinant and edge material is pinned
         // byte-level by the plan derivation tests (`tests/plan.rs`).
         assert!(plan.target_checks.is_empty());
         // Abort: drop the txn without committing.
@@ -100,12 +100,12 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
 }
 
 #[test]
-fn deleting_a_fact_with_a_scrubbed_interval_guard_is_corruption() {
-    // The same desync class on a 16-byte-field guard: scrub the Booking
+fn deleting_a_fact_with_a_scrubbed_interval_determinant_is_corruption() {
+    // The same desync class on a 16-byte-field determinant: scrub the Booking
     // key's U entry (scalar prefix ‖ whole interval) and delta-delete
-    // the fact — the guard re-derivation must land on the missing key
+    // the fact — the determinant re-derivation must land on the missing key
     // and hard-error.
-    let dir = TempDir::new("commit-desync-interval-guard");
+    let dir = TempDir::new("commit-desync-interval-determinant");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let booked = booking_fact(&schema, 1, 10, 20, 0);
@@ -122,12 +122,14 @@ fn deleting_a_fact_with_a_scrubbed_interval_guard_is_corruption() {
             .expect("commit");
     }
     {
-        let mut guard = Vec::new();
-        guard.extend_from_slice(&encode_u64(1));
-        guard.extend_from_slice(&encode_interval_u64(10, 20));
+        let mut determinant = Vec::new();
+        determinant.extend_from_slice(&encode_u64(1));
+        determinant.extend_from_slice(&encode_interval_u64(
+            crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+        ));
         let mut wtxn = env.write_txn().expect("wtxn");
         let mut key: KeyBuf = [0; MAX_KEY];
-        let u_len = keys::guard_key(&mut key, BOOKING, BOOKING_KEY, &guard);
+        let u_len = keys::determinant_key(&mut key, BOOKING, BOOKING_KEY, &determinant);
         assert!(
             env.data()
                 .delete(wtxn.raw_mut(), &key[..u_len])
@@ -143,7 +145,7 @@ fn deleting_a_fact_with_a_scrubbed_interval_guard_is_corruption() {
     drop(view);
     let plan = plan_for(&delta, &env);
     let Err(err) = apply(&plan, &env).map(|_| ()) else {
-        panic!("apply must fail on a scrubbed U guard");
+        panic!("apply must fail on a scrubbed U determinant");
     };
     assert!(matches!(
         err,
@@ -258,7 +260,7 @@ fn delete_removes_exactly_its_entries() {
     let removed: BTreeSet<Vec<u8>> = [
         key(|b| keys::fact_key(b, KEYED, 0)),
         key(|b| keys::membership_key(b, KEYED, &k_hash)),
-        key(|b| keys::guard_key(b, KEYED, KEYED_KEY, &encode_u64(9))),
+        key(|b| keys::determinant_key(b, KEYED, KEYED_KEY, &encode_u64(9))),
     ]
     .into_iter()
     .collect();
@@ -273,8 +275,8 @@ fn delete_removes_exactly_its_entries() {
 }
 
 #[test]
-fn deleting_a_containment_targeted_key_records_its_guard() {
-    let dir = TempDir::new("commit-deleted-guard");
+fn deleting_a_containment_targeted_key_records_its_determinant() {
+    let dir = TempDir::new("commit-deleted-determinant");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let t5 = target_fact(&schema, 5);
@@ -299,7 +301,7 @@ fn deleting_a_containment_targeted_key_records_its_guard() {
         panic!("one disestablished tuple");
     };
     assert_eq!(check.key, crate::schema::KeyId(0));
-    assert_eq!(&*check.guard, encode_u64(5).as_slice());
+    assert_eq!(&*check.determinant, encode_u64(5).as_slice());
 }
 
 #[test]
@@ -318,7 +320,7 @@ fn inserting_a_source_fact_writes_its_reverse_edge() {
     let applied = apply(&plan, &env).expect("apply");
 
     // R | statement | key_bytes | source_rel | source_row: key_bytes is
-    // the claim's projection in Target's guard order, the source row is
+    // the claim's projection in Target's determinant order, the source row is
     // the claim's own row id (0, first fact of its relation).
     let r = key(|b| keys::reverse_key(b, CLAIM_TARGET, &encode_u64(5), CLAIM, 0));
     assert!(all_data_keys(&applied.txn, &env).contains(&r));
@@ -400,14 +402,14 @@ fn delete_plus_insert_of_same_key_succeeds_in_either_user_order() {
     drop(view);
     let plan = plan_for(&delta, &env);
     let applied = apply(&plan, &env).expect("apply");
-    // The guard key survives, now pointing at the new row.
-    let u = key(|b| keys::guard_key(b, KEYED, KEYED_KEY, &encode_u64(1)));
+    // The determinant key survives, now pointing at the new row.
+    let u = key(|b| keys::determinant_key(b, KEYED, KEYED_KEY, &encode_u64(1)));
     assert!(all_data_keys(&applied.txn, &env).contains(&u));
 }
 
 #[test]
-fn rederived_guard_keys_match_independent_computation() {
-    let dir = TempDir::new("commit-guard-derivation");
+fn rederived_determinant_keys_match_independent_computation() {
+    let dir = TempDir::new("commit-determinant-derivation");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let k = keyed_fact(&schema, 42, 7);
@@ -420,23 +422,25 @@ fn rederived_guard_keys_match_independent_computation() {
     let plan = plan_for(&delta, &env);
     let applied = apply(&plan, &env).expect("apply");
 
-    // The scalar guard is the canonical encoding of `x`; the pointwise
-    // guard is `room ‖ during` with the interval's whole 16 bytes —
+    // The scalar determinant is the canonical encoding of `x`; the pointwise
+    // determinant is `room ‖ during` with the interval's whole 16 bytes —
     // computed here independently of the applier's slicing.
     let keys_present = all_data_keys(&applied.txn, &env);
-    assert!(keys_present.contains(&key(|b| keys::guard_key(
+    assert!(keys_present.contains(&key(|b| keys::determinant_key(
         b,
         KEYED,
         KEYED_KEY,
         &encode_u64(42)
     ))));
-    let mut booking_guard = Vec::new();
-    booking_guard.extend_from_slice(&encode_u64(3));
-    booking_guard.extend_from_slice(&encode_interval_u64(100, 200));
-    assert!(keys_present.contains(&key(|b| keys::guard_key(
+    let mut booking_determinant = Vec::new();
+    booking_determinant.extend_from_slice(&encode_u64(3));
+    booking_determinant.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(100, 200).expect("nonempty interval"),
+    ));
+    assert!(keys_present.contains(&key(|b| keys::determinant_key(
         b,
         BOOKING,
         BOOKING_KEY,
-        &booking_guard
+        &booking_determinant
     ))));
 }

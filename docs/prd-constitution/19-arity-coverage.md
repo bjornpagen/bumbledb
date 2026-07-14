@@ -70,3 +70,37 @@ engine or model finding (trophy discipline applies).
 
 `60-validation.md`'s generator section: one sentence — the descriptor
 space now sweeps projection arity and type mix to the width bound.
+
+## Results (2026-07-13)
+
+- The mixed scalar cycle is `u64/i64/bool/str/bytes<64>`: arity 29 is
+  the last legal point (470 encoded bytes), arity 28 is its under-bound
+  neighbor (462 bytes), and arity 30 is the generated 534-byte refusal.
+  The seeded tests sweep every legal arity and all selection placements,
+  equality at 1/2/3/29, both keyless equality directions, and assert the
+  exact `DeterminantKeyTooWide` width. The legacy descriptor and ops
+  decisions complete before a fresh `Rng` cursor draws the extension, so
+  the corpus stream and its digest remain unchanged while short-input
+  fuzz cases retain live late-arm entropy.
+- `cargo fuzz run theory -- -runs=50000` completed finding-free in 382 s.
+  Arity counts for 1 through 30 were
+  `[7754, 7587, 7179, 255, 237, 953, 594, 679, 242, 605, 179, 199,
+  307, 1089, 1206, 497, 268, 348, 421, 728, 131, 378, 389, 1049, 142,
+  180, 320, 220, 4078, 11786]`; type occurrences
+  (`u64/i64/bool/str/bytes`) were
+  `[157095, 147401, 138055, 128933, 121799]`; source/target/both
+  selections were `[11066, 16174, 22760]`. The session observed 24,267
+  equality cases, 34,659 reordered keys, 11,786 width refusals, 15,818
+  missing-source-key refusals, and 1,637 missing-target-key refusals.
+- `cargo fuzz run ops -- -runs=25000` completed finding-free in 744 s.
+  Legal-arity counts for 1 through 29 were
+  `[4508, 2376, 1165, 319, 350, 641, 497, 1023, 686, 420, 378, 361,
+  360, 490, 839, 576, 388, 1257, 1031, 520, 196, 253, 520, 1132, 499,
+  329, 498, 614, 2774]`; type occurrences were
+  `[75914, 69286, 64913, 59974, 53542]`; source/target/both selections
+  were `[6085, 10090, 8825]`. The session observed 8,254 equality cases
+  and 18,116 reordered keys. Each case compared one accepted seed write
+  and three typed aborts (key collision, missing source witness, target
+  removal), for 100,000 strict engine/naive write-verdict comparisons.
+- Engine findings: none. Model findings: none. Engine source changes:
+  none.

@@ -279,3 +279,11 @@ STALE: it is the literal latch, a live per-execution miss with an
 rejection completeness — the violations refactor already made
 rejections the complete violation set; rule-disjointness evidence —
 `DisjointWitness` already exists.
+
+## Campaign closure
+
+**CLOSED — 2026-07-13.** Final implementation and terminal-evidence commit:
+`41598d5f` (`Complete PRD 23 census close`). PRD 23 records all six green
+batteries, both unchanged pin-block hashes, the canonical/assembly/fuzz gates,
+and the finding-free 10k ops and rewrites smokes. This marker-only follow-up
+does not alter the evidenced tree.

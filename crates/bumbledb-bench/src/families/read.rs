@@ -14,7 +14,7 @@ fn param(id: u16) -> Term {
     Term::Param(ParamId(id))
 }
 
-/// point — `Q(amount, at) :- Posting(id = ?0, amount, at)`. Guard probe.
+/// point — `Q(amount, at) :- Posting(id = ?0, amount, at)`. Key probe.
 fn point_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],

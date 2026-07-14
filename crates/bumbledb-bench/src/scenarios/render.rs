@@ -46,7 +46,7 @@ pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
             out,
             "| {} | {} | {:.1} | {:.1} | {:.2} | {} |",
             r.name,
-            r.rows,
+            r.answers,
             us(r.ours.p50),
             us(r.theirs.p50),
             r.ratio_p50,

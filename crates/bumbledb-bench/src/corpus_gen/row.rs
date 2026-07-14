@@ -108,7 +108,10 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
             vec![
                 Value::U64(checked_id(account)),
                 Value::U64(segment.org),
-                Value::IntervalI64(segment.start, segment.end),
+                Value::IntervalI64(
+                    bumbledb::Interval::<i64>::new(segment.start, segment.end)
+                        .expect("nonempty interval"),
+                ),
             ]
         }
         _ => unreachable!("nine ledger relations"),

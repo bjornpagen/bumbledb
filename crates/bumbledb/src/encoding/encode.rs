@@ -1,7 +1,7 @@
 //! The encode side: canonical per-type encoders and the fact encoder.
 
-use super::{FactLayout, I64_SIGN_BIT, IntervalElement, TypeDesc, ValueRef, fixed_bytes_words};
-use crate::value::Value;
+use super::{FactLayout, I64_SIGN_BIT, ValueRef, fixed_bytes_words};
+use crate::{Interval, value::Value};
 
 /// Encodes a Bool as its canonical single byte.
 #[must_use]
@@ -28,21 +28,19 @@ pub const fn encode_i64(value: i64) -> [u8; 8] {
 /// lexicographically by `(start, end)` — load-bearing for the storage
 /// layer's neighbor probes (`docs/architecture/50-storage.md`).
 ///
-/// `start < end` is a programmer invariant here (`debug_assert!`): the
-/// public [`Interval`](crate::Interval) type makes the violation
-/// unconstructible.
+/// The checked input type makes `start < end` unconstructible.
 #[must_use]
-pub fn encode_interval_u64(start: u64, end: u64) -> [u8; 16] {
-    debug_assert!(start < end);
+pub fn encode_interval_u64(interval: Interval<u64>) -> [u8; 16] {
+    let (start, end) = interval.bounds();
     concat_halves(encode_u64(start), encode_u64(end))
 }
 
 /// Encodes an Interval over I64 as `start ‖ end`, each half [`encode_i64`].
-/// The same `(start, end)` lexicographic-sort and `start < end` contracts
-/// as [`encode_interval_u64`].
+/// The same `(start, end)` lexicographic-sort contract as
+/// [`encode_interval_u64`].
 #[must_use]
-pub fn encode_interval_i64(start: i64, end: i64) -> [u8; 16] {
-    debug_assert!(start < end);
+pub fn encode_interval_i64(interval: Interval<i64>) -> [u8; 16] {
+    let (start, end) = interval.bounds();
     concat_halves(encode_i64(start), encode_i64(end))
 }
 
@@ -57,7 +55,7 @@ fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
 /// zero-padded to the word boundary (`⌈N/8⌉ × 8` bytes) — the pad is
 /// encoding, not data. Injective for a fixed N, and memcmp order over the
 /// padded bytes equals byte order over the values (uniform width, zero
-/// tail), which is all the guard B-tree needs — order *operations* stay
+/// tail), which is all the determinant B-tree needs — order *operations* stay
 /// refused at the query surface.
 pub fn encode_fixed_bytes(raw: &[u8], out: &mut Vec<u8>) {
     let width = fixed_bytes_words(u16::try_from(raw.len()).expect("validated: N <= 64")) * 8;
@@ -85,11 +83,11 @@ pub fn encode_literal(value: &Value, out: &mut Vec<u8>) {
         Value::U64(v) => out.extend_from_slice(&encode_u64(*v)),
         Value::I64(v) => out.extend_from_slice(&encode_i64(*v)),
         Value::FixedBytes(raw) => encode_fixed_bytes(raw, out),
-        Value::IntervalU64(start, end) => {
-            out.extend_from_slice(&encode_interval_u64(*start, *end));
+        Value::IntervalU64(interval) => {
+            out.extend_from_slice(&encode_interval_u64(*interval));
         }
-        Value::IntervalI64(start, end) => {
-            out.extend_from_slice(&encode_interval_i64(*start, *end));
+        Value::IntervalI64(interval) => {
+            out.extend_from_slice(&encode_interval_i64(*interval));
         }
         Value::String(_) => {
             unreachable!("interned literals resolve at their consumer's boundary")
@@ -101,54 +99,35 @@ pub fn encode_literal(value: &Value, out: &mut Vec<u8>) {
 
 /// Appends the canonical encoding of a full fact to `out`.
 ///
-/// `values` must match the layout's field types positionally — that is a
-/// programmer invariant of the typed callers above this layer, checked by
-/// `debug_assert!` on this hot path.
+/// `values` match the layout positionally by construction: typed fact codegen
+/// emits both from one schema declaration, while dynamic ingress builds the
+/// refs only after `value_matches` has accepted the same layout walk. Decode
+/// callers obtain each ref from that layout itself. No raw interval bounds can
+/// reach this function.
 pub fn encode_fact(values: &[ValueRef], layout: &FactLayout, out: &mut Vec<u8>) {
-    debug_assert_eq!(values.len(), layout.field_count());
     out.reserve(layout.fact_width());
-    for (value, &(_, desc)) in values.iter().zip(&layout.fields) {
+    for value in values {
         match *value {
             ValueRef::Bool(v) => {
-                debug_assert_eq!(desc, TypeDesc::Bool);
                 out.push(encode_bool(v));
             }
             ValueRef::U64(v) => {
-                debug_assert_eq!(desc, TypeDesc::U64);
                 out.extend_from_slice(&encode_u64(v));
             }
             ValueRef::I64(v) => {
-                debug_assert_eq!(desc, TypeDesc::I64);
                 out.extend_from_slice(&encode_i64(v));
             }
             ValueRef::String(id) => {
-                debug_assert_eq!(desc, TypeDesc::String);
                 out.extend_from_slice(&encode_u64(id));
             }
             ValueRef::FixedBytes(value) => {
-                debug_assert!(matches!(
-                    desc,
-                    TypeDesc::FixedBytes { len } if usize::from(len) == value.len()
-                ));
                 out.extend_from_slice(value.padded());
             }
-            ValueRef::IntervalU64(start, end) => {
-                debug_assert_eq!(
-                    desc,
-                    TypeDesc::Interval {
-                        element: IntervalElement::U64
-                    }
-                );
-                out.extend_from_slice(&encode_interval_u64(start, end));
+            ValueRef::IntervalU64(interval) => {
+                out.extend_from_slice(&encode_interval_u64(interval));
             }
-            ValueRef::IntervalI64(start, end) => {
-                debug_assert_eq!(
-                    desc,
-                    TypeDesc::Interval {
-                        element: IntervalElement::I64
-                    }
-                );
-                out.extend_from_slice(&encode_interval_i64(start, end));
+            ValueRef::IntervalI64(interval) => {
+                out.extend_from_slice(&encode_interval_i64(interval));
             }
         }
     }

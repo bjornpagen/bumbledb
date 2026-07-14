@@ -78,7 +78,7 @@ fn word(var: VarId, word: IntervalWord) -> VarWord {
 /// or an interval shape); only cross-atom var-vs-var pairs become
 /// residuals — whole-value comparisons, except the interval-pair form
 /// `Allen`, which stays whole (four endpoint slots + mask,
-/// [`PlacedAllen`]), and point containment, which decomposes into word
+/// [`PlacedAllen`]), and point membership, which decomposes into word
 /// comparisons (docs/architecture/20-query-ir.md).
 #[expect(
     clippy::too_many_lines,
@@ -181,11 +181,11 @@ pub(super) fn place_comparisons(
             // `interval ∋ point`: same-atom is the field composition;
             // cross-atom decomposes into two word comparisons over slot
             // pairs (`a.start ≤ p AND p < a.end`).
-            ClassifiedComparison::ContainsVarVar { interval, point } => {
+            ClassifiedComparison::PointInVarVar { interval, point } => {
                 match same_atom(occurrences, *interval, *point) {
                     Some((occurrence, interval_field, point_field)) => occurrences[occurrence]
                         .filters
-                        .push(FilterPredicate::FieldsContainPoint {
+                        .push(FilterPredicate::FieldsPointIn {
                             interval: interval_field,
                             point: point_field,
                         }),
@@ -206,7 +206,7 @@ pub(super) fn place_comparisons(
             // `interval-var ∋ constant point`: the point is
             // element-typed by validation — a point membership on the
             // interval field.
-            ClassifiedComparison::ContainsVarPoint { interval, point } => {
+            ClassifiedComparison::PointInVarPoint { interval, point } => {
                 let (occurrence, field) = field_of(occurrences, *interval);
                 let point = match point {
                     SealedConst::Param(param) => ResolvedWordSource::Param(*param),
@@ -231,7 +231,7 @@ pub(super) fn place_comparisons(
             // same-atom variable sides push down as filters on the
             // measured variable's first positive occurrence (where the
             // filter-order law holds — an occurrence's other filters run
-            // first, so a guarded fact never reaches the subtraction);
+            // first, so a checked fact never reaches the subtraction);
             // only the cross-atom variable side is a residual.
             ClassifiedComparison::Duration {
                 interval,

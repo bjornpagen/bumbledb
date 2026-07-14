@@ -16,7 +16,7 @@ use super::{StoreFinding, Sweep, namespace};
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
     let schema = s.schema;
-    let mut derived = Vec::new();
+    let mut derived = keys::DeterminantImage::scratch();
     for entry in namespace(s.data, txn, keys::NS_REVERSE)? {
         let (key, _) = entry?;
         let Some((sid, key_bytes, source_rel, source_row)) = keys::parse_reverse_key(key) else {
@@ -45,20 +45,25 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             });
             continue;
         }
-        let Enforcement::Probe {
-            key_permutation, ..
-        } = &statement.enforcement
-        else {
-            // A closed-target statement never emits `R` traffic — its
-            // target side is vacuous by construction (axioms don't
-            // delete), so a stored edge's very existence is the finding
-            // (`docs/architecture/30-dependencies.md`, the shape
-            // criterion).
-            s.push(StoreFinding::ClosedRelationEntry {
-                relation: statement.target.relation,
-                key: key.into(),
-            });
-            continue;
+        let key_permutation = match &statement.enforcement {
+            Enforcement::ScalarProbe {
+                key_permutation, ..
+            }
+            | Enforcement::IntervalCoverage {
+                key_permutation, ..
+            } => key_permutation,
+            Enforcement::Closed { .. } => {
+                // A closed-target statement never emits `R` traffic — its
+                // target side is vacuous by construction (axioms don't
+                // delete), so a stored edge's very existence is the finding
+                // (`docs/architecture/30-dependencies.md`, the shape
+                // criterion).
+                s.push(StoreFinding::ClosedRelationEntry {
+                    relation: statement.target.relation,
+                    key: key.into(),
+                });
+                continue;
+            }
         };
         let layout = schema.relation(source_rel).layout();
 
@@ -74,14 +79,14 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                     layout,
                     fact,
                 ) && {
-                    keys::permuted_guard_bytes(
+                    keys::permuted_determinant_image(
                         layout,
                         &statement.source.projection,
                         key_permutation,
                         fact,
                         &mut derived,
                     );
-                    derived == key_bytes
+                    derived.as_bytes() == key_bytes
                 }
             }
         };

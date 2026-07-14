@@ -32,13 +32,13 @@ pub const MAX_RULES: usize = 16;
 
 /// The condition-tree nesting cap: a [`ConditionTree`] deeper than this
 /// is rejected at validation (`ValidationError::ConditionNestingTooDeep`)
-/// — a **boundary guard**, not planner hygiene (the trust-boundary law,
+/// — a **boundary check**, not planner hygiene (the trust-boundary law,
 /// `docs/architecture/20-query-ir.md`): queries arrive as data, the tree
 /// walks (DNF counting, distribution, rendering) recurse by depth, and an
 /// unbounded depth would let hostile input exhaust the stack — a crash,
 /// not a typed error. Depth is measured **iteratively** (an explicit work
-/// list, [`normalize::nesting_depth`]), so the guard itself is total; the
-/// recursive walks run only on guarded trees. The cap is generous: a
+/// list, [`normalize::nesting_depth`]), so the check itself is total; the
+/// recursive walks run only on checked trees. The cap is generous: a
 /// meaningful tree's depth is bounded by its leaf count, and the DNF
 /// blowup cap ([`MAX_RULES`]) already limits leaves per disjunct.
 pub const MAX_CONDITION_DEPTH: usize = 64;
@@ -72,12 +72,12 @@ pub enum Term {
     /// position: one side of an order comparison (`Lt`/`Le`/`Gt`/`Ge`)
     /// against a u64-typed term or literal — never in an atom binding
     /// (the measure is a computation, not a bindable value; typed
-    /// rejection), never under `Eq`/`Ne`/`Allen`/`Contains`, never on
+    /// rejection), never under `Eq`/`Ne`/`Allen`/`PointIn`, never on
     /// both sides. A ray (`end == MAX`) has no finite measure: the
     /// subtraction raises the typed execution error
     /// [`crate::Error::MeasureOfRay`] — hosts exclude rays with an
-    /// `Allen` guard or a bounded-end filter on the same atom first.
-    Duration(VarId),
+    /// `Allen` check or a bounded-end filter on the same atom first.
+    Measure(VarId),
 }
 
 /// One atom: a relation with named-field bindings. Absence of a field *is*
@@ -133,7 +133,7 @@ pub enum AggOp {
     /// The coalescing fold (Snodgrass coalesce) over an interval-typed
     /// variable: per group, the result is the set of **maximal disjoint
     /// half-open segments** of the union of the group's interval point
-    /// sets. `Pack` is **relation-shaped** — one result row per (group,
+    /// sets. `Pack` is **relation-shaped** — one answer per (group,
     /// maximal segment); the result position is interval-typed
     /// (`docs/architecture/20-query-ir.md` § aggregation). Adjacency
     /// merges (`end == next.start` — the half-open law), a packed ray is
@@ -155,18 +155,20 @@ pub enum FindTerm {
         op: AggOp,
         over: Option<VarId>,
     },
-    /// The measure at a find position: projects `Duration(over)` — one
-    /// u64 value per binding, `end − start` of the interval variable
-    /// (see [`Term::Duration`]; the variable must be interval-typed and
+    /// The measure at a find position: projects surface `Duration(over)` —
+    /// one u64 value per binding, `end − start` of the interval variable
+    /// (see [`Term::Measure`]; the variable must be interval-typed and
     /// atom-bound). The projected measure is a group-key position under
-    /// aggregation, exactly like a plain variable find.
-    Duration(VarId),
+    /// aggregation, exactly like a plain variable find. A ray has no finite
+    /// measure and raises [`crate::Error::MeasureOfRay`] at evaluation.
+    Measure(VarId),
     /// A fold over the measure: `Sum`/`Min`/`Max` of `Duration(over)` —
     /// the only three ops the measure admits (`Count` is nullary;
     /// `CountDistinct` and the Arg ops are typed rejections). Accumulates
     /// exactly as `Sum`/`Min`/`Max` over a u64 variable — Sum in the wide
-    /// accumulator with the single finalize range check.
-    AggregateDuration {
+    /// accumulator with the single finalize range check. A ray has no finite
+    /// measure and raises [`crate::Error::MeasureOfRay`] at evaluation.
+    AggregateMeasure {
         op: AggOp,
         over: VarId,
     },
@@ -180,8 +182,8 @@ impl FindTerm {
     #[must_use]
     pub fn head_term(&self) -> HeadTerm {
         match self {
-            Self::Var(_) | Self::Duration(_) => HeadTerm::Var,
-            Self::Aggregate { op, .. } | Self::AggregateDuration { op, .. } => {
+            Self::Var(_) | Self::Measure(_) => HeadTerm::Var,
+            Self::Aggregate { op, .. } | Self::AggregateMeasure { op, .. } => {
                 HeadTerm::Aggregate(op.head_op())
             }
         }
@@ -252,10 +254,11 @@ pub enum MaskTerm {
 /// `classify(lhs, rhs)` is in the mask (`crate::allen`) — and interval
 /// `Eq`/`Ne` are its derived facts (normalization canonicalizes them to
 /// `EQUALS` / `¬EQUALS`, so exactly one interval-pair form reaches the
-/// planner). `Contains` is point membership as a predicate — an interval
-/// left side, an element-typed right side (the predicate form of the
-/// membership binding rule, for terms already bound elsewhere); its
-/// interval⊇interval form is gone — that predicate is `Allen(COVERS)`.
+/// planner). `PointIn` is point membership: an element-typed operand
+/// against an interval operand; `x PointIn iv` iff `iv.start ≤ x < iv.end`.
+/// The ordered IR fields retain the established interval-left, point-right
+/// lowering used by the surface `x in iv`. Interval ⊇ interval is instead
+/// `Allen(COVERS)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,
@@ -265,7 +268,7 @@ pub enum CmpOp {
     Gt,
     Ge,
     Allen { mask: MaskTerm },
-    Contains,
+    PointIn,
 }
 
 impl CmpOp {
@@ -281,8 +284,8 @@ impl CmpOp {
             Self::Ge => left >= right,
             // Interval operators never reach single-word evaluation:
             // normalization lowers `Allen` to mask-carrying shapes and
-            // `Contains` to endpoint compositions (`ir::normalize`).
-            Self::Allen { .. } | Self::Contains => {
+            // `PointIn` to endpoint compositions (`ir::normalize`).
+            Self::Allen { .. } | Self::PointIn => {
                 unreachable!("interval operators are lowered before evaluation")
             }
         }
@@ -549,8 +552,12 @@ mod tests {
             Value::I64(i64::MIN),
             Value::String(Box::from(&b"text"[..])),
             Value::FixedBytes(Box::from(&[0xDEu8, 0xAD][..])),
-            Value::IntervalU64(0, u64::MAX),
-            Value::IntervalI64(i64::MIN, i64::MAX),
+            Value::IntervalU64(
+                crate::Interval::<u64>::new(0, u64::MAX).expect("nonempty interval"),
+            ),
+            Value::IntervalI64(
+                crate::Interval::<i64>::new(i64::MIN, i64::MAX).expect("nonempty interval"),
+            ),
             // Plus the one non-field value shape: the Allen mask (a
             // param's bind-time payload, never a stored type).
             Value::AllenMask(crate::allen::AllenMask::DISJOINT),
@@ -563,8 +570,14 @@ mod tests {
         // `From<Interval<_>>`: same halves, no re-check needed — the
         // checked type already holds `start < end`.
         let iv = Interval::<i64>::new(-5, 9).expect("valid bounds");
-        assert_eq!(Value::from(iv), Value::IntervalI64(-5, 9));
+        assert_eq!(
+            Value::from(iv),
+            Value::IntervalI64(crate::Interval::<i64>::new(-5, 9).expect("nonempty interval"))
+        );
         let iv = Interval::<u64>::new(3, 7).expect("valid bounds");
-        assert_eq!(Value::from(iv), Value::IntervalU64(3, 7));
+        assert_eq!(
+            Value::from(iv),
+            Value::IntervalU64(crate::Interval::<u64>::new(3, 7).expect("nonempty interval"))
+        );
     }
 }

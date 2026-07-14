@@ -97,22 +97,31 @@ fn rejects_conflicting_param_anchors() {
 }
 
 #[test]
-fn rejects_order_comparison_on_non_integer() {
-    // Holder.name is a String: Lt is illegal (equality-only type).
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![atom(HOLDER, vec![(0, var(1)), (1, var(0))])],
-        negated: vec![],
-        conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Lt,
-            lhs: var(0),
-            rhs: Term::Literal(Value::String(Box::from(&b"x"[..]))),
-        })],
-    });
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::IllegalComparison { index: 0 }
-    ));
+fn rejects_order_comparison_on_string_in_both_written_orders() {
+    // Holder.name is a String: both written orders get the dedicated
+    // equality-only refusal before generic classification.
+    for literal_on_left in [false, true] {
+        let literal = Term::Literal(Value::String(Box::from(&b"x"[..])));
+        let (lhs, rhs) = if literal_on_left {
+            (literal, var(0))
+        } else {
+            (var(0), literal)
+        };
+        let query = Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![atom(HOLDER, vec![(0, var(1)), (1, var(0))])],
+            negated: vec![],
+            conditions: vec![ConditionTree::Leaf(Comparison {
+                op: CmpOp::Lt,
+                lhs,
+                rhs,
+            })],
+        });
+        assert_eq!(
+            expect_err(&query),
+            ValidationError::OrderComparisonOnString { index: 0 }
+        );
+    }
 }
 
 #[test]
@@ -135,26 +144,31 @@ fn rejects_self_comparison() {
 }
 
 #[test]
-fn rejects_order_operators_on_bool() {
-    // Posting.flag is Bool (field 5): Lt is illegal (equality-only type).
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![
-            atom(POSTING, vec![(5, var(0)), (0, var(1))]),
-            atom(POSTING, vec![(5, var(2)), (0, var(3))]),
-        ],
-        negated: vec![],
-        conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Lt,
-            lhs: var(0),
-            rhs: var(2),
-        })],
-    });
-    let err = expect_err(&query);
-    assert!(
-        matches!(err, ValidationError::IllegalComparison { index: 0 }),
-        "order ops are integer-only; got {err:?}"
-    );
+fn rejects_order_comparison_on_bool_in_both_written_orders() {
+    // Posting.flag is Bool (field 5): both written orders get the dedicated
+    // equality-only refusal before generic classification.
+    for literal_on_left in [false, true] {
+        let literal = Term::Literal(Value::Bool(true));
+        let (lhs, rhs) = if literal_on_left {
+            (literal, var(0))
+        } else {
+            (var(0), literal)
+        };
+        let query = Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(1))],
+            atoms: vec![atom(POSTING, vec![(5, var(0)), (0, var(1))])],
+            negated: vec![],
+            conditions: vec![ConditionTree::Leaf(Comparison {
+                op: CmpOp::Lt,
+                lhs,
+                rhs,
+            })],
+        });
+        assert_eq!(
+            expect_err(&query),
+            ValidationError::OrderComparisonOnBool { index: 0 }
+        );
+    }
 }
 
 #[test]
@@ -456,7 +470,9 @@ fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Lt,
             lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(1, 5)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),
+            )),
         })],
     });
     assert!(matches!(
@@ -620,6 +636,45 @@ fn rejects_a_negated_atom_variable_unbound_by_positive_atoms() {
 }
 
 #[test]
+fn a_param_position_does_not_bind_a_negated_variable_even_when_written_after_it() {
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        // Hostile textual order: the unsafe occurrence is written first.
+        negated: vec![atom(POSTING, vec![(1, var(1))])],
+        atoms: vec![atom(
+            HOLDER,
+            vec![(0, var(0)), (1, Term::Param(ParamId(1)))],
+        )],
+        conditions: vec![],
+    });
+    assert_eq!(
+        expect_err(&query),
+        ValidationError::NegatedVariableUnbound { var: VarId(1) }
+    );
+}
+
+#[test]
+fn an_aggregate_output_does_not_bind_a_negated_variable_even_when_written_after_it() {
+    let query = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Sum,
+                over: Some(VarId(1)),
+            },
+        ],
+        // Hostile textual order: the unsafe occurrence is written first.
+        negated: vec![atom(POSTING, vec![(1, var(1))])],
+        atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        conditions: vec![],
+    });
+    assert_eq!(
+        expect_err(&query),
+        ValidationError::NegatedVariableUnbound { var: VarId(1) }
+    );
+}
+
+#[test]
 fn rejects_mixed_arg_and_fold_aggregates() {
     // ArgMax + Sum in one find list: "sum of the latest" is two queries.
     let query = simple(
@@ -704,45 +759,6 @@ fn rejects_a_non_orderable_arg_key() {
 }
 
 #[test]
-fn rejects_an_inverted_interval_literal_in_a_binding() {
-    let query = simple(
-        vec![FindTerm::Var(VarId(0))],
-        vec![atom(
-            ACCOUNT,
-            vec![
-                (0, var(0)),
-                (VALIDITY, Term::Literal(Value::IntervalU64(9, 3))),
-            ],
-        )],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::EmptyIntervalLiteral {
-            atom: 0,
-            field: FieldId(VALIDITY)
-        }
-    ));
-}
-
-#[test]
-fn rejects_an_inverted_interval_literal_in_a_comparison() {
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
-        negated: vec![],
-        conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Eq,
-            lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(9, 3)),
-        })],
-    });
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::ComparisonEmptyIntervalLiteral { index: 0 }
-    ));
-}
-
-#[test]
 fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
     // The point-domain law: points are MIN..=MAX-1, and MAX is the ray's
     // ∞ — inside no interval, so the membership is typed out, never
@@ -764,15 +780,15 @@ fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
 }
 
 #[test]
-fn rejects_a_point_literal_at_the_ceiling_under_contains() {
-    // The comparison-site sibling: a Contains right side is an interval
+fn rejects_a_point_literal_at_the_ceiling_under_point_in() {
+    // The comparison-site sibling: a PointIn right side is an interval
     // position, so the ceiling is equally not a point there.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
             rhs: Term::Literal(Value::U64(u64::MAX)),
         })],
@@ -817,7 +833,9 @@ fn rejects_the_empty_allen_mask() {
                 mask: MaskTerm::Literal(crate::allen::AllenMask::EMPTY),
             },
             lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(1, 5)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),
+            )),
         })],
     });
     assert!(matches!(
@@ -874,8 +892,8 @@ fn rejects_allen_over_non_interval_sides() {
 }
 
 #[test]
-fn rejects_contains_between_two_intervals() {
-    // The interval⊇interval Contains is gone — that predicate is
+fn rejects_point_in_between_two_intervals() {
+    // The interval⊇interval PointIn overload is gone — that predicate is
     // Allen(COVERS); an interval-typed right side is illegal.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -885,7 +903,7 @@ fn rejects_contains_between_two_intervals() {
         ],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
             rhs: var(3),
         })],
@@ -900,9 +918,11 @@ fn rejects_contains_between_two_intervals() {
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
-            rhs: Term::Literal(Value::IntervalU64(1, 5)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),
+            )),
         })],
     });
     assert!(matches!(
@@ -963,7 +983,7 @@ fn rejects_duration_in_a_binding() {
         vec![FindTerm::Var(VarId(0))],
         vec![atom(
             POSTING,
-            vec![(0, var(0)), (1, Term::Duration(VarId(1))), (SPAN, var(1))],
+            vec![(0, var(0)), (1, Term::Measure(VarId(1))), (SPAN, var(1))],
         )],
     );
     assert!(matches!(
@@ -985,7 +1005,7 @@ fn rejects_duration_over_a_non_interval_variable() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Gt,
-            lhs: Term::Duration(VarId(1)),
+            lhs: Term::Measure(VarId(1)),
             rhs: Term::Literal(Value::U64(5)),
         })],
     });
@@ -998,7 +1018,7 @@ fn rejects_duration_over_a_non_interval_variable() {
 #[test]
 fn rejects_a_duration_find_over_a_non_interval_variable() {
     let query = simple(
-        vec![FindTerm::Duration(VarId(0))],
+        vec![FindTerm::Measure(VarId(0))],
         vec![atom(POSTING, vec![(1, var(0))])],
     );
     assert!(matches!(
@@ -1013,7 +1033,7 @@ fn rejects_a_duration_aggregate_outside_sum_min_max() {
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::CountDistinct,
                 over: VarId(1),
             },
@@ -1031,7 +1051,7 @@ fn rejects_duration_under_equality() {
     // Only the order comparisons take a measure side.
     let query = duration_condition(Comparison {
         op: CmpOp::Eq,
-        lhs: Term::Duration(VarId(1)),
+        lhs: Term::Measure(VarId(1)),
         rhs: Term::Literal(Value::U64(5)),
     });
     assert!(matches!(
@@ -1044,8 +1064,8 @@ fn rejects_duration_under_equality() {
 fn rejects_duration_on_both_sides() {
     let query = duration_condition(Comparison {
         op: CmpOp::Lt,
-        lhs: Term::Duration(VarId(1)),
-        rhs: Term::Duration(VarId(1)),
+        lhs: Term::Measure(VarId(1)),
+        rhs: Term::Measure(VarId(1)),
     });
     assert!(matches!(
         expect_err(&query),
@@ -1065,7 +1085,7 @@ fn rejects_duration_against_a_non_u64_side() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Gt,
-            lhs: Term::Duration(VarId(1)),
+            lhs: Term::Measure(VarId(1)),
             rhs: var(2),
         })],
     });
@@ -1081,8 +1101,8 @@ fn rejects_a_duration_fold_over_a_group_key_variable() {
     // its measure is constant per group.
     let query = simple(
         vec![
-            FindTerm::Duration(VarId(1)),
-            FindTerm::AggregateDuration {
+            FindTerm::Measure(VarId(1)),
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(1),
             },
@@ -1103,7 +1123,7 @@ fn rejects_a_comparison_only_duration_variable() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Gt,
-            lhs: Term::Duration(VarId(9)),
+            lhs: Term::Measure(VarId(9)),
             rhs: Term::Literal(Value::U64(5)),
         })],
     });
@@ -1166,12 +1186,12 @@ fn rejects_pack_beside_a_fold_aggregate() {
 
 #[test]
 fn rejects_pack_beside_a_measure_fold() {
-    // The AggregateDuration form is a fold too — Sum∘Duration∘Pack in
+    // The AggregateMeasure form is a fold too — Sum∘Duration∘Pack in
     // one head stays two queries (the composition refusal).
     let query = simple(
         vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(1),
             },

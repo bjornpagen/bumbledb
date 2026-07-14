@@ -9,7 +9,7 @@ a macro, write plain structs, and run queries — rule programs with joins,
 negation, the full Allen interval algebra (one 13-bit mask, one branchless
 kernel), point membership, `Duration`, and the coalescing `Pack` aggregate —
 planned once and executed over columnar in-memory images with a lazy trie
-join. Results are sets; a multi-rule query's union *is* the sink's dedup.
+join. Answers are sets; a multi-rule query's union *is* the sink's dedup.
 Invariants are dependency statements — functional and inclusion dependencies,
 judged at commit against the final state — and read-compute-write is
 optimistic, witnessed by snapshots, checked in one compare at commit.
@@ -20,9 +20,9 @@ measurement with two differential oracles standing behind it.
 bumbledb::schema! {
     pub Ledger;
 
-    // A vocabulary is a closed relation: rows are ground axioms, frozen
+    // A vocabulary is a closed relation: its ground axioms are frozen
     // by the fingerprint, virtual in storage — the store holds zero
-    // vocabulary bytes. The macro emits a host enum welded to the row ids.
+    // vocabulary bytes. The macro emits a host enum welded to declaration ids.
     closed relation Region as RegionId = { Na, Eu, Apac, Latam };
     closed relation Status as StatusId = { Open, Frozen, Closed };
 
@@ -59,7 +59,7 @@ db.write(|tx| {
 
 // Queries are rule programs in set-builder notation (the `query!` macro
 // lowers to plain-data IR at compile time; the raw IR remains the contract).
-// Prepared once, executed on snapshots into a reusable buffer — zero
+// Prepared once, executed on snapshots into reusable `Answers` — zero
 // allocations per execution after warmup.
 let q = bumbledb_query::query!(Ledger {
     (h, name) | Holder(id: h, name), Account(holder: h, status == Status::Open);
@@ -107,7 +107,7 @@ engines, and bulk load favors SQLite's write path; we publish it anyway:
 
 ![writes and cold](assets/bench-writes.svg)
 
-**Context that keeps these numbers honest:** S-scale corpora (a 10⁵-row-
+**Context that keeps these numbers honest:** S-scale corpora (a 10⁵-fact-
 fact-table ledger and a calendar world of interval claims, RSVP arms, and
 ray horizons), Apple M2 Max, engine-favorable workload class (point lookups
 through multi-way joins, interval algebra, and aggregates — exactly what a
@@ -182,11 +182,11 @@ statement form enters when it carries an enforcement plan, never before.
 | `str` | `s: str` | intern id — the dictionary maps repeated text to words; UTF-8 parsed at intern | text under reuse | `==` `!=`, ∈-sets; **order/prefix refused** |
 | `bytes<N>` | `h: bytes<32>` | N raw bytes inline, word-padded; never interned | an identity (digest) | `==` `!=`, ∈-sets; **order refused** (a hash's order is an encoding artifact) |
 | `interval<E>` | `d: interval<i64>` | two order-preserving words `(start, end)`, half-open `[s, e)`, `s < e`; `end = MAX` denotes the ray `[s, ∞)` | **the set of points** `{p : s ≤ p < e}` | `p ∈ d` (membership), `Allen(mask)` (all 8,192 pair relations), `Duration` (the measure), `Pack` (coalesce) |
-| `closed relation` | `closed relation Status as StatusId = { Open, Frozen }` | virtual — rows are **ground axioms** sealed at validate, handle id = declaration order; the store holds zero vocabulary bytes | a vocabulary: the theory's named constants | referenced as a `u64` + containment to its key; handles resolve at expansion; `==` `!=`, ∈-sets; **order refused** |
+| `closed relation` | `closed relation Status as StatusId = { Open, Frozen }` | virtual — **ground axioms** sealed at validate, handle id = declaration order; the store holds zero vocabulary bytes | a vocabulary: the theory's named constants | referenced as a `u64` + containment to its key; handles resolve at expansion; `==` `!=`, ∈-sets; **order refused** |
 
-`closed relation` is a relation form, not a seventh value type: its rows
+`closed relation` is a relation form, not a seventh value type: its ground axioms
 live in the schema (frozen by the fingerprint, never written), the macro
-emits a **host enum** welded to the row ids — an emission, not a type —
+emits a **host enum** welded to declaration ids — an emission, not a type —
 and a reference to it is an ordinary `u64` field under the handle newtype
 plus a containment statement. Two tiers, one production — handles only,
 or handles with **payload columns** stating what each word means, read by
@@ -221,7 +221,7 @@ units under a host newtype; floats never persist.
   polices (`HolderId` ≠ `AccountId` at compile time). The engine itself
   stays structural — a type is an encoding, and names live in the host.
 - `fresh` — a *generation* attribute: the engine mints fresh existential
-  witnesses (dependency theory's fresh values, the chase's own move), and
+  witnesses (dependency theory's fresh-existential repair move), and
   the key theorem `R(f) -> R` materializes automatically — a generator
   whose outputs could collide would not be a generator, so the statement is
   a consequence, not a choice. `u64` only.
@@ -243,8 +243,8 @@ a theorem rather than a feature.
 **`A(X | φ) <= B(Y | ψ)` — the (conditional) inclusion dependency**:
 πX(σφ(A)) ⊆ πY(σψ(B)). Read `<=` as *is contained in* — it is `⊆` written
 in the tokens Rust lexes, and the choice is principled: the subset order is
-an order. The acceptance gate requires Y to be a key of B (one guard probe
-answers "is this tuple present"). SQL's foreign key is the unselected
+an order. The acceptance gate requires Y to be a key of B (one key probe
+answers "is this tuple present"). SQL's referential constraint is the unselected
 special case; the selected form is the CIND of the data-quality
 literature. **Pointwise lifting:** an interval position turns containment
 into *coverage* — every point of A's interval lies under B's segments,
@@ -252,17 +252,24 @@ checkable in O(log n + segments) because B's own key keeps its segments
 disjoint and ordered.
 
 **`A(..) == B(..)` — mutual inclusion**: both containments, each judged
-independently. Read `==` as *exactly*. This is the discriminated-union
-operator: `Parent(id | kind == V) == Arm(parent)` buys totality (a V-kinded
-parent *has* its arm row, same commit), arm validity (an arm row's parent
-exists *with that kind*), and exclusivity (an id in two arms would force
-`kind` to equal two variants — a contradiction, not a rule).
+independently. Read `==` as *exactly*. Because each direction's target must
+be a declared key, accepted `==` is a key-backed one-to-one correspondence
+on the selected projections: every selected A-fact has exactly one selected
+B-witness with the same projected value, and vice versa. It is not literal
+whole-fact equality (unprojected payloads may differ) and says nothing about
+unselected facts — which is the discriminated-union idiom's whole point.
+`Parent(id | kind == V) == Arm(parent)` buys totality (a V-kinded parent
+*has* its arm fact, same commit), arm validity (an arm fact's parent exists
+*with that kind*), and exclusivity (an id in two arms would force `kind` to
+equal two variants — a contradiction, not a rule).
 
 **Selections `| f == v`** are σ with equality only — the same restriction
 the CIND literature imposes — and a selected field may not also be
-projected. `|` reads as *such that*, the set-builder bar. The two levels of
-`==` (sets between atoms, values inside selections) are one concept —
-equality of denotations — at two types, exactly as mathematics uses `=`.
+projected. `|` reads as *such that*, the set-builder bar. The three equality
+levels are one concept—equality of denotations—at three
+different types: dependency `==` relates key-backed selected views, selection `==`
+tests values inside σ, and query comparison `Eq` tests typed terms. They are never
+interchangeable in diagnostics (`20-query-ir.md` § atom matching).
 
 **The judgment discipline**, which is what makes the notation load-bearing:
 a statement is accepted only if the checker holds an
@@ -286,14 +293,15 @@ broken until they agree.
 | [20 — Query IR](docs/architecture/20-query-ir.md) | queries as data: atoms, negation, membership, param sets, aggregates |
 | [30 — Dependencies](docs/architecture/30-dependencies.md) | the two judgments, statements, pointwise lifting, the acceptance gate |
 | [40 — Execution](docs/architecture/40-execution.md) | Free Join, COLT, anti-probes, batching, the Apple Silicon model |
-| [50 — Storage](docs/architecture/50-storage.md) | LMDB layout, guards as judgment accelerators, the delta write path |
+| [50 — Storage](docs/architecture/50-storage.md) | LMDB layout, determinants as judgment accelerators, the delta write path |
 | [60 — Validation](docs/architecture/60-validation.md) | the two oracles, the bench ledger, measurement discipline |
 | [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, witnessed writes, prepared queries |
 
 The intuition-transfer companion is [`docs/cookbook.md`](docs/cookbook.md) —
-twenty-six worked schemas (unions, vocabularies, trees, calendars, tax
-brackets, ledgers, host-driven closures), each rot-proofed by a compile test,
-each comment naming the theorem its statement buys.
+twenty-eight worked schemas (unions, vocabularies, trees, calendars, tax
+brackets, ledgers, maintained derived facts, host-driven closures), each
+rot-proofed by a compile test, each comment naming the theorem its statement
+buys.
 
 The algorithmic reference is Wang, Willsey & Suciu, *Free Join: Unifying
 Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in

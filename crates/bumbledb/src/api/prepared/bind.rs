@@ -14,7 +14,7 @@ use crate::storage::env::ReadTxn;
 impl<S> PreparedQuery<'_, S> {
     /// Rebuilds the executor scratch at a different batch size — the
     /// tuning/test surface for D4's measurement-owned constant. Allocation
-    /// happens here, outside any measured window. A no-op for guard
+    /// happens here, outside any measured window. A no-op for key_probe
     /// probes. Hidden: a measurement affordance, not a knob on the
     /// no-knobs surface (`docs/architecture/00-product.md`).
     #[doc(hidden)]
@@ -27,10 +27,10 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// The identity check at every execution entry (`execute` and
-    /// `profile`; `execute_collect` and `explain` route through them):
+    /// `profile`; `execute_collect` and `introspect` route through them):
     /// a snapshot of any environment other than the preparing one is a
     /// typed error before anything else runs. One u64 compare — with the
-    /// entry guarded, the view memo needs no environment epoch in its
+    /// entry protected, the view memo needs no environment epoch in its
     /// generation keys.
     pub(super) fn check_snapshot(&self, txn: &ReadTxn<'_>) -> Result<()> {
         if txn.env_instance() == self.env_instance {
@@ -292,12 +292,12 @@ pub(super) fn resolve_filters(
     latched: &mut u32,
 ) -> Result<bool> {
     for (occ_idx, occurrence) in plan.occurrences_mut().iter_mut().enumerate() {
-        // A discharged occurrence (chase-eliminated or chase-folded)
+        // A discharged occurrence (grounding-eliminated or grounding-folded)
         // resolves nothing: an eliminated occurrence's lists are empty,
-        // and a folded occurrence's retained filter list is EXPLAIN's
+        // and a folded occurrence's retained filter list is introspection's
         // picture only — plan-constant by the fold's own conditions,
         // never evaluated, so its slots stay empty and never count
-        // toward the latch (`plan/chase/evaluate.rs`).
+        // toward the latch (`plan/ground/evaluate.rs`).
         if occurrence.role.discharged() {
             debug_assert!(occurrence.selections.is_empty());
             continue;
@@ -305,7 +305,7 @@ pub(super) fn resolve_filters(
         // Templates are mutable for exactly one write: the literal latch
         // — a resolved `PendingIntern` becomes its `Const::Word` in
         // place, once, permanently (the dictionary is append-only, the
-        // prepared query owns its plan — `!Sync`, env-guarded — and ids
+        // prepared query owns its plan — `!Sync`, environment-pinned — and ids
         // outlive the environment).
         let negated = occurrence.role == crate::ir::normalize::Role::Negated;
         let filters = &mut out_filters[occ_idx];
@@ -392,8 +392,8 @@ fn resolve_selection_into(
             };
             out.extend_from_slice(words);
         }
-        // A plan-constant set (the chase-evaluator's fold —
-        // `plan/chase/evaluate.rs`): pre-resolved at prepare, copied
+        // A plan-constant set (the grounding-evaluator's fold —
+        // `plan/ground/evaluate.rs`): pre-resolved at prepare, copied
         // through verbatim; nothing to look up, nothing pending, and it
         // never counts as an unresolved literal (the latch's fast path
         // stays reachable). Never empty: |S| == 0 killed the rule.
@@ -470,7 +470,7 @@ fn resolve_filter_into(
                     write_word_set_value(dst, words);
                     return Ok(true);
                 }
-                // A plan-constant set (the chase-evaluator's fold):
+                // A plan-constant set (the grounding-evaluator's fold):
                 // pre-resolved at prepare — copy through into the
                 // slot's pooled `WordSet` exactly like a bound param
                 // set, with no per-execution work and no latch traffic.
@@ -583,7 +583,7 @@ fn resolve_filter_into(
         }
         // Constant-free kinds copy through (cheap: field ids only).
         FilterPredicate::FieldsCompare { .. }
-        | FilterPredicate::FieldsContainPoint { .. }
+        | FilterPredicate::FieldsPointIn { .. }
         | FilterPredicate::DurationFieldsCompare { .. } => {
             dst.clone_from(template);
         }
@@ -645,8 +645,8 @@ fn element_view(value: &Value) -> Option<BindValue<'_>> {
         Value::I64(v) => BindValue::I64(*v),
         Value::String(raw) => BindValue::Str(std::str::from_utf8(raw).ok()?),
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
-        Value::IntervalU64(start, end) => BindValue::IntervalU64(*start, *end),
-        Value::IntervalI64(start, end) => BindValue::IntervalI64(*start, *end),
+        Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
+        Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
         // A mask is no element type — a set never holds masks; the
         // caller reports the element mismatch.
         Value::AllenMask(_) => return None,

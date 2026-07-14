@@ -92,14 +92,22 @@ fn pack_slot(finds: &[SinkSpec]) -> Option<usize> {
 impl AggregateSink {
     /// Builds the sink. `slot_count` is the plan's binding-slot count in
     /// **words** (an interval variable holds two — the `SlotWidth` layout);
-    /// `distinct_bindings` is the plan's elision flag (40-execution): when
-    /// set, the seen-set is skipped entirely; `union` is the multi-rule
-    /// regime (the seen-set keys head projections and spans rules).
-    /// Unhinted construction (tests; production sinks are hint-sized).
+    /// Unhinted, seen-set-retaining construction (tests).
     #[cfg(test)]
     #[must_use]
-    pub fn new(finds: impl AsRef<[FindSpec]>, slot_count: usize, distinct_bindings: bool) -> Self {
-        Self::with_capacity_hint(finds.as_ref(), slot_count, distinct_bindings, false, 0)
+    pub fn new(finds: impl AsRef<[FindSpec]>, slot_count: usize) -> Self {
+        Self::build(finds.as_ref(), slot_count, DedupRegime::Bindings, 0)
+    }
+
+    /// Unhinted elided construction (tests): the proof is mandatory.
+    #[cfg(test)]
+    #[must_use]
+    pub fn new_distinct(
+        finds: impl AsRef<[FindSpec]>,
+        slot_count: usize,
+        witness: crate::plan::fj::DistinctWitness,
+    ) -> Self {
+        Self::build(finds.as_ref(), slot_count, DedupRegime::Elided(witness), 0)
     }
 
     /// Presized construction: the dedup seen-set
@@ -107,22 +115,41 @@ impl AggregateSink {
     /// clamp of it (groups are few — the estimate bounds bindings, not
     /// groups).
     ///
-    /// Dedup is **per-query-shape**: a single-rule sink (`union` false)
-    /// keys the whole slot array; a multi-rule sink keys the **head
-    /// projection** — rule-independent by construction. `distinct` is
-    /// the caller's proof that the emitted dedup-key stream is
-    /// duplicate-free, and it elides the seen-set for a single rule.
-    /// Multi-rule sinks always retain one head-projection seen-set: that
-    /// spanning map is the union representation, even when the rules are
-    /// provably disjoint.
+    /// Dedup is structural: this constructor keys a single rule's whole
+    /// slot array; [`Self::for_union`] keys the rule-independent head
+    /// projection; [`Self::without_seen_set`] alone accepts the proof and
+    /// omits the map. Multi-rule sinks always retain the spanning union
+    /// representation, even when the rules are provably disjoint.
     #[must_use]
-    pub fn with_capacity_hint(
+    pub fn with_capacity_hint(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
+        Self::build(finds, slot_count, DedupRegime::Bindings, hint)
+    }
+
+    /// Presized multi-rule construction: the head-projection seen-set is
+    /// structurally mandatory because it is the union representation.
+    #[must_use]
+    pub fn for_union(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
+        Self::build(finds, slot_count, DedupRegime::Union, hint)
+    }
+
+    /// Presized single-rule construction without a binding seen-set. The
+    /// only entry requires the plan proof by value.
+    #[must_use]
+    pub fn without_seen_set(
         finds: &[FindSpec],
         slot_count: usize,
-        distinct: bool,
-        union: bool,
+        witness: crate::plan::fj::DistinctWitness,
         hint: usize,
     ) -> Self {
+        Self::build(finds, slot_count, DedupRegime::Elided(witness), hint)
+    }
+
+    fn build(finds: &[FindSpec], slot_count: usize, regime: DedupRegime, hint: usize) -> Self {
+        let union = matches!(regime, DedupRegime::Union);
+        let distinct_witness = match regime {
+            DedupRegime::Elided(witness) => Some(witness),
+            DedupRegime::Bindings | DedupRegime::Union => None,
+        };
         // Parse first: everything below sees the measure-free execution
         // vocabulary over the extended scratch row.
         let (finds, measures) = parse_finds(finds, slot_count);
@@ -190,13 +217,14 @@ impl AggregateSink {
             "validated: Arg-restriction never crosses rules"
         );
         Self {
+            distinct_witness,
             groups: WordMap::with_capacity_hint(key_words, hint.min(4096)),
             key_scratch: vec![0; key_words],
             binding_scratch: vec![0; scratch_words],
             // Single-rule: whole-binding key, elided when its own plan
             // proves distinct bindings. Multi-rule: head-projection key,
             // always retained as the union representation.
-            seen: (union || !distinct).then(|| {
+            seen: distinct_witness.is_none().then(|| {
                 WordMap::with_capacity_hint(if union { union_words } else { scratch_words }, hint)
             }),
             union_scratch: vec![0; union_words],
@@ -211,7 +239,7 @@ impl AggregateSink {
             value_sets_live: 0,
             arg,
             arg_best: Vec::new(),
-            arg_rows: Vec::new(),
+            arg_answers: Vec::new(),
             carry_words,
             carry_scratch: Vec::with_capacity(carry_words),
             pack,
@@ -278,6 +306,11 @@ impl AggregateSink {
     /// distinct-bindings proof: every emit is first-seen).
     #[must_use]
     pub fn distinct_seen(&self) -> Option<usize> {
+        debug_assert_eq!(
+            self.seen.is_none(),
+            self.distinct_witness.is_some(),
+            "only a retained distinctness proof can remove the seen-set"
+        );
         self.seen.as_ref().map(WordMap::len)
     }
 
@@ -287,7 +320,7 @@ impl AggregateSink {
     #[cfg(test)]
     #[must_use]
     pub fn seen_elided(&self) -> bool {
-        self.seen.is_none()
+        self.distinct_witness.is_some()
     }
 
     /// Distinct values held across every live `CountDistinct` set — the
@@ -325,6 +358,13 @@ impl AggregateSink {
     pub fn measure_of_ray(&self) -> Option<[u64; 2]> {
         self.ray
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DedupRegime {
+    Bindings,
+    Union,
+    Elided(crate::plan::fj::DistinctWitness),
 }
 
 /// One head position's contribution to the union dedup key: the slot

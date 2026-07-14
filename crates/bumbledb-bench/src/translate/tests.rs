@@ -537,7 +537,7 @@ fn allen_intersects_matches_its_hand_written_golden() {
 }
 
 #[test]
-fn contains_matches_both_goldens() {
+fn point_in_matches_both_goldens() {
     // The ⊇ composite against an interval param:
     // Q(o) :- Mandate(org = o, active = v), Allen(v, ?0, COVERS).
     let query = Query::single(Rule {
@@ -564,7 +564,7 @@ fn contains_matches_both_goldens() {
     );
 
     // Point containment: Q(o, t) :- Mandate(org = o, active = v),
-    //                               Posting(at = t), Contains(v, t).
+    //                               Posting(at = t), PointIn(v, t).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
@@ -579,13 +579,13 @@ fn contains_matches_both_goldens() {
         ],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: var(1),
             rhs: var(2),
         })],
     });
     let t = translate(&query, schema(), &[]).expect("translates");
-    assert_eq!(t.sql, goldens::CONTAINS_POINT);
+    assert_eq!(t.sql, goldens::POINT_IN);
 }
 
 #[test]
@@ -630,7 +630,9 @@ fn interval_equality_matches_its_goldens() {
                 (ids::mandate::ORG, var(0)),
                 (
                     ids::mandate::ACTIVE,
-                    Term::Literal(Value::IntervalI64(1700, 1800)),
+                    Term::Literal(Value::IntervalI64(
+                        bumbledb::Interval::<i64>::new(1700, 1800).expect("nonempty interval"),
+                    )),
                 ),
             ],
         }],
@@ -1169,7 +1171,7 @@ fn a_duration_find_is_end_minus_start_on_the_stored_columns() {
     // Q(account, Duration(active)) :- Mandate(account, active) — the
     // measure translates to arithmetic over the two interval columns.
     let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         atoms: vec![Atom {
             relation: ids::MANDATE,
             bindings: vec![

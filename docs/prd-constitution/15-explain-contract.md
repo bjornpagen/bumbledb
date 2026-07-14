@@ -70,3 +70,10 @@ policy-5 stop.
 
 `70-api.md`: the EXPLAIN contract paragraph (version, determinism law,
 what a version bump means); architecture README's OPEN item resolved.
+
+## Execution reconciliation
+
+The tree sorted unresolved-literal labels lexically, contradicting the stated
+statement-order law. This was ledger-missed but mechanically resolvable under the
+conflict protocol: diagnostics now deduplicate stably at first occurrence, and the
+reverse-lexical hostile golden pins statement order.

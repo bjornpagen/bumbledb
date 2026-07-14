@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 use bumbledb::ir::Value;
 use bumbledb::ir::render::render;
 use bumbledb::{
-    BindValue, Db, Fact, ParamArg, PreparedQuery, Query, ResultBuffer, ResultValue, Schema,
-    Snapshot, Theory,
+    AnswerValue, Answers, BindValue, Db, Fact, ParamArg, PreparedQuery, Query, Schema, Snapshot,
+    Theory,
 };
 use bumbledb_query::query;
 
@@ -458,7 +458,54 @@ recipe!(r25, Accounts, {
     Posting(account) <= Account(id);
 });
 
-recipe!(r26, Payroll, {
+recipe!(r26, ExactPartition, {
+    pub ExactPartition;
+
+    relation Policy  { id: u64 as PolicyId, fresh, live: interval<i64> }
+    relation Version { policy: u64 as PolicyId, valid: interval<i64> }
+
+    Version(policy) <= Policy(id);
+    Version(policy, valid) -> Version;
+    Policy(id, live) -> Policy;
+    Policy(id, live) <= Version(policy, valid);
+    Version(policy, valid) <= Policy(id, live);
+});
+
+recipe!(r27, MaintainedRollup, {
+    pub MaintainedRollup;
+
+    closed relation Arm as ArmId = { Busy, Ooo };
+
+    relation Claim {
+        source: u64,
+        person: u64,
+        arm: u64 as ArmId,
+        span: interval<i64>,
+    }
+    relation BusySpan { person: u64, span: interval<i64> }
+
+    Claim(arm) <= Arm(id);
+    Claim(source) -> Claim;
+    Claim(person, span) -> Claim;
+    BusySpan(person, span) -> BusySpan;
+    BusySpan(person, span) <= Claim(person, span | arm == Busy);
+});
+
+mod composite_partition {
+    bumbledb::schema! {
+        pub CompositePartition;
+
+        relation Domain  { group: u64, lane: u64, live: interval<i64> }
+        relation Segment { group: u64, lane: u64, valid: interval<i64> }
+
+        Segment(group, lane, valid) -> Segment;
+        Domain(group, lane, live) -> Domain;
+        Domain(group, lane, live) <= Segment(group, lane, valid);
+        Segment(group, lane, valid) <= Domain(group, lane, live);
+    }
+}
+
+recipe!(r28, Payroll, {
     pub Payroll;
 
     relation Employee { id: u64 as EmployeeId, fresh, name: str }
@@ -472,11 +519,11 @@ recipe!(r26, Payroll, {
     Salary(employee, applies) -> Salary;
 });
 
-/// Recipe 26's OLD theory — the v1 store the migration exports from. Not
+/// Recipe 28's OLD theory — the v1 store the migration exports from. Not
 /// a roster entry (the doc shows it as text, not a pinned schema block):
 /// the recipe's pinned schema is the v2 target above; v1 exists so the
 /// compiled test can drive the whole ETL loop against two real theories.
-mod r26_old {
+mod r28_old {
     bumbledb::schema! {
         pub PayrollV1;
 
@@ -494,7 +541,7 @@ struct Recipe {
     validate: fn() -> Result<Schema, bumbledb::error::SchemaError>,
 }
 
-const ROSTER: [Recipe; 26] = [
+const ROSTER: [Recipe; 28] = [
     Recipe {
         title: "The minimal interval schema",
         source: r01::SOURCE,
@@ -571,7 +618,7 @@ const ROSTER: [Recipe; 26] = [
         validate: r15::validate,
     },
     Recipe {
-        title: "Tilings",
+        title: "Disjoint covers",
         source: r16::SOURCE,
         validate: r16::validate,
     },
@@ -621,9 +668,19 @@ const ROSTER: [Recipe; 26] = [
         validate: r25::validate,
     },
     Recipe {
-        title: "Migration is ETL",
+        title: "Exact partition",
         source: r26::SOURCE,
         validate: r26::validate,
+    },
+    Recipe {
+        title: "Derived facts, maintained",
+        source: r27::SOURCE,
+        validate: r27::validate,
+    },
+    Recipe {
+        title: "Migration is ETL",
+        source: r28::SOURCE,
+        validate: r28::validate,
     },
 ];
 
@@ -671,6 +728,32 @@ fn doc_blocks() -> Vec<String> {
     blocks
 }
 
+/// The first nonblank line after every numbered heading. The label is prose,
+/// not part of the schema token stream, so the sync lock inventories it
+/// separately while walking the same ordered recipe corpus.
+fn doc_labels() -> Vec<(usize, String)> {
+    let lines: Vec<_> = COOKBOOK.lines().collect();
+    let mut labels = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let Some(rest) = line.strip_prefix("## ") else {
+            continue;
+        };
+        let Some((number, _)) = rest.split_once(". ") else {
+            continue;
+        };
+        let Ok(number) = number.parse() else {
+            continue;
+        };
+        let label = lines[index + 1..]
+            .iter()
+            .find(|candidate| !candidate.trim().is_empty())
+            .expect("a recipe heading has following prose")
+            .trim();
+        labels.push((number, label.to_owned()));
+    }
+    labels
+}
+
 /// The count assertion: the doc's numbered recipes are exactly the roster —
 /// a recipe added to the doc without a test entry (or the reverse) fails here.
 #[test]
@@ -682,7 +765,7 @@ fn the_doc_roster_is_exactly_this_roster() {
         "doc recipes and test entries must correspond one-to-one"
     );
     for (i, ((n, title), recipe)) in headings.iter().zip(ROSTER.iter()).enumerate() {
-        assert_eq!(*n, i + 1, "recipe numbering is 1..=26 in order");
+        assert_eq!(*n, i + 1, "recipe numbering is 1..=28 in order");
         assert_eq!(title, recipe.title, "recipe {} title", i + 1);
     }
 }
@@ -691,11 +774,24 @@ fn the_doc_roster_is_exactly_this_roster() {
 #[test]
 fn doc_blocks_match_the_compiled_copies() {
     let blocks = doc_blocks();
+    let labels = doc_labels();
     assert_eq!(
         blocks.len(),
         ROSTER.len(),
         "one schema block per recipe, in roster order"
     );
+    assert_eq!(
+        labels.len(),
+        ROSTER.len(),
+        "one guarantee label per recipe, in roster order"
+    );
+    for (index, (number, label)) in labels.iter().enumerate() {
+        assert_eq!(*number, index + 1, "label numbering follows the roster");
+        assert!(
+            label.starts_with("Guarantee: "),
+            "recipe {number} has no immediate Guarantee label: {label:?}"
+        );
+    }
     for (i, (block, recipe)) in blocks.iter().zip(ROSTER.iter()).enumerate() {
         let expected = format!("bumbledb::schema!{{{}}}", normalize(recipe.source));
         assert_eq!(
@@ -721,6 +817,163 @@ fn every_recipe_schema_validates() {
             )
         });
     }
+}
+
+fn span(start: i64, end: i64) -> bumbledb::Interval<i64> {
+    bumbledb::Interval::<i64>::new(start, end).expect("nonempty half-open interval")
+}
+
+fn assert_containment_statement(error: bumbledb::Error, expected: bumbledb::schema::StatementId) {
+    let bumbledb::Error::CommitRejected { violations } = error else {
+        panic!("expected a containment rejection, got {error}");
+    };
+    let [
+        bumbledb::Violation::Containment {
+            statement,
+            direction,
+            ..
+        },
+    ] = violations.as_slice()
+    else {
+        panic!("expected one containment citation, got {violations:?}");
+    };
+    assert_eq!(*statement, expected);
+    assert_eq!(*direction, bumbledb::error::Direction::SourceUnsatisfied);
+}
+
+fn assert_r26_schema_shape() {
+    use bumbledb::schema::{StatementId, StatementView};
+
+    // The fresh {id} key coexists with two distinct pointwise keys. Both
+    // interval containments validate because their exact target field sets
+    // resolve independently; no key closure is inferred.
+    let schema = r26::validate().expect("the five-statement schema validates");
+    assert_eq!(schema.keys().len(), 3);
+    assert_eq!(schema.keys().iter().filter(|key| key.pointwise).count(), 2);
+    for statement in [StatementId(4), StatementId(5)] {
+        assert!(matches!(
+            schema.statement(statement),
+            StatementView::Containment(..)
+        ));
+    }
+}
+
+/// Recipe 26's theorem-to-runtime matrix. Point sets are written out in
+/// each arm: forward coverage rejects source gaps, reverse coverage rejects
+/// target overhang, and the one-way recipe deliberately accepts that overhang.
+#[test]
+fn r26_exact_partition_commit_matrix() {
+    use bumbledb::schema::StatementId;
+    use composite_partition::{CompositePartition, Domain, Segment};
+    use r16::{FiscalYear, FiscalYearId, PayPeriod, Payroll};
+    use r26::{ExactPartition, Policy, PolicyId, Version};
+
+    assert_r26_schema_shape();
+
+    // Exact and adjacent: [0,2) ∪ [2,5) = [0,5). Half-open adjacency
+    // shares no point, so the Version pointwise key accepts the touching pair.
+    let dir = TempDir::new("r26-exact-adjacent");
+    let db = Db::create(dir.path(), ExactPartition).expect("create exact partition store");
+    db.write(|tx| {
+        let policy = PolicyId(1);
+        tx.insert(&Policy {
+            id: policy,
+            live: span(0, 5),
+        })?;
+        tx.insert(&Version {
+            policy,
+            valid: span(0, 2),
+        })?;
+        tx.insert(&Version {
+            policy,
+            valid: span(2, 5),
+        })
+    })
+    .expect("adjacent segments form an exact partition");
+
+    // Gap only: [0,4) ∪ [5,10) leaves point support [4,5) uncovered.
+    // Each Version remains inside [0,10), so only forward statement 4 fails.
+    let dir = TempDir::new("r26-gap");
+    let db = Db::create(dir.path(), ExactPartition).expect("create gap store");
+    let error = db
+        .write(|tx| {
+            let policy = PolicyId(2);
+            tx.insert(&Policy {
+                id: policy,
+                live: span(0, 10),
+            })?;
+            tx.insert(&Version {
+                policy,
+                valid: span(0, 4),
+            })?;
+            tx.insert(&Version {
+                policy,
+                valid: span(5, 10),
+            })
+        })
+        .expect_err("the forward coverage statement rejects the gap");
+    assert_containment_statement(error, StatementId(4));
+
+    // Overhang only, the audit countermodel: source [0,10), target [0,20).
+    // Forward coverage holds; reverse statement 5 rejects escaping support [10,20).
+    let dir = TempDir::new("r26-overhang");
+    let db = Db::create(dir.path(), ExactPartition).expect("create overhang store");
+    let error = db
+        .write(|tx| {
+            let policy = PolicyId(3);
+            tx.insert(&Policy {
+                id: policy,
+                live: span(0, 10),
+            })?;
+            tx.insert(&Version {
+                policy,
+                valid: span(0, 20),
+            })
+        })
+        .expect_err("reverse coverage rejects target overhang");
+    assert_containment_statement(error, StatementId(5));
+
+    // The corrected one-way recipe pins the opposite result for that same
+    // point set: FiscalYear [0,10) is covered by PayPeriod [0,20), and the
+    // absent reverse statement means overhang is legal.
+    let dir = TempDir::new("r16-one-way-overhang");
+    let db = Db::create(dir.path(), Payroll).expect("create one-way cover store");
+    db.write(|tx| {
+        let year = FiscalYearId(4);
+        tx.insert(&FiscalYear {
+            id: year,
+            span: span(0, 10),
+        })?;
+        tx.insert(&PayPeriod {
+            year,
+            seq: 1,
+            span: span(0, 20),
+        })
+    })
+    .expect("one-way source coverage permits target overhang");
+
+    // Arity-general lock: the scalar prefix is (group, lane), followed by
+    // the interval. [0,2) and [2,5) exactly partition [0,5) for (7,3).
+    let dir = TempDir::new("r26-composite-prefix");
+    let db = Db::create(dir.path(), CompositePartition).expect("create composite store");
+    db.write(|tx| {
+        tx.insert(&Domain {
+            group: 7,
+            lane: 3,
+            live: span(0, 5),
+        })?;
+        tx.insert(&Segment {
+            group: 7,
+            lane: 3,
+            valid: span(0, 2),
+        })?;
+        tx.insert(&Segment {
+            group: 7,
+            lane: 3,
+            valid: span(2, 5),
+        })
+    })
+    .expect("two-field scalar prefixes support exact partitions");
 }
 
 /// Renders after proving the query real: prepared against a `Db` of the
@@ -757,6 +1010,37 @@ fn r03_negation_round_trips() {
     );
 }
 
+/// Recipe 3's missing negative witness: the child key is the 0..1 proof,
+/// so two different address facts for one business abort together.
+#[test]
+fn r03_a_second_optional_child_is_rejected() {
+    use r03::{Business, MailingAddress, Optionality};
+
+    let dir = TempDir::new("r03-second-child");
+    let db = Db::create(dir.path(), Optionality).expect("create optionality store");
+    let error = db
+        .write(|tx| {
+            let business = tx.alloc()?;
+            tx.insert(&Business {
+                id: business,
+                name: "one",
+            })?;
+            tx.insert(&MailingAddress {
+                business,
+                line: "first",
+                city: "here",
+            })?;
+            tx.insert(&MailingAddress {
+                business,
+                line: "second",
+                city: "there",
+            })?;
+            Ok(())
+        })
+        .expect_err("the child key permits at most one address");
+    assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
+}
+
 /// Recipe 14: the room-conflict probe — one Allen mask against a param.
 #[test]
 fn r14_booking_probe_round_trips() {
@@ -781,7 +1065,7 @@ fn r15_in_force_round_trips() {
     );
 }
 
-/// Recipe 17: the marginal bracket — membership walks the tiling.
+/// Recipe 17: the marginal bracket — membership probes the disjoint bracket set.
 #[test]
 fn r17_marginal_bracket_round_trips() {
     let marginal = query!(r17::Tax {
@@ -836,6 +1120,36 @@ fn r22_union_read_round_trips() {
         "(v0, v1) | Payment(id: v0, kind == Card), Card(payment: v0, last4: v1);\n\
          (v0, v1) | Payment(id: v0, kind == Ach), Ach(payment: v0, routing: v1);"
     );
+}
+
+/// Recipe 22's missing negative witness: one payment cannot inhabit both
+/// key-backed DU arms because the reverse equality requires two distinct
+/// discriminator values for the same fresh id.
+#[test]
+fn r22_a_double_arm_payment_is_rejected() {
+    use r22::{Ach, Card, Kind, Payment, PaymentId, Payments};
+
+    let dir = TempDir::new("r22-double-arm");
+    let db = Db::create(dir.path(), Payments).expect("create payments store");
+    let payment = PaymentId(7);
+    let error = db
+        .write(|tx| {
+            tx.insert(&Payment {
+                id: payment,
+                kind: Kind::Card.id(),
+            })?;
+            tx.insert(&Card {
+                payment,
+                last4: 1234,
+            })?;
+            tx.insert(&Ach {
+                payment,
+                routing: 99,
+            })?;
+            Ok(())
+        })
+        .expect_err("one id cannot inhabit Card and Ach simultaneously");
+    assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
 }
 
 /// Recipe 6: the vocabulary — the bare handle is a fixed point of the
@@ -920,13 +1234,13 @@ fn reachable<S>(
 ) -> bumbledb::Result<BTreeSet<u64>> {
     let mut seen = BTreeSet::from([root]);
     let mut frontier = vec![root];
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     loop {
         let params: Vec<Value> = frontier.iter().map(|&n| Value::U64(n)).collect();
         snap.execute_args(children, &[ParamArg::Set(&params)], &mut out)?;
         frontier.clear();
-        for row in 0..out.len() {
-            let ResultValue::U64(child) = out.get(row, 0) else {
+        for answer in 0..out.len() {
+            let AnswerValue::U64(child) = out.get(answer, 0) else {
                 panic!("the frontier query finds one u64 column");
             };
             if seen.insert(child) {
@@ -1047,10 +1361,10 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
                     subtree: &BTreeSet<u64>|
      -> bumbledb::Result<i64> {
         let set: Vec<Value> = subtree.iter().map(|&a| Value::U64(a)).collect();
-        let mut out = ResultBuffer::new();
+        let mut out = Answers::new();
         snap.execute_args(rollup_q, &[ParamArg::Set(&set)], &mut out)?;
-        assert_eq!(out.len(), 1, "one all-aggregate row");
-        let ResultValue::I64(total) = out.get(0, 0) else {
+        assert_eq!(out.len(), 1, "one all-aggregate answer");
+        let AnswerValue::I64(total) = out.get(0, 0) else {
             panic!("the rollup sums an i64 column");
         };
         Ok(total)
@@ -1071,28 +1385,155 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
     .expect("the rollup composes the closure with one Sum");
 }
 
-/// Recipe 26: migration is ETL — the whole loop against two real
+type BusySpanKey = (u64, i64, i64);
+
+fn derived_busy_spans(
+    snap: &Snapshot<'_, r27::MaintainedRollup>,
+    query: &mut PreparedQuery<'_, r27::MaintainedRollup>,
+) -> bumbledb::Result<BTreeSet<BusySpanKey>> {
+    let answers = snap.execute_collect(query, &[])?;
+    let mut desired = BTreeSet::new();
+    for answer in 0..answers.len() {
+        let AnswerValue::U64(person) = answers.get(answer, 0) else {
+            panic!("the rollup person is u64");
+        };
+        let AnswerValue::IntervalI64(span) = answers.get(answer, 1) else {
+            panic!("Pack returns an i64 interval");
+        };
+        desired.insert((person, span.start(), span.end()));
+    }
+    Ok(desired)
+}
+
+/// Recipe 27's documented host protocol: derive and diff on one snapshot,
+/// commit the diff under that snapshot's witness, and discard the whole attempt
+/// on movement. `before_commit` is the deterministic concurrency seam used by
+/// the lock below; production callers pass a no-op.
+fn maintain_busy_spans(
+    db: &Db<r27::MaintainedRollup>,
+    query: &mut PreparedQuery<'_, r27::MaintainedRollup>,
+    mut before_commit: impl FnMut(usize) -> bumbledb::Result<()>,
+) -> bumbledb::Result<usize> {
+    let mut retries = 0;
+    loop {
+        let attempt = db.read(|snap| {
+            let desired = derived_busy_spans(snap, query)?;
+            let existing: BTreeSet<BusySpanKey> = snap
+                .scan_facts::<r27::BusySpan>()?
+                .map(|fact| fact.map(|span| (span.person, span.span.start(), span.span.end())))
+                .collect::<bumbledb::Result<_>>()?;
+            let removes: Vec<_> = existing.difference(&desired).copied().collect();
+            let inserts: Vec<_> = desired.difference(&existing).copied().collect();
+            before_commit(retries)?;
+            db.write_from(snap, |tx| {
+                for (person, start, end) in &removes {
+                    tx.delete(&r27::BusySpan {
+                        person: *person,
+                        span: span(*start, *end),
+                    })?;
+                }
+                for (person, start, end) in &inserts {
+                    tx.insert(&r27::BusySpan {
+                        person: *person,
+                        span: span(*start, *end),
+                    })?;
+                }
+                Ok(())
+            })
+        });
+        match attempt {
+            Ok(()) => return Ok(retries),
+            Err(bumbledb::Error::GenerationMoved { .. }) => retries += 1,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// The maintained-derived-facts recipe moves the source after the first
+/// derivation. The stale diff is refused by the generation witness; the host
+/// re-derives and lands the packed span from the new source state.
+#[test]
+fn r27_maintenance_rederives_after_generation_movement() {
+    use r27::{Arm, BusySpan, Claim, MaintainedRollup};
+
+    let dir = TempDir::new("r27-maintained-rollup");
+    let db = Db::create(dir.path(), MaintainedRollup).expect("create maintained rollup store");
+    db.write(|tx| {
+        for (source, person, arm, claim_span) in [
+            (1, 7, Arm::Busy.id(), span(0, 2)),
+            (2, 7, Arm::Busy.id(), span(2, 4)),
+            (9, 8, Arm::Ooo.id(), span(100, 110)),
+        ] {
+            tx.insert(&Claim {
+                source,
+                person,
+                arm,
+                span: claim_span,
+            })?;
+        }
+        Ok(())
+    })
+    .expect("seed claims");
+
+    let derive = query!(r27::MaintainedRollup {
+        (person, busy: Pack(claim_span)) |
+            Claim(source, person, arm == Busy, span: claim_span);
+    });
+    let mut prepared = db.prepare(&derive).expect("prepare busy-span derivation");
+    let retries = maintain_busy_spans(&db, &mut prepared, |attempt| {
+        if attempt == 0 {
+            db.write(|tx| {
+                tx.insert(&Claim {
+                    source: 3,
+                    person: 7,
+                    arm: Arm::Busy.id(),
+                    span: span(4, 6),
+                })?;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    })
+    .expect("maintenance retries and commits");
+    assert_eq!(retries, 1, "the moved first derivation must be discarded");
+
+    db.read(|snap| {
+        let spans: Vec<BusySpan> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
+        assert_eq!(
+            spans,
+            vec![BusySpan {
+                person: 7,
+                span: span(0, 6),
+            }],
+            "the retry derives the new complete busy support; Ooo is excluded"
+        );
+        Ok(())
+    })
+    .expect("read maintained rollup");
+}
+
+/// Recipe 28: migration is ETL — the whole loop against two real
 /// theories. Seeds a v1 store, proves the fingerprint refusal, exports
 /// under one snapshot, transforms (the ray supplies the missing
 /// `applies` dimension), loads containment targets first, then proves
 /// the three laws: identity, mint catch-up, judgment under v2.
 #[test]
-fn r26_migration_is_etl() {
+fn r28_migration_is_etl() {
     // The transform's one decision: v1 amounts are in force since the
     // migration epoch — a ray.
     const EPOCH: i64 = 0;
-    let dir_v1 = TempDir::new("r26-v1");
-    let dir_v2 = TempDir::new("r26-v2");
+    let dir_v1 = TempDir::new("r28-v1");
+    let dir_v2 = TempDir::new("r28-v2");
 
     // Seed the v1 store; remember the fresh high water.
-    let v1 = Db::create(dir_v1.path(), r26_old::PayrollV1).expect("create the v1 store");
+    let v1 = Db::create(dir_v1.path(), r28_old::PayrollV1).expect("create the v1 store");
     let high_water = v1
         .write(|tx| {
             let mut max = 0;
             for (name, amount) in [("ada", 90_000i64), ("bo", 70_000), ("cy", 80_000)] {
-                let id: r26_old::EmployeeId = tx.alloc()?;
-                tx.insert(&r26_old::Employee { id, name })?;
-                tx.insert(&r26_old::Salary {
+                let id: r28_old::EmployeeId = tx.alloc()?;
+                tx.insert(&r28_old::Employee { id, name })?;
+                tx.insert(&r28_old::Salary {
                     employee: id,
                     amount,
                 })?;
@@ -1107,13 +1548,16 @@ fn r26_migration_is_etl() {
     let (employees, salaries) = v1
         .read(|snap| {
             let employees: Vec<Vec<Value>> = snap
-                .scan(r26_old::Employee::RELATION)?
+                .scan(r28_old::Employee::RELATION)?
                 .collect::<bumbledb::Result<_>>()?;
             let salaries: Vec<Vec<Value>> = snap
-                .scan(r26_old::Salary::RELATION)?
+                .scan(r28_old::Salary::RELATION)?
                 .map(|fact| {
                     let mut fact = fact?;
-                    fact.push(Value::IntervalI64(EPOCH, i64::MAX));
+                    fact.push(Value::IntervalI64(
+                        bumbledb::Interval::<i64>::new(EPOCH, i64::MAX)
+                            .expect("the migration ray is nonempty"),
+                    ));
                     Ok(fact)
                 })
                 .collect::<bumbledb::Result<_>>()?;
@@ -1124,7 +1568,7 @@ fn r26_migration_is_etl() {
     // The fingerprint law: with the v1 handle dropped (LMDB is one
     // handle per env), the store refuses to open under the v2 theory.
     drop(v1);
-    let Err(err) = Db::open(dir_v1.path(), r26::Payroll) else {
+    let Err(err) = Db::open(dir_v1.path(), r28::Payroll) else {
         panic!("a changed theory must not open");
     };
     assert!(
@@ -1133,19 +1577,19 @@ fn r26_migration_is_etl() {
     );
 
     // Load containment targets first; explicit fresh values keep identity.
-    let v2 = Db::create(dir_v2.path(), r26::Payroll).expect("create the v2 store");
+    let v2 = Db::create(dir_v2.path(), r28::Payroll).expect("create the v2 store");
     let loaded = v2
-        .bulk_load(r26::Employee::RELATION, employees)
+        .bulk_load(r28::Employee::RELATION, employees)
         .expect("load employees");
     assert_eq!(loaded, 3);
     let loaded = v2
-        .bulk_load(r26::Salary::RELATION, salaries)
+        .bulk_load(r28::Salary::RELATION, salaries)
         .expect("load salaries");
     assert_eq!(loaded, 3);
 
     // The mint sequence cleared the imported high water: no collision.
     v2.write(|tx| {
-        let next: r26::EmployeeId = tx.alloc()?;
+        let next: r28::EmployeeId = tx.alloc()?;
         assert!(
             next.0 > high_water,
             "minted {} at or below the imported high water {high_water}",
@@ -1157,12 +1601,12 @@ fn r26_migration_is_etl() {
 
     // The migrated store answers under the new theory: every v1 salary
     // is in force at any post-epoch instant, keyed by its old identity.
-    let in_force = query!(r26::Payroll {
+    let in_force = query!(r28::Payroll {
         (name, amount) | Employee(id: e, name), Salary(employee: e, amount, applies: w),
                          ?at in w;
     });
     let mut prepared = v2.prepare(&in_force).expect("prepare the v2 query");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     v2.read(|snap| {
         snap.execute_args(
             &mut prepared,
@@ -1173,10 +1617,10 @@ fn r26_migration_is_etl() {
     .expect("query the migrated store");
     let mut answers = BTreeSet::new();
     for row in 0..out.len() {
-        let ResultValue::String(name) = out.get(row, 0) else {
+        let AnswerValue::String(name) = out.get(row, 0) else {
             panic!("column 0 is the name");
         };
-        let ResultValue::I64(amount) = out.get(row, 1) else {
+        let AnswerValue::I64(amount) = out.get(row, 1) else {
             panic!("column 1 is the amount");
         };
         answers.insert((name.to_owned(), amount));

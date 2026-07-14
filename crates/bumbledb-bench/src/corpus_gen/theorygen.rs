@@ -18,6 +18,14 @@ use bumbledb::schema::{
 
 use super::Rng;
 
+mod arity;
+
+pub use arity::{
+    ARITY_WIDTH_BOUND, ArityCoverage, ArityDescriptorCase, ArityExpectation, ArityOpsCase,
+    MAX_MIXED_ARITY, SelectionPlacement, arity_descriptor, random_arity_descriptor,
+    random_valid_arity_descriptor, random_valid_arity_ops,
+};
+
 /// The ledger's relation vocabulary — shared names, so mutated inputs
 /// collide meaningfully instead of drifting into gibberish.
 const RELATION_NAMES: &[&str] = &[
@@ -193,29 +201,34 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
     }
 }
 
-/// Interval bounds over the shape ladder: empty (`start == end`), unit,
-/// wide, and the ray end (`MAX` = ∞) — misuse is a draw, not a mode.
+/// Interval bounds over the representable shape ladder: unit, wide, and
+/// the ray end (`MAX` = ∞). The former empty rung maps to unit without an
+/// extra entropy draw; malformed `Value` payloads are no longer a schema
+/// descriptor state.
 fn interval_value(rng: &mut Rng, element: IntervalElement) -> Value {
     match element {
         IntervalElement::U64 => {
             let start = rng.range(8);
             let end = match rng.range(4) {
-                0 => start,
-                1 => start + 1,
+                0 | 1 => start + 1,
                 2 => start + 2 + rng.range(5),
                 _ => u64::MAX,
             };
-            Value::IntervalU64(start, end)
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            )
         }
         IntervalElement::I64 => {
             let start = signed(rng);
             let end = match rng.range(4) {
-                0 => start,
+                0 => start.saturating_add(1),
                 1 => start + 1,
                 2 => start + 2 + signed(rng).abs(),
                 _ => i64::MAX,
             };
-            Value::IntervalI64(start, end)
+            Value::IntervalI64(
+                bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"),
+            )
         }
     }
 }

@@ -103,9 +103,9 @@ stays deferred — five consumers, none free):
 |---|---|---|---|
 | validation typing | the per-rule bivalent anchor fixpoint (`ir/validate.rs`, `validate/context.rs`) | `Idb` anchors resolve against `Predicate.columns` instead of the schema relation; roster items for unknown `PredId` and arity mismatch | ~40 lines |
 | normalize | the occurrence table (`ir/normalize/normalize.rs`) | `Occurrence.relation` → `source`; filters and residuals are slot/word-shaped and indifferent | ~30 lines |
-| chase | elimination + evaluation (`plan/chase.rs`, `plan/chase/evaluate.rs`) | one guard each: both rewrites refuse `Idb` occurrences — statements quantify over stored relations (`30-dependencies.md`) and sealed extensions exist only for closed relations, so elimination has no licensing statement and evaluation no stage-0 rows | ~10 lines |
+| grounding | elimination + evaluation (`plan/ground.rs`, `plan/ground/evaluate.rs`) | one guard each: both rewrites refuse `Idb` occurrences — statements quantify over stored relations (`30-dependencies.md`) and sealed extensions exist only for closed relations, so elimination has no licensing statement and evaluation no stage-0 rows | ~10 lines |
 | view binding | the per-occurrence bind loop (`api/prepared/run_join.rs`, `view_memo.rs`) | `Idb` occurrences take the transient-image bind (§4) instead of `ImageCache::get_or_build` | ~40 lines |
-| statistics | the selectivity ladder (`plan/selectivity.rs`) | `Idb` occurrences pin no row counts and cost on the ladder's floors (§3); the staleness surface already knows the shape — negated and chase-discharged occurrences carry no pin today (`70-api.md` § transactions) | ~30 lines |
+| statistics | the selectivity ladder (`plan/selectivity.rs`) | `Idb` occurrences pin no row counts and cost on the ladder's floors (§3); the staleness surface already knows the shape — negated and grounding-discharged occurrences carry no pin today (`70-api.md` § transactions) | ~30 lines |
 
 ## 2. Stratification
 
@@ -133,13 +133,13 @@ predicates iterate jointly under one round loop (§5).
   a head whose rule body reads the head's own SCC. Aggregation *of*
   lower strata is legal for the same reason: an `Idb` atom under a
   fold reads a finished set.
-- `ValidationError::MeasureInRecursiveHead { pred }` — a
-  `Duration`/`AggregateDuration` find in a recursive predicate's head.
+- `ValidationError::MeasureInRecursiveHead { pred }` — a `Measure` find in a
+  recursive predicate's head.
   Two derivations. First, the safety theorem below requires heads to
   project **bound** variables, and the measure is a computation, not a
   binding — value creation in a head exits the theorem (it is §8's
   whole subject). Second, the **error-timing ruling**, inherited from
-  the chase-evaluator's measure refusal (`plan/chase/evaluate.rs`:
+  the grounding-evaluator's measure refusal (`plan/ground/evaluate.rs`:
   a fold must not move the ray error across stages): `MeasureOfRay` is
   the engine's one runtime type error, and inside a fixpoint the round
   at which a ray reaches a recursive head depends on iteration order —
@@ -198,11 +198,11 @@ DeltaVariant  { delta: OccId, plan: ValidatedPlan }
 
 — minted exclusively by that parse and consumed totally by the driver,
 which is `ResolvableFilter`'s discipline exactly
-(`plan/chase/evaluate.rs`: minted by `parse_resolvable`, consumed
+(`plan/ground/evaluate.rs`: minted by `parse_resolvable`, consumed
 totally by `surviving_ids`) and PRD 08's `ClassifiedComparison` law
 (classification carries its proof; no consumer re-derives).
 `PreparedRule` grows one arm — `Recursive(RecursiveRule)` beside
-`FreeJoin`/`Guard` (`api/prepared.rs`) — and the arm lands **inhabited
+`FreeJoin`/`KeyProbe` (`api/prepared.rs`) — and the arm lands **inhabited
 on the day it lands**, never before: the one-inhabitant refusal is why
 this paper exists.
 
@@ -213,7 +213,7 @@ this paper exists.
 source-agnostic after decode: allocate → decode plan → fill → seal,
 and `synthesize_closed` (`image/build.rs`) proves a non-LMDB source
 rides it whole — the sealed extension synthesizes through exactly the
-plan a stored fact would, column layout, pitch padding, and distinct
+plan a stored fact would, column layout, stride padding, and cardinality
 counters untouched. The delta builder is the same shape with a cheaper
 source: the round's frontier rows are already encoded column words in
 the seen-set (§5), so the build is a columnar transpose of a dense
@@ -349,7 +349,7 @@ under both disciplines or not at all.
 
 ## 7. The notation
 
-**Named heads; bare clauses remain the output predicate.**
+**Named heads; bare rules remain the output predicate.**
 
 ```text
 path(x, z) | edge(x, y), path(y, z);
@@ -357,11 +357,11 @@ path(x, z) | edge(x, z);
 (x, z)     | path(x, z), Root(id: x);
 ```
 
-Grammar delta over `20-query-ir.md` § the query notation: `clause :=
+Grammar delta over `20-query-ir.md` § the query notation: `rule :=
 [name] '(' head ')' '|' body ';'`, and a body atom may name a
 predicate where it names a relation. **Text-level backward
 compatible:** every existing query parses unchanged and denotes what
-it denoted — a program whose every clause is bare is today's one-
+it denoted — a program whose every rule is bare is today's one-
 predicate program.
 
 Predicate names are a text-layer sidecar, exactly as variable names
@@ -373,7 +373,7 @@ schema emissions — so a typo is a macro error at the literal, and a
 predicate spelled like a relation is a macro error too (unwritable
 ambiguity, the punning law's discipline). The renderer prints interior
 predicates with synthesized names (`p0`, `p1` — the `v{id}`/`?{id}`
-convention extended) and output clauses bare; the round-trip goldens
+convention extended) and output rules bare; the round-trip goldens
 (`bumbledb-query/tests/notation.rs`, `render(lower(text))` byte-equal)
 extend with named-head cases, and the anti-drift discipline — one
 grammar, three consumers, renderer as spec — inherits unamended.
@@ -423,7 +423,7 @@ untouched — the review criterion for the future PRD, written today.
 | # | cut | seam (post-crucible shape) | files | est. diff | invariant preserved |
 |---|---|---|---|---|---|
 | 1 | `Program` wrapper + `PredId` | the pure-data IR; the degenerate-embedding precedent (`Query::single`) | `crates/bumbledb/src/ir.rs` | +90/−10 | the surface ruling (plain owned data, no behavior); degenerate form ≡ today's `Query` |
-| 2 | `AtomSource` one-line sum | `Atom.relation`'s five consumers (§1's table) | `ir.rs`, `ir/validate/context.rs`, `ir/normalize/normalize.rs`, `plan/chase.rs`, `plan/chase/evaluate.rs`, `api/prepared/run_join.rs`, `plan/selectivity.rs` | +150 | occurrence ids never move (`Role`'s law); statements speak only about stored relations, so both chase rewrites refuse `Idb` in one guard |
+| 2 | `AtomSource` one-line sum | `Atom.relation`'s five consumers (§1's table) | `ir.rs`, `ir/validate/context.rs`, `ir/normalize/normalize.rs`, `plan/ground.rs`, `plan/ground/evaluate.rs`, `api/prepared/run_join.rs`, `plan/selectivity.rs` | +150 | occurrence ids never move (`Role`'s law); statements speak only about stored relations, so both grounding rewrites refuse `Idb` in one guard |
 | 3 | per-predicate signature | PRD 04's one derivation (`ir/validate/finds.rs` territory), quantified over predicates | `ir/validate.rs`, `ir/validate/finds.rs` | +60 | one signature, one derivation; the head-alignment rule per predicate; `Predicate` still absent from `ir.rs` |
 | 4 | stratification + safety roster | the validation boundary's iterative-judge convention (the nesting cap's precedent) | new `ir/validate/strata.rs`, `ir/validate.rs`, `error.rs` | +280 | roster exhaustive, no panic from IR data; the four named errors (§2); caps documented at definition |
 | 5 | delta-variant plans | the per-rule prepare pipeline + the selectivity ladder's floors (the param-plan precedent) | `api/prepared/build.rs`, `plan/selectivity.rs`, `plan/planner.rs` | +220 | pin-at-prepare — no round re-plans; the staging law |
@@ -433,11 +433,11 @@ untouched — the review criterion for the future PRD, written today.
 | 9 | the per-stratum driver | the rule loop (one sink hears every rule; sink resets once per execution) | new `api/prepared/fixpoint.rs`, `api/prepared/execute.rs` | +260 | union is the sink — no merge node, no worklist; D2 skip per-rule, within-round |
 | 10 | frontier watermark | `WordMap`'s dense insertion-order rule | `exec/wordmap.rs`, `exec/sink.rs`, `exec/sink/projection/sink.rs` | +60 | zero hot-path cost when unused (a cold method, no emit-path branch); dedup keys stay head-shaped |
 | 11 | the budget | the typed-execution-error convention (`MeasureOfRay`'s model) | `error.rs`, `api/prepared/execute.rs` | +50 | error payloads are ids and counts; policy host-owned (the staleness doctrine); the v0 no-limits stance amended for fixpoints only, recorded |
-| 12 | EXPLAIN + stats | the `Counters` seam; the `rule_N` span precedent | `exec/explain.rs`, `api/stats.rs`, `obs.rs` names | +120 | `NoopCounters` compiles to nothing; no always-on instrumentation |
+| 12 | plan introspection + stats | the `Counters` seam; the `rule_N` span precedent | `exec/introspection.rs`, `api/stats.rs`, `obs.rs` names | +120 | `NoopCounters` compiles to nothing; no always-on instrumentation |
 | 13 | naive fixpoint oracle | the naive model's definitional evaluator | `crates/bumbledb-bench/src/naive/query.rs` | +80 | the independence law (types only); the trust root stays definitional — naive, never semi-naive |
 | 14 | SQLite lane + gate | the IR→SQL translator + the enumerated `Inexpressible` set | `bumbledb-bench/src/translate/query.rs`, `translate/types.rs`, `translate/goldens.rs` | +150 | nothing silently skipped; typed-identity error parity; linear-only, division of labor recorded |
 | 15 | generator arm | the coverage-contract convention + the entropy seam | new `bumbledb-bench/src/querygen/shapes_recursive.rs`, `querygen/coverage.rs`, `querygen/shapes.rs` | +260 | coverage asserted per run; the cost-bound rule (closure size bounded by construction); `corpus_gen::rng` untouched |
-| 16 | notation + renderer | the render grammar; round-trip goldens; the macro's local names | `ir/render.rs`, `crates/bumbledb-query/src/lib.rs`, `bumbledb-query/tests/notation.rs`, `docs/cookbook.md` | +200 | one grammar, three consumers, byte-exact goldens; bare clauses = the output predicate (text-level compatibility); names never fingerprinted |
+| 16 | notation + renderer | the render grammar; round-trip goldens; the macro's local names | `ir/render.rs`, `crates/bumbledb-query/src/lib.rs`, `bumbledb-query/tests/notation.rs`, `docs/cookbook.md` | +200 | one grammar, three consumers, byte-exact goldens; bare rules = the output predicate (text-level compatibility); names never fingerprinted |
 
 Total ≈ +2,300 lines across engine, bench, and macro crates; the
 largest single-file diff ≈ 300 lines; **zero rows invent a mechanism
@@ -458,7 +458,7 @@ shipping law's order):
 - **R5 — the images**: rows 7–8 (transient synthesis, `Idb` binding).
 - **R6 — the driver**: rows 9–11 (the loop, the watermark, the
   budget).
-- **R7 — the surfaces**: rows 12 + 16 (EXPLAIN/stats, notation,
+- **R7 — the surfaces**: rows 12 + 16 (plan introspection/stats, notation,
   cookbook and chapter amendments).
 
 Seven PRDs; six if R4 and R5 merge (they share `build.rs`), eight if

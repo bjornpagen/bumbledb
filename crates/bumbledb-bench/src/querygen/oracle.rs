@@ -258,11 +258,15 @@ fn param_value(
             match element {
                 IntervalElement::U64 => {
                     let ((start, end), _) = interval_data::ladder_u64(cfg.seed, group, rng);
-                    Value::IntervalU64(start, end)
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                    )
                 }
                 IntervalElement::I64 => {
                     let ((start, end), _) = interval_data::ladder_i64(cfg.seed, group, rng);
-                    Value::IntervalI64(start, end)
+                    Value::IntervalI64(
+                        bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"),
+                    )
                 }
             }
         }

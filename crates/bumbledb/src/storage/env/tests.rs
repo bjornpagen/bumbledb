@@ -67,6 +67,31 @@ fn open_with_different_schema_fails_with_fingerprint_error() {
 }
 
 #[test]
+fn corrupted_stored_fingerprint_names_found_and_expected_images() {
+    // Healthy sibling: the same schema and untouched metadata reopen cleanly.
+    let control_dir = TempDir::new("env-fingerprint-corrupt-control");
+    let schema = schema();
+    drop(Environment::create(control_dir.path(), &schema).expect("create control"));
+    drop(Environment::open(control_dir.path(), &schema).expect("open control"));
+
+    let dir = TempDir::new("env-fingerprint-corrupt");
+    {
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let mut wtxn = env.env.write_txn().expect("txn");
+        env.meta
+            .put(&mut wtxn, META_FINGERPRINT, &[0xA5; 32])
+            .expect("perturb fingerprint");
+        wtxn.commit().expect("commit");
+    }
+    let err = Environment::open(dir.path(), &schema).unwrap_err();
+    let Error::SchemaMismatch { found, expected } = err else {
+        panic!("expected fingerprint mismatch, got {err:?}");
+    };
+    assert_eq!(found.0, [0xA5; 32]);
+    assert_eq!(expected, crate::schema::fingerprint::fingerprint(&schema));
+}
+
+#[test]
 fn corrupted_format_version_fails_before_fingerprint() {
     let dir = TempDir::new("env-format-mismatch");
     let schema = schema();
@@ -100,7 +125,7 @@ fn generation_is_zero_on_fresh_database() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let rtxn = env.read_txn().expect("read txn");
-    assert_eq!(rtxn.generation().expect("generation"), 0);
+    assert_eq!(rtxn.generation().expect("generation").value(), 0);
 }
 
 /// The reader-slot cap is a mechanism, not a promise: >126 concurrent

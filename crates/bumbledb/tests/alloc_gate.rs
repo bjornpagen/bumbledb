@@ -27,7 +27,7 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
-use bumbledb::{BindValue, ConditionTree, Db, PreparedQuery, ResultBuffer, Snapshot};
+use bumbledb::{Answers, BindValue, ConditionTree, Db, PreparedQuery, Snapshot};
 
 mod common;
 
@@ -172,14 +172,14 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 &[
                     Value::U64(id),
                     Value::U64(person),
-                    Value::IntervalU64(start, end),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                    ),
                 ],
             )?;
         }
-        let mut account = 20u64;
-        let mut holder = 5u64;
         let mut id = 500u64;
-        for count in LADDER {
+        for ((account, holder), count) in (20u64..).zip(5u64..).zip(LADDER) {
             tx.insert_dyn(ACCOUNT, &[Value::U64(account), Value::U64(holder)])?;
             for _ in 0..count {
                 tx.insert_dyn(
@@ -193,8 +193,6 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 )?;
                 id += 1;
             }
-            account += 1;
-            holder += 1;
         }
         Ok(())
     })
@@ -272,9 +270,9 @@ fn aggregate_query() -> Query {
 }
 
 /// Q(holder, memo) :- Posting(account = a, memo), Account(id = a, holder),
-/// memo != "memo-0" — string results through the byte heap, a PendingIntern
+/// memo != "memo-0" — string results through the byte heap, a `PendingIntern`
 /// literal under Ne, and a projection narrower than the join (the D2
-/// SkipSuffix path live on every duplicate (holder, memo) pair).
+/// `SkipSuffix` path live on every duplicate (holder, memo) pair).
 fn string_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(3))],
@@ -547,8 +545,8 @@ fn pack_query() -> Query {
     })
 }
 
-/// Q(amount) :- Posting(id = ?0, amount) — the guard-probe shape.
-fn guard_query() -> Query {
+/// Q(amount) :- Posting(id = ?0, amount) — the key-probe shape.
+fn key_probe_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -570,7 +568,7 @@ fn gate(
     snap: &Snapshot<'_, SchemaDescriptor>,
     param_set: &[Vec<BindValue<'_>>],
 ) {
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     // N = 8 warmup runs over the fixed param set.
     for _ in 0..8 {
         for params in param_set {
@@ -611,7 +609,7 @@ fn silent(
     prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
     snap: &Snapshot<'_, SchemaDescriptor>,
     params: &[BindValue<'_>],
-    out: &mut ResultBuffer,
+    out: &mut Answers,
 ) {
     alloc_counter::reset();
     snap.execute(prepared, params, out).expect(label);
@@ -658,7 +656,7 @@ fn escalation_gate(
     snap: &Snapshot<'_, SchemaDescriptor>,
     params: &[Vec<BindValue<'_>>],
 ) {
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     // Warm the coldest parameter to its fixpoint — first-execution
     // allocations are sanctioned and stay outside the measured window.
     for _ in 0..8 {
@@ -684,24 +682,69 @@ fn escalation_gate(
             &mut out,
         );
         // Every previously-seen parameter sits below the high-water.
-        for j in 0..i {
+        for (j, previous) in params.iter().enumerate().take(i) {
             silent(
                 label,
                 &format!("repeat of params[{j}] under params[{i}]'s high-water"),
                 prepared,
                 snap,
-                &params[j],
+                previous,
                 &mut out,
             );
         }
     }
-    // The vacuousness guard: an escalation that never grew anything
+    // The vacuousness check: an escalation that never grew anything
     // cannot distinguish a correct engine from a gate with no eyes.
     assert!(
         growth_events >= 1,
         "{label}: the escalation observed no growth event — the fixture is vacuous"
     );
     assert!(!out.is_empty(), "{label}: the fixture produced rows");
+}
+
+/// Typed borrowed facts use host-owned strings on both insert and point-read
+/// surfaces. Warm the transaction scratch, then measure only the repeat path.
+fn borrowed_struct_gate() {
+    let dir = common::TempDir::new("alloc-gate-borrowed");
+    let db = Db::create(dir.path(), GateLedger).expect("create");
+    let item = db
+        .write(|tx| {
+            let id: GateItemId = tx.alloc()?;
+            tx.insert(&GateItem {
+                id,
+                memo: "memo-borrowed",
+            })?;
+            Ok(id)
+        })
+        .expect("seed");
+    db.write(|tx| {
+        // Warm the transaction's encode scratch outside the window.
+        tx.insert(&GateItem {
+            id: item,
+            memo: "memo-borrowed",
+        })?;
+        alloc_counter::reset();
+        let fact = GateItem {
+            id: item,
+            memo: "memo-borrowed",
+        };
+        tx.insert(&fact)?;
+        let got = tx.get::<GateItem>(item)?.expect("present");
+        assert_eq!(got.memo, "memo-borrowed");
+        let bytes = alloc_counter::snapshot();
+        assert_eq!(
+            (
+                bytes.allocs,
+                bytes.deallocs,
+                bytes.alloc_bytes,
+                bytes.dealloc_bytes
+            ),
+            (0, 0, 0, 0),
+            "borrowed-struct insert + get must be host-allocation-free"
+        );
+        Ok(())
+    })
+    .expect("borrowed-struct gate");
 }
 
 /// One test function: the gate binary is single-threaded by construction.
@@ -720,7 +763,7 @@ fn zero_warm_allocation_gate() {
         vec![BindValue::I64(40)],
     ];
     // The miss (9999) runs first so the last measured execution leaves rows.
-    let guard_params = vec![
+    let key_probe_params = vec![
         vec![BindValue::U64(9999)],
         vec![BindValue::U64(5)],
         vec![BindValue::U64(499)],
@@ -757,8 +800,8 @@ fn zero_warm_allocation_gate() {
         let mut pack = db.prepare(&pack_query())?;
         gate("pack", &mut pack, snap, &no_params);
 
-        let mut guard = db.prepare(&guard_query())?;
-        gate("guard", &mut guard, snap, &guard_params);
+        let mut key_probe = db.prepare(&key_probe_query())?;
+        gate("key_probe", &mut key_probe, snap, &key_probe_params);
 
         // The rule loop (docs/architecture/40-execution.md § the rule
         // loop): multi-rule prepared queries in the measured window —
@@ -814,7 +857,7 @@ fn zero_warm_allocation_gate() {
         // Warmup convergence: allocation is finite — by the third warmup
         // round a run allocates nothing.
         let mut fresh = db.prepare(&join_query())?;
-        let mut out = ResultBuffer::new();
+        let mut out = Answers::new();
         let mut per_round = Vec::new();
         for _ in 0..3 {
             alloc_counter::reset();
@@ -839,45 +882,5 @@ fn zero_warm_allocation_gate() {
     // per read, no boxing per write. Engine arena/delta copies are
     // sanctioned but absent here by construction (the value is already
     // interned; the fact already present).
-    let borrowed_dir = common::TempDir::new("alloc-gate-borrowed");
-    let borrowed_db = Db::create(borrowed_dir.path(), GateLedger).expect("create");
-    let item = borrowed_db
-        .write(|tx| {
-            let id: GateItemId = tx.alloc()?;
-            tx.insert(&GateItem {
-                id,
-                memo: "memo-borrowed",
-            })?;
-            Ok(id)
-        })
-        .expect("seed");
-    borrowed_db
-        .write(|tx| {
-            // Warm the transaction's encode scratch outside the window.
-            tx.insert(&GateItem {
-                id: item,
-                memo: "memo-borrowed",
-            })?;
-            alloc_counter::reset();
-            let fact = GateItem {
-                id: item,
-                memo: "memo-borrowed",
-            };
-            tx.insert(&fact)?;
-            let got = tx.get::<GateItem>(item)?.expect("present");
-            assert_eq!(got.memo, "memo-borrowed");
-            let bytes = alloc_counter::snapshot();
-            assert_eq!(
-                (
-                    bytes.allocs,
-                    bytes.deallocs,
-                    bytes.alloc_bytes,
-                    bytes.dealloc_bytes
-                ),
-                (0, 0, 0, 0),
-                "borrowed-struct insert + get must be host-allocation-free"
-            );
-            Ok(())
-        })
-        .expect("borrowed-struct gate");
+    borrowed_struct_gate();
 }

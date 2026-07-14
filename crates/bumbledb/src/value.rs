@@ -6,11 +6,11 @@
 //! module is the zero-dependency home both `ir` and `schema` import, so
 //! neither layer owes the other anything.
 //!
-//! `Value` is dumb data everywhere: `start < end` for intervals and UTF-8
-//! for strings are boundary rules — IR validation for query literals,
-//! schema validation for selections — never constructor invariants.
-//! Encoding lives in `encoding`, rendering in `schema::render`; nothing a
-//! consumer owns lives here.
+//! `Value` is dumb data except where a malformed value would erase its own
+//! denotation: interval variants carry the checked [`crate::Interval`] type,
+//! so every encodable interval is nonempty by construction. UTF-8 remains a
+//! boundary rule owned by IR/schema validation. Encoding lives in `encoding`,
+//! rendering in `schema::render`; nothing a consumer owns lives here.
 
 /// A literal value. Exactly one variant per data-model type — no universal
 /// integer (U64 and I64 literals are exact-typed; out-of-range is
@@ -30,13 +30,17 @@ pub enum Value {
     /// inline in the fact (*intern what repeats; inline what
     /// identifies* — `docs/architecture/10-data-model.md`).
     FixedBytes(Box<[u8]>),
-    /// A half-open `[start, end)` over U64 (`docs/architecture/20-query-ir.md`).
-    /// Dumb data by decision: `start < end` is a validation-boundary rule,
-    /// not a constructor invariant — hosts construct through the checked
-    /// [`crate::Interval`] type.
-    IntervalU64(u64, u64),
-    /// A half-open `[start, end)` over I64; bounds as [`Value::IntervalU64`].
-    IntervalI64(i64, i64),
+    /// A nonempty half-open `[start, end)` over U64
+    /// (`docs/architecture/20-query-ir.md`). Raw bounds do not typecheck:
+    ///
+    /// ```compile_fail
+    /// use bumbledb::Value;
+    /// let _ = Value::IntervalU64(7, 7);
+    /// ```
+    IntervalU64(crate::Interval<u64>),
+    /// A nonempty half-open `[start, end)` over I64. Construction follows
+    /// [`Value::IntervalU64`].
+    IntervalI64(crate::Interval<i64>),
     /// An Allen mask — the interval-pair relation as a value
     /// (`docs/architecture/10-data-model.md` § the mask value shape).
     /// Not a field type: it anchors nothing but the `Allen` comparison's

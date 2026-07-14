@@ -15,13 +15,14 @@ use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 
 mod aggregates;
-mod buffer;
-mod chase;
+mod answers;
 mod correctness;
 mod disjoint;
-mod explain;
 mod folded;
-mod guard;
+mod ground;
+mod introspection;
+mod introspection_goldens;
+mod key_probe;
 mod latch;
 mod measure;
 mod pack;
@@ -125,20 +126,20 @@ fn by_account_query() -> Query {
     })
 }
 
-fn rows_of(buffer: &ResultBuffer) -> Vec<(String, i64)> {
-    let mut rows: Vec<(String, i64)> = (0..buffer.len())
-        .map(|row| {
-            let ResultValue::String(memo) = buffer.get(row, 0) else {
+fn answers_of(buffer: &Answers) -> Vec<(String, i64)> {
+    let mut answers: Vec<(String, i64)> = (0..buffer.len())
+        .map(|answer| {
+            let AnswerValue::String(memo) = buffer.get(answer, 0) else {
                 panic!("column 0 is a string");
             };
-            let ResultValue::I64(amount) = buffer.get(row, 1) else {
+            let AnswerValue::I64(amount) = buffer.get(answer, 1) else {
                 panic!("column 1 is an i64");
             };
             (memo.to_owned(), amount)
         })
         .collect();
-    rows.sort();
-    rows
+    answers.sort();
+    answers
 }
 
 /// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
@@ -163,10 +164,10 @@ fn memo_param(text: &str) -> Vec<BindValue<'_>> {
     vec![BindValue::Str(text)]
 }
 
-fn amounts_of(buffer: &ResultBuffer) -> Vec<i64> {
+fn amounts_of(buffer: &Answers) -> Vec<i64> {
     let mut amounts: Vec<i64> = (0..buffer.len())
-        .map(|row| {
-            let ResultValue::I64(amount) = buffer.get(row, 0) else {
+        .map(|answer| {
+            let AnswerValue::I64(amount) = buffer.get(answer, 0) else {
                 panic!("column 0 is an i64");
             };
             amount

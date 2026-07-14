@@ -1,22 +1,29 @@
-//! EXPLAIN (docs/architecture/40-execution.md): the debugging surface — an instrumented execution of
+//! Plan introspection (EXPLAIN, colloquially) is the debugging surface: an instrumented execution of
 //! the same plan through the `Counters` seam, never a runtime mode
 //! (`docs/architecture/40-execution.md`, observability).
 //!
 //! The normal path instantiates `NoopCounters` (zero-sized, compiled to
-//! nothing); the EXPLAIN entry point instantiates [`CountingCounters`] and
+//! nothing); the introspection entry point instantiates [`CountingCounters`] and
 //! executes the real query — ANALYZE semantics. Counter methods are plain
 //! increments into plan-sized arrays: no formatting, no allocation in the
-//! join loops. Output shape is OPEN per the architecture README; this
-//! rendering is plain and stable-ish.
+//! join loops.
 //!
-//! Chase-eliminated occurrences (`plan/chase.rs`) surface here too, read
+//! The rendered artifact and structured statistics are versioned together.
+//! Within one version, identical schema fingerprint, canonical query,
+//! parameter types, and feature set produce byte-identical output. Any
+//! content or ordering change must increment `INTROSPECTION_VERSION`.
+//! Sections have fixed order; rules retain program order, nodes retain plan
+//! order, and dead, subsumed, and unresolved-literal diagnostics retain
+//! statement order. No unordered collection feeds the rendered surface.
+//!
+//! Grounding-eliminated occurrences (`plan/ground.rs`) surface here too, read
 //! directly from the plan's `Role::Eliminated` marks — no separate list
-//! exists. The marks' readers are exactly this surface (EXPLAIN and the
+//! exists. The marks' readers are exactly this surface (introspection and the
 //! structured stats, which render each mark with its relation name and
 //! its licensing statement through `schema/render.rs`) and the DP, which
 //! sees a smaller problem because eliminated occurrences never enter it.
 
-use crate::exec::dispatch::GuardPlan;
+use crate::exec::dispatch::KeyProbePlan;
 use crate::plan::fj::ValidatedPlan;
 
 mod counters;
@@ -53,22 +60,33 @@ pub struct CountingCounters {
     emits: u64,
 }
 
-/// The EXPLAIN report: per-rule plan renderings plus the counted
+/// The introspection report: per-rule plan renderings plus the counted
 /// execution — per-rule node stats under the head-level union
 /// accounting (docs/architecture/40-execution.md § the rule loop).
 /// `Display` formats lazily — nothing here ran inside the hot loops.
 #[derive(Debug)]
-pub struct Report<'p> {
+pub struct IntrospectionReport<'p> {
+    /// Query and predicate header for the public artifact. Low-level
+    /// executor tests omit it while retaining the same versioned body.
+    pub header: Option<IntrospectionHeader>,
     /// Per rule, aligned with `stats.rules`.
     pub rules: Vec<RulePlan<'p>>,
     pub stats: crate::api::stats::ExecutionStats,
+}
+
+/// Owned public header rendered before the plan sections.
+#[derive(Debug)]
+pub struct IntrospectionHeader {
+    pub query: String,
+    pub predicate: String,
+    pub pending_literal: Option<String>,
 }
 
 /// One rule's access path (docs/architecture/40-execution.md).
 #[derive(Debug)]
 pub enum RulePlan<'p> {
     /// The rule classified as a point lookup.
-    GuardProbe(&'p GuardPlan),
+    KeyProbe(&'p KeyProbePlan),
     /// The Free Join engine.
     FreeJoin(&'p ValidatedPlan),
     /// The statically-empty program (`ir/normalize/fold.rs`): every

@@ -402,7 +402,7 @@ impl Executor {
         }
         if self.origin_overflow {
             return Err(crate::error::Error::Overflow(
-                crate::error::OverflowKind::Origins,
+                crate::error::OverflowKind::OriginCapacity,
             ));
         }
         Ok(())

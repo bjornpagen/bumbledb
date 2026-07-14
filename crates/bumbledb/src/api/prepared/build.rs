@@ -1,5 +1,5 @@
 use super::{
-    AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, GuardRule,
+    AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, KeyProbeRule,
     OccurrencePin, PARKED_SLOTS, PreparedQuery, PreparedRule, Program, ProjectionSink, ResolveMemo,
     Schema, ValueType, ViewMemo,
 };
@@ -12,7 +12,9 @@ use crate::ir::normalize::{NormalizedQuery, normalize};
 use crate::ir::validate::{RuleWitness, validate};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
-use crate::plan::fj::{DisjointWitness, binary2fj, factor, provably_disjoint_rules};
+use crate::plan::fj::{
+    DisjointWitness, DistinctWitness, binary2fj, factor, provably_disjoint_rules, provably_distinct,
+};
 use crate::plan::planner::plan as plan_order;
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
@@ -48,12 +50,12 @@ pub(crate) fn prepare<'s, S>(
         normalize(schema, &witness)
     };
 
-    // The disjointness proof runs pre-chase (the rewrite never changes
+    // The disjointness proof runs pre-grounding (the rewrite never changes
     // the denotation, so the proof stands), and pre-deletion: pairwise
     // over a superset holds over whichever rules survive below.
     let disjoint_rules = disjointness(&witness, &normalized, schema);
 
-    let (survivors, subsumed) = chase_program(normalized, &witness, schema);
+    let (survivors, subsumed) = ground_program(normalized, &witness, schema);
 
     // The predicate the query defines, sealed at validation (the ONE
     // signature derivation) — it exists even when every rule below dies,
@@ -65,7 +67,7 @@ pub(crate) fn prepare<'s, S>(
         // Rule death (ir/normalize/fold.rs): a statically-empty rule is
         // deleted here — no statistics read, no DP, no plan; the union
         // loses nothing because the rule denotes the empty set. The
-        // record keeps the killing condition for EXPLAIN.
+        // record keeps the killing condition for introspection.
         if let Some(reason) = &normalized_rule.dead {
             dead.push(crate::api::stats::DeadRule {
                 rule: u16::try_from(rule_idx).expect("rule count fits u16"),
@@ -97,17 +99,15 @@ pub(crate) fn prepare<'s, S>(
     // proof. Every multi-rule sink keeps one head-projection seen-set
     // spanning all rules: that map is the union representation.
     let output_hint = output_hint(&rules);
-    let union = rules.len() > 1;
     let sink = rules.first().map_or_else(
-        || make_sink(&[], 0, true, false, 0),
+        || make_sink(&[], 0, SinkProgram::SingleRule(None), 0),
         |first| {
-            make_sink(
-                first.finds(),
-                first.slot_count(),
-                !union && first.distinct_bindings(),
-                union,
-                output_hint,
-            )
+            let program = if rules.len() > 1 {
+                SinkProgram::Union
+            } else {
+                SinkProgram::SingleRule(first.distinct_witness())
+            };
+            make_sink(first.finds(), first.slot_count(), program, output_hint)
         },
     );
     // The rule-shared binding-slot scratch, sized at the rules'
@@ -123,10 +123,15 @@ pub(crate) fn prepare<'s, S>(
     // The byte-heap types keep the resolving finalize: String resolves
     // through the dictionary; a bytes<N> find re-assembles its slot words
     // into the byte heap (no dictionary — inline values).
-    let all_words = predicate
+    let answer_heap = if predicate
         .columns
         .iter()
-        .all(|column| !matches!(column.ty, ValueType::String | ValueType::FixedBytes { .. }));
+        .all(|column| !matches!(column.ty, ValueType::String | ValueType::FixedBytes { .. }))
+    {
+        super::AnswerHeap::Words
+    } else {
+        super::AnswerHeap::Bytes
+    };
     let unresolved_literals = rules.iter().map(pending_literals).sum();
     let program = if rules.is_empty() {
         Program::Empty
@@ -147,10 +152,10 @@ pub(crate) fn prepare<'s, S>(
         missed_params: Vec::new(),
         sink,
         bindings,
-        row_scratch: Vec::new(),
-        all_words,
+        answer_scratch: Vec::new(),
+        answer_heap,
         resolve_memo: ResolveMemo::new(),
-        guard_key: Vec::new(),
+        determinant_key: Vec::new(),
         rendered: crate::ir::render::render(schema, query),
         marker: std::marker::PhantomData,
     })
@@ -169,7 +174,7 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
                 usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
                     .expect("clamped")
             }
-            PreparedRule::Guard(_) => 1,
+            PreparedRule::KeyProbe(_) => 1,
         })
         .max()
         .unwrap_or(0)
@@ -177,11 +182,11 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
 
 /// The rule's `str` literals awaiting dictionary words — the latch
 /// counter's initial value ([`PreparedQuery::unresolved_literals`]).
-/// Guard plans resolve their key constants per probe and stay outside
+/// `KeyProbePlan` values resolve their key constants per probe and stay outside
 /// the latch (the templates the latch rewrites are Free Join plan
 /// arrays). Discharged occurrences count nothing: an eliminated one
 /// carries no conditions, and a folded one's retained filters are
-/// plan-constant by the fold's own conditions (`plan/chase/evaluate.rs`)
+/// plan-constant by the fold's own conditions (`plan/ground/evaluate.rs`)
 /// and never resolved — a fold must not block the fully-latched fast
 /// path.
 fn pending_literals(rule: &PreparedRule) -> u32 {
@@ -249,7 +254,7 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
     params
 }
 
-/// The theory's program rewrite (`plan/chase.rs`): the
+/// The theory's program rewrite (`plan/ground.rs`): the
 /// elimination-and-evaluation fixpoint per rule, independently — after
 /// normalization and before statistics and the DP
 /// (docs/architecture/40-execution.md planner placement), with no
@@ -264,8 +269,8 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
 /// subsumption: a rule whose post-elimination body a sibling contains
 /// modulo eliminated filters is deleted — the union loses nothing.
 /// Returns the surviving rules with their lowered-rule indices plus
-/// the deletion record (the EXPLAIN surface).
-fn chase_program(
+/// the deletion record (the introspection surface).
+fn ground_program(
     mut normalized: Vec<NormalizedQuery>,
     witness: &crate::ir::validate::ValidatedQuery,
     schema: &Schema,
@@ -276,11 +281,11 @@ fn chase_program(
     for (rule_idx, normalized_rule) in normalized.iter_mut().enumerate() {
         // A statically-empty rule (ir/normalize/fold.rs) is deleted at
         // prepare — nothing to rewrite; the subsumption pass skips it
-        // symmetrically (`plan/chase.rs`).
+        // symmetrically (`plan/ground.rs`).
         if normalized_rule.dead.is_some() {
             continue;
         }
-        crate::plan::chase::chase(
+        crate::plan::ground::ground(
             normalized_rule,
             schema,
             &witness.rule(rule_idx).rule().finds,
@@ -290,7 +295,7 @@ fn chase_program(
         .map(|idx| witness.rule(idx).rule().finds.as_slice())
         .collect();
     let subsumed: Vec<crate::api::stats::SubsumedRule> =
-        crate::plan::chase::subsume(&normalized, &finds)
+        crate::plan::ground::subsume(&normalized, &finds)
             .into_iter()
             .map(|deletion| crate::api::stats::SubsumedRule {
                 rule: u16::try_from(deletion.rule).expect("rule count fits u16"),
@@ -307,7 +312,7 @@ fn chase_program(
 
 /// The per-rule pipeline tail: classify → statistics → DP → lowering →
 /// plan validation — the conjunctive query's pipeline, with zero
-/// changes, over one already-chased rule. Returns the rule's prepared
+/// changes, over one already-grounded rule. Returns the rule's prepared
 /// artifact; result types are the query's predicate ([`super::Predicate`]),
 /// never re-derived here.
 fn prepare_rule(
@@ -318,23 +323,25 @@ fn prepare_rule(
     normalized: &NormalizedQuery,
     columns: &[crate::ir::validate::PredicateColumn],
 ) -> Result<PreparedRule> {
-    // Classification first: a guard probe needs no statistics or planning.
+    let distinct_witness = provably_distinct(normalized, schema);
+    // Classification first: a key probe needs no statistics or planning.
     let classified = {
         let _s = obs::span(obs::names::CLASSIFY, obs::Category::Prepare);
         classify(normalized, schema)
     };
     if let Some(plan) = classified {
         let finds = find_specs(rule, &plan);
-        let guard_finds = guard_find_table(&plan, &finds, columns);
-        return Ok(PreparedRule::Guard(GuardRule {
+        let key_probe_finds = key_probe_find_table(&plan, &finds, columns);
+        return Ok(PreparedRule::KeyProbe(KeyProbeRule {
             plan,
+            distinct_witness,
             finds,
-            guard_finds,
+            key_probe_finds,
         }));
     }
 
     // The staleness pin record (`staleness.rs`): the statistics below,
-    // kept instead of dropped. Stays empty for guard probes — they read
+    // kept instead of dropped. Stays empty for key probes — they read
     // no statistics, so there is nothing to drift.
     let mut pins = Vec::new();
     // Per-occurrence input estimates (docs/architecture/40-execution.md): row counters
@@ -342,7 +349,7 @@ fn prepare_rule(
     // resident-image distinct counts (peek only: prepare never
     // builds an image for statistics), documented bounds and floors.
     // Participating occurrences only: negated occurrences enter no
-    // DP state and chase-eliminated occurrences left planning
+    // DP state and grounding-eliminated occurrences left planning
     // entirely, so neither earns a statistics read — and, by the
     // same token, neither earns a pin.
     let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
@@ -398,7 +405,7 @@ fn prepare_rule(
         finds,
         resolved_filters: vec![Vec::new(); occurrence_count],
         resolved_selections: vec![Vec::new(); occurrence_count],
-        resolved_complete: false,
+        resolution: super::ResolutionState::Pending,
         memo,
         pinned: pins.into_boxed_slice(),
     }))
@@ -450,8 +457,8 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
         // marks a set-bound level, probed once per element with the
         // survivor union (docs/architecture/40-execution.md, § selection
         // levels; set-ness is a plan fact, never per-execution data). A
-        // plan-constant `WordSet` (the chase-evaluator's fold,
-        // `plan/chase/evaluate.rs`) is the same level shape with the
+        // plan-constant `WordSet` (the grounding-evaluator's fold,
+        // `plan/ground/evaluate.rs`) is the same level shape with the
         // elements already resolved — one machinery, two producers.
         let selections: Vec<crate::exec::colt::SelectionLevel> = occurrence
             .selections
@@ -495,7 +502,7 @@ impl SlotLayout for crate::plan::fj::ValidatedPlan {
     }
 }
 
-impl SlotLayout for crate::exec::dispatch::GuardPlan {
+impl SlotLayout for crate::exec::dispatch::KeyProbePlan {
     fn slot_of(&self, var: crate::ir::VarId) -> usize {
         self.slot_of(var)
     }
@@ -517,10 +524,10 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
             // The measure positions: one u64 word computed from the
             // interval variable's two-slot span (the sinks own the
             // subtraction and the ray check — `exec::sink`).
-            FindTerm::Duration(var) => FindSpec::Duration {
+            FindTerm::Measure(var) => FindSpec::Duration {
                 slot: layout.slot_of(*var),
             },
-            FindTerm::AggregateDuration { op, over } => FindSpec::AggDuration {
+            FindTerm::AggregateMeasure { op, over } => FindSpec::AggDuration {
                 op: match op {
                     AggOp::Sum => crate::exec::sink::FoldOp::Sum,
                     AggOp::Min => crate::exec::sink::FoldOp::Min,
@@ -585,11 +592,11 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
         .collect()
 }
 
-/// The guard fast lane's find table: `Some` for guard plans whose finds
+/// The key-probe fast lane's find table: `Some` for key-probe plans whose finds
 /// are all plain variables. Types come from the predicate's columns —
 /// find order IS column order.
-fn guard_find_table(
-    guard: &crate::exec::dispatch::GuardPlan,
+fn key_probe_find_table(
+    key_probe: &crate::exec::dispatch::KeyProbePlan,
     finds: &[FindSpec],
     columns: &[crate::ir::validate::PredicateColumn],
 ) -> Option<Vec<(crate::schema::FieldId, ValueType)>> {
@@ -598,14 +605,14 @@ fn guard_find_table(
         .zip(columns)
         .map(|(spec, column)| match spec {
             FindSpec::Var { slot, .. } => {
-                let var = guard
+                let var = key_probe
                     .vars
                     .iter()
                     .find(|v| v.slot == *slot)
-                    .expect("find slots come from the guard plan's layout");
+                    .expect("find slots come from the key-probe plan's layout");
                 Some((var.field, column.ty.clone()))
             }
-            // aggregate and measure guards keep the sink path
+            // aggregate and measure key_probes keep the sink path
             FindSpec::Agg { .. }
             | FindSpec::Arg { .. }
             | FindSpec::Pack { .. }
@@ -616,9 +623,9 @@ fn guard_find_table(
 }
 
 /// The rule-disjointness proof (docs/architecture/40-execution.md § set
-/// semantics) — retained as diagnostic knowledge for EXPLAIN, run over the
-/// whole program before the pipeline goes per-rule (the chase rewrites
-/// occurrences but never the denotation, so the pre-chase proof stands).
+/// semantics) — retained as diagnostic knowledge for introspection, run over the
+/// whole program before the pipeline goes per-rule (the grounding rewrites
+/// occurrences but never the denotation, so the pre-grounding proof stands).
 /// Single-rule programs have no pair to prove.
 fn disjointness(
     witness: &crate::ir::validate::ValidatedQuery,
@@ -639,15 +646,12 @@ fn disjointness(
 
 /// Builds the sink matching the head shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`), aimed at rule 0's binding
-/// layout. `union` is the multi-rule regime (head-projection dedup
-/// keys); `distinct` is the proof the dedup-key stream is duplicate-free
-/// for a single rule, which elides the aggregate seen-set. It is always
-/// false for a union: one spanning seen-set is the union representation.
+/// layout. The program regime structurally selects single-rule binding
+/// dedup, witnessed elision, or the mandatory union seen-set.
 fn make_sink(
     finds: &[FindSpec],
     slot_count: usize,
-    distinct: bool,
-    union: bool,
+    program: SinkProgram,
     hint: usize,
 ) -> EitherSink {
     let all_plain = finds
@@ -660,8 +664,21 @@ fn make_sink(
         // are word rows the finalize pass re-assembles by find type.
         EitherSink::Projection(ProjectionSink::with_capacity_hint(finds, slot_count, hint))
     } else {
-        EitherSink::Aggregate(Box::new(AggregateSink::with_capacity_hint(
-            finds, slot_count, distinct, union, hint,
-        )))
+        let sink = match program {
+            SinkProgram::SingleRule(Some(witness)) => {
+                AggregateSink::without_seen_set(finds, slot_count, witness, hint)
+            }
+            SinkProgram::SingleRule(None) => {
+                AggregateSink::with_capacity_hint(finds, slot_count, hint)
+            }
+            SinkProgram::Union => AggregateSink::for_union(finds, slot_count, hint),
+        };
+        EitherSink::Aggregate(Box::new(sink))
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SinkProgram {
+    SingleRule(Option<DistinctWitness>),
+    Union,
 }

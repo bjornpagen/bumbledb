@@ -2,8 +2,7 @@ use super::*;
 use crate::ir::CmpOp;
 use std::collections::BTreeSet;
 
-/// The sink-relevance bits encode aggregate
-/// skip-illegality. A projection over one variable leaves deeper
+/// The suffix-skip evidence encodes aggregate skip-illegality. A projection over one variable leaves deeper
 /// nodes skippable (the D2 win); the all-variables sink set an
 /// aggregate plan passes marks every variable-binding node relevant.
 #[test]
@@ -18,7 +17,10 @@ fn aggregate_sink_vars_mark_every_node_relevant() {
     let narrow =
         validate(&plan, &normalized, &schema(3, 3), vec![0; 3], &projected).expect("valid plan");
     assert!(
-        narrow.nodes().iter().any(|n| !n.sink_relevant),
+        narrow
+            .nodes()
+            .iter()
+            .any(|n| n.suffix_skip == SuffixSkip::Licensed),
         "projections keep skippable nodes"
     );
 
@@ -31,7 +33,7 @@ fn aggregate_sink_vars_mark_every_node_relevant() {
         full.nodes()
             .iter()
             .filter(|n| !n.new_vars.is_empty())
-            .all(|n| n.sink_relevant),
+            .all(|n| n.suffix_skip == SuffixSkip::Forbidden),
         "every variable-binding node is relevant under aggregation"
     );
 }
@@ -351,9 +353,9 @@ fn duplicate_occurrence_within_a_node_is_rejected() {
 }
 
 #[test]
-fn distinct_bindings_flag_tracks_key_coverage() {
+fn distinct_witness_tracks_key_coverage() {
     // Fresh-keyed occurrence: field 0 (the auto-key) is var-bound in
-    // every occurrence -> flag set.
+    // every occurrence -> witness present.
     let query = normalized(
         vec![
             occurrence(0, 0, &[(0, X), (1, A)]),
@@ -364,9 +366,9 @@ fn distinct_bindings_flag_tracks_key_coverage() {
     let plan = binary2fj(&query, &order(&[0, 1]));
     let validated =
         validate(&plan, &query, &schema(2, 2), vec![0, 0], &BTreeSet::new()).expect("valid plan");
-    assert!(validated.distinct_bindings());
+    assert!(validated.distinct_witness().is_some());
 
-    // Occurrence 1 binds only a non-key field -> flag clear.
+    // Occurrence 1 binds only a non-key field -> no witness.
     let query = normalized(
         vec![
             occurrence(0, 0, &[(0, X), (1, A)]),
@@ -377,7 +379,7 @@ fn distinct_bindings_flag_tracks_key_coverage() {
     let plan = binary2fj(&query, &order(&[0, 1]));
     let validated =
         validate(&plan, &query, &schema(2, 2), vec![0, 0], &BTreeSet::new()).expect("valid plan");
-    assert!(!validated.distinct_bindings());
+    assert!(validated.distinct_witness().is_none());
 }
 
 #[test]

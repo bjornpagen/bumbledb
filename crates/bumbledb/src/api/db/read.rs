@@ -1,4 +1,4 @@
-use super::{Db, ParkedReader, Snapshot};
+use super::{CommitSeq, Db, ParkedReader, Snapshot};
 use crate::error::Result;
 
 impl<S> Db<S> {
@@ -12,7 +12,7 @@ impl<S> Db<S> {
     /// `Lmdb` on snapshot open; otherwise whatever `f` returns.
     pub fn read<R>(&self, f: impl FnOnce(&Snapshot<'_, S>) -> Result<R>) -> Result<R> {
         use std::sync::atomic::Ordering;
-        let seq = self.commit_seq.load(Ordering::Acquire);
+        let seq = CommitSeq::load(&self.commit_seq, Ordering::Acquire);
         let parked = self
             .read_cache
             .try_lock()
@@ -39,7 +39,7 @@ impl<S> Db<S> {
         // and the slot is free. A snapshot that fails either check
         // drops here, freeing its reader slot.
         let Snapshot { txn, .. } = snap;
-        if self.commit_seq.load(Ordering::Acquire) == seq
+        if CommitSeq::load(&self.commit_seq, Ordering::Acquire) == seq
             && let Ok(mut slot) = self.read_cache.try_lock()
             && slot.is_none()
         {

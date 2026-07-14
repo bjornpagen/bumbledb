@@ -145,9 +145,9 @@ fn random_find(rng: &mut Rng) -> FindTerm {
         },
         _ => {
             if rng.chance(1, 2) {
-                FindTerm::Duration(var(rng))
+                FindTerm::Measure(var(rng))
             } else {
-                FindTerm::AggregateDuration {
+                FindTerm::AggregateMeasure {
                     op: random_agg(rng),
                     over: var(rng),
                 }
@@ -185,13 +185,13 @@ fn random_term(rng: &mut Rng) -> Term {
         4 => Term::ParamSet(param(rng)),
         // `Duration` in a binding position is a typed rejection — a draw,
         // not a mode.
-        5 => Term::Duration(var(rng)),
+        5 => Term::Measure(var(rng)),
         _ => Term::Literal(random_value(rng)),
     }
 }
 
-/// A literal of any shape the value sum can spell — the type-mismatch,
-/// empty-interval, and ceiling-point roster lines are all draws.
+/// A literal of any shape the value sum can spell — type mismatches and
+/// ceiling points remain hostile draws; empty intervals are unspellable.
 fn random_value(rng: &mut Rng) -> Value {
     match rng.range(8) {
         0 => Value::Bool(rng.chance(1, 2)),
@@ -204,21 +204,25 @@ fn random_value(rng: &mut Rng) -> Value {
         6 => {
             let start = rng.range(8);
             let end = match rng.range(4) {
-                0 => start, // empty: `start == end`
+                0 => start + 1,
                 1 => start + 1 + rng.range(6),
-                2 => u64::MAX,              // the ray end
-                _ => start.wrapping_sub(1), // inverted
+                2 => u64::MAX, // the ray end
+                _ => start + 2,
             };
-            Value::IntervalU64(start, end)
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            )
         }
         _ => {
             let start = signed(rng);
             let end = match rng.range(3) {
-                0 => start,
+                0 => start.saturating_add(1),
                 1 => start.saturating_add(1 + i64::try_from(rng.range(6)).expect("small")),
                 _ => i64::MAX,
             };
-            Value::IntervalI64(start, end)
+            Value::IntervalI64(
+                bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"),
+            )
         }
     }
 }
@@ -259,7 +263,7 @@ fn random_comparison(rng: &mut Rng) -> Comparison {
         6 => CmpOp::Allen {
             mask: random_mask(rng),
         },
-        _ => CmpOp::Contains,
+        _ => CmpOp::PointIn,
     };
     Comparison {
         op,

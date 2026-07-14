@@ -231,13 +231,13 @@ fn populated(dir: &TempDir, schema: &Schema, rows: &[Vec<ValueRef>]) -> Environm
 // ---------- classification ----------
 
 #[test]
-fn fully_key_bound_single_atom_classifies_as_guard_probe() {
+fn fully_key_bound_single_atom_classifies_as_key_probe() {
     let schema = account_schema();
     let normalized = single(occurrence(
         &[(1, 0), (2, 1)],
         vec![eq_filter(0, Const::Word(5))], // id = 5, the fresh auto-key
     ));
-    let plan = classify(&normalized, &schema).expect("guard probe");
+    let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(plan.statement, Some(StatementId(0)));
     assert_eq!(plan.key, vec![(FieldId(0), Const::Word(5))]);
     assert!(plan.remaining_filters.is_empty());
@@ -300,7 +300,7 @@ fn currency_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// A closed relation never takes the guard path: no `U` guards and no `M`
+/// A closed relation never takes the key-probe path: no `U` determinants and no `M`
 /// entries exist — its storage is the theory — so even a single atom
 /// fully binding the auto-key (or every field) classifies as Free Join
 /// and hits the virtual image.
@@ -339,7 +339,7 @@ fn extra_filters_survive_as_remaining() {
             eq_filter(1, Const::Word(7)), // outside the key's projection
         ],
     ));
-    let plan = classify(&normalized, &schema).expect("guard probe");
+    let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(plan.remaining_filters, vec![eq_filter(1, Const::Word(7))]);
 }
 
@@ -355,7 +355,7 @@ fn a_pointwise_key_covered_by_value_classifies_with_its_statement() {
             eq_filter(1, Const::Interval { start: 5, end: 10 }),
         ],
     ));
-    let plan = classify(&normalized, &schema).expect("guard probe");
+    let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(plan.statement, Some(StatementId(0)));
     // Key constants in statement projection order.
     assert_eq!(
@@ -419,7 +419,7 @@ fn full_fact_binding_takes_the_membership_path() {
             eq_filter(1, Const::Interval { start: 5, end: 10 }),
         ],
     ));
-    let plan = classify(&normalized, &schema).expect("guard probe");
+    let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(plan.statement, None);
     assert_eq!(plan.key.len(), 2, "every field, declaration order");
     assert!(plan.remaining_filters.is_empty());
@@ -441,8 +441,8 @@ fn full_fact_binding_takes_the_membership_path() {
 
 // ---------- execution ----------
 
-fn run_guard(
-    plan: &GuardPlan,
+fn run_key_probe(
+    plan: &KeyProbePlan,
     env: &Environment,
     schema: &Schema,
     params: &[Const],
@@ -451,7 +451,7 @@ fn run_guard(
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new((0..plan.slot_count()).collect());
     let mut key = Vec::new();
-    execute_guard(
+    execute_key_probe(
         plan,
         &txn,
         schema,
@@ -462,22 +462,22 @@ fn run_guard(
         &mut crate::exec::run::NoopCounters,
     )
     .expect("execute");
-    sink.rows().map(<[u64]>::to_vec).collect()
+    sink.answers().map(<[u64]>::to_vec).collect()
 }
 
 #[test]
 fn hit_miss_and_filter_rejection() {
-    let dir = TempDir::new("guard-hit-miss");
+    let dir = TempDir::new("key_probe-hit-miss");
     let schema = account_schema();
     let env = populated_accounts(&dir, &schema, &[(5, 7, "alice"), (6, 8, "bob")]);
     let normalized = single(occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(5))]));
-    let plan = classify(&normalized, &schema).expect("guard probe");
-    assert_eq!(run_guard(&plan, &env, &schema, &[]), vec![vec![7]]);
+    let plan = classify(&normalized, &schema).expect("key probe");
+    assert_eq!(run_key_probe(&plan, &env, &schema, &[]), vec![vec![7]]);
 
     // Miss: no such id.
     let missing = single(occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(99))]));
-    let plan = classify(&missing, &schema).expect("guard probe");
-    assert!(run_guard(&plan, &env, &schema, &[]).is_empty());
+    let plan = classify(&missing, &schema).expect("key probe");
+    assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
 
     // Hit, but a remaining filter rejects the fetched fact.
     let rejected = single(occurrence(
@@ -487,30 +487,30 @@ fn hit_miss_and_filter_rejection() {
             eq_filter(1, Const::Word(999)), // holder is 7, not 999
         ],
     ));
-    let plan = classify(&rejected, &schema).expect("guard probe");
-    assert!(run_guard(&plan, &env, &schema, &[]).is_empty());
+    let plan = classify(&rejected, &schema).expect("key probe");
+    assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
 }
 
 #[test]
 fn param_driven_keys_resolve_at_bind_time() {
-    let dir = TempDir::new("guard-param");
+    let dir = TempDir::new("key_probe-param");
     let schema = account_schema();
     let env = populated_accounts(&dir, &schema, &[(5, 7, "alice")]);
     let normalized = single(occurrence(
         &[(1, 0)],
         vec![eq_filter(0, Const::Param(ParamId(0)))],
     ));
-    let plan = classify(&normalized, &schema).expect("guard probe");
+    let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(
-        run_guard(&plan, &env, &schema, &[Const::Word(5)]),
+        run_key_probe(&plan, &env, &schema, &[Const::Word(5)]),
         vec![vec![7]]
     );
-    assert!(run_guard(&plan, &env, &schema, &[Const::Word(6)]).is_empty());
+    assert!(run_key_probe(&plan, &env, &schema, &[Const::Word(6)]).is_empty());
 }
 
 #[test]
 fn pending_intern_miss_is_empty_and_never_interns() {
-    let dir = TempDir::new("guard-intern-miss");
+    let dir = TempDir::new("key_probe-intern-miss");
     let schema = account_schema();
     let env = populated_accounts(&dir, &schema, &[(5, 7, "alice")]);
     // Probe by id, filter on a never-interned name.
@@ -526,19 +526,19 @@ fn pending_intern_miss_is_empty_and_never_interns() {
             ),
         ],
     ));
-    let plan = classify(&normalized, &schema).expect("guard probe");
-    assert!(run_guard(&plan, &env, &schema, &[]).is_empty());
+    let plan = classify(&normalized, &schema).expect("key probe");
+    assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
     // The read path never interned the ghost string.
     let txn = env.read_txn().expect("txn");
     assert_eq!(dict::lookup_str(&txn, "ghost").expect("lookup"), None);
 }
 
-/// The pointwise `U` hit: the guard key carries the interval's exact
+/// The pointwise `U` hit: the determinant key carries the interval's exact
 /// 16-byte encoding — byte-identical to what the write-side slicer
-/// ([`crate::storage::keys::guard_bytes`]) derived from the stored fact.
+/// ([`crate::storage::keys::determinant_image`]) derived from the stored fact.
 #[test]
-fn pointwise_guard_hit_is_byte_exact() {
-    let dir = TempDir::new("guard-pointwise");
+fn pointwise_key_probe_hit_is_byte_exact() {
+    let dir = TempDir::new("key_probe-pointwise");
     let schema = booking_schema();
     let env = populated(
         &dir,
@@ -546,12 +546,16 @@ fn pointwise_guard_hit_is_byte_exact() {
         &[
             vec![
                 ValueRef::U64(1),
-                ValueRef::IntervalU64(5, 10),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+                ),
                 ValueRef::U64(100),
             ],
             vec![
                 ValueRef::U64(1),
-                ValueRef::IntervalU64(20, 30),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(20, 30).expect("nonempty interval"),
+                ),
                 ValueRef::U64(200),
             ],
         ],
@@ -563,25 +567,25 @@ fn pointwise_guard_hit_is_byte_exact() {
             eq_filter(1, Const::Interval { start: 5, end: 10 }),
         ],
     ));
-    let plan = classify(&normalized, &schema).expect("guard probe");
+    let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(plan.statement, Some(StatementId(0)));
 
     let txn = env.read_txn().expect("txn");
     let mut key = Vec::new();
-    let fact = guard_probe_fact(&plan, &txn, &schema, &[], &mut key)
+    let fact = key_probe_fact(&plan, &txn, &schema, &[], &mut key)
         .expect("probe")
         .expect("hit");
-    // The probe key equals the shared slicer's guard bytes for the fact.
-    let mut expected = Vec::new();
-    crate::storage::keys::guard_bytes(
+    // The probe key equals the shared slicer's determinant bytes for the fact.
+    let mut expected = crate::storage::keys::DeterminantImage::scratch();
+    crate::storage::keys::determinant_image(
         schema.relation(REL).layout(),
         &[FieldId(0), FieldId(1)],
         fact,
         &mut expected,
     );
-    assert_eq!(key, expected);
+    assert_eq!(key, expected.as_bytes());
     assert_eq!(key.len(), 8 + 16, "scalar word + whole 16-byte interval");
-    assert_eq!(run_guard(&plan, &env, &schema, &[]), vec![vec![100]]);
+    assert_eq!(run_key_probe(&plan, &env, &schema, &[]), vec![vec![100]]);
 
     // The 16 bytes are exact: a one-off end misses.
     let near = single(occurrence(
@@ -591,18 +595,21 @@ fn pointwise_guard_hit_is_byte_exact() {
             eq_filter(1, Const::Interval { start: 5, end: 11 }),
         ],
     ));
-    let plan = classify(&near, &schema).expect("guard probe");
-    assert!(run_guard(&plan, &env, &schema, &[]).is_empty());
+    let plan = classify(&near, &schema).expect("key probe");
+    assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
 }
 
 #[test]
 fn full_fact_membership_lookup_with_an_interval_field() {
-    let dir = TempDir::new("guard-m-interval");
+    let dir = TempDir::new("key_probe-m-interval");
     let schema = stay_schema();
     let env = populated(
         &dir,
         &schema,
-        &[vec![ValueRef::U64(2), ValueRef::IntervalU64(5, 10)]],
+        &[vec![
+            ValueRef::U64(2),
+            ValueRef::IntervalU64(crate::Interval::<u64>::new(5, 10).expect("nonempty interval")),
+        ]],
     );
     let exact = single(occurrence(
         &[],
@@ -611,12 +618,12 @@ fn full_fact_membership_lookup_with_an_interval_field() {
             eq_filter(1, Const::Interval { start: 5, end: 10 }),
         ],
     ));
-    let plan = classify(&exact, &schema).expect("guard probe");
+    let plan = classify(&exact, &schema).expect("key probe");
     assert_eq!(plan.statement, None, "the M path");
     let txn = env.read_txn().expect("txn");
     let mut key = Vec::new();
     assert!(
-        guard_probe_fact(&plan, &txn, &schema, &[], &mut key)
+        key_probe_fact(&plan, &txn, &schema, &[], &mut key)
             .expect("probe")
             .is_some()
     );
@@ -629,10 +636,10 @@ fn full_fact_membership_lookup_with_an_interval_field() {
             eq_filter(1, Const::Interval { start: 5, end: 11 }),
         ],
     ));
-    let plan = classify(&other, &schema).expect("guard probe");
+    let plan = classify(&other, &schema).expect("key probe");
     let mut key = Vec::new();
     assert!(
-        guard_probe_fact(&plan, &txn, &schema, &[], &mut key)
+        key_probe_fact(&plan, &txn, &schema, &[], &mut key)
             .expect("probe")
             .is_none()
     );
@@ -640,22 +647,25 @@ fn full_fact_membership_lookup_with_an_interval_field() {
 
 #[test]
 fn an_interval_variable_decodes_into_its_two_slot_span() {
-    let dir = TempDir::new("guard-interval-var");
+    let dir = TempDir::new("key_probe-interval-var");
     let schema = shift_schema();
     let env = populated(
         &dir,
         &schema,
-        &[vec![ValueRef::U64(1), ValueRef::IntervalU64(5, 10)]],
+        &[vec![
+            ValueRef::U64(1),
+            ValueRef::IntervalU64(crate::Interval::<u64>::new(5, 10).expect("nonempty interval")),
+        ]],
     );
     // Q(span) :- Shift(id = 1, span) — span is a two-word variable.
     let normalized = single_with_widths(
         occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(1))]),
         &[0],
     );
-    let plan = classify(&normalized, &schema).expect("guard probe");
+    let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(plan.slot_count(), 2);
     assert_eq!(
-        run_guard(&plan, &env, &schema, &[]),
+        run_key_probe(&plan, &env, &schema, &[]),
         vec![vec![5, 10]],
         "start and end words in the SlotWidth layout"
     );
@@ -663,11 +673,11 @@ fn an_interval_variable_decodes_into_its_two_slot_span() {
 
 #[test]
 fn aggregate_over_a_point_lookup_folds_one_binding() {
-    let dir = TempDir::new("guard-aggregate");
+    let dir = TempDir::new("key_probe-aggregate");
     let schema = account_schema();
     let env = populated_accounts(&dir, &schema, &[(5, 7, "alice")]);
     let normalized = single(occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(5))]));
-    let plan = classify(&normalized, &schema).expect("guard probe");
+    let plan = classify(&normalized, &schema).expect("key probe");
     let txn = env.read_txn().expect("txn");
     let mut bindings = Bindings::new(1);
     let mut sink = AggregateSink::new(
@@ -678,10 +688,9 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
             signed: false,
         }],
         1,
-        true,
     );
     let mut key = Vec::new();
-    execute_guard(
+    execute_key_probe(
         &plan,
         &txn,
         &schema,
@@ -692,9 +701,9 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
         &mut crate::exec::run::NoopCounters,
     )
     .expect("execute");
-    assert_eq!(sink.into_rows().expect("rows"), vec![vec![1]]);
+    assert_eq!(sink.into_answers().expect("rows"), vec![vec![1]]);
 }
 
-// No image build can occur on the guard path: `execute_guard` takes no
+// No image build can occur on the key-probe path: `execute_key_probe` takes no
 // image, view, or cache argument — the property holds by API shape, on
 // a cold database in every test above.

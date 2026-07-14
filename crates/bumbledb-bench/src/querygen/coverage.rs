@@ -12,11 +12,11 @@ use std::collections::{HashMap, HashSet};
 use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
-use crate::querygen::{ChaseVariant, ClosedVariant, Coverage, GenTags, RulesVariant, Shape};
+use crate::querygen::{ClosedVariant, Coverage, GenTags, GroundVariant, RulesVariant, Shape};
 
 /// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
 /// all six types, order operators over the two integer types only,
-/// `Allen` (any mask) and `Contains` only at their interval-anchored
+/// `Allen` (any mask) and `PointIn` only at their interval-anchored
 /// shapes.
 #[must_use]
 pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
@@ -38,7 +38,7 @@ fn op_index(op: CmpOp) -> usize {
         CmpOp::Gt => 4,
         CmpOp::Ge => 5,
         CmpOp::Allen { .. } => 6,
-        CmpOp::Contains => 7,
+        CmpOp::PointIn => 7,
     }
 }
 
@@ -98,7 +98,7 @@ fn typing(rule: &Rule) -> Typing {
                     t.scalar_params.insert(p.0);
                 }
                 // The measure never appears in bindings (validated).
-                Term::Literal(_) | Term::Duration(_) => {}
+                Term::Literal(_) | Term::Measure(_) => {}
             }
         }
     }
@@ -140,7 +140,7 @@ fn element_of(ty: &ValueType) -> Option<IntervalElement> {
 /// (`docs/architecture/60-validation.md` § the generator contract;
 /// `40-execution.md` names the degenerate): every atom carrying a
 /// var-point membership binding or an interval-typed side of a
-/// cross-atom `Allen`/`Contains` must share an equality join
+/// cross-atom `Allen`/`PointIn` must share an equality join
 /// variable with another atom or carry an equality selection
 /// (literal/param/set) on a scalar field; a negated atom whose only
 /// bindings are memberships is the same Cartesian. Returns the count of
@@ -186,9 +186,9 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
             }
         }
     }
-    // …and interval-typed sides of cross-atom Allen/Contains.
+    // …and interval-typed sides of cross-atom Allen/PointIn.
     for comparison in rule.conditions.iter().map(super::leaf) {
-        if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::Contains) {
+        if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::PointIn) {
             continue;
         }
         if let (Term::Var(lhs), Term::Var(rhs)) = (&comparison.lhs, &comparison.rhs) {
@@ -238,7 +238,7 @@ fn spine_violations(rule: &Rule, t: &Typing) -> u64 {
 impl Coverage {
     fn record_shape(&mut self, shape: Shape) {
         match shape {
-            Shape::Guard => self.guard += 1,
+            Shape::KeyProbe => self.key_probe += 1,
             Shape::Star => self.star += 1,
             Shape::Chain => self.chain += 1,
             Shape::SelfJoin => self.self_join += 1,
@@ -254,7 +254,7 @@ impl Coverage {
             Shape::Rules => self.rules += 1,
             Shape::Measure => self.measure += 1,
             Shape::ClosedJoin => self.closed_join += 1,
-            Shape::ClosedFold => self.closed_fold += 1,
+            Shape::GroundFold => self.ground_fold += 1,
         }
     }
 
@@ -271,22 +271,22 @@ impl Coverage {
         }
     }
 
-    /// The chase-variant tallies (`shapes_chase.rs`): eliminable shapes
+    /// The grounding-variant tallies (`shapes_ground.rs`): eliminable shapes
     /// (existence walks and both DU `==` directions) vs the two
     /// near-miss refusal classes.
-    fn record_chase(&mut self, chase: Option<ChaseVariant>) {
-        match chase {
-            Some(ChaseVariant::Walk) => self.chase_eliminable += 1,
-            Some(ChaseVariant::DuHeader) => {
-                self.chase_eliminable += 1;
+    fn record_ground(&mut self, ground: Option<GroundVariant>) {
+        match ground {
+            Some(GroundVariant::Walk) => self.ground_eliminable += 1,
+            Some(GroundVariant::DuHeader) => {
+                self.ground_eliminable += 1;
                 self.du_header_falls += 1;
             }
-            Some(ChaseVariant::DuChild) => {
-                self.chase_eliminable += 1;
+            Some(GroundVariant::DuChild) => {
+                self.ground_eliminable += 1;
                 self.du_child_falls += 1;
             }
-            Some(ChaseVariant::WalkExtraField) => self.chase_extra_field += 1,
-            Some(ChaseVariant::DuMissingPhi) => self.chase_missing_phi += 1,
+            Some(GroundVariant::WalkExtraField) => self.ground_extra_field += 1,
+            Some(GroundVariant::DuMissingPhi) => self.ground_missing_phi += 1,
             None => {}
         }
     }
@@ -335,8 +335,8 @@ impl Coverage {
         for comparison in rule.conditions.iter().map(super::leaf) {
             // A measure side types the comparison u64 (the measure word)
             // and is its own construct row.
-            if matches!(comparison.lhs, Term::Duration(_))
-                || matches!(comparison.rhs, Term::Duration(_))
+            if matches!(comparison.lhs, Term::Measure(_))
+                || matches!(comparison.rhs, Term::Measure(_))
             {
                 self.duration_predicate += 1;
                 self.matrix[op_index(comparison.op)][0] += 1;
@@ -375,10 +375,10 @@ impl Coverage {
                         }
                     }
                 }
-                CmpOp::Contains => match element_of(&ty) {
-                    Some(IntervalElement::U64) => self.contains_u64 += 1,
-                    Some(IntervalElement::I64) => self.contains_i64 += 1,
-                    None => unreachable!("Contains' left side is interval-typed"),
+                CmpOp::PointIn => match element_of(&ty) {
+                    Some(IntervalElement::U64) => self.point_in_u64 += 1,
+                    Some(IntervalElement::I64) => self.point_in_i64 += 1,
+                    None => unreachable!("PointIn's left side is interval-typed"),
                 },
                 _ => {}
             }
@@ -428,7 +428,7 @@ impl Coverage {
                     Term::Literal(_) => self.negation_literal += 1,
                     Term::Param(_) => self.negation_param += 1,
                     Term::ParamSet(_) => self.negation_set += 1,
-                    Term::Duration(_) => unreachable!("validated: no measure in bindings"),
+                    Term::Measure(_) => unreachable!("validated: no measure in bindings"),
                     Term::Var(var) => {
                         // Membership inside negation: an element-typed
                         // var at an interval field.
@@ -500,11 +500,11 @@ impl Coverage {
                 }
                 // The measure positions: one projected word / one fold
                 // like their plain twins, plus their own construct rows.
-                FindTerm::Duration(_) => {
+                FindTerm::Measure(_) => {
                     self.duration_find += 1;
                     projected_words += 1;
                 }
-                FindTerm::AggregateDuration { .. } => {
+                FindTerm::AggregateMeasure { .. } => {
                     self.duration_fold += 1;
                     aggregates += 1;
                 }
@@ -555,7 +555,7 @@ impl Coverage {
 
     fn record(&mut self, query: &Query, shape: Shape, tags: GenTags) {
         self.record_shape(shape);
-        self.record_chase(tags.chase);
+        self.record_ground(tags.ground);
         self.record_closed(tags.closed);
         self.record_rules(query, tags.rules);
         self.misses += u64::from(tags.miss);

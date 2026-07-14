@@ -69,7 +69,7 @@ const ARM_VAR: &str = "BUMBLEDB_CRASHPOINT";
 /// libFuzzer's `data`: libFuzzer tests the callback with an empty input
 /// once at startup before running the argv file, so a child keyed on
 /// `data` would run twice — the empty probe would create the store and
-/// the real input would refuse (`AlreadyInitialized`). The once-guard
+/// the real input would refuse (`AlreadyInitialized`). The once gate
 /// makes the startup probe the one real execution and the argv pass a
 /// no-op.
 pub fn run(data: &[u8]) {

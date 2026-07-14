@@ -22,6 +22,12 @@ use crate::corpus_gen::Rng;
 use crate::differential::{self, Op};
 use crate::naive::{Delta, NaiveDb};
 
+fn interval(start: i64, end: i64) -> Value {
+    Value::IntervalI64(
+        bumbledb::Interval::<i64>::new(start, end).expect("fixture interval is nonempty"),
+    )
+}
+
 /// The calendar family lane: every family × (its fixed rotation, plus
 /// the randomized slice when `randomized`), the `SQLite` side per
 /// [`families::CalFamily::sql_for`] — translator output for the paired
@@ -134,7 +140,7 @@ fn load_ops(cfg: crate::corpus_gen::GenConfig, sizes: CalSizes) -> Vec<Op> {
 /// implementation accident).
 fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
     let first = chain(seed, sizes, 0)[0];
-    let overlap = Value::IntervalI64(first.start, first.start + 1);
+    let overlap = interval(first.start, first.start + 1);
     // A genuine free instant in person 0's chain: the first gapped
     // boundary (every third abuts; the rest leave a positive gap).
     let segments = chain(seed, sizes, 0);
@@ -177,7 +183,7 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                     Value::U64(sizes.ooo_source_base() + sizes.claims + 7),
                     Value::U64(0),
                     Value::U64(ARM_BUSY),
-                    Value::IntervalI64(gap, gap + 1),
+                    interval(gap, gap + 1),
                 ],
             )],
         }),
@@ -197,7 +203,7 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                         vec![
                             Value::U64(sizes.events),
                             Value::U64(0),
-                            Value::IntervalI64(CAL_BASE - 2 * HOUR, CAL_BASE - HOUR),
+                            interval(CAL_BASE - 2 * HOUR, CAL_BASE - HOUR),
                             Value::I64(CAL_BASE),
                             crate::calendar::corpus_gen::event_hash(seed, sizes.events),
                         ],
@@ -217,7 +223,7 @@ fn violating_ops(seed: u64, sizes: &CalSizes) -> Vec<Op> {
                             Value::U64(source),
                             Value::U64(0),
                             Value::U64(ARM_BUSY),
-                            Value::IntervalI64(CAL_BASE - 2 * HOUR, CAL_BASE - HOUR),
+                            interval(CAL_BASE - 2 * HOUR, CAL_BASE - HOUR),
                         ],
                     ),
                 ],

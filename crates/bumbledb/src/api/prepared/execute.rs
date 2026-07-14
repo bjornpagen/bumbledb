@@ -1,7 +1,7 @@
-use super::{BindValue, GuardRule, PreparedQuery, PreparedRule, Program, ResultBuffer, ValueType};
+use super::{Answers, BindValue, KeyProbeRule, PreparedQuery, PreparedRule, Program, ValueType};
 
 use crate::error::Result;
-use crate::exec::dispatch::execute_guard;
+use crate::exec::dispatch::execute_key_probe;
 use crate::exec::run::{Counters, NoopCounters};
 use crate::image::cache::ImageCache;
 use crate::obs;
@@ -28,7 +28,7 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         params: &[BindValue<'_>],
-        out: &mut ResultBuffer,
+        out: &mut Answers,
     ) -> Result<()> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
@@ -56,7 +56,7 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         args: &[super::ParamArg<'_>],
-        out: &mut ResultBuffer,
+        out: &mut Answers,
     ) -> Result<()> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
@@ -77,7 +77,7 @@ impl<S> PreparedQuery<'_, S> {
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        out: &mut ResultBuffer,
+        out: &mut Answers,
     ) -> Result<()> {
         // The statically-empty program (ir/normalize/fold.rs): params
         // were bound above — bind errors surfaced, a vacuous mask param
@@ -91,17 +91,17 @@ impl<S> PreparedQuery<'_, S> {
         }
         // The point fast lane, single-rule programs only: one probe, one
         // fetch, cells decoded straight into the buffer — no sink, no
-        // bindings, no finalize pass. Aggregate-find guards (rare) and
-        // guard rules inside multi-rule programs keep the sink path (the
+        // bindings, no finalize pass. Aggregate-find key_probes (rare) and
+        // key-probe rules inside multi-rule programs keep the sink path (the
         // union must hear them).
         if matches!(
             self.program.rules(),
-            [PreparedRule::Guard(GuardRule {
-                guard_finds: Some(_),
+            [PreparedRule::KeyProbe(KeyProbeRule {
+                key_probe_finds: Some(_),
                 ..
             })]
         ) {
-            return self.execute_guard_direct(txn, out);
+            return self.execute_key_probe_direct(txn, out);
         }
         // Phase attribution engages only under an active obs capture
         // (docs/architecture/60-validation.md): timing runs — even obs
@@ -130,11 +130,11 @@ impl<S> PreparedQuery<'_, S> {
         let _s = obs::span(obs::names::FINALIZE, obs::Category::Execute);
         finalize(
             &mut self.sink,
-            &mut self.row_scratch,
+            &mut self.answer_scratch,
             &mut self.resolve_memo,
             txn,
             &self.predicate.columns,
-            self.all_words,
+            self.answer_heap,
             out,
         )
     }
@@ -164,7 +164,7 @@ impl<S> PreparedQuery<'_, S> {
 
     /// One rule of the loop: re-aim the sink's slot tables at the rule's
     /// binding layout, resolve this execution's filter constants, and
-    /// run the rule's plan — guard probe or Free Join — into the shared
+    /// run the rule's plan — key probe or Free Join — into the shared
     /// sink. `Ok(false)` = the positive-occurrence `Eq` short-circuit (a
     /// dictionary miss or empty set emptied this conjunctive rule; the
     /// other rules still run — a rule is one disjunct).
@@ -199,13 +199,13 @@ impl<S> PreparedQuery<'_, S> {
             return Ok(false);
         };
         let ran = match &mut rules[rule_idx] {
-            PreparedRule::Guard(rule) => {
-                execute_guard(
+            PreparedRule::KeyProbe(rule) => {
+                execute_key_probe(
                     &rule.plan,
                     txn,
                     self.schema,
                     &self.resolved_params,
-                    &mut self.guard_key,
+                    &mut self.determinant_key,
                     &mut self.bindings,
                     &mut self.sink,
                     counters,
@@ -214,24 +214,29 @@ impl<S> PreparedQuery<'_, S> {
             }
             PreparedRule::FreeJoin(rule) => {
                 let plan = &mut rule.plan;
-                let resolved = if fast_eligible && rule.resolved_complete {
-                    true
-                } else {
-                    let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
-                    let complete = resolve_filters(
-                        txn,
-                        plan,
-                        &self.resolved_params,
-                        &self.missed_params,
-                        &mut rule.resolved_filters,
-                        &mut rule.resolved_selections,
-                        &mut latched,
-                    )?;
-                    // A short-circuited pass leaves later slots
-                    // unwritten; only a completed one arms the skip.
-                    rule.resolved_complete = complete;
-                    complete
-                };
+                let resolved =
+                    if fast_eligible && rule.resolution == super::ResolutionState::Complete {
+                        true
+                    } else {
+                        let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
+                        let complete = resolve_filters(
+                            txn,
+                            plan,
+                            &self.resolved_params,
+                            &self.missed_params,
+                            &mut rule.resolved_filters,
+                            &mut rule.resolved_selections,
+                            &mut latched,
+                        )?;
+                        // A short-circuited pass leaves later slots
+                        // unwritten; only a completed one arms the skip.
+                        rule.resolution = if complete {
+                            super::ResolutionState::Complete
+                        } else {
+                            super::ResolutionState::Pending
+                        };
+                        complete
+                    };
                 if resolved {
                     // This execution's Allen-residual masks (literal or
                     // bound param) resolve into the executor before the
@@ -274,11 +279,11 @@ impl<S> PreparedQuery<'_, S> {
 
     /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery.
-    fn execute_guard_direct(&mut self, txn: &ReadTxn<'_>, out: &mut ResultBuffer) -> Result<()> {
+    fn execute_key_probe_direct(&mut self, txn: &ReadTxn<'_>, out: &mut Answers) -> Result<()> {
         let [
-            PreparedRule::Guard(GuardRule {
-                plan: guard,
-                guard_finds: Some(guard_finds),
+            PreparedRule::KeyProbe(KeyProbeRule {
+                plan: key_probe,
+                key_probe_finds: Some(key_probe_finds),
                 ..
             }),
         ] = self.program.rules()
@@ -286,26 +291,30 @@ impl<S> PreparedQuery<'_, S> {
             return Ok(());
         };
         self.resolve_memo.clear();
-        let Some(fact) = crate::exec::dispatch::guard_probe_fact(
-            guard,
+        let Some(fact) = crate::exec::dispatch::key_probe_fact(
+            key_probe,
             txn,
             self.schema,
             &self.resolved_params,
-            &mut self.guard_key,
+            &mut self.determinant_key,
         )?
         else {
             return Ok(());
         };
-        out.cells.reserve(guard_finds.len());
-        for (field, ty) in guard_finds {
+        out.cells.reserve(key_probe_finds.len());
+        for (field, ty) in key_probe_finds {
             if let ValueType::Interval { element } = ty {
                 let crate::exec::dispatch::FactOperand::Pair(start, end) =
-                    crate::exec::dispatch::fact_operand(self.schema, guard.relation, fact, *field)
+                    crate::exec::dispatch::fact_operand(
+                        self.schema,
+                        key_probe.relation,
+                        fact,
+                        *field,
+                    )
                 else {
                     unreachable!("validated: interval finds read interval fields")
                 };
-                out.cells
-                    .push(ResultBuffer::interval_cell(*element, start, end));
+                out.cells.push(Answers::interval_cell(*element, start, end));
                 continue;
             }
             if let ValueType::FixedBytes { len } = ty {
@@ -313,7 +322,7 @@ impl<S> PreparedQuery<'_, S> {
                 // fact — no dictionary.
                 let words = match crate::exec::dispatch::fact_operand(
                     self.schema,
-                    guard.relation,
+                    key_probe.relation,
                     fact,
                     *field,
                 ) {
@@ -328,12 +337,13 @@ impl<S> PreparedQuery<'_, S> {
                 out.push_fixed_bytes(*len, &words);
                 continue;
             }
-            let word = crate::exec::dispatch::fact_word(self.schema, guard.relation, fact, *field);
+            let word =
+                crate::exec::dispatch::fact_word(self.schema, key_probe.relation, fact, *field);
             match ty {
                 ValueType::String => {
                     out.push_word(txn, ty, word, &mut self.resolve_memo)?;
                 }
-                _ => out.cells.push(ResultBuffer::word_cell(ty, word)),
+                _ => out.cells.push(Answers::word_cell(ty, word)),
             }
         }
         Ok(())
@@ -349,8 +359,8 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         params: &[BindValue<'_>],
-    ) -> Result<ResultBuffer> {
-        let mut out = ResultBuffer::new();
+    ) -> Result<Answers> {
+        let mut out = Answers::new();
         self.execute(txn, cache, params, &mut out)?;
         Ok(out)
     }
@@ -365,8 +375,8 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         args: &[super::ParamArg<'_>],
-    ) -> Result<ResultBuffer> {
-        let mut out = ResultBuffer::new();
+    ) -> Result<Answers> {
+        let mut out = Answers::new();
         self.execute_args(txn, cache, args, &mut out)?;
         Ok(out)
     }

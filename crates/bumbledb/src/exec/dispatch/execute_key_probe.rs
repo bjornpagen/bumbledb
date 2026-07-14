@@ -1,14 +1,14 @@
-use super::{FactOperand, GuardPlan, fact_operand, guard_probe_fact};
+use super::{FactOperand, KeyProbePlan, fact_operand, key_probe_fact};
 use crate::error::Result;
 use crate::exec::run::{Bindings, Sink};
 use crate::image::view::Const;
 use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
 
-/// Executes the guard probe: key bytes from constants, one `U`/`M` get,
+/// Executes the key probe: key bytes from constants, one `U`/`M` get,
 /// one `F` fetch, remaining filters on the fact bytes, then the single
 /// binding through the ordinary sink (sinks are reused, not special-cased
-/// — a guard rule inside a multi-rule program unions through the same
+/// — a key-probe rule inside a multi-rule program unions through the same
 /// spanning seen-set as every other rule). The emit is counted like a
 /// join emit (the rule loop's union accounting). Multi-word variables
 /// (intervals, bytes<N>) occupy their whole slot span.
@@ -23,8 +23,8 @@ use crate::storage::env::ReadTxn;
 )] // the prepared query's split borrows,
 // exactly like `run_join`'s — bundling
 // would only rename the same eight things
-pub fn execute_guard<S: Sink, C: crate::exec::run::Counters>(
-    plan: &GuardPlan,
+pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters>(
+    plan: &KeyProbePlan,
     txn: &ReadTxn<'_>,
     schema: &Schema,
     params: &[Const],
@@ -33,11 +33,11 @@ pub fn execute_guard<S: Sink, C: crate::exec::run::Counters>(
     sink: &mut S,
     counters: &mut C,
 ) -> Result<()> {
-    let Some(fact) = guard_probe_fact(plan, txn, schema, params, key_scratch)? else {
+    let Some(fact) = key_probe_fact(plan, txn, schema, params, key_scratch)? else {
         return Ok(());
     };
     // The single binding, through the ordinary sink (the aggregate-find
-    // guard path; plain-variable guards take the direct lane).
+    // key-probe path; plain-variable key_probes take the direct lane).
     // Interval variables occupy their two-slot span.
     bindings.reset();
     for var in &plan.vars {

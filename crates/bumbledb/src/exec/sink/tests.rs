@@ -231,7 +231,9 @@ fn payroll_views_of(
             &[
                 ValueRef::U64(*id),
                 ValueRef::U64(*emp),
-                ValueRef::IntervalI64(*start, *end),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(PAYROLL).layout(),
             &mut bytes,
@@ -375,7 +377,7 @@ fn run_aggregate(
     views: &[Arc<crate::image::RelationImage>],
     finds: Vec<FindSpec>,
 ) -> Result<Vec<Vec<u64>>> {
-    run_aggregate_distinct(plan, views, finds, plan.distinct_bindings())
+    run_aggregate_distinct(plan, views, finds, plan.distinct_witness().is_some())
 }
 
 fn run_aggregate_distinct(
@@ -386,7 +388,7 @@ fn run_aggregate_distinct(
 ) -> Result<Vec<Vec<u64>>> {
     let mut colts = colts_for(plan, views);
     let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
-    let mut sink = AggregateSink::new(finds, plan.slot_count(), distinct);
+    let mut sink = aggregate_sink(plan, finds, distinct);
     Executor::new(plan)
         .execute(
             plan,
@@ -396,9 +398,22 @@ fn run_aggregate_distinct(
             &mut crate::exec::run::NoopCounters,
         )
         .expect("execute");
-    let mut rows = sink.into_rows()?;
+    let mut rows = sink.into_answers()?;
     rows.sort_unstable();
     Ok(rows)
+}
+
+fn aggregate_sink(plan: &ValidatedPlan, finds: Vec<FindSpec>, elided: bool) -> AggregateSink {
+    if elided {
+        AggregateSink::new_distinct(
+            finds,
+            plan.slot_count(),
+            plan.distinct_witness()
+                .expect("the test's elided regime requires a proved plan"),
+        )
+    } else {
+        AggregateSink::new(finds, plan.slot_count())
+    }
 }
 
 /// A scalar find's spec (width 1 through the layout map).

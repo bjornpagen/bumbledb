@@ -61,14 +61,14 @@ operator), and point membership** (below) — never `Lt`-family order or
 `Min`/`Max`: the value order that
 exists (lexicographic by start) is an encoding accident, and offering it would invite
 queries that mean intersection and say "less than". Everything else is equality-only:
-a closed reference's row-id order is a declaration-order accident, not semantics
+a closed reference's declaration-id order is a declaration-order accident, not semantics
 (order on it is refused exactly as the enum's ordinal order was); String intern ids
 are meaningless to order; Bool ordering is noise. **`bytes<N>` is identity-only by
 refusal** (`Eq`/`Ne` and membership; order comparisons and `Min`/`Max` are typed
 validation errors): a digest's lexicographic order is an encoding artifact, and
-admitting it would make hash-function choice semantically visible. The guard B-tree
+admitting it would make hash-function choice semantically visible. The determinant B-tree
 still sorts the padded encodings — sortedness is the index's need, not a query
-semantics (the padded bytes memcmp in value-byte order, which is all the guard asks).
+semantics (the padded bytes memcmp in value-byte order, which is all the determinant asks).
 
 **The mask value shape:** the interval-pair relation itself is a value —
 `AllenMask`, a 13-bit word, bit *i* = Allen basic *i* in the palindromic order
@@ -109,10 +109,13 @@ timestamp in it. **Reverses if:** never — the jobs are covered separately and 
 ## Interval: the denotation
 
 An `Interval` value `[s, e)` is **a set of points, written as its bounds** —
-half-open over the element domain, `s < e` enforced at the encoding boundary exactly
-as Bool's strict 0/1 is (a stored `s ≥ e` is corruption, and the empty interval is
-unrepresentable: a fact never denotes nothing). Half-open and nonempty are not house
-conventions but **Allen's algebra's preconditions**: the 13 basic interval relations
+half-open over the element domain. `Interval::new` is the one construction boundary:
+`Value` and the encoding layer carry that checked type, so malformed intervals are
+unconstructible in any encodable value. Decoding still rejects stored `s ≥ e` as
+corruption; that check detects damage at rest rather than repairing host input. The
+empty interval is unrepresentable because a fact never denotes nothing. Half-open
+and nonempty are not house conventions but **Allen's algebra's preconditions**: the
+13 basic interval relations
 are jointly exhaustive and pairwise disjoint (JEPD) only over nonempty intervals —
 an empty interval satisfies none of them cleanly — and *meets* (`a.end == b.start`,
 no shared point) is only well-defined half-open; closed intervals would make meeting
@@ -132,7 +135,7 @@ machinery of its own:
   keyword; here it is not an option but what the judgment *means* on this type.
 - An **inclusion dependency over an interval position holds pointwise** — every point
   of the source's interval is covered by the target's intervals (SQL:2011's `PERIOD`
-  foreign keys). The target needs a pointwise key for this to be checkable in
+  referential constraints). The target needs a pointwise key for this to be checkable in
   logarithmic time; validation demands it (`30-dependencies.md`).
 - **Point membership is a typing rule, not syntax**: a query atom binding an
   interval-typed field with an element-typed term means `t ∈ interval`
@@ -201,14 +204,15 @@ exists to stop telling.
 
 A field is `(name, type, generation)` where `generation ∈ {None, Fresh}`. Generation
 is a **storage behavior, not a type**, and the name is the mechanism's own: minting an
-id is generating a **fresh existential witness** — exactly what the chase does when a
-statement demands a value that does not exist. Postgres's word for this was the last
+id is generating a **fresh existential witness** — exactly what dependency-theory
+repair does when a statement demands a value that does not exist. Postgres's word
+for this was the last
 SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
 
 - A `Fresh` field must be `U64`. The database mints its values: monotonic per
   (relation, field), never re-issuing any value observable in a committed state;
   aborted transactions don't advance the committed sequence.
-- **The usage pattern this exists for** — insert a new row without ever reading a max:
+- **The usage pattern this exists for** — insert a new fact without ever reading a max:
 
   ```rust
   db.write(|tx| {
@@ -260,7 +264,7 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
    ids other facts reference. The SQL-standard `GENERATED ALWAYS` shape is
    incompatible with the engine's own update idiom. Explicit writes advance the
    high-water (`saturating_add`); exhaustion at `u64::MAX` is ~585,000 years at 10⁶
-   allocs/sec — no guard beyond `FreshExhausted`. **Reverses if:** never —
+   allocs/sec — no check beyond `FreshExhausted`. **Reverses if:** never —
    writability is a theorem of the update idiom, not a preference.
 3. **Generation attribute, not a type.** A type is an encoding and the value's
    encoding *is* u64; a distinct engine type would smuggle nominal typing past the
@@ -276,19 +280,22 @@ check.
 
 A **closed relation** declares its extension in the schema:
 `RelationDescriptor { name, fields, extension: Option<Extension> }`, where
-`Some(rows)` is the kind — there is no relation-kind enum; the option *is* it. Its
-rows are **ground axioms** — atomic sentences of the theory. A schema was
+`Some(axioms)` is the kind — there is no relation-kind enum; the option *is* it. Its
+elements are **ground axioms** — atomic sentences of the theory. A schema was
 *signature + axioms* where every axiom was a universally quantified statement; a
 closed relation gives the theory constants, and vocabularies stop being a type to
 become what they always were relationally: unary-plus-payload relations with a
 fixed extension.
 
-- **Identity is the handle.** Each row declares a handle (`Usd`, `Q1`); its row id
+- **Identity is the handle.** Each ground axiom declares a handle (`Usd`, `Q1`); its id
   is the declaration index — exactly the declaration-order rule relations, fields,
   and statements already obey. The handle is NOT a column: the sealed relation
-  opens with a synthetic first field (`id`, U64), so guards, statements, and
+  opens with a synthetic first field (`id`, U64), so determinants, statements, and
   queries address the id uniformly at field 0; the macro never lets the user
   declare it (a hand-built descriptor that tries collides on the field name).
+  Compiled sub-vocabulary membership is a typed `MemberSet::contains(AxiomIndex)`
+  query; an arbitrary fact word narrows at that boundary, and every out-of-range
+  index means absence rather than a distinct error.
 - **The auto-key.** Closedness materializes `R(id) -> R` exactly as `fresh` does
   (materialized order below) — ordinary in every way and targetable: a reference
   to a closed relation is a plain u64 column plus a declared containment, like any
@@ -311,14 +318,14 @@ fixed extension.
   ray `[s, ∞)` says the theory's constant is still running, and a still-running
   span is policy, not an intrinsic property (the ray refusal,
   recorded here; rays stay honest values in ordinary relations);
-  1..=256 rows (an empty extension is a vocabulary of nothing — write no
+  1..=256 ground axioms (an empty extension is a vocabulary of nothing — write no
   relation; a larger one is policy data wearing a vocabulary costume). Values are
-  canonically encoded ONCE, at validate — the sealed rows carry fact bytes and
+  canonically encoded ONCE, at validate — the sealed ground axioms carry fact bytes and
   are never re-encoded (the staging law applied to the feature itself).
 - **Writes are refused.** Any delta operation naming a closed relation —
   insert/delete, typed or dynamic, `bulk_load`, `alloc` — is the typed
   `ClosedRelationWrite`, checked at the write-surface entry before any encoding
-  runs. The store holds no rows for a closed relation, and the sweeper
+  runs. The store holds no facts for a closed relation, and the sweeper
   (`verify_store`) convicts any `F`/`M`/`U`/`R` entry naming one as corruption.
 
 **The intrinsic-vs-policy law, normative.** Intrinsic properties of a vocabulary
@@ -332,11 +339,18 @@ ordinary relation (the open-extension refusal, recorded here).
 
 ## Relations are sets of facts; the fact is its own identity
 
+**Language-law glossary.** A **fact** is one stored full tuple; its identity is its
+canonical bytes (§ fact identity below). An **answer** is one output tuple of a
+query—the Datalog word used throughout the API and query chapters. A **ground
+axiom** is one sealed element of a closed relation. A **tuple** is the mathematical
+product used in notation. “Row” is not a logical-model synonym for any of these; it
+survives only for physical layout/stride and for SQLite's external row concept.
+
 - Every relation is a set of full, typed facts. Canonical membership is implicit for
   every relation; storage's row ids never surface into the logical model.
 - **There is no primary key, and this is doctrine, not omission.** "Primary key" is a
-  bag-semantics crutch: when duplicate rows are possible, some column set must be
-  *appointed* to give rows identity. Here the fact is its own identity — identity is
+  bag-semantics crutch: when duplicate records are possible, some column set must be
+  *appointed* to give records identity. Here the fact is its own identity — identity is
   the canonical bytes (below). Keys (functional dependencies, `30-dependencies.md`)
   are invariants a relation *satisfies*, plural and unprivileged; an inclusion targets
   whichever key it names, and fresh is a value-minting convenience that happens to
@@ -350,7 +364,7 @@ ordinary relation (the open-extension refusal, recorded here).
   behavior for it because it falls out of the representation.
 
 **Decision: no primary keys.** **Alternative:** entity relations with appointed PKs
-and whole-row `replace`. **Why it lost:** one identity concept (the fact), one mutation
+and whole-fact `replace`. **Why it lost:** one identity concept (the fact), one mutation
 algebra (insert/delete), no PK-vs-key duality. Consequences now explicit: mutating a
 referenced fact needs dependency-timing rules (commit-time, against the final state —
 `30-dependencies.md`) and fresh re-supply (specified above). **Reverses if:** the
@@ -448,8 +462,12 @@ text indexes, not de-interning).
 Owned entirely by `30-dependencies.md`. The one sentence this chapter contributes:
 **dependencies are judgments about queries, checked once at commit against the
 transaction's final state** — there are no constraint modes, no per-operation
-enforcement, no deferral opt-in, and the words *unique*, *foreign key*, *primary key*,
+enforcement, no deferral opt-in, and the words *unique*, *referential constraint*, *primary key*,
 *cascade*, and *restrict* do not name anything in this system.
+
+**Glossary — determinant:** the ordered projection on the left side of a
+functionality; `DeterminantImage` is its canonical encoding in key order, stored in
+and probed against the `U` determinant index.
 
 ## Schema
 
@@ -470,7 +488,7 @@ declaration order — for each: name and fields in declaration order (name, stru
 type description — including the element type for intervals — and generation
 flag; the enum's retired type tag is never reissued), then the closedness tag (ordinary = 0;
 closed = 1 followed by the ground axioms in declaration order — handle, then the
-row's canonical fact bytes); then the **dependency statements in
+fact's canonical bytes); then the **dependency statements in
 materialized order** — for each: the judgment form (functionality or containment,
 with direction count) and both sides' (relation id, projection field-id list in
 statement order, selection list as (field id, literal value) pairs in statement
@@ -495,7 +513,7 @@ never, absent a second consumer.
 ## The modeling discipline (BCNF by discipline, temporality by type)
 
 Natural n-ary relations for domain facts; natural edge relations (`OrgParent(child,
-parent)`) welcome; closed relations for closed domains instead of two-row
+parent)`) welcome; closed relations for closed domains instead of two-fact
 mutable lookup tables;
 **intervals for validity, sessions, periods, and lifetimes** instead of
 start/end column pairs or status-plus-nullable-timestamp machines; optional
@@ -552,7 +570,7 @@ it as the positive atom under `Allen` against the param window; `conflict_free`
 pushes the *same* fragment into `negated` with a point-membership binding
 (negation is a position in the query, not a kind of atom — `20-query-ir.md`);
 `free_busy` folds its span variable under `Pack`. Change what "busy" means —
-an added arm, an added guard — and every consumer follows at the next compile.
+an added arm, an added match arm — and every consumer follows at the next compile.
 **Refusal, permanent: no named-view registry in
 the engine, ever.** A registry would be a second schema with none of the
 theory's guarantees — names resolved at run time, fragments outside the
@@ -589,7 +607,7 @@ the witness — the derived relation cannot commit against sources it didn't
 actually read (`GenerationMoved` otherwise).
 
 **The honest limit: statements prove presence and topology, never arithmetic
-agreement.** Containment proves every derived row justified and — reversed —
+agreement.** Containment proves every derived fact justified and — reversed —
 every source represented; keys prove shape; selections pin arms; pointwise
 lifting proves coverage. What no statement can say is that a *value* equals a
 *computation* over its sources: the calendar's `Attendance(id | rsvp ==

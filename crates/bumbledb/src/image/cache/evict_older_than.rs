@@ -2,6 +2,7 @@
 //! commit (docs/architecture/50-storage.md).
 
 use super::ImageCache;
+use crate::storage::env::GenerationId;
 
 impl ImageCache {
     /// Retains only entries at or above `generation`; called by the write
@@ -14,7 +15,7 @@ impl ImageCache {
     /// # Panics
     ///
     /// Only on a poisoned cache mutex.
-    pub fn evict_older_than(&self, generation: u64) {
+    pub fn evict_older_than(&self, generation: GenerationId) {
         let mut inner = self.inner.lock().expect("cache mutex");
         #[cfg(feature = "trace")]
         {

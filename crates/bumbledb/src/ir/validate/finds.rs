@@ -14,7 +14,7 @@ impl Predicate {
     /// Derives the signature from one rule's find terms and resolved
     /// typing — called exactly once, at validation, on rule 0 (the
     /// per-rule alignment already proved every rule derives the same
-    /// predicate). No other derivation of the output row exists.
+    /// predicate). No other derivation of the answer tuple exists.
     pub(super) fn derive(rule: &LoweredRule, typing: &RuleTyping) -> Self {
         let var_type = |var: &VarId| typing.var_types[var].clone();
         let columns = rule
@@ -28,11 +28,11 @@ impl Predicate {
                 // The measure positions are u64 by definition (|[s, e)| =
                 // e − s — 20-query-ir § the measure): projected plain,
                 // folded under the fold's kind.
-                FindTerm::Duration(_) => PredicateColumn {
+                FindTerm::Measure(_) => PredicateColumn {
                     ty: ValueType::U64,
                     op: None,
                 },
-                FindTerm::AggregateDuration { op, .. } => PredicateColumn {
+                FindTerm::AggregateMeasure { op, .. } => PredicateColumn {
                     ty: ValueType::U64,
                     op: Some(AggKind::of(*op)),
                 },
@@ -108,7 +108,7 @@ impl Context {
                 // the fold form admits Sum/Min/Max only and folds a u64
                 // input, so the aggregate-input type rule is satisfied by
                 // construction.
-                FindTerm::Duration(var) => {
+                FindTerm::Measure(var) => {
                     if !self.atom_vars.contains(var) {
                         return Err(ValidationError::UnboundFindVariable { var: *var });
                     }
@@ -116,7 +116,7 @@ impl Context {
                         return Err(ValidationError::DurationOverNonInterval { var: *var });
                     }
                 }
-                FindTerm::AggregateDuration { op, over } => {
+                FindTerm::AggregateMeasure { op, over } => {
                     fold_seen = true;
                     if !matches!(op, AggOp::Sum | AggOp::Min | AggOp::Max) {
                         return Err(ValidationError::DurationAggregateOp { find: find_idx });

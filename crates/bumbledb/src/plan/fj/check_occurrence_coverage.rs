@@ -4,7 +4,7 @@ use crate::ir::normalize::NormalizedQuery;
 /// The occurrence-coverage half of the boundary: every subatom resolves
 /// to a **participating** occurrence of this query (an unknown `OccId`
 /// would reach the executor as an out-of-range COLT index; a negated or
-/// chase-eliminated one would join a node it must never join), and every
+/// grounding-eliminated one would join a node it must never join), and every
 /// participating occurrence appears in at least one subatom. The
 /// partition check is vacuous for a zero-variable (gate) occurrence —
 /// empty seen == empty expected — so the appearance check is what keeps
@@ -13,7 +13,7 @@ use crate::ir::normalize::NormalizedQuery;
 /// subatom in some node, exactly what `binary2fj` emits; the
 /// all-gates/empty-plan degenerate fails here too. Negated occurrences
 /// are covered by anti-probe attachment, never by subatoms; eliminated
-/// occurrences are covered by their containment proof (`plan/chase.rs`).
+/// occurrences are covered by their containment proof (`plan/ground.rs`).
 pub(super) fn check_occurrence_coverage(
     plan: &FjPlan,
     normalized: &NormalizedQuery,

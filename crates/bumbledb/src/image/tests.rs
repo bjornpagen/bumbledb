@@ -13,7 +13,7 @@ mod corruption;
 mod decode;
 mod fixed_bytes;
 mod interval;
-mod pitch;
+mod stride;
 mod timing;
 
 /// R(id u64 fresh, flag bool, kind bool, amount i64).

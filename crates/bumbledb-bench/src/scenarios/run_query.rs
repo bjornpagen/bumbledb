@@ -1,4 +1,4 @@
-use bumbledb::ResultBuffer;
+use bumbledb::Answers;
 use bumbledb::schema::ValueType;
 
 use super::{QueryReport, Scenario, ScenarioQuery, Stores};
@@ -36,12 +36,12 @@ pub(super) fn run_query(
 
     // The oracle gate: agreement on every param set before any timing.
     for (idx, params) in sets.iter().enumerate() {
-        let mut buffer = ResultBuffer::new();
+        let mut buffer = Answers::new();
         stores
             .db
             .read(|snap| snap.execute(&mut prepared, &bind_values(params), &mut buffer))
             .map_err(|e| format!("{}/{}: execute: {e:?}", scenario.name, sq.name))?;
-        let ours = compare::from_buffer(&buffer, &types);
+        let ours = compare::from_answers(&buffer, &types);
         let mut stmt = stores
             .conn
             .prepare_cached(&translated.sql)
@@ -62,7 +62,7 @@ pub(super) fn run_query(
 
     // Timing, the ledger protocol: rotation across param sets, medians.
     let mut rotation = Rotation::new(sets.clone());
-    let mut buffer = ResultBuffer::new();
+    let mut buffer = Answers::new();
     let db = &stores.db;
     let ours = harness::measure(proto, || {
         let params = bind_values(rotation.next_set());
@@ -86,7 +86,7 @@ pub(super) fn run_query(
         scenario: scenario.name,
         name: sq.name,
         about: sq.about,
-        rows: ours.work / u64::from(proto.samples.max(1)),
+        answers: ours.work / u64::from(proto.samples.max(1)),
         ours: ours.stats,
         theirs: theirs.stats,
         ratio_p50,

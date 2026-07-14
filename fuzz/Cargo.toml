@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-# chase-off + fold-off: the rewrite passes' thread-local off switches,
+# ground-off + fold-off: the rewrite passes' thread-local off switches,
 # for the `rewrites` dual-pipeline differential. NOT a dual build: cargo
 # refuses a second renamed dependency on the same package ("depends on
 # crate `bumbledb v0.1.0` multiple times with different names"), so one
@@ -20,7 +20,7 @@ libfuzzer-sys = "0.4"
 # feature for EVERY target here (cargo unifies features across this
 # crate's one bumbledb) — safe because the hooks are inert without the
 # BUMBLEDB_CRASHPOINT env var, which only the crash child ever sets.
-bumbledb = { path = "../crates/bumbledb", features = ["chase-off", "fold-off", "crashpoint"] }
+bumbledb = { path = "../crates/bumbledb", features = ["ground-off", "fold-off", "crashpoint"] }
 bumbledb-bench = { path = "../crates/bumbledb-bench" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 

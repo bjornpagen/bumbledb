@@ -233,7 +233,7 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
             .map(|_| ())
     })
     .expect("seed");
-    assert_eq!(db.generation().expect("generation"), 1);
+    assert_eq!(db.generation().expect("generation").value(), 1);
 
     // Q(id, v) :- S(id, v) — a full-scan free join that builds views.
     let query = crate::ir::Query::single(crate::ir::Rule {
@@ -259,7 +259,7 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     let escaped = db.write(|tx| tx.alloc_at(id_field)).expect("bare alloc");
     assert_eq!(escaped, 1);
     assert_eq!(
-        db.generation().expect("generation"),
+        db.generation().expect("generation").value(),
         1,
         "a counters-only commit is not a state change"
     );

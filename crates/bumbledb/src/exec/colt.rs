@@ -27,7 +27,7 @@
 
 use crate::image::view::View;
 
-/// Positions per chunk: bounded pointer-chase, independent loads within a
+/// Positions per chunk: bounded pointer traversal, independent loads within a
 /// chunk (the deviation from the paper's growable per-key vectors).
 const CHUNK_LEN: usize = 64;
 

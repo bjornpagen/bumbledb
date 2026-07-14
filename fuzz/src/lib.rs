@@ -17,15 +17,16 @@ pub(crate) mod world;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use bumbledb::error::SchemaError;
 use bumbledb::schema::SchemaDescriptor;
 use bumbledb::schema::fingerprint::{self, SchemaFingerprint};
-use bumbledb::{Db, Error, PreparedQuery, Query, RelationId, ResultValue, Value};
+use bumbledb::{AnswerValue, Db, Error, PreparedQuery, Query, RelationId, Value};
 use bumbledb_bench::corpus_gen::Rng;
 use bumbledb_bench::corpus_gen::opgen::{self, FuzzOp, OpScenario};
 use bumbledb_bench::corpus_gen::theorygen;
-use bumbledb_bench::differential::{Rows, Verdict as WriteVerdict};
+use bumbledb_bench::differential::{self, Answers, Op, Verdict as WriteVerdict};
 use bumbledb_bench::families;
 use bumbledb_bench::naive::query::QueryError;
 use bumbledb_bench::naive::{Delta, NaiveDb, ParamValue, Tuple};
@@ -40,20 +41,32 @@ pub fn theory(data: &[u8]) {
     let mut rng = Rng::from_bytes(data);
     let descriptor = theorygen::random_descriptor(&mut rng);
 
+    theory_oracles(&descriptor);
+
+    // The arity arm is an extension: every legacy decision and all three
+    // legacy oracles have completed before the first new entropy draw.
+    let mut arity_rng = Rng::from_bytes(data);
+    let case = theorygen::random_arity_descriptor(&mut arity_rng);
+    let verdict = theory_oracles(&case.descriptor);
+    assert_arity_expectation(case.coverage.expectation, &verdict);
+    record_arity(ArityLane::Theory, case.coverage);
+}
+
+fn theory_oracles(descriptor: &SchemaDescriptor) -> Verdict {
     // Oracle 3: judgment determinism — the same descriptor against two
     // fresh stores yields the identical verdict (rejections compared
     // payload-exact, acceptances by schema fingerprint).
     let store = StoreDir::new();
-    let first = judge(&descriptor, store.path());
+    let first = judge(descriptor, store.path());
     let twin = StoreDir::new();
-    let second = judge(&descriptor, twin.path());
+    let second = judge(descriptor, twin.path());
     assert_eq!(first, second, "judgment determinism");
 
-    if let Verdict::Accepted(created) = first {
+    if let Verdict::Accepted(created) = &first {
         // Oracle 3, continued: an accepted schema re-opens cleanly on the
         // store it created, to the same sealed theory, and `verify_store`
         // passes on the empty store.
-        let db = match Db::open(store.path(), descriptor) {
+        let db = match Db::open(store.path(), descriptor.clone()) {
             Ok(db) => db,
             Err(err) => panic!("accepted schema failed to reopen: {err:?}"),
         };
@@ -67,6 +80,7 @@ pub fn theory(data: &[u8]) {
             report.findings
         );
     }
+    first
 }
 
 /// The ops runner — the flagship lifecycle target
@@ -107,7 +121,7 @@ pub fn theory(data: &[u8]) {
 ///    back to equality per its reactivation clause, and the pinned
 ///    trophy now replays the ORDER end-to-end.
 /// 2. **Query parity** per execution — set-semantic result equality,
-///    the differential's comparator ([`Rows`]).
+///    the differential's comparator ([`Answers`]).
 /// 3. **Reopen equivalence** — after every reopen, every ordinary
 ///    relation's full contents equal the model's.
 /// 4. **`verify_store` green** after every commit and every reopen
@@ -144,6 +158,28 @@ pub fn ops(data: &[u8]) {
         assert_green(&db, "reopen");
         epoch(&db, &mut naive, &scenario, segment);
     }
+
+    // As in the theory lane, the existing scenario's generation and replay
+    // finish before the extension consumes entropy.
+    let mut arity_rng = Rng::from_bytes(data);
+    let case = theorygen::random_valid_arity_ops(&mut arity_rng);
+    arity_ops(case);
+}
+
+fn arity_ops(case: theorygen::ArityOpsCase) {
+    let store = StoreDir::new();
+    let db = match Db::create(store.path(), case.descriptor.clone()) {
+        Ok(db) => db,
+        Err(err) => panic!("valid arity theory failed to create: {err:?}"),
+    };
+    let mut naive = NaiveDb::new(&case.descriptor);
+    let ops: Vec<Op> = case.deltas.into_iter().map(Op::Write).collect();
+    let summary = differential::run(&db, &mut naive, &ops)
+        .unwrap_or_else(|finding| panic!("high-arity verdict divergence: {finding:?}"));
+    assert_eq!(summary.commits, 1, "the matching seed pair must commit");
+    assert_eq!(summary.aborts, 3, "all three enforcement probes must abort");
+    assert_green(&db, "high-arity parity stream");
+    record_arity(ArityLane::Ops, case.coverage);
 }
 
 /// One epoch: the ops between two reopens, against one live env. The
@@ -202,9 +238,9 @@ fn epoch(db: &Db<target::Target>, naive: &mut NaiveDb, scenario: &OpScenario, op
                 // errors included.
                 let engine = execute(db, &mut pool[*slot], params);
                 let model = match naive.query(&scenario.queries[*slot], params) {
-                    Ok(rows) => Rows::Ok(rows),
-                    Err(QueryError::Overflow { .. }) => Rows::Overflow,
-                    Err(QueryError::MeasureOfRay) => Rows::MeasureOfRay,
+                    Ok(answers) => Answers::Ok(answers),
+                    Err(QueryError::Overflow { .. }) => Answers::Overflow,
+                    Err(QueryError::MeasureOfRay) => Answers::MeasureOfRay,
                 };
                 assert_eq!(engine, model, "query parity (pool slot {slot})");
             }
@@ -285,23 +321,23 @@ fn engine_write(db: &Db<target::Target>, delta: &Delta) -> WriteVerdict {
     }
 }
 
-/// One prepared execution as a [`Rows`] verdict — the pooled sibling of
+/// One prepared execution as a [`Answers`] verdict — the pooled sibling of
 /// the differential's per-op query path (that one re-prepares; this one
 /// exercises the prepared-state lifecycle).
 fn execute(
     db: &Db<target::Target>,
     prepared: &mut PreparedQuery<'_, target::Target>,
     params: &[ParamValue],
-) -> Rows {
+) -> Answers {
     let args = families::param_args(params);
     match db.read(|snap| snap.execute_collect_args(prepared, &args)) {
-        Ok(buffer) => Rows::Ok(
+        Ok(buffer) => Answers::Ok(
             buffer
-                .rows()
-                .map(|row| {
+                .answers()
+                .map(|answer| {
                     Tuple(
                         (0..buffer.arity())
-                            .map(|column| owned(row.get(column)))
+                            .map(|column| owned(answer.get(column)))
                             .collect(),
                     )
                 })
@@ -314,10 +350,10 @@ fn execute(
 /// The boundary: a generated query's execution refuses through the two
 /// defined runtime errors and nothing else. Every other variant is
 /// named — never a catch-all — and is a finding on this path.
-fn query_refusal(err: Error) -> Rows {
+fn query_refusal(err: Error) -> Answers {
     match err {
-        Error::Overflow(_) => Rows::Overflow,
-        Error::MeasureOfRay { .. } => Rows::MeasureOfRay,
+        Error::Overflow(_) => Answers::Overflow,
+        Error::MeasureOfRay { .. } => Answers::MeasureOfRay,
         other @ (Error::Schema(_)
         | Error::FormatMismatch { .. }
         | Error::SchemaMismatch { .. }
@@ -353,16 +389,16 @@ fn query_refusal(err: Error) -> Rows {
 }
 
 /// One result value, owned — the harness's copy of the differential's
-/// total mapping (a new `ResultValue` variant is a compile error here).
-fn owned(value: ResultValue<'_>) -> Value {
+/// total mapping (a new `AnswerValue` variant is a compile error here).
+fn owned(value: AnswerValue<'_>) -> Value {
     match value {
-        ResultValue::Bool(v) => Value::Bool(v),
-        ResultValue::U64(v) => Value::U64(v),
-        ResultValue::I64(v) => Value::I64(v),
-        ResultValue::String(v) => Value::String(Box::from(v.as_bytes())),
-        ResultValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
-        ResultValue::IntervalU64(iv) => Value::IntervalU64(iv.start(), iv.end()),
-        ResultValue::IntervalI64(iv) => Value::IntervalI64(iv.start(), iv.end()),
+        AnswerValue::Bool(v) => Value::Bool(v),
+        AnswerValue::U64(v) => Value::U64(v),
+        AnswerValue::I64(v) => Value::I64(v),
+        AnswerValue::String(v) => Value::String(Box::from(v.as_bytes())),
+        AnswerValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
+        AnswerValue::IntervalU64(iv) => Value::IntervalU64(iv),
+        AnswerValue::IntervalI64(iv) => Value::IntervalI64(iv),
     }
 }
 
@@ -397,7 +433,7 @@ fn assert_contents(db: &Db<target::Target>, naive: &NaiveDb, when: &str) {
 }
 
 /// Oracle 4: the store's own internal auditor agrees, continuously.
-fn assert_green(db: &Db<target::Target>, when: &str) {
+fn assert_green<S>(db: &Db<S>, when: &str) {
     let report = match db.verify_store() {
         Ok(report) => report,
         Err(err) => panic!("verify_store errored after {when}: {err:?}"),
@@ -458,6 +494,96 @@ enum Verdict {
     /// Rejected: the variant name (the total-match token) plus the full
     /// typed payload.
     Rejected(&'static str, SchemaError),
+}
+
+fn assert_arity_expectation(expectation: theorygen::ArityExpectation, verdict: &Verdict) {
+    use theorygen::ArityExpectation;
+    match (expectation, verdict) {
+        (ArityExpectation::Accepted, Verdict::Accepted(_)) => {}
+        (
+            ArityExpectation::DeterminantKeyTooWide { width: expected },
+            Verdict::Rejected(
+                "DeterminantKeyTooWide",
+                SchemaError::DeterminantKeyTooWide { width, .. },
+            ),
+        ) if *width == expected => {}
+        (
+            ArityExpectation::MissingSourceKey,
+            Verdict::Rejected(
+                "NoMatchingTargetKey",
+                SchemaError::NoMatchingTargetKey { target, .. },
+            ),
+        ) if *target == RelationId(0) => {}
+        (
+            ArityExpectation::MissingTargetKey,
+            Verdict::Rejected(
+                "NoMatchingTargetKey",
+                SchemaError::NoMatchingTargetKey { target, .. },
+            ),
+        ) if *target == RelationId(1) => {}
+        _ => panic!("arity-case verdict mismatch: expected {expectation:?}, got {verdict:?}"),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ArityLane {
+    Theory,
+    Ops,
+}
+
+#[derive(Debug, Default)]
+struct ArityHistogram {
+    runs: u64,
+    arities: [u64; theorygen::MAX_MIXED_ARITY + 2],
+    type_occurrences: [u64; 5],
+    selections: [u64; 3],
+    equalities: u64,
+    reordered_keys: u64,
+    width_rejections: u64,
+    missing_source_keys: u64,
+    missing_target_keys: u64,
+}
+
+static THEORY_ARITY_HISTOGRAM: OnceLock<Mutex<ArityHistogram>> = OnceLock::new();
+static OPS_ARITY_HISTOGRAM: OnceLock<Mutex<ArityHistogram>> = OnceLock::new();
+
+fn record_arity(lane: ArityLane, coverage: theorygen::ArityCoverage) {
+    let histogram = match lane {
+        ArityLane::Theory => &THEORY_ARITY_HISTOGRAM,
+        ArityLane::Ops => &OPS_ARITY_HISTOGRAM,
+    };
+    let mut histogram = histogram
+        .get_or_init(|| Mutex::new(ArityHistogram::default()))
+        .lock()
+        .expect("arity histogram lock");
+    histogram.runs += 1;
+    histogram.arities[coverage.arity] += 1;
+    for (total, count) in histogram
+        .type_occurrences
+        .iter_mut()
+        .zip(coverage.type_counts)
+    {
+        *total += count as u64;
+    }
+    let selection = match coverage.selection {
+        theorygen::SelectionPlacement::Source => 0,
+        theorygen::SelectionPlacement::Target => 1,
+        theorygen::SelectionPlacement::Both => 2,
+    };
+    histogram.selections[selection] += 1;
+    histogram.equalities += u64::from(coverage.equality);
+    histogram.reordered_keys += u64::from(coverage.reordered_key);
+    match coverage.expectation {
+        theorygen::ArityExpectation::Accepted => {}
+        theorygen::ArityExpectation::DeterminantKeyTooWide { .. } => {
+            histogram.width_rejections += 1;
+        }
+        theorygen::ArityExpectation::MissingSourceKey => histogram.missing_source_keys += 1,
+        theorygen::ArityExpectation::MissingTargetKey => histogram.missing_target_keys += 1,
+    }
+    if histogram.runs % 5_000 == 0 {
+        eprintln!("{lane:?} arity histogram: {histogram:?}");
+    }
 }
 
 /// One acceptance pass through the REAL public API: `Db::create` on a
@@ -535,7 +661,6 @@ fn schema_variant(rejection: &SchemaError) -> &'static str {
         SchemaError::DuplicateExtensionHandle { .. } => "DuplicateExtensionHandle",
         SchemaError::ExtensionArityMismatch { .. } => "ExtensionArityMismatch",
         SchemaError::ExtensionValueTypeMismatch { .. } => "ExtensionValueTypeMismatch",
-        SchemaError::ExtensionIntervalEmpty { .. } => "ExtensionIntervalEmpty",
         SchemaError::ExtensionIntervalRay { .. } => "ExtensionIntervalRay",
         SchemaError::StrOnClosedRelation { .. } => "StrOnClosedRelation",
         SchemaError::FreshOnClosedRelation { .. } => "FreshOnClosedRelation",
@@ -547,13 +672,12 @@ fn schema_variant(rejection: &SchemaError) -> &'static str {
         SchemaError::FunctionalityMultipleIntervals { .. } => "FunctionalityMultipleIntervals",
         SchemaError::FunctionalityIntervalNotLast { .. } => "FunctionalityIntervalNotLast",
         SchemaError::DuplicateFunctionality { .. } => "DuplicateFunctionality",
-        SchemaError::GuardKeyTooWide { .. } => "GuardKeyTooWide",
+        SchemaError::DeterminantKeyTooWide { .. } => "DeterminantKeyTooWide",
         SchemaError::ContainmentArityMismatch { .. } => "ContainmentArityMismatch",
         SchemaError::ContainmentTypeMismatch { .. } => "ContainmentTypeMismatch",
         SchemaError::SelectedFieldProjected { .. } => "SelectedFieldProjected",
         SchemaError::SelectionLiteralTypeMismatch { .. } => "SelectionLiteralTypeMismatch",
         SchemaError::SelectionLiteralNotUtf8 { .. } => "SelectionLiteralNotUtf8",
-        SchemaError::SelectionIntervalEmpty { .. } => "SelectionIntervalEmpty",
         SchemaError::NoMatchingTargetKey { .. } => "NoMatchingTargetKey",
         SchemaError::NoPointwiseTargetKey { .. } => "NoPointwiseTargetKey",
         SchemaError::ClosedContainmentInterval { .. } => "ClosedContainmentInterval",

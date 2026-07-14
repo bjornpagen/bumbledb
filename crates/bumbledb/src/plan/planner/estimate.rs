@@ -6,13 +6,13 @@ use super::OccInfo;
 /// `rows / distinct(field of v)` for its most selective join variable —
 /// reference walks fan out by rows-per-key instead of the old
 /// `min(prefix, rows)` rule, which priced a 200-postings-per-account
-/// walk as 1 and misled EXPLAIN by 12,703x on the balance family. A
+/// walk as 1 and misled introspection by 12,703x on the balance family. A
 /// key (`Functionality` statement) whose projection is covered by the
 /// join variables pins the fanout to 1 (compound keys included —
 /// per-var distincts cannot see those). Coverage means the FULL
 /// projection: for a pointwise key the interval field must be a join
 /// variable bound by value — a scalar-prefix-only join takes the
-/// general fanout below (the guard is `densify`'s translation).
+/// general fanout below (the determinant is `densify`'s translation).
 pub(super) fn estimate(prefix_est: u64, prefix_vars: u128, occs: &[OccInfo], last: usize) -> u64 {
     let r = &occs[last];
     let join_vars = r.vars & prefix_vars;

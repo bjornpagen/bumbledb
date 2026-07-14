@@ -1,4 +1,4 @@
-use super::{Bindings, EitherSink, Executor, FilterPredicate, Schema, ViewMemo};
+use super::{Bindings, EitherSink, Executor, FilterPredicate, Schema, ViewGeneration, ViewMemo};
 
 use crate::error::Result;
 use crate::image::cache::ImageCache;
@@ -57,23 +57,21 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
         "Eq-constant conditions never reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-        // A discharged occurrence (chase-eliminated or chase-folded) is
+        // A discharged occurrence (grounding-eliminated or grounding-folded) is
         // unreachable at execution — no subatom, no anti-probe — so it
         // earns no view and, above all, no image build
-        // (`plan/chase.rs`: skipping this build is the rewrite's
+        // (`plan/ground.rs`: skipping this build is the rewrite's
         // payoff; for a fold, the sealed extension was already read at
         // prepare and nothing remains to bind).
         if occurrence.role.discharged() {
             continue;
         }
-        // A closed relation's view binds at the sentinel generation: its
-        // image is synthesized from the theory, so no commit can stale it
-        // — the memo stays warm across generations forever, and the
-        // stale-reaping pass never touches it (the sentinel is maximal).
+        // A closed relation's view binds to the theory identity rather
+        // than a fabricated storage generation, so no commit can stale it.
         let generation = if schema.relation(occurrence.relation).is_closed() {
-            super::view_memo::GENERATION_CLOSED
+            ViewGeneration::Closed
         } else {
-            txn_generation
+            ViewGeneration::Storage(txn_generation)
         };
         // Warm fast path: an active or parked binding for this exact
         // (generation, resolved residual filters) pair — the COLT's view

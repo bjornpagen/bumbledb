@@ -26,11 +26,11 @@ fn literal_query(memo: &str) -> Query {
     })
 }
 
-fn amounts(out: &ResultBuffer) -> Vec<i64> {
+fn amounts(out: &Answers) -> Vec<i64> {
     let mut amounts: Vec<i64> = out
-        .rows()
-        .map(|row| match row.get(0) {
-            ResultValue::I64(v) => v,
+        .answers()
+        .map(|answer| match answer.get(0) {
+            AnswerValue::I64(v) => v,
             other => panic!("i64 find, got {other:?}"),
         })
         .collect();
@@ -49,7 +49,7 @@ fn a_str_literal_latches_on_first_execution() {
     let mut prepared = prepare(&txn, &cache, &schema, &literal_query("alice")).expect("prepare");
     assert_eq!(prepared.unresolved_literals, 1, "counted at prepare");
 
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     prepared
         .execute(&txn, &cache, &[], &mut out)
         .expect("execute");
@@ -58,7 +58,7 @@ fn a_str_literal_latches_on_first_execution() {
     let [PreparedRule::FreeJoin(rule)] = prepared.program.rules() else {
         panic!("free join fixture");
     };
-    assert!(rule.resolved_complete);
+    assert_eq!(rule.resolution, ResolutionState::Complete);
 
     // The latch IS the rewrite: the template slot now carries the word —
     // no parallel resolution state exists to consult.
@@ -97,17 +97,26 @@ fn a_miss_stays_live_and_latches_after_interning() {
 
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &literal_query("carol")).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     prepared
         .execute(&txn, &cache, &[], &mut out)
         .expect("execute");
     assert!(out.is_empty(), "an uninterned Eq literal empties the rule");
     assert_eq!(prepared.unresolved_literals, 1, "a miss never latches");
+    let (_, report) = prepared
+        .introspect(&txn, &cache, &[])
+        .expect("the missed query explains");
+    assert!(
+        report.contains(
+            "pending literals: \"carol\" — an unresolved Eq literal empties its rule at execution until latched"
+        ),
+        "{report}"
+    );
     assert!(
         matches!(
             prepared.program.rules(),
             [PreparedRule::FreeJoin(FreeJoinRule {
-                resolved_complete: false,
+                resolution: ResolutionState::Pending,
                 ..
             })]
         ),
@@ -118,13 +127,14 @@ fn a_miss_stays_live_and_latches_after_interning() {
     // Something interned it since: the miss becomes a hit — monotone,
     // one way, never the reverse.
     insert_postings(&env, &schema, &[(2, 8, "carol", 30)]);
-    cache.evict_older_than(2);
+    cache.evict_older_than(crate::GenerationId::from_storage(2));
     let txn = env.read_txn().expect("txn");
-    prepared
-        .execute(&txn, &cache, &[], &mut out)
-        .expect("execute");
-    assert_eq!(amounts(&out), vec![30]);
+    let (latched, report) = prepared
+        .introspect(&txn, &cache, &[])
+        .expect("the newly interned literal explains and latches");
+    assert_eq!(amounts(&latched), vec![30]);
     assert_eq!(prepared.unresolved_literals, 0);
+    assert!(!report.contains("pending literals:"), "{report}");
 
     // Third execution: the fast path, same answer.
     prepared
@@ -149,7 +159,7 @@ fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &literal_query("alice")).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
 
     obs::start_capture();
     prepared

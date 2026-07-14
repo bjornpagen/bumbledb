@@ -1,8 +1,8 @@
-//! The dual-run fold differential (PRD 07; the chase.rs dual-run
-//! precedent): the chase-evaluator's folds — positive membership,
+//! The dual-run fold differential (PRD 07; the grounding.rs dual-run
+//! precedent): the grounding-evaluator's folds — positive membership,
 //! payload-dead, ψ-selected, the |S| == 0 rule death, and the negated
 //! COMPLEMENT fold — run through the engine twice (rewrite on and off
-//! via `with_chase_disabled`, which covers the evaluator inside the
+//! via `with_grounding_disabled`, which covers the evaluator inside the
 //! same fixpoint) and three-way compare with the naive model, across
 //! randomized corpus draws. The profile surface proves the runs are not
 //! vacuously equal: the fold-on plan carries `Role::Folded` marks, the
@@ -18,11 +18,11 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     AggOp, CmpOp, Comparison, ConditionTree, Db, FindTerm, Query, RelationId, Rule, Term, Value,
-    VarId, with_chase_disabled,
+    VarId, with_grounding_disabled,
 };
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
-use crate::differential::{Rows, engine_query};
+use crate::differential::{Answers, engine_query};
 use crate::fixture::{TempDir, atom, field, var};
 use crate::naive::query::{ParamValue, QueryError};
 use crate::naive::{Delta, NaiveDb};
@@ -140,13 +140,13 @@ fn folded(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::FoldedOccur
 /// result set — with the marks asserted so neither equality is vacuous.
 fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, marks: usize, tag: &str) {
     let on = engine_query(db, query, &[]);
-    let off = with_chase_disabled(|| engine_query(db, query, &[]));
-    let model = Rows::Ok(naive.query(query, &[]).expect("the model executes"));
+    let off = with_grounding_disabled(|| engine_query(db, query, &[]));
+    let model = Answers::Ok(naive.query(query, &[]).expect("the model executes"));
     assert_eq!(on, off, "folded and unfolded disagree ({tag})");
     assert_eq!(on, model, "engine and model disagree ({tag})");
     assert_eq!(folded(db, query).len(), marks, "fold marks ({tag})");
     assert!(
-        with_chase_disabled(|| folded(db, query)).is_empty(),
+        with_grounding_disabled(|| folded(db, query)).is_empty(),
         "the off switch keeps every occurrence joining ({tag})"
     );
 }
@@ -300,16 +300,16 @@ fn the_fold_family_agrees_three_ways_across_randomized_draws() {
 /// ψ-selected corpus actually produces rows (kinds 0..=3 are all
 /// witnessed), so the byte-identity is over non-empty sets.
 #[test]
-fn the_fold_fixtures_produce_rows() {
+fn the_fold_fixtures_produce_answers() {
     let descriptor = descriptor();
     let dir = TempDir::new("fold-nonempty");
     let mut rng = Rng::new(7);
     let (db, _) = stores(dir.path(), &descriptor, corpus(&mut rng, 16));
-    let Rows::Ok(rows) = engine_query(&db, &selected(20), &[]) else {
+    let Answers::Ok(rows) = engine_query(&db, &selected(20), &[]) else {
         unreachable!("fixture queries never overflow")
     };
     assert!(!rows.is_empty(), "rank-20 readings exist by construction");
-    let Rows::Ok(rows) = engine_query(&db, &negated_subset(20), &[]) else {
+    let Answers::Ok(rows) = engine_query(&db, &negated_subset(20), &[]) else {
         unreachable!("fixture queries never overflow")
     };
     assert!(
@@ -356,11 +356,11 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
                 params[usize::from(param.0)] = ParamValue::Set(values.clone());
             }
             let on = engine_query(&db, &query, &params);
-            let off = with_chase_disabled(|| engine_query(&db, &query, &params));
+            let off = with_grounding_disabled(|| engine_query(&db, &query, &params));
             let model = match naive.query(&query, &params) {
-                Ok(rows) => Rows::Ok(rows),
-                Err(QueryError::Overflow { .. }) => Rows::Overflow,
-                Err(QueryError::MeasureOfRay) => Rows::MeasureOfRay,
+                Ok(rows) => Answers::Ok(rows),
+                Err(QueryError::Overflow { .. }) => Answers::Overflow,
+                Err(QueryError::MeasureOfRay) => Answers::MeasureOfRay,
             };
             assert_eq!(on, off, "folded and unfolded disagree: {query:?}");
             assert_eq!(on, model, "engine and model disagree: {query:?}");

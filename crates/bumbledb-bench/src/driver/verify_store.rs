@@ -47,8 +47,8 @@ pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
 /// for rendering the violated statement back in the `schema!` notation.
 fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
     match finding {
-        StoreFinding::FactWithoutGuard { statement, .. }
-        | StoreFinding::GuardWithoutFact { statement, .. }
+        StoreFinding::FactWithoutDeterminant { statement, .. }
+        | StoreFinding::DeterminantWithoutFact { statement, .. }
         | StoreFinding::PointwiseOverlap { statement, .. }
         | StoreFinding::FactWithoutReverseEdge { statement, .. }
         | StoreFinding::ReverseEdgeWithoutFact { statement, .. }

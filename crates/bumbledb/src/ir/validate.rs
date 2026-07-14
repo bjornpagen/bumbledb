@@ -15,7 +15,7 @@
 //!     pins the head's positional types, and every later rule must agree)
 //!
 //! Between the program shape and the per-rule roster, first the
-//! **nesting boundary guard**: condition trees deeper than
+//! **nesting boundary check**: condition trees deeper than
 //! [`crate::ir::MAX_CONDITION_DEPTH`] are the typed
 //! `ConditionNestingTooDeep` — judged by an iterative depth walk before
 //! any recursive tree walk runs, so hostile nesting is a rejection,
@@ -43,7 +43,7 @@
 //!     String literals and `start >= end` interval literals included),
 //!     and element-typed point literals at the domain ceiling wherever
 //!     they meet an interval position — membership bindings and
-//!     `Contains` operands (the point-domain law: points are
+//!     `PointIn` operands (the point-domain law: points are
 //!     `MIN ..= MAX−1`; `MAX` is the ray's ∞ — point *params* get the
 //!     same rejection at bind, where the value exists)
 //!  6. enum ordinal out of range for the field's variant list (bindings
@@ -58,7 +58,7 @@
 //!  9. comparisons violating the type rules (Eq/Ne all types; order ops
 //!     U64/U64 and I64/I64 only — an interval operand under an order op
 //!     gets its own diagnostic; Allen two intervals of one element type;
-//!     Contains interval × element — its interval⊇interval form is
+//!     `PointIn` interval × element — its interval⊇interval form is
 //!     `Allen(COVERS)`, not an operator), and the Allen vacuity rules:
 //!     the ∅ mask ("never" — write no query) and the full mask
 //!     ("always" — write no condition), distinct typed errors here for
@@ -103,7 +103,7 @@ pub use validate::validate;
 /// exactly like relations pre-`as`), its typed output signature derived
 /// ONCE at validation and sealed. The single authority for sink
 /// construction, result-buffer typing, finalize's all-words decision,
-/// and EXPLAIN's header. Referenced by NOTHING — the named-view refusal
+/// and introspection's header. Referenced by NOTHING — the named-view refusal
 /// stands; a reference to a predicate is the recursion trigger firing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Predicate {
@@ -112,7 +112,7 @@ pub struct Predicate {
 }
 
 impl std::fmt::Display for Predicate {
-    /// The signature in one line — EXPLAIN's header (`(u64, Sum i64)`:
+    /// The signature in one line — introspection's header (`(u64, Sum i64)`:
     /// declaration type spellings, rule-notation fold names).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("(")?;
@@ -246,9 +246,9 @@ pub(crate) enum ClassifiedComparison {
         mask: MaskConst,
     },
     /// Point containment between variables: `interval-var ∋ point-var`.
-    ContainsVarVar { interval: VarId, point: VarId },
+    PointInVarVar { interval: VarId, point: VarId },
     /// Point containment of a constant point: `interval-var ∋ point`.
-    ContainsVarPoint { interval: VarId, point: SealedConst },
+    PointInVarPoint { interval: VarId, point: SealedConst },
     /// Point containment in a constant interval: `outer ∋ scalar-var`.
     VarWithin { var: VarId, outer: SealedConst },
     /// The measure comparison, the operator sealed measure-on-left:
@@ -300,7 +300,7 @@ pub struct ValidatedQuery {
     /// `param_types` is the *element* type.
     set_params: BTreeSet<ParamId>,
     /// Element-typed params meeting an interval position (membership
-    /// bindings and `Contains` operands): their values are points, so the
+    /// bindings and `PointIn` operands): their values are points, so the
     /// point-domain law (`docs/architecture/10-data-model.md`) forbids the
     /// domain ceiling — enforced at bind, where the value exists.
     point_params: BTreeSet<ParamId>,
@@ -325,14 +325,14 @@ struct RuleTyping {
 impl ValidatedQuery {
     /// The predicate this query defines (see [`Predicate`]): the sealed
     /// signature every downstream consumer reads — no other derivation
-    /// of the output row types exists.
+    /// of the answer types exists.
     #[must_use]
     pub fn predicate(&self) -> &Predicate {
         &self.predicate
     }
 
     /// One rule's slice of the witness — the unit the per-rule pipeline
-    /// (normalize → chase → plan) consumes.
+    /// (normalize → grounding → plan) consumes.
     ///
     /// # Panics
     ///
@@ -379,7 +379,7 @@ impl ValidatedQuery {
     }
 
     /// The point-position params: element-typed at an interval position
-    /// (a membership binding or a `Contains` operand). Bind-time rejects
+    /// (a membership binding or a `PointIn` operand). Bind-time rejects
     /// their domain ceiling — points are `MIN ..= MAX−1`; `MAX` is the
     /// ray's ∞ (the point-domain law).
     #[must_use]
@@ -459,7 +459,7 @@ impl<'a> RuleWitness<'a> {
     /// cross nodes binding nothing projected. For an aggregate-bearing
     /// head it is **every** variable of the rule: the fold is defined over
     /// the distinct full binding set, so no node's bindings are skippable,
-    /// and the `sink_relevant` bits themselves encode the illegality —
+    /// and the `SuffixSkip::Forbidden` evidence itself encodes the illegality —
     /// any `SkipSuffix` a future sink ever signaled under an aggregate
     /// plan is absorbed at the node that produced it.
     #[must_use]
@@ -530,7 +530,7 @@ struct Context {
     /// Variables occurring in negated atoms (the negation safety rule).
     negated_vars: BTreeSet<VarId>,
     /// Params anchored at interval positions (membership bindings and
-    /// `Contains` operands); those that resolve element-typed are the
+    /// `PointIn` operands); those that resolve element-typed are the
     /// witness's point params.
     interval_position_params: BTreeSet<ParamId>,
     /// Params in `Allen` mask positions (never in `param_slots` — the

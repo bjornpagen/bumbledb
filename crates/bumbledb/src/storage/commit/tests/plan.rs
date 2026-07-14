@@ -1,5 +1,5 @@
 //! The plan derivation (PRD: `CommitPlan` — compute, don't accumulate):
-//! delta in, plan out, byte-level assertions on guard bytes, reverse-edge
+//! delta in, plan out, byte-level assertions on determinant bytes, reverse-edge
 //! key bytes, probe markers, and the target-side check sets — the class
 //! of test the accumulate-during-apply shape could never have. Covers
 //! scalar keys, pointwise keys, satisfied and unsatisfied selections, the
@@ -12,10 +12,10 @@
 
 use crate::encoding::{ValueRef, encode_interval_u64, encode_u64};
 use crate::schema::{
-    ContainmentId, FieldId, KeyId, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    StatementDescriptor, StatementId, ValueType,
+    ContainmentId, Enforcement, FieldId, KeyId, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
 };
-use crate::storage::commit::plan::{CommitPlan, EdgeOp, FactOp, GuardOp};
+use crate::storage::commit::plan::{CommitPlan, DeterminantOp, EdgeOp, FactOp};
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
@@ -37,9 +37,6 @@ const LINK: RelationId = RelationId(9);
 /// Declared statement order (no fresh fields, so no auto-keys).
 const ACCOUNT_KEY: StatementId = StatementId(0);
 const ROOM_KEY: StatementId = StatementId(1);
-const PARENT_KEY: StatementId = StatementId(2);
-const CHILD_KEY: StatementId = StatementId(3);
-const COMBO_KEY: StatementId = StatementId(4);
 const TRANSFER_ACCOUNT: StatementId = StatementId(5);
 const GRANT_ACCOUNT: StatementId = StatementId(6);
 const REPORT_ACCOUNT: StatementId = StatementId(7);
@@ -205,7 +202,9 @@ fn room(schema: &Schema, room: u64, start: u64, end: u64, tag: u64) -> Vec<u8> {
         ROOM,
         &[
             ValueRef::U64(room),
-            ValueRef::IntervalU64(start, end),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
             ValueRef::U64(tag),
         ],
     )
@@ -215,7 +214,12 @@ fn stay(schema: &Schema, room: u64, start: u64, end: u64) -> Vec<u8> {
     fact(
         schema,
         STAY,
-        &[ValueRef::U64(room), ValueRef::IntervalU64(start, end)],
+        &[
+            ValueRef::U64(room),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
     )
 }
 
@@ -269,33 +273,29 @@ fn op_for<'a, 'd>(ops: &'a [FactOp<'d>], rel: RelationId, fact: &[u8]) -> &'a Fa
         .expect("an op exists for every net disposition")
 }
 
-fn assert_guard(op: &GuardOp, statement: StatementId, guard: &[u8], pointwise: bool) {
+fn assert_determinant(
+    op: &DeterminantOp,
+    statement: StatementId,
+    determinant: &[u8],
+    pointwise: bool,
+) {
     assert_eq!(op.statement, statement);
-    assert_eq!(&*op.guard, guard, "guard bytes");
+    assert_eq!(&*op.determinant, determinant, "determinant bytes");
     assert_eq!(op.pointwise, pointwise, "pointwise marker");
 }
 
-fn assert_edge(
-    edge: &EdgeOp,
-    statement: StatementId,
-    key_bytes: &[u8],
-    target_relation: RelationId,
-    target_key: KeyId,
-    coverage: bool,
-) {
+fn assert_edge(schema: &Schema, edge: &EdgeOp, statement: StatementId, key_bytes: &[u8]) {
     assert_eq!(edge.statement, statement);
     assert_eq!(edge.containment, containment_id(statement));
     assert_eq!(&*edge.key_bytes, key_bytes, "permuted key bytes");
-    assert_eq!(edge.target_relation, target_relation);
-    assert_eq!(edge.target_key, target_key);
-    assert_eq!(edge.coverage, coverage, "coverage marker");
+    assert_eq!(schema.containment(edge.containment).id, statement);
 }
 
-// ---------- per-fact ops: guards and edges ----------
+// ---------- per-fact ops: determinants and edges ----------
 
 #[test]
-fn scalar_and_pointwise_guards_carry_exact_bytes() {
-    let dir = TempDir::new("plan-guards");
+fn scalar_and_pointwise_determinants_carry_exact_bytes() {
+    let dir = TempDir::new("plan-determinants");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let a = account(&schema, 7, true, 0);
@@ -312,22 +312,24 @@ fn scalar_and_pointwise_guards_carry_exact_bytes() {
     assert_eq!(plan.inserts.len(), 2);
     let account_op = op_for(&plan.inserts, ACCOUNT, &a);
     assert_eq!(account_op.relation, ACCOUNT);
-    let [guard] = &*account_op.guards else {
+    let [determinant] = &*account_op.determinants else {
         panic!("one key statement");
     };
-    assert_guard(guard, ACCOUNT_KEY, &encode_u64(7), false);
+    assert_determinant(determinant, ACCOUNT_KEY, &encode_u64(7), false);
     assert!(account_op.edges.is_empty(), "Account has no outgoing");
 
-    // The pointwise guard: scalar prefix ‖ the interval's whole 16 bytes,
+    // The pointwise determinant: scalar prefix ‖ the interval's whole 16 bytes,
     // marked for the ordered-neighbor probe.
     let room_op = op_for(&plan.inserts, ROOM, &r);
-    let mut room_guard = Vec::new();
-    room_guard.extend_from_slice(&encode_u64(3));
-    room_guard.extend_from_slice(&encode_interval_u64(10, 20));
-    let [guard] = &*room_op.guards else {
+    let mut room_determinant = Vec::new();
+    room_determinant.extend_from_slice(&encode_u64(3));
+    room_determinant.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+    ));
+    let [determinant] = &*room_op.determinants else {
         panic!("one key statement");
     };
-    assert_guard(guard, ROOM_KEY, &room_guard, true);
+    assert_determinant(determinant, ROOM_KEY, &room_determinant, true);
 }
 
 #[test]
@@ -349,14 +351,7 @@ fn source_selection_gates_the_edges() {
     let [edge] = &*op_for(&plan.inserts, REPORT, &urgent).edges else {
         panic!("one satisfied containment");
     };
-    assert_edge(
-        edge,
-        REPORT_ACCOUNT,
-        &encode_u64(5),
-        ACCOUNT,
-        key_id(ACCOUNT_KEY),
-        false,
-    );
+    assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));
     // Outside σ: no edge, so no R put and no source probe — by absence.
     assert!(op_for(&plan.inserts, REPORT, &calm).edges.is_empty());
 }
@@ -380,24 +375,17 @@ fn pair_statements_edge_their_own_directions() {
     let [edge] = &*op_for(&plan.inserts, PARENT, &p).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(
-        edge,
-        TOTALITY,
-        &encode_u64(4),
-        CHILD,
-        key_id(CHILD_KEY),
-        false,
-    );
+    assert_edge(&schema, edge, TOTALITY, &encode_u64(4));
     let [edge] = &*op_for(&plan.inserts, CHILD, &c).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, ARM, &encode_u64(4), PARENT, key_id(PARENT_KEY), false);
+    assert_edge(&schema, edge, ARM, &encode_u64(4));
 }
 
 #[test]
 fn edge_key_bytes_land_in_target_key_order() {
     // Link(p, q) <= Combo(y, x) against key Combo(x, y): projection
-    // element p maps to guard position 1, q to 0 — the plan's key bytes
+    // element p maps to determinant position 1, q to 0 — the plan's key bytes
     // are pre-permuted, byte-for-byte.
     let dir = TempDir::new("plan-permutation");
     let schema = schema();
@@ -412,7 +400,7 @@ fn edge_key_bytes_land_in_target_key_order() {
     let [edge] = &*op_for(&plan.inserts, LINK, &l).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, LINK_COMBO, &expected, COMBO, key_id(COMBO_KEY), false);
+    assert_edge(&schema, edge, LINK_COMBO, &expected);
 }
 
 #[test]
@@ -426,11 +414,17 @@ fn interval_edges_are_marked_for_the_coverage_walk() {
 
     let mut expected = Vec::new();
     expected.extend_from_slice(&encode_u64(3));
-    expected.extend_from_slice(&encode_interval_u64(12, 15));
+    expected.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(12, 15).expect("nonempty interval"),
+    ));
     let [edge] = &*op_for(&plan.inserts, STAY, &s).edges else {
         panic!("one outgoing statement");
     };
-    assert_edge(edge, STAY_ROOM, &expected, ROOM, key_id(ROOM_KEY), true);
+    assert_edge(&schema, edge, STAY_ROOM, &expected);
+    assert!(matches!(
+        schema.containment(edge.containment).enforcement,
+        Enforcement::IntervalCoverage { .. }
+    ));
 }
 
 #[test]
@@ -446,18 +440,11 @@ fn delete_ops_carry_the_byte_symmetric_edges() {
     let plan = plan_of(&env, &mut delta, &[(REPORT, r.clone())], &[]);
     assert!(plan.inserts.is_empty());
     let op = op_for(&plan.deletes, REPORT, &r);
-    assert!(op.guards.is_empty(), "Report has no key statements");
+    assert!(op.determinants.is_empty(), "Report has no key statements");
     let [edge] = &*op.edges else {
         panic!("one satisfied containment");
     };
-    assert_edge(
-        edge,
-        REPORT_ACCOUNT,
-        &encode_u64(5),
-        ACCOUNT,
-        key_id(ACCOUNT_KEY),
-        false,
-    );
+    assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));
     // Report has no keys, so nothing was disestablished.
     assert!(plan.target_checks.is_empty());
 }
@@ -479,26 +466,20 @@ fn disestablished_tuple_expands_per_dependent_statement() {
     };
     assert_eq!(check.key, key_id(ACCOUNT_KEY));
     assert_eq!(schema.key(check.key).relation, ACCOUNT);
-    assert_eq!(&*check.guard, encode_u64(9).as_slice());
+    assert_eq!(&*check.determinant, encode_u64(9).as_slice());
     // Not re-established: every dependent checks unconditionally, in
     // materialized order.
     let statements: Vec<_> = check
         .dependents
         .iter()
-        .map(|d| {
-            (
-                schema.containment(d.containment).id,
-                d.coverage,
-                d.psi_qualified,
-            )
-        })
+        .map(|d| (schema.containment(d.containment).id, d.psi_qualified))
         .collect();
     assert_eq!(
         statements,
         [
-            (TRANSFER_ACCOUNT, false, false),
-            (GRANT_ACCOUNT, false, false),
-            (REPORT_ACCOUNT, false, false),
+            (TRANSFER_ACCOUNT, false),
+            (GRANT_ACCOUNT, false),
+            (REPORT_ACCOUNT, false),
         ]
     );
 }
@@ -511,7 +492,7 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
     let old = account(&schema, 9, true, 0);
     commit_base(&env, &schema, &[(ACCOUNT, old.clone())]);
 
-    // Delete + insert re-lands the exact guard bytes (only the non-key
+    // Delete + insert re-lands the exact determinant bytes (only the non-key
     // `note` differs): the plain set difference discharges the empty-ψ
     // dependents at plan time; the ψ-carrying dependent stays, marked —
     // only the judgment phase can read the establishing fact.
@@ -522,7 +503,7 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
         panic!("one disestablished tuple");
     };
     assert_eq!(check.key, key_id(ACCOUNT_KEY));
-    assert_eq!(&*check.guard, encode_u64(9).as_slice());
+    assert_eq!(&*check.determinant, encode_u64(9).as_slice());
     let [dependent] = &*check.dependents else {
         panic!("only the ψ-carrying dependent survives");
     };
@@ -534,7 +515,7 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
 }
 
 #[test]
-fn pointwise_tuple_keeps_its_interval_tail_and_coverage_marker() {
+fn pointwise_tuple_keeps_its_interval_tail_and_coverage_evidence() {
     let dir = TempDir::new("plan-check-interval");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -548,14 +529,19 @@ fn pointwise_tuple_keeps_its_interval_tail_and_coverage_marker() {
     };
     assert_eq!(check.key, key_id(ROOM_KEY));
     assert_eq!(schema.key(check.key).relation, ROOM);
-    let mut guard = Vec::new();
-    guard.extend_from_slice(&encode_u64(3));
-    guard.extend_from_slice(&encode_interval_u64(10, 20));
-    assert_eq!(&*check.guard, guard.as_slice());
+    let mut determinant = Vec::new();
+    determinant.extend_from_slice(&encode_u64(3));
+    determinant.extend_from_slice(&encode_interval_u64(
+        crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+    ));
+    assert_eq!(&*check.determinant, determinant.as_slice());
     let [dependent] = &*check.dependents else {
         panic!("one dependent");
     };
     assert_eq!(schema.containment(dependent.containment).id, STAY_ROOM);
-    assert!(dependent.coverage);
+    assert!(matches!(
+        schema.containment(dependent.containment).enforcement,
+        Enforcement::IntervalCoverage { .. }
+    ));
     assert!(!dependent.psi_qualified);
 }

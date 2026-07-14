@@ -1,17 +1,20 @@
-use super::{BindValue, PreparedQuery, PreparedRule, Program, ResultBuffer};
+use super::{Answers, BindValue, PreparedQuery, PreparedRule, Program};
 
-use crate::api::stats::{ExecutionStats, GuardStats, RuleStats};
+use crate::api::stats::{ExecutionStats, KeyProbeStats, RuleStats};
 use crate::error::Result;
-use crate::exec::explain::{CountingCounters, Report, RulePlan};
+use crate::exec::introspection::{
+    CountingCounters, IntrospectionHeader, IntrospectionReport, RulePlan,
+};
 use crate::exec::run::Counters;
 use crate::image::cache::ImageCache;
+use crate::image::view::{Const, FilterPredicate};
 use crate::storage::env::ReadTxn;
 
 use super::finalize::finalize;
 
 impl<S> PreparedQuery<'_, S> {
-    /// EXPLAIN (docs/architecture/40-execution.md): executes the query with counting instrumentation
-    /// (ANALYZE semantics) and returns the rows alongside the rendered
+    /// Plan introspection (docs/architecture/40-execution.md): executes the query with counting instrumentation
+    /// (ANALYZE semantics) and returns the answers alongside the rendered
     /// report — per-rule plans and node stats under the head-level union
     /// accounting.
     ///
@@ -22,42 +25,88 @@ impl<S> PreparedQuery<'_, S> {
     /// # Panics
     ///
     /// Only on programmer-invariant violations (plan/executor pairing).
-    pub(crate) fn explain(
+    pub(crate) fn introspect(
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         params: &[BindValue<'_>],
-    ) -> Result<(ResultBuffer, String)> {
+    ) -> Result<(Answers, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
-        let report = Report {
+        let pending = self.pending_literal_note();
+        let report = IntrospectionReport {
+            header: Some(IntrospectionHeader {
+                query: self.rendered.clone(),
+                predicate: self.predicate.to_string(),
+                pending_literal: pending,
+            }),
             rules: match &self.program {
                 Program::Empty => vec![RulePlan::Empty],
                 Program::Rules(rules) => rules
                     .iter()
                     .map(|rule| match rule {
-                        PreparedRule::Guard(rule) => RulePlan::GuardProbe(&rule.plan),
+                        PreparedRule::KeyProbe(rule) => RulePlan::KeyProbe(&rule.plan),
                         PreparedRule::FreeJoin(rule) => RulePlan::FreeJoin(&rule.plan),
                     })
                     .collect(),
             },
             stats,
         };
-        // The report opens with the query in the rule notation
+        // After the version marker, the report opens with the query in the rule notation
         // (`crate::ir::render` — the read-side syntax) and the predicate
-        // it defines (`ir/validate` — the signature authority): EXPLAIN
+        // it defines (`ir/validate` — the signature authority): introspection
         // prints what it explains.
-        Ok((
-            out,
-            format!(
-                "query:\n{}\npredicate: {}\n{report}",
-                self.rendered, self.predicate
-            ),
+        Ok((out, report.to_string()))
+    }
+
+    /// The pending-literal explanation is derived from the mutable plan
+    /// templates after execution: a hit has already latched to `Word` and
+    /// disappears; a dictionary miss remains owned raw bytes here.
+    fn pending_literal_note(&self) -> Option<String> {
+        if self.unresolved_literals == 0 {
+            return None;
+        }
+        let mut literals = Vec::new();
+        for rule in self.program.rules() {
+            let PreparedRule::FreeJoin(rule) = rule else {
+                continue;
+            };
+            for occurrence in rule
+                .plan
+                .occurrences()
+                .iter()
+                .filter(|occurrence| !occurrence.role.discharged())
+            {
+                for selection in &occurrence.selections {
+                    if let Const::PendingIntern { bytes } = &selection.value {
+                        let label = pending_literal_label(bytes);
+                        if !literals.contains(&label) {
+                            literals.push(label);
+                        }
+                    }
+                }
+                for filter in &occurrence.filters {
+                    if let FilterPredicate::Compare {
+                        value: Const::PendingIntern { bytes },
+                        ..
+                    } = filter
+                    {
+                        let label = pending_literal_label(bytes);
+                        if !literals.contains(&label) {
+                            literals.push(label);
+                        }
+                    }
+                }
+            }
+        }
+        Some(format!(
+            "pending literals: {} — an unresolved Eq literal empties its rule at execution until latched\n",
+            literals.join(", ")
         ))
     }
 
     /// The query in the rule notation, rendered at prepare
-    /// ([`crate::ir::render`] — one clause per rule, `;`-terminated):
-    /// the diagnostic twin of the EXPLAIN report's header, for hosts
+    /// ([`crate::ir::render`] — one rendered block per rule, `;`-terminated):
+    /// the diagnostic twin of the introspection report's header, for hosts
     /// that log or display the query a prepared handle answers.
     #[must_use]
     pub fn rendered_query(&self) -> &str {
@@ -65,9 +114,9 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// ANALYZE with structured output: executes with counting
-    /// instrumentation and returns the rows alongside [`ExecutionStats`]
-    /// — the data `explain` renders. Allocation-sanctioned exactly like
-    /// `explain`.
+    /// instrumentation and returns the answers alongside [`ExecutionStats`]
+    /// — the data `introspect` renders. Allocation-sanctioned exactly like
+    /// `introspect`.
     ///
     /// # Errors
     ///
@@ -81,9 +130,9 @@ impl<S> PreparedQuery<'_, S> {
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         params: &[BindValue<'_>],
-    ) -> Result<(ResultBuffer, ExecutionStats)> {
+    ) -> Result<(Answers, ExecutionStats)> {
         self.check_snapshot(txn)?;
-        let mut out = ResultBuffer::new();
+        let mut out = Answers::new();
         out.arity = self.predicate.columns.len();
         // The statically-empty program mirrors `run_bound`'s
         // short-circuit: bind (errors surface), then nothing runs and
@@ -92,25 +141,27 @@ impl<S> PreparedQuery<'_, S> {
             self.bind_params(txn, params)?;
             return Ok((out, self.empty_stats()));
         }
-        // The single-rule guard program keeps its fast lane: `execute`
+        // The single-rule key-probe program keeps its fast lane: `execute`
         // dispatches it whole, and the stats are the probe's outcome.
-        if matches!(self.program.rules(), [PreparedRule::Guard(_)]) {
+        if matches!(self.program.rules(), [PreparedRule::KeyProbe(_)]) {
             self.execute(txn, cache, params, &mut out)?;
             let emitted = out.len() as u64;
             let stats = ExecutionStats {
+                introspection_version: crate::api::stats::INTROSPECTION_VERSION,
                 rules: vec![RuleStats {
+                    distinct_bindings: self.program.rules()[0].distinct_witness().is_some(),
                     nodes: Vec::new(),
-                    // A guard probe is a single-atom query: the chase has
+                    // A key probe is a single-atom query: the grounding has
                     // nothing to pair and nothing to fold, so no marks
                     // can exist.
                     eliminated: Vec::new(),
                     folded: Vec::new(),
-                    // Classification precedes statistics: a guard probe
+                    // Classification precedes statistics: a key probe
                     // reads none, so nothing is pinned.
                     pinned: Vec::new(),
                     emitted,
                     absorbed: 0,
-                    guard: Some(GuardStats {
+                    key_probe: Some(KeyProbeStats {
                         hit: !out.is_empty(),
                     }),
                 }],
@@ -118,7 +169,7 @@ impl<S> PreparedQuery<'_, S> {
                 // A single-rule program has no pair to prove.
                 disjoint_rules: None,
                 // ... but may still be a deletion pass's residue: a
-                // program deleted down to one guard rule keeps both
+                // program deleted down to one key-probe rule keeps both
                 // records.
                 subsumed: self.subsumed.clone(),
                 dead: self.dead.clone(),
@@ -139,7 +190,7 @@ impl<S> PreparedQuery<'_, S> {
             let seen_before = self.sink.distinct_seen().unwrap_or(0);
             let mut counters = match &self.program.rules()[rule_idx] {
                 PreparedRule::FreeJoin(rule) => CountingCounters::new(&rule.plan),
-                PreparedRule::Guard(_) => CountingCounters::for_guard(),
+                PreparedRule::KeyProbe(_) => CountingCounters::for_key_probe(),
             };
             ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
             // The union accounting (docs/architecture/40-execution.md
@@ -158,25 +209,26 @@ impl<S> PreparedQuery<'_, S> {
                     self.rule_pinned_rows(rule_idx),
                     absorbed,
                 ),
-                PreparedRule::Guard(_) => RuleStats {
+                PreparedRule::KeyProbe(rule) => RuleStats {
+                    distinct_bindings: rule.distinct_witness.is_some(),
                     nodes: Vec::new(),
                     eliminated: Vec::new(),
                     folded: Vec::new(),
                     pinned: Vec::new(),
                     emitted,
                     absorbed,
-                    guard: Some(GuardStats { hit: emitted > 0 }),
+                    key_probe: Some(KeyProbeStats { hit: emitted > 0 }),
                 },
             });
         }
         if ran {
             finalize(
                 &mut self.sink,
-                &mut self.row_scratch,
+                &mut self.answer_scratch,
                 &mut self.resolve_memo,
                 txn,
                 &self.predicate.columns,
-                self.all_words,
+                self.answer_heap,
                 &mut out,
             )?;
         }
@@ -184,6 +236,7 @@ impl<S> PreparedQuery<'_, S> {
         Ok((
             out,
             ExecutionStats {
+                introspection_version: crate::api::stats::INTROSPECTION_VERSION,
                 rules: rule_stats,
                 emits,
                 disjoint_rules: self.disjoint_rules_stat(),
@@ -198,14 +251,16 @@ impl<S> PreparedQuery<'_, S> {
     /// record (`stats.dead`) carries the per-rule killing conditions.
     fn empty_stats(&self) -> ExecutionStats {
         ExecutionStats {
+            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
             rules: vec![RuleStats {
+                distinct_bindings: false,
                 nodes: Vec::new(),
                 eliminated: Vec::new(),
                 folded: Vec::new(),
                 pinned: Vec::new(),
                 emitted: 0,
                 absorbed: 0,
-                guard: None,
+                key_probe: None,
             }],
             emits: 0,
             // An empty program has no pair to prove.
@@ -223,7 +278,7 @@ impl<S> PreparedQuery<'_, S> {
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
         match self.program.rules() {
-            [rule] => rule.distinct_bindings(),
+            [rule] => rule.distinct_witness().is_some(),
             _ => false,
         }
     }
@@ -233,7 +288,7 @@ impl<S> PreparedQuery<'_, S> {
     /// diagnostic knowledge, not an executor switch: the measured
     /// cross-rule optimization was reverted. Always `false` for
     /// single-rule programs (no pair exists). The witness is reported by
-    /// EXPLAIN and
+    /// introspection and
     /// [`crate::api::stats::ExecutionStats::disjoint_rules`].
     #[must_use]
     pub fn disjoint_rules(&self) -> bool {
@@ -261,4 +316,11 @@ impl<S> PreparedQuery<'_, S> {
     pub fn predicate(&self) -> &crate::ir::validate::Predicate {
         &self.predicate
     }
+}
+
+fn pending_literal_label(bytes: &[u8]) -> String {
+    format!(
+        "{:?}",
+        std::str::from_utf8(bytes).expect("validated String literal is UTF-8")
+    )
 }

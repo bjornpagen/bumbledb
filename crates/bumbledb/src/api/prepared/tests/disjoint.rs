@@ -1,6 +1,6 @@
 //! The rule-disjointness proof (docs/architecture/40-execution.md § set
 //! semantics): rules selecting different values of one discriminator are
-//! provably disjoint. The proof remains visible in EXPLAIN, while execution
+//! provably disjoint. The proof remains visible in introspection, while execution
 //! deliberately keeps one seen-set spanning the rules. These tests pin the
 //! proof and show that the spanning set absorbs nothing across proven arms.
 
@@ -141,12 +141,12 @@ fn the_du_arm_union_proves_and_an_unselected_arm_unproves() {
     assert!(!same.disjoint_rules(), "equal literals are not different");
 }
 
-/// EXPLAIN names the proof — `disjoint_rules: proven (Item.kind)` — and
+/// introspection names the proof — `disjoint_rules: proven (Item.kind)` — and
 /// the structured stats carry the same witness; the unproven program
 /// says so.
 #[test]
-fn explain_names_the_disjointness_witness() {
-    let dir = TempDir::new("prepared-disjoint-explain");
+fn introspection_names_the_disjointness_witness() {
+    let dir = TempDir::new("prepared-disjoint-introspect");
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_items(&env, &schema, &item_rows());
@@ -160,7 +160,7 @@ fn explain_names_the_disjointness_witness() {
         &du_query(vec![arm_rule(0), arm_rule(1)]),
     )
     .expect("prepare");
-    let (out, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (out, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert_eq!(out.len(), 4, "both arms, the task excluded");
     assert!(
         report.contains("disjoint_rules: proven (Item.kind)"),
@@ -184,12 +184,12 @@ fn explain_names_the_disjointness_witness() {
     open.atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(2)));
     let mut unproven =
         prepare(&txn, &cache, &schema, &du_query(vec![arm_rule(0), open])).expect("prepare");
-    let (_, report) = unproven.explain(&txn, &cache, &[]).expect("explain");
+    let (_, report) = unproven.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(report.contains("disjoint_rules: unproven"), "{report}");
 }
 
 /// `Count` over a proven-disjoint union retains the spanning seen-set,
-/// which absorbs zero rows because the theorem is true, and matches the
+/// which absorbs zero answers because the theorem is true, and matches the
 /// naive model: one `(id)` per item of the selected kinds.
 #[test]
 fn count_over_a_proven_disjoint_union_absorbs_nothing() {
@@ -243,18 +243,18 @@ fn count_over_a_proven_disjoint_union_absorbs_nothing() {
     // The naive model: fold domain = ∪ head-projected bindings; per
     // group (id) the projection is the singleton (id), so Count = 1 for
     // each note/event item and the task never appears.
-    let mut rows: Vec<(u64, u64)> = (0..out.len())
-        .map(|row| {
-            let (ResultValue::U64(id), ResultValue::U64(count)) =
-                (out.get(row, 0), out.get(row, 1))
+    let mut answers: Vec<(u64, u64)> = (0..out.len())
+        .map(|answer| {
+            let (AnswerValue::U64(id), AnswerValue::U64(count)) =
+                (out.get(answer, 0), out.get(answer, 1))
             else {
                 panic!("U64 columns");
             };
             (id, count)
         })
         .collect();
-    rows.sort_unstable();
-    assert_eq!(rows, vec![(1, 1), (2, 1), (3, 1), (4, 1)]);
+    answers.sort_unstable();
+    assert_eq!(answers, vec![(1, 1), (2, 1), (3, 1), (4, 1)]);
 }
 
 /// The projection sink under the proof: a three-arm union returns every
@@ -276,19 +276,19 @@ fn a_three_arm_union_absorbs_nothing_across_rules() {
     );
     let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert!(stats.rules.iter().all(|rule| rule.absorbed == 0));
-    let mut rows: Vec<(u64, u64)> = (0..out.len())
-        .map(|row| {
-            let (ResultValue::U64(id), ResultValue::U64(payload)) =
-                (out.get(row, 0), out.get(row, 1))
+    let mut answers: Vec<(u64, u64)> = (0..out.len())
+        .map(|answer| {
+            let (AnswerValue::U64(id), AnswerValue::U64(payload)) =
+                (out.get(answer, 0), out.get(answer, 1))
             else {
                 panic!("U64 columns");
             };
             (id, payload)
         })
         .collect();
-    rows.sort_unstable();
+    answers.sort_unstable();
     assert_eq!(
-        rows,
+        answers,
         vec![(1, 10), (2, 20), (3, 20), (4, 40), (5, 50)],
         "the whole union, exactly once each — including the equal payloads"
     );

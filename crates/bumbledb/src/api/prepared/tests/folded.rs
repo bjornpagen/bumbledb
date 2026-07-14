@@ -1,8 +1,8 @@
-//! The chase-evaluator's execution shape (docs/architecture/
-//! 40-execution.md, § the chase: elimination and evaluation): a folded
+//! The grounding-evaluator's execution shape (docs/architecture/
+//! 40-execution.md, § the ground: elimination and evaluation): a folded
 //! occurrence never builds an image or binds a view, its plan-constant
 //! set rides the param-set selection machinery (and never counts as an
-//! unresolved literal — the PRD 09 latch), EXPLAIN carries the fold
+//! unresolved literal — the PRD 09 latch), introspection carries the fold
 //! line, and the |S| == 0 verdict prepares to the statically-empty
 //! plan.
 
@@ -11,7 +11,7 @@ use crate::schema::Row;
 
 /// Reading(id fresh, kind u64, value i64) referencing the closed
 /// Kind(rank u64; ranks 10/20/20/30) through Reading(kind) <= Kind(id).
-fn closed_schema() -> Schema {
+pub(super) fn closed_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -82,7 +82,7 @@ fn closed_schema() -> Schema {
 const READING: RelationId = RelationId(0);
 const KIND: RelationId = RelationId(1);
 
-fn insert_readings(env: &Environment, schema: &Schema, rows: &[(u64, u64, i64)]) {
+pub(super) fn insert_readings(env: &Environment, schema: &Schema, rows: &[(u64, u64, i64)]) {
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(schema);
     for (id, kind, value) in rows {
@@ -103,7 +103,7 @@ fn insert_readings(env: &Environment, schema: &Schema, rows: &[(u64, u64, i64)])
 }
 
 /// `Q(id, value) :- Reading(id, kind = x, value), Kind(id = x, rank == <rank>)`.
-fn fold_query(rank: u64) -> Query {
+pub(super) fn fold_query(rank: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
@@ -128,10 +128,10 @@ fn fold_query(rank: u64) -> Query {
     })
 }
 
-fn values_of(buffer: &ResultBuffer) -> Vec<i64> {
+fn values_of(buffer: &Answers) -> Vec<i64> {
     let mut values: Vec<i64> = (0..buffer.len())
-        .map(|row| {
-            let ResultValue::I64(value) = buffer.get(row, 1) else {
+        .map(|answer| {
+            let AnswerValue::I64(value) = buffer.get(answer, 1) else {
                 panic!("column 1 is an i64");
             };
             value
@@ -142,7 +142,7 @@ fn values_of(buffer: &ResultBuffer) -> Vec<i64> {
 }
 
 /// The readings fixture: kinds 0..=3, values tagged by kind.
-const READINGS: &[(u64, u64, i64)] = &[
+pub(super) const READINGS: &[(u64, u64, i64)] = &[
     (1, 0, 100),
     (2, 1, 210),
     (3, 1, 211),
@@ -219,12 +219,12 @@ fn a_folded_occurrence_builds_no_image_and_binds_no_view() {
     );
 }
 
-/// EXPLAIN carries the fold line (the Eliminated-reporting precedent),
+/// introspection carries the fold line (the Eliminated-reporting precedent),
 /// and the structured stats mirror it — the surviving set as handles,
 /// the vocabulary's names (the handle set IS the payload).
 #[test]
-fn explain_reports_the_fold_with_its_filters_and_handles() {
-    let dir = TempDir::new("folded-explain");
+fn introspection_reports_the_fold_with_its_filters_and_handles() {
+    let dir = TempDir::new("folded-introspect");
     let schema = closed_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_readings(&env, &schema, READINGS);
@@ -240,7 +240,7 @@ fn explain_reports_the_fold_with_its_filters_and_handles() {
     assert_eq!(folded[0].rendered, "Kind{rank == 20}");
     assert_eq!(folded[0].handles, vec!["B".to_owned(), "C".to_owned()]);
     assert!(!folded[0].negated);
-    let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(
         report.contains("folded: Kind{rank == 20} → {B, C}"),
         "{report}"
@@ -268,7 +268,7 @@ fn an_empty_fold_prepares_the_statically_empty_program() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(out.len(), 0);
-    let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(
         report.contains("statically empty: rule 0: folded to ∅: Kind{rank == 99}"),
         "{report}"

@@ -60,7 +60,7 @@ fn wide_plan(fields: u16) -> (NormalizedQuery, Vec<(u16, u16)>) {
 }
 
 /// Runs a plan through the real projection sink (the scan path) and
-/// returns the distinct projected rows, `slots`-ordered.
+/// returns the distinct projected answers, `slots`-ordered.
 fn scan_rows_of(
     plan: &ValidatedPlan,
     views: &[Arc<crate::image::RelationImage>],
@@ -79,7 +79,7 @@ fn scan_rows_of(
             &mut NoopCounters,
         )
         .expect("execute");
-    sink.rows().map(<[u64]>::to_vec).collect()
+    sink.answers().map(<[u64]>::to_vec).collect()
 }
 
 /// Runs the same plan through [`CollectSink`] (declines scans — the
@@ -163,11 +163,11 @@ fn hoisted_and_per_position_arms_agree() {
         per_position.scan_run(&scan, SuffixRun::Positions(chunk));
     }
     assert_eq!(per_position.end_scan(&scan), len as u64);
-    let rows_of = |sink: &ProjectionSinkForTest| -> BTreeSet<Vec<u64>> {
-        sink.rows().map(<[u64]>::to_vec).collect()
+    let answers_of = |sink: &ProjectionSinkForTest| -> BTreeSet<Vec<u64>> {
+        sink.answers().map(<[u64]>::to_vec).collect()
     };
-    assert_eq!(rows_of(&hoisted), rows_of(&per_position));
-    assert_eq!(rows_of(&hoisted).len(), 6, "dedup still holds");
+    assert_eq!(answers_of(&hoisted), answers_of(&per_position));
+    assert_eq!(answers_of(&hoisted).len(), 6, "dedup still holds");
 }
 
 /// More leaf residuals than the deleted table held (9 > 8), over runs

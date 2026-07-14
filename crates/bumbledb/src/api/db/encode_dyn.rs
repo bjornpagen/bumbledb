@@ -21,10 +21,6 @@ pub(super) fn shape_mismatch(
             relation: rel,
             field,
         },
-        crate::schema::ValueMismatch::IntervalEmpty => FactShapeError::EmptyInterval {
-            relation: rel,
-            field,
-        },
     }
 }
 
@@ -90,8 +86,8 @@ impl<S> WriteTx<'_, S> {
                 Value::Bool(v) => ValueRef::Bool(*v),
                 Value::U64(v) => ValueRef::U64(*v),
                 Value::I64(v) => ValueRef::I64(*v),
-                Value::IntervalU64(start, end) => ValueRef::IntervalU64(*start, *end),
-                Value::IntervalI64(start, end) => ValueRef::IntervalI64(*start, *end),
+                Value::IntervalU64(interval) => ValueRef::IntervalU64(*interval),
+                Value::IntervalI64(interval) => ValueRef::IntervalI64(*interval),
                 Value::String(raw) => {
                     let text =
                         std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
@@ -131,8 +127,8 @@ pub(super) fn decode_values(
                 ValueRef::I64(v) => Value::I64(v),
                 ValueRef::String(id) => Value::String(resolve_str(id)?),
                 ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
-                ValueRef::IntervalU64(start, end) => Value::IntervalU64(start, end),
-                ValueRef::IntervalI64(start, end) => Value::IntervalI64(start, end),
+                ValueRef::IntervalU64(interval) => Value::IntervalU64(interval),
+                ValueRef::IntervalI64(interval) => Value::IntervalI64(interval),
             })
         })
         .collect()

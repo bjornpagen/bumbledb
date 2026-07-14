@@ -209,7 +209,7 @@ fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
 }
 
 /// The calendar union example: Busy ∪ Ooo is
-/// the Claim relation's two arms — two clauses, one head, a window param.
+/// the Claim relation's two arms — two rules, one head, a window param.
 /// The qualified handle spelling (`ClaimKind::Busy`) resolves through the
 /// host enum's welded row id; the renderer prints the row id back as its
 /// BARE handle, resolved through the theory's sealed extension (a
@@ -387,7 +387,7 @@ fn closed_reference_handles_are_a_fixed_point() {
     assert_eq!(qualified, reparsed);
 }
 
-/// Every named-aggregate head form in one clause; the names stay at the
+/// Every named-aggregate head form in one rule; the names stay at the
 /// call site (result columns are positional — the render drops them).
 #[test]
 fn aggregate_heads_golden() {
@@ -401,6 +401,83 @@ fn aggregate_heads_golden() {
         "(v1, Sum(v2), Count, CountDistinct(v0), Min(v2), Max(v2)) | \
          Posting(entry: v0, account: v1, amount: v2);"
     );
+}
+
+/// Arg restriction is writable and renderer-total in all three important
+/// shapes: singleton carry, coherent multi-carry, and the key carrying itself.
+/// Each source spelling renders to the normalized form, whose positional form
+/// reparses and renders byte-identically.
+#[test]
+fn arg_heads_round_trip_singleton_composite_and_self_carry() {
+    let singleton = query!(Ledger {
+        (ArgMax(id, at)) | Posting(id, at);
+    });
+    let singleton_normalized = "(ArgMax(v0, v1)) | Posting(id: v0, at: v1);";
+    assert_eq!(
+        pin("arg-singleton", Ledger, &singleton),
+        singleton_normalized
+    );
+    let singleton_reparsed = query!(Ledger {
+        (ArgMax(v0, v1)) | Posting(id: v0, at: v1);
+    });
+    assert_eq!(
+        pin("arg-singleton-fixed-point", Ledger, &singleton_reparsed),
+        singleton_normalized
+    );
+
+    let composite = query!(Ledger {
+        (account, ArgMax(id, at), ArgMax(amount, at))
+            | Posting(id, account, amount, at);
+    });
+    let composite_normalized = "(v1, ArgMax(v0, v3), ArgMax(v2, v3)) | \
+        Posting(id: v0, account: v1, amount: v2, at: v3);";
+    assert_eq!(
+        pin("arg-composite", Ledger, &composite),
+        composite_normalized
+    );
+    let composite_reparsed = query!(Ledger {
+        (v1, ArgMax(v0, v3), ArgMax(v2, v3))
+            | Posting(id: v0, account: v1, amount: v2, at: v3);
+    });
+    assert_eq!(
+        pin("arg-composite-fixed-point", Ledger, &composite_reparsed),
+        composite_normalized
+    );
+
+    let self_carry = query!(Ledger {
+        (ArgMin(at, at)) | Posting(at);
+    });
+    let self_carry_normalized = "(ArgMin(v0, v0)) | Posting(at: v0);";
+    assert_eq!(
+        pin("arg-self-carry", Ledger, &self_carry),
+        self_carry_normalized
+    );
+    let self_carry_reparsed = query!(Ledger {
+        (ArgMin(v0, v0)) | Posting(at: v0);
+    });
+    assert_eq!(
+        pin("arg-self-carry-fixed-point", Ledger, &self_carry_reparsed),
+        self_carry_normalized
+    );
+}
+
+/// Grammar exposure does not weaken the semantic boundary: Arg restriction
+/// remains single-rule because its key is rule-scoped outside the head.
+#[test]
+fn arg_across_rules_is_the_typed_notation_level_refusal() {
+    let query = query!(Ledger {
+        (ArgMax(id, at)) | Posting(id, account == 3, at);
+        (ArgMax(id, at)) | Posting(id, account == 7, at);
+    });
+    let dir = TempDir::new("arg-across-rules");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    let Err(error) = db.prepare(&query) else {
+        panic!("Arg restriction across rules must be refused");
+    };
+    assert!(matches!(
+        error,
+        bumbledb::Error::Validation(bumbledb::error::ValidationError::ArgAcrossRules { rules: 2 })
+    ));
 }
 
 /// `Pack` (the coalescing fold) and the measure forms: a `Duration`
@@ -425,6 +502,41 @@ fn pack_and_duration_round_trip() {
     });
     assert_eq!(
         pin("long-meetings-fixed-point", Scheduling, &reparsed),
+        normalized
+    );
+
+    let durations = query!(Scheduling {
+        (Duration(span)) | Claim(span);
+    });
+    let normalized = "(Duration(v0)) | Claim(span: v0);";
+    assert_eq!(pin("durations", Scheduling, &durations), normalized);
+    let reparsed = query!(Scheduling {
+        (Duration(v0)) | Claim(span: v0);
+    });
+    assert_eq!(
+        pin("durations-fixed-point", Scheduling, &reparsed),
+        normalized
+    );
+}
+
+/// Every scalar comparison operator and a scalar param survive the same
+/// lowering/rendering fixed point.
+#[test]
+fn scalar_comparisons_round_trip() {
+    let comparisons = query!(Ledger {
+        (id) | Posting(id, entry, account, instrument, amount, at),
+               id == ?wanted, entry != 0, account < 10, instrument <= 10,
+               amount > -10, at >= -10;
+    });
+    let normalized = "(v0) | Posting(id: v0, entry: v1, account: v2, instrument: v3, amount: v4, at: v5), \
+        v0 == ?0, v1 != 0, v2 < 10, v3 <= 10, v4 > -10, v5 >= -10;";
+    assert_eq!(pin("scalar-comparisons", Ledger, &comparisons), normalized);
+    let reparsed = query!(Ledger {
+        (v0) | Posting(id: v0, entry: v1, account: v2, instrument: v3, amount: v4, at: v5),
+               v0 == ?0, v1 != 0, v2 < 10, v3 <= 10, v4 > -10, v5 >= -10;
+    });
+    assert_eq!(
+        pin("scalar-comparisons-fixed-point", Ledger, &reparsed),
         normalized
     );
 }

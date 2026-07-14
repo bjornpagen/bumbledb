@@ -1,4 +1,4 @@
-//! The punning law (B): the same punned name in two atoms of one clause
+//! The punning law (B): the same punned name in two atoms of one rule
 //! is a macro error, spanned at the second occurrence — the line
 //! directive pins the span.
 //@ error: ambiguous punning — rename explicitly

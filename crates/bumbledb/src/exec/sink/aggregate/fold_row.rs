@@ -141,7 +141,7 @@ impl AggregateSink {
                     .extend_from_slice(&self.binding_scratch[*slot..slot + width]);
             }
         }
-        let rows = &mut self.arg_rows[group_idx];
+        let rows = &mut self.arg_answers[group_idx];
         if better {
             // Strictly better: the previous extreme's rows are no longer
             // attained — clear, then store this row.

@@ -1,6 +1,6 @@
 //! The `Pack` criteria (20-query-ir § aggregation) at the API boundary:
 //! the coalescing fold end to end — validate → plan → execute → result
-//! buffer. Relation-shaped: one result row per (group, maximal segment);
+//! carrier. Relation-shaped: one answer per (group, maximal segment);
 //! adjacency merges, duplicates collapse in the sweep, a packed ray is a
 //! ray; `Pack` groups by the non-aggregated head vars exactly as `Sum`
 //! does; and a multi-rule head folds the union (the spanning seen-set
@@ -74,7 +74,9 @@ fn insert_busy(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64, (u64,
                 ValueRef::U64(*id),
                 ValueRef::U64(*person),
                 ValueRef::U64(*cap),
-                ValueRef::IntervalU64(*start, *end),
+                ValueRef::IntervalU64(
+                    crate::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(BUSY).layout(),
             &mut bytes,
@@ -94,7 +96,9 @@ fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
             &[
                 ValueRef::U64(*id),
                 ValueRef::U64(*person),
-                ValueRef::IntervalI64(*start, *end),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                ),
             ],
             schema.relation(SHIFT).layout(),
             &mut bytes,
@@ -127,21 +131,21 @@ fn pack_query() -> Query {
     })
 }
 
-fn packed_u64_rows(out: &ResultBuffer) -> Vec<(u64, u64, u64)> {
-    let mut rows: Vec<(u64, u64, u64)> = (0..out.len())
-        .map(|row| match (out.get(row, 0), out.get(row, 1)) {
-            (ResultValue::U64(person), ResultValue::IntervalU64(iv)) => {
+fn packed_u64_answers(out: &Answers) -> Vec<(u64, u64, u64)> {
+    let mut answers: Vec<(u64, u64, u64)> = (0..out.len())
+        .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+            (AnswerValue::U64(person), AnswerValue::IntervalU64(iv)) => {
                 (person, iv.start(), iv.end())
             }
-            other => panic!("(u64, interval<u64>) row: {other:?}"),
+            other => panic!("(u64, interval<u64>) answer: {other:?}"),
         })
         .collect();
-    rows.sort_unstable();
-    rows
+    answers.sort_unstable();
+    answers
 }
 
 /// Overlap, containment, adjacency, and duplicate claims fold into
-/// maximal segments per group — one result row each, groups scoped.
+/// maximal segments per group — one answer each, groups scoped.
 #[test]
 fn pack_coalesces_overlap_adjacency_and_duplicates_per_group() {
     let dir = TempDir::new("pack-coalesce");
@@ -167,7 +171,7 @@ fn pack_coalesces_overlap_adjacency_and_duplicates_per_group() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(
-        packed_u64_rows(&out),
+        packed_u64_answers(&out),
         vec![(10, 1, 7), (10, 9, 10), (20, 4, 6)]
     );
 }
@@ -215,16 +219,16 @@ fn pack_absorbs_rays_over_i64_spans() {
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
-    let mut rows: Vec<(u64, i64, i64)> = (0..out.len())
-        .map(|row| match (out.get(row, 0), out.get(row, 1)) {
-            (ResultValue::U64(person), ResultValue::IntervalI64(iv)) => {
+    let mut answers: Vec<(u64, i64, i64)> = (0..out.len())
+        .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+            (AnswerValue::U64(person), AnswerValue::IntervalI64(iv)) => {
                 (person, iv.start(), iv.end())
             }
-            other => panic!("(u64, interval<i64>) row: {other:?}"),
+            other => panic!("(u64, interval<i64>) answer: {other:?}"),
         })
         .collect();
-    rows.sort_unstable();
-    assert_eq!(rows, vec![(10, -5, i64::MAX), (20, -10, -9)]);
+    answers.sort_unstable();
+    assert_eq!(answers, vec![(10, -5, i64::MAX), (20, -10, -9)]);
 }
 
 /// The group-interaction criterion: `Pack` groups by the non-aggregated
@@ -268,8 +272,8 @@ fn pack_groups_exactly_as_sum_does() {
     let mut sum = prepare(&txn, &cache, &schema, &sum_query).expect("prepare");
     let sum_out = sum.execute_collect(&txn, &cache, &[]).expect("execute");
     let mut sum_groups: Vec<u64> = (0..sum_out.len())
-        .map(|row| match sum_out.get(row, 0) {
-            ResultValue::U64(person) => person,
+        .map(|answer| match sum_out.get(answer, 0) {
+            AnswerValue::U64(person) => person,
             other => panic!("u64 group key: {other:?}"),
         })
         .collect();
@@ -277,13 +281,13 @@ fn pack_groups_exactly_as_sum_does() {
 
     let mut pack = prepare(&txn, &cache, &schema, &pack_query()).expect("prepare");
     let pack_out = pack.execute_collect(&txn, &cache, &[]).expect("execute");
-    let mut pack_groups: Vec<u64> = packed_u64_rows(&pack_out)
+    let mut pack_groups: Vec<u64> = packed_u64_answers(&pack_out)
         .into_iter()
         .map(|(person, _, _)| person)
         .collect();
     pack_groups.dedup();
     assert_eq!(pack_groups, sum_groups);
-    // Every group's claims are disjoint here, so Pack is one row per
+    // Every group's claims are disjoint here, so Pack is one answer per
     // claim — the group scoping is the assertion above.
     assert_eq!(pack_out.len(), 4);
 }
@@ -343,5 +347,5 @@ fn multi_rule_pack_folds_the_union() {
         .expect("execute");
     // The union is all three claims: [1,3) stands alone; [5,6) — derived
     // by BOTH rules, folded once — meets [6,8).
-    assert_eq!(packed_u64_rows(&out), vec![(10, 1, 3), (10, 5, 8)]);
+    assert_eq!(packed_u64_answers(&out), vec![(10, 1, 3), (10, 5, 8)]);
 }

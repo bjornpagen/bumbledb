@@ -2,6 +2,7 @@ use std::path::Path;
 
 use super::Db;
 use crate::error::Result;
+use crate::storage::env::GenerationId;
 
 impl<S> Db<S> {
     /// The image cache's counters (feature `trace`; reader: the
@@ -67,7 +68,7 @@ impl<S> Db<S> {
     /// # Errors
     ///
     /// `Lmdb` on snapshot open; `Corruption` on a malformed tx id.
-    pub fn generation(&self) -> Result<u64> {
+    pub fn generation(&self) -> Result<GenerationId> {
         self.env.read_txn()?.generation()
     }
 }

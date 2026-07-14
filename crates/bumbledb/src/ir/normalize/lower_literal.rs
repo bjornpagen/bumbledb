@@ -20,13 +20,13 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
             bytes: bytes.clone(),
         },
         Value::FixedBytes(raw) => fixed_bytes_const(raw),
-        Value::IntervalU64(start, end) => Const::Interval {
-            start: *start,
-            end: *end,
+        Value::IntervalU64(interval) => Const::Interval {
+            start: interval.start(),
+            end: interval.end(),
         },
-        Value::IntervalI64(start, end) => Const::Interval {
-            start: i64_word(*start),
-            end: i64_word(*end),
+        Value::IntervalI64(interval) => Const::Interval {
+            start: i64_word(interval.start()),
+            end: i64_word(interval.end()),
         },
         // A mask literal is only ever legal inside `CmpOp::Allen`'s mask
         // position, which lowers through `MaskConst`, never through here.

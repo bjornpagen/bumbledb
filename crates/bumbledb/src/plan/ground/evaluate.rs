@@ -1,5 +1,5 @@
-//! The chase-evaluator: folding stage-zero atoms
-//! (docs/architecture/40-execution.md, § the chase: elimination and
+//! The grounding-evaluator: folding stage-zero atoms
+//! (docs/architecture/40-execution.md, § the ground: elimination and
 //! evaluation).
 //!
 //! A closed relation's extension is sealed at validate — stage-0 data
@@ -47,18 +47,18 @@
 //!   `Eq`-`WordSet` membership filter.
 //! - `|S| == 0`: the rule is statically empty — the fold's rule-death
 //!   channel ([`NormalizedQuery::dead`], rendered `folded to ∅: …`);
-//!   the pipeline runs fold-then-chase, so the evaluator writes the
+//!   the pipeline runs fold then ground, so the evaluator writes the
 //!   verdict itself rather than routing a set back through the fold.
 //! - No live `k` (a pure constant gate, e.g. a nonemptiness check over
 //!   a ψ-subset): `|S| ≥ 1` deletes the atom outright; `|S| == 0` kills
 //!   the rule. The gate must bind **no variables at all**: a dead-but-
 //!   bound variable still multiplies an aggregate's fold domain (the
 //!   binding set is over ALL query variables — 40-execution, D2), so a
-//!   var-binding guard is REFUSED, recorded; trigger: a measured
+//!   var-binding gate is REFUSED, recorded; trigger: a measured
 //!   projection-sink-only win.
 //!
 //! The fold mark remains `Copy`, so it cannot carry the parsed filter
-//! set. EXPLAIN reparses the retained original filters on its cold path;
+//! set. introspection reparses the retained original filters on its cold path;
 //! a failed reparse maps to an empty handle list after a debug assertion,
 //! never to a production panic. The rendered picture always uses those
 //! originals so diagnostics preserve the user's spelling.
@@ -101,7 +101,7 @@ use crate::schema::{FieldId, IntervalElement, Relation, RelationId, Schema, Valu
 
 use super::var_is_dead;
 
-/// One evaluator step of the chase fixpoint: finds the first foldable
+/// One evaluator step of the grounding loop: finds the first foldable
 /// occurrence, applies its fold (mark + membership attachment, outright
 /// deletion, or the rule-death verdict) and reports whether anything
 /// changed. One action per call — the caller's loop re-runs elimination
@@ -154,9 +154,9 @@ fn fold_positive(
         }
         binders
     } else {
-        // The pure-guard shape: only a var-less atom may delete — a
+        // The pure-gate shape: only a var-less atom may delete — a
         // dead-but-bound variable still multiplies an aggregate's fold
-        // domain (module doc), and the guard's truth must survive
+        // domain (module doc), and the gate's truth must survive
         // without it.
         if !normalized.occurrences[c_idx].vars.is_empty() {
             return false;
@@ -272,7 +272,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     true
 }
 
-// The foldability conditions, one named predicate each (the chase
+// The foldability conditions, one named predicate each (the grounding
 // conditions' naming discipline — `join_covers_full_key`,
 // `target_otherwise_unused`); each unit-tested in isolation (tests.rs).
 
@@ -295,7 +295,7 @@ pub(super) fn payload_escapes(
 /// **Condition 1 (join half)** — the occurrence's live join variable:
 /// the variable bound at the id position `FieldId(0)`, if it is live
 /// outside the occurrence. A dead id variable is no join (the atom is
-/// then a guard candidate — and a var-binding guard refuses, module
+/// then a gate candidate — and a var-binding gate refuses, module
 /// doc).
 pub(super) fn join_id_var(
     normalized: &NormalizedQuery,
@@ -339,7 +339,7 @@ pub(crate) enum ResolvableFilter {
     /// A constant point inside the column's interval.
     PointIn { field: FieldId, point: u64 },
     /// A same-row point field inside an interval field.
-    FieldsContainPoint { interval: FieldId, point: FieldId },
+    FieldsPointIn { interval: FieldId, point: FieldId },
     /// The column's interval within a constant outer interval.
     Within {
         field: FieldId,
@@ -437,8 +437,8 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
             field: *field,
             point: *point,
         }),
-        FilterPredicate::FieldsContainPoint { interval, point } => {
-            Some(ResolvableFilter::FieldsContainPoint {
+        FilterPredicate::FieldsPointIn { interval, point } => {
+            Some(ResolvableFilter::FieldsPointIn {
                 interval: *interval,
                 point: *point,
             })
@@ -471,7 +471,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         }),
         // Param points/masks/intervals, `AnyPointIn`'s stage-3 set, and
         // measure filters refuse for the staging/error-timing reasons
-        // above. The unmatched `FieldsCompare` arm is Allen/Contains,
+        // above. The unmatched `FieldsCompare` arm is Allen/PointIn,
         // which normalization lowers to fixed filter shapes.
         FilterPredicate::FieldsCompare { .. }
         | FilterPredicate::PointIn { .. }
@@ -571,7 +571,7 @@ fn containment_into_id(
 /// comparison paths — encoded-word compares, the scalar `Allen`
 /// classify, never a batch kernel. Its narrowed input was minted by
 /// [`parse_resolvable`], so evaluation is total over the vocabulary.
-/// Crate-visible for the EXPLAIN surface (`exec/explain/into_stats.rs`),
+/// Crate-visible for the introspection surface (`exec/introspection/into_stats.rs`),
 /// which re-runs the σ to name the surviving handles.
 pub(crate) fn surviving_ids(relation: &Relation, filters: &[ResolvableFilter]) -> Vec<u64> {
     let layout = relation.layout();
@@ -629,13 +629,13 @@ fn row_satisfies(
             // The parser never constructs these; returning false keeps
             // the consumer total even if this crate-visible enum gains
             // another constructor in the future.
-            CmpOp::Allen { .. } | CmpOp::Contains => false,
+            CmpOp::Allen { .. } | CmpOp::PointIn => false,
         },
         ResolvableFilter::PointIn { field, point } => {
             let (start, end) = pair(*field);
             start <= *point && *point < end
         }
-        ResolvableFilter::FieldsContainPoint { interval, point } => {
+        ResolvableFilter::FieldsPointIn { interval, point } => {
             let (start, end) = pair(*interval);
             let p = word(*point);
             start <= p && p < end
@@ -707,8 +707,8 @@ fn remove_anti_probe(normalized: &mut NormalizedQuery, c_idx: usize) {
 /// The fold's rendered picture — `Kind{mastered == true}` — in the rule
 /// notation's value formats (`ir/render`, one notation on every
 /// diagnostic surface). Two readers: the rule-death verdict
-/// (`folded to ∅: …`) and EXPLAIN's fold line
-/// (`exec/explain/into_stats.rs`), off the folded occurrence's retained
+/// (`folded to ∅: …`) and introspection's fold line
+/// (`exec/introspect/into_stats.rs`), off the folded occurrence's retained
 /// filter list. A word at the relation's own id position prints its
 /// handle (a handle set for an attached membership) — the vocabulary's
 /// names on every surface a row id reaches.
@@ -779,7 +779,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push_str(" in ");
             out.push_str(name(field));
         }
-        FilterPredicate::FieldsContainPoint { interval, point } => {
+        FilterPredicate::FieldsPointIn { interval, point } => {
             out.push_str(name(point));
             out.push_str(" in ");
             out.push_str(name(interval));
@@ -879,7 +879,7 @@ fn op_symbol(op: CmpOp) -> &'static str {
         CmpOp::Gt => " > ",
         CmpOp::Ge => " >= ",
         CmpOp::Allen { .. } => " Allen ",
-        CmpOp::Contains => " contains ",
+        CmpOp::PointIn => " PointIn ",
     }
 }
 

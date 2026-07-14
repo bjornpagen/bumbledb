@@ -71,7 +71,7 @@ pub mod names {
     pub const VALIDATE: &str = "validate";
     /// Normalization. (-, -)
     pub const NORMALIZE: &str = "normalize";
-    /// Guard-vs-join classification. (-, -)
+    /// Key-probe-vs-join classification. (-, -)
     pub const CLASSIFY: &str = "classify";
     /// Statistics reads. (occurrences measured concretely, -)
     pub const STATS: &str = "stats";
@@ -82,13 +82,13 @@ pub mod names {
     /// COLT construction at prepare. (-, -)
     pub const BUILD_COLTS: &str = "build_colts";
 
-    /// One prepared execution. (result rows, -)
+    /// One prepared execution. (answers, -)
     pub const EXECUTE: &str = "execute";
     /// One rule of the loop, under the execute span — the index rides in
     /// the name (`RULE[index]`; the validation cap `crate::ir::MAX_RULES`
     /// = 16 bounds it). (bindings emitted, absorbed by the spanning
     /// seen-set) — both zero on uncounted paths (the release executor
-    /// counts nothing; trace and EXPLAIN runs count).
+    /// counts nothing; trace and introspection runs count).
     pub const RULE: [&str; 16] = [
         "rule_0", "rule_1", "rule_2", "rule_3", "rule_4", "rule_5", "rule_6", "rule_7", "rule_8",
         "rule_9", "rule_10", "rule_11", "rule_12", "rule_13", "rule_14", "rule_15",
@@ -110,8 +110,8 @@ pub mod names {
     pub const JOIN: &str = "join";
     /// Sink finalization into the result buffer. (-, -)
     pub const FINALIZE: &str = "finalize";
-    /// The guard-probe access path. (1 hit / 0 miss, -)
-    pub const GUARD_PROBE: &str = "guard_probe";
+    /// The key-probe access path. (1 hit / 0 miss, -)
+    pub const KEY_PROBE: &str = "key_probe";
     /// One occurrence's selection-level probe (docs/architecture/40-execution.md).
     /// (occurrence index, 1 hit / 0 miss)
     pub const SELECT_PROBE: &str = "select_probe";
@@ -148,7 +148,7 @@ pub mod names {
     pub const APPLY_INSERTS: &str = "apply_inserts";
     /// Phase 3, containment source side. (satisfying source probes, -)
     pub const JUDGMENT_SOURCE: &str = "judgment_source";
-    /// Phase 3, containment target side. (disestablished guards scanned, -)
+    /// Phase 3, containment target side. (disestablished determinants scanned, -)
     pub const JUDGMENT_TARGET: &str = "judgment_target";
     /// Phase 4. (pending interns flushed, -)
     pub const COUNTERS_FLUSH: &str = "counters_flush";
@@ -453,7 +453,7 @@ pub struct SpanGuard;
 impl SpanGuard {
     /// Sets the payload args (no-op: the `trace` feature is off).
     #[inline]
-    pub fn set_args(&mut self, _a0: u64, _a1: u64) {}
+    pub fn set_args(&mut self, _: u64, _: u64) {}
 
     /// Ends the span (no-op: the `trace` feature is off).
     #[inline]
@@ -485,7 +485,7 @@ pub fn finish_capture() -> Vec<TraceEvent> {
 #[cfg(not(feature = "trace"))]
 #[inline]
 #[must_use]
-pub fn span(_name: &'static str, _cat: Category) -> SpanGuard {
+pub fn span(_: &'static str, _: Category) -> SpanGuard {
     SpanGuard
 }
 
@@ -493,14 +493,14 @@ pub fn span(_name: &'static str, _cat: Category) -> SpanGuard {
 #[cfg(not(feature = "trace"))]
 #[inline]
 #[must_use]
-pub fn span_args(_name: &'static str, _cat: Category, _a0: u64, _a1: u64) -> SpanGuard {
+pub fn span_args(_: &'static str, _: Category, _: u64, _: u64) -> SpanGuard {
     SpanGuard
 }
 
 /// Records a point event (no-op: the `trace` feature is off).
 #[cfg(not(feature = "trace"))]
 #[inline]
-pub fn event(_name: &'static str, _cat: Category, _a0: u64, _a1: u64) {}
+pub fn event(_: &'static str, _: Category, _: u64, _: u64) {}
 
 #[cfg(all(test, feature = "trace"))]
 mod tests;

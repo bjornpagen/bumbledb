@@ -1,9 +1,12 @@
 //! Structured per-execution statistics (docs/architecture/60-validation.md): the data
-//! behind EXPLAIN, as plain structs — estimates vs actuals, cover
+//! behind plan introspection, as plain structs — estimates vs actuals, cover
 //! choices, probe hit rates, batching, skips — for tooling that wants
 //! numbers, not a rendered string. Obtained via `Snapshot::profile`
 //! (ANALYZE semantics: the query really executes, with counting
-//! instrumentation; allocation-sanctioned exactly like `explain`).
+//! instrumentation; allocation-sanctioned exactly like `introspect`).
+
+/// The version shared by rendered and structured plan introspection.
+pub const INTROSPECTION_VERSION: u16 = 2;
 
 /// One execution's counted statistics: per-rule node stats under the
 /// head-level union accounting (docs/architecture/40-execution.md § the
@@ -11,6 +14,9 @@
 /// the union). The single-rule program is the one-element list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionStats {
+    /// The introspection contract version. Any content or ordering change
+    /// to either surface increments this value and the rendered marker.
+    pub introspection_version: u16,
     /// Per rule, in rule order.
     pub rules: Vec<RuleStats>,
     /// Bindings emitted to the sink across all rules (the sum of the
@@ -22,7 +28,7 @@ pub struct ExecutionStats {
     /// programs and unproven pairs. This is diagnostic knowledge; the
     /// spanning seen-set stays in either case.
     pub disjoint_rules: Option<DisjointRules>,
-    /// Rules the subsumption pass deleted at prepare (`plan/chase.rs`):
+    /// Rules the subsumption pass deleted at prepare (`plan/ground.rs`):
     /// after per-rule elimination the subsuming rule's normalized body
     /// contains the deleted rule's, so the union loses nothing. Indices
     /// are lowered-rule indices (the DNF-distributed program validation
@@ -31,7 +37,7 @@ pub struct ExecutionStats {
     pub subsumed: Vec<SubsumedRule>,
     /// Rules the statically-empty fold refuted at prepare
     /// (`ir/normalize/fold.rs`): each carries its killing condition —
-    /// EXPLAIN's `statically empty: rule N: <picture>` line. Indices are
+    /// introspection's `statically empty: rule N: <picture>` line. Indices are
     /// lowered-rule indices, exactly as `subsumed`; a program of only
     /// dead rules represented by an empty prepared program.
     pub dead: Vec<DeadRule>,
@@ -49,7 +55,7 @@ pub struct DeadRule {
     pub rendered: String,
 }
 
-/// One deleted rule with its subsumer (EXPLAIN's `subsumed: rule D by
+/// One deleted rule with its subsumer (introspection's `subsumed: rule D by
 /// rule K`). Both indices are lowered-rule indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubsumedRule {
@@ -60,8 +66,8 @@ pub struct SubsumedRule {
 }
 
 /// The disjointness witness, rendered by name: the relation and field
-/// whose differing pinned literals make the rules' head rows
-/// collision-free (EXPLAIN's `disjoint_rules: proven (R.f)`).
+/// whose differing pinned literals make the rules' head answers
+/// collision-free (introspection's `disjoint_rules: proven (R.f)`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisjointRules {
     /// The witness relation's name.
@@ -73,23 +79,27 @@ pub struct DisjointRules {
 /// One rule's counted execution under the shared sink.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleStats {
-    /// Per plan node, in node order (empty for guard-probe rules).
+    /// Whether this rule carries the proof that distinct facts imply
+    /// distinct bindings. A single-rule aggregate spends this witness to
+    /// omit its binding seen-set; a union retains its spanning set.
+    pub distinct_bindings: bool,
+    /// Per plan node, in node order (empty for key-probe rules).
     pub nodes: Vec<NodeStats>,
-    /// Occurrences the chase eliminated (`plan/chase.rs`), read straight
+    /// Occurrences the grounding eliminated (`plan/ground.rs`), read straight
     /// off the rule plan's `Role::Eliminated` marks — no separate list
     /// exists in the plan; this surface renders the marks. Empty for
-    /// guard probes (single-atom queries have nothing to pair).
+    /// key probes (single-atom queries have nothing to pair).
     pub eliminated: Vec<EliminatedOccurrence>,
-    /// Occurrences the chase-evaluator folded (`plan/chase/evaluate.rs`),
+    /// Occurrences the grounding-evaluator folded (`plan/ground/evaluate.rs`),
     /// read straight off the rule plan's `Role::Folded` marks exactly as
-    /// `eliminated` reads its own. Empty for guard probes.
+    /// `eliminated` reads its own. Empty for key probes.
     pub folded: Vec<FoldedOccurrence>,
     /// Per participating occurrence, in occurrence-id order: the
     /// statistics the rule's plan was costed with — every node `estimate`
     /// is estimated from (pinned rows at prepare), so a drifted plan is
     /// visible in one read of this surface (the pull-based signal is
-    /// `PreparedQuery::staleness`). Empty for guard probes (they read
-    /// no statistics); negated and chase-eliminated occurrences earned
+    /// `PreparedQuery::staleness`). Empty for key probes (they read
+    /// no statistics); negated and grounding-eliminated occurrences earned
     /// no statistics read at prepare and carry no entry.
     pub pinned: Vec<PinnedRows>,
     /// Bindings this rule emitted to the shared sink.
@@ -99,12 +109,12 @@ pub struct RuleStats {
     /// (`emitted - absorbed` were new). Zero under a single-rule
     /// distinct-bindings proof (nothing can be absorbed).
     pub absorbed: u64,
-    /// Present iff this rule classified as a guard probe.
-    pub guard: Option<GuardStats>,
+    /// Present iff this rule classified as a key probe.
+    pub key_probe: Option<KeyProbeStats>,
 }
 
-/// One chase-eliminated occurrence: never joined, its view never built —
-/// the plan solved a smaller problem (`plan/chase.rs`).
+/// One grounding-eliminated occurrence: never joined, its view never built —
+/// the plan solved a smaller problem (`plan/ground.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EliminatedOccurrence {
     /// The occurrence index (`OccId`) in the normalized occurrence table.
@@ -118,11 +128,11 @@ pub struct EliminatedOccurrence {
     pub rendered: String,
 }
 
-/// One chase-folded occurrence (`plan/chase/evaluate.rs`): a closed
+/// One grounding-folded occurrence (`plan/ground/evaluate.rs`): a closed
 /// atom evaluated against its sealed extension at prepare — never
 /// joined, its view never bound, its image never built; the surviving
 /// id-set rides the siblings' selection machinery as a plan constant.
-/// EXPLAIN's line: `folded: Kind{mastered == true} → {DirectPass,
+/// introspection's line: `folded: Kind{mastered == true} → {DirectPass,
 /// JudgedPass}` (negated: `folded: !Kind{…} → {…} rejected` — the
 /// attached set is then the complement). The handle set IS the payload:
 /// handles are the vocabulary's names, and `|S|` is its length.
@@ -215,9 +225,9 @@ pub struct CoverStats {
     pub hashes: u64,
 }
 
-/// The guard-probe outcome.
+/// The key-probe outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GuardStats {
+pub struct KeyProbeStats {
     /// Whether the probe found a fact.
     pub hit: bool,
 }

@@ -107,7 +107,7 @@ fn busy_scan_query() -> Query {
 const ACTIVE_SPAN: i64 = 22_000_000;
 
 fn window(at: i64, width: i64) -> Value {
-    Value::IntervalI64(at, at + width)
+    Value::IntervalI64(bumbledb::Interval::<i64>::new(at, at + width).expect("nonempty interval"))
 }
 
 fn busy_scan_params(_: &GenConfig) -> Vec<Draw> {
@@ -153,8 +153,13 @@ fn meets_chain_query() -> Query {
 
 fn meets_chain_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = CalSizes::of(cfg.scale);
-    let full = Value::IntervalI64(CAL_BASE - HOUR, CAL_HORIZON);
-    let quarter = Value::IntervalI64(CAL_BASE - HOUR, CAL_BASE + ACTIVE_SPAN / 4);
+    let full = Value::IntervalI64(
+        bumbledb::Interval::<i64>::new(CAL_BASE - HOUR, CAL_HORIZON).expect("nonempty interval"),
+    );
+    let quarter = Value::IntervalI64(
+        bumbledb::Interval::<i64>::new(CAL_BASE - HOUR, CAL_BASE + ACTIVE_SPAN / 4)
+            .expect("nonempty interval"),
+    );
     vec![
         scalar_draw(vec![Value::U64(0), full.clone()]),
         scalar_draw(vec![Value::U64(sizes.persons / 2), full.clone()]),
@@ -166,7 +171,7 @@ fn meets_chain_params(cfg: &GenConfig) -> Vec<Draw> {
 /// `rsvp_union` — **times the DU whole-read: a three-rule program, one
 /// rule per RSVP arm through one spanning union seen-set** (rules as
 /// data, one sink, and cross-rule set semantics). The distinct `rsvp`
-/// selections still prove the arms disjoint and EXPLAIN reports that
+/// selections still prove the arms disjoint and introspection reports that
 /// knowledge, but execution deliberately keeps the spanning set after
 /// the measured refutation in `docs/architecture/40-execution.md`.
 fn rsvp_union_query() -> Query {
@@ -314,7 +319,10 @@ fn free_busy_query() -> Query {
 
 fn free_busy_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = CalSizes::of(cfg.scale);
-    let wide = Value::IntervalI64(CAL_BASE - HOUR, CAL_BASE + ACTIVE_SPAN);
+    let wide = Value::IntervalI64(
+        bumbledb::Interval::<i64>::new(CAL_BASE - HOUR, CAL_BASE + ACTIVE_SPAN)
+            .expect("nonempty interval"),
+    );
     let narrow = window(CAL_BASE + ACTIVE_SPAN / 8, ACTIVE_SPAN / 64);
     vec![
         scalar_draw(vec![Value::U64(0), wide.clone()]),
@@ -326,8 +334,8 @@ fn free_busy_params(cfg: &GenConfig) -> Vec<Draw> {
 
 /// `claim_hours` — **times the measure: `Sum(Duration)` grouped by claim
 /// arm** (PRD 10 — the one arithmetic the point-set denotation defines),
-/// under the `Allen(DISJOINT)` ray guard against `[CAL_HORIZON, ∞)`:
-/// rays have no finite measure, and the guard keeps exactly the bounded
+/// under the `Allen(DISJOINT)` ray filter against `[CAL_HORIZON, ∞)`:
+/// rays have no finite measure, and the filter keeps exactly the bounded
 /// claims (every bounded end sits below the horizon), the documented
 /// host idiom. The `source` binding is the claim key, so the fold's
 /// distinct-bindings elision engages (key coverage — the `balance`
@@ -337,7 +345,7 @@ fn claim_hours_query() -> Query {
     Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(2),
             },
@@ -354,8 +362,7 @@ fn claim_hours_query() -> Query {
         conditions: vec![allen(
             var(2),
             Term::Literal(Value::IntervalI64(
-                CAL_HORIZON,
-                bumbledb::Interval::<i64>::MAX_END,
+                bumbledb::Interval::<i64>::ray(CAL_HORIZON).expect("calendar ray"),
             )),
             AllenMask::DISJOINT,
         )],
@@ -453,7 +460,7 @@ pub const FREE_BUSY_SLOTS: &[ParamSlot] = &[
 ];
 
 /// `claim_hours`: the normative fold template over the distinct binding
-/// set, the ray guard's 4 disjoint basics OR'd against the horizon
+/// set, the ray filter's 4 disjoint basics OR'd against the horizon
 /// literal (`[1800000000, ∞)` — ∞ = `i64::MAX`, the largest end word).
 pub const CLAIM_HOURS: &str = "SELECT v0, SUM(v2_end - v2_start) FROM (SELECT DISTINCT t0.\"arm\" AS v0, t0.\"source\" AS v1, t0.\"span_start\" AS v2_start, t0.\"span_end\" AS v2_end FROM \"Claim\" AS t0 WHERE ((t0.\"span_end\" < 1800000000) OR (t0.\"span_end\" = 1800000000) OR (9223372036854775807 = t0.\"span_start\") OR (9223372036854775807 < t0.\"span_start\"))) GROUP BY v0";
 
@@ -538,7 +545,7 @@ pub fn all() -> &'static [CalFamily] {
             params: claim_hours_params,
             golden_sql: CLAIM_HOURS,
             hand_param_slots: None,
-            param_policy: "No params — the ray-guarded full measure fold; one empty draw.",
+            param_policy: "No params — the ray-filtered full measure fold; one empty draw.",
             indexes: &[(
                 "idx_claim_arm_span",
                 "Claim",
@@ -634,7 +641,7 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
         let start = CAL_BASE - HOUR + i64::try_from(rng.range(span)).expect("fits");
         let width = 1 + i64::try_from(rng.range(u64::try_from(max_width).expect("positive")))
             .expect("fits");
-        Value::IntervalI64(start, start + width)
+        window(start, width)
     };
     match name {
         "busy_scan" => Some(scalar_draw(vec![window(rng, ACTIVE_SPAN / 8)])),
@@ -670,7 +677,7 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
 /// these make every join produce witnesses).
 #[must_use]
 pub fn unit_draw(name: &str, seed: u64, sizes: &CalSizes) -> Draw {
-    let wide = Value::IntervalI64(CAL_BASE - HOUR, CAL_HORIZON - 1);
+    let wide = window(CAL_BASE - HOUR, CAL_HORIZON - CAL_BASE + HOUR - 1);
     match name {
         "busy_scan" => scalar_draw(vec![wide]),
         "meets_chain" | "free_busy" => scalar_draw(vec![Value::U64(0), wide]),

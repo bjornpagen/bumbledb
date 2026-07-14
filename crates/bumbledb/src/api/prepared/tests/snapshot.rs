@@ -9,7 +9,7 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
-    let mut out = ResultBuffer::new();
+    let mut out = Answers::new();
     prepared
         .execute(
             &txn,
@@ -76,7 +76,7 @@ fn prepare_pins_no_images_and_reaping_releases_them() {
     // first execution at the new generation reaps the stale parked
     // binding and rebuilds the active one.
     insert_postings(&env, &schema, &[(3, 7, "c", 30)]);
-    cache.evict_older_than(2);
+    cache.evict_older_than(crate::GenerationId::from_storage(2));
     let txn = env.read_txn().expect("txn");
     prepared
         .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100)])

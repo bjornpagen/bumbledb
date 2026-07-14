@@ -1,10 +1,22 @@
-use super::{Report, RulePlan};
-use crate::exec::dispatch::GuardPlan;
+use super::{IntrospectionReport, RulePlan};
+use crate::exec::dispatch::KeyProbePlan;
 use crate::plan::fj::ValidatedPlan;
 use std::fmt;
 
-impl fmt::Display for Report<'_> {
+impl fmt::Display for IntrospectionReport<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "introspection v{}",
+            crate::api::stats::INTROSPECTION_VERSION
+        )?;
+        if let Some(header) = &self.header {
+            writeln!(f, "query:\n{}", header.query)?;
+            writeln!(f, "predicate: {}", header.predicate)?;
+            if let Some(pending) = &header.pending_literal {
+                write!(f, "{pending}")?;
+            }
+        }
         let multi = self.rules.len() > 1;
         for (rule_idx, rule) in self.rules.iter().enumerate() {
             let stats = &self.stats.rules[rule_idx];
@@ -12,12 +24,21 @@ impl fmt::Display for Report<'_> {
                 writeln!(f, "rule {rule_idx}:")?;
             }
             match rule {
-                RulePlan::GuardProbe(plan) => fmt_guard_probe(f, plan)?,
+                RulePlan::KeyProbe(plan) => fmt_key_probe(f, plan)?,
                 RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, stats)?,
                 // The reasons — one per dead rule — print below with
                 // the death record (`stats.dead`).
                 RulePlan::Empty => writeln!(f, "access path: statically empty")?,
             }
+            writeln!(
+                f,
+                "  distinct_bindings: {}",
+                if stats.distinct_bindings {
+                    "proven"
+                } else {
+                    "unproven"
+                }
+            )?;
             // The union accounting, per rule (docs/architecture/
             // 40-execution.md § the rule loop): what this rule handed the
             // shared sink and what the spanning seen-set absorbed.
@@ -49,7 +70,7 @@ impl fmt::Display for Report<'_> {
                 None => writeln!(f, "disjoint_rules: unproven")?,
             }
         }
-        // The subsumption record (`plan/chase.rs`): rules deleted at
+        // The subsumption record (`plan/ground.rs`): rules deleted at
         // prepare with the subsuming rule's index — lowered-rule
         // indices; the per-rule sections above are the survivors.
         for subsumed in &self.stats.subsumed {
@@ -69,8 +90,8 @@ impl fmt::Display for Report<'_> {
     }
 }
 
-fn fmt_guard_probe(f: &mut fmt::Formatter<'_>, plan: &GuardPlan) -> fmt::Result {
-    writeln!(f, "access path: guard probe")?;
+fn fmt_key_probe(f: &mut fmt::Formatter<'_>, plan: &KeyProbePlan) -> fmt::Result {
+    writeln!(f, "access path: key probe")?;
     writeln!(f, "  relation: {}", plan.relation.0)?;
     match plan.statement {
         Some(s) => writeln!(f, "  key statement: {}", s.0)?,
@@ -108,7 +129,7 @@ fn fmt_free_join(
         )?;
         // The pin record: what this occurrence's estimates derive from
         // (absent for occurrences that earned no statistics read —
-        // negated, chase-eliminated).
+        // negated, grounding-eliminated).
         if let Some(pin) = stats
             .pinned
             .iter()
@@ -125,7 +146,7 @@ fn fmt_free_join(
             }
         }
     }
-    // The chase's marks (`plan/chase.rs`): occurrences the
+    // The grounding's marks (`plan/ground.rs`): occurrences the
     // plan never joined, with the licensing statement.
     for eliminated in &stats.eliminated {
         writeln!(
@@ -134,7 +155,7 @@ fn fmt_free_join(
             eliminated.relation, eliminated.rendered,
         )?;
     }
-    // The evaluator's marks (`plan/chase/evaluate.rs`): closed atoms
+    // The evaluator's marks (`plan/ground/evaluate.rs`): closed atoms
     // evaluated at prepare — the filters and the surviving handle set
     // (the vocabulary's names, the set IS the payload); a negated
     // fold's attached set is the complement, and the named handles are

@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn reordering_a_projection_changes_the_fingerprint() {
-        // X is ordered (the order defines the guard key): the same field
+        // X is ordered (the order defines the determinant key): the same field
         // *set* in the other written order is a different schema.
         let of_projection = |fields: [u16; 2]| {
             fingerprint(&schema_of(SchemaDescriptor {

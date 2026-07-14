@@ -4,7 +4,7 @@
 
 use super::*;
 
-mod closed_member;
+mod member_set;
 mod reject;
 mod valid;
 

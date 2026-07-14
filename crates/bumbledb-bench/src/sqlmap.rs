@@ -369,11 +369,17 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
 pub fn interval_halves(value: &Value) -> (rusqlite::types::Value, rusqlite::types::Value) {
     use rusqlite::types::Value as Sql;
     match value {
-        Value::IntervalU64(start, end) => (
-            Sql::Integer(i64::try_from(*start).expect("the SQLite mapping axiom: u64 < 2^63")),
-            Sql::Integer(i64::try_from(*end).expect("the SQLite mapping axiom: u64 < 2^63")),
+        Value::IntervalU64(interval) => (
+            Sql::Integer(
+                i64::try_from(interval.start()).expect("the SQLite mapping axiom: u64 < 2^63"),
+            ),
+            Sql::Integer(
+                i64::try_from(interval.end()).expect("the SQLite mapping axiom: u64 < 2^63"),
+            ),
         ),
-        Value::IntervalI64(start, end) => (Sql::Integer(*start), Sql::Integer(*end)),
+        Value::IntervalI64(interval) => {
+            (Sql::Integer(interval.start()), Sql::Integer(interval.end()))
+        }
         scalar => panic!("interval_halves on a scalar {scalar:?}"),
     }
 }
@@ -450,11 +456,17 @@ pub fn interval_from_sql(
         return Err(format!("interval columns hold start {start} >= end {end}"));
     }
     match element {
-        IntervalElement::U64 => Ok(Value::IntervalU64(
-            u64::try_from(*start).map_err(|_| format!("u64 interval start holds {start}"))?,
-            u64::try_from(*end).map_err(|_| format!("u64 interval end holds {end}"))?,
-        )),
-        IntervalElement::I64 => Ok(Value::IntervalI64(*start, *end)),
+        IntervalElement::U64 => {
+            let start =
+                u64::try_from(*start).map_err(|_| format!("u64 interval start holds {start}"))?;
+            let end = u64::try_from(*end).map_err(|_| format!("u64 interval end holds {end}"))?;
+            bumbledb::Interval::<u64>::new(start, end)
+                .map(Value::IntervalU64)
+                .ok_or_else(|| format!("interval columns hold start {start} >= end {end}"))
+        }
+        IntervalElement::I64 => bumbledb::Interval::<i64>::new(*start, *end)
+            .map(Value::IntervalI64)
+            .ok_or_else(|| format!("interval columns hold start {start} >= end {end}")),
     }
 }
 
@@ -680,10 +692,14 @@ mod tests {
     fn interval_halves_reassemble_through_the_pair_decode() {
         use rusqlite::types::Value as Sql;
         for value in [
-            Value::IntervalI64(i64::MIN, i64::MAX),
-            Value::IntervalI64(-5, 9),
-            Value::IntervalU64(0, (1 << 63) - 1),
-            Value::IntervalU64(5, 6),
+            Value::IntervalI64(
+                bumbledb::Interval::<i64>::new(i64::MIN, i64::MAX).expect("nonempty interval"),
+            ),
+            Value::IntervalI64(bumbledb::Interval::<i64>::new(-5, 9).expect("nonempty interval")),
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(0, (1 << 63) - 1).expect("nonempty interval"),
+            ),
+            Value::IntervalU64(bumbledb::Interval::<u64>::new(5, 6).expect("nonempty interval")),
         ] {
             let (start, end) = interval_halves(&value);
             let element = match value {
@@ -725,15 +741,44 @@ mod tests {
             vec![
                 Value::U64(1),
                 Value::U64(1),
-                Value::IntervalI64(i64::MIN, i64::MAX),
+                Value::IntervalI64(
+                    bumbledb::Interval::<i64>::new(i64::MIN, i64::MAX).expect("nonempty interval"),
+                ),
             ],
-            vec![Value::U64(2), Value::U64(1), Value::IntervalI64(-5, 9)],
-            vec![Value::U64(3), Value::U64(1), Value::IntervalI64(-9, -8)],
+            vec![
+                Value::U64(2),
+                Value::U64(1),
+                Value::IntervalI64(
+                    bumbledb::Interval::<i64>::new(-5, 9).expect("nonempty interval"),
+                ),
+            ],
+            vec![
+                Value::U64(3),
+                Value::U64(1),
+                Value::IntervalI64(
+                    bumbledb::Interval::<i64>::new(-9, -8).expect("nonempty interval"),
+                ),
+            ],
         ];
         let spans = [
-            vec![Value::U64(1), Value::IntervalU64(0, 1)],
-            vec![Value::U64(2), Value::IntervalU64(0, (1 << 63) - 1)],
-            vec![Value::U64(3), Value::IntervalU64(5, 6)],
+            vec![
+                Value::U64(1),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(0, 1).expect("nonempty interval"),
+                ),
+            ],
+            vec![
+                Value::U64(2),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(0, (1 << 63) - 1).expect("nonempty interval"),
+                ),
+            ],
+            vec![
+                Value::U64(3),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(5, 6).expect("nonempty interval"),
+                ),
+            ],
         ];
         let mandate = schema.relation(RelationId(2));
         let span = schema.relation(RelationId(3));

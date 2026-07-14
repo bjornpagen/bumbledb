@@ -1,4 +1,4 @@
-use super::{ResolveMemo, ResultBuffer};
+use super::{Answers, ResolveMemo};
 
 use crate::error::{Error, Result};
 use crate::obs;
@@ -27,7 +27,7 @@ impl ResolveMemo {
         &mut self,
         txn: &ReadTxn<'_>,
         word: u64,
-        buffer: &mut ResultBuffer,
+        buffer: &mut Answers,
     ) -> Result<(usize, usize)> {
         if let Some((last_word, range)) = self.last
             && last_word == word

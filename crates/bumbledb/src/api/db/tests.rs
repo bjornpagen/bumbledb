@@ -178,7 +178,7 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
             tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".as_bytes().into())])?,
             Some(entry("a", 1))
         );
-        // Delete: the guard map records absence.
+        // Delete: the determinant map records absence.
         assert!(tx.delete_dyn(ENTRY, &entry("a", 1))?);
         assert_eq!(
             tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".as_bytes().into())])?,

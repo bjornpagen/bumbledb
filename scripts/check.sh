@@ -29,9 +29,15 @@ echo "==> allocation gate (release): steady-state + escalating high-water"
 # flag keeps even an accidental second test from turning it flaky.
 cargo test --features alloc-counter --test alloc_gate --release -- --test-threads=1
 
-# The fold-off fuzz-oracle feature is load-bearing for the fuzz crate's
-# rewrites dual-pipeline differential (the crucible packet (git ecec1dc3)): the engine
-# suite must stay green with the off switch compiled in.
+# The ground-off and fold-off fuzz-oracle features are load-bearing for
+# the fuzz crate's rewrites dual-pipeline differential (the crucible
+# packet (git ecec1dc3)): the engine suite must stay green with each off
+# switch compiled in. The default workspace test/clippy invocations above
+# are the feature-off matrix; these are the feature-on matrix.
+echo "==> bumbledb with the ground-off fuzz-oracle feature (clippy + tests)"
+cargo clippy -p bumbledb --all-targets --features ground-off -- -D warnings
+cargo test -p bumbledb --features ground-off
+
 echo "==> bumbledb with the fold-off fuzz-oracle feature (tests)"
 cargo test -p bumbledb --features fold-off
 

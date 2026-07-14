@@ -115,14 +115,14 @@ impl From<Interval<u64>> for crate::value::Value {
     /// [`Interval`] type, so a converted literal already satisfies
     /// `start < end`.
     fn from(interval: Interval<u64>) -> Self {
-        Self::IntervalU64(interval.start(), interval.end())
+        Self::IntervalU64(interval)
     }
 }
 
 impl From<Interval<i64>> for crate::value::Value {
     /// Bounds discipline as [`From<Interval<u64>>`].
     fn from(interval: Interval<i64>) -> Self {
-        Self::IntervalI64(interval.start(), interval.end())
+        Self::IntervalI64(interval)
     }
 }
 
@@ -162,5 +162,13 @@ mod tests {
         // MAX is not a point: a ray starting at the ceiling is empty.
         assert!(Interval::<u64>::ray(u64::MAX).is_none());
         assert!(Interval::<i64>::ray(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn value_variants_accept_only_checked_intervals() {
+        let unsigned = Interval::<u64>::new(3, 9).expect("checked");
+        let signed = Interval::<i64>::new(-5, 9).expect("checked");
+        assert_eq!(crate::Value::IntervalU64(unsigned), unsigned.into());
+        assert_eq!(crate::Value::IntervalI64(signed), signed.into());
     }
 }

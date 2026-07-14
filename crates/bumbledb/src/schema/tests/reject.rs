@@ -1,5 +1,12 @@
 use super::*;
-use crate::error::SchemaError;
+use crate::error::{SchemaError, TargetKeyCandidate};
+
+fn target_key(key: u16, projection: &[FieldId]) -> TargetKeyCandidate {
+    TargetKeyCandidate {
+        key: KeyId(key),
+        projection: projection.into(),
+    }
+}
 
 // Field-level checks first, then the statement reject corpus: one test per
 // line of the validation roster (docs/architecture/30-dependencies.md
@@ -105,6 +112,78 @@ fn two_relations(
     }
 }
 
+#[test]
+fn equality_rejects_a_singleton_reverse_projection_without_a_left_key() {
+    // `S(a) == T(x)` lowers to statements 1 and 2 after T's key. The
+    // forward half resolves T(x); the reverse half targets unkeyed S(a)
+    // and must cite that reverse statement and relation.
+    let decl = two_relations(
+        vec![field("a", ValueType::U64)],
+        vec![field("x", ValueType::U64)],
+        vec![
+            fd(RelationId(1), &[FieldId(0)]),
+            containment(
+                side(RelationId(0), &[FieldId(0)]),
+                side(RelationId(1), &[FieldId(0)]),
+            ),
+            containment(
+                side(RelationId(1), &[FieldId(0)]),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+        ],
+    );
+    let StatementDescriptor::Containment { target, .. } = &decl.statements[2] else {
+        panic!("the cited reverse half is a containment");
+    };
+    assert_eq!(target.relation, RelationId(0));
+    assert_eq!(&*target.projection, &[FieldId(0)]);
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::NoMatchingTargetKey {
+            statement: StatementId(2),
+            target: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+            available: Box::new([]),
+        }
+    );
+}
+
+#[test]
+fn equality_rejects_a_composite_reverse_projection_without_a_left_key() {
+    // Mixed (u64, i64) product. T's key is declared in reordered (y, x)
+    // order, proving the forward half resolves by exact field set and a
+    // permutation; only the reverse half targeting unkeyed S(a, b) fails.
+    let decl = two_relations(
+        vec![field("a", ValueType::U64), field("b", ValueType::I64)],
+        vec![field("x", ValueType::U64), field("y", ValueType::I64)],
+        vec![
+            fd(RelationId(1), &[FieldId(1), FieldId(0)]),
+            containment(
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+            ),
+            containment(
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+            ),
+        ],
+    );
+    let StatementDescriptor::Containment { target, .. } = &decl.statements[2] else {
+        panic!("the cited reverse half is a containment");
+    };
+    assert_eq!(target.relation, RelationId(0));
+    assert_eq!(&*target.projection, &[FieldId(0), FieldId(1)]);
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::NoMatchingTargetKey {
+            statement: StatementId(2),
+            target: RelationId(0),
+            projection: Box::new([FieldId(0), FieldId(1)]),
+            available: Box::new([]),
+        }
+    );
+}
+
 /// Roster "unknown relation … ids".
 #[test]
 fn rejects_statement_unknown_relation() {
@@ -192,7 +271,7 @@ fn rejects_duplicate_selection_field() {
     );
 }
 
-/// Roster ">1 interval position": 2-D exclusion, which the ordered guard
+/// Roster ">1 interval position": 2-D exclusion, which the ordered determinant
 /// cannot answer.
 #[test]
 fn rejects_functionality_with_two_intervals() {
@@ -253,7 +332,7 @@ fn rejects_duplicate_functionality() {
 }
 
 /// The FD duplicate rule is a *set* rule: a permuted projection asserts the
-/// same judgment (its guard is pure write amplification), and rejecting it
+/// same judgment (its determinant is pure write amplification), and rejecting it
 /// is what keeps target-key resolution — a permutation match — unambiguous.
 #[test]
 fn rejects_permuted_duplicate_functionality() {
@@ -271,12 +350,12 @@ fn rejects_permuted_duplicate_functionality() {
     );
 }
 
-/// Roster "guard width overflow": one u64 field more than
-/// `MAX_GUARD_WIDTH` (the storage-side constant, imported — never
+/// Roster "determinant width overflow": one u64 field more than
+/// `MAX_DETERMINANT_WIDTH` (the storage-side constant, imported — never
 /// duplicated) admits.
 #[test]
-fn rejects_guard_overflow() {
-    let count = crate::storage::keys::MAX_GUARD_WIDTH / 8 + 1;
+fn rejects_determinant_overflow() {
+    let count = crate::storage::keys::MAX_DETERMINANT_WIDTH / 8 + 1;
     let fields: Vec<FieldDescriptor> = (0..count)
         .map(|i| field(&format!("f{i}"), ValueType::U64))
         .collect();
@@ -287,7 +366,7 @@ fn rejects_guard_overflow() {
     decl.statements.push(fd(RelationId(0), &projection));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::GuardKeyTooWide {
+        SchemaError::DeterminantKeyTooWide {
             statement: StatementId(0),
             width: count * 8
         }
@@ -440,38 +519,6 @@ fn rejects_non_utf8_string_selection_literal() {
 
 /// The interval literal bound rule: `start >= end` denotes no points, and a
 /// fact never denotes nothing.
-#[test]
-fn rejects_empty_interval_selection_literal() {
-    let decl = two_relations(
-        vec![
-            field("a", ValueType::U64),
-            field(
-                "span",
-                ValueType::Interval {
-                    element: IntervalElement::U64,
-                },
-            ),
-        ],
-        vec![field("x", ValueType::U64)],
-        vec![containment(
-            side_where(
-                RelationId(0),
-                &[FieldId(0)],
-                vec![(FieldId(1), Value::IntervalU64(5, 5))],
-            ),
-            side(RelationId(1), &[FieldId(0)]),
-        )],
-    );
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::SelectionIntervalEmpty {
-            statement: StatementId(0),
-            relation: RelationId(0),
-            field: FieldId(1)
-        }
-    );
-}
-
 /// Roster "IND whose target projection matches no key of the target".
 #[test]
 fn rejects_no_matching_target_key() {
@@ -487,8 +534,36 @@ fn rejects_no_matching_target_key() {
         decl.validate().unwrap_err(),
         SchemaError::NoMatchingTargetKey {
             statement: StatementId(0),
-            relation: RelationId(1)
+            target: RelationId(1),
+            projection: Box::new([FieldId(0)]),
+            available: Box::new([]),
         }
+    );
+}
+
+#[test]
+fn target_key_diagnostic_lists_the_requested_projection_and_every_available_key() {
+    let decl = two_relations(
+        vec![field("a", ValueType::U64), field("b", ValueType::U64)],
+        vec![
+            field("x", ValueType::U64),
+            field("y", ValueType::U64),
+            field("z", ValueType::U64),
+        ],
+        vec![
+            fd(RelationId(1), &[FieldId(0)]),
+            fd(RelationId(1), &[FieldId(1), FieldId(2)]),
+            containment(
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+            ),
+        ],
+    );
+    let error = decl.validate().unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "statement 2: target relation 1 projection {0, 1} matches no declared key; \
+         available keys: key 0 {0}; key 1 {1, 2}"
     );
 }
 
@@ -510,12 +585,21 @@ fn rejects_interval_containment_without_pointwise_key() {
             ),
         ],
     );
+    let error = decl.validate().unwrap_err();
     assert_eq!(
-        decl.validate().unwrap_err(),
+        error,
         SchemaError::NoPointwiseTargetKey {
             statement: StatementId(1),
-            relation: RelationId(1)
+            target: RelationId(1),
+            projection: Box::new([FieldId(0), FieldId(1)]),
+            available: Box::new([target_key(0, &[FieldId(0)])]),
         }
+    );
+    assert_eq!(
+        error.to_string(),
+        "statement 1: target relation 1 projection {0, 1} matches no declared key; \
+         available keys: key 0 {0}; hint: declare the exact pointwise key \
+         `R(prefix…, interval) -> R`"
     );
 }
 
@@ -679,33 +763,6 @@ fn rejects_an_extension_value_type_mismatch() {
 }
 
 #[test]
-fn rejects_an_empty_interval_axiom() {
-    // The constructor law holds for axioms too: a malformed ground axiom
-    // is a schema error, not corruption.
-    let decl = SchemaDescriptor {
-        relations: vec![closed(
-            "Quarter",
-            vec![field(
-                "span",
-                ValueType::Interval {
-                    element: IntervalElement::U64,
-                },
-            )],
-            vec![row("Q1", vec![Value::IntervalU64(5, 5)])],
-        )],
-        statements: vec![],
-    };
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::ExtensionIntervalEmpty {
-            relation: RelationId(0),
-            row: 0,
-            field: FieldId(1)
-        }
-    );
-}
-
-#[test]
 fn rejects_a_ray_axiom() {
     // The ray refusal (`docs/architecture/10-data-model.md`): `[s, ∞)` says the
     // theory's constant is still running, and a still-running span is
@@ -725,15 +782,25 @@ fn rejects_a_ray_axiom() {
         field: FieldId(1),
     };
     assert_eq!(
-        of_element(IntervalElement::U64, Value::IntervalU64(5, u64::MAX))
-            .validate()
-            .unwrap_err(),
+        of_element(
+            IntervalElement::U64,
+            Value::IntervalU64(
+                crate::Interval::<u64>::new(5, u64::MAX).expect("nonempty interval")
+            )
+        )
+        .validate()
+        .unwrap_err(),
         expected
     );
     assert_eq!(
-        of_element(IntervalElement::I64, Value::IntervalI64(5, i64::MAX))
-            .validate()
-            .unwrap_err(),
+        of_element(
+            IntervalElement::I64,
+            Value::IntervalI64(
+                crate::Interval::<i64>::new(5, i64::MAX).expect("nonempty interval")
+            )
+        )
+        .validate()
+        .unwrap_err(),
         expected
     );
 }
@@ -814,7 +881,12 @@ fn closed_window() -> RelationDescriptor {
                 element: IntervalElement::U64,
             },
         )],
-        vec![row("Morning", vec![Value::IntervalU64(6, 12)])],
+        vec![row(
+            "Morning",
+            vec![Value::IntervalU64(
+                crate::Interval::<u64>::new(6, 12).expect("nonempty interval"),
+            )],
+        )],
     )
 }
 
@@ -911,7 +983,9 @@ fn rejects_a_closed_target_projection_that_is_not_the_id() {
         decl.validate().unwrap_err(),
         SchemaError::NoMatchingTargetKey {
             statement: StatementId(1),
-            relation: RelationId(0)
+            target: RelationId(0),
+            projection: Box::new([FieldId(1)]),
+            available: Box::new([target_key(0, &[FieldId(0)])]),
         }
     );
 }
@@ -991,8 +1065,18 @@ fn rejects_a_declared_pointwise_key_the_axioms_refute() {
                 },
             )],
             vec![
-                row("Morning", vec![Value::IntervalU64(6, 12)]),
-                row("Brunch", vec![Value::IntervalU64(10, 14)]),
+                row(
+                    "Morning",
+                    vec![Value::IntervalU64(
+                        crate::Interval::<u64>::new(6, 12).expect("nonempty interval"),
+                    )],
+                ),
+                row(
+                    "Brunch",
+                    vec![Value::IntervalU64(
+                        crate::Interval::<u64>::new(10, 14).expect("nonempty interval"),
+                    )],
+                ),
             ],
         )],
         statements: vec![fd(RelationId(0), &[FieldId(1)])],

@@ -152,13 +152,13 @@ pub(super) fn at_window(domains: &Domains) -> (i64, i64) {
 fn window_literal_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
     let ((start, end), drawn) = interval_data::ladder_u64(cfg.seed, rng.range(64), rng);
     b.saw_rung(drawn);
-    Value::IntervalU64(start, end)
+    Value::IntervalU64(bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"))
 }
 
 fn active_literal_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) -> Value {
     let ((start, end), drawn) = interval_data::ladder_i64(cfg.seed, rng.range(64), rng);
     b.saw_rung(drawn);
-    Value::IntervalI64(start, end)
+    Value::IntervalI64(bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"))
 }
 
 /// Filter dressing ([`DRESS_PCT`]% of queries, 1–3 predicates), per the

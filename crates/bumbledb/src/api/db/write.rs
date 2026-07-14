@@ -1,6 +1,6 @@
 use std::sync::PoisonError;
 
-use super::{BULK_CHUNK, BulkLoadError, Db, Snapshot, WriteTx, WriterThreadReset};
+use super::{BULK_CHUNK, BulkLoadError, CommitSeq, Db, Snapshot, WriteTx, WriterThreadReset};
 use crate::error::{Error, Result};
 use crate::ir::Value;
 use crate::schema::RelationId;
@@ -78,7 +78,7 @@ impl<S> Db<S> {
     /// # Errors
     ///
     /// [`Error::ForeignSnapshot`] on a witness from another database
-    /// (the environment-identity guard prepared queries run);
+    /// (the environment-identity check prepared queries run);
     /// [`Error::GenerationMoved`] when a state-changing commit landed
     /// after the witness; otherwise as [`Db::write`].
     ///
@@ -105,7 +105,7 @@ impl<S> Db<S> {
     /// the critical section, cold on the success path.
     fn write_witnessed<R>(
         &self,
-        witnessed: Option<u64>,
+        witnessed: Option<crate::GenerationId>,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
     ) -> Result<R> {
         use std::sync::atomic::Ordering;
@@ -118,7 +118,7 @@ impl<S> Db<S> {
         // A panicking closure poisons nothing real: the delta died in the
         // unwind and LMDB was never touched, so the flag is cleared rather
         // than propagated.
-        let _guard = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let _writer_lock = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         self.writer_thread.store(caller, Ordering::Release);
         let _owner = WriterThreadReset(&self.writer_thread);
         // Drop the parked reader before writing: a
@@ -162,7 +162,7 @@ impl<S> Db<S> {
             self.cache.evict_older_than(report.new_generation);
             // Invalidate any snapshot parked mid-write by a concurrent
             // reader: the next read must begin fresh.
-            self.commit_seq.fetch_add(1, Ordering::Release);
+            CommitSeq::advance(&self.commit_seq, Ordering::Release);
             crashpoint!("after-memo-update");
         }
         Ok(out)

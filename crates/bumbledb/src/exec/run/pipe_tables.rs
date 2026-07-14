@@ -42,7 +42,9 @@ impl PipeTables {
             carried.push(occs);
             carried_col.push(cols);
         }
-        let absorb = (0..n_nodes).rev().find(|&m| plan.nodes()[m].sink_relevant);
+        let absorb = (0..n_nodes)
+            .rev()
+            .find(|&m| plan.nodes()[m].suffix_skip == crate::plan::fj::SuffixSkip::Forbidden);
         Self {
             entry_level,
             carried,

@@ -14,7 +14,7 @@
 //!   single-rule fold domain stays the distinct full binding set.
 //! - An `Interval(E)` field is two INTEGER columns (`crate::sqlmap`):
 //!   a membership binding becomes `f_start <= t AND t < f_end`, interval
-//!   value equality compares the halves pairwise, `Contains`' point
+//!   value equality compares the halves pairwise, `PointIn`'s point
 //!   form is the membership formula, an `Allen` mask is its basics'
 //!   endpoint formulas OR'd under the query's `SELECT DISTINCT`, and
 //!   `Duration` is `(end - start)` on the two stored columns.
@@ -144,7 +144,7 @@ pub enum Inexpressible {
     /// included.
     ContainmentJudgment,
     /// A `Pack` head: `SQLite` has no coalescing aggregate — a
-    /// relation-shaped GROUP BY (one row per (group, maximal segment))
+    /// relation-shaped GROUP BY (one answer per (group, maximal segment))
     /// is not a SQL fold, and a recursive-CTE emulation would test the
     /// emulation, not the engine. Naive-only by decision; the verify
     /// harness consumes this enumeration to route and report it.

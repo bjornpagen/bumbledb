@@ -132,7 +132,7 @@ fn lower_atom(
     // Pass 1 — variable positions: the first *domain* binding of each
     // variable (a scalar field, or an interval field read by value).
     // Membership positions bind no variable — they are conditions, lowered
-    // to filters in pass 2. `Term::Duration` never appears in a binding
+    // to filters in pass 2. `Term::Measure` never appears in a binding
     // (validation: `DurationInBinding`), so both passes match it
     // unreachable.
     let mut vars: Vec<(FieldId, VarId)> = Vec::new();
@@ -161,7 +161,7 @@ fn lower_atom(
                     // variable's binding once bound (the point-membership
                     // scan, docs/architecture/40-execution.md).
                     filters.push(match vars.iter().find(|(_, v)| v == var) {
-                        Some((point_field, _)) => FilterPredicate::FieldsContainPoint {
+                        Some((point_field, _)) => FilterPredicate::FieldsPointIn {
                             interval: *field,
                             point: *point_field,
                         },
@@ -221,7 +221,7 @@ fn lower_atom(
                     });
                 }
             }
-            Term::Duration(_) => unreachable!("validated: no measure in bindings"),
+            Term::Measure(_) => unreachable!("validated: no measure in bindings"),
             Term::Literal(value) => {
                 let membership = matches!(field_type, ValueType::Interval { .. })
                     && !matches!(value, Value::IntervalU64(..) | Value::IntervalI64(..));

@@ -93,7 +93,7 @@ pub enum FindSpec {
     /// interval variable's two-slot span. Relation-shaped group state —
     /// per group the sink accumulates the claim list; finalize sorts by
     /// start word and drives the shared segment sweep
-    /// (`crate::interval::sweep`), one head row per maximal segment.
+    /// (`crate::interval::sweep`), one head answer per maximal segment.
     /// Validation admits at most one per head and no fold or Arg
     /// companions.
     Pack { slot: usize },
@@ -301,6 +301,9 @@ struct ArgSpec {
 /// signaled by mistake would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
+    /// Evidence retained exactly when the binding seen-set is absent.
+    /// Construction cannot enter that regime without a plan proof.
+    distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     /// The measure-free sink specs in **derived-slot form**: construction
     /// parses every measure onto a derived binding-scratch word —
     /// `Duration { slot }` becomes `Var { slot: derived, width: 1 }` and
@@ -350,12 +353,12 @@ pub struct AggregateSink {
     /// the value, I64 words are the sign-flipped biased form, and both
     /// encodings are order-preserving (docs/architecture/40-execution.md).
     arg_best: Vec<u64>,
-    /// Per group: the restricted set's projected rows (all Arg carries
+    /// Per group: the restricted set's projected answers (all Arg carries
     /// concatenated, in find order) — a word-set, because ties are
     /// set-honest: two distinct bindings may project equal rows, and the
     /// answer is a set (20-query-ir § aggregation). Pooled by group
     /// index, capacity retained across executions.
-    arg_rows: Vec<WordMap<()>>,
+    arg_answers: Vec<WordMap<()>>,
     /// Words per Arg row (the carries' total width).
     carry_words: usize,
     /// Arg row assembly scratch.

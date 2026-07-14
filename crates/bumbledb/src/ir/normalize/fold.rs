@@ -18,7 +18,7 @@
 //! 2. **Contradiction detection** — each rule judged on **constants
 //!    only**, each producing a statically-empty verdict for the RULE
 //!    ([`super::NormalizedQuery::dead`]), with the killing condition
-//!    rendered for EXPLAIN: an empty range summary; `Eq` to two distinct
+//!    rendered for introspection: an empty range summary; `Eq` to two distinct
 //!    constants on one slot; an `Eq` constant outside the range summary;
 //!    a membership set empty after sentinel-trim, or intersected with an
 //!    `Eq` constant not in it; an `Allen` literal-vs-literal condition
@@ -46,8 +46,8 @@ use crate::schema::{FieldId, IntervalElement, Relation, Schema, ValueType};
 
 #[cfg(any(test, feature = "fold-off"))]
 thread_local! {
-    /// The test-only off switch (the chase-off-switch precedent,
-    /// `plan/chase.rs`): the fold-preservation differential runs the
+    /// The test-only off switch (the ground-off-switch precedent,
+    /// `plan/ground.rs`): the fold-preservation differential runs the
     /// same query folded and unfolded. Reachable from this crate's own
     /// tests and — through the `fold-off` fuzz-oracle feature, enabled
     /// only by the detached fuzz crate's `rewrites` dual-pipeline
@@ -130,7 +130,7 @@ impl RangeSummary {
                 Some(below) => self.hi = self.hi.min(below),
                 None => self.mark_empty(),
             },
-            CmpOp::Eq | CmpOp::Ne | CmpOp::Allen { .. } | CmpOp::Contains => {
+            CmpOp::Eq | CmpOp::Ne | CmpOp::Allen { .. } | CmpOp::PointIn => {
                 unreachable!("only order filters narrow the summary")
             }
         }
@@ -144,8 +144,8 @@ impl RangeSummary {
     }
 }
 
-// The contradiction rules, one function each (the chase conditions'
-// naming discipline, `plan/chase.rs`) — every one judged on constants
+// The contradiction rules, one function each (the grounding conditions'
+// naming discipline, `plan/ground.rs`) — every one judged on constants
 // only, each a statically-empty verdict for the rule.
 
 /// Rule (a): the folded order filters admit no word.
@@ -471,7 +471,7 @@ fn emit(
     }
 }
 
-// The verdict pictures — EXPLAIN's `statically empty:` payloads, in the
+// The verdict pictures — introspection's `statically empty:` payloads, in the
 // rule notation's value formats (`ir::render`): decoded values, `..`
 // intervals, named masks. Rendered here, at the one point where the
 // schema, the killing constants, and the field types coexist.
@@ -492,10 +492,15 @@ pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Valu
         ValueType::Interval {
             element: IntervalElement::I64,
         } => Value::IntervalI64(
-            decode_i64(pair.0.to_be_bytes()),
-            decode_i64(pair.1.to_be_bytes()),
+            crate::Interval::<i64>::new(
+                decode_i64(pair.0.to_be_bytes()),
+                decode_i64(pair.1.to_be_bytes()),
+            )
+            .expect("validated interval constant"),
         ),
-        _ => Value::IntervalU64(pair.0, pair.1),
+        _ => Value::IntervalU64(
+            crate::Interval::<u64>::new(pair.0, pair.1).expect("validated interval constant"),
+        ),
     }
 }
 

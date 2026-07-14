@@ -71,14 +71,14 @@ bumbledb::schema! {
 
   `closed` is a leading keyword on the `relation` production; `as NewType` is
   **required** (the handle needs a host type); the column block is optional;
-  the `= { … }` extension block is required and non-empty. Each row is
+  the `= { … }` extension block is required and non-empty. Each ground axiom is
   `Handle` or `Handle { column: literal, … }` with every declared column
   present exactly once — duplicate handles, missing/extra/duplicate columns,
-  and type-mismatched literals are expansion errors naming the offender. Row
+  and type-mismatched literals are expansion errors naming the offender. Ground-axiom
   literals ride the selection-literal machine (same typing, same errors). In
   statement selections a bare handle is legal on any field whose newtype is a
   closed relation's handle newtype (`| status == Frozen`), resolving to the
-  handle's declaration-order row id at expansion exactly as field names
+  handle's declaration-order id at expansion exactly as field names
   resolve to ordinals; a handle on any other field is an expansion error.
 
   **The emission per closed relation:** the **host enum** (`pub enum Status {
@@ -158,7 +158,7 @@ The theory renders a **manifest** (`Theory::manifest()` → `schema::Manifest`):
 name → id pairing as a plain Rust value straight off the descriptor — relations and
 fields with their ids stated explicitly, each field's structural type, and each
 closed relation's **extension table**
-(relation → handle → declaration-order row id → (column, value) pairs), so foreign
+(relation → handle → declaration-order id → (column, value) pairs), so foreign
 surfaces see the vocabulary without touching Rust. A foreign host gets the same
 numbers as data. No serde anywhere (the dependency law): a downstream binding
 serializes the value however it likes; the engine never learns the wire format.
@@ -197,7 +197,7 @@ Both are emission; the grammar is untouched.
   returns `ForeignPreparedQuery` on a foreign snapshot (plan, statistics, and view
   memo all belong to the preparing environment).
 - `prepared.staleness(&snap)` — the plan-drift signal, the pin-at-prepare decision's
-  compensating control (`20-query-ir.md`): per participating occurrence, the row
+  compensating control (`20-query-ir.md`): per participating occurrence, the fact
   count the plan was costed with against the snapshot's live `S` counter (one O(1)
   get each, ≤ 20 by the roster cap), each ratio
   `max(live, pinned) / max(1, min(live, pinned))` so shrink and growth both read as
@@ -207,11 +207,11 @@ Both are emission; the grammar is untouched.
   execution-work ratios vary by query class up to 4761.9×, so a fixed cutoff cannot
   separate drift from estimation shape. Hosts may compare this raw signal across
   generations using workload-specific evidence. Same
-  foreign-snapshot guard as execution; it allocates — a diagnostic surface, never a
-  warm-path call. Negated and chase-eliminated occurrences earn no statistics read
-  at prepare and so carry no pin; guard probes pin nothing. The stats/EXPLAIN
+  foreign-snapshot check as execution; it allocates — a diagnostic surface, never a
+  warm-path call. Negated and grounding-eliminated occurrences earn no statistics read
+  at prepare and so carry no pin; key probes pin nothing. The stats/plan introspection
   surface (`Snapshot::profile`) carries the same pin record per occurrence —
-  "estimated from (pinned rows at prepare)" — so a drifted plan is visible in one
+  "estimated from (pinned facts at prepare)" — so a drifted plan is visible in one
   read of the existing report.
 - `db.write(|tx| ...)` — the single writer; commits on `Ok`, aborts on `Err`/panic.
   Non-reentrant: a nested `write` from within a write closure on the same thread
@@ -220,7 +220,7 @@ Both are emission; the grammar is untouched.
   Write operations: typed `alloc::<NewType>()` via the generated `Fresh` newtypes
   (untyped: `alloc_at(FreshField) -> u64`, taking the witness
   `Schema::fresh_field(relation, field)` resolves — see the ETL section) — fresh
-  minting, insert new rows
+  minting, insert new facts
   without reading a max (`10-data-model.md`); `insert(&fact) -> bool` (changed-state
   report); `delete(&fact) -> bool`; `_dyn` forms of both for ETL tooling.
   `FreshExhausted` raises eagerly at the `alloc` call (the sequence state is knowable
@@ -250,13 +250,13 @@ Both are emission; the grammar is untouched.
   ```
 
   **Full queries inside write transactions remain forbidden** — point reads are
-  guard gets (allocation-free, no images, no plans); dragging the image cache and
+  determinant gets (allocation-free, no images, no plans); dragging the image cache and
   executor into the write path is the refused half. **Alternative:** keep the pure
   two-transaction idiom. **Why it lost:** the surveyed workloads' upserts and
-  check-then-act guards are exactly the shape that needs a read of the state being
+  check-then-act conditions are exactly the shape that needs a read of the state being
   written, and the two-txn idiom reintroduces the TOCTOU the single-writer design
   exists to kill (safe only under host-side write ordering nobody polices).
-  **Reverses if:** never — the guards are already read inside commit; this exposes
+  **Reverses if:** never — the determinants are already read inside commit; this exposes
   the same gets one phase earlier. The ruling's **compensating control for
   query-driven writes** is the generation witness (§ conditional writes below):
   read on a snapshot, write through `write_from`.
@@ -274,6 +274,41 @@ Both are emission; the grammar is untouched.
 
 ## Conditional writes — the generation witness
 
+The persisted clock is the nominal public `GenerationId`, including the
+`Db::generation` diagnostic accessor and both `GenerationMoved` fields; it is
+never a bare integer in the engine API. The parked-reader cache uses a separate,
+crate-private `CommitSeq` clock that resets at process open. The two clocks have
+different lifetimes and cannot be compared or converted into one another.
+
+### Derived-fact maintenance protocol (normative)
+
+The host protocol is one explicit retry loop:
+
+1. open a snapshot and run the deriving query against that snapshot;
+2. compute the desired derived facts and diff them against the stored derived
+   relation as seen by the same snapshot;
+3. apply that diff with `db.write_from(&snapshot, |tx| ...)`;
+4. on `GenerationMoved`, discard both derivation and diff, open a new snapshot,
+   and start again; every other result ends the attempt.
+
+The public write surface has exactly three epistemic classes:
+
+| class | public path | what makes the premise current |
+|---|---|---|
+| snapshot-derived, generation-witnessed | `Db::write_from` | the snapshot's generation is compared inside the writer critical section before the closure runs |
+| final-state point-read inside the write transaction | `Db::write` plus `WriteTx::{contains,get,get_dyn}` | the point read observes base + pending delta while the single-writer lock is held |
+| unconditional | `Db::write` without a point-read premise; `Db::bulk_load` | there is no read-derived premise to witness |
+
+**Dependencies prove surviving derived facts sound; the WITNESS proves the
+derivation saw the state it claims; nothing proves completeness — recompute
+under a new witness.** In particular, the engine does not retry, secretly run
+a derivation, or claim that a stored relation equals a query result. Automatic
+retries and hidden derivation semantics are host policy disguised as engine
+behavior; query-defined/materialized-view equality remains D5 territory in the
+constitution's refusal ledger. A schema may state one or both ordinary
+containment directions when those projections express the intended invariant,
+but it never gains an implicit refresh theorem.
+
 The writer mutex serializes write *transactions*, not read-compute-write
 *sequences*: query-driven writes — update-where-predicate, insert-select,
 everything SQL spells with data-modifying CTEs — must read on a snapshot first,
@@ -288,7 +323,7 @@ proposition the commit checks in one integer compare.
   generation, the transaction aborts **before any page is touched** with the typed
   `GenerationMoved { witnessed, current }` (ids, never strings); the delta drops
   exactly as any abort does, and the closure never ran. The environment-identity
-  guard runs first, exactly as prepared queries run it at every execution entry —
+  check runs first, exactly as prepared queries run it at every execution entry —
   a witness snapshot of another database is the typed `ForeignSnapshot`.
 - **The witness is the snapshot, never an integer** (recorded refusal,
   recorded): a snapshot is evidence — its generation was read
@@ -306,16 +341,16 @@ proposition the commit checks in one integer compare.
   staleness-signal doctrine verbatim: the engine's job is to make the condition
   checkable. The host convention is re-run the query → re-compute → `write_from`
   again; conflicts are rare by the bursty-write design point (`00-product.md`).
-- **The two guards compose into the complete conditional-write vocabulary:** the
-  witness is the scan-shaped guard (premises from full queries, whole-snapshot
-  precision), WriteTx point reads remain the key-shaped guard (per-fact
+- **The two conditions compose into the complete conditional-write vocabulary:** the
+  witness is the scan-shaped condition (premises from full queries, whole-snapshot
+  precision), WriteTx point reads remain the key-shaped condition (per-fact
   precision, zero retries, race-free by construction inside one transaction).
   *Read the model, propose a delta, commit iff the model you read is still the
   model.*
 - **The three idioms**, each query → compute → `write_from` → host retry:
   - *Update-where:* query the matching facts on a snapshot, compute their
     replacements, `write_from(&snap)` doing `delete(old); insert(new)` per fact.
-  - *Insert-select:* query the source rows, compute the derived facts,
+  - *Insert-select:* query the source answers, compute the derived facts,
     `write_from(&snap)` inserting them — the data-modifying-CTE shapes with the
     premises witnessed instead of locked.
   - *Derived-relation maintenance:* re-run the deriving query, diff against the
@@ -360,11 +395,11 @@ proposition the commit checks in one integer compare.
   cross-schema `RelationId`-aliasing hole that a width mismatch only caught by
   luck. Inference hides the parameter at call sites; same-schema/different-
   environment confusion stays a runtime check (`ForeignPreparedQuery`).
-- Query results: one concrete `ResultBuffer` (decided: columnar cells + a byte heap,
-  no caller-buffer trait) — rows of decoded values (String decoded from intern
+- Query answers: one concrete `Answers` carrier (decided: columnar cells + a byte heap,
+  no caller-buffer trait) — answers of decoded values (String decoded from intern
   ids at materialization, into the buffer's byte heap; `bytes<N>` re-assembled
   from its inline slot words with no dictionary touch; intervals as start/end word
-  pairs), a `rows()` iterator, and column metadata via
+  pairs), an `answers()` iterator, and column metadata via
   `PreparedQuery::predicate()` — the predicate the query defines
   (`20-query-ir.md` § the query shape) is the **buffer-typing authority**:
   one signature column per head position, result type plus producing fold,
@@ -372,7 +407,7 @@ proposition the commit checks in one integer compare.
   typeless: stamping owned types per execution would allocate on the warm
   path). Contract on `Err`: the
   buffer's contents are unspecified — ignore `out` when `execute` errors; the
-  snapshot stays usable. Results are **sets**: unordered; the host sorts. Zero-alloc
+  snapshot stays usable. Answers form a **set**: unordered; the host sorts. Zero-alloc
   path: caller-provided reusable buffer (`40-execution.md`); convenience path
   allocates a fresh buffer.
 - Params are supplied positionally by `ParamId` at execution — scalars as
@@ -392,6 +427,10 @@ proposition the commit checks in one integer compare.
 - **Schema errors** (declaration boundary, `30-dependencies.md` roster included):
   typed, enumerated, returned from `Db::create`/`Db::open` — where the definition's
   descriptor is validated — before any environment exists.
+- **Schema warnings:** an accepted sealed schema exposes `Schema::warnings()`.
+  `RedundantSuperkey { relation, key, implied_by }` reports determinant write
+  amplification without weakening or disabling either key; warnings are never
+  errors and never alter the fingerprint.
 - **Validation errors** (IR boundary, `20-query-ir.md` roster): typed, enumerated,
   returned at prepare time.
 - **Runtime query errors:** `Overflow` (aggregate range check), `Corruption` (hard
@@ -420,10 +459,12 @@ workspace error lands in `Error::BulkLoad { committed, error }`, never dropping 
 count (it is the resumability payload the type exists for). The returned/carried
 count is **facts that changed
 state** (idempotent re-inserts are consumed but not counted) — changed-not-consumed
-semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids and
-`start ≥ end` intervals) are typed `FactShape` errors (decided: ETL input is data,
-not code — no panics on the import path). Explicit fresh values preserve identity
-(high-water advances past them). Untyped fresh minting is resolve-once/mint-per-row:
+semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids)
+are typed `FactShape` errors (decided: ETL input is data, not code — no panics on the
+import path). Interval fields accept only the checked `Interval<T>` carried by
+`Value`, so `start ≥ end` cannot enter this path. Explicit fresh values preserve
+identity (high-water advances past them). Untyped fresh minting is
+resolve-once/mint-per-fact:
 `Schema::fresh_field(relation, field) -> Result<FreshField, FactShapeError>`
 validates the ids and the `Fresh` generation once and returns a `Copy` witness
 (private fields, one construction site — the type is the proof);
@@ -446,11 +487,27 @@ Two feature-gated surfaces, both compiling to nothing under default features
 feature registers the counting allocator (events + bytes + current live bytes, the gate's and
 the benchmark's memory truth), and the `trace` feature enables `bumbledb::obs` —
 explicit per-thread capture of nanosecond spans and point events over every prepare/
-execute/commit phase, drained by tooling into Chrome-trace artifacts. Always
-available: `snap.explain(..)` (rendered report — it opens with the query in the
-rule notation, `20-query-ir.md` § the renderer; `PreparedQuery::rendered_query`
-exposes the same string) and the structured execution-stats surface it is built
-from. For a query prepare *rejected* there is no handle to ask:
+execute/commit phase, drained by tooling into Chrome-trace artifacts. Plan
+introspection — EXPLAIN, colloquially — is always available through
+`snap.introspect(..)`. It returns an ANALYZE-semantics rendered artifact beginning
+with `introspection v2`, then the query in rule notation (`20-query-ir.md` § the
+renderer; `PreparedQuery::rendered_query` exposes the same query string), predicate,
+plan sections, and diagnostics. `Snapshot::profile` returns the same execution as
+structured `ExecutionStats`, carrying `introspection_version: 2`, each rule's
+`distinct_bindings` proof status, and the same program/node ordering. Version 2
+adds that proof-status line/field to version 1's artifact.
+
+Within one version, identical schema fingerprint, canonical query, parameter types,
+and feature set produce byte-identical rendered output. Sections are fixed; rules
+remain in program order, nodes in plan order, and dead, subsumed, and unresolved-
+literal diagnostics in statement order. Any content or ordering change increments
+the version in both surfaces. When a String literal still awaits interning, plan
+introspection names every pending
+literal and states the latch consequence: an unresolved `Eq` literal empties its
+rule at execution until latched. The line is derived from the live plan templates
+after execution, so it disappears on the execution that resolves and rewrites the
+literal (`api/prepared/introspect.rs`, `bind.rs`). For a query prepare *rejected*
+there is no handle to ask:
 `Db::render_query` renders any query — malformed included, with placeholder
 names — so roster errors print beside the query they reject.
 
@@ -464,7 +521,7 @@ names — so roster errors print beside the query they reject.
   `10-data-model.md` § derived relations.
 - The outer-join merge: run the positive and the negated query, concatenate — the
   sanctioned decomposition (`20-query-ir.md`), a two-line host function.
-- Zero-default aggregates: the host maps an absent aggregate row to 0 where the
+- Zero-default aggregates: the host maps an absent aggregate answer to 0 where the
   domain wants it (`20-query-ir.md` empty-set semantics).
 - Downstream query sugar — in any language — lowers to IR data; the engine never
   knows it exists (the permanent surface ruling, `20-query-ir.md`; the
@@ -492,14 +549,14 @@ errors are the portable half of the API.
 
 ## OPEN (this doc's honest list)
 
-Resolved by ruling or implementation (recorded above): the `ResultBuffer` shape;
-the dynamic-fact ETL form; EXPLAIN's surface (`snap.explain(&mut prepared, params)
--> (ResultBuffer, String)` — ANALYZE semantics, rendered-text report); WriteTx point
+Resolved by ruling or implementation (recorded above): the `Answers` shape;
+the dynamic-fact ETL form; plan introspection's versioned surface (`snap.introspect(&mut prepared, params)
+-> (Answers, String)` — ANALYZE semantics, rendered-text report); WriteTx point
 reads (decided).
 
 Still open:
 
-- Ordering/limit conveniences on results (host-side; shape undecided).
+- Ordering/limit conveniences on answers (host-side; shape undecided).
 - The typed signature for multi-key `tx.get` disambiguation when a relation carries
   several key FDs over the same newtype (the `_dyn` form is unambiguous today;
   the typed sugar waits for real usage).

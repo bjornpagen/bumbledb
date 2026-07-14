@@ -12,8 +12,57 @@ use std::fmt;
 use crate::schema::{Schema, SchemaDescriptor, StatementId, render};
 
 use super::{
-    CorruptionError, Direction, Error, FactShapeError, SchemaError, ValidationError, Violation,
+    CorruptionError, Direction, Error, FactShapeError, SchemaError, TargetKeyCandidate,
+    ValidationError, Violation,
 };
+
+fn field_set(f: &mut fmt::Formatter<'_>, projection: &[crate::schema::FieldId]) -> fmt::Result {
+    let mut fields = projection.to_vec();
+    fields.sort_unstable();
+    write!(f, "{{")?;
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            write!(f, ", ")?;
+        }
+        write!(f, "{}", field.0)?;
+    }
+    write!(f, "}}")
+}
+
+fn target_key_rejection(
+    f: &mut fmt::Formatter<'_>,
+    statement: crate::schema::StatementId,
+    target: crate::schema::RelationId,
+    projection: &[crate::schema::FieldId],
+    available: &[TargetKeyCandidate],
+    pointwise: bool,
+) -> fmt::Result {
+    write!(
+        f,
+        "statement {}: target relation {} projection ",
+        statement.0, target.0
+    )?;
+    field_set(f, projection)?;
+    write!(f, " matches no declared key; available keys: ")?;
+    if available.is_empty() {
+        write!(f, "none")?;
+    } else {
+        for (index, candidate) in available.iter().enumerate() {
+            if index > 0 {
+                write!(f, "; ")?;
+            }
+            write!(f, "key {} ", candidate.key.0)?;
+            field_set(f, &candidate.projection)?;
+        }
+    }
+    if pointwise {
+        write!(
+            f,
+            "; hint: declare the exact pointwise key `R(prefix…, interval) -> R`"
+        )?;
+    }
+    Ok(())
+}
 
 impl fmt::Display for Violation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -76,11 +125,6 @@ impl fmt::Display for FactShapeError {
             Self::InvalidUtf8 { relation, field } => write!(
                 f,
                 "relation {}, field {}: string bytes are not UTF-8",
-                relation.0, field.0
-            ),
-            Self::EmptyInterval { relation, field } => write!(
-                f,
-                "relation {}, field {}: interval start >= end",
                 relation.0, field.0
             ),
             Self::NotAKeyStatement {
@@ -211,15 +255,6 @@ impl fmt::Display for SchemaError {
                 "relation {}, row {row}: value type mismatch at field {}",
                 r.0, fd.0
             ),
-            Self::ExtensionIntervalEmpty {
-                relation: r,
-                row,
-                field: fd,
-            } => write!(
-                f,
-                "relation {}, row {row}: interval axiom start >= end at field {}",
-                r.0, fd.0
-            ),
             Self::ExtensionIntervalRay {
                 relation: r,
                 row,
@@ -286,7 +321,7 @@ impl fmt::Display for SchemaError {
                 field: fd,
             } => write!(
                 f,
-                "statement {}: second interval field {} on relation {} — the ordered guard answers one dimension",
+                "statement {}: second interval field {} on relation {} — the ordered determinant answers one dimension",
                 s.0, fd.0, r.0
             ),
             Self::FunctionalityIntervalNotLast {
@@ -306,12 +341,12 @@ impl fmt::Display for SchemaError {
                 "statement {}: statement {} already keys this field set",
                 s.0, earlier.0
             ),
-            Self::GuardKeyTooWide {
+            Self::DeterminantKeyTooWide {
                 statement: s,
                 width,
             } => write!(
                 f,
-                "statement {}: {width}-byte guard key exceeds the key-size ceiling",
+                "statement {}: {width}-byte determinant key exceeds the key-size ceiling",
                 s.0
             ),
             Self::ContainmentArityMismatch {
@@ -358,31 +393,18 @@ impl fmt::Display for SchemaError {
                 "statement {}: string literal is not UTF-8 at relation {}, field {}",
                 s.0, r.0, fd.0
             ),
-            Self::SelectionIntervalEmpty {
-                statement: s,
-                relation: r,
-                field: fd,
-            } => write!(
-                f,
-                "statement {}: interval literal start >= end at relation {}, field {}",
-                s.0, r.0, fd.0
-            ),
             Self::NoMatchingTargetKey {
                 statement: s,
-                relation: r,
-            } => write!(
-                f,
-                "statement {}: target projection matches no key of relation {}",
-                s.0, r.0
-            ),
+                target,
+                projection,
+                available,
+            } => target_key_rejection(f, *s, *target, projection, available, false),
             Self::NoPointwiseTargetKey {
                 statement: s,
-                relation: r,
-            } => write!(
-                f,
-                "statement {}: no pointwise key of relation {} carries the interval position",
-                s.0, r.0
-            ),
+                target,
+                projection,
+                available,
+            } => target_key_rejection(f, *s, *target, projection, available, true),
             Self::ClosedContainmentInterval {
                 statement: s,
                 relation: r,
@@ -470,11 +492,6 @@ impl fmt::Display for ValidationError {
             Self::LiteralTypeMismatch { atom, field } => {
                 write!(f, "atom {atom}: literal type mismatch at field {}", field.0)
             }
-            Self::EmptyIntervalLiteral { atom, field } => write!(
-                f,
-                "atom {atom}: interval literal start >= end at field {}",
-                field.0
-            ),
             Self::PointLiteralAtCeiling { atom, field } => write!(
                 f,
                 "atom {atom}: point literal at the domain ceiling at field {} — \
@@ -514,14 +531,19 @@ impl fmt::Display for ValidationError {
                 "comparison {index}: order operator on bytes<N> — a digest's \
                  lexicographic order is an encoding artifact; identity only"
             ),
+            Self::OrderComparisonOnString { index } => write!(
+                f,
+                "comparison {index}: order operator on String — strings are equality-only"
+            ),
+            Self::OrderComparisonOnBool { index } => write!(
+                f,
+                "comparison {index}: order operator on Bool — booleans are equality-only"
+            ),
             Self::ConstantComparison { index } => {
                 write!(f, "comparison {index}: neither side is a variable")
             }
             Self::SelfComparison { index } => {
                 write!(f, "comparison {index}: a variable compared with itself")
-            }
-            Self::ComparisonEmptyIntervalLiteral { index } => {
-                write!(f, "comparison {index}: interval literal start >= end")
             }
             Self::ComparisonPointLiteralAtCeiling { index } => write!(
                 f,
@@ -757,16 +779,13 @@ impl fmt::Display for Error {
             Self::MeasureOfRay { start, end } => write!(
                 f,
                 "Duration of a ray: encoded interval [{start}, {end}) has no finite \
-                 measure — exclude rays with an Allen guard or a bounded-end filter"
+                 measure — exclude rays with an Allen predicate or a bounded-end filter"
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")
             }
-            Self::Overflow(super::OverflowKind::Origins) => {
-                write!(
-                    f,
-                    "origin mint space exhausted: more than 2^32 absorb-node survivors in one execution"
-                )
+            Self::Overflow(super::OverflowKind::OriginCapacity) => {
+                write!(f, "origin capacity exceeded")
             }
             Self::BulkLoad { committed, error } => {
                 write!(
@@ -855,7 +874,6 @@ impl SchemaError {
             | Self::DuplicateExtensionHandle { .. }
             | Self::ExtensionArityMismatch { .. }
             | Self::ExtensionValueTypeMismatch { .. }
-            | Self::ExtensionIntervalEmpty { .. }
             | Self::ExtensionIntervalRay { .. }
             | Self::StrOnClosedRelation { .. }
             | Self::FreshOnClosedRelation { .. } => None,
@@ -867,13 +885,12 @@ impl SchemaError {
             | Self::FunctionalityMultipleIntervals { statement, .. }
             | Self::FunctionalityIntervalNotLast { statement, .. }
             | Self::DuplicateFunctionality { statement, .. }
-            | Self::GuardKeyTooWide { statement, .. }
+            | Self::DeterminantKeyTooWide { statement, .. }
             | Self::ContainmentArityMismatch { statement, .. }
             | Self::ContainmentTypeMismatch { statement, .. }
             | Self::SelectedFieldProjected { statement, .. }
             | Self::SelectionLiteralTypeMismatch { statement, .. }
             | Self::SelectionLiteralNotUtf8 { statement, .. }
-            | Self::SelectionIntervalEmpty { statement, .. }
             | Self::NoMatchingTargetKey { statement, .. }
             | Self::NoPointwiseTargetKey { statement, .. }
             | Self::ClosedContainmentInterval { statement, .. }

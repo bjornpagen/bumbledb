@@ -18,10 +18,10 @@ fn distinct_counts_are_exact() {
     let txn = env.read_txn().expect("txn");
     let image = build(&txn, &schema, R).expect("build");
     // populated(): ids 0..10, flag i % 2 == 0, kind i % 3 == 0, amount i*7-30.
-    assert_eq!(image.distinct(0), 10, "fresh ids all distinct");
-    assert_eq!(image.distinct(1), 2, "bools");
-    assert_eq!(image.distinct(2), 2, "kind bools");
-    assert_eq!(image.distinct(3), 10, "amounts all distinct");
+    assert_eq!(image.cardinality(0), 10, "fresh ids all distinct");
+    assert_eq!(image.cardinality(1), 2, "bools");
+    assert_eq!(image.cardinality(2), 2, "kind bools");
+    assert_eq!(image.cardinality(3), 10, "amounts all distinct");
 
     // A skewed refresh: 100 more rows sharing 5 amounts.
     let view = env.read_txn().expect("txn");
@@ -37,12 +37,12 @@ fn distinct_counts_are_exact() {
     let txn = env.read_txn().expect("txn");
     let image = build(&txn, &schema, R).expect("build");
     assert_eq!(image.row_count(), 110);
-    assert_eq!(image.distinct(0), 110);
+    assert_eq!(image.cardinality(0), 110);
     // Old 10 distinct amounts + {0..5}, minus the overlaps: the old
     // amounts are 7i - 30 (…-30, -23, …, 33); {0..5} intersects at
     // nothing except… 7i-30 ∈ {0,1,2,3,4} ⇔ i has no integer
     // solution except none (7i = 30..34 has none). 10 + 5 = 15.
-    assert_eq!(image.distinct(3), 15);
+    assert_eq!(image.cardinality(3), 15);
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn byte_size_covers_rows_and_slab_slack() {
     let image = build(&txn, &schema, R).expect("build");
     // The fixture: 10 rows over 2 word columns (id, amount) and 2 byte
     // columns (flag, kind). Lower bound: the raw payload; upper bound:
-    // payload plus per-column alignment/stagger slack.
+    // payload plus per-column alignment/stride slack.
     let payload = 10 * (2 * 8 + 2);
     assert!(image.byte_size() >= payload, "{}", image.byte_size());
     let slack = 4 * (SET_STRIDE + LINE);

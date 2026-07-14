@@ -1,9 +1,9 @@
-//! Canonical results and multiset comparison (docs/architecture/60-validation.md):
-//! one owned row form both engines decode into, and one diff whose
+//! Canonical answers and multiset comparison (docs/architecture/60-validation.md):
+//! one owned answer form both engines decode into, and one diff whose
 //! mismatches are undeniable and debuggable — the verify layer's core.
 
 use bumbledb::schema::ValueType;
-use bumbledb::{ResultBuffer, ResultValue, Value};
+use bumbledb::{AnswerValue, Answers, Value};
 
 use crate::naive::ParamValue;
 use crate::sqlmap;
@@ -21,25 +21,25 @@ pub enum Owned {
     IntervalI64(i64, i64),
 }
 
-/// One canonical row.
-pub type Row = Vec<Owned>;
+/// One canonical answer.
+pub type Answer = Vec<Owned>;
 
-/// Decodes a bumbledb result buffer into canonical rows (column types
-/// from the prepared query's predicate — the buffer-typing authority).
+/// Decodes bumbledb [`Answers`] into canonical answers (column types
+/// from the prepared query's predicate — the answer-typing authority).
 #[must_use]
-pub fn from_buffer(buffer: &ResultBuffer, types: &[ValueType]) -> Vec<Row> {
-    buffer
-        .rows()
-        .map(|row| {
+pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
+    answers
+        .answers()
+        .map(|answer| {
             (0..types.len())
-                .map(|column| match row.get(column) {
-                    ResultValue::Bool(v) => Owned::Bool(v),
-                    ResultValue::U64(v) => Owned::U64(v),
-                    ResultValue::I64(v) => Owned::I64(v),
-                    ResultValue::String(v) => Owned::Str(v.to_owned()),
-                    ResultValue::FixedBytes(v) => Owned::Bytes(v.to_vec()),
-                    ResultValue::IntervalU64(iv) => Owned::IntervalU64(iv.start(), iv.end()),
-                    ResultValue::IntervalI64(iv) => Owned::IntervalI64(iv.start(), iv.end()),
+                .map(|column| match answer.get(column) {
+                    AnswerValue::Bool(v) => Owned::Bool(v),
+                    AnswerValue::U64(v) => Owned::U64(v),
+                    AnswerValue::I64(v) => Owned::I64(v),
+                    AnswerValue::String(v) => Owned::Str(v.to_owned()),
+                    AnswerValue::FixedBytes(v) => Owned::Bytes(v.to_vec()),
+                    AnswerValue::IntervalU64(iv) => Owned::IntervalU64(iv.start(), iv.end()),
+                    AnswerValue::IntervalI64(iv) => Owned::IntervalI64(iv.start(), iv.end()),
                 })
                 .collect()
         })
@@ -47,7 +47,7 @@ pub fn from_buffer(buffer: &ResultBuffer, types: &[ValueType]) -> Vec<Row> {
 }
 
 /// Executes a prepared `SQLite` statement with the given typed params and
-/// decodes every row into canonical form, guided by the expected column
+/// decodes every answer into canonical form, guided by the expected column
 /// types (the engine side already knows them — aggregate columns
 /// included; an interval find spans two INTEGER result columns and
 /// reassembles through the pair decode).
@@ -65,7 +65,7 @@ pub fn from_sqlite(
     param_order: &[ParamSlot],
     args: &[ParamValue],
     types: &[ValueType],
-) -> Result<Vec<Row>, String> {
+) -> Result<Vec<Answer>, String> {
     let bound = crate::sqlite_run::bind_args(param_order, args);
     let mut rows = stmt
         .query(rusqlite::params_from_iter(bound))
@@ -96,8 +96,12 @@ pub fn from_sqlite(
                         .map_err(|_| format!("column {}: non-UTF-8 text", column - 1))?,
                 ),
                 Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
-                Value::IntervalU64(start, end) => Owned::IntervalU64(start, end),
-                Value::IntervalI64(start, end) => Owned::IntervalI64(start, end),
+                Value::IntervalU64(interval) => {
+                    Owned::IntervalU64(interval.start(), interval.end())
+                }
+                Value::IntervalI64(interval) => {
+                    Owned::IntervalI64(interval.start(), interval.end())
+                }
                 Value::AllenMask(_) => {
                     return Err(format!(
                         "column {}: mask values are not results",
@@ -111,32 +115,32 @@ pub fn from_sqlite(
     Ok(out)
 }
 
-/// How many exemplar rows a mismatch carries per side.
+/// How many exemplar answers a mismatch carries per side.
 const EXEMPLARS: usize = 8;
 
-/// A failed multiset comparison: sizes plus up to [`EXEMPLARS`] rows each
+/// A failed multiset comparison: sizes plus up to [`EXEMPLARS`] answers each
 /// side has that the other lacks (multiset difference — duplicate-count
 /// differences surface here too).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mismatch {
     pub ours_len: usize,
     pub theirs_len: usize,
-    pub ours_only: Vec<Row>,
-    pub theirs_only: Vec<Row>,
+    pub ours_only: Vec<Answer>,
+    pub theirs_only: Vec<Answer>,
 }
 
 impl std::fmt::Display for Mismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "result multisets diverge: ours {} rows, theirs {} rows",
+            "result multisets diverge: ours {} answers, theirs {} answers",
             self.ours_len, self.theirs_len
         )?;
-        for row in &self.ours_only {
-            writeln!(f, "  ours only:   {row:?}")?;
+        for answer in &self.ours_only {
+            writeln!(f, "  ours only:   {answer:?}")?;
         }
-        for row in &self.theirs_only {
-            writeln!(f, "  theirs only: {row:?}")?;
+        for answer in &self.theirs_only {
+            writeln!(f, "  theirs only: {answer:?}")?;
         }
         Ok(())
     }
@@ -147,7 +151,7 @@ impl std::fmt::Display for Mismatch {
 /// # Errors
 ///
 /// The [`Mismatch`] when the multisets differ.
-pub fn multisets(mut ours: Vec<Row>, mut theirs: Vec<Row>) -> Result<(), Mismatch> {
+pub fn multisets(mut ours: Vec<Answer>, mut theirs: Vec<Answer>) -> Result<(), Mismatch> {
     ours.sort();
     theirs.sort();
     if ours == theirs {
@@ -189,43 +193,43 @@ pub fn multisets(mut ours: Vec<Row>, mut theirs: Vec<Row>) -> Result<(), Mismatc
 mod tests {
     use super::*;
 
-    fn row(values: &[i64]) -> Row {
+    fn answer(values: &[i64]) -> Answer {
         values.iter().map(|v| Owned::I64(*v)).collect()
     }
 
     #[test]
     fn equal_multisets_pass_shuffled() {
-        let a = vec![row(&[1, 2]), row(&[3, 4]), row(&[1, 2])];
-        let b = vec![row(&[3, 4]), row(&[1, 2]), row(&[1, 2])];
+        let a = vec![answer(&[1, 2]), answer(&[3, 4]), answer(&[1, 2])];
+        let b = vec![answer(&[3, 4]), answer(&[1, 2]), answer(&[1, 2])];
         assert!(multisets(a, b).is_ok());
     }
 
     #[test]
-    fn a_one_row_difference_lands_on_the_correct_side() {
-        let a = vec![row(&[1]), row(&[2])];
-        let b = vec![row(&[1]), row(&[3])];
+    fn a_one_answer_difference_lands_on_the_correct_side() {
+        let a = vec![answer(&[1]), answer(&[2])];
+        let b = vec![answer(&[1]), answer(&[3])];
         let mismatch = multisets(a, b).unwrap_err();
-        assert_eq!(mismatch.ours_only, vec![row(&[2])]);
-        assert_eq!(mismatch.theirs_only, vec![row(&[3])]);
+        assert_eq!(mismatch.ours_only, vec![answer(&[2])]);
+        assert_eq!(mismatch.theirs_only, vec![answer(&[3])]);
     }
 
     #[test]
     fn duplicate_count_differences_are_detected() {
-        let a = vec![row(&[7]), row(&[7])];
-        let b = vec![row(&[7])];
+        let a = vec![answer(&[7]), answer(&[7])];
+        let b = vec![answer(&[7])];
         let mismatch = multisets(a, b).unwrap_err();
         assert_eq!(mismatch.ours_len, 2);
         assert_eq!(mismatch.theirs_len, 1);
-        assert_eq!(mismatch.ours_only, vec![row(&[7])]);
+        assert_eq!(mismatch.ours_only, vec![answer(&[7])]);
         assert!(mismatch.theirs_only.is_empty());
     }
 
     #[test]
     fn the_display_is_golden() {
-        let mismatch = multisets(vec![row(&[1])], vec![row(&[2])]).unwrap_err();
+        let mismatch = multisets(vec![answer(&[1])], vec![answer(&[2])]).unwrap_err();
         assert_eq!(
             mismatch.to_string(),
-            "result multisets diverge: ours 1 rows, theirs 1 rows\n  \
+            "result multisets diverge: ours 1 answers, theirs 1 answers\n  \
              ours only:   [I64(1)]\n  theirs only: [I64(2)]\n"
         );
     }
@@ -248,9 +252,9 @@ mod tests {
             ValueType::FixedBytes { len: 2 },
         ];
         let mut stmt = conn.prepare("SELECT * FROM t").expect("prepare");
-        let rows = from_sqlite(&mut stmt, &[], &[], &types).expect("decode");
+        let answers = from_sqlite(&mut stmt, &[], &[], &types).expect("decode");
         assert_eq!(
-            rows,
+            answers,
             vec![vec![
                 Owned::Bool(true),
                 Owned::U64(2),

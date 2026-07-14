@@ -5,7 +5,7 @@ use crate::schema::{FieldId, RelationId, Schema};
 
 /// The rule-disjointness proof's witness (docs/architecture/40-execution.md
 /// § set semantics): the relation and field whose differing pinned
-/// literals make the rules' head rows collision-free. EXPLAIN renders it
+/// literals make the rules' head answers collision-free. introspection renders it
 /// as diagnostic knowledge: `disjoint_rules: proven (R.f)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DisjointWitness {
@@ -13,12 +13,12 @@ pub struct DisjointWitness {
     pub field: FieldId,
 }
 
-/// The rule-disjointness check — EXPLAIN's direct proof producer. A pair of
+/// The rule-disjointness check — introspection's direct proof producer. A pair of
 /// rules is **provably disjoint** when there is a relation R and a field
 /// f such that both rules bind a positive occurrence of R whose filters
 /// pin f to *different* concrete literals, **and** that occurrence's
 /// bound key columns flow to the same head positions in both rules. Two
-/// equal head rows would then force the two pinned facts to agree on a
+/// equal head answers would then force the two pinned facts to agree on a
 /// key of R — one fact, whose f cannot equal two different literals. The
 /// DU-arm union (one rule per `kind`) is exactly this shape via the
 /// parent occurrence's discriminator selection.
@@ -29,7 +29,7 @@ pub struct DisjointWitness {
 ///   unprovable pair (under every candidate) returns `None` and the
 ///   seen-set stays. The single shared witness is the workload's own
 ///   shape (every DU arm selects the one discriminator) and keeps the
-///   EXPLAIN line honest.
+///   introspection line honest.
 /// - **Concrete literals only**: params resolve at bind and pin nothing
 ///   here; a set matches any element and pins nothing; mixed constant
 ///   forms (a resolved word against a pending intern) stay unknown. Two
@@ -146,11 +146,11 @@ fn provably_different(a: &Const, b: &Const) -> bool {
 
 /// Whether some key of R is value-bound in both occurrences with every
 /// key column flowing to a common head position — the step that turns
-/// "equal head rows" into "one fact of R pinned by both rules".
+/// "equal head answers" into "one fact of R pinned by both rules".
 /// Value-bound means present in `vars` (membership bindings lowered to
 /// filters and never enter it), so a pointwise key's interval column is
 /// carried by both words and equal spans mean one fact, exactly the
-/// `provably_distinct` guard.
+/// `provably_distinct` check.
 fn key_flows_to_common_head(
     a: &Occurrence,
     head_a: &[FindTerm],
@@ -194,9 +194,9 @@ fn head_reads(term: &FindTerm) -> Option<VarId> {
         } => *over,
         // The remaining positions witness nothing: the nullary Count and
         // Arg terms as before, and the measure positions — `end − start`
-        // is a NON-injective map of its variable, so equal head rows do
+        // is a NON-injective map of its variable, so equal head answers do
         // not force equal interval values.
-        FindTerm::Aggregate { .. } | FindTerm::Duration(_) | FindTerm::AggregateDuration { .. } => {
+        FindTerm::Aggregate { .. } | FindTerm::Measure(_) | FindTerm::AggregateMeasure { .. } => {
             None
         }
     }

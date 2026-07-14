@@ -66,10 +66,10 @@ impl Sink for EitherSink {
         }
     }
 
-    fn may_skip(&self) -> bool {
+    fn skip_capability(&self) -> crate::exec::run::SkipCapability {
         match self {
-            Self::Projection(sink) => sink.may_skip(),
-            Self::Aggregate(sink) => sink.may_skip(),
+            Self::Projection(sink) => sink.skip_capability(),
+            Self::Aggregate(sink) => sink.skip_capability(),
         }
     }
 

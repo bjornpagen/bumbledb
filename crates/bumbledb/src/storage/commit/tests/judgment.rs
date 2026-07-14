@@ -1,4 +1,4 @@
-//! The containment source-side judgment (PRD 08 criteria): scalar guard
+//! The containment source-side judgment (PRD 08 criteria): scalar determinant
 //! probes with and without target selections, conditional sources (σ
 //! gating both the `R` writes and the probes), the coverage-walk matrix,
 //! and the `==` pair's insert-time totality.
@@ -171,7 +171,9 @@ fn shift(schema: &Schema, worker: u64, start: u64, end: u64, rested: bool) -> Ve
         SHIFT,
         &[
             ValueRef::U64(worker),
-            ValueRef::IntervalU64(start, end),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
             ValueRef::Bool(rested),
         ],
     )
@@ -181,7 +183,12 @@ fn session(schema: &Schema, worker: u64, start: u64, end: u64) -> Vec<u8> {
     fact(
         schema,
         SESSION,
-        &[ValueRef::U64(worker), ValueRef::IntervalU64(start, end)],
+        &[
+            ValueRef::U64(worker),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
     )
 }
 
@@ -189,7 +196,12 @@ fn rest(schema: &Schema, worker: u64, start: u64, end: u64) -> Vec<u8> {
     fact(
         schema,
         REST,
-        &[ValueRef::U64(worker), ValueRef::IntervalU64(start, end)],
+        &[
+            ValueRef::U64(worker),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            ),
+        ],
     )
 }
 
@@ -296,7 +308,7 @@ fn scalar_source_with_pre_committed_target_commits() {
 
 #[test]
 fn scalar_target_failing_the_target_selection_aborts() {
-    // The guard hit alone is not the proof: the found account is outside
+    // The determinant hit alone is not the proof: the found account is outside
     // the statement's target σ (active == true).
     let schema = schema();
     let t = transfer(&schema, 9);

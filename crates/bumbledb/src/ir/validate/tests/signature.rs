@@ -191,7 +191,7 @@ fn cases() -> Vec<Case> {
     for field in [PU, PI] {
         cases.push(case(
             format!("duration over field {field}"),
-            vec![FindTerm::Duration(VarId(0))],
+            vec![FindTerm::Measure(VarId(0))],
             vec![(field, 0)],
             vec![ValueType::U64],
         ));
@@ -202,7 +202,7 @@ fn cases() -> Vec<Case> {
         for field in [PU, PI] {
             cases.push(case(
                 format!("{op:?} duration over field {field}"),
-                vec![FindTerm::AggregateDuration { op, over: VarId(0) }],
+                vec![FindTerm::AggregateMeasure { op, over: VarId(0) }],
                 vec![(field, 0)],
                 vec![ValueType::U64],
             ));
@@ -282,8 +282,8 @@ fn cases() -> Vec<Case> {
         "projected measure + folded measure",
         vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::Duration(VarId(1)),
-            FindTerm::AggregateDuration {
+            FindTerm::Measure(VarId(1)),
+            FindTerm::AggregateMeasure {
                 op: AggOp::Max,
                 over: VarId(2),
             },
@@ -397,7 +397,7 @@ fn the_fold_kind_rides_each_column() {
 
     let plain = case(
         "plain",
-        vec![FindTerm::Var(VarId(0)), FindTerm::Duration(VarId(1))],
+        vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         vec![(U, 0), (PU, 1)],
         vec![],
     );
@@ -431,7 +431,7 @@ fn the_fold_kind_rides_each_column() {
 
     let measure_fold = case(
         "measure fold",
-        vec![FindTerm::AggregateDuration {
+        vec![FindTerm::AggregateMeasure {
             op: AggOp::Max,
             over: VarId(0),
         }],

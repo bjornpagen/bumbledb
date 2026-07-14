@@ -35,10 +35,11 @@ documents themselves describe **only the current reality**.
 | `20-query-ir.md` | The pure-data IR: atoms, negation, membership, param sets, aggregates, validation |
 | `30-dependencies.md` | The two judgments (functionality, containment), statements, pointwise lifting, the acceptance gate |
 | `40-execution.md` | Access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation |
-| `50-storage.md` | LMDB layout, guard namespaces as judgment accelerators, the delta write path, images |
+| `50-storage.md` | LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images |
 | `60-validation.md` | The two oracles (SQLite + naive model), ledger benchmark protocol, test families |
 | `70-api.md` | Embedding surface: the schema! grammar, transactions, point reads, results, ETL |
 | `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative (reader: the owner and any agent writing a theory) |
+| `../formal/README.md` | Versioned Lean model, provenance, scope, and the bridge from theorems to Rust evidence |
 
 ## OPEN items
 
@@ -56,15 +57,15 @@ documents themselves describe **only the current reality**.
   latency-budget violation.*
 - **Declared range/stabbing accelerators**: time-range, point-membership, and
   overlap scans are O(n) by decision; accelerators return only with a benchmark that
-  demands them. Candidate mechanism on trigger: guard skip scan (cursor `set_range`
+  demands them. Candidate mechanism on trigger: determinant skip scan (cursor `set_range`
   prefix-hopping over existing `U` namespaces, O(distinct-prefix × log n)) — for
-  non-prefix guard lookups and low-cardinality-leading range scans; interval
+  non-prefix determinant lookups and low-cardinality-leading range scans; interval
   stabbing needs the coverage-walk shape instead (`40-execution.md`). *Trigger:
   latency budget violation on a range/interval family.*
-- **Chase interval-pair elimination**: pointwise coverage proves that covering facts
+- **Grounding interval-pair elimination**: pointwise coverage proves that covering facts
   exist, not that an interval pair is equal and joinable, so interval-typed statement
-  positions refuse chase elimination. *Trigger: a census-style query that would
-  benefit from interval-pair elimination (`40-execution.md` § the chase).*
+  positions refuse grounding elimination. *Trigger: a census-style query that would
+  benefit from interval-pair elimination (`40-execution.md` § the grounding).*
 - **Dictionary GC**: interned values are never reclaimed — including ids no
   committed fact ever referenced (a no-op insert's interns flush with any
   state-changing commit; accepted leak, `10-data-model.md`). The trigger profile
@@ -92,8 +93,6 @@ documents themselves describe **only the current reality**.
   violating the latency budget despite the cache — recorded with D1's reversal.*
 - **Vectorized batch size**: 64–256 starting range decided; the number is
   measurement-owned. *Trigger: the ledger benchmark.*
-- **EXPLAIN output shape**: ANALYZE semantics shipped; text stability not promised.
-  *Remaining open: nothing structural.*
 - **`70-api.md` open sub-items**: see that doc's own OPEN list (result ordering,
   multi-key typed `get` sugar, multi-process future).
 
@@ -103,7 +102,7 @@ Each recorded with its rationale in the owning doc; listed here so nothing is
 re-litigated by accident:
 
 - **Invariants are two judgments about queries** (functionality, containment);
-  *unique / foreign key / primary key / check / exclusion / cascade / restrict /
+  *unique / referential / primary key / check / exclusion / cascade / restrict /
   trigger / deferrable* are deleted vocabulary (`30-dependencies.md`, `00-product.md`).
 - **No sugar** — the schema surface is raw statements (`->`, `<=`, `==`); no
   field-level constraint modifiers, no `union` keyword (the pattern is derived, its
@@ -119,7 +118,7 @@ re-litigated by accident:
   `50-storage.md`).
 - **The IR carries** negation (anti-join atoms with the safety rule), point membership
   (a typing rule), param sets (`IN`), `CountDistinct`, Arg-restriction with
-  set-honest ties, and the relation-shaped `Pack` (one row per (group, maximal
+  set-honest ties, and the relation-shaped `Pack` (one answer per (group, maximal
   segment) — the coalescing fold); the outer join is a documented decomposition,
   never a node (`20-query-ir.md`).
 - **The query surface is the IR, permanently — pure data** (the text-language OPEN
@@ -131,6 +130,9 @@ re-litigated by accident:
   the read-side syntax (`20-query-ir.md`, `70-api.md`).
 - **WriteTx point reads** (`contains`/`get` against the delta-overlaid final-state
   view); full queries in write transactions are forbidden (`70-api.md`).
+- **Plan introspection output** is the versioned `introspection v2` contract:
+  deterministic content and ordering within a version, with rendered and structured
+  surfaces incremented together (`40-execution.md`, `70-api.md`).
 - **The naive model is required infrastructure** — the second oracle, judging
   dependency semantics SQLite cannot express (`60-validation.md`).
 - **No prior on-disk format opens; no migration path exists** — ETL is the story

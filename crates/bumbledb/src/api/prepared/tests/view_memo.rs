@@ -43,7 +43,7 @@ fn residual_bindings_memoize_under_lru() {
             .iter()
             .filter(|e| e.name == obs::names::VIEW_MEMO_HIT)
             .count();
-        (builds, hits, rows_of(&out))
+        (builds, hits, answers_of(&out))
     };
     let expected = |floor: i64| -> Vec<(String, i64)> {
         let rows = [
@@ -208,7 +208,7 @@ fn a_generation_bump_invalidates_the_memo() {
         "the stale binding rebuilds in place"
     );
     assert_eq!(
-        rows_of(&out),
+        answers_of(&out),
         vec![("new".to_owned(), 20), ("old".to_owned(), 10)],
         "the rebuilt view carries the new fact"
     );
@@ -216,7 +216,7 @@ fn a_generation_bump_invalidates_the_memo() {
 
 /// The read-path capture contract (feature `trace`).
 #[test]
-fn read_path_traces_phases_memo_hits_and_guard() {
+fn read_path_traces_phases_memo_hits_and_key_probe() {
     use crate::obs;
 
     let dir = TempDir::new("prepared-trace-read");
@@ -290,8 +290,8 @@ fn read_path_traces_phases_memo_hits_and_guard() {
     assert!(!second_names.contains(&obs::names::VIEW_BUILD));
     assert!(!second_names.contains(&obs::names::IMAGE_BUILD));
 
-    // A guard-shaped query: guard_probe, never join.
-    let guard_query = Query::single(Rule {
+    // A key-probe-shaped query: key_probe, never join.
+    let key_probe_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -303,21 +303,21 @@ fn read_path_traces_phases_memo_hits_and_guard() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
+    let mut key_probe = prepare(&txn, &cache, &schema, &key_probe_query).expect("prepare");
     obs::start_capture();
-    guard
+    key_probe
         .execute_collect(&txn, &cache, &[BindValue::U64(1)])
         .expect("execute");
-    let guard_events = obs::finish_capture();
-    let guard_names = names(&guard_events);
+    let key_probe_events = obs::finish_capture();
+    let key_probe_names = names(&key_probe_events);
     assert!(
-        guard_names.contains(&obs::names::GUARD_PROBE),
-        "{guard_names:?}"
+        key_probe_names.contains(&obs::names::KEY_PROBE),
+        "{key_probe_names:?}"
     );
-    assert!(!guard_names.contains(&obs::names::JOIN));
-    let probe = guard_events
+    assert!(!key_probe_names.contains(&obs::names::JOIN));
+    let probe = key_probe_events
         .iter()
-        .find(|e| e.name == obs::names::GUARD_PROBE)
+        .find(|e| e.name == obs::names::KEY_PROBE)
         .expect("probe");
     assert_eq!(probe.a0, 1, "hit flag");
 

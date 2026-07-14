@@ -17,9 +17,16 @@ Every schema below compiles and validates verbatim against the current engine �
 and a sync test pins the duplication, so a recipe edited here without the test
 following breaks the build.
 
+Guarantee labels that name Lean results refer to the checked artifact in
+[`docs/formal/`](formal/README.md) through the theorem-to-evidence table in
+`30-dependencies.md`; the label always names any additional Rust premise.
+
 ## Foundations
 
 ## 1. The minimal interval schema
+
+Guarantee: formal predicate + validator/runtime premise — the pointwise key
+enforces per-service disjointness; checked intervals supply nonempty values.
 
 One fact per outage window; the pointwise key is the whole temporal design.
 
@@ -38,7 +45,7 @@ bumbledb::schema! {
     Outage(service, window) -> Outage;
 
     // Queries (the notation — 20-query-ir.md § the query notation):
-    //   down at instant t (membership is a typing rule, not syntax):
+    //   down at instant t (point membership (`in`) is a typing rule):
     //     (service) | Outage(service, window: w), ?t in w;
     //   overlapping an incident window (one Allen mask, no operator zoo):
     //     (service, w) | Outage(service, window: w), Allen(w, INTERSECTS, ?incident);
@@ -49,6 +56,10 @@ bumbledb::schema! {
 
 ## 2. Discriminated unions
 
+Guarantee: Lean theorem + validator/runtime premises — key-backed equality
+gives unique source/target correspondence (`KeyBackedEquality.unique_target`
+and `.unique_source`); both projections must resolve to declared keys.
+
 Sum-typed entities: a closed-relation discriminator plus per-arm child
 relations, glued by bidirectional conditional containments
 (`30-dependencies.md` § the derivations).
@@ -57,7 +68,7 @@ relations, glued by bidirectional conditional containments
 bumbledb::schema! {
     pub Grading;
 
-    // The discriminator vocabulary is a closed relation: rows are ground
+    // The discriminator vocabulary is a closed relation: its ground axioms are
     // axioms, and the host enum `Kind` is emitted for rustc's matching.
     closed relation Kind as KindId = { Deterministic, CustomOperator };
 
@@ -66,10 +77,10 @@ bumbledb::schema! {
     relation CustomOperatorGrading { task: u64 as TaskId, operator: str }
 
     Task(kind) <= Kind(id);                                // the discriminator resolves
-    DeterministicGrading(task)  -> DeterministicGrading;   // one arm row per parent
+    DeterministicGrading(task)  -> DeterministicGrading;   // one arm fact per parent
     CustomOperatorGrading(task) -> CustomOperatorGrading;
-    // Totality (==, left to right): a Deterministic task HAS its arm row —
-    // same commit, always. Arm validity (right to left): an arm row's parent
+    // Totality (==, left to right): a Deterministic task HAS its arm fact —
+    // same commit, always. Arm validity (right to left): an arm fact's parent
     // exists WITH that kind — composite-FK-plus-CHECK, one statement.
     Task(id | kind == Deterministic)  == DeterministicGrading(task);
     Task(id | kind == CustomOperator) == CustomOperatorGrading(task);
@@ -80,6 +91,9 @@ bumbledb::schema! {
 ```
 
 ## 3. 0..1 optional attributes
+
+Guarantee: definition + validator/runtime premises — the child key proves at
+most one fact and containment requires its parent; absence remains legal.
 
 No nulls, anywhere. Optional data is an absent fact in a child relation; the
 child's key plus a one-way containment *is* "nullable column", done honestly.
@@ -103,6 +117,9 @@ bumbledb::schema! {
 ```
 
 ## 4. Money
+
+Guarantee: host discipline + validator premises — fixed-point scale and
+currency grouping live in host newtypes; containments only resolve references.
 
 Fixed-point i64 minor units; the host newtype owns scale and currency. Floats
 are permanently refused (the ledger); proration and FX are host arithmetic.
@@ -137,6 +154,9 @@ bumbledb::schema! {
 
 ## 5. Content addressing
 
+Guarantee: validator/runtime premises + host discipline — the payload key and
+containments enforce identity/reference shape; hashing and blob durability stay external.
+
 The decision rule for byte-shaped data: **intern what repeats (`str`); inline
 what identifies (`bytes<N>`)** — `10-data-model.md` § the type layer.
 
@@ -169,19 +189,22 @@ bumbledb::schema! {
 
 ## 6. The vocabulary
 
+Guarantee: validator/runtime premise — the sealed closed extension and compiled
+member-set containment admit only declared priority handles.
+
 The enum idiom's replacement, first-class: a vocabulary is a **closed
-relation** — its rows are ground axioms declared in the schema, sealed at
+relation** — its ground axioms are declared in the schema, sealed at
 validate, frozen by the fingerprint, virtual in storage
 (`10-data-model.md` § closed relations). The store holds zero vocabulary
 bytes, and handles are the literals on every surface: statements, queries,
-EXPLAIN, errors.
+Plan introspection, errors.
 
 ```rust
 bumbledb::schema! {
     pub Tickets;
 
     // Tier 1: handles only. The macro emits the host enum `Priority`,
-    // welded to the declaration-order row ids — an emission, not a type:
+    // welded to declaration-order ids — an emission, not a type:
     // the engine's vocabulary stays relational; rustc's pattern matching
     // keeps working on the projection.
     closed relation Priority as PriorityId = { Low, Normal, Urgent };
@@ -201,7 +224,7 @@ bumbledb::schema! {
     // renderer prints them back — the round trip runs on names:
     //   (t) | Ticket(id: t, priority == Urgent);
     // A query atom over the vocabulary itself folds at prepare; the join
-    // has zero runtime existence (40-execution.md § the chase).
+    // has zero runtime existence (40-execution.md § the grounding).
     // The boundary law: intrinsic meaning goes here (changing it is a new
     // theory); policy that drifts without a rebuild is an ordinary
     // relation — a vocabulary is never written, only declared.
@@ -210,8 +233,11 @@ bumbledb::schema! {
 
 ## 7. The classification
 
+Guarantee: validator/runtime premise — closed payload facts and ψ-selected
+containment restrict certificates to the compiled mastered-handle set.
+
 The fused form: the vocabulary carries its intrinsic facts as **payload
-columns** — one row per handle, values sealed with the schema, read by
+columns** — one ground axiom per handle, values sealed with the schema, read by
 ψ-selections. The old shape — an ordinary relation the application wrote at
 startup and every deployment re-verified — is deleted outright: axioms are
 declared, never written.
@@ -246,14 +272,17 @@ bumbledb::schema! {
     // the vocabulary's payload in the query too:
     //   (a) | Attempt(id: a, kind: k), Kind(id: k, mastered == true);
     // The Kind atom folds at prepare into a plan-constant handle set on
-    // its sibling; EXPLAIN prints the set, not a count:
+    // its sibling; plan introspection prints the set, not a count:
     //   folded: Kind{mastered == true} → {DirectPass, JudgedPass}
 }
 ```
 
 ## 8. The sub-vocabulary
 
-The ψ-selected containment: a reference constrained to the rows of a
+Guarantee: validator/runtime premise — ψ over the sealed extension compiles the
+exact paging member set; a nonmember write is commit-rejected.
+
+The ψ-selected containment: a reference constrained to the facts of a
 vocabulary that satisfy a payload selection. Because the target is closed,
 the enforcement plan is not a probe strategy — it is **the answer set
 itself**, compiled at validate (`30-dependencies.md` § enforcement, whose
@@ -299,6 +328,9 @@ bumbledb::schema! {
 
 ## 9. Ordered collections
 
+Guarantee: validator/runtime premise + host discipline — the composite key
+permits one occupant per slot; ordering the result remains a host operation.
+
 The linked-list verdict: successor pointers are control flow smuggled into
 data — every reorder becomes a dependent chain of writes. Order is a value.
 
@@ -321,6 +353,9 @@ bumbledb::schema! {
 ```
 
 ## 10. Trees and ASTs
+
+Guarantee: Lean theorem + validator/runtime premises for key-backed arms; host
+discipline for acyclicity — statements prove arm/edge shape, never a tree theorem.
 
 Node header + per-kind arms (recipe 2's pattern); every edge resolves; the
 shape theorems come from FDs on the edge relations.
@@ -360,6 +395,9 @@ bumbledb::schema! {
 
 ## 11. Typed graphs
 
+Guarantee: validator/runtime premises — endpoint containments type each edge
+and composite keys deduplicate pairs; no transitive graph property is claimed.
+
 One relation per edge kind: the edge vocabulary is closed and checked —
 endpoint containments pin which node kinds each edge may touch.
 
@@ -373,7 +411,7 @@ bumbledb::schema! {
     relation Maintains { person: u64 as PersonId, repo: u64 as RepoId }
 
     Follows(follower) <= Person(id);        // a Person→Person edge, by statement —
-    Follows(followee) <= Person(id);        // a Follows row cannot touch a Repo
+    Follows(followee) <= Person(id);        // a Follows fact cannot touch a Repo
     Follows(follower, followee) -> Follows; // at most one edge per pair
     Maintains(person) <= Person(id);
     Maintains(repo)   <= Repo(id);
@@ -388,9 +426,12 @@ bumbledb::schema! {
 
 ## 12. Entity-component
 
+Guarantee: definition + validator/runtime premises — component keys give 0..1
+and containments require the stated entity/archetype facts.
+
 The 0..1 idiom (recipe 3) at scale: components are sidecar relations; an
 entity has a component iff the fact exists; a new component kind is a new
-relation, not a wider row.
+relation, not a wider fact.
 
 ```rust
 bumbledb::schema! {
@@ -417,6 +458,9 @@ bumbledb::schema! {
 
 ## 13. State machines
 
+Guarantee: Lean theorem + validator/runtime premises for the shipped arm; host
+discipline for allowed transitions — equality pins state evidence, not paths.
+
 States are a discriminated union; per-state data lives in arms; and the
 conditional reference target — a reference to "an order *that is shipped*" —
 is one selected containment, the statement SQL cannot write.
@@ -441,16 +485,19 @@ bumbledb::schema! {
     // THAT IS Shipped (validity), and every Shipped order has its Shipment
     // (totality) — the transition and its evidence commit together.
     Shipment(order) == Order(id | state == Shipped);
-    // Transition guards ("only Placed may ship") are host code under the
+    // Transition predicates ("only Placed may ship") are host code under the
     // generation witness — recipe 20; the schema pins the states, not the paths.
 
     //   (id, carrier) | Order(id, state == Shipped), Shipment(order: id, carrier);
 }
 ```
 
-## Time and tilings
+## Time and coverage
 
 ## 14. The calendar core
+
+Guarantee: Lean theorem + validator/runtime premises — accepted equality is
+key-backed correspondence, while pointwise keys/coverage enforce only declared hard policy.
 
 Policy as schema: hard rules are pointwise keys, soft rules are the statements
 you decline to write.
@@ -507,8 +554,12 @@ bumbledb::schema! {
 
 ## 15. Effective-dated configuration
 
-Versioned rules: no overlaps (pointwise key), no gaps (coverage), and "in
-force on date t" is one membership probe.
+Guarantee: Lean theorem/countermodel + validator/runtime premise — pointwise
+keys plus one-way support inclusion form a disjoint cover; target overhang is legal.
+
+Versioned rules: no overlaps (pointwise key), no gaps in the policy's source
+lifetime (one-way coverage; version overhang remains legal), and "in force on
+date t" is one membership probe.
 
 ```rust
 bumbledb::schema! {
@@ -520,8 +571,9 @@ bumbledb::schema! {
     Version(policy) <= Policy(id);
     // No overlapping versions: at any instant, at most one rate is the law.
     Version(policy, valid) -> Version;
-    // No gaps: every point of the policy's lifetime is covered by versions —
-    // together with the key above, versions TILE the lifetime (recipe 16).
+    // No gaps in the policy lifetime: every source point is covered by versions.
+    // Together with the key above this is a disjoint cover, not an exact
+    // partition: Version intervals may overhang the Policy lifetime (recipe 16).
     Policy(id, live) <= Version(policy, valid);
 
     //   in force on date t — one membership probe:
@@ -532,10 +584,16 @@ bumbledb::schema! {
 }
 ```
 
-## 16. Tilings
+## 16. Disjoint covers
 
-Pay periods, shifts, estimated-tax quarters: **disjoint + covering = a
-tiling** — no overlaps, no holes, two statements.
+Guarantee: Lean theorem/countermodel + validator/runtime premise —
+`intervalContains_iff_support_subset` proves source coverage, not exact partition.
+
+Pay periods, shifts, estimated-tax quarters: a pointwise key plus one-way
+coverage is a **disjoint cover** — no overlaps among pay periods and no holes
+in the fiscal year's source span. Pay periods may extend beyond that span;
+target overhang is legal under this statement. Historically this pattern was
+called a tiling here; that was stronger than the judgment actually proved.
 
 ```rust
 bumbledb::schema! {
@@ -547,7 +605,8 @@ bumbledb::schema! {
     PayPeriod(year) <= FiscalYear(id);
     PayPeriod(year, seq)  -> PayPeriod;     // sequence numbers stay unique
     PayPeriod(year, span) -> PayPeriod;     // disjoint: no shared instant
-    FiscalYear(id, span) <= PayPeriod(year, span);  // covering: no holes
+    // Covering: no holes in the fiscal year's span; pay-period overhang is legal.
+    FiscalYear(id, span) <= PayPeriod(year, span);
 
     //   the period holding date t:
     //     (seq) | PayPeriod(year == ?y, seq, span: s), ?t in s;
@@ -555,6 +614,9 @@ bumbledb::schema! {
 ```
 
 ## 17. Federal income tax
+
+Guarantee: validator/runtime premises + host discipline — keys prove bracket
+disjointness and statements prove residency coverage; full bracket coverage and proration are host duties.
 
 Brackets are intervals over money; the top bracket is a ray; regimes key on
 (year, status); and proration happens at write time, never at query time.
@@ -572,7 +634,7 @@ bumbledb::schema! {
     }
     relation Bracket { regime: u64 as RegimeId, income: interval<i64>, rate_bps: i64 }
     relation Residency { person: u64, span: interval<i64> }
-    // Tile at write: an Earned fact never spans a year boundary — writers
+    // Split at write: an Earned fact never spans a year boundary — writers
     // split (prorate) at the boundary, so no reader ever clips. The
     // representation move that deletes clip-at-query (gravestone, recipe 23).
     relation Earned { person: u64, regime: u64 as RegimeId, span: interval<i64>, minor: i64 }
@@ -580,9 +642,10 @@ bumbledb::schema! {
     Regime(status) <= Status(id);
     Regime(year, status) -> Regime;         // one regime per (year, filing status)
     Bracket(regime) <= Regime(id);
-    // Brackets tile [0, ∞): disjoint per regime, and the TOP BRACKET IS A RAY —
-    // end == MAX denotes [s, ∞), an honest value of the representation, not a
-    // sentinel (the point-domain law, 10-data-model.md).
+    // Brackets are disjoint per regime. Seed data conventionally covers [0, ∞)
+    // and the top bracket is a ray, but this key proves disjointness only — it
+    // does not prove coverage. end == MAX denotes [s, ∞), an honest value of
+    // the representation, not a sentinel (the point-domain law, 10-data-model.md).
     Bracket(regime, income) -> Bracket;
     Earned(regime) <= Regime(id);
     Residency(person, span) -> Residency;
@@ -590,7 +653,7 @@ bumbledb::schema! {
     // period — pointwise coverage, the same judgment as recipe 15's.
     Earned(person, span) <= Residency(person, span);
 
-    //   the marginal bracket (membership walks the tiling):
+    //   the marginal bracket (membership probes the disjoint bracket set):
     //     (rate_bps) | Regime(id: r, year == ?y, status == ?s),
     //                  Bracket(regime: r, income: b, rate_bps), ?taxable in b;
     // Tax owed is host arithmetic over the bracket walk — arithmetic beyond
@@ -600,8 +663,11 @@ bumbledb::schema! {
 
 ## 18. Free time and coalescing
 
+Guarantee: runtime query semantics — `Pack` coalesces answer intervals; it
+asserts no stored disjointness, completeness, or maintenance behavior.
+
 `Pack` is Snodgrass's coalesce as an aggregate — maximal disjoint segments per
-group, one row per (group, segment). Coalescing is never a write rule: the
+group, one answer per (group, segment). Coalescing is never a write rule: the
 engine stores the claims it was given.
 
 ```rust
@@ -621,13 +687,16 @@ bumbledb::schema! {
     //     (person, Sum(Duration(span))) | Claim(person, span);
     // Coalesced totals = the two-query composition (Pack, then a host fold) —
     // aggregates never nest; free time (gaps) is the two-line host walk over
-    // sorted packed rows — both refusals recorded in the ledger.
+    // sorted packed answers — both refusals recorded in the ledger.
 }
 ```
 
 ## The write side
 
 ## 19. The ledger
+
+Guarantee: Lean theorem + runtime invariant for bounded sums; host discipline
+for double entry — statements resolve posting references, not arithmetic agreement.
 
 The census workload. Balance is a query, never a column.
 
@@ -660,6 +729,9 @@ bumbledb::schema! {
 
 ## 20. Conditional writes
 
+Guarantee: generation-witness/runtime premise + host retry discipline —
+snapshot-derived writes detect movement; final-state point reads need no earlier witness.
+
 The generation witness (`70-api.md` § conditional writes): read the model,
 propose a delta, commit iff the model you read is still the model.
 
@@ -682,22 +754,27 @@ bumbledb::schema! {
     // claiming a job and leasing it commit together or not at all.
     Lease(job) == Job(id | state == Running);
 
-    // The three witness idioms, each snapshot-query → compute →
-    // write_from(&snap) → host retry on GenerationMoved:
+    // Three write idioms. The first two are snapshot-derived and therefore
+    // use snapshot-query → compute → write_from(&snap) → host retry on
+    // GenerationMoved:
     //   update-where: query the premise on a snapshot, then delete(old) +
     //     insert(new) per matched fact — "still Queued" is the witness:
     //       (id, payload) | Job(id, state == Queued, payload);
-    //   insert-select: query source rows, insert the derived facts — the
+    //   insert-select: query source answers, insert the derived facts — the
     //     data-modifying CTE with its premises witnessed instead of locked.
     //   read-modify-write, key-shaped: WriteTx point reads (get/contains) see
-    //     the final state — per-fact premises need no witness, never retry.
+    //     the final state — per-fact premises need no earlier snapshot witness.
 }
 ```
 
 ## 21. Derived relations
 
-The materialized view as a relation under statements — staleness the schema
-can name is uncommittable (`10-data-model.md` § derived relations owns this).
+Guarantee: Lean theorem + validator/runtime premises for soundness; host
+discipline for completeness — containment rejects unsupported facts but never refreshes omissions.
+
+The materialized view as a relation under statements — unsoundness the schema
+can name is uncommittable; incompleteness remains representable until the host
+refreshes it (`10-data-model.md` § derived relations owns this).
 
 ```rust
 bumbledb::schema! {
@@ -732,6 +809,9 @@ bumbledb::schema! {
 
 ## 22. Union reads
 
+Guarantee: Lean theorem + represented planner/runtime premise — rule union is
+set-idempotent; key-backed DU arms justify the disjointness optimization.
+
 The whole-DU read is a set of rules: one head, one rule per arm — disjunction
 is data at the top, never an execution node.
 
@@ -751,7 +831,7 @@ bumbledb::schema! {
     Payment(id | kind == Card) == Card(payment);
     Payment(id | kind == Ach)  == Ach(payment);
 
-    // One query, two clauses (set union). The exclusivity theorem (recipe 2)
+    // One query, two rules (set union). The exclusivity theorem (recipe 2)
     // is spent a third time here: rules selecting different `kind` values are
     // provably disjoint, so the executor elides cross-rule dedup — the free
     // lunch (40-execution.md § set semantics).
@@ -761,6 +841,9 @@ bumbledb::schema! {
 ```
 
 ## 23. The anti-recipes: five gravestones
+
+Guarantee: intentionally refused — each gravestone names unsupported vocabulary
+and its representable replacement; none asserts an engine theorem.
 
 What not to model. Each gravestone cites its replacement; the block's
 relations are the replacements, compiled.
@@ -781,7 +864,7 @@ bumbledb::schema! {
     // the invariant (30-dependencies.md; recipe 13's arm shape).
     relation ActiveRun { student: u64, run: u64 }
     // GRAVESTONE: clip-at-query intervals (facts spanning period boundaries,
-    // every reader clipping). REPLACEMENT: tile at write (recipe 17) — split
+    // every reader clipping). REPLACEMENT: split at write (recipe 17) — split
     // the fact at the boundary; readers stop clipping because nothing spans.
     relation Usage { meter: u64, period: u64, used: interval<i64> }
     // GRAVESTONE: uuid keys. uuidv7 is identity + clash-avoidance + clock in
@@ -799,6 +882,9 @@ bumbledb::schema! {
 ## Host-driven closure
 
 ## 24. The closure idiom
+
+Guarantee: host discipline — the finite `seen` loop proves termination for the
+host run; the engine provides no recursive closure or cross-snapshot freshness.
 
 Reachability on the current engine: the recursion the IR refuses, run as
 honest control flow in the host. The refusal is recorded with its trigger
@@ -850,9 +936,13 @@ design (`docs/reference/recursion-design.md`), not around it.
 
 ## 25. The chart of accounts
 
-The ledger workload's real recursion case, solved on the current engine: a
-hierarchical chart of accounts and a subtree rollup. Composition, not a new
-operator — recipe 24's loop accumulates the subtree's ∈-set, then **one
+Guarantee: host discipline + runtime aggregate semantics — the host computes
+closure, then one checked `Sum`; no recursive engine plan is claimed.
+
+The ledger workload's real recursion case, handled by explicit host composition
+over the current query engine: a hierarchical chart of accounts and a subtree
+rollup. Composition, not a new operator — recipe 24's loop accumulates the
+subtree's ∈-set, then **one
 `Sum` query over the accumulated set** folds the postings. The engine
 aggregates, the host composes (aggregates never nest — recipe 18's refusal
 family), and the refusal record (`20-query-ir.md` § engine recursion —
@@ -889,9 +979,95 @@ the test drives a three-level hierarchy with postings and asserts the
 hand-computed subtree sum — equal postings to one account both count,
 because the fresh id keeps their bindings distinct.
 
+## 26. Exact partition
+
+Guarantee: Lean theorem + validator/runtime premises — mutual point coverage
+plus pointwise keys realizes `exactTiling_iff_exactPointPartition`.
+
+An exact partition needs both coverage directions. The first containment below
+is the intent-level reference; the two pointwise keys make each side disjoint;
+the final pair proves equal point supports per policy — forward coverage forbids
+gaps and reverse coverage forbids overhang. This is not mere tiling language:
+it is the five ordinary statements witnessing
+`exactTiling_iff_exactPointPartition`.
+
+The explicit `Policy(id, live) -> Policy` is load-bearing. Containment targets
+resolve by their exact projected field set, so the fresh `{id}` key cannot serve
+the `{id, live}` target and the engine infers no key closure.
+
+```rust
+bumbledb::schema! {
+    pub ExactPartition;
+
+    relation Policy  { id: u64 as PolicyId, fresh, live: interval<i64> }
+    relation Version { policy: u64 as PolicyId, valid: interval<i64> }
+
+    Version(policy) <= Policy(id);             // reference intent
+    Version(policy, valid) -> Version;          // disjoint versions
+    Policy(id, live) -> Policy;                 // exact target key, not implied by {id}
+    Policy(id, live) <= Version(policy, valid); // no gaps in the policy source span
+    Version(policy, valid) <= Policy(id, live); // no version overhang
+}
+```
+
+Together the mutual containments prove equal point supports for each policy;
+the pointwise keys make those supports genuine partitions rather than overlapping
+covers. Touching half-open segments remain legal, and the same construction works
+with any scalar-prefix arity before the final interval position.
+
+## 27. Derived facts, maintained
+
+Guarantee: host discipline + validator/runtime premises — freshness comes from
+the generation witness; containment proves surviving rollup facts sound only.
+
+A stored rollup is an ordinary relation with an ordinary soundness statement.
+Here `Pack` derives maximal busy spans, while containment prevents any stored
+`BusySpan` point that has no busy claim behind it. That is soundness, not a
+refresh theorem: a missing span remains representable until the host maintenance
+loop fills it.
+
+```rust
+bumbledb::schema! {
+    pub MaintainedRollup;
+
+    closed relation Arm as ArmId = { Busy, Ooo };
+
+    relation Claim {
+        source: u64,
+        person: u64,
+        arm: u64 as ArmId,
+        span: interval<i64>,
+    }
+    relation BusySpan { person: u64, span: interval<i64> }
+
+    Claim(arm) <= Arm(id);
+    Claim(source) -> Claim;
+    Claim(person, span) -> Claim;
+    BusySpan(person, span) -> BusySpan;
+    BusySpan(person, span) <= Claim(person, span | arm == Busy);
+
+    // Derive the desired rollup on the maintenance snapshot:
+    //   (person, busy: Pack(span)) |
+    //       Claim(source, person, arm == Busy, span);
+}
+```
+
+The host loop is snapshot → derive → diff → `write_from(snapshot)`. On
+`GenerationMoved`, it throws away the derived set and diff and starts from a new
+snapshot; it never retries a stale diff. Dependencies prove every surviving
+stored span sound, while the witness proves which source state the derivation
+saw; neither mechanism proves completeness. The compiled copy is
+`maintain_busy_spans` in `cookbook.rs`; its lock moves the source generation
+between derive and commit, observes one retry, and then asserts the recomputed
+packed span.
+
 ## Operating the store
 
-## 26. Migration is ETL
+## 28. Migration is ETL
+
+Guarantee: validator/runtime premises + host discipline — fingerprints refuse
+reinterpretation, final-state judgments validate each load, and the host owns
+the semantic transform and dependency-safe load order.
 
 There is no in-place migration and never will be: a schema is a theory,
 the store records the theory's fingerprint, and `Db::open` under a changed

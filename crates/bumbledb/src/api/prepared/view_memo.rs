@@ -1,14 +1,4 @@
-use super::{FilterPredicate, ParkedView, ViewMemo};
-
-/// The sentinel generation a closed relation's view binds at
-/// (`docs/architecture/40-execution.md` § the view-memo LRU): the theory
-/// is the image's generation, so the binding can never go stale — the
-/// sentinel is maximal and storage generations only advance, so the
-/// stale-reaping pass below (which drops parked bindings *strictly below*
-/// the reader's generation) can never touch it: warm forever. A sentinel
-/// constant, not an `Option<Generation>` threaded through the memo —
-/// every existing comparison keeps compiling and meaning the right thing.
-pub(super) const GENERATION_CLOSED: u64 = u64::MAX;
+use super::{FilterPredicate, ParkedView, ViewGeneration, ViewMemo};
 
 impl ViewMemo {
     /// Binds `occ`'s active slot to `(generation, filters)`: an active
@@ -18,7 +8,7 @@ impl ViewMemo {
     pub(super) fn bind(
         &mut self,
         occ: usize,
-        generation: u64,
+        generation: ViewGeneration,
         filters: &[FilterPredicate],
     ) -> bool {
         // Stale reaping first: generations only advance, so a parked

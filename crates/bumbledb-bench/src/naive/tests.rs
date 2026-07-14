@@ -19,7 +19,7 @@ fn the_model_imports_no_compiled_representation() {
         ("naive/query.rs", include_str!("query.rs")),
         ("naive/tuple.rs", include_str!("tuple.rs")),
     ] {
-        for banned in ["Resolved", "closed_member", "[u64; 4]", "1 <<", "bitset"] {
+        for banned in ["Resolved", "MemberSet", "[u64; 4]", "1 <<", "bitset"] {
             assert!(
                 !source.contains(banned),
                 "{name} mentions {banned:?} — the model must not share the \

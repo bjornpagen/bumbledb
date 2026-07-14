@@ -2,11 +2,11 @@
 //! derivable key byte and check set of one commit, computed as a **pure
 //! function of (delta, schema)** before a single LMDB page is touched —
 //! representation over control flow applied to the write path. Per fact:
-//! its guard bytes per key statement (pointwise keys marked for the
+//! its determinant bytes per key statement (pointwise keys marked for the
 //! ordered-neighbor probe) and its reverse-edge key bytes per containment
 //! whose source selection it satisfies — the same permuted bytes serve the
 //! `R` put/delete and the insert's source probe. Aggregated: the
-//! per-statement disestablished-guard check sets (deleted − inserted,
+//! per-statement disestablished-determinant check sets (deleted − inserted,
 //! with ψ-qualified re-establishment inputs marked for the judgment
 //! phase). Selection literals arrive pre-encoded ([`Selections`]) and the
 //! plan owns them for the rest of the commit.
@@ -19,9 +19,11 @@
 
 use std::collections::BTreeSet;
 
-use crate::schema::{ContainmentId, Enforcement, KeyId, RelationId, Schema, StatementId};
+use crate::schema::{
+    AxiomIndex, ContainmentId, Enforcement, KeyId, RelationId, Schema, StatementId,
+};
 use crate::storage::delta::WriteDelta;
-use crate::storage::keys;
+use crate::storage::keys::{self, DeterminantImage};
 
 use super::judgment::{SelectionCheck, Selections, satisfies};
 
@@ -38,7 +40,7 @@ pub(crate) struct CommitPlan<'d> {
     pub(crate) inserts: Box<[FactOp<'d>]>,
     /// Phase-3 target-side check set: one entry per key tuple this commit
     /// disestablishes for at least one dependent statement.
-    pub(crate) target_checks: Box<[GuardCheck]>,
+    pub(crate) target_checks: Box<[DeterminantCheck]>,
 }
 
 /// Everything derivable about one fact's application.
@@ -47,12 +49,12 @@ pub(crate) struct FactOp<'d> {
     /// The canonical fact bytes (identity = bytes, `10-data-model.md`).
     pub(crate) fact: &'d [u8],
     /// One per key statement of the relation, materialized order.
-    pub(crate) guards: Box<[GuardOp]>,
+    pub(crate) determinants: Box<[DeterminantOp]>,
     /// One per outgoing containment whose source selection the fact
     /// satisfies — a fact outside σ has no edge, by design.
     pub(crate) edges: Box<[EdgeOp]>,
     /// One per outgoing **closed-target** containment whose source
-    /// selection the fact satisfies: no guard bytes, no `R` traffic —
+    /// selection the fact satisfies: no determinant bytes, no `R` traffic —
     /// the compiled member set is the whole plan, and the judgment is
     /// one AND and one test on the insert side
     /// (`docs/architecture/30-dependencies.md`). Dead weight on a
@@ -61,13 +63,13 @@ pub(crate) struct FactOp<'d> {
     pub(crate) memberships: Box<[MembershipOp]>,
 }
 
-/// One key statement's guard material for one fact.
-pub(crate) struct GuardOp {
+/// One key statement's determinant material for one fact.
+pub(crate) struct DeterminantOp {
     /// The `Functionality` statement.
     pub(crate) statement: StatementId,
     /// The projected fields' canonical encodings in statement order
-    /// ([`keys::guard_bytes`]) — the `U` key's guard segment.
-    pub(crate) guard: Box<[u8]>,
+    /// ([`keys::determinant_image`]) — the `U` key's determinant segment.
+    pub(crate) determinant: DeterminantImage,
     /// Interval-carrying key: the exact `U` put cannot detect overlap, so
     /// the insert additionally runs the ordered-neighbor probe.
     pub(crate) pointwise: bool,
@@ -80,49 +82,42 @@ pub(crate) struct MembershipOp {
     /// The validation-minted containment witness; the fingerprint identity
     /// is derived only when constructing an error.
     pub(crate) containment: ContainmentId,
-    /// The referencing field's word — a row id into the target's sealed
-    /// extension when the fact is legal; out of range is simply a miss.
-    pub(crate) id: u64,
+    /// The referencing field narrowed to the closed extension's index
+    /// domain. `None` is an out-of-range value and therefore a miss.
+    pub(crate) axiom: Option<AxiomIndex>,
 }
 
 /// One containment edge of one fact: the `R` key material and, on the
 /// insert side, the source-probe input.
 pub(crate) struct EdgeOp {
-    /// The typed containment used for sealed selections and enforcement.
+    /// The typed containment supplies target relation, target key, and
+    /// scalar-versus-interval enforcement at judgment.
     pub(crate) containment: ContainmentId,
-    /// The `Containment` statement.
+    /// Prederived statement identity for the schema-free byte applier.
     pub(crate) statement: StatementId,
-    /// The source projection laid down in the target key's guard order
-    /// ([`keys::permuted_guard_bytes`]) — the `R` key-bytes segment and
-    /// the source probe's target guard value.
-    pub(crate) key_bytes: Box<[u8]>,
-    pub(crate) target_relation: RelationId,
-    /// The `Functionality` statement whose `U` guard the source probes.
-    pub(crate) target_key: KeyId,
-    /// Interval-position statement: the source probe is the coverage
-    /// walk, not the scalar get.
-    pub(crate) coverage: bool,
+    /// The source projection laid down in the target key's determinant order
+    /// ([`keys::permuted_determinant_image`]) — the `R` key-bytes segment and
+    /// the source probe's target determinant value.
+    pub(crate) key_bytes: DeterminantImage,
 }
 
 /// One disestablished key tuple and the dependent statements that must
 /// re-check it (`deleted − inserted`, per statement).
-pub(crate) struct GuardCheck {
+pub(crate) struct DeterminantCheck {
     /// The key (`Functionality`) statement whose tuple left.
     pub(crate) key: KeyId,
-    /// The tuple's guard bytes (interval keys carry the 16-byte tail).
-    pub(crate) guard: Box<[u8]>,
+    /// The tuple's determinant bytes (interval keys carry the 16-byte tail).
+    pub(crate) determinant: DeterminantImage,
     /// The dependent containments still owed a check, in materialized
     /// order — a dependent whose empty-ψ tuple re-lands in phase 2 is
     /// already dropped here.
     pub(crate) dependents: Box<[DependentCheck]>,
 }
 
-/// One dependent statement's entry in a [`GuardCheck`].
+/// One dependent statement's entry in a [`DeterminantCheck`].
 pub(crate) struct DependentCheck {
     /// The validation-minted containment witness.
     pub(crate) containment: ContainmentId,
-    /// Interval-position statement: survivors re-run the coverage walk.
-    pub(crate) coverage: bool,
     /// The tuple's exact bytes re-land in phase 2 and this dependent
     /// carries a ψ: the check applies only if the establishing fact fails
     /// ψ — the judgment fetches it (one `F` get, shared across the
@@ -140,11 +135,11 @@ pub(crate) fn plan_commit<'d>(
     schema: &Schema,
     selections: Selections,
 ) -> CommitPlan<'d> {
-    // Guard tuples of key statements some containment depends on — the
+    // Determinant tuples of key statements some containment depends on — the
     // inputs of the target-side check set (`deleted − inserted`).
-    let mut deleted_guards: BTreeSet<(KeyId, Box<[u8]>)> = BTreeSet::new();
-    let mut inserted_guards: BTreeSet<(KeyId, Box<[u8]>)> = BTreeSet::new();
-    let mut scratch = Vec::new();
+    let mut deleted_determinants: BTreeSet<(KeyId, DeterminantImage)> = BTreeSet::new();
+    let mut inserted_determinants: BTreeSet<(KeyId, DeterminantImage)> = BTreeSet::new();
+    let mut scratch = DeterminantImage::scratch();
     let deletes = delta
         .deletes()
         .map(|(rel, fact)| {
@@ -153,7 +148,7 @@ pub(crate) fn plan_commit<'d>(
                 &selections,
                 rel,
                 fact,
-                &mut deleted_guards,
+                &mut deleted_determinants,
                 &mut scratch,
             )
         })
@@ -166,12 +161,17 @@ pub(crate) fn plan_commit<'d>(
                 &selections,
                 rel,
                 fact,
-                &mut inserted_guards,
+                &mut inserted_determinants,
                 &mut scratch,
             )
         })
         .collect();
-    let target_checks = target_checks(schema, &selections, deleted_guards, &inserted_guards);
+    let target_checks = target_checks(
+        schema,
+        &selections,
+        deleted_determinants,
+        &inserted_determinants,
+    );
     CommitPlan {
         selections,
         deletes,
@@ -180,39 +180,39 @@ pub(crate) fn plan_commit<'d>(
     }
 }
 
-/// Derives one fact's op: guard bytes per key statement, reverse-edge key
-/// bytes per satisfied containment. Guard tuples of dependent-carrying
-/// key statements are recorded into `dependent_guards` for the check-set
+/// Derives one fact's op: determinant bytes per key statement, reverse-edge key
+/// bytes per satisfied containment. Determinant tuples of dependent-carrying
+/// key statements are recorded into `dependent_determinants` for the check-set
 /// difference.
 fn fact_op<'d>(
     schema: &Schema,
     selections: &Selections,
     rel: RelationId,
     fact: &'d [u8],
-    dependent_guards: &mut BTreeSet<(KeyId, Box<[u8]>)>,
-    scratch: &mut Vec<u8>,
+    dependent_determinants: &mut BTreeSet<(KeyId, DeterminantImage)>,
+    scratch: &mut DeterminantImage,
 ) -> FactOp<'d> {
     // Every F/M/U/R key byte originates from this derivation — the
     // refusal-hardening chokepoint (`keys::debug_assert_ordinary`).
     keys::debug_assert_ordinary(schema, rel);
     let relation = schema.relation(rel);
     let layout = relation.layout();
-    let guards = relation
+    let determinants = relation
         .keys()
         .iter()
         .map(|&key_id| {
             let statement = schema.key(key_id);
-            // Guard keys derived by slicing projected fields out of
+            // Determinant keys derived by slicing projected fields out of
             // fact_bytes — never a scan; interval fields slice as their
             // whole 16 bytes.
-            keys::guard_bytes(layout, &statement.projection, fact, scratch);
-            let guard: Box<[u8]> = scratch.as_slice().into();
+            keys::determinant_image(layout, &statement.projection, fact, scratch);
+            let determinant = scratch.clone();
             if !schema.dependents(key_id).is_empty() {
-                dependent_guards.insert((key_id, guard.clone()));
+                dependent_determinants.insert((key_id, determinant.clone()));
             }
-            GuardOp {
+            DeterminantOp {
                 statement: statement.id,
-                guard,
+                determinant,
                 pointwise: statement.pointwise,
             }
         })
@@ -233,12 +233,13 @@ fn fact_op<'d>(
             continue;
         }
         match &statement.enforcement {
-            Enforcement::Probe {
-                target_key,
-                key_permutation,
-                coverage,
+            Enforcement::ScalarProbe {
+                key_permutation, ..
+            }
+            | Enforcement::IntervalCoverage {
+                key_permutation, ..
             } => {
-                keys::permuted_guard_bytes(
+                keys::permuted_determinant_image(
                     layout,
                     &statement.source.projection,
                     key_permutation,
@@ -248,10 +249,7 @@ fn fact_op<'d>(
                 edges.push(EdgeOp {
                     containment: containment_id,
                     statement: statement.id,
-                    key_bytes: scratch.as_slice().into(),
-                    target_relation: statement.target.relation,
-                    target_key: *target_key,
-                    coverage: *coverage,
+                    key_bytes: scratch.clone(),
                 });
             }
             Enforcement::Closed { .. } => {
@@ -262,7 +260,7 @@ fn fact_op<'d>(
                 );
                 memberships.push(MembershipOp {
                     containment: containment_id,
-                    id: u64::from_be_bytes(word),
+                    axiom: AxiomIndex::try_from(u64::from_be_bytes(word)).ok(),
                 });
             }
         }
@@ -270,13 +268,13 @@ fn fact_op<'d>(
     FactOp {
         relation: rel,
         fact,
-        guards,
+        determinants,
         edges: edges.into_boxed_slice(),
         memberships: memberships.into_boxed_slice(),
     }
 }
 
-/// The target-side check set: every deleted guard tuple, expanded per
+/// The target-side check set: every deleted determinant tuple, expanded per
 /// dependent statement with **ψ-qualified re-establishment**
 /// (`docs/architecture/50-storage.md` § commit step 3). A tuple whose
 /// exact bytes re-land in phase 2 is re-established for an empty-ψ
@@ -287,23 +285,22 @@ fn fact_op<'d>(
 fn target_checks(
     schema: &Schema,
     selections: &Selections,
-    deleted_guards: BTreeSet<(KeyId, Box<[u8]>)>,
-    inserted_guards: &BTreeSet<(KeyId, Box<[u8]>)>,
-) -> Box<[GuardCheck]> {
-    deleted_guards
+    deleted_determinants: BTreeSet<(KeyId, DeterminantImage)>,
+    inserted_determinants: &BTreeSet<(KeyId, DeterminantImage)>,
+) -> Box<[DeterminantCheck]> {
+    deleted_determinants
         .into_iter()
         .filter_map(|entry| {
-            let reestablished = inserted_guards.contains(&entry);
-            let (key, guard) = entry;
+            let reestablished = inserted_determinants.contains(&entry);
+            let (key, determinant) = entry;
             let dependents: Box<[DependentCheck]> = schema
                 .dependents(key)
                 .iter()
                 .filter_map(|&containment_id| {
                     let statement = schema.containment(containment_id);
-                    let coverage = match &statement.enforcement {
-                        Enforcement::Probe { coverage, .. } => *coverage,
-                        Enforcement::Closed { .. } => return None,
-                    };
+                    if matches!(statement.enforcement, Enforcement::Closed { .. }) {
+                        return None;
+                    }
                     let psi_qualified = if reestablished {
                         match &selections.containment(containment_id).target {
                             SelectionCheck::Empty => return None,
@@ -315,7 +312,6 @@ fn target_checks(
                     };
                     Some(DependentCheck {
                         containment: containment_id,
-                        coverage,
                         psi_qualified,
                     })
                 })
@@ -323,9 +319,9 @@ fn target_checks(
             if dependents.is_empty() {
                 return None;
             }
-            Some(GuardCheck {
+            Some(DeterminantCheck {
                 key,
-                guard,
+                determinant,
                 dependents,
             })
         })

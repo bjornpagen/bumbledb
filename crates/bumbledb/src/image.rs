@@ -9,9 +9,9 @@ pub mod cache;
 pub mod view;
 
 mod build;
+mod cardinality;
 mod decode;
-mod distinct;
-mod pitch;
+mod stride;
 
 pub use build::{build, synthesize_closed};
 
@@ -19,8 +19,8 @@ pub use build::{build, synthesize_closed};
 /// the L1D's set congruence (256 sets × 64 B lines,
 /// index bits 6–13 — a mild ≤1.55× on real lockstep scans) and the
 /// stream-prefetch trackers' page-number bits (the severe one: 4–6× on
-/// DRAM lockstep scans when pitches sit near a multiple). The layout
-/// rule pads PITCHES off multiples of this ([`PitchPadder`]); the old
+/// DRAM lockstep scans when strides sit near a multiple). The layout
+/// rule pads STRIDES off multiples of this ([`StridePadder`]); the old
 /// belief that congruent bases cost "10–20×" is retired — that figure
 /// required a fully dependent load chain and never applied to
 /// scans.
@@ -144,7 +144,7 @@ pub struct RelationImage {
     /// Per-column exact distinct-value counts, computed LAZILY on first
     /// planner demand: the eager per-column pass was
     /// the cold path's dominant fixed cost (~1.8 ms per 150k rows,
-    /// paid before the first query could run — even a guard probe that
+    /// paid before the first query could run — even a key probe that
     /// needs no estimates). The image is generation-keyed by the cache,
     /// so a `OnceLock` per column IS the per-(snapshot, relation,
     /// column) stats cache; the counts themselves are unchanged (same
@@ -154,7 +154,7 @@ pub struct RelationImage {
     spans: Box<[ColumnSpan]>,
     columns: Box<[Column]>,
     /// Backing store for 8-byte columns; column bases are 128-byte aligned
-    /// with pitches padded off 16 KiB multiples (see [`PitchPadder`]).
+    /// with strides padded off 16 KiB multiples (see [`StridePadder`]).
     words: Vec<u64>,
     /// Backing store for 1-byte columns, same alignment discipline.
     bytes: Vec<u8>,
@@ -227,33 +227,33 @@ impl RelationImage {
     }
 }
 
-/// Column pitches padded away from prefetch-tracker aliasing.
+/// Column strides padded away from prefetch-tracker aliasing.
 /// The measured law: the L1D's
 /// 16 KiB set congruence costs AT MOST 1.55× on real lockstep scans —
 /// but stream-prefetch trackers alias on low 16 KiB page-number bits,
-/// so power-of-two-ish pitches with small (1–3 line) staggers cost
+/// so power-of-two-ish strides with small (1–3 line) staggers cost
 /// 4–6× on DRAM-tier lockstep scans (8.13 vs 1.78 ns/row measured).
 /// The old rule here — odd 128 B residues mod 16 KiB, the "stagger" —
 /// was built against the first (mild) hazard and CREATED the second.
-/// The replacement: when a column-to-column pitch is large enough to be
-/// scanned from DRAM (≥ [`PAD_MIN_PITCH`]) and lands a small NONZERO
+/// The replacement: when a column-to-column stride is large enough to be
+/// scanned from DRAM (≥ [`PAD_MIN_STRIDE`]) and lands a small NONZERO
 /// offset (≤ [`PAD_TOLERANCE`]) from a 16 KiB multiple, round it UP to
 /// the next exact multiple — exact multiples measured clean (the
 /// stagger-16,384 discriminator ran fast); the poison is the small
-/// offset. Below [`PAD_MIN_PITCH`], columns are cache-resident at scan
+/// offset. Below [`PAD_MIN_STRIDE`], columns are cache-resident at scan
 /// time and no tracker interference was measured — disk is not free.
-struct PitchPadder {
+struct StridePadder {
     /// Previous column start per backing slab (element index), so the
-    /// pitch under test is always between neighbors in the SAME slab —
+    /// stride under test is always between neighbors in the SAME slab —
     /// lockstep scans stride within a slab.
     prev_start_by_width: [Option<usize>; 2],
 }
 
-/// Pitches below this never pad (the columns are cache-resident when
+/// Strides below this never pad (the columns are cache-resident when
 /// scanned; the pathology is a DRAM-stream phenomenon).
-const PAD_MIN_PITCH: usize = 64 * 1024;
+const PAD_MIN_STRIDE: usize = 64 * 1024;
 
-/// How close (bytes) to a 16 KiB multiple a pitch must land to count as
+/// How close (bytes) to a 16 KiB multiple a stride must land to count as
 /// tracker-aliasing-shaped: the measured discriminators put stagger 8,
 /// 32, 64, and 128 in the pathological band and 16,384 out of it.
 const PAD_TOLERANCE: usize = 384;

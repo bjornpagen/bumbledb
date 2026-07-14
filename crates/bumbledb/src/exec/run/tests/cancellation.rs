@@ -165,7 +165,7 @@ fn randomized_subset_projections_match_the_oracle_under_d2() {
                     &mut NoopCounters,
                 )
                 .expect("execute");
-            let got: BTreeSet<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+            let got: BTreeSet<Vec<u64>> = sink.answers().map(<[u64]>::to_vec).collect();
             assert_eq!(
                 got, expected,
                 "case {case} shape {shape} order {order:?} keep {keep:?} batch {batch}"

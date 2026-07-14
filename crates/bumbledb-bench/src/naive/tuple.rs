@@ -2,13 +2,13 @@
 //! `Ord` (the engine orders encoded words, never decoded values), so the
 //! model wraps its rows in [`Tuple`] and spells the order out — variant
 //! rank first, then contents. Any total order works; it only has to be a
-//! total order so `BTreeSet` can hold facts and result rows.
+//! total order so `BTreeSet` can hold facts and answers.
 
 use std::cmp::Ordering;
 
 use bumbledb::Value;
 
-/// One decoded fact or result row: a value per field (or per variable),
+/// One decoded fact or answer: a value per field (or per variable),
 /// ordered lexicographically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tuple(pub Vec<Value>);
@@ -55,8 +55,12 @@ pub(crate) fn cmp_value(a: &Value, b: &Value) -> Ordering {
         (Value::String(x), Value::String(y)) | (Value::FixedBytes(x), Value::FixedBytes(y)) => {
             x.cmp(y)
         }
-        (Value::IntervalU64(xs, xe), Value::IntervalU64(ys, ye)) => (xs, xe).cmp(&(ys, ye)),
-        (Value::IntervalI64(xs, xe), Value::IntervalI64(ys, ye)) => (xs, xe).cmp(&(ys, ye)),
+        (Value::IntervalU64(x), Value::IntervalU64(y)) => {
+            (x.start(), x.end()).cmp(&(y.start(), y.end()))
+        }
+        (Value::IntervalI64(x), Value::IntervalI64(y)) => {
+            (x.start(), x.end()).cmp(&(y.start(), y.end()))
+        }
         (Value::AllenMask(x), Value::AllenMask(y)) => x.bits().cmp(&y.bits()),
         _ => rank(a).cmp(&rank(b)),
     }
@@ -71,8 +75,8 @@ pub(crate) fn cmp_value(a: &Value, b: &Value) -> Ordering {
 /// model expects them.
 pub(crate) fn endpoints(value: &Value) -> (i128, i128) {
     match value {
-        Value::IntervalU64(start, end) => (i128::from(*start), i128::from(*end)),
-        Value::IntervalI64(start, end) => (i128::from(*start), i128::from(*end)),
+        Value::IntervalU64(interval) => (i128::from(interval.start()), i128::from(interval.end())),
+        Value::IntervalI64(interval) => (i128::from(interval.start()), i128::from(interval.end())),
         other => panic!("expected an interval value, got {other:?}"),
     }
 }
@@ -93,6 +97,6 @@ pub(crate) fn overlaps(a: (i128, i128), b: (i128, i128)) -> bool {
 }
 
 /// Point membership: `start <= t < end`.
-pub(crate) fn contains_point(interval: (i128, i128), t: i128) -> bool {
-    interval.0 <= t && t < interval.1
+pub(crate) fn point_in(interval: (i128, i128), point: i128) -> bool {
+    interval.0 <= point && point < interval.1
 }

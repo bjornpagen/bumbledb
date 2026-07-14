@@ -1,6 +1,6 @@
 //! Edge-case pins from the design audits: cyclic containments, nullary
 //! relations, fresh exhaustion, cap-wide closed vocabularies, 1-byte
-//! compound guards, and empty interned values — each a doc claim that
+//! compound determinants, and empty interned values — each a doc claim that
 //! previously rested on a code-reading argument instead of a test. Plus the PRD 20 bind matrix:
 //! precise per-position errors for every scalar/set misuse, and a valid
 //! mixed bind through the public [`bumbledb::ParamArg`] surface.
@@ -11,7 +11,7 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Row, SchemaDescriptor,
     Side, StatementDescriptor, ValueType,
 };
-use bumbledb::{BindValue, Db, Error, Fact, ParamArg, ResultBuffer, ResultValue, Value};
+use bumbledb::{AnswerValue, Answers, BindValue, Db, Error, Fact, ParamArg, Value};
 
 mod common;
 
@@ -207,9 +207,9 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
 }
 
 /// A compound key plus a containment over 1-byte fields (bool, bool):
-/// the dense 2-byte guard shape in `U`/`R` keys, commit-judged.
+/// the dense 2-byte determinant shape in `U`/`R` keys, commit-judged.
 #[test]
-fn one_byte_compound_guards() {
+fn one_byte_compound_determinants() {
     let status = ValueType::Bool;
     let schema = SchemaDescriptor {
         relations: vec![
@@ -274,7 +274,7 @@ fn one_byte_compound_guards() {
     };
     let (switch, watcher) = (RelationId(0), RelationId(1));
 
-    let dir = common::TempDir::new("edge-byte-guards");
+    let dir = common::TempDir::new("edge-byte-determinants");
     let db = Db::create(dir.path(), schema).expect("create");
     db.write(|tx| {
         tx.insert_dyn(switch, &[Value::Bool(true), Value::Bool(true)])?;
@@ -284,9 +284,9 @@ fn one_byte_compound_guards() {
         )?;
         Ok(())
     })
-    .expect("guarded insert commits");
+    .expect("validated insert commits");
 
-    // The containment holds over the 2-byte guard: a watcher of a
+    // The containment holds over the 2-byte determinant: a watcher of a
     // missing pair aborts.
     let err = db
         .write(|tx| {
@@ -350,19 +350,19 @@ fn zero_binding_gate_with_global_count() {
     });
     let mut prepared = db.prepare(&query).expect("prepare");
 
-    // Gate empty: no rows at all (empty-input aggregate = empty set).
-    let rows = db
+    // Gate empty: no answers at all (empty-input aggregate = empty set).
+    let answers = db
         .read(|snap| snap.execute_collect(&mut prepared, &[]))
         .expect("execute");
-    assert!(rows.is_empty(), "an empty gate empties the query");
+    assert!(answers.is_empty(), "an empty gate empties the query");
 
     db.write(|tx| tx.insert(&Gate { tag: "open" }))
         .expect("open the gate");
-    let rows = db
+    let answers = db
         .read(|snap| snap.execute_collect(&mut prepared, &[]))
         .expect("execute");
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows.get(0, 0), bumbledb::ResultValue::U64(2));
+    assert_eq!(answers.len(), 1);
+    assert_eq!(answers.get(0, 0), bumbledb::AnswerValue::U64(2));
 }
 
 /// Q(id) :- Posting(id, account = ?set1, amount = ?0, memo = ?2) — one
@@ -428,11 +428,11 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
             ParamArg::Set(&[Value::U64(10), Value::U64(11), Value::U64(11)]),
             ParamArg::Scalar(BindValue::Str("rent")),
         ];
-        let mut out = ResultBuffer::new();
+        let mut out = Answers::new();
         snap.execute_args(&mut prepared, &args, &mut out)?;
         let mut got: Vec<u64> = (0..out.len())
-            .map(|row| {
-                let ResultValue::U64(id) = out.get(row, 0) else {
+            .map(|answer| {
+                let AnswerValue::U64(id) = out.get(answer, 0) else {
                     panic!("column 0 is the posting id");
                 };
                 id

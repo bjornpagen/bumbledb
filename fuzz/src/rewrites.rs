@@ -1,5 +1,5 @@
 //! The rewrites target (the crucible packet (git ecec1dc3)): the dual-PIPELINE
-//! differential. "Rewrites are semantics-preserving" — the chase
+//! differential. "Rewrites are semantics-preserving" — the grounding
 //! (occurrence elimination + prepare-time folding) and the statically-
 //! empty condition fold are where "looks right" and "is right" diverge
 //! silently: a wrong fold produces plausible wrong answers, not crashes.
@@ -9,9 +9,9 @@
 //! NOT a dual build (recorded in the PRD's Results): cargo refuses a
 //! second renamed dependency on the same package, and feature
 //! unification would union a rename into one build anyway. The
-//! `chase-off`/`fold-off` features never were compile-time pass removal
+//! `ground-off`/`fold-off` features never were compile-time pass removal
 //! — they gate PUBLIC access to the passes' thread-local off switches
-//! (`with_chase_disabled`/`with_fold_disabled`), so ONE binary carries
+//! (`with_grounding_disabled`/`with_fold_disabled`), so ONE binary carries
 //! both pipelines and flips them per execution, exactly the bench
 //! crate's dual-run differential idiom.
 //!
@@ -22,7 +22,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bumbledb::{with_chase_disabled, with_fold_disabled};
+use bumbledb::{with_fold_disabled, with_grounding_disabled};
 use bumbledb_bench::corpus_gen::Rng;
 use bumbledb_bench::families;
 use bumbledb_bench::querygen;
@@ -46,12 +46,12 @@ pub fn run(data: &[u8]) {
     with_world(index, |world| {
         for draw in draws {
             let params = world::positional(&draw);
-            // The rewritten pipeline: chase and fold on (the default).
+            // The rewritten pipeline: grounding and fold on (the default).
             let rewritten = world::execute(&world.db, &query, &params);
             // The rewrite-free pipeline: both switches thrown for the
-            // prepare inside — the plan is built with the chase skipped
+            // prepare inside — the plan is built with the grounding skipped
             // and the fold skipped, then executed on the same store.
-            let rewrite_free = with_chase_disabled(|| {
+            let rewrite_free = with_grounding_disabled(|| {
                 with_fold_disabled(|| world::execute(&world.db, &query, &params))
             });
             // THE oracle: identical result sets (typed runtime errors

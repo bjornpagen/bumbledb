@@ -9,7 +9,7 @@ no nulls, no layer cake — and a constraint system Postgres cannot follow:
 **invariants are two judgments about queries** (functionality and containment,
 `30-dependencies.md`), judged once per commit against the transaction's final state,
 which makes totality of sum types, conditional reference targets, and pointwise
-temporal keys *statable* — and makes the SQL constraint zoo (unique, foreign key,
+temporal keys *statable* — and makes the SQL constraint zoo (unique, referential,
 primary key, check, exclusion, cascade, restrict, deferrable) **deleted
 vocabulary**, each word replaced by a derivation. BCNF is a modeling discipline the
 owner enforces; temporality is not a discipline but a type (`Interval`,
@@ -88,7 +88,7 @@ language. **Reverses if:** never — owner axiom.
 
 - **One process.** Multi-process access to one database is out of the envelope in v0
   (LMDB would permit it, but the environment-scope image cache and counter batching are
-  process-local). Guarded: every open takes an exclusive advisory lock on
+  process-local). Protected: every open takes an exclusive advisory lock on
   `<dir>/bumbledb.lock` for the handle's lifetime, so a second handle — another process,
   or a second `Db` on the same path in this one — fails loudly at open time
   (`EnvironmentLocked`) instead of corrupting derived state silently. Recorded as
@@ -152,12 +152,12 @@ decision accommodates narrower platforms). Full research notes with sources:
   (`40-execution.md` D1) is sound at this scale.
 - **Unaligned loads are near-free (16 KB pages)**: facts are stored dense, with no
   intra-row padding; alignment is spent only where NEON reads column bases.
-- **Columnar data is SoA, 128-byte aligned, with pitches padded off 16 KiB
+- **Columnar data is SoA, 128-byte aligned, with strides padded off 16 KiB
   multiples** (`50-storage.md`; measured): the L1D manages 64 B lines behind
   a 128 B memory-system granule — both numbers are real, at different levels —
   and its set congruence costs at most 1.55× on real lockstep scans. The layout
   hazard that actually matters is prefetch-tracker aliasing on 16 KiB page-number
-  bits (4–6× on DRAM lockstep scans); one page of pitch padding cures it.
+  bits (4–6× on DRAM lockstep scans); one page of stride padding cures it.
 - **TAGE branch prediction (>99%)**: the residual misprediction source is per-tuple
   data-dependent branching — batching converts it into branchless compaction; and the
   hot path contains no indirect dispatch (sinks/counters monomorphized,
@@ -249,7 +249,7 @@ IR-as-data in, result copies out (`70-api.md` § anticipated bindings).
 
 **Deleted vocabulary** (each word's replacement, one line, normative in
 `30-dependencies.md` and `10-data-model.md`): *primary key* → the fact is its own
-identity; *unique* → functional dependency statement; *foreign key* → containment
+identity; *unique* → functional dependency statement; *referential constraint* → containment
 statement; *check constraint* → host newtype constructors; *exclusion constraint* →
 functional dependency over an interval position; *cascade* → same-transaction
 cluster demolition under final-state judgment; *restrict / no action / deferrable* →
@@ -262,7 +262,7 @@ idiom; *SELECT FOR UPDATE / row locks / SERIALIZABLE retry* → the generation w
 (snapshot-witnessed `write_from`) plus WriteTx point reads under final-state
 judgment — locks protect what you remembered to lock; the witness protects
 everything the snapshot saw; *enum* → closed relation (a vocabulary is a relation
-whose rows are ground axioms; the type died when the schema macro began emitting
+whose elements are ground axioms; the type died when the schema macro began emitting
 closed-relation handles, as recorded by `10-data-model.md`'s obituary, and the
 value-type roster is six).
 

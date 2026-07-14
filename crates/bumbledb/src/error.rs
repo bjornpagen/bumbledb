@@ -11,7 +11,16 @@ mod display;
 
 use crate::ir::{ParamId, VarId};
 use crate::schema::fingerprint::SchemaFingerprint;
-use crate::schema::{FieldId, RelationId, StatementId, ValueType};
+use crate::schema::{FieldId, KeyId, RelationId, StatementId, ValueType};
+
+/// One declared key offered as owned evidence in a target-key rejection.
+/// The diagnostic may outlive the descriptor, so it carries no schema
+/// references.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetKeyCandidate {
+    pub key: KeyId,
+    pub projection: Box<[FieldId]>,
+}
 
 /// Corruption detected while decoding stored bytes — a hard error, never a
 /// skip, never a default (`docs/architecture/50-storage.md`).
@@ -31,7 +40,7 @@ pub enum CorruptionError {
     DanglingInternId(u64),
     /// A row id obtained from `M`/`U` has no `F` entry in the same snapshot.
     MissingFact { relation: RelationId, row_id: u64 },
-    /// A live `M` entry's `F` row or `U` guard was absent at delete time —
+    /// A live `M` entry's `F` row or `U` determinant was absent at delete time —
     /// the write-side M/F disagreement (the read side raises
     /// [`CorruptionError::MissingFact`]).
     MembershipDesync { relation: RelationId, row_id: u64 },
@@ -151,14 +160,6 @@ pub enum SchemaError {
         row: usize,
         field: FieldId,
     },
-    /// An interval ground axiom with `start >= end`: the constructor law
-    /// holds for axioms too — a malformed ground axiom is a schema error,
-    /// not corruption.
-    ExtensionIntervalEmpty {
-        relation: RelationId,
-        row: usize,
-        field: FieldId,
-    },
     /// A ray `[start, ∞)` as a ground axiom: an unbounded end says the
     /// theory's constant is still running, and a still-running span is
     /// policy, not an intrinsic property (the intrinsic-vs-policy law) —
@@ -218,7 +219,7 @@ pub enum SchemaError {
         field: FieldId,
     },
     /// Roster ">1 interval position": two interval fields in one FD
-    /// projection would be 2-D exclusion, which the ordered guard cannot
+    /// projection would be 2-D exclusion, which the ordered determinant cannot
     /// answer. Carries the second interval field.
     FunctionalityMultipleIntervals {
         statement: StatementId,
@@ -234,16 +235,16 @@ pub enum SchemaError {
     },
     /// Roster "duplicate statements", the Functionality-specific form: two
     /// FDs over one field set on one relation assert one judgment — the
-    /// second guard is pure write amplification, and rejecting it makes
+    /// second determinant is pure write amplification, and rejecting it makes
     /// containment target-key resolution unambiguous.
     DuplicateFunctionality {
         statement: StatementId,
         earlier: StatementId,
     },
-    /// Roster "guard width overflow": Σ projected field widths exceeds
-    /// [`crate::storage::keys::MAX_GUARD_WIDTH`] — rejected at declaration,
+    /// Roster "determinant width overflow": Σ projected field widths exceeds
+    /// [`crate::storage::keys::MAX_DETERMINANT_WIDTH`] — rejected at declaration,
     /// never discovered at write time.
-    GuardKeyTooWide {
+    DeterminantKeyTooWide {
         statement: StatementId,
         width: usize,
     },
@@ -280,25 +281,22 @@ pub enum SchemaError {
         relation: RelationId,
         field: FieldId,
     },
-    /// Roster "selection literal type mismatch", the interval bound rule:
-    /// `start >= end` denotes no points, and a fact never denotes nothing.
-    SelectionIntervalEmpty {
-        statement: StatementId,
-        relation: RelationId,
-        field: FieldId,
-    },
     /// Roster "IND whose target projection matches no key of the target":
     /// probe-ability requires Y to be a permutation of a declared key.
     NoMatchingTargetKey {
         statement: StatementId,
-        relation: RelationId,
+        target: RelationId,
+        projection: Box<[FieldId]>,
+        available: Box<[TargetKeyCandidate]>,
     },
     /// Roster "IND … (or, with an interval position, no pointwise key
     /// carrying it)": the coverage walk needs the target's own key to keep
     /// its intervals disjoint and ordered.
     NoPointwiseTargetKey {
         statement: StatementId,
-        relation: RelationId,
+        target: RelationId,
+        projection: Box<[FieldId]>,
+        available: Box<[TargetKeyCandidate]>,
     },
     /// An interval position on a containment with a closed side — refused
     /// v0: a pointwise judgment against a closed relation would mix the
@@ -369,13 +367,6 @@ pub enum FactShapeError {
         relation: RelationId,
         field: FieldId,
     },
-    /// An interval value with `start >= end`: the empty interval denotes
-    /// no points, and a fact never denotes nothing
-    /// (`docs/architecture/10-data-model.md`).
-    EmptyInterval {
-        relation: RelationId,
-        field: FieldId,
-    },
     /// [`crate::WriteTx::get_dyn`]'s statement id is not a `Functionality`
     /// on the queried relation (out of range, a containment, or another
     /// relation's key) — the dynamic point-read surface is data, so the
@@ -408,7 +399,7 @@ pub enum ValidationError {
     },
     /// DNF distribution of the rules' condition trees would produce more
     /// rules than the cap ([`crate::ir::MAX_RULES`]) — the exponential
-    /// case is rejected at declaration, exactly like guard-width
+    /// case is rejected at declaration, exactly like determinant-width
     /// overflow. `produced` names the blowup: the structural term count
     /// across all rules, judged before a single disjunct is materialized
     /// (so before duplicate collapse).
@@ -417,7 +408,7 @@ pub enum ValidationError {
         cap: usize,
     },
     /// A rule's condition trees nest deeper than
-    /// [`crate::ir::MAX_CONDITION_DEPTH`] — the boundary guard for every
+    /// [`crate::ir::MAX_CONDITION_DEPTH`] — the boundary check for every
     /// recursive tree walk (the trust-boundary law: hostile nesting must
     /// be a typed rejection, never a stack exhaustion). Judged
     /// iteratively, before any recursion sees the tree.
@@ -477,14 +468,6 @@ pub enum ValidationError {
         atom: usize,
         field: FieldId,
     },
-    /// An interval literal with `start >= end` in a binding position — it
-    /// denotes no points, and no field value equals or contains nothing
-    /// (comparison sites report
-    /// [`ValidationError::ComparisonEmptyIntervalLiteral`]).
-    EmptyIntervalLiteral {
-        atom: usize,
-        field: FieldId,
-    },
     /// The point-domain law (`docs/architecture/10-data-model.md`): points
     /// are `MIN ..= MAX−1`; `end == MAX` denotes the ray `[s, ∞)`, so an
     /// element-typed literal equal to the domain ceiling in a membership
@@ -520,8 +503,8 @@ pub enum ValidationError {
     IntervalParamSet {
         param: ParamId,
     },
-    /// Type rules violated: cross-type comparison, an order operator on a
-    /// non-integer type, or an interval operator over non-interval sides.
+    /// Type rules violated: mixed-type operands or an interval operator over
+    /// non-interval sides. Single-type order refusals have dedicated variants.
     IllegalComparison {
         index: usize,
     },
@@ -539,6 +522,16 @@ pub enum ValidationError {
     OrderComparisonOnFixedBytes {
         index: usize,
     },
+    /// An order operator with a String operand. Intern ids are an equality
+    /// representation, not a collation; String is equality-only.
+    OrderComparisonOnString {
+        index: usize,
+    },
+    /// An order operator with a Bool operand. Boolean ordering is noise;
+    /// Bool is equality-only.
+    OrderComparisonOnBool {
+        index: usize,
+    },
     /// Neither side is a variable — write the query you mean.
     ConstantComparison {
         index: usize,
@@ -546,12 +539,6 @@ pub enum ValidationError {
     /// Both sides are the same variable — constant-valued; write the
     /// query you mean.
     SelfComparison {
-        index: usize,
-    },
-    /// An interval literal with `start >= end` in a comparison position
-    /// (the binding-site sibling of
-    /// [`ValidationError::EmptyIntervalLiteral`]).
-    ComparisonEmptyIntervalLiteral {
         index: usize,
     },
     /// An element-typed literal equal to the domain ceiling as a
@@ -644,7 +631,7 @@ pub enum ValidationError {
     /// `Pack` is relation-shaped — a fold column repeated per segment row
     /// is a join in aggregate costume. Coalesced-time accounting
     /// (`Sum∘Duration∘Pack`) is two prepared queries or a host fold over
-    /// packed rows; *trigger* for a composed form: a measured two-pass
+    /// packed answers; *trigger* for a composed form: a measured two-pass
     /// budget violation.
     MixedPackAndFold {
         find: usize,
@@ -659,7 +646,7 @@ pub enum ValidationError {
     PackInputType {
         find: usize,
     },
-    /// A `Term::Duration` in an atom binding: the measure is a
+    /// A `Term::Measure` in an atom binding: the measure is a
     /// computation over a bound interval variable, not a bindable value
     /// — its legal positions are a find term, the aggregated input of
     /// `Sum`/`Min`/`Max`, and one side of an order comparison
@@ -674,14 +661,14 @@ pub enum ValidationError {
     DurationOverNonInterval {
         var: VarId,
     },
-    /// A `FindTerm::AggregateDuration` whose op is not `Sum`/`Min`/`Max`
+    /// A `FindTerm::AggregateMeasure` whose op is not `Sum`/`Min`/`Max`
     /// — `Count` is nullary, `CountDistinct` over a measure is a count
     /// over derived values with no sighted use, and the Arg ops key on
     /// variables, not computations.
     DurationAggregateOp {
         find: usize,
     },
-    /// A `Term::Duration` under any operator but the order comparisons
+    /// A `Term::Measure` under any operator but the order comparisons
     /// (`Lt`/`Le`/`Gt`/`Ge`) — the measure's one comparison position
     /// (`docs/architecture/20-query-ir.md`, § the measure).
     DurationComparisonOperator {
@@ -712,7 +699,7 @@ pub enum ValidationError {
 /// directions, source before target ([`Violations`]' sort key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Direction {
-    /// An inserted source fact inside σ has no target: the guard probe
+    /// An inserted source fact inside σ has no target: the key probe
     /// missed, or the coverage walk found a gap.
     SourceUnsatisfied,
     /// A deleted target key tuple is still required by a surviving
@@ -726,7 +713,7 @@ pub enum Direction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Violation {
     /// A `Functionality` statement violated by the final state: two live
-    /// facts claim one key — the same guard bytes (scalar put-conflict),
+    /// facts claim one key — the same determinant bytes (scalar put-conflict),
     /// or overlapping intervals within one scalar-prefix group (the
     /// pointwise neighbor probe).
     Functionality {
@@ -735,7 +722,7 @@ pub enum Violation {
         fact: Box<[u8]>,
         /// The already-standing fact, for the pointwise arm — the probe
         /// names both parties. `None` for a scalar put-conflict, where
-        /// the guard bytes inside `fact` already identify the collision.
+        /// the determinant bytes inside `fact` already identify the collision.
         incumbent: Option<Box<[u8]>>,
     },
     /// A `Containment` statement violated by the final state
@@ -848,13 +835,13 @@ impl<'a> IntoIterator for &'a Violations {
 pub enum OverflowKind {
     /// An aggregate's final value exceeds its result type (the once-at-
     /// finalization range check; deterministic under any fold order).
-    /// Carries the find-clause index.
+    /// Carries the find-position index.
     Aggregate { find: usize },
     /// The executor's D2 origin counter would cross u32 — more than 2³²
     /// absorb-node survivors in one execution. Beyond the scale axiom,
     /// but valid input, so it errors; checked at batch granularity
     /// (`exec/run/probe_pass.rs`).
-    Origins,
+    OriginCapacity,
 }
 
 /// The one workspace error type, categorized per
@@ -948,9 +935,9 @@ pub enum Error {
     /// § conditional writes).
     GenerationMoved {
         /// The witness snapshot's generation.
-        witnessed: u64,
+        witnessed: crate::storage::env::GenerationId,
         /// The current committed generation.
-        current: u64,
+        current: crate::storage::env::GenerationId,
     },
     /// The commit's durability boundary failed: `mdb_txn_commit` surfaced
     /// a raw OS errno from its write/sync path — on macOS the data-page
@@ -988,7 +975,7 @@ pub enum Error {
     ForeignPreparedQuery,
     /// A witness snapshot of a different database than the one being
     /// written ([`crate::Db::write_from`]) — the same environment-identity
-    /// guard prepared queries run at every execution entry, on the write
+    /// key-probe prepared queries run at every execution entry, on the write
     /// side: another database's generation clock proves nothing about
     /// this one.
     ForeignSnapshot,
@@ -1023,7 +1010,7 @@ pub enum Error {
         expected: ValueType,
     },
     /// Bind-time: a point-position param (an element-typed param meeting
-    /// an interval position — a membership binding or a `Contains`
+    /// an interval position — a membership binding or a `PointIn`
     /// operand) bound to its domain ceiling. The point domain is
     /// `MIN ..= MAX−1`; `MAX` is the ray's ∞, never a point
     /// (`docs/architecture/10-data-model.md`, the point-domain law) — the
@@ -1057,7 +1044,7 @@ pub enum Error {
     /// the offending fact's two encoded interval words (order-preserving
     /// column form — I64 endpoints are the sign-flipped biased words).
     /// The alternative — silently yielding `MAX` — would fabricate
-    /// arithmetic. Hosts exclude rays first: an `Allen` guard
+    /// arithmetic. Hosts exclude rays first: an `Allen` predicate
     /// (`DISJOINT` from the ray-detecting probe `[MAX−1, MAX)`) or a
     /// bounded-end filter on the measured atom runs before the measure
     /// by the filter-order law (`docs/architecture/20-query-ir.md`,

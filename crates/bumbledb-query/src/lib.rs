@@ -8,11 +8,12 @@
 //! it, round-trip goldens pin the two together):
 //!
 //! ```text
-//! query   := clause+                     // two or more clauses denote set union
-//! clause  := '(' head ')' '|' body ';'
+//! query   := rule+                       // two or more rules denote set union
+//! rule    := '(' head ')' '|' body ';'
 //! head    := headterm (',' headterm)*
 //! headterm:= var | [name ':'] agg        // named positions become result columns
 //! agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
+//!          | ArgMax(v, key) | ArgMin(v, key)
 //!            where t := v | Duration(v)
 //! body    := item (',' item)*
 //! item    := atom                        // positive occurrence
@@ -29,10 +30,13 @@
 //! term    := var | ?param | literal
 //! ```
 //!
+//! Surface `Duration(iv)` lowers to IR `Measure(iv)`: it denotes the
+//! point-set cardinality `end − start`, and a ray has no measure.
+//!
 //! **Punning law (B, decided; the alternative is ledgered in
-//! docs/architecture/70-api.md):** a bare field name binds a **clause-local variable
+//! docs/architecture/70-api.md):** a bare field name binds a **rule-local variable
 //! named after the field** — projection shorthand, Rust's struct-shorthand
-//! instinct. The same punned name in two atoms of one clause is a compile
+//! instinct. The same punned name in two atoms of one rule is a compile
 //! error, spanned at the second occurrence ("ambiguous punning — rename
 //! explicitly"); joins are always written `field: v` on both ends.
 //!
@@ -70,7 +74,7 @@
 //! - **Params** are one style per query: named (`?window`, dense ids by
 //!   first occurrence, query-global) or positional (`?0`, the id
 //!   verbatim — the renderer's own spelling, so rendered output reparses).
-//! - **Item-position `in`** is point membership (`Contains`): the right
+//! - **Item-position `in`** is point membership (`PointIn`): the right
 //!   side is the interval — a variable, a `?param`, or a `start..end`
 //!   literal. Set membership is the binding form `field in ?param`.
 //!
@@ -190,7 +194,7 @@ enum SelValue {
 enum Term {
     Var(Name),
     Param(Param),
-    Duration(Name),
+    Measure(Name),
     Lit(Lit),
 }
 
@@ -234,8 +238,7 @@ enum Item {
     },
 }
 
-/// The aggregate ops the head grammar admits (Arg terms are the
-/// renderer's honest extension, not grammar; the raw IR carries them).
+/// The aggregate ops admitted by both the head grammar and the IR renderer.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AggOp {
     Sum,
@@ -244,6 +247,8 @@ enum AggOp {
     Count,
     CountDistinct,
     Pack,
+    ArgMax,
+    ArgMin,
 }
 
 impl AggOp {
@@ -255,6 +260,8 @@ impl AggOp {
             Self::Count => "Count",
             Self::CountDistinct => "CountDistinct",
             Self::Pack => "Pack",
+            Self::ArgMax => "ArgMax",
+            Self::ArgMin => "ArgMin",
         }
     }
 }
@@ -264,16 +271,18 @@ impl AggOp {
 /// variable names are a debugging sidecar the engine never stores.
 enum HeadTerm {
     Var(Name),
-    Duration(Name),
+    Measure(Name),
     Agg {
         op: AggOp,
         over: Option<Name>,
         /// The aggregated term is `Duration(v)` (Sum/Min/Max only).
         measure: bool,
+        /// Arg-restriction's extremized variable; absent for folds.
+        key: Option<Name>,
     },
 }
 
-struct Clause {
+struct ParsedRule {
     head: Vec<HeadTerm>,
     items: Vec<Item>,
 }
@@ -475,13 +484,15 @@ fn parse_param(tokens: &mut Tokens, question: Span) -> Parse<Param> {
 // The grammar, production by production.
 // ---------------------------------------------------------------------
 
-const AGG_NAMES: [(&str, AggOp); 6] = [
+const AGG_NAMES: [(&str, AggOp); 8] = [
     ("Sum", AggOp::Sum),
     ("Min", AggOp::Min),
     ("Max", AggOp::Max),
     ("Count", AggOp::Count),
     ("CountDistinct", AggOp::CountDistinct),
     ("Pack", AggOp::Pack),
+    ("ArgMax", AggOp::ArgMax),
+    ("ArgMin", AggOp::ArgMin),
 ];
 
 fn agg_op(name: &str) -> Option<AggOp> {
@@ -500,10 +511,27 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
             op,
             over: None,
             measure: false,
+            key: None,
         });
     }
     let (mut arg, _) = take_paren_group(tokens, "the aggregate's argument")?;
     let first = expect_ident(&mut arg, "a variable")?;
+    if matches!(op, AggOp::ArgMax | AggOp::ArgMin) {
+        expect_punct(&mut arg, ',', "`,` between the Arg value and key")?;
+        let key = expect_ident(&mut arg, "the Arg key variable")?;
+        if let Some(extra) = arg.next() {
+            return fail(
+                extra.span(),
+                "query!: ArgMax/ArgMin take value and key variables",
+            );
+        }
+        return Ok(HeadTerm::Agg {
+            op,
+            over: Some(first),
+            measure: false,
+            key: Some(key),
+        });
+    }
     let measure = first.text == "Duration" && matches!(arg.peek(), Some(TokenTree::Group(_)));
     let over = if measure {
         if !matches!(op, AggOp::Sum | AggOp::Min | AggOp::Max) {
@@ -529,6 +557,7 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
         op,
         over: Some(over),
         measure,
+        key: None,
     })
 }
 
@@ -555,7 +584,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
                 agg_name.span,
                 format!(
                     "query!: `{}` is not an aggregate — a named head position \
-                     takes Sum/Min/Max/Count/CountDistinct/Pack",
+                     takes Sum/Min/Max/Count/CountDistinct/Pack/ArgMax/ArgMin",
                     agg_name.text
                 ),
             );
@@ -571,7 +600,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
         if let Some(extra) = inner.next() {
             return fail(extra.span(), "query!: Duration takes one variable");
         }
-        return Ok(HeadTerm::Duration(var));
+        return Ok(HeadTerm::Measure(var));
     }
     Ok(HeadTerm::Var(name))
 }
@@ -689,7 +718,7 @@ fn parse_term(tokens: &mut Tokens) -> Parse<Term> {
             if let Some(extra) = inner.next() {
                 return fail(extra.span(), "query!: Duration takes one variable");
             }
-            return Ok(Term::Duration(var));
+            return Ok(Term::Measure(var));
         }
         return Ok(Term::Var(name));
     }
@@ -839,7 +868,7 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
             if let Some(extra) = inner.next() {
                 return fail(extra.span(), "query!: Duration takes one variable");
             }
-            return finish_term_item(tokens, Term::Duration(var));
+            return finish_term_item(tokens, Term::Measure(var));
         }
         return Ok(Item::Atom(parse_atom(tokens, name)?));
     }
@@ -847,9 +876,9 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
     finish_term_item(tokens, lhs)
 }
 
-/// Parses one clause: `(head) | body ;`.
-fn parse_clause(tokens: &mut Tokens) -> Parse<Clause> {
-    let (head_group, head_span) = take_paren_group(tokens, "a clause head `(…)`")?;
+/// Parses one rule: `(head) | body ;`.
+fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
+    let (head_group, head_span) = take_paren_group(tokens, "a rule head `(…)`")?;
     let head = parse_head(head_group)?;
     if head.is_empty() {
         return fail(head_span, "query!: a head needs at least one term");
@@ -877,20 +906,20 @@ fn parse_clause(tokens: &mut Tokens) -> Parse<Clause> {
         if peek_punct(tokens, ';') {
             let span = peek_span(tokens);
             if items.is_empty() {
-                return fail(span, "query!: a clause body needs at least one atom");
+                return fail(span, "query!: a rule body needs at least one atom");
             }
             tokens.next();
             break;
         }
         if tokens.peek().is_none() {
-            return fail(Span::call_site(), "query!: a clause ends with `;`");
+            return fail(Span::call_site(), "query!: a rule ends with `;`");
         }
         items.push(parse_item(tokens)?);
         if peek_punct(tokens, ',') {
             tokens.next();
         }
     }
-    Ok(Clause { head, items })
+    Ok(ParsedRule { head, items })
 }
 
 // ---------------------------------------------------------------------
@@ -983,7 +1012,7 @@ impl Params {
     }
 }
 
-/// One clause's variable scope: dense ids by first occurrence, plus the
+/// One rule's variable scope: dense ids by first occurrence, plus the
 /// punning ledger (law B: the same punned name twice is ambiguous, and
 /// the error points at the second occurrence).
 #[derive(Default)]
@@ -1022,7 +1051,7 @@ impl Scope {
                     fail(
                         name.span,
                         format!(
-                            "query!: head variable `{}` is not bound in the clause body",
+                            "query!: head variable `{}` is not bound in the rule body",
                             name.text
                         ),
                     )
@@ -1091,8 +1120,8 @@ impl Emitter<'_> {
         Ok(match term {
             Term::Var(name) => Self::var(scope.intern(name)?),
             Term::Param(param) => self.param(param)?,
-            Term::Duration(name) => format!(
-                "::bumbledb::Term::Duration(::bumbledb::VarId({}))",
+            Term::Measure(name) => format!(
+                "::bumbledb::Term::Measure(::bumbledb::VarId({}))",
                 scope.intern(name)?
             ),
             Term::Lit(lit) => format!("::bumbledb::Term::Literal({})", Self::lit(lit)),
@@ -1186,19 +1215,31 @@ impl Emitter<'_> {
                 "::bumbledb::FindTerm::Var(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Duration(name) => format!(
-                "::bumbledb::FindTerm::Duration(::bumbledb::VarId({}))",
+            HeadTerm::Measure(name) => format!(
+                "::bumbledb::FindTerm::Measure(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Agg { op, over, measure } => {
-                let op_expr = format!("::bumbledb::AggOp::{}", op.ir_name());
+            HeadTerm::Agg {
+                op,
+                over,
+                measure,
+                key,
+            } => {
+                let op_expr = match op {
+                    AggOp::ArgMax | AggOp::ArgMin => format!(
+                        "::bumbledb::AggOp::{} {{ key: ::bumbledb::VarId({}) }}",
+                        op.ir_name(),
+                        scope.head_var(key.as_ref().expect("Arg parser seals a key"))?
+                    ),
+                    _ => format!("::bumbledb::AggOp::{}", op.ir_name()),
+                };
                 match over {
                     None => format!(
                         "::bumbledb::FindTerm::Aggregate {{ op: {op_expr}, \
                              over: ::std::option::Option::None }}"
                     ),
                     Some(name) if *measure => format!(
-                        "::bumbledb::FindTerm::AggregateDuration {{ op: {op_expr}, \
+                        "::bumbledb::FindTerm::AggregateMeasure {{ op: {op_expr}, \
                              over: ::bumbledb::VarId({}) }}",
                         scope.head_var(name)?
                     ),
@@ -1212,15 +1253,15 @@ impl Emitter<'_> {
         })
     }
 
-    /// One clause as a `Rule` expression. Items lower in source order;
+    /// One parsed rule as a `Rule` expression. Items lower in source order;
     /// the IR buckets them (atoms, negated, conditions) — the renderer's
     /// normalized order.
-    fn rule(&mut self, clause: &Clause) -> Parse<String> {
+    fn rule(&mut self, rule: &ParsedRule) -> Parse<String> {
         let mut scope = Scope::default();
         let mut atoms = String::new();
         let mut negated = String::new();
         let mut conditions = String::new();
-        for item in &clause.items {
+        for item in &rule.items {
             match item {
                 Item::Atom(atom) => {
                     let _ = write!(atoms, "{},", self.atom(&mut scope, atom)?);
@@ -1236,14 +1277,14 @@ impl Emitter<'_> {
                     let _ = write!(conditions, "{},", Self::leaf(&op, &lhs, &rhs));
                 }
                 Item::Membership { element, container } => {
-                    // `Contains` is interval-first; the notation reads
+                    // `PointIn` is stored interval-first; the notation reads
                     // point-first.
                     let element = self.term(&mut scope, element)?;
                     let container = self.term(&mut scope, container)?;
                     let _ = write!(
                         conditions,
                         "{},",
-                        Self::leaf("::bumbledb::CmpOp::Contains", &container, &element)
+                        Self::leaf("::bumbledb::CmpOp::PointIn", &container, &element)
                     );
                 }
                 Item::Cmp { op, lhs, rhs } => {
@@ -1255,7 +1296,7 @@ impl Emitter<'_> {
             }
         }
         let mut finds = String::new();
-        for term in &clause.head {
+        for term in &rule.head {
             let _ = write!(finds, "{},", Self::find(&scope, term)?);
         }
         Ok(format!(
@@ -1287,13 +1328,13 @@ fn expand(input: TokenStream) -> Parse<String> {
             Some(other) => {
                 return fail(
                     other.span(),
-                    "query!: the shape is `query!(Theory { clauses })`",
+                    "query!: the shape is `query!(Theory { rules })`",
                 );
             }
             None => {
                 return fail(
                     Span::call_site(),
-                    "query!: the shape is `query!(Theory { clauses })`",
+                    "query!: the shape is `query!(Theory { rules })`",
                 );
             }
         }
@@ -1305,20 +1346,20 @@ fn expand(input: TokenStream) -> Parse<String> {
         unreachable!("peeked the brace group");
     };
     if let Some(extra) = tokens.next() {
-        return fail(extra.span(), "query!: nothing follows the clause block");
+        return fail(extra.span(), "query!: nothing follows the rule block");
     }
-    let mut clause_tokens: Tokens = group.stream().into_iter().peekable();
+    let mut rule_tokens: Tokens = group.stream().into_iter().peekable();
     let mut emitter = Emitter {
         theory: &theory,
         params: Params::default(),
     };
     let mut rules = String::new();
-    while clause_tokens.peek().is_some() {
-        let clause = parse_clause(&mut clause_tokens)?;
-        let _ = write!(rules, "{},", emitter.rule(&clause)?);
+    while rule_tokens.peek().is_some() {
+        let rule = parse_rule(&mut rule_tokens)?;
+        let _ = write!(rules, "{},", emitter.rule(&rule)?);
     }
     if rules.is_empty() {
-        return fail(group.span(), "query!: a query needs at least one clause");
+        return fail(group.span(), "query!: a query needs at least one rule");
     }
     Ok(format!(
         "{{ let rules = ::std::vec![{rules}]; \
@@ -1344,7 +1385,7 @@ fn expand(input: TokenStream) -> Parse<String> {
 ///
 /// Never on malformed input — every diagnostic is a spanned
 /// `compile_error!` at the offending token. The one internal `expect`
-/// guards the generated code parsing as Rust, a bug in this macro if it
+/// ensures the generated code parsing as Rust, a bug in this macro if it
 /// ever fires.
 #[proc_macro]
 pub fn query(input: TokenStream) -> TokenStream {

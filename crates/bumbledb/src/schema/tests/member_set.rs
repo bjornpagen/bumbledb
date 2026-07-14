@@ -1,10 +1,10 @@
-//! Exhaustive boundary suite for [`closed_member`] — the closed-target
-//! membership judgment over its `[u64; 4]` bitset
+//! Exhaustive boundary suite for [`MemberSet`] — the closed-target
+//! membership judgment over its typed bitset
 //! (the crucible packet (git ecec1dc3), suite 2): every in-range
 //! index against a structured pattern family, judged against a naive
-//! bit walk that shares none of `closed_member`'s word/shift arithmetic.
+//! bit walk that shares none of [`MemberSet::contains`]'s arithmetic.
 
-use crate::schema::closed_member;
+use crate::schema::{AxiomIndex, MemberSet};
 
 /// The naive oracle: walk all 256 bits by (word, bit) coordinates and
 /// report whether any SET bit's position equals `id`. Out-of-range ids
@@ -20,6 +20,23 @@ fn naive_member(members: &[u64; 4], id: u64) -> bool {
         }
     }
     found
+}
+
+/// Builds the typed subject through its insertion contract. The oracle
+/// above retains independent word/bit arithmetic.
+fn member_set(words: &[u64; 4]) -> MemberSet {
+    let mut members = MemberSet::empty();
+    for index in 0..256u16 {
+        let word = usize::from(index / 64);
+        if words[word] & (1 << (index % 64)) != 0 {
+            members.insert(AxiomIndex(index));
+        }
+    }
+    members
+}
+
+fn contains(members: &MemberSet, id: u64) -> bool {
+    AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index))
 }
 
 /// A splitmix64 step — the repo's no-dependency randomness.
@@ -84,7 +101,7 @@ fn probe_ids() -> Vec<u64> {
 ///     = 269 ids.
 /// Cells: 834 × 269 = 224,346, every one judged against the oracle.
 #[test]
-fn exhaustive_closed_member_matches_the_naive_bit_walk() {
+fn exhaustive_member_set_matches_the_naive_bit_walk() {
     let mut patterns: Vec<[u64; 4]> = Vec::new();
     for k in 0..=256 {
         let prefix = prefix_pattern(k);
@@ -106,12 +123,13 @@ fn exhaustive_closed_member_matches_the_naive_bit_walk() {
     assert_eq!(ids.len(), 269, "256 in-range + 13 out-of-range ids");
 
     let mut cells = 0u32;
-    for members in &patterns {
+    for words in &patterns {
+        let members = member_set(words);
         for &id in &ids {
             assert_eq!(
-                closed_member(members, id),
-                naive_member(members, id),
-                "members {members:?}, id {id}"
+                contains(&members, id),
+                naive_member(words, id),
+                "members {words:?}, id {id}"
             );
             cells += 1;
         }
@@ -123,7 +141,7 @@ fn exhaustive_closed_member_matches_the_naive_bit_walk() {
 /// all-set, and the corner singletons — every in-range id, plus the
 /// out-of-range probes. 10 patterns × 269 ids = 2,690 cells.
 #[test]
-fn representative_closed_member_boundaries() {
+fn representative_member_set_boundaries() {
     let mut patterns: Vec<[u64; 4]> = [0usize, 63, 64, 128, 192, 256]
         .iter()
         .map(|&k| prefix_pattern(k))
@@ -140,9 +158,10 @@ fn representative_closed_member_boundaries() {
         last[3] = 1 << 63;
         last
     });
-    for members in &patterns {
+    for words in &patterns {
+        let members = member_set(words);
         for &id in &probe_ids() {
-            assert_eq!(closed_member(members, id), naive_member(members, id));
+            assert_eq!(contains(&members, id), naive_member(words, id));
         }
     }
 }

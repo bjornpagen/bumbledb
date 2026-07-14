@@ -13,7 +13,7 @@ use crate::exec::sink::{MeasuredSource, ProjSource, ProjectionSink, ProjectionSo
 use crate::image::ColumnView;
 
 impl ProjectionSink {
-    /// The per-binding measured emit (guard probes and tests).
+    /// The per-binding measured emit (key probes and tests).
     pub(super) fn emit_measured(&mut self, bindings: &Bindings) -> Flow {
         if self.ray.is_some() {
             return Flow::Continue;

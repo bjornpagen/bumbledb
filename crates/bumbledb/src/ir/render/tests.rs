@@ -104,7 +104,7 @@ fn projection_rule(relation: RelationId) -> Rule {
 }
 
 /// The calendar union query, golden: unavailability is Busy ∪ Ooo
-/// against a window param — two clauses, one per rule, `;`-terminated,
+/// against a window param — two rules, each `;`-terminated,
 /// newline-separated (the mask is a param here; the literal-mask spelling
 /// is pinned below).
 #[test]
@@ -147,7 +147,9 @@ fn selection_negation_and_literal_mask_golden() {
                 mask: MaskTerm::Literal(AllenMask::INTERSECTS),
             },
             lhs: Term::Var(VarId(1)),
-            rhs: Term::Literal(Value::IntervalU64(100, 200)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(100, 200).expect("nonempty interval"),
+            )),
         })],
     });
     let schema = calendar();
@@ -248,7 +250,7 @@ fn duration_head_golden() {
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
-            FindTerm::AggregateDuration {
+            FindTerm::AggregateMeasure {
                 op: AggOp::Sum,
                 over: VarId(1),
             },
@@ -260,7 +262,7 @@ fn duration_head_golden() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Ge,
-            lhs: Term::Duration(VarId(1)),
+            lhs: Term::Measure(VarId(1)),
             rhs: Term::Literal(Value::U64(3600)),
         })],
     });
@@ -289,7 +291,7 @@ fn membership_and_param_forms() {
         }],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Contains,
+            op: CmpOp::PointIn,
             lhs: Term::Var(VarId(1)),
             rhs: Term::Var(VarId(0)),
         })],
@@ -352,7 +354,9 @@ fn mask_union_spelling() {
                 mask: MaskTerm::Literal(mask),
             },
             lhs: Term::Var(VarId(1)),
-            rhs: Term::Literal(Value::IntervalU64(5, 9)),
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(5, 9).expect("nonempty interval"),
+            )),
         })],
     });
     assert_eq!(

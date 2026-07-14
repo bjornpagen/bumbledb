@@ -18,7 +18,7 @@
 //!   state, an abort never touched disk. `delete(old); insert(new)` in
 //!   either order is the blessed mutation idiom.
 //! - Query through [`Db::prepare`] ([`ir::Query`] is the IR) and execute
-//!   inside [`Db::read`] snapshots into a reusable [`ResultBuffer`] —
+//!   inside [`Db::read`] snapshots into a reusable [`Answers`] —
 //!   results are sets; the host sorts.
 //! - Migrate by ETL: [`Snapshot::scan`] exports, [`Db::bulk_load`] imports
 //!   (schema change = a new database, never in place).
@@ -113,11 +113,11 @@ mod verify_store;
 pub use allen::{AllenMask, Basic, classify};
 pub use api::db::{BulkLoadError, Db, Fact, Fresh, FreshKeyed, Snapshot, WriteTx};
 pub use api::prepared::{
-    BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
+    Answer, AnswerValue, Answers, BindValue, OccurrenceDrift, ParamArg, PreparedQuery, Staleness,
 };
 pub use api::stats::{
     CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
-    GuardStats, NodeStats, PinnedRows, RuleStats,
+    INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats,
 };
 pub use error::{Direction, Error, OverflowKind, Result, Violation, Violations};
 pub use interval::Interval;
@@ -130,12 +130,12 @@ pub use interval::Interval;
 /// crate can only reach through a feature, never through `cfg(test)`.
 #[cfg(feature = "fold-off")]
 pub use ir::normalize::with_fold_disabled;
-/// The chase's test-support off switch (`plan/chase.rs`): reachable only
-/// under the `chase-off` feature, which the bench crate's dual-run
+/// The grounding's test-support off switch (`plan/ground.rs`): reachable only
+/// under the `ground-off` feature, which the bench crate's dual-run
 /// differential unit tests (as a dev-dependency) and the fuzz crate's
 /// `rewrites` dual-pipeline differential enable.
-#[cfg(feature = "chase-off")]
-pub use plan::chase::with_chase_disabled;
+#[cfg(feature = "ground-off")]
+pub use plan::ground::with_grounding_disabled;
 /// The crashpoint table (`storage/commit.rs`): the commit pipeline's
 /// named phase boundaries with their expected recovery sides, reachable
 /// only under the `crashpoint` fuzz-oracle feature. The detached fuzz
@@ -150,6 +150,7 @@ pub use storage::commit::{CRASHPOINTS, CrashpointSide};
 /// key on it: a format bump must regenerate every store-derived
 /// artifact, never reuse one.
 pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
+pub use storage::env::GenerationId;
 // The IR vocabulary a host needs to build a `Query`, and the id types that
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.

@@ -2,12 +2,12 @@
 //! two-relation schema with one `==` pair and one pointwise key. Engine
 //! and model must agree on every write verdict (including the violating
 //! statement) and on every one of 20 fixed queries — plus the dual-run
-//! chase differential ([`chase`]).
+//! grounding differential ([`grounding`]).
 
-mod chase;
 mod closed;
 mod contradiction;
 mod fold;
+mod ground;
 mod identity_bytes;
 mod measure;
 mod pack;
@@ -125,7 +125,7 @@ fn booking(rng: &mut Rng, reference: u64) -> Vec<Value> {
     let end = start + 1 + rng.below(5);
     vec![
         Value::U64(rng.below(3)),
-        Value::IntervalU64(start, end),
+        Value::IntervalU64(bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval")),
         Value::U64(reference),
     ]
 }
@@ -414,7 +414,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 atoms: vec![booking_atom(), atom(MARKER, &[(0, var(3))])],
                 negated: vec![],
                 conditions: vec![ConditionTree::Leaf(Comparison {
-                    op: CmpOp::Contains,
+                    op: CmpOp::PointIn,
                     lhs: var(1),
                     rhs: var(3),
                 })],
@@ -594,7 +594,11 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
     let mut naive = NaiveDb::new(&descriptor);
 
     // Pre-seed {a, b}: a booking and the marker it requires.
-    let a = vec![Value::U64(0), Value::IntervalU64(1, 4), Value::U64(3)];
+    let a = vec![
+        Value::U64(0),
+        Value::IntervalU64(bumbledb::Interval::<u64>::new(1, 4).expect("nonempty interval")),
+        Value::U64(3),
+    ];
     let b = vec![Value::U64(3)];
     let seed = Delta {
         deletes: vec![],

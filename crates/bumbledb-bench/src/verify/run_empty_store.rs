@@ -6,7 +6,7 @@ use crate::schema::{Ledger, schema};
 use crate::sqlmap;
 
 /// The empty-store pass: a fresh store pair with the schema loaded and
-/// **zero rows anywhere**, over which every family (the ledger pair) and
+/// **zero facts anywhere**, over which every family (the ledger pair) and
 /// a seeded slice of randomized queries (a target-schema pair) run and
 /// compare. Every gate is false, every scan empty, every aggregate folds
 /// nothing (the empty-set-not-NULL rule and the HAVING template earn

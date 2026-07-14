@@ -29,6 +29,7 @@ pub use binary2fj::binary2fj;
 pub(crate) use check_selections::check_selections;
 pub use factor::factor;
 pub use provably_disjoint::{DisjointWitness, provably_disjoint_rules};
+pub(crate) use provably_distinct::{DistinctWitness, provably_distinct};
 pub(crate) use split_filters::split_filters;
 pub use validate::validate;
 
@@ -75,8 +76,8 @@ pub enum PlanError {
     /// A subatom references a non-participating occurrence — a negated
     /// occurrence joins no node (the executor reaches it exclusively
     /// through anti-probes, docs/architecture/40-execution.md) and a
-    /// chase-eliminated occurrence joins nothing at all
-    /// (`plan/chase.rs`).
+    /// grounding-eliminated occurrence joins nothing at all
+    /// (`plan/ground.rs`).
     NonParticipatingOccurrenceInNode { node: usize, occ: OccId },
     /// Two subatoms of one node share an occurrence.
     DuplicateOccurrenceInNode { node: usize, occ: OccId },
@@ -135,15 +136,15 @@ pub struct PointProbe {
 /// One occurrence's execution-facing description — every role lives in
 /// the one table ([`OccId`]s are indices): negated occurrences appear in
 /// no subatom and are probed through the nodes' `anti_probes`;
-/// chase-eliminated occurrences appear nowhere at all and their view is
-/// never built (`plan/chase.rs`).
+/// grounding-eliminated occurrences appear nowhere at all and their view is
+/// never built (`plan/ground.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanOccurrence {
     pub occ_id: OccId,
     pub relation: RelationId,
     /// The occurrence's planning state, carried from normalization —
     /// execution's view-bind and filter-resolution loops read it to
-    /// skip eliminated occurrences, and PRD 12's EXPLAIN reads the
+    /// skip eliminated occurrences, and PRD 12's introspection reads the
     /// `Eliminated` marks directly.
     pub role: Role,
     /// The field each variable reads from.
@@ -214,8 +215,8 @@ pub struct PlanNode {
     // phase 2 issues all bucket loads as independent chains). One
     // interleaved rejection list would force per-item dispatch exactly
     // where phase-grouped batches now run.
-    /// Decomposed point-containment word residuals (cross-atom
-    /// `Contains`/membership) evaluated at this node — same placement
+    /// Decomposed point-membership word residuals (cross-atom
+    /// `PointIn`/membership) evaluated at this node — same placement
     /// rule as `residuals`.
     pub word_residuals: Vec<PlacedWordComparison>,
     /// Cross-atom `Allen` residuals evaluated at this node — four
@@ -242,10 +243,18 @@ pub struct PlanNode {
     pub point_probes: Vec<PointProbe>,
     /// Variables first bound by this node.
     pub new_vars: Vec<VarId>,
-    /// Whether this node binds any sink-relevant (projected) variable —
-    /// the D2 subtree-skip unwind stops at the first `true` node
-    /// (precomputed here; the executor just reads the bit).
-    pub sink_relevant: bool,
+    /// Evidence governing whether D2 may cancel past this node.
+    pub suffix_skip: SuffixSkip,
+}
+
+/// Plan evidence for D2 subtree cancellation. `Licensed` means this node
+/// binds only existential variables for the active projection shape;
+/// aggregate validation supplies every variable as sink-relevant, so its
+/// plans contain only `Forbidden`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuffixSkip {
+    Forbidden,
+    Licensed,
 }
 
 /// The sealed plan witness execution trusts; validated once at
@@ -264,8 +273,8 @@ pub struct ValidatedPlan {
     /// fields cover a key (`Functionality` statement) of its relation, so
     /// distinct facts imply distinct bindings and the aggregate sink may
     /// skip its seen-set (40-execution, elision).
-    distinct_bindings: bool,
-    /// The planner's per-step estimates (EXPLAIN's reader, the 40-execution doc).
+    distinct_witness: Option<DistinctWitness>,
+    /// The planner's per-step estimates (introspection's reader, the 40-execution doc).
     estimates: Vec<u64>,
 }
 
@@ -280,7 +289,7 @@ impl ValidatedPlan {
     /// a resolved `PendingIntern` rewrites its template slot once,
     /// permanently — the latch IS the rewrite; no parallel resolution
     /// state exists. Sound because the prepared query owns its plan
-    /// (`!Sync`, env-guarded), and a latched word is valid for the
+    /// (`!Sync`, environment-pinned), and a latched word is valid for the
     /// environment's lifetime (ids never reused, dictionary never
     /// shrinks).
     pub(crate) fn occurrences_mut(&mut self) -> &mut [PlanOccurrence] {
@@ -307,16 +316,16 @@ impl ValidatedPlan {
     }
 
     /// Whether an occurrence is negated — a role read, never a subatom
-    /// search: a chase-eliminated occurrence also appears in no subatom,
-    /// so absence stopped being evidence of negation (`plan/chase.rs`).
+    /// search: a grounding-eliminated occurrence also appears in no subatom,
+    /// so absence stopped being evidence of negation (`plan/ground.rs`).
     #[must_use]
     pub fn is_negated(&self, occ: OccId) -> bool {
         self.occurrences[usize::from(occ.0)].role == Role::Negated
     }
 
     #[must_use]
-    pub fn distinct_bindings(&self) -> bool {
-        self.distinct_bindings
+    pub(crate) fn distinct_witness(&self) -> Option<DistinctWitness> {
+        self.distinct_witness
     }
 
     /// Whether a suffix skip can never cross a node — the pipelined

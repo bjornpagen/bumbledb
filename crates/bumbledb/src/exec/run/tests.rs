@@ -306,7 +306,7 @@ trait FirstCol {
 }
 impl FirstCol for ProjectionSinkForTest {
     fn rows_first_col(&self) -> Vec<u64> {
-        self.rows().map(|r| r[0]).collect()
+        self.answers().map(|answer| answer[0]).collect()
     }
 }
 

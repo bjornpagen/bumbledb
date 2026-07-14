@@ -56,8 +56,10 @@ fn sql_literal(value: &Value) -> Result<String, String> {
 /// endpoints (u64 halves under the same `< 2⁶³` axiom as scalar u64).
 fn interval_halves(value: &Value) -> Result<(String, String), String> {
     match value {
-        Value::IntervalU64(start, end) => Ok((sql_u64(*start)?, sql_u64(*end)?)),
-        Value::IntervalI64(start, end) => Ok((start.to_string(), end.to_string())),
+        Value::IntervalU64(interval) => Ok((sql_u64(interval.start())?, sql_u64(interval.end())?)),
+        Value::IntervalI64(interval) => {
+            Ok((interval.start().to_string(), interval.end().to_string()))
+        }
         _ => Err("scalar literal in an interval position".to_owned()),
     }
 }
@@ -70,7 +72,7 @@ fn op_sql(op: CmpOp) -> &'static str {
         CmpOp::Le => "<=",
         CmpOp::Gt => ">",
         CmpOp::Ge => ">=",
-        CmpOp::Allen { .. } | CmpOp::Contains => {
+        CmpOp::Allen { .. } | CmpOp::PointIn => {
             unreachable!("interval operators take the endpoint forms")
         }
     }
@@ -189,7 +191,7 @@ impl Builder<'_> {
             }
             Term::ParamSet(param) => out.push(self.in_list(column, *param)?),
             Term::Var(_) => unreachable!("variable arms are polarity-specific"),
-            Term::Duration(_) => unreachable!("validated: no measure in bindings"),
+            Term::Measure(_) => unreachable!("validated: no measure in bindings"),
         }
         Ok(())
     }
@@ -229,7 +231,7 @@ impl Builder<'_> {
             }
             Term::ParamSet(param) => out.push(self.set_membership(start, end, *param)?),
             Term::Var(_) => unreachable!("variable arms are polarity-specific"),
-            Term::Duration(_) => unreachable!("validated: no measure in bindings"),
+            Term::Measure(_) => unreachable!("validated: no measure in bindings"),
         }
         Ok(())
     }
@@ -404,7 +406,7 @@ impl Builder<'_> {
             // The measure: end − start arithmetic over the halves —
             // exact in SQLite's i64 for the generated corpora (the U64
             // lane's sentinel end sits below 2⁶³).
-            Term::Duration(var) => match self.columns.get(var) {
+            Term::Measure(var) => match self.columns.get(var) {
                 Some(VarCols::Interval { start, end }) => {
                     Ok(Rendered::One(format!("({end} - {start})")))
                 }
@@ -471,7 +473,7 @@ impl Builder<'_> {
                 format!("({})", arms.join(" OR "))
             }
             // Point containment: the membership form.
-            (CmpOp::Contains, Rendered::Pair(ls, le), Rendered::One(point)) => {
+            (CmpOp::PointIn, Rendered::Pair(ls, le), Rendered::One(point)) => {
                 format!("{ls} <= {point} AND {point} < {le}")
             }
             (

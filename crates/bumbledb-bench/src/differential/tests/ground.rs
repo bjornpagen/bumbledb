@@ -1,11 +1,11 @@
-//! The dual-run chase differential (`docs/architecture/40-execution.md`
-//! § the chase; the naive model is the semantics oracle): each
+//! The dual-run grounding differential (`docs/architecture/40-execution.md`
+//! § the grounding; the naive model is the semantics oracle): each
 //! eliminable fixture runs through the engine twice — rewrite on and
-//! off, via the engine's `chase-off` test-support switch — and three-way
+//! off, via the engine's `ground-off` test-support switch — and three-way
 //! compares with the model, under the projection sink and the aggregate
 //! sink. The profile surface proves the runs are not vacuously equal:
-//! the chase-on plan carries exactly one `Role::Eliminated` mark naming
-//! the fixture's fallen relation; the chase-off plan carries none.
+//! the grounding-on plan carries exactly one `Role::Eliminated` mark naming
+//! the fixture's fallen relation; the ground-off plan carries none.
 
 use std::path::Path;
 
@@ -13,10 +13,10 @@ use bumbledb::schema::{
     FieldId, RelationDescriptor, SchemaDescriptor, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId, with_chase_disabled,
+    AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId, with_grounding_disabled,
 };
 
-use crate::differential::{Rows, engine_query};
+use crate::differential::{Answers, engine_query};
 use crate::fixture::{TempDir, atom, field, fresh, side, var};
 use crate::naive::{Delta, NaiveDb};
 
@@ -56,16 +56,16 @@ fn eliminated(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::Elimina
     stats.rules.swap_remove(0).eliminated
 }
 
-/// The dual run: chase-on, chase-off, and the model must produce one
+/// The dual run: grounding-on, ground-off, and the model must produce one
 /// result set — with the marks asserted so neither equality is vacuous
 /// (on eliminates exactly `fallen`; off eliminates nothing).
 fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: &str) {
     let on = engine_query(db, query, &[]);
-    let off = with_chase_disabled(|| engine_query(db, query, &[]));
-    let model = Rows::Ok(naive.query(query, &[]).expect("the model executes"));
-    assert_eq!(on, off, "chase-on and chase-off disagree ({fallen})");
+    let off = with_grounding_disabled(|| engine_query(db, query, &[]));
+    let model = Answers::Ok(naive.query(query, &[]).expect("the model executes"));
+    assert_eq!(on, off, "grounding-on and ground-off disagree ({fallen})");
     assert_eq!(on, model, "engine and model disagree ({fallen})");
-    let Rows::Ok(rows) = &on else {
+    let Answers::Ok(rows) = &on else {
         unreachable!("fixture queries never overflow")
     };
     assert!(!rows.is_empty(), "the fixture produces rows ({fallen})");
@@ -73,7 +73,7 @@ fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: 
     assert_eq!(marks.len(), 1, "one mark expected ({fallen})");
     assert_eq!(marks[0].relation, fallen, "the wrong side fell");
     assert!(
-        with_chase_disabled(|| eliminated(db, query)).is_empty(),
+        with_grounding_disabled(|| eliminated(db, query)).is_empty(),
         "the off switch keeps every occurrence joining ({fallen})"
     );
 }
@@ -307,9 +307,9 @@ fn the_missing_phi_near_miss_refuses_and_still_agrees() {
     });
     assert!(
         eliminated(&db, &query).is_empty(),
-        "without φ the chase must refuse"
+        "without φ the grounding must refuse"
     );
     let engine = engine_query(&db, &query, &[]);
-    let model = Rows::Ok(naive.query(&query, &[]).expect("the model executes"));
+    let model = Answers::Ok(naive.query(&query, &[]).expect("the model executes"));
     assert_eq!(engine, model, "engine and model disagree on the near-miss");
 }

@@ -2,10 +2,10 @@ use crate::arena::ArenaSlice;
 use crate::schema::{KeyId, RelationId};
 use crate::storage::keys;
 
-use super::{GuardDisposition, GuardOverlay, WriteDelta};
+use super::{DeterminantDisposition, DeterminantOverlay, WriteDelta};
 
 impl WriteDelta<'_> {
-    /// Records the guard disposition of one changed fact under every key
+    /// Records the determinant disposition of one changed fact under every key
     /// statement of its relation — `Some(slice)` for an insert (the fact
     /// establishes each of its key tuples), `None` for a delete. Called by
     /// `insert`/`delete` exactly when the final-state view changes —
@@ -13,10 +13,10 @@ impl WriteDelta<'_> {
     /// disposition — so point reads compose delta-over-committed
     /// correctly; last disposition wins.
     ///
-    /// Guard bytes come from the one shared slicer ([`keys::guard_bytes`])
+    /// Determinant bytes come from the one shared slicer ([`keys::determinant_image`])
     /// — the same derivation commit applies, so a point read and the
     /// judgment phase can never disagree on a tuple's identity.
-    pub(super) fn record_guards(
+    pub(super) fn record_determinants(
         &mut self,
         rel: RelationId,
         fact_bytes: &[u8],
@@ -25,15 +25,15 @@ impl WriteDelta<'_> {
         let relation = self.schema.relation(rel);
         for &key_id in relation.keys() {
             let statement = self.schema.key(key_id);
-            keys::guard_bytes(
+            keys::determinant_image(
                 relation.layout(),
                 &statement.projection,
                 fact_bytes,
-                &mut self.guard_scratch,
+                &mut self.determinant_scratch,
             );
-            let per_key = self.guards.entry(key_id).or_default();
+            let per_key = self.determinants.entry(key_id).or_default();
             let disposition = if let Some(slice) = establishes {
-                GuardDisposition::Present(slice)
+                DeterminantDisposition::Present(slice)
             } else {
                 // A delete disestablishes its *own* tuple only: it must
                 // not erase a record established by a different pending
@@ -41,34 +41,40 @@ impl WriteDelta<'_> {
                 // insert(new)` is blessed in either order
                 // (`docs/architecture/70-api.md`), and the final state
                 // keeps `new` whichever ran last.
-                if let Some(GuardDisposition::Present(existing)) =
-                    per_key.get(self.guard_scratch.as_slice())
+                if let Some(DeterminantDisposition::Present(existing)) =
+                    per_key.get(self.determinant_scratch.as_bytes())
                     && self.arena.get(*existing) != fact_bytes
                 {
                     continue;
                 }
-                GuardDisposition::Absent
+                DeterminantDisposition::Absent
             };
-            per_key.insert(Box::from(self.guard_scratch.as_slice()), disposition);
+            per_key.insert(self.determinant_scratch.clone(), disposition);
         }
     }
 
-    /// The delta's net overlay for one key statement's guard tuple, if any
+    /// The delta's net overlay for one key statement's determinant tuple, if any
     /// — the delta-first leg of a point read (`docs/architecture/50-storage.md`
     /// § `WriteTx` point reads). `None` = the tuple is untouched by this
     /// transaction and the committed state answers.
     ///
-    /// The probe borrows: guard bytes look up as `&[u8]` through the
+    /// The probe borrows: determinant bytes look up as `&[u8]` through the
     /// nested map, so a typed point read touches no allocator (the
     /// borrowed-struct gate pins this).
     #[must_use]
-    pub fn guard_overlay(&self, key: KeyId, guard: &[u8]) -> Option<GuardOverlay<'_>> {
-        self.guards
+    pub fn determinant_overlay(
+        &self,
+        key: KeyId,
+        determinant: &[u8],
+    ) -> Option<DeterminantOverlay<'_>> {
+        self.determinants
             .get(&key)?
-            .get(guard)
+            .get(determinant)
             .map(|disposition| match disposition {
-                GuardDisposition::Present(slice) => GuardOverlay::Present(self.arena.get(*slice)),
-                GuardDisposition::Absent => GuardOverlay::Absent,
+                DeterminantDisposition::Present(slice) => {
+                    DeterminantOverlay::Present(self.arena.get(*slice))
+                }
+                DeterminantDisposition::Absent => DeterminantOverlay::Absent,
             })
     }
 }

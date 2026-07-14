@@ -72,3 +72,32 @@ expected; doc comments on `write`/`write_from` may sharpen.
 ## Doc amendments (rule 6)
 
 This PRD is its amendments; README recipe count follows.
+
+## Results (2026-07-13)
+
+The no-unwitnessed-path audit used `rg -n "pub fn"` across
+`crates/bumbledb/src/api/db/` and its exported API siblings. Every logical
+data-write path fits the three documented classes:
+
+| public path | classification | audit disposition |
+|---|---|---|
+| `Db::write_from` | snapshot-derived, generation-witnessed | the sole snapshot-derived entry; takes `&Snapshot`, compares its generation before the closure runs, returns `GenerationMoved` on mismatch |
+| `Db::write` with `WriteTx::{contains,get,get_dyn}` | final-state point-read inside the write transaction | point premises are read from base + pending delta under the single-writer critical section |
+| `Db::write` without a read premise | unconditional | no proposition derived from earlier state exists to witness |
+| `Db::bulk_load` | unconditional | chunked calls to `Db::write`; imported input is host data, not a database-derived premise |
+| `WriteTx::{insert,insert_dyn,delete,delete_dyn,alloc,alloc_at}` | inherits the opening `Db::write` / `Db::write_from` class | delta operations, not independent transaction entry points; none can bypass the opener's witness decision |
+
+The grep also sees `api::db::plumbing`, but `lib.rs` exports it only under the
+doc-hidden `__private` macro-support module and explicitly says it is not API.
+`Db::{create,open,compact}` write or copy files but are lifecycle/maintenance
+operations, not logical data-write transactions; none accepts a read-derived
+premise. No fourth or unclassified logical write entry exists.
+
+Recipe 27 (`Derived facts, maintained`) adds the compiled
+`maintain_busy_spans` derive/diff/retry loop. Its deterministic interleaving
+moves the source generation after the first derivation, observes exactly one
+`GenerationMoved` retry, recomputes, and commits the new packed span. The
+optimistic-CC suite now separately locks update-where, insert-select, and
+snapshot read-modify-write movement (including that the stale closure never
+runs), plus final-state rejection of a surviving derived fact after its source
+delete. Engine signatures and implementation are unchanged.

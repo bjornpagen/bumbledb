@@ -25,12 +25,12 @@ impl CountingCounters {
         }
     }
 
-    /// A node-less counter for a guard-probe rule inside a multi-rule
+    /// A node-less counter for a key-probe rule inside a multi-rule
     /// program: only the emit count exists (the union accounting — one
     /// probe, at most one emit); no join ever runs, so the per-node
     /// tables stay empty and unindexed.
     #[must_use]
-    pub fn for_guard() -> Self {
+    pub fn for_key_probe() -> Self {
         Self {
             stride: 0,
             node_entries: Vec::new(),

@@ -105,8 +105,8 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
         .finds
         .iter()
         .filter_map(|f| match f {
-            FindTerm::Var(v) | FindTerm::Duration(v) => Some(*v),
-            FindTerm::Aggregate { .. } | FindTerm::AggregateDuration { .. } => None,
+            FindTerm::Var(v) | FindTerm::Measure(v) => Some(*v),
+            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => None,
         })
         .collect();
     validate(
@@ -165,7 +165,7 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
     );
     assert_eq!(witness.slots(), &[(x, SlotWidth::ONE), (y, SlotWidth::ONE)]);
     // B's bound fields (a, at) cover no key of B — no elision proof.
-    assert!(!witness.distinct_bindings());
+    assert!(witness.distinct_witness().is_none());
 }
 
 /// The outer-join idiom's absence half: `A` with a negated `B` atom —
@@ -201,7 +201,7 @@ fn outer_join_idiom_absence_half_validates_into_the_witness() {
     assert_eq!(witness.occurrence(OccId(1)).key_widths, vec![1]);
     // A alone binds its fresh key: the elision proof holds (the
     // negated occurrence binds nothing and cannot break it).
-    assert!(witness.distinct_bindings());
+    assert!(witness.distinct_witness().is_some());
 }
 
 /// An `Allen` residual query: two P occurrences with no shared variable,

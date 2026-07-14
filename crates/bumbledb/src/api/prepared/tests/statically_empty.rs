@@ -61,7 +61,9 @@ fn insert_events(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
             &[
                 ValueRef::U64(*id),
                 ValueRef::U64(*kind),
-                ValueRef::IntervalI64(*start, *end),
+                ValueRef::IntervalI64(
+                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                ),
                 ValueRef::I64(*score),
             ],
             schema.relation(EVENT).layout(),
@@ -104,10 +106,10 @@ fn contradiction() -> Vec<Comparison> {
     vec![score_cmp(CmpOp::Gt, 5), score_cmp(CmpOp::Lt, 3)]
 }
 
-fn scores_of(buffer: &ResultBuffer) -> Vec<i64> {
+fn scores_of(buffer: &Answers) -> Vec<i64> {
     let mut scores: Vec<i64> = (0..buffer.len())
-        .map(|row| {
-            let ResultValue::I64(score) = buffer.get(row, 0) else {
+        .map(|answer| {
+            let AnswerValue::I64(score) = buffer.get(answer, 0) else {
                 panic!("column 0 is an i64");
             };
             score
@@ -155,13 +157,13 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
         .expect("execute");
     assert_eq!(scores_of(&out), vec![40], "kind 7's row; kind 3 never ran");
 
-    // The death record names the killing condition — EXPLAIN's line.
+    // The death record names the killing condition — introspection's line.
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(stats.rules.len(), 1, "stats cover the live rule only");
     assert_eq!(stats.dead.len(), 1);
     assert_eq!(stats.dead[0].rule, 0);
     assert_eq!(stats.dead[0].rendered, "Event: score > 5 ∧ score < 3");
-    let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
+    let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(
         report.contains("statically empty: rule 0: Event: score > 5 ∧ score < 3"),
         "{report}"
@@ -218,7 +220,9 @@ fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
             mask: MaskTerm::Param(ParamId(0)),
         },
         lhs: Term::Var(VarId(1)),
-        rhs: Term::Literal(Value::IntervalI64(7, 9)),
+        rhs: Term::Literal(Value::IntervalI64(
+            crate::Interval::<i64>::new(7, 9).expect("nonempty interval"),
+        )),
     });
     let mut rule1 = by_kind_rule(7, masked);
     rule1.atoms[0]
@@ -254,10 +258,10 @@ fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
     assert_eq!(out.len(), 0, "stage-2-known empty");
     assert_eq!(out.arity(), 1, "the predicate shapes the empty buffer");
 
-    // EXPLAIN prints the program kind and both killing conditions.
+    // introspection prints the program kind and both killing conditions.
     let (out, report) = prepared
-        .explain(&txn, &cache, &[BindValue::AllenMask(AllenMask::INTERSECTS)])
-        .expect("explain");
+        .introspect(&txn, &cache, &[BindValue::AllenMask(AllenMask::INTERSECTS)])
+        .expect("introspect");
     assert_eq!(out.len(), 0);
     assert!(report.contains("access path: statically empty"), "{report}");
     assert!(
@@ -312,7 +316,7 @@ fn the_empty_program_builds_no_image_and_binds_no_view() {
 }
 
 /// Fold-preservation: randomized single-slot filter sets, folded vs
-/// unfolded (the `with_fold_disabled` switch — the chase-off precedent)
+/// unfolded (the `with_fold_disabled` switch — the ground-off precedent)
 /// over one fixture corpus, identical results. Folding is conjunction
 /// reassociation over one slot's total order — set-preserving by
 /// construction; this pins it against the executor.
@@ -364,14 +368,14 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
         let mut folded = prepare(&txn, &cache, &schema, &query).expect("prepare folded");
         let mut unfolded =
             with_fold_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare raw");
-        let folded_rows = scores_of(&folded.execute_collect(&txn, &cache, &[]).expect("folded"));
-        let unfolded_rows = scores_of(
+        let folded_answers = scores_of(&folded.execute_collect(&txn, &cache, &[]).expect("folded"));
+        let unfolded_answers = scores_of(
             &unfolded
                 .execute_collect(&txn, &cache, &[])
                 .expect("unfolded"),
         );
         assert_eq!(
-            folded_rows, unfolded_rows,
+            folded_answers, unfolded_answers,
             "round {round}: the fold changed the denotation"
         );
     }

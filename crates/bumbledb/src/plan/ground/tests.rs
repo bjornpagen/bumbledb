@@ -42,11 +42,11 @@ fn containment(
     }
 }
 
-/// Runs the full honest pipeline: validate → normalize → chase.
-fn chased(schema: &Schema, query: &Query) -> NormalizedQuery {
+/// Runs the full honest pipeline: validate → normalize → grounding.
+fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
     let witness = validate(schema, query).expect("valid fixture query");
     let mut normalized = normalize(schema, &witness).remove(0);
-    chase(&mut normalized, schema, &query.rules[0].finds);
+    ground(&mut normalized, schema, &query.rules[0].finds);
     normalized
 }
 
@@ -124,7 +124,7 @@ fn walk_query() -> Query {
 #[test]
 fn existence_walk_eliminates_the_reference_target() {
     let schema = walk_schema();
-    let normalized = chased(&schema, &walk_query());
+    let normalized = grounded(&schema, &walk_query());
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, Role::Eliminated(StatementId(2))],
@@ -141,9 +141,9 @@ fn the_off_switch_bypasses_the_rewrite() {
     let query = walk_query();
     let witness = validate(&schema, &query).expect("valid fixture query");
     let mut normalized = normalize(&schema, &witness).remove(0);
-    with_chase_disabled(|| chase(&mut normalized, &schema, &query.rules[0].finds));
+    with_grounding_disabled(|| ground(&mut normalized, &schema, &query.rules[0].finds));
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
-    chase(&mut normalized, &schema, &query.rules[0].finds);
+    ground(&mut normalized, &schema, &query.rules[0].finds);
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, Role::Eliminated(StatementId(2))],
@@ -215,7 +215,7 @@ fn du_one_sided_walk_eliminates_the_header() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, Role::Eliminated(StatementId(3))],
@@ -286,7 +286,7 @@ fn a_containment_chain_eliminates_both_targets_in_fixpoint() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
         vec![
@@ -350,7 +350,7 @@ fn a_partial_key_join_refuses() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
@@ -380,7 +380,7 @@ fn a_projected_non_key_field_refuses() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
@@ -439,7 +439,7 @@ fn a_negated_atom_referencing_the_target_refuses() {
         }],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, Role::Positive, Role::Negated]
@@ -509,7 +509,7 @@ fn a_membership_point_sourced_from_the_target_refuses() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, Role::Positive, Role::Positive]
@@ -569,13 +569,13 @@ fn a_missing_source_selection_refuses() {
             conditions: vec![],
         })
     };
-    let normalized = chased(&schema, &query(false));
+    let normalized = grounded(&schema, &query(false));
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, Role::Positive],
         "without kind == Det the source facts are not all in σφ"
     );
-    let normalized = chased(&schema, &query(true));
+    let normalized = grounded(&schema, &query(true));
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, Role::Eliminated(StatementId(2))],
@@ -613,7 +613,7 @@ fn an_extra_target_selection_refuses() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
@@ -672,28 +672,28 @@ fn an_interval_typed_pair_refuses() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
-/// The whole chased program: validate → normalize → chase per rule,
+/// The whole grounded program: validate → normalize → grounding per rule,
 /// returning each rule's normalized form with its finds — the
 /// subsumption pass's exact inputs.
-fn chased_program(schema: &Schema, query: &Query) -> (Vec<NormalizedQuery>, Vec<Vec<FindTerm>>) {
+fn grounded_program(schema: &Schema, query: &Query) -> (Vec<NormalizedQuery>, Vec<Vec<FindTerm>>) {
     let witness = validate(schema, query).expect("valid fixture query");
     let mut rules = normalize(schema, &witness);
     let finds: Vec<Vec<FindTerm>> = (0..rules.len())
         .map(|idx| witness.rule(idx).rule().finds.clone())
         .collect();
     for (idx, rule) in rules.iter_mut().enumerate() {
-        chase(rule, schema, &finds[idx]);
+        ground(rule, schema, &finds[idx]);
     }
     (rules, finds)
 }
 
 /// The DNF residue over the DU fixture: `Q(rate) :- Det(grading = g,
 /// rate = r), Grading(id = g, kind = k), (r > 30 ∨ k == Det)`. Lowering
-/// distributes the disjunction into two rules; the chase eliminates the
+/// distributes the disjunction into two rules; the grounding eliminates the
 /// Grading occurrence from both (statement 3 discharges the second
 /// disjunct's `kind` filter with it), leaving that rule filterless — it
 /// subsumes the rate-filtered sibling.
@@ -739,13 +739,13 @@ fn residue_query() -> Query {
 #[test]
 fn the_dnf_residue_subsumes_the_filtered_rule() {
     let schema = du_schema();
-    let (rules, finds) = chased_program(&schema, &residue_query());
+    let (rules, finds) = grounded_program(&schema, &residue_query());
     assert_eq!(rules.len(), 2, "two disjuncts lower to two rules");
     for rule in &rules {
         assert_eq!(
             roles(rule),
             vec![Role::Positive, Role::Eliminated(StatementId(3))],
-            "the chase runs per rule and eliminates Grading in each"
+            "the grounding runs per rule and eliminates Grading in each"
         );
     }
     let finds: Vec<&[FindTerm]> = finds.iter().map(Vec::as_slice).collect();
@@ -756,16 +756,16 @@ fn the_dnf_residue_subsumes_the_filtered_rule() {
     );
 }
 
-/// The off switch covers the second pass too: the same chased pair
+/// The off switch covers the second pass too: the same grounded pair
 /// yields no deletion under the switch, and the record returns once the
 /// switch releases.
 #[test]
 fn the_off_switch_covers_subsumption() {
     let schema = du_schema();
-    let (rules, finds) = chased_program(&schema, &residue_query());
+    let (rules, finds) = grounded_program(&schema, &residue_query());
     let finds: Vec<&[FindTerm]> = finds.iter().map(Vec::as_slice).collect();
     assert!(
-        with_chase_disabled(|| subsume(&rules, &finds)).is_empty(),
+        with_grounding_disabled(|| subsume(&rules, &finds)).is_empty(),
         "the switch bypasses subsumption"
     );
     assert_eq!(
@@ -804,7 +804,7 @@ fn distinct_bodies_refuse_subsumption() {
     }
     .validate()
     .expect("valid fixture");
-    let (rules, finds) = chased_program(&schema, &residue_query());
+    let (rules, finds) = grounded_program(&schema, &residue_query());
     for rule in &rules {
         assert_eq!(roles(rule), vec![Role::Positive, Role::Positive]);
     }
@@ -842,7 +842,7 @@ fn mutual_containments_never_eliminate_both() {
         negated: vec![],
         conditions: vec![],
     });
-    let normalized = chased(&schema, &query);
+    let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
         vec![Role::Eliminated(StatementId(2)), Role::Positive],

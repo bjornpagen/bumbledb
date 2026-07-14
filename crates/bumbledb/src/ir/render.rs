@@ -2,7 +2,7 @@
 //! sibling (`crate::schema::render`), on the read side of the data
 //! surface: **when the write-side query surface is data, the renderer is
 //! the pretty syntax** (`docs/architecture/20-query-ir.md` § the data
-//! surface). One clause per rule, set-builder shaped:
+//! surface). One rendered block per rule, set-builder shaped:
 //!
 //! ```text
 //! (v0, v1) | Busy(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);
@@ -14,11 +14,11 @@
 //! (schema-grammar-verbatim, params admitted as `?N`), `!` negation,
 //! membership as `in`, `Allen(term, MASK, term)` with masks as named
 //! basics joined by `|` (set union) or the workload composites, `;`
-//! terminating each clause exactly as it terminates statements.
+//! terminating each rule exactly as it terminates statements.
 //!
 //! Deterministic and **total on plain data** — its consumers are
 //! diagnostics (roster errors print the offending query, so malformed
-//! shapes must render, not panic) and the EXPLAIN/stats surface:
+//! shapes must render, not panic) and the introspection/stats surface:
 //!
 //! - variables render as `v{id}` and params as `?{id}` (the IR carries
 //!   dense ids only; names are a debugging sidecar the engine never
@@ -44,7 +44,7 @@
 //!   appear only when diagnostics picture an input tree.
 //!
 //! Rendering allocates; it runs only in diagnostic contexts (roster
-//! errors, EXPLAIN, arbitration bundles), never on a warm path.
+//! errors, introspection, arbitration bundles), never on a warm path.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -60,8 +60,8 @@ use crate::schema::{Enforcement, FieldDescriptor, FieldId, Relation, RelationId,
 /// construction: `(relation, field)` → the closed relation whose row ids
 /// the field's words are. A schema walk over declared containments whose
 /// target is a closed relation's id and whose source projection is that
-/// single field — the same inference the chase's complement fold runs
-/// (`plan/chase/evaluate.rs::containment_into_id`) — plus each closed
+/// single field — the same inference the grounding's complement fold runs
+/// (`plan/ground/evaluate.rs::containment_into_id`) — plus each closed
 /// relation's own id field, which maps to itself.
 struct ClosedRefs(BTreeMap<(RelationId, FieldId), RelationId>);
 
@@ -121,8 +121,8 @@ impl ClosedRefs {
     }
 }
 
-/// Renders a query in the rule notation, one clause per rule, newline-
-/// separated, each clause `;`-terminated. Deterministic (two calls yield
+/// Renders a query in the rule notation, one block per rule, newline-
+/// separated, each rule `;`-terminated. Deterministic (two calls yield
 /// one string) and total: malformed queries render with placeholder
 /// names — this is the diagnostic surface for the roster's rejections.
 #[must_use]
@@ -133,13 +133,13 @@ pub fn render(schema: &Schema, query: &Query) -> String {
         if index > 0 {
             out.push('\n');
         }
-        clause(&mut out, schema, &refs, rule);
+        render_rule(&mut out, schema, &refs, rule);
     }
     out
 }
 
-/// One rule as one clause: `(head) | body;`.
-fn clause(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
+/// One rule as `(head) | body;`.
+fn render_rule(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
     out.push('(');
     for (index, term) in rule.finds.iter().enumerate() {
         if index > 0 {
@@ -165,19 +165,19 @@ fn clause(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule) {
     out.push(';');
 }
 
-/// One head position of a clause. `Count` is nullary; a malformed
+/// One head position of a rule. `Count` is nullary; a malformed
 /// `Count(v)` renders its variable anyway (totality over the shapes the
 /// roster rejects).
 fn find_term(out: &mut String, term: &FindTerm) {
     match term {
         FindTerm::Var(var) => var_name(out, *var),
-        FindTerm::Duration(var) => {
+        FindTerm::Measure(var) => {
             out.push_str("Duration(");
             var_name(out, *var);
             out.push(')');
         }
         FindTerm::Aggregate { op, over } => aggregate(out, *op, *over, false),
-        FindTerm::AggregateDuration { op, over } => aggregate(out, *op, Some(*over), true),
+        FindTerm::AggregateMeasure { op, over } => aggregate(out, *op, Some(*over), true),
     }
 }
 
@@ -264,7 +264,7 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
             }
             // Rejected by validation (`DurationInBinding`); rendered
             // anyway — the diagnostic pictures the mistake.
-            Term::Duration(var) => {
+            Term::Measure(var) => {
                 out.push_str(" == Duration(");
                 var_name(&mut out, *var);
                 out.push(')');
@@ -279,7 +279,7 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
 /// functionally (module doc — the input grammar's trees are pictures,
 /// not notation). Depth-budgeted at [`crate::ir::MAX_CONDITION_DEPTH`]:
 /// the renderer recurses by depth and must stay total on the hostile
-/// nesting validation rejects, so anything past the boundary guard's own
+/// nesting validation rejects, so anything past the boundary check's own
 /// cap elides to `...` instead of exhausting the stack.
 fn tree_item(tree: &ConditionTree) -> String {
     tree_item_within(tree, crate::ir::MAX_CONDITION_DEPTH)
@@ -305,7 +305,7 @@ fn functional(name: &str, children: &[ConditionTree], budget: usize) -> String {
 }
 
 /// One comparison item: `Allen(a, MASK, b)`, membership `point in
-/// interval` (the `Contains` predicate's notation), or infix `lhs op rhs`.
+/// interval` (the `PointIn` predicate's notation), or infix `lhs op rhs`.
 fn comparison(cmp: &Comparison) -> String {
     let mut out = String::new();
     match cmp.op {
@@ -318,9 +318,9 @@ fn comparison(cmp: &Comparison) -> String {
             term(&mut out, &cmp.rhs);
             out.push(')');
         }
-        // `Contains(interval, point)` is point membership as a predicate:
+        // `PointIn(interval, point)` is point membership as a predicate:
         // the notation reads point-first.
-        CmpOp::Contains => {
+        CmpOp::PointIn => {
             term(&mut out, &cmp.rhs);
             out.push_str(" in ");
             term(&mut out, &cmp.lhs);
@@ -333,7 +333,7 @@ fn comparison(cmp: &Comparison) -> String {
                 CmpOp::Le => "<=",
                 CmpOp::Gt => ">",
                 CmpOp::Ge => ">=",
-                CmpOp::Allen { .. } | CmpOp::Contains => unreachable!("matched above"),
+                CmpOp::Allen { .. } | CmpOp::PointIn => unreachable!("matched above"),
             };
             term(&mut out, &cmp.lhs);
             out.push(' ');
@@ -353,7 +353,7 @@ fn term(out: &mut String, term: &Term) {
         Term::Var(var) => var_name(out, *var),
         Term::Param(param) | Term::ParamSet(param) => param_name(out, *param),
         Term::Literal(value) => literal(out, value),
-        Term::Duration(var) => {
+        Term::Measure(var) => {
             out.push_str("Duration(");
             var_name(out, *var);
             out.push(')');
@@ -440,11 +440,11 @@ pub(crate) fn literal(out: &mut String, value: &Value) {
         Value::I64(v) => {
             let _ = write!(out, "{v}");
         }
-        Value::IntervalU64(start, end) => {
-            let _ = write!(out, "{start}..{end}");
+        Value::IntervalU64(interval) => {
+            let _ = write!(out, "{}..{}", interval.start(), interval.end());
         }
-        Value::IntervalI64(start, end) => {
-            let _ = write!(out, "{start}..{end}");
+        Value::IntervalI64(interval) => {
+            let _ = write!(out, "{}..{}", interval.start(), interval.end());
         }
         Value::String(bytes) => {
             out.push('"');

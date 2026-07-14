@@ -900,9 +900,15 @@ fn value_expr(
                 start: (false, start),
                 end: (false, end),
             },
-        ) => format!("{value}::IntervalU64({start}, {end})"),
+        ) => format!(
+            "{value}::IntervalU64(::bumbledb::Interval::<u64>::new({start}, {end}).expect(\"schema! interval literals are nonempty\"))"
+        ),
         (FieldTy::Interval(IntervalElement::I64), Literal::Interval { start, end }) => {
-            format!("{value}::IntervalI64({}, {})", signed(start), signed(end))
+            format!(
+                "{value}::IntervalI64(::bumbledb::Interval::<i64>::new({}, {}).expect(\"schema! interval literals are nonempty\"))",
+                signed(start),
+                signed(end)
+            )
         }
         _ => panic!(
             "schema!: the literal for `{relation}.{field}` does not fit \
@@ -1288,7 +1294,7 @@ fn encode_exprs(field: &Field) -> (String, String, String) {
         FieldTy::U64 => same(format!("::bumbledb::__private::ValueRef::U64({access})")),
         FieldTy::I64 => same(format!("::bumbledb::__private::ValueRef::I64({access})")),
         FieldTy::Interval(element) => same(format!(
-            "::bumbledb::__private::ValueRef::Interval{}({access}.start(), {access}.end())",
+            "::bumbledb::__private::ValueRef::Interval{}({access})",
             element.suffix()
         )),
         // Inline in every context: bytes<N> never touches the dictionary,
@@ -1347,15 +1353,10 @@ fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
         FieldTy::Bool => arm("Bool(v)".to_owned(), "v".to_owned()),
         FieldTy::U64 => arm("U64(v)".to_owned(), wrap("v")),
         FieldTy::I64 => arm("I64(v)".to_owned(), wrap("v")),
-        FieldTy::Interval(element) => {
-            let el = element.rust();
-            arm(
-                format!("Interval{}(start, end)", element.suffix()),
-                wrap(&format!(
-                    "::bumbledb::Interval::<{el}>::new(start, end).expect(\"stored intervals satisfy start < end\")"
-                )),
-            )
-        }
+        FieldTy::Interval(element) => arm(
+            format!("Interval{}(interval)", element.suffix()),
+            wrap("interval"),
+        ),
         FieldTy::Str => arm(
             "String(id)".to_owned(),
             format!("::bumbledb::__private::resolve_string{suffix}({ctx}, id)?"),

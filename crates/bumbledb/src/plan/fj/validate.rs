@@ -45,9 +45,9 @@ fn is_point_filter(filter: &FilterPredicate) -> bool {
 /// occurrence's subatom var-lists in node order (§3.3); a negated
 /// occurrence's single probe level — all its variables in binding (slot)
 /// order, exactly the shape of a fully-hoisted positive lookup; a
-/// chase-eliminated occurrence's empty schema — no level is ever forced
+/// grounding-eliminated occurrence's empty schema — no level is ever forced
 /// or probed, and its selections and filters are likewise empty so the
-/// bind and view paths have nothing to resolve (`plan/chase.rs`). Key
+/// bind and view paths have nothing to resolve (`plan/ground.rs`). Key
 /// widths per level: the sum of the level's variables' slot widths (an
 /// interval join variable is one variable with a two-word key). Spans:
 /// the relation's field→column map, built once per witness.
@@ -109,12 +109,12 @@ fn build_occurrences(
             // A selection's miss contract — "the whole conjunctive query
             // is empty" — holds for positive occurrences only; an empty
             // negated view just means the anti-probe never rejects. A
-            // chase-eliminated occurrence carries nothing: its filters
+            // grounding-eliminated occurrence carries nothing: its filters
             // are implied by the containment and the key, so nothing is
-            // resolved, probed, or scanned for it (`plan/chase.rs`). A
-            // chase-FOLDED occurrence keeps its filter list but empties
-            // its selections: the filters are EXPLAIN's fold picture
-            // (`plan/chase/evaluate.rs::folded_picture`) — never
+            // resolved, probed, or scanned for it (`plan/ground.rs`). A
+            // grounding-FOLDED occurrence keeps its filter list but empties
+            // its selections: the filters are introspection's fold picture
+            // (`plan/ground/evaluate.rs::folded_picture`) — never
             // resolved, probed, or scanned (`Role::discharged`, read by
             // every execution-side loop).
             let view_filters: Vec<FilterPredicate> = occurrence
@@ -163,7 +163,7 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// Validates a plan against its normalized query, deriving covers,
 /// residual/word-residual/anti-probe placement, trie schemas (negated
 /// occurrences included), field→column span maps, the two-slot-aware
-/// binding-slot layout, and the distinct-bindings flag.
+/// binding-slot layout, and the optional distinct-bindings witness.
 ///
 /// # Errors
 ///
@@ -219,7 +219,11 @@ pub fn validate(
 
     let mut nodes = derive_nodes(plan)?;
     for node in &mut nodes {
-        node.sink_relevant = node.new_vars.iter().any(|v| sink_vars.contains(v));
+        node.suffix_skip = if node.new_vars.iter().any(|v| sink_vars.contains(v)) {
+            super::SuffixSkip::Forbidden
+        } else {
+            super::SuffixSkip::Licensed
+        };
     }
 
     // Cumulative bound-variable sets, once — the one input every
@@ -241,7 +245,7 @@ pub fn validate(
         };
         nodes[node].residuals.push(*residual);
     }
-    // Decomposed point-containment word residuals: the same rule over
+    // Decomposed point-membership word residuals: the same rule over
     // the word operands' variables.
     for (residual_idx, residual) in normalized.word_residuals.iter().enumerate() {
         let Some(node) = earliest_bound_node(&bound, &[residual.lhs.var, residual.rhs.var]) else {
@@ -348,21 +352,21 @@ pub fn validate(
     let occurrences = build_occurrences(plan, normalized, schema, &slots);
     // A tautology at this call site — `split_filters` just constructed
     // these occurrences, so no Eq-constant can sit in `filters`. The real
-    // producers `check_selections` guards against are hand-built
+    // producers `check_selections` checks against are hand-built
     // `PlanOccurrence`s (tests, future callers); the executor-side twin
     // is a debug_assert too. `check_selections` judges participating
     // occurrences only: a negated occurrence's Eq-constants legitimately
     // live in its filter list, a folded occurrence retains its
-    // pre-split list for EXPLAIN, and an eliminated occurrence's lists
+    // pre-split list for introspection, and an eliminated occurrence's lists
     // are empty (see `build_occurrences`).
     debug_assert!(check_selections(&occurrences).is_ok());
 
-    let distinct_bindings = provably_distinct(normalized, schema);
+    let distinct_witness = provably_distinct(normalized, schema);
     Ok(ValidatedPlan {
         occurrences,
         nodes,
         slots,
-        distinct_bindings,
+        distinct_witness,
         estimates,
     })
 }
