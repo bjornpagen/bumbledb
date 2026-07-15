@@ -479,6 +479,30 @@ impl fmt::Display for SchemaError {
                  write it once",
                 s.0, r.0, fd.0
             ),
+            Self::CardinalityInvertedWindow {
+                statement: s,
+                lo,
+                hi,
+            } => write!(
+                f,
+                "statement {}: the window {lo}..{hi} is inverted — no count satisfies \
+                 hi < lo; the canonical bounds are lo < hi ({{lo..hi}}), an exact count \
+                 lo = hi (the {{n}} spelling)",
+                s.0
+            ),
+            Self::CardinalityVacuousWindow { statement: s } => write!(
+                f,
+                "statement {}: the 0..* window admits every count — it provably says \
+                 nothing (lean/Bumbledb/Cardinality.lean: cardinality_zero_star); delete \
+                 the statement",
+                s.0
+            ),
+            Self::CardinalityContainmentWindow { statement: s } => write!(
+                f,
+                "statement {}: the 1..* window says only what the bare containment says — \
+                 drop the annotation and declare `target <= source`",
+                s.0
+            ),
             Self::CardinalityIntervalPosition {
                 statement: s,
                 relation: r,
@@ -1035,6 +1059,9 @@ impl SchemaError {
             | Self::DuplicateStatement { statement, .. }
             | Self::DegenerateSelectionSet { statement, .. }
             | Self::DuplicateSelectionLiteral { statement, .. }
+            | Self::CardinalityInvertedWindow { statement, .. }
+            | Self::CardinalityVacuousWindow { statement, .. }
+            | Self::CardinalityContainmentWindow { statement, .. }
             | Self::CardinalityIntervalPosition { statement, .. } => Some(*statement),
         }
     }

@@ -36,7 +36,7 @@ mod common;
 /// Busy(id fresh, person u64, slot interval<u64>) +
 /// Item(doc u64, pos u64, note u64), with
 /// `Posting(account) <= Account(id)` and
-/// `Item(doc) in 1..4096 per Account(id)` (the cardinality window) — the
+/// `Account(id) <={1..4096} Item(doc)` (the cardinality window) — the
 /// marks machinery lives in the store the read windows measure, and the
 /// window-heavy write family churns it between them.
 fn schema() -> SchemaDescriptor {
@@ -143,7 +143,7 @@ fn schema() -> SchemaDescriptor {
                     selection: Box::new([]),
                 },
             },
-            // `Item(doc) in 1..4096 per Account(id)`: every account
+            // `Account(id) <={1..4096} Item(doc)`: every account
             // parents a chain, so each marks-family commit walks live
             // window counts.
             StatementDescriptor::Cardinality {

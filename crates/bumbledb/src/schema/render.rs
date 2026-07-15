@@ -20,7 +20,9 @@ use super::{
 /// (`Account(id | kind == Savings)`), and a bidirectional pair — read off
 /// the sealed [`super::ContainmentStatement::mirror`] link — as
 /// `==` once, in the pair's written orientation (both ids render the same
-/// string). Selection literals render through one value formatter;
+/// string), and a cardinality window B-family, target-left, in its one
+/// canonical spelling (`Parent(id) <={1..3} Task(parent)`; `lo = hi`
+/// prints `{n}`). Selection literals render through one value formatter;
 /// intervals render as `start..end`.
 ///
 /// # Panics
@@ -312,20 +314,29 @@ impl fmt::Display for Rendered<'_> {
                     side(f, self.names, target)
                 }
             },
+            // B-family, target-left, CANONICAL spellings only (the
+            // canonical-utterance law, `docs/architecture/70-api.md`):
+            // `lo = hi` is the `{n}` exact spelling (`{0}` the
+            // exclusion), no ceiling is `{lo..*}`, else `{lo..hi}`.
+            // Validation rejects the banned bound shapes (`{0..*}`,
+            // `{1..*}`, inverted), so a sealed statement never renders
+            // one; a rejected declaration renders its banned bounds as
+            // written — the diagnostic must show the offense.
             RenderedStatement::Cardinality {
                 source,
                 lo,
                 hi,
                 target,
             } => {
-                side(f, self.names, source)?;
-                write!(f, " in {lo}..")?;
+                side(f, self.names, target)?;
+                write!(f, " <={{")?;
                 match hi {
-                    Some(hi) => write!(f, "{hi}")?,
-                    None => write!(f, "*")?,
+                    Some(hi) if hi == lo => write!(f, "{lo}")?,
+                    Some(hi) => write!(f, "{lo}..{hi}")?,
+                    None => write!(f, "{lo}..*")?,
                 }
-                write!(f, " per ")?;
-                side(f, self.names, target)
+                write!(f, "}} ")?;
+                side(f, self.names, source)
             }
         }
     }

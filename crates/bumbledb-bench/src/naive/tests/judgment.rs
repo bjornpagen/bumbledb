@@ -1191,7 +1191,7 @@ mod marks {
     }
 
     /// Holder(id, tag; key id); Account(holder, kind, num) with
-    /// `Account(holder | kind == 1) in 1..2 per Holder(id)`.
+    /// `Holder(id) <={1..2} Account(holder | kind == 1)`.
     fn schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1295,12 +1295,13 @@ mod marks {
     }
 
     /// The window-boundary schema: Holder(id; key) with
-    /// `Account(holder | kind == 1) in 2..2 per Holder(id)` (exactness)
-    /// and `Account(holder | kind == 9) in 0..* per Holder(id)` (the
-    /// provably vacuous default posture,
-    /// `lean/Bumbledb/Cardinality.lean: zero_star_admits`).
-    /// Materialized: the `Holder` key (0), the `2..2` window (1), the
-    /// `0..*` window (2).
+    /// `Holder(id) <={2} Account(holder | kind == 1)` (exactness) and
+    /// `Holder(id) <={0} Account(holder | kind == 9)` (the exclusion —
+    /// the `{0}` window's naive-parity coverage; the vacuous `0..*`
+    /// posture is unrepresentable, rejected at validation as
+    /// `CardinalityVacuousWindow`).
+    /// Materialized: the `Holder` key (0), the `{2}` window (1), the
+    /// `{0}` window (2).
     fn exact_schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1347,14 +1348,14 @@ mod marks {
                         )]),
                     },
                     lo: 0,
-                    hi: None,
+                    hi: Some(0),
                     target: side(HOLDER, &[0], &[]),
                 },
             ],
         }
     }
 
-    /// The `n..n` exactness window, the `0..*` vacuity, the
+    /// The `{n}` exactness window, the `{0}` exclusion, the
     /// empty-parent vacuity, and the delete-then-reinsert seams —
     /// the targeted subfamilies pinning
     /// `lean/Bumbledb/Cardinality.lean: CardinalityWindow` at its
@@ -1363,7 +1364,7 @@ mod marks {
     /// delta_restricted_commit_sound` — a touched group is re-judged
     /// even when the delta nets to nothing).
     #[test]
-    fn window_exactness_vacuity_and_reinsert_seams() {
+    fn window_exactness_exclusion_and_reinsert_seams() {
         run(
             &exact_schema(),
             vec![
@@ -1389,15 +1390,17 @@ mod marks {
                     verdict: Err(window(1)),
                 },
                 Case {
-                    name: "0..* never gates",
+                    name: "the {0} exclusion convicts its first member",
                     base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
                     deletes: vec![],
-                    inserts: vec![
-                        account(1, 9, 0),
-                        account(1, 9, 1),
-                        account(1, 9, 2),
-                        account(1, 9, 3),
-                    ],
+                    inserts: vec![account(1, 9, 0)],
+                    verdict: Err(window(2)),
+                },
+                Case {
+                    name: "the {0} exclusion admits everything outside sigma",
+                    base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
+                    deletes: vec![],
+                    inserts: vec![account(1, 5, 0), account(1, 6, 1)],
                     verdict: Ok(()),
                 },
                 Case {

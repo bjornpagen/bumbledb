@@ -119,7 +119,7 @@ checks.
 The query corpus is Tiny-scale, valid-arm only. Per-build coverage is
 logged by the builder and the comparator (`Report::coverage_line`);
 the checked-in corpus was built at **219/325 expressible** (200 seeded
-+ 19 hand cases), plus the 20 hand judgment cases outside the report
++ 19 hand cases), plus the 21 hand judgment cases outside the report
 (they have no expressibility gate):
 
 * **hostile arm** — not drawn at all: structurally-free IR types

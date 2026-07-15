@@ -125,14 +125,24 @@ fn schema_compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's ten cases (docs/architecture/70-api.md — the emission's roster,
-    // plus the two funerals and the width grammar): duplicate handle;
-    // missing column; extra column; type-mismatched literal; `closed
-    // relation` without `as`; handle literal on a non-closed field; the
-    // deleted inline `enum` type diagnosing its replacement; the deleted
-    // `order` statement form diagnosing its derivations (the grammar lock
-    // of `docs/architecture/30-dependencies.md` § refused: order marks);
+    // The suite's nineteen cases (docs/architecture/70-api.md — the emission's
+    // roster, the funerals, the width grammar, and the canonical-utterance
+    // law's ban table): duplicate handle; missing column; extra column;
+    // type-mismatched literal; `closed relation` without `as`; handle
+    // literal on a non-closed field; the deleted inline `enum` type
+    // diagnosing its replacement; the deleted `order` statement form
+    // diagnosing its derivations (the grammar lock of
+    // `docs/architecture/30-dependencies.md` § refused: order marks);
     // `interval<E, 0>` (denotes nothing) and the widthless
-    // `interval<E, >` (names no width), each naming the field.
-    assert_eq!(seen, 10, "the schema compile-fail roster has ten fixtures");
+    // `interval<E, >` (names no width), each naming the field; and the
+    // window/selection ban table, each error naming the canonical form —
+    // the deleted `in lo..hi per` spelling, `{1..*}` (the containment
+    // respelled), `{n..n}` (write `{n}`), `{0..0}` (write `{0}`),
+    // `{0..*}` (vacuous — `cardinality_zero_star`), inverted bounds, the
+    // open shorthands `{..hi}` / `{lo..}`, and the singleton literal set
+    // (the bare literal's second spelling).
+    assert_eq!(
+        seen, 19,
+        "the schema compile-fail roster has nineteen fixtures"
+    );
 }
