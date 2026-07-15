@@ -37,6 +37,26 @@ then and are dashed where unknown.
   each replays in 21–65 ms on a quiet machine — child-spawn latency
   under the overnight session's machine load, not slow inputs.
   Environmental, deleted.
+- **2026-07-15, query session (memory mode):** five `slow-unit`
+  artifacts, all replaying to exit 0 (every oracle agrees). Root cause
+  pinned by a mid-replay `sample` of the worst input (169 s): 100% of
+  wall time inside the NAIVE oracle — `NaiveDb::query → rows_for →
+  rule_bindings → enumerate` recursing per atom, the model's
+  by-design nested-loop join fanning out at Tiny scale. The engine
+  never appears in the stacks. Same slow-but-correct class as the
+  2026-07-13 rewrites smoke disposition; oracle cost, not an engine
+  finding. Deleted. The same input (`slow-unit-d5eadb07…`, kept in the
+  corpus by cmin) re-tripped the slow threshold under the ASAN lane's
+  tax the same day — same root cause, same disposition, deleted again.
+- **2026-07-15, rewrites session (memory mode):** one
+  `oom-2a21d1c6…` at libFuzzer's default `-rss_limit_mb=2048`
+  (job peak_rss 2181 MB). The input replays clean standalone: exit 0,
+  peak RSS 282 MB; twenty replays of the same input in ONE process
+  still peak at 282 MB — zero per-iteration growth, no engine leak.
+  The 2181 MB is fork-job-cumulative RSS (allocator high-water across
+  a job's diverse heavy-join inputs plus libFuzzer corpus bookkeeping),
+  the same process-level-accounting class as the PRD 15 ASAN oom
+  disposition. Environmental, deleted.
 
 ## Trophies (cross-reference: the ledger in fuzz/README.md)
 
@@ -79,3 +99,9 @@ then and are dashed where unknown.
 | 2026-07-13 | rewrites | none | 1m x 2 workers | 27425 | 421/s | 11964 | 3372 -> 3380 | 0 |
 | 2026-07-13 | crash | none | 1m x 2 workers | 2246 | 36/s | 2898 | 420 -> 441 | 0 |
 | 2026-07-13 | query | address | 1m x 2 workers | 73 | 0/s | 20608 | 2430 -> 2418 | 0 |
+| 2026-07-15 | theory | none | 12m x 8 workers | 597806 | 752/s | 1978 | 316 -> 406 | 0 |
+| 2026-07-15 | ops | none | 12m x 8 workers | 589543 | 813/s | 12803 | 2393 -> 3508 | 0 |
+| 2026-07-15 | query | none | 12m x 8 workers | 60073 | 76/s | 13493 | 2418 -> 2708 | 5 |
+| 2026-07-15 | rewrites | none | 12m x 8 workers | 1038630 | 1861/s | 12323 | 3380 -> 3563 | 1 |
+| 2026-07-15 | crash | none | 12m x 8 workers | 310918 | 430/s | 3151 | 441 -> 614 | 0 |
+| 2026-07-15 | query | address | 10m x 8 workers | 5614 | 6/s | 20897 | 2708 -> 2725 | 1 |
