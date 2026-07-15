@@ -1417,3 +1417,38 @@ fn rejects_a_closed_to_closed_window_the_axioms_refute() {
         }
     );
 }
+
+/// Q1's fence at the schema gate: element-domain typing relaxes WIDTHS,
+/// never element domains — an `interval<u64, 1>` position against an
+/// `interval<i64>` position is still the positional type mismatch (the
+/// two domains share no `Point` tag).
+#[test]
+fn rejects_interval_positions_across_element_domains_whatever_the_widths() {
+    let decl = two_relations(
+        vec![field(
+            "slot",
+            ValueType::Interval {
+                element: IntervalElement::U64,
+                width: Some(1),
+            },
+        )],
+        vec![field(
+            "span",
+            ValueType::Interval {
+                element: IntervalElement::I64,
+                width: None,
+            },
+        )],
+        vec![containment(
+            side(RelationId(0), &[FieldId(0)]),
+            side(RelationId(1), &[FieldId(0)]),
+        )],
+    );
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ContainmentTypeMismatch {
+            statement: StatementId(0),
+            position: 0
+        }
+    );
+}

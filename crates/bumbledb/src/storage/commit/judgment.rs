@@ -831,9 +831,11 @@ impl<'a> Checker<'a> {
         // type: the probe's key bytes end in the SOURCE interval at the
         // source field's encoding; the stored determinant entries end in
         // the TARGET's (the acceptance gate puts both intervals last).
-        // Widths agree under exact positional typing and may differ
-        // under the element-domain rule — the walk is width-blind either
-        // way, because both tails parse to order-preserving words.
+        // The widths MAY DIFFER — Q1's element-domain typing at interval
+        // positions admits a fixed-width side against a general (or
+        // other-width) side of one element — and the walk is width-blind
+        // by construction, because both tails parse to order-preserving
+        // words (`docs/architecture/30-dependencies.md` § Q1).
         let source_tail = probe
             .source_tail
             .expect("coverage probes carry their source tail");

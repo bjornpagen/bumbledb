@@ -75,7 +75,13 @@ model's recorded fact, not an oversight.
   `holds` is consumed on ACCEPTED theories only (Txn, PRD 09).
 * The pointwise judgments quantify over the tagged `Point` sum
   (`Schema.lean`), so no typing premise appears; accepted statements
-  stay within one tag by positional structural typing.
+  stay within one tag by positional typing — which at interval
+  positions is ELEMENT-DOMAIN typing (Q1): the tag carries no width,
+  so a fixed-width projection position against a general one of the
+  same element meets in one tag and every judgment below holds
+  unchanged (`Value.points_one_tag_u64`/`_i64` — the spec catching
+  up to its own denotation). Scalar positions keep exact structural
+  equality (`schema/validate.rs::positional_types_match`).
 * Finiteness is never demanded: the ten items are subset and
   injectivity algebra, valid over arbitrary fact sets; the named token
   (`Set.Finite`) stays unspent in this module.

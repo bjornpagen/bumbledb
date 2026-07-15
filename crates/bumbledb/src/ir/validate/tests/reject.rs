@@ -1286,3 +1286,96 @@ fn rejects_pack_over_a_group_key_variable() {
         ValidationError::AggregateOverGroupKey { find: 1 }
     ));
 }
+
+// --- Q1's fence: element domain is not anything-goes ---
+
+/// Pair(id u64, ulane interval<u64, 5>, iline interval<i64>) — the
+/// cross-domain fixture for the Q1 fence.
+fn cross_domain_schema() -> Schema {
+    let field = |name: &str, ty: ValueType| FieldDescriptor {
+        name: name.into(),
+        value_type: ty,
+        generation: Generation::None,
+    };
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Pair".into(),
+            fields: vec![
+                field("id", ValueType::U64),
+                field(
+                    "ulane",
+                    ValueType::Interval {
+                        element: IntervalElement::U64,
+                        width: Some(5),
+                    },
+                ),
+                field(
+                    "iline",
+                    ValueType::Interval {
+                        element: IntervalElement::I64,
+                        width: None,
+                    },
+                ),
+            ],
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+/// Q1 relaxes widths, never element domains: Allen between a u64-domain
+/// fixed-width term and an i64-domain general term stays an illegal
+/// comparison — the two domains share no `Point` tag
+/// (`lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`).
+#[test]
+fn rejects_an_allen_pair_across_element_domains_whatever_the_widths() {
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(
+            RelationId(0),
+            vec![(0, var(0)), (1, var(1)), (2, var(2))],
+        )],
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+            },
+            lhs: var(1), // interval<u64, 5>
+            rhs: var(2), // interval<i64>
+        })],
+    });
+    assert!(matches!(
+        validate(&cross_domain_schema(), &query).expect_err("cross-domain Allen must reject"),
+        ValidationError::IllegalComparison { .. }
+    ));
+}
+
+/// Lock (d), the scalar/field side of Q1: a FIELD binding is value
+/// equality at the field's EXACT encoding — a general interval literal
+/// of the wrong width at an `interval<u64, 5>` position is still a
+/// literal type mismatch (the width is the type; only comparison
+/// positions relax to the element domain).
+#[test]
+fn rejects_a_wrong_width_interval_literal_at_a_fixed_width_field() {
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![atom(
+            RelationId(0),
+            vec![
+                (0, var(0)),
+                (
+                    1, // ulane: interval<u64, 5>
+                    Term::Literal(Value::IntervalU64(
+                        crate::Interval::<u64>::new(3, 7).expect("nonempty"), // width 4
+                    )),
+                ),
+            ],
+        )],
+    );
+    assert!(matches!(
+        validate(&cross_domain_schema(), &query).expect_err("wrong width must reject"),
+        ValidationError::LiteralTypeMismatch { atom: 0, .. }
+    ));
+}

@@ -1192,16 +1192,31 @@ impl Context {
                     other: DurationOperand::Const(value),
                 })
             }
-            // `Allen { mask }`: two interval terms of one element type —
+            // `Allen { mask }`: two interval terms of one ELEMENT DOMAIN —
             // the one interval-pair comparison (the mask itself was
             // checked at the shape pass; params get the vacuity rules at
-            // bind).
+            // bind). Q1, element-domain typing at interval positions: the
+            // classification runs over derived bounds, which carry an
+            // element domain and not a width, so a fixed-width term meets
+            // a general (or other-width) term of the same element freely —
+            // u64-vs-i64 stays illegal
+            // (`docs/architecture/30-dependencies.md` § Q1).
             Shaped::AllenVarVar { mask, lhs, rhs } => {
-                let lhs_type = self.resolved_var_type(*lhs).clone();
-                if !matches!(lhs_type, ValueType::Interval { .. }) {
+                let ValueType::Interval {
+                    element: lhs_element,
+                    ..
+                } = *self.resolved_var_type(*lhs)
+                else {
                     return Err(ValidationError::IllegalComparison { index });
-                }
-                if *self.resolved_var_type(*rhs) != lhs_type {
+                };
+                let ValueType::Interval {
+                    element: rhs_element,
+                    ..
+                } = *self.resolved_var_type(*rhs)
+                else {
+                    return Err(ValidationError::IllegalComparison { index });
+                };
+                if lhs_element != rhs_element {
                     return Err(ValidationError::IllegalComparison { index });
                 }
                 Ok(ClassifiedComparison::AllenVarVar {
@@ -1216,11 +1231,22 @@ impl Context {
                 var_on_left,
                 constant,
             } => {
-                let var_type = self.resolved_var_type(*var).clone();
-                if !matches!(var_type, ValueType::Interval { .. }) {
+                let ValueType::Interval { element, .. } = *self.resolved_var_type(*var) else {
                     return Err(ValidationError::IllegalComparison { index });
-                }
-                let other = self.check_const(index, constant, &var_type)?;
+                };
+                // The constant side types by element domain too (Q1): an
+                // interval literal spells both bounds and anchors the
+                // GENERAL type, and the comparison classifies over derived
+                // bounds — so a general constant against a fixed-width
+                // var is a legal mixed-width pair of one element.
+                let other = self.check_const(
+                    index,
+                    constant,
+                    &ValueType::Interval {
+                        element,
+                        width: None,
+                    },
+                )?;
                 Ok(ClassifiedComparison::AllenVarConst {
                     var: *var,
                     other,

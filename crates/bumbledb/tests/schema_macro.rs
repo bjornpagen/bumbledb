@@ -1525,3 +1525,261 @@ mod fixed_width_intervals {
         .expect("measure");
     }
 }
+
+mod element_domain_typing {
+    //! Q1 locks — element-domain typing at interval positions
+    //! (`docs/architecture/30-dependencies.md` § Q1): the playlist
+    //! recipe VERBATIM — a general `interval<u64>` span exact-partitioned
+    //! (`==`) by `interval<u64, 1>` unit slots, mixed widths meeting at
+    //! the containment's interval position because points carry an
+    //! element domain and never a width (`lean/Bumbledb/Schema.lean:
+    //! Value.points_one_tag_u64`). Locks: the recipe validates, a tiling
+    //! commits, a gap delta aborts, an overlap delta aborts, and a
+    //! mixed-width Allen query classifies with hand answers.
+
+    use bumbledb::error::Direction;
+    use bumbledb::ir::{
+        Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Query, Rule, Term, VarId,
+    };
+    use bumbledb::schema::{FieldId, StatementId};
+    use bumbledb::{AllenMask, AnswerValue, Db, Error, Fact as _, Interval, Violation};
+
+    bumbledb::schema! {
+        pub Playlists;
+
+        relation Playlist {
+            id: u64 as PlaylistId, fresh,
+            span: interval<u64> as PlaylistSpan,
+        }
+
+        relation Slot {
+            playlist: u64 as PlaylistId,
+            slot: interval<u64, 1> as SlotPos,
+            track: u64,
+        }
+
+        Playlist(id, span) -> Playlist;
+        Slot(playlist, slot) -> Slot;
+        Slot(playlist, slot) == Playlist(id, span);
+    }
+
+    fn unit(at: u64) -> SlotPos {
+        SlotPos(Interval::<u64>::fixed(at, 1).expect("in-domain unit slot"))
+    }
+
+    /// The tiling delta: one playlist over `[0, 3)` and the three unit
+    /// slots partitioning it, committed together.
+    fn tile(db: &Db<Playlists>) -> PlaylistId {
+        db.write(|tx| {
+            let id = tx.alloc::<PlaylistId>()?;
+            tx.insert(&Playlist {
+                id,
+                span: PlaylistSpan(Interval::<u64>::new(0, 3).expect("nonempty")),
+            })?;
+            for (at, track) in [(0, 100), (1, 200), (2, 300)] {
+                tx.insert(&Slot {
+                    playlist: id,
+                    slot: unit(at),
+                    track,
+                })?;
+            }
+            Ok(id)
+        })
+        .expect("an exact tiling commits")
+    }
+
+    /// Lock (a), the accepting half: the recipe VALIDATES (mixed widths
+    /// at the `==`'s interval position) and an exact tiling COMMITS.
+    #[test]
+    fn the_playlist_recipe_validates_and_a_tiling_commits() {
+        let dir = crate::common::TempDir::new("macro-q1-tiling");
+        let db = Db::create(dir.path(), Playlists).expect("Q1: the recipe validates");
+        let id = tile(&db);
+        db.read(|snap| {
+            let slots: Vec<Slot> = snap.scan_facts()?.collect::<Result<_, _>>()?;
+            assert_eq!(slots.len(), 3);
+            assert!(slots.iter().all(|s| s.playlist == id));
+            Ok(())
+        })
+        .expect("scan");
+    }
+
+    /// Lock (a), gap: a tiling with a hole — slots at 0 and 2 under a
+    /// `[0, 3)` span — aborts: the span's point 1 has no covering slot
+    /// (the Playlist-side coverage judgment).
+    #[test]
+    fn a_gap_delta_aborts() {
+        let dir = crate::common::TempDir::new("macro-q1-gap");
+        let db = Db::create(dir.path(), Playlists).expect("create");
+        let error = db
+            .write(|tx| {
+                let id = tx.alloc::<PlaylistId>()?;
+                tx.insert(&Playlist {
+                    id,
+                    span: PlaylistSpan(Interval::<u64>::new(0, 3).expect("nonempty")),
+                })?;
+                for (at, track) in [(0, 100), (2, 300)] {
+                    tx.insert(&Slot {
+                        playlist: id,
+                        slot: unit(at),
+                        track,
+                    })?;
+                }
+                Ok(())
+            })
+            .expect_err("a gap in the partition must abort");
+        let Error::CommitRejected { violations } = error else {
+            panic!("expected a containment rejection, got {error}");
+        };
+        assert!(
+            matches!(
+                violations.as_slice(),
+                [Violation::Containment {
+                    direction: Direction::SourceUnsatisfied,
+                    ..
+                }]
+            ),
+            "the uncovered span point convicts the coverage direction, got {violations:?}"
+        );
+    }
+
+    /// Lock (a), overlap: two unit slots at one position (they overlap
+    /// exactly when they collide — width 1) abort through the pointwise
+    /// key's disjointness, the same neighbor probe every fixed-width
+    /// group gets.
+    #[test]
+    fn an_overlap_delta_aborts() {
+        let dir = crate::common::TempDir::new("macro-q1-overlap");
+        let db = Db::create(dir.path(), Playlists).expect("create");
+        let id = tile(&db);
+        let error = db
+            .write(|tx| {
+                tx.insert(&Slot {
+                    playlist: id,
+                    slot: unit(1),
+                    track: 999,
+                })
+            })
+            .expect_err("an overlapping unit slot must abort");
+        assert!(
+            matches!(
+                &error,
+                Error::CommitRejected { violations }
+                    if matches!(violations.as_slice(), [Violation::Functionality {
+                        statement: StatementId(2),
+                        ..
+                    }])
+            ),
+            "the pointwise key convicts the overlap, got {error:?}"
+        );
+    }
+
+    /// Lock (a)'s past-the-end sibling: a unit slot outside the span is
+    /// the Slot-side coverage violation — the partition is exact in both
+    /// directions.
+    #[test]
+    fn a_slot_past_the_span_aborts() {
+        let dir = crate::common::TempDir::new("macro-q1-past-end");
+        let db = Db::create(dir.path(), Playlists).expect("create");
+        let id = tile(&db);
+        let error = db
+            .write(|tx| {
+                tx.insert(&Slot {
+                    playlist: id,
+                    slot: unit(3),
+                    track: 999,
+                })
+            })
+            .expect_err("a slot outside the span must abort");
+        assert!(
+            matches!(
+                &error,
+                Error::CommitRejected { violations }
+                    if matches!(violations.as_slice(), [Violation::Containment {
+                        direction: Direction::SourceUnsatisfied,
+                        ..
+                    }])
+            ),
+            "the uncovered slot convicts the slot-side coverage, got {error:?}"
+        );
+    }
+
+    /// Lock (b): a mixed-width Allen query CLASSIFIES — `interval<u64, 1>`
+    /// slot against `interval<u64>` span over derived bounds — with hand
+    /// answers per singleton mask: under span `[0, 3)`, slot `[0, 1)`
+    /// STARTS it, `[1, 2)` is DURING it, `[2, 3)` FINISHES it.
+    #[test]
+    fn a_mixed_width_allen_query_classifies_with_hand_answers() {
+        let dir = crate::common::TempDir::new("macro-q1-allen");
+        let db = Db::create(dir.path(), Playlists).expect("create");
+        tile(&db);
+        // Q(track) :- Playlist(id, span), Slot(playlist = id, slot, track),
+        //             Allen(slot, span, mask).
+        let query = |mask: AllenMask| {
+            Query::single(Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![
+                    Atom {
+                        source: bumbledb::AtomSource::Edb(Playlist::RELATION),
+                        bindings: vec![
+                            (FieldId(0), Term::Var(VarId(3))),
+                            (FieldId(1), Term::Var(VarId(1))),
+                        ],
+                    },
+                    Atom {
+                        source: bumbledb::AtomSource::Edb(Slot::RELATION),
+                        bindings: vec![
+                            (FieldId(0), Term::Var(VarId(3))),
+                            (FieldId(1), Term::Var(VarId(2))),
+                            (FieldId(2), Term::Var(VarId(0))),
+                        ],
+                    },
+                ],
+                negated: vec![],
+                conditions: vec![ConditionTree::Leaf(Comparison {
+                    op: CmpOp::Allen {
+                        mask: MaskTerm::Literal(mask),
+                    },
+                    lhs: Term::Var(VarId(2)), // slot: interval<u64, 1>
+                    rhs: Term::Var(VarId(1)), // span: interval<u64>
+                })],
+            })
+        };
+        let answers = |mask: AllenMask| -> Vec<u64> {
+            let mut prepared = db.prepare(&query(mask)).expect("Q1: mixed widths classify");
+            db.read(|snap| {
+                let out = snap.execute_collect(&mut prepared, &[])?;
+                let mut tracks: Vec<u64> = (0..out.len())
+                    .map(|i| match out.get(i, 0) {
+                        AnswerValue::U64(t) => t,
+                        other => panic!("track answers are u64, got {other:?}"),
+                    })
+                    .collect();
+                tracks.sort_unstable();
+                Ok(tracks)
+            })
+            .expect("execute")
+        };
+        assert_eq!(
+            answers(AllenMask::STARTS),
+            vec![100],
+            "slot [0,1) starts [0,3)"
+        );
+        assert_eq!(
+            answers(AllenMask::DURING),
+            vec![200],
+            "slot [1,2) is during [0,3)"
+        );
+        assert_eq!(
+            answers(AllenMask::FINISHES),
+            vec![300],
+            "slot [2,3) finishes [0,3)"
+        );
+        assert_eq!(
+            answers(AllenMask::INTERSECTS),
+            vec![100, 200, 300],
+            "every unit slot intersects its span"
+        );
+        assert_eq!(answers(AllenMask::AFTER), Vec::<u64>::new());
+    }
+}

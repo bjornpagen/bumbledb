@@ -64,8 +64,16 @@ relations as instance-independent sealed constants.
 * **`Point` is the tagged sum of the two interval element domains.**
   Every pointwise judgment quantifies over `Set Point`, which makes
   the judgments total without a typing premise: a scalar value denotes
-  no points, and positional structural typing keeps accepted
-  statements within one tag.
+  no points, and positional typing keeps accepted statements within
+  one tag. **Q1 — element-domain typing at interval positions**: the
+  tag IS the element domain and carries no width, so a fixed-width
+  side against a general (or other-width) side of one element is
+  already well-judged by every theorem in this file and its
+  consumers — the judgments quantified over `Point` all along, so
+  admitting mixed widths is the acceptance gate catching up to the
+  denotation, not a semantic change (`Value.points_one_tag_u64`;
+  Rust: `schema/validate.rs::positional_types_match`). Scalar
+  positions keep exact structural equality.
 * **`Header.intervalSplit` reads the field SET, never the written
   order** — the FieldSet doctrine: `resolve_target_key` counts
   interval positions as a set and `key_permutation` bridges statement
@@ -229,8 +237,11 @@ theorem Selection.satisfies_of_superset {φ φ' : Selection}
 
 /-- A point of an interval element domain, tagged by the domain — the
 one carrier every pointwise judgment quantifies over. The sum makes
-the judgments total without a typing premise; positional structural
-typing keeps accepted statements within one tag. -/
+the judgments total without a typing premise; Q1's element-domain
+typing at interval positions keeps accepted statements within one
+tag (a point carries an element domain, never a width — so a
+fixed-width side against a general side of one element meets in one
+tag: `Value.points_one_tag_u64`/`_i64`). -/
 inductive Point where
   | u64 (x : U64)
   | i64 (x : I64)
@@ -295,6 +306,34 @@ theorem Value.points_nonempty_fixed {v : Value} {e : Elem} {w : Nat}
   | i64 =>
     obtain ⟨x, hx⟩ := interval_nonempty val.toInterval
     exact ⟨.i64 x, hx⟩
+
+/-- **Q1, the element-domain rule made concrete (u64):** every point
+an interval-SHAPED value of element domain `u64` denotes carries the
+`u64` tag — GENERAL or FIXED, any width. Mixed-width pairs of one
+element domain therefore meet in ONE `Point` tag, so every pointwise
+judgment (`PointwiseKey`, `Coverage`, `ExactPartition`, the window
+count — all quantifying over `Point`, never over widths) engages
+across them with zero changes: element-domain typing at interval
+positions is the spec catching up to its OWN denotation, not a new
+rule. Scalar positions are untouched (a scalar value denotes no
+points; its typing is exact structural equality,
+`schema/validate.rs::positional_types_match`). -/
+theorem Value.points_one_tag_u64 {v : Value} {p : Point}
+    (h : v.type = .interval .u64 ∨ ∃ w, v.type = .intervalFixed .u64 w)
+    (hp : p ∈ v.points) : ∃ x, p = .u64 x := by
+  obtain ⟨t, val⟩ := v
+  rcases h with h | ⟨w, h⟩ <;> cases h <;> cases p with
+  | u64 x => exact ⟨x, rfl⟩
+  | i64 x => exact nomatch hp
+
+/-- The `i64` twin of `Value.points_one_tag_u64`. -/
+theorem Value.points_one_tag_i64 {v : Value} {p : Point}
+    (h : v.type = .interval .i64 ∨ ∃ w, v.type = .intervalFixed .i64 w)
+    (hp : p ∈ v.points) : ∃ x, p = .i64 x := by
+  obtain ⟨t, val⟩ := v
+  rcases h with h | ⟨w, h⟩ <;> cases h <;> cases p with
+  | u64 x => exact nomatch hp
+  | i64 x => exact ⟨x, rfl⟩
 
 /-! ## Headers -/
 

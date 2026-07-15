@@ -42,8 +42,27 @@ a real invariant appears that no relation split can express.
 
 **Containment (IND).** `A(X | φ) <= B(Y | ψ)`: subset inclusion of the selected
 projected views (`lean/Bumbledb/Dependencies.lean: Containment`,
-`contains_iff_view_subset`). |X| = |Y| with positional structural type
-equality (`10-data-model.md`). Unselected, this is dependency theory's inclusion
+`contains_iff_view_subset`). |X| = |Y| with positional type equality — exact
+structural equality at scalar positions (`10-data-model.md`), **element-domain
+equality at interval positions (Q1)**: two interval-shaped types of one element
+domain match whatever their widths, so `interval<u64, 1>` meets `interval<u64>`
+positionally while `interval<u64, w>` against `interval<i64>` (or any scalar)
+still mismatches. The pointwise judgments quantify over points, which carry an
+element domain and not a width (`lean/Bumbledb/Schema.lean:
+Value.points_one_tag_u64`), and the coverage walk is width-blind by
+construction (`storage/commit/judgment.rs::check_coverage`).
+
+**Decision: element-domain typing at interval positions.** **Alternative:**
+exact-encoding equality (widths included, as at scalar positions). **Why it
+lost:** the pointwise judgments quantify over points, which carry an element
+domain, not a width — the denotation never distinguished widths, so strict
+equality would refuse statements the spec already judges; concretely, it
+rejects the purge's own named replacement recipe (the ordering triple's
+exact-partition `==` between a general playlist span and its `interval<u64, 1>`
+slots, the cookbook recipe the order-mark funeral points at). **Reverses if:**
+never — the denotation decides.
+
+Unselected, this is dependency theory's inclusion
 dependency; with selections it is the conditional inclusion dependency (CIND) of the
 data-quality literature. The bidirectional statement `A(X | φ) == B(Y | ψ)` is
 exactly the two containments, each judged independently
@@ -563,7 +582,8 @@ already certifies.
 
 Rejected at schema validation, each with a distinct error: unknown relation/field
 ids; empty or duplicate-carrying projections; arity mismatch between sides;
-positional structural-type mismatch; selection literal type mismatch (including
+positional structural-type mismatch (element-domain at interval positions — Q1
+above — exact everywhere else); selection literal type mismatch (including
 non-UTF-8 string literals — every literal of a set binding checks); a selected field also
 projected; a degenerate literal set (a `Many` of zero or one literals — the
 empty set selects nothing and the singleton is the equality spelling); a

@@ -725,3 +725,72 @@ fn a_reordered_literal_set_is_a_duplicate_statement() {
         }
     );
 }
+
+/// Q1 — element-domain typing at interval positions: a fixed-width
+/// interval position against a GENERAL one of the same element domain
+/// matches positionally (widths free; the pointwise judgments quantify
+/// over points, which carry an element domain and never a width —
+/// `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`), and the
+/// containment resolves the same pointwise coverage plan. This is the
+/// playlist recipe's typing seam: `Slot(playlist, slot: interval<u64, 1>)
+/// == Playlist(id, span: interval<u64>)`.
+#[test]
+fn mixed_width_interval_positions_of_one_element_domain_resolve() {
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Playlist".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field(
+                        "span",
+                        ValueType::Interval {
+                            element: IntervalElement::U64,
+                            width: None,
+                        },
+                    ),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Slot".into(),
+                fields: vec![
+                    field("playlist", ValueType::U64),
+                    field(
+                        "slot",
+                        ValueType::Interval {
+                            element: IntervalElement::U64,
+                            width: Some(1),
+                        },
+                    ),
+                ],
+            },
+        ],
+        statements: vec![
+            fd(RelationId(0), &[FieldId(0), FieldId(1)]),
+            fd(RelationId(1), &[FieldId(0), FieldId(1)]),
+            // The exact-partition ==, spelled as its two containments.
+            containment(
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+            ),
+            containment(
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+            ),
+        ],
+    }
+    .validate()
+    .expect("mixed widths of one element domain validate (Q1)");
+    assert!(schema.key(KeyId(0)).pointwise);
+    assert!(schema.key(KeyId(1)).pointwise);
+    assert!(matches!(
+        schema.containment(ContainmentId(0)).enforcement,
+        Enforcement::IntervalCoverage { .. }
+    ));
+    assert!(matches!(
+        schema.containment(ContainmentId(1)).enforcement,
+        Enforcement::IntervalCoverage { .. }
+    ));
+}

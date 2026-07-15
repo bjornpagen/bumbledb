@@ -334,6 +334,24 @@ enum FunctionalityEvidence {
 
 /// The projection positions holding interval-typed fields — the one scan
 /// behind the FD interval gate and the containment pointwise gate.
+/// Q1 — element-domain typing at interval positions: two interval types
+/// of one element domain match positionally WHATEVER their widths (the
+/// pointwise judgments quantify over points, which carry an element
+/// domain and not a width — `lean/Bumbledb/Schema.lean: Value.points`;
+/// the coverage walk is width-blind by construction,
+/// `storage/commit/judgment.rs::check_coverage`). Every other position
+/// demands exact structural equality — scalar typing is untouched, and
+/// u64-vs-i64 interval pairs still mismatch
+/// (`docs/architecture/30-dependencies.md` § Q1).
+fn positional_types_match(a: &ValueType, b: &ValueType) -> bool {
+    match (a, b) {
+        (ValueType::Interval { element: ea, .. }, ValueType::Interval { element: eb, .. }) => {
+            ea == eb
+        }
+        _ => a == b,
+    }
+}
+
 fn interval_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec<usize> {
     projection
         .iter()
@@ -606,9 +624,11 @@ fn validate_containment(
         });
     }
 
-    // Roster "positional structural-type mismatch" — derive-eq on
-    // `ValueType`, which also covers the called-out interval-against-scalar
-    // case (`docs/architecture/10-data-model.md` structural equality).
+    // Roster "positional structural-type mismatch" — element-domain at
+    // interval positions (Q1: widths free, elements bound), exact
+    // structural equality everywhere else, which also covers the
+    // called-out interval-against-scalar case
+    // (`docs/architecture/10-data-model.md` structural equality).
     let source_fields = &relations[source.relation.0 as usize].fields;
     let target_fields = &relations[target.relation.0 as usize].fields;
     for (position, (s, t)) in source
@@ -617,8 +637,10 @@ fn validate_containment(
         .zip(target.projection.iter())
         .enumerate()
     {
-        if source_fields[usize::from(s.0)].value_type != target_fields[usize::from(t.0)].value_type
-        {
+        if !positional_types_match(
+            &source_fields[usize::from(s.0)].value_type,
+            &target_fields[usize::from(t.0)].value_type,
+        ) {
             return Err(SchemaError::ContainmentTypeMismatch {
                 statement: id,
                 position,
@@ -725,7 +747,9 @@ fn validate_cardinality(
         });
     }
 
-    // Roster "positional structural-type mismatch" — as for containment.
+    // Roster "positional structural-type mismatch" — as for containment
+    // (Q1 element-domain at interval positions; moot for acceptance here,
+    // since any interval position hits the window refusal just below).
     let source_fields = &relations[source.relation.0 as usize].fields;
     let target_fields = &relations[target.relation.0 as usize].fields;
     for (position, (s, t)) in source
@@ -734,8 +758,10 @@ fn validate_cardinality(
         .zip(target.projection.iter())
         .enumerate()
     {
-        if source_fields[usize::from(s.0)].value_type != target_fields[usize::from(t.0)].value_type
-        {
+        if !positional_types_match(
+            &source_fields[usize::from(s.0)].value_type,
+            &target_fields[usize::from(t.0)].value_type,
+        ) {
             return Err(SchemaError::ContainmentTypeMismatch {
                 statement: id,
                 position,

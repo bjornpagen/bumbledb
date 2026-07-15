@@ -469,7 +469,10 @@ where stated (no U64-vs-I64, no silent coercion). `Eq`/`Ne` are legal for all si
 types; `Lt/Le/Gt/Ge` only for U64/U64 and I64/I64 — **never intervals,
 `bytes<N>`, String, or Bool** (`10-data-model.md` orderability; all four
 refusals have dedicated typed diagnostics). `Allen { mask }` requires two interval terms of
-one element type — **the** interval-pair comparison (next section). `PointIn`
+one element type — widths free (Q1 element-domain typing, `30-dependencies.md`:
+`interval<u64, 5>` classifies against `interval<u64>` or `interval<u64, 3>`
+over derived bounds; against `interval<i64, w>` it stays illegal) — **the**
+interval-pair comparison (next section). `PointIn`
 requires an interval left side and an **element-typed** right side (point
 membership as a predicate — the predicate form of the binding rule, for terms
 already bound elsewhere); its old interval⊇interval form is not an operator —

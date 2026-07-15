@@ -476,3 +476,89 @@ fn accepts_identity_operations_over_fixed_bytes() {
     );
     assert!(witness.set_params().contains(&ParamId(0)));
 }
+
+// --- Q1: element-domain typing at interval comparison positions ---
+
+/// Zone(id u64, span interval<u64>, lane interval<u64, 5>) — the local
+/// mixed-width fixture (the shared fixture carries general intervals
+/// only).
+fn mixed_width_schema() -> Schema {
+    let field = |name: &str, ty: ValueType| FieldDescriptor {
+        name: name.into(),
+        value_type: ty,
+        generation: Generation::None,
+    };
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Zone".into(),
+            fields: vec![
+                field("id", ValueType::U64),
+                field(
+                    "span",
+                    ValueType::Interval {
+                        element: IntervalElement::U64,
+                        width: None,
+                    },
+                ),
+                field(
+                    "lane",
+                    ValueType::Interval {
+                        element: IntervalElement::U64,
+                        width: Some(5),
+                    },
+                ),
+            ],
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+/// Q1's Allen rule: a fixed-width term against a general term of ONE
+/// element domain classifies — the comparison runs over derived
+/// bounds, which carry an element domain and never a width
+/// (`docs/architecture/30-dependencies.md` § Q1; the u64-vs-i64 twin
+/// still rejects, `reject.rs`).
+#[test]
+fn accepts_a_mixed_width_allen_pair_of_one_element_domain() {
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(
+            RelationId(0),
+            vec![(0, var(0)), (1, var(1)), (2, var(2))],
+        )],
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+            },
+            lhs: var(1), // interval<u64>
+            rhs: var(2), // interval<u64, 5>
+        })],
+    });
+    validate(&mixed_width_schema(), &query).expect("mixed widths of one element classify");
+}
+
+/// The constant side of Q1's Allen rule: an interval literal spells
+/// both bounds and anchors the GENERAL type, so it classifies against
+/// a fixed-width variable of the same element domain.
+#[test]
+fn accepts_a_general_interval_literal_allen_against_a_fixed_width_var() {
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(RelationId(0), vec![(0, var(0)), (2, var(1))])],
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Allen {
+                mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+            },
+            lhs: var(1), // interval<u64, 5>
+            rhs: Term::Literal(Value::IntervalU64(
+                crate::Interval::<u64>::new(3, 40).expect("nonempty"),
+            )),
+        })],
+    });
+    validate(&mixed_width_schema(), &query).expect("a general literal against a fixed var");
+}
