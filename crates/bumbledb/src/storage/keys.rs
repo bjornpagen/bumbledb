@@ -343,10 +343,12 @@ pub fn parse_stat_key(key: &[u8]) -> Option<(RelationId, u8)> {
 /// out of `fact_bytes`, in statement projection order, into `out` — the
 /// determinant segment of a `U` key, re-derived per fact, never a scan.
 ///
-/// An interval field copies its whole 16-byte `start ‖ end` encoding in
-/// one piece (the slice width comes from the layout — never split here):
-/// the contiguity is what keeps the determinant B-tree ordered by interval start
-/// within one scalar-prefix group.
+/// An interval field copies its whole encoded tail in one piece — 16-byte
+/// `start ‖ end` general, the 8-byte start for a fixed-width
+/// `interval<E, w>` position (the slice width comes from the layout —
+/// never split here): the contiguity is what keeps the determinant B-tree
+/// ordered by interval start within one scalar-prefix group (the fixed
+/// family's one word is the start itself).
 pub fn determinant_image<'a>(
     layout: &FactLayout,
     projection: &[FieldId],
@@ -365,7 +367,8 @@ pub fn determinant_image<'a>(
 /// key's* determinant order: `key_permutation[i]` is the determinant position of
 /// projection element `i` (statement projection order → target key order,
 /// `Enforcement::{ScalarProbe, IntervalCoverage}::key_permutation`) — the
-/// key-bytes segment of an `R` key. Interval fields copy their whole 16 bytes, exactly as in
+/// key-bytes segment of an `R` key. Interval fields copy their whole encoded
+/// tail (16 bytes general, the 8-byte fixed start), exactly as in
 /// [`determinant_image`].
 pub fn permuted_determinant_image<'a>(
     layout: &FactLayout,
@@ -498,6 +501,7 @@ mod tests {
             TypeDesc::U64,
             TypeDesc::Interval {
                 element: IntervalElement::U64,
+                width: None,
             },
             TypeDesc::U64,
         ])

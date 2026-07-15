@@ -8,15 +8,19 @@ use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
 use crate::storage::{dict, read};
 
-/// Resolves a constant to its canonical key-segment bytes — per field, the
-/// same canonical encoding [`crate::storage::keys::determinant_image`] slices out
-/// of a stored fact (`U` determinants and `M` fact bytes share it, so an
-/// interval constant contributes its whole 16-byte `start ‖ end` piece).
+/// Resolves a constant to its canonical key-segment bytes AT ITS FIELD'S
+/// ENCODING — per field, the same canonical encoding
+/// [`crate::storage::keys::determinant_image`] slices out of a stored fact
+/// (`U` determinants and `M` fact bytes share it): an interval constant
+/// contributes its whole 16-byte `start ‖ end` piece at a general
+/// position and its 8-byte START at a fixed-width one (`interval<E, w>` —
+/// the width is the type's, so the stored segment carries no end).
 /// A `PendingIntern` that missed the dictionary resolves to the
 /// never-minted sentinel id — the ensuing `U`/`M` probe then misses (empty
 /// result), never an insert, never an error.
 fn const_bytes(
     txn: &ReadTxn<'_>,
+    desc: crate::encoding::TypeDesc,
     value: &Const,
     params: &[Const],
     out: &mut Vec<u8>,
@@ -33,10 +37,15 @@ fn const_bytes(
         }
         Const::Interval { start, end } => {
             out.extend_from_slice(&start.to_be_bytes());
-            out.extend_from_slice(&end.to_be_bytes());
+            if !matches!(
+                desc,
+                crate::encoding::TypeDesc::Interval { width: Some(_), .. }
+            ) {
+                out.extend_from_slice(&end.to_be_bytes());
+            }
         }
         Const::Param(p) => {
-            return const_bytes(txn, &params[usize::from(p.0)], params, out);
+            return const_bytes(txn, desc, &params[usize::from(p.0)], params, out);
         }
         Const::ParamSet(_) | Const::WordSet(_) => {
             unreachable!("classification: a param-set binding never reaches the key-probe path")
@@ -108,22 +117,29 @@ fn fact_matches(
     filter: &FilterPredicate,
     params: &[Const],
 ) -> Result<bool> {
-    let operand = |field| fact_operand(schema, plan.relation, fact, field);
-    let pair = |field| match operand(field) {
-        FactOperand::Pair(start, end) => (start, end),
-        FactOperand::Word(_) | FactOperand::Block { .. } => {
-            unreachable!("validated: interval predicates read interval fields")
+    // Corruption (a fixed-width start at or past the Q2 bound) is a hard
+    // error out of every read — never a skip, never a classification.
+    let operand =
+        |field| -> Result<FactOperand> { Ok(fact_operand(schema, plan.relation, fact, field)?) };
+    let pair = |field| -> Result<(u64, u64)> {
+        match operand(field)? {
+            FactOperand::Pair(start, end) => Ok((start, end)),
+            FactOperand::Word(_) | FactOperand::Block { .. } => {
+                unreachable!("validated: interval predicates read interval fields")
+            }
         }
     };
-    let word = |field| match operand(field) {
-        FactOperand::Word(word) => word,
-        FactOperand::Pair(..) | FactOperand::Block { .. } => {
-            unreachable!("validated: point operands are scalar fields")
+    let word = |field| -> Result<u64> {
+        match operand(field)? {
+            FactOperand::Word(word) => Ok(word),
+            FactOperand::Pair(..) | FactOperand::Block { .. } => {
+                unreachable!("validated: point operands are scalar fields")
+            }
         }
     };
     Ok(match filter {
         FilterPredicate::Compare { field, op, value } => {
-            match (operand(*field), const_operand(txn, value, params)?) {
+            match (operand(*field)?, const_operand(txn, value, params)?) {
                 (FactOperand::Word(w), FactOperand::Word(c)) => op.compare(&w, &c),
                 // Interval-vs-interval-constant: value equality only
                 // (interval-pair *predicates* are the Allen kinds below).
@@ -143,7 +159,7 @@ fn fact_matches(
             }
         }
         FilterPredicate::FieldsCompare { left, right, op } => {
-            match (operand(*left), operand(*right)) {
+            match (operand(*left)?, operand(*right)?) {
                 (FactOperand::Word(a), FactOperand::Word(b)) => op.compare(&a, &b),
                 // Interval fields compare pairwise; validation admits
                 // Eq/Ne only.
@@ -164,7 +180,7 @@ fn fact_matches(
             }
         }
         FilterPredicate::PointIn { field, point } => {
-            let (start, end) = pair(*field);
+            let (start, end) = pair(*field)?;
             point_in(start, end, point_word(point, params))
         }
         FilterPredicate::AnyPointIn { .. } => {
@@ -175,14 +191,14 @@ fn fact_matches(
         // preserve value order, so classification over fact words equals
         // classification over values.
         FilterPredicate::FieldsAllen { left, right, mask } => {
-            let (l_start, l_end) = pair(*left);
-            let (r_start, r_end) = pair(*right);
+            let (l_start, l_end) = pair(*left)?;
+            let (r_start, r_end) = pair(*right)?;
             crate::image::view::mask_of(*mask, params).contains(crate::allen::classify_bounds(
                 &l_start, &l_end, &r_start, &r_end,
             ))
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
-            let (f_start, f_end) = pair(*field);
+            let (f_start, f_end) = pair(*field)?;
             let FactOperand::Pair(start, end) = const_operand(txn, other, params)? else {
                 unreachable!("validated: the Allen constant side is an interval")
             };
@@ -191,14 +207,14 @@ fn fact_matches(
             ))
         }
         FilterPredicate::FieldsPointIn { interval, point } => {
-            let (start, end) = pair(*interval);
-            point_in(start, end, word(*point))
+            let (start, end) = pair(*interval)?;
+            point_in(start, end, word(*point)?)
         }
         FilterPredicate::FieldWithin { field, outer } => {
             let FactOperand::Pair(start, end) = const_operand(txn, outer, params)? else {
                 unreachable!("validated: the outer side is an interval constant")
             };
-            match operand(*field) {
+            match operand(*field)? {
                 FactOperand::Word(w) => point_in(start, end, w),
                 FactOperand::Pair(..) | FactOperand::Block { .. } => {
                     unreachable!("validated: within-comparands are scalar words")
@@ -234,8 +250,10 @@ pub(crate) fn key_probe_fact<'t>(
     // A dictionary miss lands the sentinel id in the key, and the probe
     // below misses.
     key_scratch.clear();
-    for (_, value) in &plan.key {
-        const_bytes(txn, value, params, key_scratch)?;
+    let layout = schema.relation(plan.relation).layout();
+    for (field, value) in &plan.key {
+        let desc = layout.field_type(usize::from(field.0));
+        const_bytes(txn, desc, value, params, key_scratch)?;
     }
 
     let mut probe_span = obs::span(obs::names::KEY_PROBE, obs::Category::Execute);

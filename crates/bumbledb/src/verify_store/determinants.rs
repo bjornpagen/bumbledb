@@ -85,21 +85,42 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             });
         }
 
-        // Pointwise disjointness: the determinant's 16-byte tail is
-        // `start ‖ end` in order-preserving halves, so byte compare is
-        // numeric compare. Half-open `[ps, pe)` and `[ns, ne)` with
-        // `ps <= ns` by cursor order overlap iff `pe > ns`; equality is
-        // adjacency, legal by construction.
-        if !statement.pointwise || determinant.len() < 16 {
+        // Pointwise disjointness: the determinant's tail parses through
+        // the key statement's interval-tail shape (16-byte `start ‖ end`,
+        // or the 8-byte fixed start whose end is the type's width) to
+        // order-preserving words, so word compare is numeric compare.
+        // Half-open `[ps, pe)` and `[ns, ne)` with `ps <= ns` by cursor
+        // order overlap iff `pe > ns`; equality is adjacency, legal by
+        // construction.
+        let tail = if statement.pointwise {
+            schema.key_tail(statement)
+        } else {
+            None
+        };
+        let Some(tail) = tail else {
+            prev_pointwise = None;
+            continue;
+        };
+        if determinant.len() < tail.bytes() {
             // A pointwise determinant shorter than its interval is a width
             // desync the re-derivation above already convicted.
             prev_pointwise = None;
             continue;
         }
         if let Some(prev) = prev_pointwise {
-            let same_group =
-                prev.len() == key.len() && prev[..prev.len() - 16] == key[..key.len() - 16];
-            if same_group && prev[prev.len() - 8..] > key[key.len() - 16..key.len() - 8] {
+            let same_group = prev.len() == key.len()
+                && prev[..prev.len() - tail.bytes()] == key[..key.len() - tail.bytes()];
+            let words = (
+                tail.words(&prev[prev.len() - tail.bytes()..]),
+                tail.words(&key[key.len() - tail.bytes()..]),
+            );
+            // A tail past the Q2 bound is a malformed value the F pass's
+            // canonical re-decode already convicts; the disjointness walk
+            // skips it rather than double-reporting.
+            if let (Some((_, prev_end)), Some((next_start, _))) = words
+                && same_group
+                && prev_end > next_start
+            {
                 s.push(StoreFinding::PointwiseOverlap {
                     relation: rel,
                     statement: sid,

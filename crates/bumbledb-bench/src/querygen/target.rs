@@ -290,6 +290,7 @@ pub fn descriptor() -> SchemaDescriptor {
                             "active",
                             ValueType::Interval {
                                 element: IntervalElement::I64,
+                                width: None,
                             },
                         ),
                     ],
@@ -305,6 +306,7 @@ pub fn descriptor() -> SchemaDescriptor {
                                 "window",
                                 ValueType::Interval {
                                     element: IntervalElement::U64,
+                                    width: None,
                                 },
                             ),
                         ];

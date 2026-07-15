@@ -244,6 +244,7 @@ fn cold_dual_output_matches_separate_build_and_apply() -> DbResult<()> {
 fn interval_schema() -> Schema {
     let interval_i64 = ValueType::Interval {
         element: IntervalElement::I64,
+        width: None,
     };
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),

@@ -62,7 +62,7 @@ pub(super) fn finalize(
 fn push_word_answer(out: &mut Answers, columns: &[PredicateColumn], answer: &[u64]) {
     let mut word = 0;
     for column in columns {
-        if let ValueType::Interval { element } = &column.ty {
+        if let ValueType::Interval { element, .. } = &column.ty {
             out.cells.push(Answers::interval_cell(
                 *element,
                 answer[word],
@@ -89,7 +89,7 @@ fn push_resolved_answer(
     let mut word = 0;
     for column in columns {
         match &column.ty {
-            ValueType::Interval { element } => {
+            ValueType::Interval { element, .. } => {
                 out.cells.push(Answers::interval_cell(
                     *element,
                     answer[word],

@@ -253,7 +253,7 @@ fn param_value(
         // — equal/adjacent/nested/ray against the drawn group, whatever
         // the draw kind (hit-vs-miss for interval values is a corpus
         // alignment question, and the ladder IS the alignment sweep).
-        ValueType::Interval { element } => {
+        ValueType::Interval { element, .. } => {
             let group = rng.range(64);
             match element {
                 IntervalElement::U64 => {

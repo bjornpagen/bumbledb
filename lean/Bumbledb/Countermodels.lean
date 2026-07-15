@@ -406,6 +406,58 @@ theorem one_way_overhang :
     subst hf'
     exact absurd hx.2 (by decide)
 
+/-! ## The Q2 ray-exclusion (Tier-2 literal types)
+
+Why `interval<E, w>`'s carrier bound is STRICT (`start + w < maxEnd`,
+never `≤`): the ceiling is not a point — `«end» = maxEnd` denotes the
+unbounded ray `[start, ∞)` (`ray_is_unbounded_tail`) — so a "unit
+slot" written at the ceiling would not be one point wide; it would be
+an unbounded tail with NO measure, refuting the fixed family's
+constant-measure theorem (`fixed_measure_const_u64`). The strict
+bound makes that value UNCONSTRUCTIBLE in the fixed carrier: rays
+stay exclusive to the general type, by construction rather than by
+check.
+
+**The Tier-3 refusal, recorded here with its boundary.** The
+admission rule (`docs/architecture/10-data-model.md`) admits a type
+parameter iff it CHANGES THE ENCODING — `w` does (one word instead
+of two). A parameter that merely CHECKS values — a refinement
+`u64 where v < 100`, a CHECK constraint in type costume — changes no
+byte of the encoding, so it is not a type: two "types" differing
+only in an admitted predicate would carry identical encodings, and
+"types are encodings" would be false. Predicate parameters stay
+refused (Tier 3); the constraint vocabulary is the statement layer's,
+and a per-value check that is not a dependency is a value the host
+refuses to construct. -/
+
+/-- The GENERAL slot written against the ceiling, `[maxEnd − 1,
+maxEnd)` — representable in the general type, where it is honestly a
+RAY. -/
+def ceilingSlot : Interval U64 :=
+  ⟨⟨2 ^ 64 - 2, by omega⟩, U64.maxEnd, by
+    show (2 ^ 64 - 2 : Nat) < U64.maxEnd.val
+    have h : U64.maxEnd.val = 2 ^ 64 - 1 := rfl
+    omega⟩
+
+/-- **The countermodel's first half:** the ceiling slot is a ray with
+no measure — one "point" of spelling, an unbounded tail of
+denotation. -/
+theorem ceiling_slot_denotes_an_unbounded_tail :
+    ceilingSlot.isRay ∧ ceilingSlot.measure = none :=
+  ⟨rfl, measure_ray_none _ rfl⟩
+
+/-- **The countermodel's second half (Q2, spent):** no `interval<u64, 1>`
+value starts at `maxEnd − 1` — the strict carrier bound makes the
+ceiling slot unconstructible in the fixed family, so every
+fixed-width value keeps the constant measure `w`.
+Bridge: `crate::Interval::fixed` returns `None` there. -/
+theorem unit_slot_at_ceiling_unconstructible :
+    ¬ ∃ v : FixedU64 1, v.val.val = U64.maxEnd.val - 1 := by
+  rintro ⟨v, hv⟩
+  have hb := v.property
+  have h : U64.maxEnd.val = 2 ^ 64 - 1 := rfl
+  omega
+
 /-! ## The unsafe-rule countermodel (PRD 04)
 
 One rule: `finds [v₀]`, one zero-binding gate atom, nothing else. The

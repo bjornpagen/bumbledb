@@ -43,6 +43,22 @@ impl Interval<u64> {
         Self::new(start, Self::MAX_END)
     }
 
+    /// The fixed-width value `[start, start + width)` — the
+    /// `interval<u64, w>` constructor, discharging the Q2 bound by
+    /// parsing: `None` unless `width ≥ 1` and `start + width < MAX_END`
+    /// (strictly — the ceiling end denotes the unbounded ray, so a
+    /// fixed-width value is NEVER a ray, by construction;
+    /// `lean/Bumbledb/Values.lean: FixedU64.not_ray`,
+    /// `lean/Bumbledb/Countermodels.lean:
+    /// unit_slot_at_ceiling_unconstructible`).
+    #[must_use]
+    pub fn fixed(start: u64, width: u64) -> Option<Self> {
+        let end = start
+            .checked_add(width)
+            .filter(|end| *end < Self::MAX_END)?;
+        Self::new(start, end)
+    }
+
     /// Whether this interval is the unbounded ray `[start, ∞)`.
     #[must_use]
     pub const fn is_ray(&self) -> bool {
@@ -80,6 +96,17 @@ impl Interval<i64> {
     #[must_use]
     pub fn ray(start: i64) -> Option<Self> {
         Self::new(start, Self::MAX_END)
+    }
+
+    /// The fixed-width value `[start, start + width)` — the Q2
+    /// discharge, as [`Interval::<u64>::fixed`] (`width` is a point
+    /// count, so it is unsigned in both element domains).
+    #[must_use]
+    pub fn fixed(start: i64, width: u64) -> Option<Self> {
+        let end = start
+            .checked_add_unsigned(width)
+            .filter(|end| *end < Self::MAX_END)?;
+        Self::new(start, end)
     }
 
     /// Whether this interval is the unbounded ray `[start, ∞)`.
@@ -162,6 +189,30 @@ mod tests {
         // MAX is not a point: a ray starting at the ceiling is empty.
         assert!(Interval::<u64>::ray(u64::MAX).is_none());
         assert!(Interval::<i64>::ray(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn fixed_parses_the_q2_bound() {
+        // The happy path: [start, start + w), never a ray.
+        let iv = Interval::<u64>::fixed(3, 5).expect("in-domain fixed value");
+        assert_eq!((iv.start(), iv.end()), (3, 8));
+        assert!(!iv.is_ray());
+        let iv = Interval::<i64>::fixed(-4, 7).expect("in-domain fixed value");
+        assert_eq!((iv.start(), iv.end()), (-4, 3));
+        // Zero width denotes nothing: refused.
+        assert!(Interval::<u64>::fixed(3, 0).is_none());
+        assert!(Interval::<i64>::fixed(3, 0).is_none());
+        // The Q2 bound is STRICT: start + w == MAX_END would make the
+        // derived end the ceiling — ray territory — and anything past
+        // it overflows; both are unconstructible.
+        assert!(Interval::<u64>::fixed(u64::MAX - 1, 1).is_none());
+        assert!(Interval::<u64>::fixed(u64::MAX - 2, 1).is_some());
+        assert!(Interval::<u64>::fixed(1, u64::MAX).is_none());
+        assert!(Interval::<i64>::fixed(i64::MAX - 1, 1).is_none());
+        assert!(Interval::<i64>::fixed(i64::MAX - 2, 1).is_some());
+        assert!(Interval::<i64>::fixed(-1, u64::MAX).is_none());
+        // The widest representable i64 fixed value.
+        assert!(Interval::<i64>::fixed(i64::MIN, u64::MAX - 2).is_some());
     }
 
     #[test]

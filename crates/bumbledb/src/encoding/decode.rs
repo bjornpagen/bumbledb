@@ -63,6 +63,28 @@ pub const fn decode_interval_i64(bytes: [u8; 16]) -> Result<(i64, i64), Corrupti
     }
 }
 
+/// Decodes a fixed-width interval's stored START word (either element
+/// domain: both encodings are order-preserving u64 words, and the bias
+/// is additive, so `start_word + w` IS the encoded end), validating the
+/// Q2 bound `start + w < MAX_END` in the word domain — both ceilings
+/// encode to `u64::MAX`. Returns the `(start_word, end_word)` pair.
+///
+/// # Errors
+///
+/// [`CorruptionError::InvalidFixedIntervalStart`] when the stored start
+/// sits at or past the bound — the derived end would reach the ceiling
+/// (ray territory, unconstructible in the fixed family) or overflow.
+pub const fn decode_fixed_interval_start(
+    bytes: [u8; 8],
+    width: u64,
+) -> Result<(u64, u64), CorruptionError> {
+    let start_word = u64::from_be_bytes(bytes);
+    match start_word.checked_add(width) {
+        Some(end_word) if end_word < u64::MAX => Ok((start_word, end_word)),
+        _ => Err(CorruptionError::InvalidFixedIntervalStart(bytes)),
+    }
+}
+
 /// Decodes a `bytes<len>` field's word-padded encoding, validating the
 /// pad: `padded` is the field's `⌈len/8⌉ × 8` stored bytes, and every
 /// byte past `len` must be zero — the pad is encoding, not data, so a
@@ -150,7 +172,10 @@ pub fn decode_field(
         TypeDesc::I64 => Ok(ValueRef::I64(decode_i64(word()))),
         TypeDesc::String => Ok(ValueRef::String(decode_u64(word()))),
         TypeDesc::FixedBytes { len } => decode_fixed_bytes(bytes, len).map(ValueRef::FixedBytes),
-        TypeDesc::Interval { element } => {
+        TypeDesc::Interval {
+            element,
+            width: None,
+        } => {
             // The 16-byte width is layout-derived — the same
             // single-determinant ruling as [`field_word_bytes`], inline for
             // the one wide shape.
@@ -171,6 +196,29 @@ pub fn decode_field(
                     )
                 }),
             }
+        }
+        TypeDesc::Interval {
+            element,
+            width: Some(w),
+        } => {
+            // One stored word: the start; the end re-derives from the
+            // TYPE's width. The Q2 bound is the corruption check —
+            // `decode_fixed_interval_start` validates it in the
+            // order-preserving word domain, where the bias is additive.
+            let (start_word, end_word) = decode_fixed_interval_start(word(), w)?;
+            Ok(match element {
+                IntervalElement::U64 => ValueRef::FixedIntervalU64(
+                    Interval::<u64>::new(start_word, end_word)
+                        .expect("the Q2 bound implies start < end"),
+                ),
+                IntervalElement::I64 => {
+                    let decode = |word: u64| (word ^ I64_SIGN_BIT).cast_signed();
+                    ValueRef::FixedIntervalI64(
+                        Interval::<i64>::new(decode(start_word), decode(end_word))
+                            .expect("the Q2 bound implies start < end"),
+                    )
+                }
+            })
         }
     }
 }

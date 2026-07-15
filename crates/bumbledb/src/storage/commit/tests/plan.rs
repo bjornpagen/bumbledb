@@ -281,7 +281,7 @@ fn assert_determinant(
 ) {
     assert_eq!(op.statement, statement);
     assert_eq!(&*op.determinant, determinant, "determinant bytes");
-    assert_eq!(op.pointwise, pointwise, "pointwise marker");
+    assert_eq!(op.pointwise.is_some(), pointwise, "pointwise marker");
 }
 
 fn assert_edge(schema: &Schema, edge: &EdgeOp, statement: StatementId, key_bytes: &[u8]) {

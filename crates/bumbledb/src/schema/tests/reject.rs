@@ -87,6 +87,33 @@ fn rejects_fixed_bytes_widths_outside_the_range() {
     }
 }
 
+#[test]
+fn rejects_interval_widths_outside_the_range() {
+    // The interval<E, w> width gate: w = 0 denotes nothing, and at
+    // w = u64::MAX no start satisfies the Q2 bound in either element
+    // domain (an empty type is a relation no fact can inhabit); every
+    // other width is a real type.
+    let fixed = |width: u64| ValueType::Interval {
+        element: IntervalElement::U64,
+        width: Some(width),
+    };
+    for width in [0u64, u64::MAX] {
+        let decl = one_relation(vec![field("span", fixed(width))]);
+        assert_eq!(
+            decl.validate().unwrap_err(),
+            SchemaError::IntervalWidthOutOfRange {
+                relation: RelationId(0),
+                field: FieldId(0),
+                width,
+            }
+        );
+    }
+    for width in [1u64, 2, 1 << 40, u64::MAX - 1] {
+        let decl = one_relation(vec![field("span", fixed(width))]);
+        assert!(decl.validate().is_ok(), "interval<u64, {width}> validates");
+    }
+}
+
 // --- The statement roster ---
 
 /// Two relations with no fresh ids: statement ids equal declaration order.
@@ -277,6 +304,7 @@ fn rejects_duplicate_selection_field() {
 fn rejects_functionality_with_two_intervals() {
     let iv = ValueType::Interval {
         element: IntervalElement::I64,
+        width: None,
     };
     let mut decl = one_relation(vec![field("a", iv.clone()), field("b", iv)]);
     decl.statements
@@ -300,6 +328,7 @@ fn rejects_functionality_interval_not_last() {
             "during",
             ValueType::Interval {
                 element: IntervalElement::I64,
+                width: None,
             },
         ),
         field("room", ValueType::U64),
@@ -424,6 +453,7 @@ fn rejects_interval_position_against_scalar() {
             "span",
             ValueType::Interval {
                 element: IntervalElement::I64,
+                width: None,
             },
         )],
         vec![field("x", ValueType::I64)],
@@ -573,6 +603,7 @@ fn target_key_diagnostic_lists_the_requested_projection_and_every_available_key(
 fn rejects_interval_containment_without_pointwise_key() {
     let iv = ValueType::Interval {
         element: IntervalElement::I64,
+        width: None,
     };
     let decl = two_relations(
         vec![field("who", ValueType::U64), field("span", iv.clone())],
@@ -771,7 +802,13 @@ fn rejects_a_ray_axiom() {
     let of_element = |element, value| SchemaDescriptor {
         relations: vec![closed(
             "Quarter",
-            vec![field("span", ValueType::Interval { element })],
+            vec![field(
+                "span",
+                ValueType::Interval {
+                    element,
+                    width: None,
+                },
+            )],
             vec![row("Q1", vec![value])],
         )],
         statements: vec![],
@@ -879,6 +916,7 @@ fn closed_window() -> RelationDescriptor {
             "during",
             ValueType::Interval {
                 element: IntervalElement::U64,
+                width: None,
             },
         )],
         vec![row(
@@ -904,6 +942,7 @@ fn rejects_an_interval_position_into_a_closed_target() {
                     "span",
                     ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                 )],
             },
@@ -936,6 +975,7 @@ fn rejects_an_interval_position_from_a_closed_source() {
                     "span",
                     ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                 )],
             },
@@ -1099,6 +1139,7 @@ fn rejects_a_declared_pointwise_key_the_axioms_refute() {
                 "during",
                 ValueType::Interval {
                     element: IntervalElement::U64,
+                    width: None,
                 },
             )],
             vec![
@@ -1154,6 +1195,7 @@ fn extension_tree() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
+                            width: None,
                         },
                     ),
                 ],
@@ -1275,6 +1317,7 @@ fn rejects_a_window_with_an_interval_position() {
         "active",
         ValueType::Interval {
             element: IntervalElement::U64,
+            width: None,
         },
     ));
     decl.statements = vec![

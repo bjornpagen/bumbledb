@@ -1,4 +1,5 @@
 use crate::encoding::{TypeDesc, field_bytes};
+use crate::error::CorruptionError;
 use crate::schema::{FieldId, RelationId, Schema};
 
 /// One field's value sliced straight out of canonical fact bytes, in
@@ -20,19 +21,28 @@ pub(crate) enum FactOperand {
 /// Reads a field's [`FactOperand`] from canonical fact bytes. Dispatch is
 /// on the field's *type*, never its byte width — a bytes<16> field and an
 /// interval field are both 16 bytes with different shapes.
+///
+/// # Errors
+///
+/// [`CorruptionError::InvalidFixedIntervalStart`] on a fixed-width
+/// interval field whose stored start sits at or past the Q2 bound — the
+/// derived end would reach the ceiling (the ray sentinel, unconstructible
+/// in the fixed family) or overflow. Hard error, never a skip, never a
+/// classification: the same conviction the image lane's
+/// [`crate::encoding::decode_fixed_interval_start`] routing delivers.
 pub(crate) fn fact_operand(
     schema: &Schema,
     relation: RelationId,
     fact: &[u8],
     field: FieldId,
-) -> FactOperand {
+) -> Result<FactOperand, CorruptionError> {
     let layout = schema.relation(relation).layout();
     let bytes = field_bytes(fact, layout, usize::from(field.0));
     // The field's whole words, width carried by `as_chunks`'s type — a
     // scalar is one chunk, an interval two, a `bytes<N>` block `⌈N/8⌉`.
     let (word_bytes, _) = bytes.as_chunks::<8>();
     let word_at = |i: usize| u64::from_be_bytes(word_bytes[i]);
-    match layout.field_type(usize::from(field.0)) {
+    Ok(match layout.field_type(usize::from(field.0)) {
         TypeDesc::Bool => FactOperand::Word(u64::from(bytes[0])),
         TypeDesc::U64 | TypeDesc::I64 | TypeDesc::String => FactOperand::Word(word_at(0)),
         TypeDesc::FixedBytes { len } => {
@@ -50,19 +60,37 @@ pub(crate) fn fact_operand(
                 }
             }
         }
-        TypeDesc::Interval { .. } => FactOperand::Pair(word_at(0), word_at(1)),
-    }
+        TypeDesc::Interval { width: None, .. } => FactOperand::Pair(word_at(0), word_at(1)),
+        // A fixed-width field stores one word; the end re-derives from the
+        // TYPE's width through the one shared decoder, which convicts the
+        // at-bound AND overflow starts as corruption (Q2's bound holds at
+        // rest too — corrupt stored bytes never reach classification).
+        TypeDesc::Interval { width: Some(w), .. } => {
+            let (start, end) = crate::encoding::decode_fixed_interval_start(word_bytes[0], w)?;
+            FactOperand::Pair(start, end)
+        }
+    })
 }
 
 /// A scalar field's column word (the direct decode lane's reader).
+///
+/// # Errors
+///
+/// [`CorruptionError`] as [`fact_operand`] (unreachable for the scalar
+/// fields this reader serves, but the conviction stays in the type).
 ///
 /// # Panics
 ///
 /// On a programmer-invariant violation: a multi-word field (its readers go
 /// through [`fact_operand`]).
-pub(crate) fn fact_word(schema: &Schema, relation: RelationId, fact: &[u8], field: FieldId) -> u64 {
-    match fact_operand(schema, relation, fact, field) {
-        FactOperand::Word(word) => word,
+pub(crate) fn fact_word(
+    schema: &Schema,
+    relation: RelationId,
+    fact: &[u8],
+    field: FieldId,
+) -> Result<u64, CorruptionError> {
+    match fact_operand(schema, relation, fact, field)? {
+        FactOperand::Word(word) => Ok(word),
         FactOperand::Pair(..) | FactOperand::Block { .. } => {
             unreachable!("multi-word fields decode as pairs or blocks")
         }

@@ -153,6 +153,10 @@ impl fmt::Display for CorruptionError {
             Self::InvalidInterval(bytes) => {
                 write!(f, "interval bytes {bytes:02x?}: start >= end")
             }
+            Self::InvalidFixedIntervalStart(bytes) => write!(
+                f,
+                "fixed-width interval start {bytes:02x?}: start + w at or past the domain ceiling"
+            ),
             Self::MetaMissing => write!(f, "the _meta database is absent or malformed"),
             Self::DanglingInternId(id) => write!(f, "intern id {id} has no dictionary entry"),
             Self::MissingFact { relation, row_id } => {
@@ -227,6 +231,17 @@ impl fmt::Display for SchemaError {
             } => write!(
                 f,
                 "relation {}, field {}: bytes<{len}> outside the 1..=64 width range",
+                r.0, fd.0
+            ),
+            Self::IntervalWidthOutOfRange {
+                relation: r,
+                field: fd,
+                width,
+            } => write!(
+                f,
+                "relation {}, field {}: interval<E, {width}> — the width must be \
+                 1..=u64::MAX-1 (zero points denote nothing; u64::MAX leaves no \
+                 start under the Q2 bound)",
                 r.0, fd.0
             ),
             Self::EmptyExtension { relation: r } => write!(
@@ -979,6 +994,7 @@ impl SchemaError {
             Self::DuplicateRelationName { .. }
             | Self::DuplicateFieldName { .. }
             | Self::FixedBytesWidthOutOfRange { .. }
+            | Self::IntervalWidthOutOfRange { .. }
             | Self::FreshOnNonU64 { .. }
             | Self::EmptyExtension { .. }
             | Self::ExtensionTooManyRows { .. }

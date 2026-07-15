@@ -21,9 +21,11 @@ fn element_type(element: IntervalElement) -> ValueType {
 }
 
 /// Whether `candidate` is one of a bivalent slot's two readings: the
-/// element type (membership) or the interval type (value equality).
-fn bivalent_admits(element: IntervalElement, candidate: &ValueType) -> bool {
-    *candidate == element_type(element) || *candidate == ValueType::Interval { element }
+/// element type (membership — a point carries no width) or the
+/// anchoring position's exact interval type (value equality — the
+/// family member, width included).
+fn bivalent_admits(element: IntervalElement, width: Option<u64>, candidate: &ValueType) -> bool {
+    *candidate == element_type(element) || *candidate == ValueType::Interval { element, width }
 }
 
 /// The structural type a literal contributes as a comparison anchor.
@@ -39,11 +41,16 @@ fn literal_anchor_type(value: &Value) -> Option<ValueType> {
         Value::FixedBytes(raw) => ValueType::FixedBytes {
             len: u16::try_from(raw.len()).unwrap_or(u16::MAX),
         },
+        // An interval literal anchors the GENERAL type: the value spells
+        // both bounds, and no literal syntax names a width — fixed
+        // positions check literals through `value_matches` instead.
         Value::IntervalU64(..) => ValueType::Interval {
             element: IntervalElement::U64,
+            width: None,
         },
         Value::IntervalI64(..) => ValueType::Interval {
             element: IntervalElement::I64,
+            width: None,
         },
         // A mask literal is no data-model type at all (it is only ever
         // legal inside `CmpOp::Allen`'s mask position, never as a term) —
@@ -61,11 +68,14 @@ fn at_domain_ceiling(value: &Value) -> bool {
 
 /// A literal in an interval-field binding: element-typed means point
 /// membership, while interval-typed (same element) means value equality.
-/// Interval literals are nonempty by construction.
+/// Interval literals are nonempty by construction; at a fixed-width
+/// position the equality reading demands exactly the declared width and
+/// never a ray (`value_matches`' Q2 rule — the width is the type).
 fn check_interval_field_literal(
     atom: usize,
     field: FieldId,
     element: IntervalElement,
+    width: Option<u64>,
     value: &Value,
 ) -> Result<(), ValidationError> {
     match (value, element) {
@@ -78,9 +88,15 @@ fn check_interval_field_literal(
                 Ok(())
             }
         }
-        // Value equality against the field's intervals.
+        // Value equality against the field's intervals — through the one
+        // shared width-aware check.
         (Value::IntervalU64(_), IntervalElement::U64)
-        | (Value::IntervalI64(_), IntervalElement::I64) => Ok(()),
+        | (Value::IntervalI64(_), IntervalElement::I64) => {
+            match literal_matches(value, &ValueType::Interval { element, width }) {
+                Ok(()) => Ok(()),
+                Err(_) => Err(ValidationError::LiteralTypeMismatch { atom, field }),
+            }
+        }
         _ => Err(ValidationError::LiteralTypeMismatch { atom, field }),
     }
 }
@@ -304,8 +320,8 @@ impl Context {
                 Err(ValidationError::VariableTypeConflict { var })
             }
             Some(TypeSlot::Mono(_)) => Ok(()),
-            Some(TypeSlot::Bivalent(element)) => {
-                if bivalent_admits(*element, value_type) {
+            Some(TypeSlot::Bivalent { element, width }) => {
+                if bivalent_admits(*element, *width, value_type) {
                     self.var_slots
                         .insert(var, TypeSlot::Mono(value_type.clone()));
                     Ok(())
@@ -325,24 +341,29 @@ impl Context {
         &mut self,
         var: VarId,
         element: IntervalElement,
+        width: Option<u64>,
     ) -> Result<(), ValidationError> {
         match self.var_slots.get(&var) {
             Some(TypeSlot::Mono(existing)) => {
-                if bivalent_admits(element, existing) {
+                if bivalent_admits(element, width, existing) {
                     Ok(())
                 } else {
                     Err(ValidationError::VariableTypeConflict { var })
                 }
             }
-            Some(TypeSlot::Bivalent(existing)) => {
-                if *existing == element {
+            Some(TypeSlot::Bivalent {
+                element: existing,
+                width: existing_width,
+            }) => {
+                if *existing == element && *existing_width == width {
                     Ok(())
                 } else {
                     Err(ValidationError::VariableTypeConflict { var })
                 }
             }
             None => {
-                self.var_slots.insert(var, TypeSlot::Bivalent(element));
+                self.var_slots
+                    .insert(var, TypeSlot::Bivalent { element, width });
                 Ok(())
             }
         }
@@ -358,8 +379,8 @@ impl Context {
                 Err(ValidationError::ParamTypeConflict { param })
             }
             Some(TypeSlot::Mono(_)) => Ok(()),
-            Some(TypeSlot::Bivalent(element)) => {
-                if bivalent_admits(*element, value_type) {
+            Some(TypeSlot::Bivalent { element, width }) => {
+                if bivalent_admits(*element, *width, value_type) {
                     self.param_slots
                         .insert(param, TypeSlot::Mono(value_type.clone()));
                     Ok(())
@@ -379,24 +400,29 @@ impl Context {
         &mut self,
         param: ParamId,
         element: IntervalElement,
+        width: Option<u64>,
     ) -> Result<(), ValidationError> {
         match self.param_slots.get(&param) {
             Some(TypeSlot::Mono(existing)) => {
-                if bivalent_admits(element, existing) {
+                if bivalent_admits(element, width, existing) {
                     Ok(())
                 } else {
                     Err(ValidationError::ParamTypeConflict { param })
                 }
             }
-            Some(TypeSlot::Bivalent(existing)) => {
-                if *existing == element {
+            Some(TypeSlot::Bivalent {
+                element: existing,
+                width: existing_width,
+            }) => {
+                if *existing == element && *existing_width == width {
                     Ok(())
                 } else {
                     Err(ValidationError::ParamTypeConflict { param })
                 }
             }
             None => {
-                self.param_slots.insert(param, TypeSlot::Bivalent(element));
+                self.param_slots
+                    .insert(param, TypeSlot::Bivalent { element, width });
                 Ok(())
             }
         }
@@ -493,8 +519,8 @@ impl Context {
                     }
                     crate::ir::AtomSource::Idb(pred) => idb.column(occ_idx, pred, *field)?,
                 };
-                if let ValueType::Interval { element } = field_type {
-                    self.check_interval_binding(occ_idx, negated, *field, *element, term)?;
+                if let ValueType::Interval { element, width } = field_type {
+                    self.check_interval_binding(occ_idx, negated, *field, *element, *width, term)?;
                 } else {
                     self.check_scalar_binding(occ_idx, negated, *field, field_type, term)?;
                 }
@@ -518,11 +544,12 @@ impl Context {
         negated: bool,
         field: FieldId,
         element: IntervalElement,
+        width: Option<u64>,
         term: &Term,
     ) -> Result<(), ValidationError> {
         match term {
             Term::Var(var) => {
-                self.bind_var_bivalent(*var, element)?;
+                self.bind_var_bivalent(*var, element, width)?;
                 if negated {
                     self.negated_vars.insert(*var);
                 } else {
@@ -531,7 +558,7 @@ impl Context {
             }
             Term::Param(param) => {
                 self.note_param_kind(*param, ParamKind::Scalar)?;
-                self.anchor_param_bivalent(*param, element)?;
+                self.anchor_param_bivalent(*param, element, width)?;
                 self.interval_position_params.insert(*param);
             }
             // A set holds points, so an interval-field position anchors
@@ -543,7 +570,7 @@ impl Context {
                 self.interval_position_params.insert(*param);
             }
             Term::Literal(value) => {
-                check_interval_field_literal(occ_idx, field, element, value)?;
+                check_interval_field_literal(occ_idx, field, element, width, value)?;
             }
             // The measure is a computation over a bound variable, not a
             // bindable value (docs/architecture/20-query-ir.md, § the
@@ -906,7 +933,9 @@ impl Context {
     fn collapse_term(&mut self, term: &Term, value_type: &ValueType) -> bool {
         match term {
             Term::Var(var) => match self.var_slots.get(var) {
-                Some(TypeSlot::Bivalent(element)) if bivalent_admits(*element, value_type) => {
+                Some(TypeSlot::Bivalent { element, width })
+                    if bivalent_admits(*element, *width, value_type) =>
+                {
                     self.var_slots
                         .insert(*var, TypeSlot::Mono(value_type.clone()));
                     true
@@ -919,7 +948,9 @@ impl Context {
                         .insert(*param, TypeSlot::Mono(value_type.clone()));
                     true
                 }
-                Some(TypeSlot::Bivalent(element)) if bivalent_admits(*element, value_type) => {
+                Some(TypeSlot::Bivalent { element, width })
+                    if bivalent_admits(*element, *width, value_type) =>
+                {
                     self.param_slots
                         .insert(*param, TypeSlot::Mono(value_type.clone()));
                     true
@@ -971,14 +1002,14 @@ impl Context {
             .map(|(var, slot)| {
                 let value_type = match slot {
                     TypeSlot::Mono(value_type) => value_type,
-                    TypeSlot::Bivalent(element) => ValueType::Interval { element },
+                    TypeSlot::Bivalent { element, width } => ValueType::Interval { element, width },
                 };
                 (var, value_type)
             })
             .collect();
         for slot in self.param_slots.values_mut() {
-            if let TypeSlot::Bivalent(element) = *slot {
-                *slot = TypeSlot::Mono(ValueType::Interval { element });
+            if let TypeSlot::Bivalent { element, width } = *slot {
+                *slot = TypeSlot::Mono(ValueType::Interval { element, width });
             }
         }
     }
@@ -1203,7 +1234,7 @@ impl Context {
             // predicate is `Allen(COVERS)`, and an interval-typed point
             // side is an illegal comparison.
             Shaped::PointInVarVar { lhs, rhs } => {
-                let ValueType::Interval { element } = *self.resolved_var_type(*lhs) else {
+                let ValueType::Interval { element, .. } = *self.resolved_var_type(*lhs) else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 if *self.resolved_var_type(*rhs) != element_type(element) {
@@ -1215,7 +1246,7 @@ impl Context {
                 })
             }
             Shaped::PointInVarConst { var, constant } => {
-                let ValueType::Interval { element } = *self.resolved_var_type(*var) else {
+                let ValueType::Interval { element, .. } = *self.resolved_var_type(*var) else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
                 match constant {
@@ -1258,14 +1289,24 @@ impl Context {
                         ValueType::I64 => IntervalElement::I64,
                         _ => return Err(ValidationError::IllegalComparison { index }),
                     };
-                    self.anchor_param_mono(*param, &ValueType::Interval { element })?;
+                    // A bound outer interval is the GENERAL type: the
+                    // param carries both bounds, whatever any field's
+                    // width — no width is nameable from a scalar side.
+                    self.anchor_param_mono(
+                        *param,
+                        &ValueType::Interval {
+                            element,
+                            width: None,
+                        },
+                    )?;
                     Ok(ClassifiedComparison::VarWithin {
                         var: *var,
                         outer: SealedConst::Param(*param),
                     })
                 }
                 ConstSide::Literal(value) => {
-                    let Some(ValueType::Interval { element }) = literal_anchor_type(value) else {
+                    let Some(ValueType::Interval { element, .. }) = literal_anchor_type(value)
+                    else {
                         return Err(ValidationError::IllegalComparison { index });
                     };
                     if *self.resolved_var_type(*var) != element_type(element) {

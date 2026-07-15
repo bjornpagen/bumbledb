@@ -29,6 +29,7 @@ fn tagged_interval_schema(relations: usize) -> Schema {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: crate::schema::IntervalElement::U64,
+                            width: None,
                         },
                         generation: Generation::None,
                     },
@@ -310,6 +311,7 @@ fn membership_schema() -> Schema {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: crate::schema::IntervalElement::U64,
+                            width: None,
                         },
                         generation: Generation::None,
                     },
@@ -485,6 +487,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: crate::schema::IntervalElement::U64,
+                            width: None,
                         },
                         generation: Generation::None,
                     },

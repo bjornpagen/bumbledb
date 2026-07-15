@@ -134,10 +134,16 @@ impl std::fmt::Display for Predicate {
                 ValueType::I64 => f.write_str("i64")?,
                 ValueType::String => f.write_str("string")?,
                 ValueType::FixedBytes { len } => write!(f, "bytes<{len}>")?,
-                ValueType::Interval { element } => match element {
-                    IntervalElement::U64 => f.write_str("interval<u64>")?,
-                    IntervalElement::I64 => f.write_str("interval<i64>")?,
-                },
+                ValueType::Interval { element, width } => {
+                    let element = match element {
+                        IntervalElement::U64 => "u64",
+                        IntervalElement::I64 => "i64",
+                    };
+                    match width {
+                        None => write!(f, "interval<{element}>")?,
+                        Some(w) => write!(f, "interval<{element}, {w}>")?,
+                    }
+                }
             }
         }
         f.write_str(")")
@@ -619,9 +625,15 @@ enum TypeSlot {
     /// Named by at least one monovalent anchor.
     Mono(ValueType),
     /// Anchored only by interval-field positions so far: the term is
-    /// either `Interval(element)` (value equality) or `element`-typed
-    /// (membership).
-    Bivalent(IntervalElement),
+    /// either the position's interval type (value equality — the
+    /// field's exact family member, width included) or `element`-typed
+    /// (membership; a point carries no width).
+    Bivalent {
+        element: IntervalElement,
+        /// The anchoring field's width: `None` general, `Some(w)`
+        /// fixed — part of the equality reading's type.
+        width: Option<u64>,
+    },
 }
 
 /// How a param id is used: a scalar (`Term::Param`) or a set

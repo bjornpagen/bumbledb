@@ -495,6 +495,7 @@ pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Valu
     match value_type {
         ValueType::Interval {
             element: IntervalElement::I64,
+            ..
         } => Value::IntervalI64(
             crate::Interval::<i64>::new(
                 decode_i64(pair.0.to_be_bytes()),
@@ -679,6 +680,7 @@ fn point_in_picture(relation: &Relation, field: FieldId, pin: (u64, u64), point:
     let element_type = match &descriptor.value_type {
         ValueType::Interval {
             element: IntervalElement::I64,
+            ..
         } => ValueType::I64,
         _ => ValueType::U64,
     };
@@ -699,11 +701,14 @@ fn field_within_picture(
     outer: (u64, u64),
 ) -> String {
     let descriptor = relation.field(field);
+    // A constant interval pair renders through the GENERAL type: the
+    // pair carries both bounds, whatever the field's width.
     let outer_type = ValueType::Interval {
         element: match descriptor.value_type {
             ValueType::I64 => IntervalElement::I64,
             _ => IntervalElement::U64,
         },
+        width: None,
     };
     let mut out = format!("{}: {} == ", relation.name(), descriptor.name);
     literal(&mut out, &decoded_scalar(&descriptor.value_type, point));

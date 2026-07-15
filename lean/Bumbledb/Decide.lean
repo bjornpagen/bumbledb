@@ -421,6 +421,20 @@ theorem mem_points_u64 (v : Value) (x : U64) :
         exact hx
     | i64 => exact ⟨fun h => (nomatch h),
         by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
+  | intervalFixed e w =>
+    -- The fixed family reads through its DERIVED interval — the same
+    -- one `Value.intervalU64` answers, so the inversion is unchanged.
+    cases e with
+    | u64 =>
+      constructor
+      · intro h
+        exact ⟨val.toInterval, rfl, h⟩
+      · rintro ⟨iv, hiv, hx⟩
+        have heq : val.toInterval = iv := Option.some.inj hiv
+        subst heq
+        exact hx
+    | i64 => exact ⟨fun h => (nomatch h),
+        by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
 
 /-- The `i64` twin of `mem_points_u64`. -/
 theorem mem_points_i64 (v : Value) (x : I64) :
@@ -448,6 +462,18 @@ theorem mem_points_i64 (v : Value) (x : I64) :
         exact ⟨val, rfl, h⟩
       · rintro ⟨iv, hiv, hx⟩
         have heq : val = iv := Option.some.inj hiv
+        subst heq
+        exact hx
+  | intervalFixed e w =>
+    cases e with
+    | u64 => exact ⟨fun h => (nomatch h),
+        by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
+    | i64 =>
+      constructor
+      · intro h
+        exact ⟨val.toInterval, rfl, h⟩
+      · rintro ⟨iv, hiv, hx⟩
+        have heq : val.toInterval = iv := Option.some.inj hiv
         subst heq
         exact hx
 

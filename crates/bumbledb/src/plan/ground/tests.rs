@@ -472,6 +472,7 @@ fn a_membership_point_sourced_from_the_target_refuses() {
                         "active",
                         ValueType::Interval {
                             element: IntervalElement::U64,
+                            width: None,
                         },
                     ),
                 ],
@@ -624,6 +625,7 @@ fn an_extra_target_selection_refuses() {
 fn an_interval_typed_pair_refuses() {
     let during = ValueType::Interval {
         element: IntervalElement::U64,
+        width: None,
     };
     let schema = SchemaDescriptor {
         relations: vec![

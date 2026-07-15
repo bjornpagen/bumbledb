@@ -64,6 +64,7 @@ fn booking_schema() -> Schema {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -100,6 +101,7 @@ fn stay_schema() -> Schema {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -128,6 +130,7 @@ fn shift_schema() -> Schema {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                     generation: Generation::None,
                 },

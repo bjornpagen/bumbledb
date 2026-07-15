@@ -178,6 +178,7 @@ fn booking_schema() -> Schema {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -368,6 +369,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -527,4 +529,153 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), AnswerValue::U64(7));
+}
+
+/// A hand-corrupted fixed-width start through the key-probe path is a
+/// CORRUPTION conviction — never a panic, never a classification. Both
+/// corrupt shapes convict: the at-bound start (`start + w = MAX_END`,
+/// whose derived end is the ray sentinel, unconstructible in the fixed
+/// family) and the overflowing start. Same conviction, same decoder as
+/// the image lane (`encoding::decode_fixed_interval_start`).
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture, two corrupt shapes: the schema, the healthy hit, and both convictions read as one story"
+)]
+fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic() {
+    use crate::error::CorruptionError;
+    use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+    use crate::storage::read;
+
+    // Slot(room u64, span interval<u64, 5>, label u64) keyed by room.
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Slot".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "room".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+                FieldDescriptor {
+                    name: "span".into(),
+                    value_type: ValueType::Interval {
+                        element: IntervalElement::U64,
+                        width: Some(5),
+                    },
+                    generation: Generation::None,
+                },
+                FieldDescriptor {
+                    name: "label".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+            ],
+        }],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+        }],
+    }
+    .validate()
+    .expect("valid fixture");
+    let dir = TempDir::new("prepared-key_probe-fixed-corrupt");
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let mut bytes = Vec::new();
+        encode_fact(
+            &[
+                ValueRef::U64(1),
+                ValueRef::FixedIntervalU64(
+                    crate::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+                ),
+                ValueRef::U64(100),
+            ],
+            schema.relation(RelationId(0)).layout(),
+            &mut bytes,
+        );
+        delta.insert(&view, RelationId(0), &bytes).expect("insert");
+        drop(view);
+        commit(delta, &env).expect("commit");
+    }
+
+    // Q(span, label) :- Slot(room = 1, span, label) — the key-probe fast lane.
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bindings: vec![
+                (FieldId(0), Term::Literal(Value::U64(1))),
+                (FieldId(1), Term::Var(VarId(0))),
+                (FieldId(2), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let cache = ImageCache::new(&schema);
+    {
+        // Sanity: the healthy fact answers through the fast lane.
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+        assert!(matches!(
+            prepared.program.rules(),
+            [PreparedRule::KeyProbe(_)]
+        ));
+        let out = prepared.execute_collect(&txn, &cache, &[]).expect("hit");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(0, 1), AnswerValue::U64(100));
+    }
+
+    // Hand-corrupt the stored F value's span start (one stored word) —
+    // the `U` determinant key is untouched, so the probe still HITS and
+    // the fetched fact carries the corrupt start. Both corrupt shapes
+    // must convict as Corruption.
+    let layout = schema.relation(RelationId(0)).layout();
+    let offset = layout.field_offset(1);
+    let victim = {
+        let txn = env.read_txn().expect("txn");
+        read::scan(&txn, &schema, RelationId(0))
+            .expect("scan")
+            .map(|e| e.expect("ok").0)
+            .next()
+            .expect("nonempty")
+    };
+    let healthy = {
+        let txn = env.read_txn().expect("txn");
+        read::fetch(&txn, &schema, RelationId(0), victim)
+            .expect("fetch")
+            .to_vec()
+    };
+    // At-bound (`u64::MAX - 5 + 5 = u64::MAX`, the ray sentinel) and
+    // past-bound (overflowing) starts.
+    for corrupt_start in [u64::MAX - 5, u64::MAX] {
+        let mut corrupt = healthy.clone();
+        corrupt[offset..offset + 8].copy_from_slice(&corrupt_start.to_be_bytes());
+        {
+            let mut wtxn = env.write_txn().expect("txn");
+            let mut key: KeyBuf = [0; MAX_KEY];
+            let len = keys::fact_key(&mut key, RelationId(0), victim);
+            env.data()
+                .put(wtxn.raw_mut(), &key[..len], &corrupt)
+                .expect("put");
+            wtxn.commit().expect("commit");
+        }
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+        let err = prepared
+            .execute_collect(&txn, &cache, &[])
+            .expect_err("corrupt stored start convicts");
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(CorruptionError::InvalidFixedIntervalStart(bytes))
+                    if bytes == corrupt_start.to_be_bytes()
+            ),
+            "{err:?}"
+        );
+    }
 }

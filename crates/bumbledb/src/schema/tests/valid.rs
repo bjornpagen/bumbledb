@@ -37,6 +37,7 @@ fn a_redundant_pointwise_superkey_seals_with_a_warning() {
             "span",
             ValueType::Interval {
                 element: IntervalElement::I64,
+                width: None,
             },
         ),
     ]);
@@ -202,6 +203,7 @@ fn example_schema_resolves_exactly() {
                         "active",
                         ValueType::Interval {
                             element: IntervalElement::I64,
+                            width: None,
                         },
                     ),
                 ],
@@ -285,6 +287,7 @@ fn example_schema_resolves_exactly() {
 fn pointwise_key_and_containment_resolve() {
     let iv = ValueType::Interval {
         element: IntervalElement::I64,
+        width: None,
     };
     let schema = SchemaDescriptor {
         relations: vec![

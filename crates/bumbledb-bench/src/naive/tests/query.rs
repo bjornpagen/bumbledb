@@ -49,6 +49,7 @@ fn schema() -> SchemaDescriptor {
                         "active",
                         ValueType::Interval {
                             element: IntervalElement::U64,
+                            width: None,
                         },
                     ),
                 ],

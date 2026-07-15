@@ -15,9 +15,10 @@
 use super::{
     AxiomIndex, CardinalityStatement, CompiledCheck, CompiledSides, ContainmentId,
     ContainmentStatement, DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor,
-    FieldId, Generation, KeyId, KeyStatement, LiteralSet, MemberSet, Relation, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, SchemaWarning, Side, StatementDescriptor, StatementId,
-    StatementRef, ValueMismatch, ValueType, WindowId, value_matches,
+    FieldId, Generation, IntervalTail, KeyId, KeyStatement, LiteralSet, MemberSet, Relation,
+    RelationDescriptor, RelationId, Schema, SchemaDescriptor, SchemaWarning, Side,
+    StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType, WindowId,
+    value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{SchemaError, TargetKeyCandidate};
@@ -121,8 +122,14 @@ impl SchemaDescriptor {
                         target: canonical_side(target),
                         enforcement,
                         checks: CompiledSides {
-                            source: compiled_checks(&source.selection),
-                            target: compiled_checks(&target.selection),
+                            source: compiled_checks(
+                                &source.selection,
+                                &relations[source.relation.0 as usize].fields,
+                            ),
+                            target: compiled_checks(
+                                &target.selection,
+                                &relations[target.relation.0 as usize].fields,
+                            ),
                         },
                         mirror: mirror_of(&descriptors, idx),
                     });
@@ -155,8 +162,14 @@ impl SchemaDescriptor {
                         target: canonical_side(target),
                         enforcement,
                         checks: CompiledSides {
-                            source: compiled_checks(&source.selection),
-                            target: compiled_checks(&target.selection),
+                            source: compiled_checks(
+                                &source.selection,
+                                &relations[source.relation.0 as usize].fields,
+                            ),
+                            target: compiled_checks(
+                                &target.selection,
+                                &relations[target.relation.0 as usize].fields,
+                            ),
                         },
                     });
                     StatementRef::Cardinality(window_id)
@@ -532,12 +545,26 @@ fn validate_functionality(
                 let collide = match interval_position {
                     None => true,
                     Some(pos) => {
-                        let idx = usize::from(projection.ordered()[pos].0);
-                        let a = field_bytes(&row.fact, layout, idx);
-                        let b = field_bytes(&earlier.fact, layout, idx);
-                        // Half-open `[s, e)` intersection on the 8-byte
-                        // order-preserving halves.
-                        a[..8] < b[8..] && b[..8] < a[8..]
+                        let field = projection.ordered()[pos];
+                        let idx = usize::from(field.0);
+                        let tail = IntervalTail {
+                            width: match relation.fields[idx].value_type {
+                                ValueType::Interval { width, .. } => width,
+                                _ => unreachable!("interval_positions found an interval field"),
+                            },
+                        };
+                        // Half-open `[s, e)` intersection on the
+                        // order-preserving words (a fixed-width field's
+                        // end derives from the type's width). Sealed rows
+                        // encode at validate, so a malformed tail is a
+                        // programmer invariant, never data.
+                        let (a_start, a_end) = tail
+                            .words(field_bytes(&row.fact, layout, idx))
+                            .expect("sealed rows hold canonical interval bytes");
+                        let (b_start, b_end) = tail
+                            .words(field_bytes(&earlier.fact, layout, idx))
+                            .expect("sealed rows hold canonical interval bytes");
+                        a_start < b_end && b_start < a_end
                     }
                 };
                 if collide {
@@ -636,7 +663,10 @@ fn validate_containment(
         relations[source.relation.0 as usize].extension.as_deref(),
     ) {
         let layout = &relations[source.relation.0 as usize].layout;
-        let phi = compiled_checks(&source.selection);
+        let phi = compiled_checks(
+            &source.selection,
+            &relations[source.relation.0 as usize].fields,
+        );
         for (row_idx, row) in rows.iter().enumerate() {
             if !sealed_satisfies(&phi, layout, &row.fact) {
                 continue;
@@ -748,8 +778,8 @@ fn validate_cardinality(
             .as_deref()
             .expect("the Closed enforcement arm resolves only against a closed target");
         let source_layout = &relations[source.relation.0 as usize].layout;
-        let phi = compiled_checks(&source.selection);
-        let psi = compiled_checks(&target.selection);
+        let phi = compiled_checks(&source.selection, source_fields);
+        let psi = compiled_checks(&target.selection, target_fields);
         for (row_idx, parent) in target_rows.iter().enumerate() {
             if !sealed_satisfies(&psi, &target_relation.layout, &parent.fact) {
                 continue;
@@ -785,10 +815,11 @@ fn validate_cardinality(
     Ok(resolved)
 }
 
-/// One encodable literal's sealed canonical bytes.
-fn encoded_literal(literal: &Value) -> Box<[u8]> {
+/// One encodable literal's sealed canonical bytes, at its field's
+/// encoding (a fixed-width interval binding seals its one-word start).
+fn encoded_literal(literal: &Value, desc: crate::encoding::TypeDesc) -> Box<[u8]> {
     let mut bytes = Vec::with_capacity(16);
-    crate::encoding::encode_literal(literal, &mut bytes);
+    crate::encoding::encode_literal(literal, desc, &mut bytes);
     bytes.into()
 }
 
@@ -800,42 +831,51 @@ fn encoded_literal(literal: &Value) -> Box<[u8]> {
 /// bindings seal their alternatives in canonical order. The one compile
 /// walk — the sealed [`ContainmentStatement::checks`] and the
 /// closed-extension evaluations below both consume it.
-fn compiled_checks(selection: &[(FieldId, LiteralSet)]) -> Box<[CompiledCheck]> {
+fn compiled_checks(
+    selection: &[(FieldId, LiteralSet)],
+    fields: &[FieldDescriptor],
+) -> Box<[CompiledCheck]> {
     selection
         .iter()
-        .map(|(field, literals)| match canonical_literals(literals) {
-            LiteralSet::One(Value::String(raw)) => CompiledCheck::Interned {
-                field: *field,
-                text: std::str::from_utf8(&raw)
-                    .expect("selection literals validated UTF-8")
-                    .into(),
-            },
-            LiteralSet::One(literal) => CompiledCheck::Encoded {
-                field: *field,
-                bytes: encoded_literal(&literal),
-            },
-            // A validated binding is type-homogeneous: a `str` field's set
-            // is all strings, any other field's set all encodable.
-            LiteralSet::Many(values) if matches!(values[0], Value::String(_)) => {
-                CompiledCheck::InternedSet {
+        .map(|(field, literals)| {
+            let desc = fields[usize::from(field.0)].value_type.type_desc();
+            match canonical_literals(literals) {
+                LiteralSet::One(Value::String(raw)) => CompiledCheck::Interned {
                     field: *field,
-                    texts: values
-                        .iter()
-                        .map(|value| {
-                            let Value::String(raw) = value else {
-                                unreachable!("validated string binding is homogeneous")
-                            };
-                            std::str::from_utf8(raw)
-                                .expect("selection literals validated UTF-8")
-                                .into()
-                        })
-                        .collect(),
+                    text: std::str::from_utf8(&raw)
+                        .expect("selection literals validated UTF-8")
+                        .into(),
+                },
+                LiteralSet::One(literal) => CompiledCheck::Encoded {
+                    field: *field,
+                    bytes: encoded_literal(&literal, desc),
+                },
+                // A validated binding is type-homogeneous: a `str` field's set
+                // is all strings, any other field's set all encodable.
+                LiteralSet::Many(values) if matches!(values[0], Value::String(_)) => {
+                    CompiledCheck::InternedSet {
+                        field: *field,
+                        texts: values
+                            .iter()
+                            .map(|value| {
+                                let Value::String(raw) = value else {
+                                    unreachable!("validated string binding is homogeneous")
+                                };
+                                std::str::from_utf8(raw)
+                                    .expect("selection literals validated UTF-8")
+                                    .into()
+                            })
+                            .collect(),
+                    }
                 }
+                LiteralSet::Many(values) => CompiledCheck::EncodedSet {
+                    field: *field,
+                    alternatives: values
+                        .iter()
+                        .map(|literal| encoded_literal(literal, desc))
+                        .collect(),
+                },
             }
-            LiteralSet::Many(values) => CompiledCheck::EncodedSet {
-                field: *field,
-                alternatives: values.iter().map(encoded_literal).collect(),
-            },
         })
         .collect()
 }
@@ -1209,7 +1249,7 @@ fn missing_target_key(
 /// extension passed validation before statement resolution, so every
 /// declaration index is below [`super::MAX_EXTENSION_ROWS`].
 fn compile_member_set(target: &Relation, side: &Side, rows: &[super::SealedRow]) -> MemberSet {
-    let psi = compiled_checks(&side.selection);
+    let psi = compiled_checks(&side.selection, &target.fields);
     let mut members = MemberSet::empty();
     for (idx, row) in rows.iter().enumerate() {
         if sealed_satisfies(&psi, &target.layout, &row.fact) {
@@ -1269,6 +1309,22 @@ fn validate_relation(
                     relation: rel_id,
                     field: field_id,
                     len,
+                });
+            }
+        }
+        if let ValueType::Interval {
+            width: Some(width), ..
+        } = field.value_type
+        {
+            // The interval<E, w> width gate: w ≥ 1 (zero points denote
+            // nothing) and w ≤ u64::MAX − 1 (at w = u64::MAX no start
+            // satisfies the Q2 bound in either element domain — an empty
+            // type is a relation no fact can ever inhabit).
+            if width == 0 || width == u64::MAX {
+                return Err(SchemaError::IntervalWidthOutOfRange {
+                    relation: rel_id,
+                    field: field_id,
+                    width,
                 });
             }
         }
@@ -1406,7 +1462,7 @@ fn validate_extension(
             // Total here: String and enums (refused columns) and AllenMask
             // (no field type) all fail `value_matches` before reaching the
             // encoder.
-            crate::encoding::encode_literal(value, &mut fact);
+            crate::encoding::encode_literal(value, field.value_type.type_desc(), &mut fact);
         }
         debug_assert_eq!(fact.len(), layout.fact_width());
         sealed.push(super::SealedRow {

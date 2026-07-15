@@ -194,6 +194,7 @@ fn interval_schema() -> Schema {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: crate::schema::IntervalElement::U64,
+                            width: None,
                         },
                         generation: Generation::None,
                     },

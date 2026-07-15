@@ -343,14 +343,14 @@ impl<S> PreparedQuery<'_, S> {
         };
         out.cells.reserve(key_probe_finds.len());
         for (field, ty) in key_probe_finds {
-            if let ValueType::Interval { element } = ty {
+            if let ValueType::Interval { element, .. } = ty {
                 let crate::exec::dispatch::FactOperand::Pair(start, end) =
                     crate::exec::dispatch::fact_operand(
                         self.schema,
                         key_probe.relation,
                         fact,
                         *field,
-                    )
+                    )?
                 else {
                     unreachable!("validated: interval finds read interval fields")
                 };
@@ -365,7 +365,7 @@ impl<S> PreparedQuery<'_, S> {
                     key_probe.relation,
                     fact,
                     *field,
-                ) {
+                )? {
                     crate::exec::dispatch::FactOperand::Word(word) => vec![word],
                     crate::exec::dispatch::FactOperand::Block { words, count } => {
                         words[..usize::from(count)].to_vec()
@@ -378,7 +378,7 @@ impl<S> PreparedQuery<'_, S> {
                 continue;
             }
             let word =
-                crate::exec::dispatch::fact_word(self.schema, key_probe.relation, fact, *field);
+                crate::exec::dispatch::fact_word(self.schema, key_probe.relation, fact, *field)?;
             match ty {
                 ValueType::String => {
                     out.push_word(txn, ty, word, &mut self.resolve_memo)?;

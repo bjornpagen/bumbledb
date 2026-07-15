@@ -46,12 +46,20 @@ bumbledb::schema! {
 - **Field syntax:** `name: type` with optional `as NewType` and optional `fresh`.
   Types: `bool`, `u64`, `i64`, `str`, `bytes<N>` (N ∈ 1..=64 — the width is
   mandatory and part of the type; bare `bytes` does not parse),
-  `interval<i64>`, `interval<u64>` — the six-type roster; the inline `enum`
+  `interval<i64>`, `interval<u64>`, and the fixed-width family
+  `interval<u64, w>` / `interval<i64, w>` (w ≥ 1 an integer literal — the
+  width is the type and the encoding stores only the start,
+  `10-data-model.md` § the admission rule; `interval<u64, 0>` and the
+  trailing-comma `interval<u64, >` are expansion errors naming the field);
+  the inline `enum`
   production is deleted vocabulary (a vocabulary is a closed relation, and
   the word diagnoses its own replacement at expansion). `as` is legal on u64, i64,
   `bytes<N>`, and intervals (the newtype wraps the engine value; rustc polices
   domains — `10-data-model.md`; bytes and interval newtypes derive no order —
-  both refusals are semantics, `10-data-model.md`).
+  both refusals are semantics, `10-data-model.md`). A fixed-width field's
+  host type is the same checked `Interval<T>`; the typed write boundary
+  checks the declared width (a wide or narrow value is a typed shape
+  error — wide values are unrepresentable at the type, never stored).
   `fresh` is legal on `u64` only and auto-materializes `R(field) -> R`.
   **There are no field-level constraint modifiers** — no `unique`, no `fk(...)`;
   those words do not parse.

@@ -154,6 +154,7 @@ fn schema() -> &'static Schema {
                             "active",
                             ValueType::Interval {
                                 element: IntervalElement::I64,
+                                width: None,
                             },
                         ),
                     ],

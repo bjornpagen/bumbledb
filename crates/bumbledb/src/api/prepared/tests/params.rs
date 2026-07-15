@@ -150,6 +150,7 @@ fn mandate_schema() -> Schema {
                     name: "active".into(),
                     value_type: ValueType::Interval {
                         element: crate::schema::IntervalElement::U64,
+                        width: None,
                     },
                     generation: Generation::None,
                 },

@@ -33,6 +33,7 @@ fn schema() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
+                            width: None,
                         },
                     ),
                     field("cap", ValueType::U64),
@@ -47,6 +48,7 @@ fn schema() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::I64,
+                            width: None,
                         },
                     ),
                 ],

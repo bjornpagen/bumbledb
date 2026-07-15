@@ -33,6 +33,18 @@ pub(super) enum Decode {
         start_column: usize,
         end_column: usize,
     },
+    /// A fixed-width (`interval<E, w>`) field: ONE stored word — the
+    /// start — filling BOTH word columns, the end derived as
+    /// `start + w` in the order-preserving word domain (the bias is
+    /// additive, so this is exact for either element). Kernels see the
+    /// same two-column shape a general interval fills; the width lives
+    /// only here, in the type.
+    FixedInterval {
+        offset: usize,
+        width: u64,
+        start_column: usize,
+        end_column: usize,
+    },
     Bool {
         offset: usize,
         start: usize,
@@ -111,6 +123,14 @@ pub(super) fn decode_plan(
                     offset,
                     start: words_start(columns[first]),
                 },
+                (ColumnWidth::WordPair, TypeDesc::Interval { width: Some(w), .. }) => {
+                    Decode::FixedInterval {
+                        offset,
+                        width: *w,
+                        start_column: words_start(columns[first]),
+                        end_column: words_start(columns[first + 1]),
+                    }
+                }
                 (ColumnWidth::WordPair, _) => Decode::Interval {
                     offset,
                     start_column: words_start(columns[first]),
@@ -253,6 +273,27 @@ pub(super) fn decode_fact(
                 if start_word >= end_word {
                     return Err(Error::Corruption(CorruptionError::InvalidInterval(halves)));
                 }
+                unsafe {
+                    *words.get_unchecked_mut(start_column + position) = start_word;
+                    *words.get_unchecked_mut(end_column + position) = end_word;
+                }
+            }
+            Decode::FixedInterval {
+                offset,
+                width,
+                start_column,
+                end_column,
+            } => {
+                // SAFETY: offset + 8 <= fact_width (layout-derived, the
+                // fixed encoding is one word), width checked above; slab
+                // bounds as for Word.
+                let start_bytes: [u8; 8] =
+                    unsafe { fact_bytes.as_ptr().add(*offset).cast::<[u8; 8]>().read() };
+                // The Q2 corruption check and the end derivation are one
+                // shared decoder — hard error, never a skip.
+                let (start_word, end_word) =
+                    crate::encoding::decode_fixed_interval_start(start_bytes, *width)
+                        .map_err(Error::Corruption)?;
                 unsafe {
                     *words.get_unchecked_mut(start_column + position) = start_word;
                     *words.get_unchecked_mut(end_column + position) = end_word;

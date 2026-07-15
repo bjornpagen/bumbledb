@@ -52,6 +52,7 @@ fn idiom_schema() -> Schema {
 fn interval_schema() -> Schema {
     let interval = ValueType::Interval {
         element: IntervalElement::I64,
+        width: None,
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {

@@ -572,7 +572,7 @@ impl ParamTables {
         for (param, slot) in ctx.param_slots {
             let value_type = match slot {
                 TypeSlot::Mono(value_type) => value_type,
-                TypeSlot::Bivalent(_) => unreachable!("resolve_bivalents ran"),
+                TypeSlot::Bivalent { .. } => unreachable!("resolve_bivalents ran"),
             };
             match self.param_types.get(&param) {
                 Some(existing) if *existing != value_type => {

@@ -679,21 +679,37 @@ fn convert_scalar(
         (BindValue::Bool(v), ValueType::Bool) => Const::Byte(u8::from(v)),
         (BindValue::U64(v), ValueType::U64) => Const::Word(v),
         (BindValue::I64(v), ValueType::I64) => Const::Word(i64_word(v)),
+        // The interval family: the general type takes any nonempty
+        // bounds; a fixed-width position demands exactly the declared
+        // width and never a ray (Q2 — `crate::schema::value_matches`'
+        // rule, applied to the bind vocabulary; the width is the type).
         (
             BindValue::IntervalU64(start, end),
             ValueType::Interval {
                 element: IntervalElement::U64,
+                width,
             },
-        ) if start < end => Const::Interval { start, end },
+        ) if start < end
+            && width.is_none_or(|w| end - start == w && end < crate::Interval::<u64>::MAX_END) =>
+        {
+            Const::Interval { start, end }
+        }
         (
             BindValue::IntervalI64(start, end),
             ValueType::Interval {
                 element: IntervalElement::I64,
+                width,
             },
-        ) if start < end => Const::Interval {
-            start: i64_word(start),
-            end: i64_word(end),
-        },
+        ) if start < end
+            && width.is_none_or(|w| {
+                end.abs_diff(start) == w && end < crate::Interval::<i64>::MAX_END
+            }) =>
+        {
+            Const::Interval {
+                start: i64_word(start),
+                end: i64_word(end),
+            }
+        }
         (BindValue::Str(text), ValueType::String) => match dict::lookup_str(txn, text)? {
             Some(id) => Const::Word(id),
             None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),

@@ -75,7 +75,7 @@ pub fn from_sqlite(
         let mut canonical = Vec::with_capacity(types.len());
         let mut column = 0usize;
         for ty in types {
-            let value = if let ValueType::Interval { element } = ty {
+            let value = if let ValueType::Interval { element, .. } = ty {
                 let start: rusqlite::types::Value = row.get(column).map_err(|e| e.to_string())?;
                 let end: rusqlite::types::Value = row.get(column + 1).map_err(|e| e.to_string())?;
                 column += 2;

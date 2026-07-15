@@ -46,7 +46,8 @@ use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
     AxiomIndex, CardinalityStatement, CompiledCheck, ContainmentId, DisjointDeterminantProof,
-    Enforcement, FieldId, KeyId, RelationId, Schema, StatementId, StatementView, WindowId,
+    Enforcement, FieldId, IntervalTail, KeyId, RelationId, Schema, StatementId, StatementView,
+    WindowId,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -305,6 +306,7 @@ pub(super) fn check_source(
                 key_bytes: &edge.key_bytes,
                 fact_bytes: op.fact,
                 direction: Direction::SourceUnsatisfied,
+                source_tail: schema.source_tail(statement),
             };
             let outcome = match &statement.enforcement {
                 Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
@@ -428,11 +430,23 @@ pub(super) fn check_target(
                 // group and filter by intersection. An optimized lower
                 // bound would need the maximum source-interval length,
                 // which we refuse to track — the group is small and this
-                // is the delete path.
-                let ts = &determinant[determinant.len() - 16..determinant.len() - 8];
-                let te = &determinant[determinant.len() - 8..];
-                let p_len =
-                    keys::reverse_prefix(&mut key, sid, &determinant[..determinant.len() - 16]);
+                // is the delete path. The disestablished tuple reads at
+                // the TARGET key's tail; each surviving edge's key bytes
+                // read at the SOURCE projection's tail — the two ends of
+                // one seam, each derived from its own field's type.
+                let target_tail = schema
+                    .key_tail(key_statement)
+                    .expect("an interval dependent resolves a pointwise key");
+                let source_tail = schema
+                    .source_tail(statement)
+                    .expect("an interval containment has an interval source position");
+                let (ts, te) = target_tail
+                    .words(&determinant[determinant.len() - target_tail.bytes()..])
+                    .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                        "U determinant tail",
+                    )))?;
+                let group = &determinant[..determinant.len() - target_tail.bytes()];
+                let p_len = keys::reverse_prefix(&mut key, sid, group);
                 let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
                     (Bound::Included(&key[..p_len]), Bound::Unbounded);
                 for group_entry in data.range(txn.raw(), &bounds)? {
@@ -447,17 +461,19 @@ pub(super) fn check_target(
                     };
                     // Same statement, same target key: any other key-bytes
                     // width is corrupt data, a hard error.
-                    if key_bytes.len() != determinant.len() {
+                    if key_bytes.len() != group.len() + source_tail.bytes() {
                         return Err(Error::Corruption(CorruptionError::MalformedValue(
                             "R key width",
                         )));
                     }
                     // Half-open intersection of the source interval
                     // `[ss, se)` with the disestablished `[ts, te)`:
-                    // `ss < te && ts < se`, byte compare on the 8-byte
-                    // order-preserving halves.
-                    let ss = &key_bytes[key_bytes.len() - 16..key_bytes.len() - 8];
-                    let se = &key_bytes[key_bytes.len() - 8..];
+                    // `ss < te && ts < se` on the order-preserving words.
+                    let (ss, se) = source_tail
+                        .words(&key_bytes[key_bytes.len() - source_tail.bytes()..])
+                        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                            "R key interval tail",
+                        )))?;
                     if ss < te && ts < se {
                         affected.insert((dependent.containment, k.to_vec()));
                     }
@@ -557,6 +573,7 @@ pub(super) fn check_target(
             key_bytes,
             fact_bytes,
             direction: Direction::TargetRequired,
+            source_tail: schema.source_tail(statement),
         };
         collect(checker.check_coverage(*disjoint, &probe), violations)?;
     }
@@ -717,6 +734,11 @@ pub(crate) struct Probe<'a> {
     pub(crate) fact_bytes: &'a [u8],
     /// Which side's judgment a miss convicts.
     pub(crate) direction: Direction,
+    /// Coverage probes only: how `key_bytes`' trailing interval reads —
+    /// the SOURCE field's encoding (16-byte `start ‖ end`, or the
+    /// 8-byte fixed start whose end is the source type's width).
+    /// `None` on scalar probes.
+    pub(crate) source_tail: Option<IntervalTail>,
 }
 
 impl Probe<'_> {
@@ -805,36 +827,48 @@ impl<'a> Checker<'a> {
     ) -> Result<()> {
         disjoint.authorize_coverage();
         let target_key = self.schema.key(probe.target_key);
-        // The scratch holds the full determinant key
-        // `U | rel | stmt | prefix | s | e` (the acceptance gate puts the
-        // interval last, so its 16 bytes are the tail). Only slices of it
-        // are used: the group prefix, the seek key `group ‖ s`, and the
-        // source window words.
-        let full_len = keys::determinant_key(
+        // The two tails of one seam, each derived from its own field's
+        // type: the probe's key bytes end in the SOURCE interval at the
+        // source field's encoding; the stored determinant entries end in
+        // the TARGET's (the acceptance gate puts both intervals last).
+        // Widths agree under exact positional typing and may differ
+        // under the element-domain rule — the walk is width-blind either
+        // way, because both tails parse to order-preserving words.
+        let source_tail = probe
+            .source_tail
+            .expect("coverage probes carry their source tail");
+        let target_tail = self
+            .schema
+            .key_tail(target_key)
+            .expect("IntervalCoverage resolves a pointwise key");
+        // The scratch holds the source-shaped determinant key
+        // `U | rel | stmt | prefix | source-tail`. Only slices of it are
+        // used: the group prefix and the seek key `group ‖ s` (both
+        // encodings LEAD with the start half, so the seek prefix is the
+        // same 8 bytes whatever the source tail's width).
+        let full_src_len = keys::determinant_key(
             &mut self.key,
             probe.target_relation,
             target_key.id,
             probe.key_bytes,
         );
-        let group_len = full_len - 16;
-        let seek_len = full_len - 8;
-        // The scratch parses exactly like a stored determinant key: its tail
-        // is the probe interval `s ‖ e` (the acceptance gate puts the
-        // interval last) — a construction invariant of `determinant_key`, so
-        // the surviving determinant is a programmer-error panic, never a
-        // corruption path (the slice type cannot carry a runtime determinant
-        // width).
-        let (source_start, source_end, _) = segment_words(&self.key[..full_len], &[])
-            .expect("the determinant scratch ends in the probe interval");
+        let group_len = full_src_len - source_tail.bytes();
+        let seek_len = group_len + 8;
+        let (source_start, source_end) = source_tail
+            .words(&self.key[group_len..full_src_len])
+            .expect("the plan derived these key bytes from a validated fact");
+        // Every stored key of the group has exactly this length.
+        let full_len = group_len + target_tail.bytes();
 
         // Entry location: the one determinant entry that can cover `s`. A
-        // segment starting exactly at `s` has full key `seek ‖ its end`,
-        // so the ≥ probe lands on it first when it exists; otherwise the
-        // group's predecessor — the segment with the largest start below
-        // `s` — may still be running at `s`. A predecessor that has
-        // ended (`end ≤ s`) proves nothing covers `s` (the group is
-        // disjoint and start-ordered), so there is no entry segment and
-        // the sweep gaps at `s` over an empty walk.
+        // segment starting exactly at `s` has full key `seek ‖ its end`
+        // (or IS the seek, fixed target), so the ≥ probe lands on it
+        // first when it exists; otherwise the group's predecessor — the
+        // segment with the largest start below `s` — may still be
+        // running at `s`. A predecessor that has ended (`end ≤ s`)
+        // proves nothing covers `s` (the group is disjoint and
+        // start-ordered), so there is no entry segment and the sweep
+        // gaps at `s` over an empty walk.
         let at_or_after = self
             .data
             .get_greater_than_or_equal_to(self.txn, &self.key[..seek_len])?
@@ -848,7 +882,10 @@ impl<'a> Checker<'a> {
                             "U determinant key length",
                         )));
                     }
-                    (k[full_len - 8..] > self.key[group_len..seek_len]).then_some((k, v))
+                    let (_, pred_end) = target_tail.words(&k[group_len..]).ok_or(
+                        Error::Corruption(CorruptionError::MalformedValue("U determinant tail")),
+                    )?;
+                    (pred_end > source_start).then_some((k, v))
                 }
                 _ => None,
             },
@@ -856,7 +893,7 @@ impl<'a> Checker<'a> {
         let (entry, chain) = match located {
             Some((entry_key, entry_value)) => {
                 let Some(segment) = (entry_key.len() == full_len)
-                    .then(|| segment_words(entry_key, entry_value))
+                    .then(|| segment_words(entry_key, entry_value, target_tail))
                     .flatten()
                 else {
                     return Err(Error::Corruption(CorruptionError::MalformedValue(
@@ -877,6 +914,7 @@ impl<'a> Checker<'a> {
             chain,
             group: &self.key[..group_len],
             full_len,
+            tail: target_tail,
         };
         sweep(
             segments,
@@ -1035,18 +1073,27 @@ impl<'a> Checker<'a> {
     }
 }
 
-/// One sweep segment out of the determinant adapter: the 8-byte
-/// order-preserving interval halves off the key's tail, plus the determinant
-/// value (the σ payload — a row id for the target-selection re-check).
-type DeterminantSegment<'t> = ([u8; 8], [u8; 8], &'t [u8]);
+/// One sweep segment out of the determinant adapter: the
+/// order-preserving `(start, end)` words off the key's tail, plus the
+/// determinant value (the σ payload — a row id for the
+/// target-selection re-check).
+type DeterminantSegment<'t> = (u64, u64, &'t [u8]);
 
-/// Parses a determinant key into the sweep's word pair: the interval halves
-/// are the key's last 16 bytes (the acceptance gate puts the interval
-/// last). `None` on a key too short to carry them — the callers' key-
-/// shape corruption path consumes it alongside their length check.
-fn segment_words<'t>(key: &[u8], value: &'t [u8]) -> Option<DeterminantSegment<'t>> {
-    let (head, &end) = key.split_last_chunk()?;
-    let (_, &start) = head.split_last_chunk()?;
+/// Parses a determinant key into the sweep's word pair through the
+/// key's [`IntervalTail`] (the acceptance gate puts the interval last):
+/// the general tail splits its 16 bytes; a fixed tail derives the end
+/// from the type's width. `None` on a key too short to carry the tail
+/// or a fixed start past the Q2 bound — the callers' key-shape
+/// corruption path consumes it alongside their length check.
+fn segment_words<'t>(
+    key: &[u8],
+    value: &'t [u8],
+    tail: IntervalTail,
+) -> Option<DeterminantSegment<'t>> {
+    if key.len() < tail.bytes() {
+        return None;
+    }
+    let (start, end) = tail.words(&key[key.len() - tail.bytes()..])?;
     Some((start, end, value))
 }
 
@@ -1066,6 +1113,9 @@ struct DeterminantSegments<'t, 'k, I> {
     /// Every key in the group has exactly this length; anything else is
     /// corruption, never a silently skipped segment.
     full_len: usize,
+    /// The target key's interval-tail shape — how each stored key's
+    /// trailing interval parses to words.
+    tail: IntervalTail,
 }
 
 impl<'t, I> Iterator for DeterminantSegments<'t, '_, I>
@@ -1095,7 +1145,7 @@ where
             return None;
         }
         let Some(segment) = (key.len() == self.full_len)
-            .then(|| segment_words(key, value))
+            .then(|| segment_words(key, value, self.tail))
             .flatten()
         else {
             self.chain = None;
@@ -1117,14 +1167,14 @@ struct GapAt<'c, 'a, 'p> {
     probe: &'c Probe<'p>,
 }
 
-impl<'v> Continuation<[u8; 8], &'v [u8]> for GapAt<'_, '_, '_> {
+impl<'v> Continuation<u64, &'v [u8]> for GapAt<'_, '_, '_> {
     type Error = Error;
 
     fn segment(&mut self, value: &'v [u8]) -> Result<()> {
         self.checker.check_segment(self.probe, value)
     }
 
-    fn maximal(&mut self, _: [u8; 8], _: [u8; 8]) -> Result<()> {
+    fn maximal(&mut self, _: u64, _: u64) -> Result<()> {
         Err(self.probe.unsatisfied())
     }
 }

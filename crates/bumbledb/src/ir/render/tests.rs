@@ -29,6 +29,7 @@ fn calendar() -> Schema {
     };
     let during = ValueType::Interval {
         element: IntervalElement::U64,
+        width: None,
     };
     SchemaDescriptor {
         relations: vec![

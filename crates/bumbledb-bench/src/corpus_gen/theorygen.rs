@@ -125,11 +125,17 @@ fn random_type(rng: &mut Rng) -> ValueType {
         5 => ValueType::FixedBytes {
             len: FIXED_LENS[draw(rng, FIXED_LENS.len())],
         },
+        // The corpus generator deliberately draws only the GENERAL
+        // interval type: fixture provenance is byte-pinned, and the
+        // fixed-width family's storage seam is covered by the engine's
+        // own suites.
         6 => ValueType::Interval {
             element: IntervalElement::U64,
+            width: None,
         },
         _ => ValueType::Interval {
             element: IntervalElement::I64,
+            width: None,
         },
     }
 }
@@ -207,7 +213,7 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
             };
             Value::FixedBytes(vec![0xA5; width].into())
         }
-        ValueType::Interval { element } => interval_value(rng, *element),
+        ValueType::Interval { element, .. } => interval_value(rng, *element),
     }
 }
 

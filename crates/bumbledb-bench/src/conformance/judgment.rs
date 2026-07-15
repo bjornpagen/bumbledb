@@ -209,6 +209,7 @@ const CLAIM: RelationId = RelationId(1);
 fn permuted_schema() -> SchemaDescriptor {
     let interval = ValueType::Interval {
         element: bumbledb::schema::IntervalElement::U64,
+        width: None,
     };
     SchemaDescriptor {
         relations: vec![

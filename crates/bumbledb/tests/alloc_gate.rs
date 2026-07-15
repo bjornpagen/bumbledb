@@ -102,6 +102,7 @@ fn schema() -> SchemaDescriptor {
                         name: "slot".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb::schema::IntervalElement::U64,
+                            width: None,
                         },
                         generation: Generation::None,
                     },

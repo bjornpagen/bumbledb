@@ -249,6 +249,17 @@ def Value.points : Value → Set Point
       match p with
       | .i64 x => x ∈ Interval.points iv
       | .u64 _ => False
+  -- A fixed-width value denotes its DERIVED interval's points,
+  -- `[s, s + w)` — the width is the type's, and the judgments read
+  -- the same `Interval.points` the general type feeds them.
+  | { type := .intervalFixed .u64 _, val := v } => fun p =>
+      match p with
+      | .u64 x => x ∈ Interval.points v.toInterval
+      | .i64 _ => False
+  | { type := .intervalFixed .i64 _, val := v } => fun p =>
+      match p with
+      | .i64 x => x ∈ Interval.points v.toInterval
+      | .u64 _ => False
   | _ => fun _ => False
 
 /-- An interval-typed value denotes a NONEMPTY point family —
@@ -269,6 +280,22 @@ theorem Value.points_nonempty {v : Value} {e : Elem}
     obtain ⟨x, hx⟩ := interval_nonempty val
     exact ⟨.i64 x, hx⟩
 
+/-- The fixed-width companion of `Value.points_nonempty`: a stored
+`interval<E, w>` column carries fixed-width values, and every one
+denotes the nonempty derived `[s, s + w)` — `interval_nonempty` read
+through `FixedU64.toInterval`. -/
+theorem Value.points_nonempty_fixed {v : Value} {e : Elem} {w : Nat}
+    (h : v.type = .intervalFixed e w) : ∃ p, p ∈ v.points := by
+  obtain ⟨t, val⟩ := v
+  cases h
+  cases e with
+  | u64 =>
+    obtain ⟨x, hx⟩ := interval_nonempty val.toInterval
+    exact ⟨.u64 x, hx⟩
+  | i64 =>
+    obtain ⟨x, hx⟩ := interval_nonempty val.toInterval
+    exact ⟨.i64 x, hx⟩
+
 /-! ## Headers -/
 
 /-- A header: each relation's positional field types — the signature
@@ -276,10 +303,17 @@ acceptance validates statements against. -/
 structure Header where
   sig : RelId → List ValueType
 
-/-- Whether field `i` of relation `R` is interval-typed. -/
+/-- Whether field `i` of relation `R` is interval-typed — the general
+type AND the fixed-width family: `interval<E, w>` is interval-shaped
+to every consumer of this discriminator, which is why `intervalSplit`
+and BOTH pointwise judgments engage for fixed-width positions with
+ZERO changes to any dependency judgment (they quantify over
+`Value.points` and this split alone — the design's beauty; verified
+against `Dependencies.lean` and `Admission.lean`, 2026-07-15). -/
 def Header.isInterval (h : Header) (R : RelId) (i : FieldId) : Bool :=
   match (h.sig R)[i.id]? with
   | some (.interval _) => true
+  | some (.intervalFixed _ _) => true
   | _ => false
 
 /-- The set-canonical interval shape of a determinant or projection —

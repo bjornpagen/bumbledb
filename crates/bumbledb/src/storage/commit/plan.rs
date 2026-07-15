@@ -20,7 +20,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AxiomIndex, ContainmentId, Enforcement, KeyId, RelationId, Schema, StatementId, WindowId,
+    AxiomIndex, ContainmentId, Enforcement, IntervalTail, KeyId, RelationId, Schema, StatementId,
+    WindowId,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::keys::{self, DeterminantImage};
@@ -101,8 +102,11 @@ pub(crate) struct DeterminantOp {
     /// ([`keys::determinant_image`]) — the `U` key's determinant segment.
     pub(crate) determinant: DeterminantImage,
     /// Interval-carrying key: the exact `U` put cannot detect overlap, so
-    /// the insert additionally runs the ordered-neighbor probe.
-    pub(crate) pointwise: bool,
+    /// the insert additionally runs the ordered-neighbor probe — the
+    /// tail descriptor says how the determinant's trailing interval
+    /// reads (16-byte `start ‖ end`, or the 8-byte fixed start whose end
+    /// is the type's width). `None` = scalar key.
+    pub(crate) pointwise: Option<IntervalTail>,
 }
 
 /// One closed-target containment of one fact: the membership judgment's
@@ -261,7 +265,11 @@ fn fact_op<'d>(
             DeterminantOp {
                 statement: statement.id,
                 determinant,
-                pointwise: statement.pointwise,
+                pointwise: statement.pointwise.then(|| {
+                    schema
+                        .key_tail(statement)
+                        .expect("a pointwise key has a tail")
+                }),
             }
         })
         .collect();

@@ -806,6 +806,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
                     ValueType::I64 => IntervalElement::I64,
                     _ => IntervalElement::U64,
                 },
+                width: None,
             };
             literal(out, &decoded_interval(&outer_type, (*start, *end)));
         }
@@ -875,6 +876,7 @@ fn element_type(value_type: &ValueType) -> ValueType {
     match value_type {
         ValueType::Interval {
             element: IntervalElement::I64,
+            ..
         } => ValueType::I64,
         _ => ValueType::U64,
     }

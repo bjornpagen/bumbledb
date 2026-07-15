@@ -14,12 +14,18 @@ mod tests;
 
 pub(crate) use decode::split_halves;
 pub use decode::{
-    decode_bool, decode_field, decode_i64, decode_u64, field_bytes, field_word_bytes,
+    decode_bool, decode_field, decode_fixed_interval_start, decode_i64, decode_u64, field_bytes,
+    field_word_bytes,
 };
 pub use encode::{
-    encode_bool, encode_fact, encode_fixed_bytes, encode_i64, encode_interval_i64,
-    encode_interval_u64, encode_literal, encode_u64,
+    encode_bool, encode_fact, encode_fixed_bytes, encode_i64, encode_literal, encode_u64,
 };
+// The two-half interval encoders' production users live inside this
+// module (the type-aware `encode_literal` and `encode_fact` arms); the
+// crate-wide re-export survives for the byte-level test fixtures (the
+// i64 twin's fixtures import it from `encode` directly).
+#[cfg(test)]
+pub(crate) use encode::encode_interval_u64;
 pub use fact_hash::fact_hash;
 
 use crate::{Interval, schema::IntervalElement};
@@ -51,24 +57,36 @@ pub enum TypeDesc {
         /// Declared width in bytes, `1..=MAX_FIXED_BYTES`.
         len: u16,
     },
-    /// 16 bytes: `start ‖ end`, each half in the element's order-preserving
-    /// encoding, strictly `start < end`.
+    /// The interval family. General (`width: None`): 16 bytes,
+    /// `start ‖ end`, each half in the element's order-preserving
+    /// encoding, strictly `start < end`. Fixed (`width: Some(w)`,
+    /// `interval<E, w>`): 8 bytes — the START half only; the width is
+    /// the type's, so the end derives as `start + w` at decode, and a
+    /// stored start at or past the Q2 bound (`start + w < MAX_END`) is
+    /// corruption ([`crate::error::CorruptionError::InvalidFixedIntervalStart`]).
     Interval {
         /// The element domain: one of the two orderable scalars.
         element: IntervalElement,
+        /// `Some(w)`: the fixed width — the encoding is one word.
+        width: Option<u64>,
     },
 }
 
 impl TypeDesc {
-    /// Encoded width in bytes: 1 for `Bool`, 16 for `Interval`, the
-    /// word-padded `⌈len/8⌉ × 8` for `FixedBytes`, 8 for everything else.
+    /// Encoded width in bytes: 1 for `Bool`, 16 for a general
+    /// `Interval` and 8 for a fixed-width one (the width halving — the
+    /// end is the type's to derive, so storing it would be
+    /// transcription), the word-padded `⌈len/8⌉ × 8` for `FixedBytes`,
+    /// 8 for everything else.
     #[must_use]
     pub const fn width(self) -> usize {
         match self {
             Self::Bool => 1,
-            Self::U64 | Self::I64 | Self::String => 8,
+            // A fixed-width interval is one word — the start; the end
+            // is the type's to derive (the width halving).
+            Self::U64 | Self::I64 | Self::String | Self::Interval { width: Some(_), .. } => 8,
             Self::FixedBytes { len } => (len as usize).div_ceil(8) * 8,
-            Self::Interval { .. } => 16,
+            Self::Interval { width: None, .. } => 16,
         }
     }
 }
@@ -151,6 +169,16 @@ pub enum ValueRef {
     IntervalU64(Interval<u64>),
     /// Nonempty interval over I64.
     IntervalI64(Interval<i64>),
+    /// A fixed-width (`interval<u64, w>`) value: the checked interval
+    /// whose width the layout declares — [`encode_fact`] writes the
+    /// START word only (the width is the type's), and decode re-derives
+    /// the end. Constructors are the checking boundary
+    /// ([`crate::__private::fixed_interval_u64`]; the dynamic path
+    /// checks through `value_matches` first).
+    FixedIntervalU64(Interval<u64>),
+    /// A fixed-width (`interval<i64, w>`) value, as
+    /// [`ValueRef::FixedIntervalU64`].
+    FixedIntervalI64(Interval<i64>),
 }
 
 impl ValueRef {

@@ -31,8 +31,11 @@
 //!
 //! Types: `bool`, `u64`, `i64`, `str`, `bytes<N>` (N ∈ 1..=64 — the
 //! width is mandatory; bare `bytes` does not exist), `interval<i64>`,
-//! `interval<u64>` — the six-type roster; a vocabulary is a closed
-//! relation, never a type. `as NewType` generates the host-side nominal newtype
+//! `interval<u64>`, and the fixed-width interval family
+//! `interval<u64, w>` / `interval<i64, w>` (w ≥ 1 an integer literal —
+//! the width is the type, the encoding stores only the start; `w = 0`
+//! and a trailing comma with no width are expansion errors naming the
+//! field); a vocabulary is a closed relation, never a type. `as NewType` generates the host-side nominal newtype
 //! (legal on u64, i64, `bytes<N>`, and both intervals). `fresh`
 //! auto-materializes `R(field) -> R` at schema resolution. **There are no field-level constraint modifiers** — everything
 //! relational is a dependency statement between the relation blocks
@@ -127,7 +130,10 @@ enum FieldTy {
     /// `bytes<N>` — the width is part of the type (mandatory in the
     /// grammar; range-validated at `Db::create`/`open`).
     FixedBytes(u64),
-    Interval(IntervalElement),
+    /// `interval<E>` (width `None`) or `interval<E, w>` (width
+    /// `Some(w)`, `w ≥ 1` — the width is the type; the grammar rejects
+    /// `w = 0` here, and `Db::create`/`open` re-validates the range).
+    Interval(IntervalElement, Option<u64>),
 }
 
 #[derive(Debug, Clone)]
@@ -352,8 +358,9 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                 "i64" => IntervalElement::I64,
                 other => panic!("schema!: interval element must be i64 or u64, found `{other}`"),
             };
+            let width = parse_interval_width(&name, tokens);
             expect_punct(tokens, '>');
-            FieldTy::Interval(element)
+            FieldTy::Interval(element, width)
         }
         other => panic!("schema!: unknown type `{other}`"),
     };
@@ -368,7 +375,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         assert!(
             matches!(
                 field.ty,
-                FieldTy::U64 | FieldTy::I64 | FieldTy::FixedBytes(_) | FieldTy::Interval(_)
+                FieldTy::U64 | FieldTy::I64 | FieldTy::FixedBytes(_) | FieldTy::Interval(..)
             ),
             "schema!: `as NewType` applies to u64/i64/bytes<N>/interval fields only"
         );
@@ -404,6 +411,34 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         }
     }
     field
+}
+
+/// The optional interval width: `interval<u64, w>` — the fixed-width
+/// family, w ≥ 1 an integer literal. A trailing comma with no width and
+/// w = 0 are grammar errors naming the field.
+fn parse_interval_width(name: &str, tokens: &mut Tokens) -> Option<u64> {
+    if !peek_punct(tokens, ',') {
+        return None;
+    }
+    tokens.next();
+    assert!(
+        !peek_punct(tokens, '>'),
+        "schema!: field `{name}`: `interval<E, >` names no width — write \
+         `interval<E>` (general) or `interval<E, w>` with w >= 1"
+    );
+    let (negative, text) = parse_int(tokens, "the interval width");
+    assert!(
+        !negative,
+        "schema!: field `{name}`: an interval width is a point count — non-negative"
+    );
+    let width: u64 = text
+        .parse()
+        .unwrap_or_else(|_| panic!("schema!: field `{name}`: malformed interval width `{text}`"));
+    assert!(
+        width >= 1,
+        "schema!: field `{name}`: interval<E, 0> denotes nothing — the width must be >= 1"
+    );
+    Some(width)
 }
 
 /// Whether the next token is a brace-delimited group.
@@ -909,10 +944,16 @@ fn value_type_expr(ty: &FieldTy) -> String {
         FieldTy::I64 => format!("{value_type}::I64"),
         FieldTy::Str => format!("{value_type}::String"),
         FieldTy::FixedBytes(len) => format!("{value_type}::FixedBytes {{ len: {len} }}"),
-        FieldTy::Interval(element) => format!(
-            "{value_type}::Interval {{ element: ::bumbledb::schema::IntervalElement::{} }}",
-            element.suffix()
-        ),
+        FieldTy::Interval(element, width) => {
+            let width = match width {
+                None => "::std::option::Option::None".to_owned(),
+                Some(w) => format!("::std::option::Option::Some({w}u64)"),
+            };
+            format!(
+                "{value_type}::Interval {{ element: ::bumbledb::schema::IntervalElement::{},                  width: {width} }}",
+                element.suffix()
+            )
+        }
     }
 }
 
@@ -993,7 +1034,7 @@ fn value_expr(
             format!("{value}::FixedBytes(::std::boxed::Box::from(&{text}[..]))")
         }
         (
-            FieldTy::Interval(IntervalElement::U64),
+            FieldTy::Interval(IntervalElement::U64, _),
             Literal::Interval {
                 start: (false, start),
                 end: (false, end),
@@ -1001,7 +1042,7 @@ fn value_expr(
         ) => format!(
             "{value}::IntervalU64(::bumbledb::Interval::<u64>::new({start}, {end}).expect(\"schema! interval literals are nonempty\"))"
         ),
-        (FieldTy::Interval(IntervalElement::I64), Literal::Interval { start, end }) => {
+        (FieldTy::Interval(IntervalElement::I64, _), Literal::Interval { start, end }) => {
             format!(
                 "{value}::IntervalI64(::bumbledb::Interval::<i64>::new({}, {}).expect(\"schema! interval literals are nonempty\"))",
                 signed(start),
@@ -1297,7 +1338,7 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
                 FieldTy::U64 => ("u64".to_owned(), false),
                 FieldTy::I64 => ("i64".to_owned(), false),
                 FieldTy::FixedBytes(len) => (format!("[u8; {len}]"), true),
-                FieldTy::Interval(element) => {
+                FieldTy::Interval(element, _) => {
                     (format!("::bumbledb::Interval<{}>", element.rust()), true)
                 }
                 _ => unreachable!("parser restricts `as` to u64/i64/bytes<N>/interval"),
@@ -1421,7 +1462,7 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::I64 => "i64".to_owned(),
         FieldTy::Str => "&'a str".to_owned(),
         FieldTy::FixedBytes(len) => format!("[u8; {len}]"),
-        FieldTy::Interval(element) => format!("::bumbledb::Interval<{}>", element.rust()),
+        FieldTy::Interval(element, _) => format!("::bumbledb::Interval<{}>", element.rust()),
     }
 }
 
@@ -1430,7 +1471,7 @@ fn rust_field_ty(field: &Field) -> String {
 /// committed, never mints — a miss proves the fact absent), read
 /// (committed dictionary only). Word-backed fields encode identically in
 /// every context; only the interned kinds (str/bytes) split by boundary.
-fn encode_exprs(field: &Field) -> (String, String, String) {
+fn encode_exprs(field: &Field, idx: usize) -> (String, String, String) {
     let access = if field.newtype.is_some() {
         format!("self.{}.0", field.name)
     } else {
@@ -1441,9 +1482,19 @@ fn encode_exprs(field: &Field) -> (String, String, String) {
         FieldTy::Bool => same(format!("::bumbledb::__private::ValueRef::Bool({access})")),
         FieldTy::U64 => same(format!("::bumbledb::__private::ValueRef::U64({access})")),
         FieldTy::I64 => same(format!("::bumbledb::__private::ValueRef::I64({access})")),
-        FieldTy::Interval(element) => same(format!(
+        FieldTy::Interval(element, None) => same(format!(
             "::bumbledb::__private::ValueRef::Interval{}({access})",
             element.suffix()
+        )),
+        // The fixed-width family: the host hands the same checked
+        // `Interval<T>`; the boundary checks the declared width (a wide
+        // or narrow value is a typed error — the width is the type) and
+        // marks the one-word encoding.
+        FieldTy::Interval(element, Some(width)) => same(format!(
+            "::bumbledb::__private::fixed_interval_{}(\
+             <Self as ::bumbledb::Fact<'a>>::RELATION, \
+             ::bumbledb::schema::FieldId({idx}), {access}, {width}u64)?",
+            element.rust()
         )),
         // Inline in every context: bytes<N> never touches the dictionary,
         // so write/delete/read share one self-encoding expression.
@@ -1501,8 +1552,14 @@ fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
         FieldTy::Bool => arm("Bool(v)".to_owned(), "v".to_owned()),
         FieldTy::U64 => arm("U64(v)".to_owned(), wrap("v")),
         FieldTy::I64 => arm("I64(v)".to_owned(), wrap("v")),
-        FieldTy::Interval(element) => arm(
+        FieldTy::Interval(element, None) => arm(
             format!("Interval{}(interval)", element.suffix()),
+            wrap("interval"),
+        ),
+        // A fixed-width field decodes through its own ValueRef variant —
+        // the end was re-derived from the type's width at decode.
+        FieldTy::Interval(element, Some(_)) => arm(
+            format!("FixedInterval{}(interval)", element.suffix()),
             wrap("interval"),
         ),
         FieldTy::Str => arm(
@@ -1546,7 +1603,7 @@ fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation:
     let mut decode_fields = String::new();
     let mut decode_write_fields = String::new();
     for (idx, field) in relation.fields.iter().enumerate() {
-        let (write_expr, delete_expr, read_expr) = encode_exprs(field);
+        let (write_expr, delete_expr, read_expr) = encode_exprs(field, idx);
         let _ = write!(write_values, "{write_expr},");
         let _ = write!(delete_values, "{delete_expr},");
         let _ = write!(read_values, "{read_expr},");

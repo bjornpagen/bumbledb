@@ -48,6 +48,7 @@ fn schema() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
+                            width: None,
                         },
                     ),
                     field("reference", ValueType::U64),

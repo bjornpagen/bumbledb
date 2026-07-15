@@ -387,6 +387,7 @@ fn interval_schema() -> Schema {
                     name: "during".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::I64,
+                        width: None,
                     },
                     generation: Generation::None,
                 },
@@ -464,7 +465,8 @@ fn interval_find_round_trips_through_answers() {
         vec![
             ValueType::U64,
             ValueType::Interval {
-                element: IntervalElement::I64
+                element: IntervalElement::I64,
+                width: None
             },
         ],
         "the predicate reports the interval type"

@@ -118,7 +118,7 @@ impl Applier<'_> {
             // later conflicts against these exact bytes convict the same
             // statement), next determinant.
             if let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? {
-                let incumbent = if determinant.pointwise {
+                let incumbent = if determinant.pointwise.is_some() {
                     let incumbent_row = decode_row_id(value)?;
                     Some(fact_by_row(self.data, self.txn.raw(), rel, incumbent_row)?.into())
                 } else {
@@ -137,11 +137,11 @@ impl Applier<'_> {
                 row_id.to_le_bytes().as_slice(),
             )?;
             crashpoint!("mid-write-u");
-            if determinant.pointwise {
+            if let Some(tail) = determinant.pointwise {
                 // The exact put cannot detect overlap — only equality —
                 // so a pointwise key additionally probes its ordered
                 // neighbors within the scalar-prefix group.
-                self.probe_neighbors(rel, determinant.statement, u_len, op.fact)?;
+                self.probe_neighbors(rel, determinant.statement, u_len, tail, op.fact)?;
             }
         }
         for edge in &op.edges {
@@ -174,26 +174,31 @@ impl Applier<'_> {
     /// statement).
     ///
     /// Comparison directions, derived once from half-open semantics: a
-    /// determinant is `prefix ‖ start ‖ end` with order-preserving 8-byte halves,
-    /// so byte order within the group is `(start, end)` order, and byte
-    /// comparison of halves is numeric comparison. Two half-open intervals
-    /// `[s, e)` and `[x, y)` share a point iff `x < e && s < y`. The
-    /// predecessor sorts strictly below the inserted key, so `ps <= s < e`
-    /// and its test reduces to `pe > s`; the successor sorts strictly
-    /// above, so `ne > ns >= s` and its test reduces to `ns < e`. Both
-    /// comparisons are strict: `pe == s` and `ns == e` are adjacency,
-    /// legal by half-open construction — no epsilon, no widening.
+    /// determinant is `prefix ‖ interval-tail` with order-preserving
+    /// words (16-byte `start ‖ end`, or the 8-byte fixed start whose end
+    /// derives from the type's width — [`IntervalTail::words`]), so byte
+    /// order within the group is start order, and word comparison is
+    /// numeric comparison. Two half-open intervals `[s, e)` and `[x, y)`
+    /// share a point iff `x < e && s < y`. The predecessor sorts strictly
+    /// below the inserted key, so `ps <= s < e` and its test reduces to
+    /// `pe > s`; the successor sorts strictly above, so `ne > ns >= s`
+    /// and its test reduces to `ns < e`. Both comparisons are strict:
+    /// `pe == s` and `ns == e` are adjacency, legal by half-open
+    /// construction — no epsilon, no widening.
     fn probe_neighbors(
         &mut self,
         rel: RelationId,
         statement: StatementId,
         u_len: usize,
+        tail: crate::schema::IntervalTail,
         fact_bytes: &[u8],
     ) -> Result<()> {
         let inserted = &self.key[..u_len];
-        let prefix = &inserted[..u_len - 16];
-        let start = &inserted[u_len - 16..u_len - 8];
-        let end = &inserted[u_len - 8..u_len];
+        let tail_bytes = tail.bytes();
+        let prefix = &inserted[..u_len - tail_bytes];
+        let (start, end) = tail
+            .words(&inserted[u_len - tail_bytes..])
+            .expect("the plan derived this determinant from a validated fact");
 
         let mut incumbent_row: Option<u64> = None;
         if let Some((pk, pv)) = self.data.get_lower_than(self.txn.raw(), inserted)?
@@ -206,8 +211,13 @@ impl Applier<'_> {
                     "U determinant key length",
                 )));
             }
+            let (_, pe) = tail
+                .words(&pk[u_len - tail_bytes..])
+                .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                    "U determinant tail",
+                )))?;
             // Predecessor `[ps, pe)`: violation iff `pe > s`.
-            if &pk[u_len - 8..] > start {
+            if pe > start {
                 incumbent_row = Some(decode_row_id(pv)?);
             }
         }
@@ -220,8 +230,13 @@ impl Applier<'_> {
                     "U determinant key length",
                 )));
             }
+            let (ns, _) = tail
+                .words(&nk[u_len - tail_bytes..])
+                .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                    "U determinant tail",
+                )))?;
             // Successor `[ns, ne)`: violation iff `ns < e`.
-            if &nk[u_len - 16..u_len - 8] < end {
+            if ns < end {
                 incumbent_row = Some(decode_row_id(nv)?);
             }
         }

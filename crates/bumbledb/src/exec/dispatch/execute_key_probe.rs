@@ -41,7 +41,7 @@ pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters>(
     // Interval variables occupy their two-slot span.
     bindings.reset();
     for var in &plan.vars {
-        match fact_operand(schema, plan.relation, fact, var.field) {
+        match fact_operand(schema, plan.relation, fact, var.field)? {
             FactOperand::Word(word) => bindings.set(var.slot, word),
             FactOperand::Pair(start, end) => {
                 debug_assert_eq!(var.width, 2, "the SlotWidth layout");

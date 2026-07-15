@@ -754,10 +754,18 @@ fn type_name(value_type: &ValueType) -> String {
         ValueType::FixedBytes { len } => format!("bytes<{len}>"),
         ValueType::Interval {
             element: bumbledb::schema::IntervalElement::U64,
+            width: None,
         } => "interval_u64".into(),
         ValueType::Interval {
             element: bumbledb::schema::IntervalElement::I64,
+            width: None,
         } => "interval_i64".into(),
+        // No corpus fixture carries a fixed-width interval field yet:
+        // the generator does not draw the family (provenance replay is
+        // byte-pinned), so a sighting here is a fixture-authoring error.
+        ValueType::Interval { width: Some(_), .. } => {
+            unreachable!("corpus fixtures carry no fixed-width interval fields")
+        }
     }
 }
 

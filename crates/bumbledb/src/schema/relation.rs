@@ -1,7 +1,8 @@
 //! Field, layout, and statement-index accessors on a validated relation.
 
 use super::{
-    ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, Relation, SealedRow, WindowId,
+    ContainmentId, FactLayout, FieldDescriptor, FieldId, IntervalTail, KeyId, Relation, SealedRow,
+    ValueType, WindowId,
 };
 
 impl Relation {
@@ -66,5 +67,22 @@ impl Relation {
     #[must_use]
     pub fn window_targets(&self) -> &[WindowId] {
         &self.window_targets
+    }
+
+    /// The interval-tail descriptor of a projection over this relation:
+    /// `Some` when the projection carries an interval-typed field (the
+    /// acceptance gate makes it unique and final for keys, so the tail is
+    /// the determinant's trailing encoding), describing how many trailing
+    /// bytes the interval occupies and how its end derives — 16 general
+    /// (`start ‖ end`), 8 fixed (`interval<E, w>`: the start word; the
+    /// end is `start + w`, the width being the type's).
+    #[must_use]
+    pub(crate) fn interval_tail(&self, projection: &[FieldId]) -> Option<IntervalTail> {
+        projection
+            .iter()
+            .find_map(|field| match self.field(*field).value_type {
+                ValueType::Interval { width, .. } => Some(IntervalTail { width }),
+                _ => None,
+            })
     }
 }

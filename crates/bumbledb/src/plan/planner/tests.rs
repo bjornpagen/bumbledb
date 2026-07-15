@@ -214,6 +214,7 @@ fn key_coverage_fires_through_the_fresh_auto_key() {
 fn pointwise_schema() -> Schema {
     let interval = ValueType::Interval {
         element: IntervalElement::U64,
+        width: None,
     };
     SchemaDescriptor {
         relations: vec![

@@ -1,11 +1,20 @@
 /-!
 # Values — the value universe (Level 0, PRD 02)
 
-The value universe: the six structural types (Bool, U64, I64, Str,
-FixedBytes n, Interval over an orderable element domain), the
-nonempty half-open interval with rays and measure, and the
-order-embedding encodings. Types are encodings — hard structural
-typing; nominal safety lives in host Rust newtypes, never here.
+The value universe: the structural types (Bool, U64, I64, Str,
+FixedBytes n, Interval over an orderable element domain, and the
+fixed-width interval family `interval<E, w>` — one type per width,
+the fixedBytes<N> precedent generalized), the nonempty half-open
+interval with rays and measure, and the order-embedding encodings.
+Types are encodings — hard structural typing; nominal safety lives
+in host Rust newtypes, never here.
+
+**The admission rule** (normative — `docs/architecture/10-data-model.md`):
+a type parameter is admitted iff it CHANGES THE ENCODING. The width
+`w` of `interval<E, w>` does — the encoding is ONE word, the start;
+the end derives as `start + w` — so the parameter is a type. A
+parameter that merely checks values would be a CHECK constraint
+(Tier 3), refused (`Countermodels.lean` § the Tier-3 refusal).
 
 ## Deliberate absences (design facts, not gaps)
 
@@ -71,6 +80,18 @@ typing; nominal safety lives in host Rust newtypes, never here.
   generality is dead — widths no code implements —
   and `value_eq_iff_encode_eq` is proved uniformly in `n`, so nothing
   false rides it.
+* **The fixed-width carrier is concrete per element domain**
+  (`FixedU64`/`FixedI64`), like `encode_interval_order`: the two real
+  domains cost less than an abstract order-embedding class. The
+  carrier is the START SCALAR with the Q2 subtype bound
+  `0 < w ∧ start + w < maxEnd`: a wide value is unrepresentable (the
+  width is the type's), a `w = 0` carrier is EMPTY (a fact never
+  denotes nothing), and the derived end sits strictly below the
+  ceiling — fixed-width values are NEVER rays, by construction
+  (`FixedU64.not_ray`); rays stay exclusive to the general type. The
+  Rust mirror spells the family as the one `Interval` variant with an
+  optional width (pattern-totality is Rust's exhaustiveness idiom;
+  a new constructor is Lean's) — same universe, same encodings.
 * **The decode/corruption boundary is spec-silent SUPPORT.** Only
   encode is modeled; decode's strictness (`InvalidBool` on any byte
   ≠ 0/1, `InvalidInterval` on `start ≥ end`, `NonzeroFixedBytesPad`)
@@ -346,6 +367,123 @@ theorem encode_interval_order_u64 (iv jv : Interval U64) :
   unfold lexLt encodeIntervalU64
   rw [encodeU64_lt_iff, encodeU64_lt_iff, encodeU64_eq_iff]
 
+/-! ## Fixed-width intervals — `interval<E, w>` (Tier-2 literal types)
+
+The width is the TYPE; the carrier is the start scalar under the Q2
+bound; the derived interval is `[s, s + w)`. Everything downstream
+(points, membership, the pointwise judgments) reads the derived
+interval through the ordinary `Interval` machinery — the design's
+whole point. -/
+
+/-- `interval<u64, w>`'s carrier: the start with the Q2 subtype bound
+`0 < w ∧ start + w < maxEnd`. Wide values are unrepresentable; the
+`w = 0` carrier is empty; the bound bars ray-hood by construction.
+Bridge: `crate::Interval::fixed` (the `Option`-returning constructor
+discharges exactly this bound). -/
+abbrev FixedU64 (w : Nat) : Type :=
+  { s : U64 // 0 < w ∧ s.val + w < U64.maxEnd.val }
+
+/-- `interval<i64, w>`'s carrier, as `FixedU64`. -/
+abbrev FixedI64 (w : Nat) : Type :=
+  { s : I64 // 0 < w ∧ s.val + w < I64.maxEnd.val }
+
+/-- The derived interval `[s, s + w)` — nonempty from `0 < w`, in
+domain from the Q2 bound. -/
+def FixedU64.toInterval {w : Nat} (v : FixedU64 w) : Interval U64 :=
+  { start := v.val
+    «end» := ⟨v.val.val + w, by
+      have hb := v.property
+      have hs := v.val.property
+      show v.val.val + w < 2 ^ 64
+      have : U64.maxEnd.val = 2 ^ 64 - 1 := rfl
+      omega⟩
+    h := by
+      show v.val.val < v.val.val + w
+      have hb := v.property
+      omega }
+
+/-- The derived interval `[s, s + w)`, `i64` domain. -/
+def FixedI64.toInterval {w : Nat} (v : FixedI64 w) : Interval I64 :=
+  { start := v.val
+    «end» := ⟨v.val.val + w, by
+      have hb := v.property
+      have hs := v.val.property
+      constructor
+      · omega
+      · have : I64.maxEnd.val = 2 ^ 63 - 1 := rfl
+        omega⟩
+    h := by
+      show v.val.val < v.val.val + (w : Int)
+      have hb := v.property
+      omega }
+
+/-- **Q2, by construction:** no fixed-width value is a ray — the
+carrier bound keeps the derived end strictly below the ceiling, so
+`[start, ∞)` is unreachable from this type; rays stay exclusive to
+the general interval type. Bridge: `crate::Interval::fixed` returns
+`None` at and past the bound. -/
+theorem FixedU64.not_ray {w : Nat} (v : FixedU64 w) :
+    ¬ v.toInterval.isRay := by
+  intro hray
+  have hval : v.toInterval.«end».val = U64.maxEnd.val :=
+    congrArg Subtype.val hray
+  have hb := v.property
+  have : v.val.val + w = U64.maxEnd.val := hval
+  omega
+
+/-- **Q2 (i64 companion).** -/
+theorem FixedI64.not_ray {w : Nat} (v : FixedI64 w) :
+    ¬ v.toInterval.isRay := by
+  intro hray
+  have hval : v.toInterval.«end».val = I64.maxEnd.val :=
+    congrArg Subtype.val hray
+  have hb := v.property
+  have : v.val.val + (w : Int) = I64.maxEnd.val := hval
+  omega
+
+/-- **The measure of a fixed-width value is the constant `w`** — the
+recorded choice: the measure position ACCEPTS fixed-width values
+trivially rather than refusing them as constant-valued. Rationale:
+`Duration` is total on non-rays, fixed-width values are never rays
+(`FixedU64.not_ray`), and a value-independent answer is a theorem,
+not an error — refusing it would make well-typedness depend on
+whether an expression is constant, a rule the tree has nowhere
+else. -/
+theorem fixed_measure_const_u64 {w : Nat} (v : FixedU64 w) :
+    v.toInterval.measure = some w := by
+  rw [measure_finite _ v.not_ray]
+  show some (v.toInterval.«end».val - v.toInterval.start.val) = some w
+  have hend : v.toInterval.«end».val = v.val.val + w := rfl
+  have hstart : v.toInterval.start.val = v.val.val := rfl
+  rw [hend, hstart, Nat.add_sub_cancel_left]
+
+/-- **The constant measure (i64 companion).** -/
+theorem fixed_measure_const_i64 {w : Nat} (v : FixedI64 w) :
+    v.toInterval.measure = some w := by
+  rw [measure_finite _ v.not_ray]
+  show some ((v.toInterval.«end».val - v.toInterval.start.val).toNat) =
+    some w
+  have hend : v.toInterval.«end».val = v.val.val + (w : Int) := rfl
+  have hstart : v.toInterval.start.val = v.val.val := rfl
+  rw [hend, hstart]
+  congr 1
+  omega
+
+/-- **The fixed-width order embedding — trivially the scalar
+embedding**: the encoding is one word, the start, so the determinant
+order over an `interval<u64, w>` position IS the element order of
+the starts (the width-halving law's semantic half).
+Bridge: the one-word determinant slice (`crate::storage::keys::determinant_image`
+over an 8-byte fixed tail). -/
+theorem encode_fixed_order_u64 {w : Nat} (a b : FixedU64 w) :
+    a.val ≤ b.val ↔ encodeU64 a.val ≤ encodeU64 b.val :=
+  encode_u64_order_embedding a.val b.val
+
+/-- **The fixed-width order embedding (i64 companion).** -/
+theorem encode_fixed_order_i64 {w : Nat} (a b : FixedI64 w) :
+    a.val ≤ b.val ↔ encodeI64 a.val ≤ encodeI64 b.val :=
+  encode_i64_order_embedding a.val b.val
+
 /-! ## The value universe -/
 
 /-- An interval's element type: the two orderable scalars. -/
@@ -354,8 +492,9 @@ inductive Elem where
   | i64
 deriving DecidableEq
 
-/-- The six structural value types. Types are encodings; there is no
-nominal typing anywhere in the universe. -/
+/-- The structural value types — six shapes, two of them parameterized
+families (`bytes<N>`, `interval<E, w>`). Types are encodings; there is
+no nominal typing anywhere in the universe. -/
 inductive ValueType where
   | bool
   | u64
@@ -367,6 +506,12 @@ inductive ValueType where
   | fixedBytes (n : Nat)
   /-- A nonempty half-open interval over an orderable scalar. -/
   | interval (e : Elem)
+  /-- `interval<E, w>`: the width is the type — the encoding stores
+  ONLY the start (one word); the end derives as `start + w`. Admitted
+  under the admission rule (the parameter changes the encoding — the
+  `fixedBytes n` precedent, generalized); `w ≥ 1` is the accepted
+  grammar, and the `w = 0` carrier is empty by the Q2 bound. -/
+  | intervalFixed (e : Elem) (w : Nat)
 deriving DecidableEq
 
 /-- An opaque intern id: equality only. NO `LT`/`LE`/`Ord` instance
@@ -389,6 +534,8 @@ def ValueType.carrier : ValueType → Type
   | .fixedBytes n => FixedBytes n
   | .interval .u64 => Interval U64
   | .interval .i64 => Interval I64
+  | .intervalFixed .u64 w => FixedU64 w
+  | .intervalFixed .i64 w => FixedI64 w
 
 /-- A value: the dependent sum over `ValueType` — a type together
 with an inhabitant of its carrier (`crate::value::Value`). -/
@@ -408,6 +555,10 @@ def encodeAt : (t : ValueType) → t.carrier → List Word
   | .fixedBytes _, bs => bs.val
   | .interval .u64, iv => [(encodeIntervalU64 iv).1, (encodeIntervalU64 iv).2]
   | .interval .i64, iv => [(encodeIntervalI64 iv).1, (encodeIntervalI64 iv).2]
+  -- ONE word: the width is the type's, never the bytes' — the end is
+  -- derived, so encoding it would be transcription.
+  | .intervalFixed .u64 _, v => [encodeU64 v.val]
+  | .intervalFixed .i64 _, v => [encodeI64 v.val]
 
 /-- A value's canonical encoding. -/
 def Value.encode (v : Value) : List Word := encodeAt v.type v.val
@@ -443,5 +594,13 @@ theorem value_eq_iff_encode_eq (t : ValueType) (a b : t.carrier) :
     simp only [encodeAt, encodeIntervalI64, List.cons.injEq, and_true] at heq
     exact Interval.ext ((encodeI64_eq_iff _ _).mp heq.1)
       ((encodeI64_eq_iff _ _).mp heq.2)
+  | .intervalFixed .u64 _, a, b =>
+    -- One word decides the whole value: the start determines the
+    -- derived interval, so the scalar injectivity is the identity law.
+    simp only [encodeAt, List.cons.injEq, and_true] at heq
+    exact Subtype.ext ((encodeU64_eq_iff _ _).mp heq)
+  | .intervalFixed .i64 _, a, b =>
+    simp only [encodeAt, List.cons.injEq, and_true] at heq
+    exact Subtype.ext ((encodeI64_eq_iff _ _).mp heq)
 
 end Bumbledb

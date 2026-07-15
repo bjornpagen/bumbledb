@@ -258,8 +258,9 @@ pub use bumbledb_macros::schema;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::api::db::plumbing::{
-        decode, decode_write, encode_read_fact, encode_write_fact, intern_str_delete,
-        intern_str_read, intern_str_write, resolve_string, resolve_string_write,
+        decode, decode_write, encode_read_fact, encode_write_fact, fixed_interval_i64,
+        fixed_interval_u64, intern_str_delete, intern_str_read, intern_str_write, resolve_string,
+        resolve_string_write,
     };
     pub use crate::encoding::ValueRef;
 }

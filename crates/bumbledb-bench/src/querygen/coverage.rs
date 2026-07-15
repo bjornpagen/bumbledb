@@ -131,7 +131,7 @@ fn typing(rule: &Rule) -> Typing {
 
 fn element_of(ty: &ValueType) -> Option<IntervalElement> {
     match ty {
-        ValueType::Interval { element } => Some(*element),
+        ValueType::Interval { element, .. } => Some(*element),
         _ => None,
     }
 }

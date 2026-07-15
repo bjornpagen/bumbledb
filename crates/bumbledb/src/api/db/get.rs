@@ -7,9 +7,7 @@
 
 use super::encode_dyn::shape_mismatch;
 use super::{Fact, Fresh, FreshKeyed, WriteTx, plumbing};
-use crate::encoding::{
-    encode_bool, encode_i64, encode_interval_i64, encode_interval_u64, encode_u64,
-};
+use crate::encoding::encode_u64;
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
 use crate::schema::{FieldId, KeyId, RelationId, StatementId, StatementView};
@@ -190,18 +188,6 @@ impl<S> WriteTx<'_, S> {
                 return Err(shape_mismatch(relation, field, mismatch).into());
             }
             match value {
-                Value::AllenMask(_) => {
-                    unreachable!("value_matches rejected mask values above: not a field type")
-                }
-                Value::Bool(v) => out.push(encode_bool(*v)),
-                Value::U64(v) => out.extend_from_slice(&encode_u64(*v)),
-                Value::I64(v) => out.extend_from_slice(&encode_i64(*v)),
-                Value::IntervalU64(interval) => {
-                    out.extend_from_slice(&encode_interval_u64(*interval));
-                }
-                Value::IntervalI64(interval) => {
-                    out.extend_from_slice(&encode_interval_i64(*interval));
-                }
                 Value::String(raw) => {
                     let text =
                         std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
@@ -210,8 +196,18 @@ impl<S> WriteTx<'_, S> {
                         None => return Ok(false),
                     }
                 }
-                // Self-encoding: the padded canonical bytes, no dictionary.
-                Value::FixedBytes(raw) => crate::encoding::encode_fixed_bytes(raw, out),
+                // Every self-encoding value takes the one type-aware
+                // literal encoder — a fixed-width interval position
+                // contributes its 8-byte start, a general one its 16
+                // bytes, exactly what `determinant_image` slices out of
+                // a stored fact (String peeled above per the encoder's
+                // contract; a mask value is unreachable — `value_matches`
+                // rejected it: not a field type).
+                encodable => crate::encoding::encode_literal(
+                    encodable,
+                    rel.field(field).value_type.type_desc(),
+                    out,
+                ),
             }
         }
         Ok(true)

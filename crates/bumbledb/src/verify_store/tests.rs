@@ -67,6 +67,7 @@ fn schema() -> SchemaDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: IntervalElement::U64,
+                            width: None,
                         },
                         generation: Generation::None,
                     },
@@ -101,6 +102,7 @@ fn schema() -> SchemaDescriptor {
                         name: "span".into(),
                         value_type: ValueType::Interval {
                             element: IntervalElement::U64,
+                            width: None,
                         },
                         generation: Generation::None,
                     },
@@ -237,6 +239,7 @@ fn canonical_field_schema() -> SchemaDescriptor {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                     generation: Generation::None,
                 },

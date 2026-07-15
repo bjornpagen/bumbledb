@@ -40,12 +40,14 @@ fn sig_schema() -> Schema {
                     "pu",
                     ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                 ),
                 field(
                     "pi",
                     ValueType::Interval {
                         element: IntervalElement::I64,
+                        width: None,
                     },
                 ),
                 field("ku", ValueType::U64),
@@ -82,12 +84,14 @@ fn type_roster() -> Vec<(u16, ValueType)> {
             PU,
             ValueType::Interval {
                 element: IntervalElement::U64,
+                width: None,
             },
         ),
         (
             PI,
             ValueType::Interval {
                 element: IntervalElement::I64,
+                width: None,
             },
         ),
     ]
@@ -96,12 +100,14 @@ fn type_roster() -> Vec<(u16, ValueType)> {
 fn interval_u64() -> ValueType {
     ValueType::Interval {
         element: IntervalElement::U64,
+        width: None,
     }
 }
 
 fn interval_i64() -> ValueType {
     ValueType::Interval {
         element: IntervalElement::I64,
+        width: None,
     }
 }
 

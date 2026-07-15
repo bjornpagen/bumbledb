@@ -21,7 +21,10 @@ use crate::naive::{Delta, NaiveDb, Tuple};
 /// Shift(id u64, person u64, slot interval<i64>). No statements: every
 /// write commits (ids are plain — the generator numbers them itself).
 fn schema() -> SchemaDescriptor {
-    let slot = |element: IntervalElement| ValueType::Interval { element };
+    let slot = |element: IntervalElement| ValueType::Interval {
+        element,
+        width: None,
+    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {

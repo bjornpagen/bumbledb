@@ -135,6 +135,11 @@ def ledger : List Obligation := [
     "crate::encoding::encode::encode_literal (crates/bumbledb/src/encoding/encode.rs); crate::encoding::encode::encode_fact (crates/bumbledb/src/encoding/encode.rs)"
     "encode_fact_matches_independent_field_encodings (crates/bumbledb/src/encoding/tests.rs)",
 
+  .row @FixedU64.not_ray `Bumbledb.FixedU64.not_ray
+    "The Q2 bound of the fixed-width interval family: start plus width sits strictly below the ceiling, so a fixed-width value is never a ray and its one-word encoding re-derives the end without loss — the constructor discharges the bound by parsing."
+    "crate::Interval::fixed (crates/bumbledb/src/interval.rs); crate::schema::value_matches (crates/bumbledb/src/schema.rs); encoding/decode.rs::decode_fixed_interval_start (crates/bumbledb/src/encoding/decode.rs)"
+    "fixed_parses_the_q2_bound (crates/bumbledb/src/interval.rs); fixed_interval_round_trips_one_word (crates/bumbledb/src/encoding/tests.rs); fixed_interval_decode_rejects_a_start_at_the_q2_bound (crates/bumbledb/src/encoding/tests.rs)",
+
   /- ## PRD 03 — Schema and Dependencies -/
 
   .row @den_closed_constant `Bumbledb.den_closed_constant
@@ -568,7 +573,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 88 := rfl
+theorem ledger_count : ledger.length = 89 := rfl
 
 end Bridge
 end Bumbledb

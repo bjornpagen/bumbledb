@@ -105,12 +105,12 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             }
             StatementView::Containment(_, statement) => {
                 out.push(1);
-                put_side(out, &statement.source);
-                put_side(out, &statement.target);
+                put_side(out, schema, &statement.source);
+                put_side(out, schema, &statement.target);
             }
             StatementView::Cardinality(_, statement) => {
                 out.push(2);
-                put_side(out, &statement.source);
+                put_side(out, schema, &statement.source);
                 out.extend_from_slice(&statement.lo.to_le_bytes());
                 match statement.hi {
                     None => out.push(0),
@@ -119,7 +119,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                         out.extend_from_slice(&hi.to_le_bytes());
                     }
                 }
-                put_side(out, &statement.target);
+                put_side(out, schema, &statement.target);
             }
         }
     }
@@ -151,7 +151,7 @@ fn put_field_id(out: &mut Vec<u8>, id: FieldId) {
     out.extend_from_slice(&id.0.to_le_bytes());
 }
 
-fn put_side(out: &mut Vec<u8>, side: &Side) {
+fn put_side(out: &mut Vec<u8>, schema: &Schema, side: &Side) {
     put_relation_id(out, side.relation);
     put_len(out, side.projection.len());
     for field in &side.projection {
@@ -160,6 +160,14 @@ fn put_side(out: &mut Vec<u8>, side: &Side) {
     put_len(out, side.selection.len());
     for (field, literals) in &side.selection {
         put_field_id(out, *field);
+        // Literals hash at the selected FIELD's encoding — the same
+        // type-aware `encode_literal` the commit judgment seals, so a
+        // fixed-width interval binding hashes its one-word form.
+        let desc = schema
+            .relation(side.relation)
+            .field(*field)
+            .value_type
+            .type_desc();
         // The literal COUNT precedes the literals: a one-literal binding
         // and a set binding can never alias, and the sealed side's
         // canonical (sorted, deduplicated) set order makes the stream a
@@ -167,12 +175,12 @@ fn put_side(out: &mut Vec<u8>, side: &Side) {
         match literals {
             LiteralSet::One(literal) => {
                 put_len(out, 1);
-                put_literal(out, literal);
+                put_literal(out, desc, literal);
             }
             LiteralSet::Many(values) => {
                 put_len(out, values.len());
                 for literal in values {
-                    put_literal(out, literal);
+                    put_literal(out, desc, literal);
                 }
             }
         }
@@ -193,13 +201,34 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
             out.push(5);
             out.extend_from_slice(&len.to_le_bytes());
         }
-        ValueType::Interval { element } => {
+        // The interval family: the general type keeps its historical
+        // stream (tag 6 ‖ element) untouched; the fixed-width type is a
+        // DIFFERENT type and hashes under its own tag with the width fed
+        // — a width change is a new theory, exactly as a `bytes<N>`
+        // width change is (`docs/architecture/10-data-model.md`).
+        ValueType::Interval {
+            element,
+            width: None,
+        } => {
             out.push(6);
-            out.push(match element {
-                IntervalElement::U64 => 0,
-                IntervalElement::I64 => 1,
-            });
+            out.push(element_tag(*element));
         }
+        ValueType::Interval {
+            element,
+            width: Some(width),
+        } => {
+            out.push(7);
+            out.push(element_tag(*element));
+            out.extend_from_slice(&width.to_le_bytes());
+        }
+    }
+}
+
+/// The element domain's fingerprint byte, shared by both interval tags.
+fn element_tag(element: IntervalElement) -> u8 {
+    match element {
+        IntervalElement::U64 => 0,
+        IntervalElement::I64 => 1,
     }
 }
 
@@ -213,10 +242,10 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
 /// per-database state, not schema identity. `FixedBytes` literals are
 /// self-encoding (their canonical bytes ARE the value, word-padded), so
 /// they take the shared encoder like every other literal.
-fn put_literal(out: &mut Vec<u8>, literal: &Value) {
+fn put_literal(out: &mut Vec<u8>, desc: crate::encoding::TypeDesc, literal: &Value) {
     match literal {
         Value::String(bytes) => put_bytes(out, bytes),
-        encoded => encode_literal(encoded, out),
+        encoded => encode_literal(encoded, desc, out),
     }
 }
 
@@ -435,7 +464,13 @@ mod tests {
                 relations: vec![RelationDescriptor {
                     extension: None,
                     name: "R".into(),
-                    fields: vec![field("during", ValueType::Interval { element })],
+                    fields: vec![field(
+                        "during",
+                        ValueType::Interval {
+                            element,
+                            width: None,
+                        },
+                    )],
                 }],
                 statements: vec![],
             }))
@@ -444,6 +479,31 @@ mod tests {
             of_element(IntervalElement::U64),
             of_element(IntervalElement::I64)
         );
+    }
+
+    #[test]
+    fn the_interval_width_is_a_fingerprint_input() {
+        // A width change is a new theory — exactly as a bytes<N> width
+        // change is — and the fixed family never aliases the general
+        // type (distinct tags in the canonical stream).
+        let of_width = |width| {
+            fingerprint(&schema_of(SchemaDescriptor {
+                relations: vec![RelationDescriptor {
+                    extension: None,
+                    name: "R".into(),
+                    fields: vec![field(
+                        "slot",
+                        ValueType::Interval {
+                            element: IntervalElement::U64,
+                            width,
+                        },
+                    )],
+                }],
+                statements: vec![],
+            }))
+        };
+        assert_ne!(of_width(Some(1)), of_width(Some(2)));
+        assert_ne!(of_width(Some(1)), of_width(None));
     }
 
     #[test]

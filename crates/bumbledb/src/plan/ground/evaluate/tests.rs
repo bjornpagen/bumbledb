@@ -108,6 +108,7 @@ fn theory() -> Schema {
                     "span",
                     ValueType::Interval {
                         element: IntervalElement::U64,
+                        width: None,
                     },
                 )],
             },

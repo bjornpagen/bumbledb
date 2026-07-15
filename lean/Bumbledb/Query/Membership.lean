@@ -90,6 +90,7 @@ membership typing rule reads on both the field side and the term side
 (`ir/normalize/normalize.rs::is_membership`). -/
 def ValueType.isInterval : ValueType → Bool
   | .interval _ => true
+  | .intervalFixed _ _ => true
   | _ => false
 
 /-- The declared type of field `i` of relation `R` — total via a
@@ -115,6 +116,33 @@ definitionally the `pointIn` comparison with `w` on the interval side
 (`pointMem_iff_pointIn`). -/
 def Value.pointMem (x w : Value) : Prop :=
   ∃ p, x.point = some p ∧ p ∈ w.points
+
+/-- **The fixed-width membership lowering (u64):** an element-typed
+value at an `interval<u64, w>` position reads point membership in
+the DERIVED half-open `[s, s + w)` — the same `pointMem` reading
+every interval position gets (`Header.isInterval` answers `true` for
+the family, so `Typing.membership` fires unchanged); the width is
+the type's, never the bytes'. -/
+theorem pointMem_fixed_u64 {w : Nat} (x : U64) (v : FixedU64 w) :
+    Value.pointMem ⟨.u64, x⟩ ⟨.intervalFixed .u64 w, v⟩ ↔
+      v.val ≤ x ∧ x.val < v.val.val + w := by
+  constructor
+  · rintro ⟨p, hp, hmem⟩
+    cases hp
+    exact hmem
+  · intro h
+    exact ⟨.u64 x, rfl, h⟩
+
+/-- **The fixed-width membership lowering (i64 companion).** -/
+theorem pointMem_fixed_i64 {w : Nat} (x : I64) (v : FixedI64 w) :
+    Value.pointMem ⟨.i64, x⟩ ⟨.intervalFixed .i64 w, v⟩ ↔
+      v.val ≤ x ∧ x.val < v.val.val + (w : Int) := by
+  constructor
+  · rintro ⟨p, hp, hmem⟩
+    cases hp
+    exact hmem
+  · intro h
+    exact ⟨.i64 x, rfl, h⟩
 
 namespace Query
 

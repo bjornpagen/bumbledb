@@ -79,9 +79,23 @@ pub enum ValueType {
     },
     /// A half-open `[start, end)` over the element domain, strictly
     /// `start < end` — a finite set of points, written as its bounds
-    /// (`docs/architecture/10-data-model.md`).
+    /// (`docs/architecture/10-data-model.md`). `width` selects within
+    /// the interval FAMILY: `None` is the general type (16-byte
+    /// `start ‖ end` encoding, rays representable); `Some(w)` is
+    /// `interval<E, w>` — the width is the type (the `bytes<N>`
+    /// precedent), the encoding stores ONLY the start (8 bytes; the
+    /// end derives as `start + w`), wide values are unrepresentable,
+    /// and the Q2 bound `start + w < MAX_END` bars ray-hood by
+    /// construction (`lean/Bumbledb/Values.lean: FixedU64.not_ray`).
+    /// Admitted under the admission rule: a type parameter is
+    /// admitted iff it changes the encoding — `w` does; a parameter
+    /// that merely checks is a CHECK constraint, refused
+    /// (`docs/architecture/10-data-model.md` § the admission rule).
+    /// The width is a fingerprint input — a width change is a new
+    /// theory. `w ≥ 1`, validated at declaration.
     Interval {
         element: IntervalElement,
+        width: Option<u64>,
     },
 }
 
@@ -149,19 +163,37 @@ pub(crate) fn value_matches(value: &Value, expected: &ValueType) -> Result<(), V
     match (value, expected) {
         (Value::Bool(_), ValueType::Bool)
         | (Value::U64(_), ValueType::U64)
-        | (Value::I64(_), ValueType::I64)
-        | (
-            Value::IntervalU64(_),
+        | (Value::I64(_), ValueType::I64) => Ok(()),
+        // The interval family: the general type takes any checked
+        // interval of its element; a fixed-width type takes exactly the
+        // declared width, never a ray (Q2: `start + w < MAX_END` — the
+        // ray end IS `MAX_END`, so `!is_ray()` is the bound;
+        // `lean/Bumbledb/Values.lean: FixedU64.not_ray`). A wide or
+        // narrow value is a kind mismatch — the width is the type.
+        (
+            Value::IntervalU64(interval),
             ValueType::Interval {
                 element: IntervalElement::U64,
+                width,
             },
-        )
-        | (
-            Value::IntervalI64(_),
+        ) => match width {
+            None => Ok(()),
+            Some(w) if interval.end() - interval.start() == *w && !interval.is_ray() => Ok(()),
+            Some(_) => Err(ValueMismatch::Type),
+        },
+        (
+            Value::IntervalI64(interval),
             ValueType::Interval {
                 element: IntervalElement::I64,
+                width,
             },
-        ) => Ok(()),
+        ) => match width {
+            None => Ok(()),
+            Some(w) if interval.end().abs_diff(interval.start()) == *w && !interval.is_ray() => {
+                Ok(())
+            }
+            Some(_) => Err(ValueMismatch::Type),
+        },
         // The length is the type: a bytes<N> literal of any other width
         // is a kind mismatch.
         (Value::FixedBytes(raw), ValueType::FixedBytes { len }) => {
@@ -411,6 +443,67 @@ impl SchemaDescriptor {
         }
         statements.extend(self.statements.iter().cloned());
         statements
+    }
+}
+
+/// The trailing interval encoding of a pointwise determinant or an
+/// interval-final projection: how many encoded bytes the interval
+/// position occupies and how its exclusive end derives. The general type
+/// stores both order-preserving halves; a fixed-width type stores the
+/// START word only — the width is the type's, and the bias of both
+/// element encodings is additive, so `start_word + w` IS the encoded end
+/// (`lean/Bumbledb/Values.lean: encode_fixed_order_u64`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IntervalTail {
+    /// `Some(w)` = the fixed width; `None` = general (`start ‖ end`).
+    pub(crate) width: Option<u64>,
+}
+
+impl IntervalTail {
+    /// Trailing encoded bytes: 16 general, 8 fixed.
+    pub(crate) const fn bytes(self) -> usize {
+        match self.width {
+            None => 16,
+            Some(_) => 8,
+        }
+    }
+
+    /// The `(start, end)` order-preserving words of a tail slice —
+    /// `None` on a malformed tail (wrong width, or a fixed start at or
+    /// past the Q2 bound; callers convict corruption). Both element
+    /// ceilings encode to `u64::MAX`, so the fixed bound is one word
+    /// compare in either domain.
+    pub(crate) fn words(self, tail: &[u8]) -> Option<(u64, u64)> {
+        if tail.len() != self.bytes() {
+            return None;
+        }
+        match self.width {
+            None => {
+                let start = u64::from_be_bytes(tail[..8].try_into().ok()?);
+                let end = u64::from_be_bytes(tail[8..].try_into().ok()?);
+                Some((start, end))
+            }
+            Some(width) => {
+                let bytes: [u8; 8] = tail.try_into().ok()?;
+                crate::encoding::decode_fixed_interval_start(bytes, width).ok()
+            }
+        }
+    }
+}
+
+impl Schema {
+    /// The interval-tail descriptor of a pointwise key's determinant;
+    /// `None` for scalar keys.
+    pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<IntervalTail> {
+        self.relation(key.relation).interval_tail(&key.projection)
+    }
+
+    /// The interval-tail descriptor of a containment's SOURCE projection
+    /// — the shape of the reverse-edge key-bytes tail (the source fact's
+    /// interval encodes at its own field's width).
+    pub(crate) fn source_tail(&self, statement: &ContainmentStatement) -> Option<IntervalTail> {
+        self.relation(statement.source.relation)
+            .interval_tail(&statement.source.projection)
     }
 }
 

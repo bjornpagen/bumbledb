@@ -111,16 +111,30 @@ two-slot read + subtraction; the ray raises
 def Value.measure? : Value → Option Value
   | { type := .interval .u64, val := iv } => iv.measure.bind measureOfNat
   | { type := .interval .i64, val := iv } => iv.measure.bind measureOfNat
+  -- A fixed-width value measures through its derived interval —
+  -- always `some w` (`fixed_measure_const_u64`/`_i64`): never a ray,
+  -- so the measure position accepts it trivially (the recorded
+  -- choice, `Values.lean`).
+  | { type := .intervalFixed .u64 _, val := v } =>
+    v.toInterval.measure.bind measureOfNat
+  | { type := .intervalFixed .i64 _, val := v } =>
+    v.toInterval.measure.bind measureOfNat
   | _ => none
 
-/-- The `Interval U64` a value carries, if any. -/
+/-- The `Interval U64` a value carries, if any — a fixed-width value
+carries its DERIVED `[s, s + w)`: Allen and `pointIn` classify over
+derived bounds, so the fixed family participates in every
+interval-pair reading through this one observer. -/
 def Value.intervalU64 : Value → Option (Interval U64)
   | { type := .interval .u64, val := iv } => some iv
+  | { type := .intervalFixed .u64 _, val := v } => some v.toInterval
   | _ => none
 
-/-- The `Interval I64` a value carries, if any. -/
+/-- The `Interval I64` a value carries, if any (fixed-width values as
+`Value.intervalU64`). -/
 def Value.intervalI64 : Value → Option (Interval I64)
   | { type := .interval .i64, val := iv } => some iv
+  | { type := .intervalFixed .i64 _, val := v } => some v.toInterval
   | _ => none
 
 namespace Query
@@ -862,6 +876,8 @@ def ValueType.carrierDecEq : (t : ValueType) → DecidableEq t.carrier
   | .fixedBytes n => inferInstanceAs (DecidableEq (FixedBytes n))
   | .interval .u64 => inferInstanceAs (DecidableEq (Interval U64))
   | .interval .i64 => inferInstanceAs (DecidableEq (Interval I64))
+  | .intervalFixed .u64 w => inferInstanceAs (DecidableEq (FixedU64 w))
+  | .intervalFixed .i64 w => inferInstanceAs (DecidableEq (FixedI64 w))
 
 instance : DecidableEq Value := fun a b =>
   match a, b with
@@ -912,6 +928,14 @@ instance : (a : Value) → (p : Point) → Decidable (p ∈ a.points)
   | ⟨.interval .i64, iv⟩, p =>
     match p with
     | .i64 x => inferInstanceAs (Decidable (x ∈ iv.points))
+    | .u64 _ => isFalse fun h => h
+  | ⟨.intervalFixed .u64 _, v⟩, p =>
+    match p with
+    | .u64 x => inferInstanceAs (Decidable (x ∈ v.toInterval.points))
+    | .i64 _ => isFalse fun h => h
+  | ⟨.intervalFixed .i64 _, v⟩, p =>
+    match p with
+    | .i64 x => inferInstanceAs (Decidable (x ∈ v.toInterval.points))
     | .u64 _ => isFalse fun h => h
   | ⟨.bool, _⟩, _ => isFalse fun h => h
   | ⟨.u64, _⟩, _ => isFalse fun h => h

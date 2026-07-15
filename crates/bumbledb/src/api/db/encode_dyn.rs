@@ -86,8 +86,22 @@ impl<S> WriteTx<'_, S> {
                 Value::Bool(v) => ValueRef::Bool(*v),
                 Value::U64(v) => ValueRef::U64(*v),
                 Value::I64(v) => ValueRef::I64(*v),
-                Value::IntervalU64(interval) => ValueRef::IntervalU64(*interval),
-                Value::IntervalI64(interval) => ValueRef::IntervalI64(*interval),
+                // The interval family splits by the FIELD's width:
+                // `value_matches` above already enforced the fixed
+                // type's exact width and Q2 bound, so the fixed ref just
+                // marks the one-word encoding.
+                Value::IntervalU64(interval) => match field.value_type {
+                    crate::schema::ValueType::Interval { width: Some(_), .. } => {
+                        ValueRef::FixedIntervalU64(*interval)
+                    }
+                    _ => ValueRef::IntervalU64(*interval),
+                },
+                Value::IntervalI64(interval) => match field.value_type {
+                    crate::schema::ValueType::Interval { width: Some(_), .. } => {
+                        ValueRef::FixedIntervalI64(*interval)
+                    }
+                    _ => ValueRef::IntervalI64(*interval),
+                },
                 Value::String(raw) => {
                     let text =
                         std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
@@ -127,8 +141,14 @@ pub(super) fn decode_values(
                 ValueRef::I64(v) => Value::I64(v),
                 ValueRef::String(id) => Value::String(resolve_str(id)?),
                 ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
-                ValueRef::IntervalU64(interval) => Value::IntervalU64(interval),
-                ValueRef::IntervalI64(interval) => Value::IntervalI64(interval),
+                // A fixed-width field decodes to the same checked host
+                // interval — the end was derived from the type's width.
+                ValueRef::IntervalU64(interval) | ValueRef::FixedIntervalU64(interval) => {
+                    Value::IntervalU64(interval)
+                }
+                ValueRef::IntervalI64(interval) | ValueRef::FixedIntervalI64(interval) => {
+                    Value::IntervalI64(interval)
+                }
             })
         })
         .collect()

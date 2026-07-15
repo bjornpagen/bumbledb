@@ -36,6 +36,7 @@ fn pack_schema() -> Schema {
                         "slot",
                         ValueType::Interval {
                             element: IntervalElement::U64,
+                            width: None,
                         },
                     ),
                 ],
@@ -50,6 +51,7 @@ fn pack_schema() -> Schema {
                         "slot",
                         ValueType::Interval {
                             element: IntervalElement::I64,
+                            width: None,
                         },
                     ),
                 ],

@@ -29,6 +29,7 @@ fn schema() -> Schema {
     };
     let interval_u64 = ValueType::Interval {
         element: IntervalElement::U64,
+        width: None,
     };
     SchemaDescriptor {
         relations: vec![

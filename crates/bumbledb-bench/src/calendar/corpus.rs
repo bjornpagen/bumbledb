@@ -207,7 +207,7 @@ pub fn assert_loaded_equal(db: &Db<Scheduling>, conn: &Connection, cfg: GenConfi
                     for field in relation.fields() {
                         if matches!(
                             field.value_type,
-                            bumbledb::schema::ValueType::Interval { element }
+                            bumbledb::schema::ValueType::Interval { element, .. }
                                 if matches!(element, bumbledb::schema::IntervalElement::I64)
                         ) {
                             let start: rusqlite::types::Value = row.get(column)?;

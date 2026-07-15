@@ -663,6 +663,7 @@ fn schema_variant(rejection: &SchemaError) -> &'static str {
         SchemaError::DuplicateFieldName { .. } => "DuplicateFieldName",
         SchemaError::FreshOnNonU64 { .. } => "FreshOnNonU64",
         SchemaError::FixedBytesWidthOutOfRange { .. } => "FixedBytesWidthOutOfRange",
+        SchemaError::IntervalWidthOutOfRange { .. } => "IntervalWidthOutOfRange",
         SchemaError::EmptyExtension { .. } => "EmptyExtension",
         SchemaError::ExtensionTooManyRows { .. } => "ExtensionTooManyRows",
         SchemaError::DuplicateExtensionHandle { .. } => "DuplicateExtensionHandle",

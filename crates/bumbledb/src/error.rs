@@ -32,6 +32,12 @@ pub enum CorruptionError {
     /// unrepresentable (a fact never denotes nothing), so a stored one is
     /// corruption, not a value. Carries the raw 16 bytes.
     InvalidInterval([u8; 16]),
+    /// A fixed-width (`interval<E, w>`) start word at or past the Q2
+    /// bound `start + w < MAX_END`: the derived end would reach the
+    /// ceiling (ray territory — unconstructible in the fixed family) or
+    /// overflow the domain, so a stored such start is corruption exactly
+    /// as an inverted interval is. Carries the raw 8 start bytes.
+    InvalidFixedIntervalStart([u8; 8]),
     /// The `_meta` database or one of its required keys is absent or
     /// malformed: the environment is not a usable bumbledb database.
     MetaMissing,
@@ -123,6 +129,16 @@ pub enum SchemaError {
         relation: RelationId,
         field: FieldId,
         len: u16,
+    },
+    /// An `interval<E, w>` field with `w = 0` (zero points denote
+    /// nothing — a fact never denotes nothing) or `w = u64::MAX` (no
+    /// start satisfies the Q2 bound in either element domain, so the
+    /// type would be empty). Every other width is a real type whose
+    /// carrier the bound narrows honestly.
+    IntervalWidthOutOfRange {
+        relation: RelationId,
+        field: FieldId,
+        width: u64,
     },
 
     // --- Closed-relation roster (10-data-model § closed relations) ---

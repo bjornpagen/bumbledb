@@ -145,7 +145,8 @@ fn accepts_a_variable_joined_across_two_interval_fields() {
     assert_eq!(
         witness.rule(0).var_type(VarId(1)),
         &ValueType::Interval {
-            element: IntervalElement::U64
+            element: IntervalElement::U64,
+            width: None
         }
     );
 }
@@ -245,6 +246,7 @@ fn accepts_allen_between_interval_variables_from_different_atoms() {
         let witness = validate(&schema(), &query).expect("valid");
         let interval = ValueType::Interval {
             element: IntervalElement::U64,
+            width: None,
         };
         assert_eq!(witness.rule(0).var_type(VarId(1)), &interval);
         assert_eq!(witness.rule(0).var_type(VarId(3)), &interval);
@@ -292,7 +294,8 @@ fn accepts_literals_params_and_sets_inside_negated_atoms() {
         (
             ParamId(0),
             &ValueType::Interval {
-                element: IntervalElement::U64
+                element: IntervalElement::U64,
+                width: None
             }
         )
     );
@@ -398,7 +401,8 @@ fn accepts_pack_and_pins_the_interval_result_type() {
         vec![
             ValueType::U64,
             ValueType::Interval {
-                element: IntervalElement::U64
+                element: IntervalElement::U64,
+                width: None
             }
         ]
     );

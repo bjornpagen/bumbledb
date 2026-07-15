@@ -1,7 +1,48 @@
 use super::{RelationId, Snapshot, ValueRef, WriteTx};
 use crate::encoding::decode_field;
-use crate::error::{CorruptionError, Error, Result};
+use crate::error::{CorruptionError, Error, FactShapeError, Result};
 use crate::storage::dict;
+
+/// The typed path's fixed-width interval boundary: checks the host's
+/// checked interval against the field's declared width — exactly the
+/// `value_matches` rule (width equality and the Q2 ray bar; the width
+/// is the type, so a wide or narrow value is a type mismatch) — and
+/// wraps it as the one-word-encoding [`ValueRef`].
+///
+/// # Errors
+///
+/// [`FactShapeError::TypeMismatch`] when the interval's width is not the
+/// declared `width` or its end is the domain ceiling (a ray).
+pub fn fixed_interval_u64(
+    relation: RelationId,
+    field: crate::schema::FieldId,
+    interval: crate::Interval<u64>,
+    width: u64,
+) -> Result<ValueRef> {
+    if interval.end() - interval.start() == width && !interval.is_ray() {
+        Ok(ValueRef::FixedIntervalU64(interval))
+    } else {
+        Err(FactShapeError::TypeMismatch { relation, field }.into())
+    }
+}
+
+/// The `i64` sibling of [`fixed_interval_u64`].
+///
+/// # Errors
+///
+/// As [`fixed_interval_u64`].
+pub fn fixed_interval_i64(
+    relation: RelationId,
+    field: crate::schema::FieldId,
+    interval: crate::Interval<i64>,
+    width: u64,
+) -> Result<ValueRef> {
+    if interval.end().abs_diff(interval.start()) == width && !interval.is_ray() {
+        Ok(ValueRef::FixedIntervalI64(interval))
+    } else {
+        Err(FactShapeError::TypeMismatch { relation, field }.into())
+    }
+}
 
 /// Write-context interning: novel values mint provisional ids flushed
 /// at commit.

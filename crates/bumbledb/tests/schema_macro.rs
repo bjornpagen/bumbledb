@@ -118,6 +118,7 @@ fn hand_built() -> bumbledb::schema::Schema {
                         "active",
                         ValueType::Interval {
                             element: IntervalElement::I64,
+                            width: None,
                         },
                     ),
                 ],
@@ -455,12 +456,14 @@ mod interval_newtype {
             relation.field(FieldId(1)).value_type,
             ValueType::Interval {
                 element: IntervalElement::I64,
+                width: None
             }
         );
         assert_eq!(
             relation.field(FieldId(2)).value_type,
             ValueType::Interval {
                 element: IntervalElement::U64,
+                width: None
             }
         );
     }
@@ -1231,5 +1234,294 @@ mod extension_forms {
             panic!("the declared statement is a containment");
         };
         assert_eq!(source.selection[0].1, LiteralSet::One(Value::U64(7)));
+    }
+}
+
+mod fixed_width_intervals {
+    //! The Tier-2 literal type end to end: `interval<u64, w>` — the
+    //! width is the type, the encoding is the start
+    //! (`docs/architecture/10-data-model.md` § the admission rule;
+    //! `lean/Bumbledb/Values.lean: FixedU64.not_ray`). One stored word,
+    //! the derived end feeding membership, Allen, and the measure over
+    //! the same kernels the general type runs — and the pointwise key's
+    //! neighbor probe judging overlap over derived bounds.
+
+    use bumbledb::ir::{
+        Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Query, Rule, Term, Value, VarId,
+    };
+    use bumbledb::schema::{FieldId, ValueType};
+    use bumbledb::{AllenMask, AnswerValue, Db, Fact, Interval, Theory as _};
+
+    bumbledb::schema! {
+        pub Jukebox;
+
+        relation Slot {
+            playlist: u64,
+            slot: interval<u64, 5> as SlotSpan,
+            track: u64,
+        }
+
+        Slot(playlist, slot) -> Slot;
+    }
+
+    #[test]
+    fn the_width_is_the_type_and_the_encoding_is_the_start() {
+        // The macro spells the family into the descriptor…
+        let descriptor = Jukebox.descriptor();
+        assert_eq!(
+            descriptor.relations[0].fields[1].value_type,
+            ValueType::Interval {
+                element: bumbledb::schema::IntervalElement::U64,
+                width: Some(5),
+            }
+        );
+        // …and the sealed layout stores ONE word for the position:
+        // 8 (playlist) + 8 (slot start) + 8 (track) — the width halving.
+        let schema = descriptor.validate().expect("valid");
+        assert_eq!(schema.relations()[0].layout().fact_width(), 24);
+    }
+
+    #[test]
+    fn typed_writes_check_the_declared_width_and_round_trip() {
+        let dir = crate::common::TempDir::new("macro-fixed-interval");
+        let db = Db::create(dir.path(), Jukebox).expect("create");
+        let slot = Slot {
+            playlist: 1,
+            slot: SlotSpan(Interval::<u64>::fixed(10, 5).expect("in-domain")),
+            track: 77,
+        };
+        db.write(|tx| tx.insert(&slot)).expect("write");
+        db.read(|snap| {
+            let back: Vec<Slot> = snap.scan_facts()?.collect::<Result<_, _>>()?;
+            assert_eq!(back, vec![slot.clone()]);
+            Ok(())
+        })
+        .expect("scan");
+        // A wide value is unrepresentable AT THE TYPE: the typed boundary
+        // reports the mismatch, exactly as the dynamic path's
+        // `value_matches` does — the width is the type.
+        let err = db
+            .write(|tx| {
+                tx.insert(&Slot {
+                    playlist: 1,
+                    slot: SlotSpan(Interval::<u64>::new(100, 107).expect("nonempty")),
+                    track: 78,
+                })?;
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, bumbledb::Error::FactShape(_)),
+            "a wrong-width interval is a typed shape error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn the_fixed_pointwise_key_rejects_overlap_and_accepts_adjacency() {
+        let dir = crate::common::TempDir::new("macro-fixed-pointwise");
+        let db = Db::create(dir.path(), Jukebox).expect("create");
+        let slot = |playlist: u64, start: u64, track: u64| Slot {
+            playlist,
+            slot: SlotSpan(Interval::<u64>::fixed(start, 5).expect("in-domain")),
+            track,
+        };
+        // Adjacent unit tiles land ([10,15) then [15,20)); another
+        // playlist's overlapping start is a different scalar group.
+        db.write(|tx| {
+            tx.insert(&slot(1, 10, 1))?;
+            tx.insert(&slot(1, 15, 2))?;
+            tx.insert(&slot(2, 12, 3))?;
+            Ok(())
+        })
+        .expect("adjacency and cross-group starts are legal");
+        // An overlapping fixed value in the same group aborts: the
+        // neighbor probe derives both ends from the type's width.
+        let err = db.write(|tx| tx.insert(&slot(1, 12, 4))).unwrap_err();
+        assert!(
+            matches!(err, bumbledb::Error::CommitRejected { .. }),
+            "derived-bounds overlap must convict, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn the_key_probe_lane_finds_an_exact_fixed_tuple() {
+        // Pin the whole key (playlist, slot) by constants: classification
+        // takes the key-probe fast lane, whose determinant bytes must be
+        // the stored one-word tail — an exact fixed-interval lookup hits,
+        // a shifted one misses (empty result, never a phantom).
+        let dir = crate::common::TempDir::new("macro-fixed-key-probe");
+        let db = Db::create(dir.path(), Jukebox).expect("create");
+        db.write(|tx| {
+            tx.insert(&Slot {
+                playlist: 1,
+                slot: SlotSpan(Interval::<u64>::fixed(10, 5).expect("in-domain")),
+                track: 77,
+            })
+        })
+        .expect("write");
+        let lookup = |start: u64| {
+            Query::single(Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: bumbledb::AtomSource::Edb(Slot::RELATION),
+                    bindings: vec![
+                        (FieldId(0), Term::Literal(Value::U64(1))),
+                        (
+                            FieldId(1),
+                            Term::Literal(Value::IntervalU64(
+                                Interval::<u64>::fixed(start, 5).expect("in-domain"),
+                            )),
+                        ),
+                        (FieldId(2), Term::Var(VarId(0))),
+                    ],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            })
+        };
+        let mut hit = db.prepare(&lookup(10)).expect("prepare");
+        let mut miss = db.prepare(&lookup(11)).expect("prepare");
+        db.read(|snap| {
+            let answers = snap.execute_collect(&mut hit, &[])?;
+            assert_eq!(answers.len(), 1);
+            assert_eq!(answers.get(0, 0), AnswerValue::U64(77));
+            assert!(snap.execute_collect(&mut miss, &[])?.is_empty());
+            Ok(())
+        })
+        .expect("key probe");
+    }
+
+    /// Q(track) :- Slot(playlist = 1, slot ∋ 12? no — slot covers ?point).
+    fn membership_query(point: u64) -> Query {
+        Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: bumbledb::AtomSource::Edb(Slot::RELATION),
+                bindings: vec![
+                    (FieldId(0), Term::Literal(Value::U64(1))),
+                    (FieldId(1), Term::Literal(Value::U64(point))),
+                    (FieldId(2), Term::Var(VarId(0))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        })
+    }
+
+    #[test]
+    fn membership_allen_and_measure_run_over_derived_bounds() {
+        let dir = crate::common::TempDir::new("macro-fixed-kernels");
+        let db = Db::create(dir.path(), Jukebox).expect("create");
+        db.write(|tx| {
+            for (start, track) in [(10u64, 1u64), (15, 2), (25, 3)] {
+                tx.insert(&Slot {
+                    playlist: 1,
+                    slot: SlotSpan(Interval::<u64>::fixed(start, 5).expect("in-domain")),
+                    track,
+                })?;
+            }
+            Ok(())
+        })
+        .expect("write");
+
+        // Membership: the element-typed literal at the fixed position
+        // reads point membership in the DERIVED [s, s+5)
+        // (`lean/Bumbledb/Query/Membership.lean: pointMem_fixed_u64`).
+        let mut covers_12 = db.prepare(&membership_query(12)).expect("prepare");
+        let mut covers_15 = db.prepare(&membership_query(15)).expect("prepare");
+        let mut covers_20 = db.prepare(&membership_query(20)).expect("prepare");
+        db.read(|snap| {
+            let answers = snap.execute_collect(&mut covers_12, &[])?;
+            assert_eq!(answers.len(), 1);
+            assert_eq!(answers.get(0, 0), AnswerValue::U64(1));
+            // Half-open at the derived end: 15 belongs to [15, 20) only.
+            let answers = snap.execute_collect(&mut covers_15, &[])?;
+            assert_eq!(answers.len(), 1);
+            assert_eq!(answers.get(0, 0), AnswerValue::U64(2));
+            // The gap [20, 25) covers nothing.
+            let answers = snap.execute_collect(&mut covers_20, &[])?;
+            assert!(answers.is_empty());
+            Ok(())
+        })
+        .expect("membership");
+
+        // Allen over derived bounds: [10,15) meets [15,20) — the classify
+        // kernel reads the image's derived end column. Equality of two
+        // fixed values canonicalizes to Allen(EQUALS) the same way.
+        let allen_query = Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            atoms: vec![
+                Atom {
+                    source: bumbledb::AtomSource::Edb(Slot::RELATION),
+                    bindings: vec![
+                        (FieldId(1), Term::Var(VarId(2))),
+                        (FieldId(2), Term::Var(VarId(0))),
+                    ],
+                },
+                Atom {
+                    source: bumbledb::AtomSource::Edb(Slot::RELATION),
+                    bindings: vec![
+                        (FieldId(1), Term::Var(VarId(3))),
+                        (FieldId(2), Term::Var(VarId(1))),
+                    ],
+                },
+            ],
+            negated: vec![],
+            conditions: vec![ConditionTree::Leaf(Comparison {
+                op: CmpOp::Allen {
+                    mask: MaskTerm::Literal(AllenMask::MEETS),
+                },
+                lhs: Term::Var(VarId(2)),
+                rhs: Term::Var(VarId(3)),
+            })],
+        });
+        let mut meets = db.prepare(&allen_query).expect("prepare");
+        db.read(|snap| {
+            let answers = snap.execute_collect(&mut meets, &[])?;
+            let mut pairs: Vec<(u64, u64)> = (0..answers.len())
+                .map(|i| {
+                    let (AnswerValue::U64(a), AnswerValue::U64(b)) =
+                        (answers.get(i, 0), answers.get(i, 1))
+                    else {
+                        panic!("both columns are u64 tracks");
+                    };
+                    (a, b)
+                })
+                .collect();
+            pairs.sort_unstable();
+            assert_eq!(pairs, vec![(1, 2)], "[10,15) meets [15,20), and only it");
+            Ok(())
+        })
+        .expect("allen");
+
+        // The measure of a fixed-width value is the constant w — the
+        // recorded choice: Duration accepts it trivially
+        // (`lean/Bumbledb/Values.lean: fixed_measure_const_u64`).
+        let measure_query = Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
+            atoms: vec![Atom {
+                source: bumbledb::AtomSource::Edb(Slot::RELATION),
+                bindings: vec![
+                    (FieldId(1), Term::Var(VarId(1))),
+                    (FieldId(2), Term::Var(VarId(0))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        });
+        let mut measures = db.prepare(&measure_query).expect("prepare");
+        db.read(|snap| {
+            let answers = snap.execute_collect(&mut measures, &[])?;
+            assert_eq!(answers.len(), 3);
+            for i in 0..answers.len() {
+                assert_eq!(
+                    answers.get(i, 1),
+                    AnswerValue::U64(5),
+                    "Duration of a fixed-width value is the constant w"
+                );
+            }
+            Ok(())
+        })
+        .expect("measure");
     }
 }

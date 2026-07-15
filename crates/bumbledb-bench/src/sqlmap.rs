@@ -522,6 +522,7 @@ mod tests {
                             "active",
                             ValueType::Interval {
                                 element: IntervalElement::I64,
+                                width: None,
                             },
                         ),
                     ],
@@ -535,6 +536,7 @@ mod tests {
                             "u",
                             ValueType::Interval {
                                 element: IntervalElement::U64,
+                                width: None,
                             },
                         ),
                     ],
@@ -687,7 +689,8 @@ mod tests {
             from_sql_value(
                 &rusqlite::types::Value::Integer(0),
                 &ValueType::Interval {
-                    element: IntervalElement::I64
+                    element: IntervalElement::I64,
+                    width: None
                 }
             )
             .is_err()

@@ -29,6 +29,7 @@ fn example() -> SchemaDescriptor {
                         "active",
                         ValueType::Interval {
                             element: IntervalElement::I64,
+                            width: None,
                         },
                     ),
                 ],
@@ -55,6 +56,7 @@ fn example() -> SchemaDescriptor {
                         "span",
                         ValueType::Interval {
                             element: IntervalElement::U64,
+                            width: None,
                         },
                     ),
                 ],

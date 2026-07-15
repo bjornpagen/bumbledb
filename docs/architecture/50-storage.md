@@ -75,10 +75,18 @@ facts, never interned, so the key hash carries no type tag: forward
   encodings, concatenated in statement order — order embeddings, so key order is
   value order (`lean/Bumbledb/Values.lean: encode_u64_order_embedding`,
   `encode_i64_order_embedding`). An interval field (always last —
-  `30-dependencies.md` gate) contributes its 16 bytes, so within one scalar-prefix
+  `30-dependencies.md` gate) contributes its 16 bytes — and a FIXED-WIDTH
+  interval field (`interval<E, w>`, `10-data-model.md` § the admission rule)
+  contributes its ONE 8-byte start word, the width halving: the end is the
+  type's, re-derived wherever the tail is read (the neighbor probe, the
+  coverage walk, the sweeper's disjointness pass all parse the tail through
+  the key's interval-tail shape). Either way, within one scalar-prefix
   group the determinant B-tree is **ordered by interval start**
-  (`lean/Bumbledb/Values.lean: encode_interval_order`): the property the
-  pointwise check and the coverage walk stand on. A `bytes<N>` field contributes
+  (`lean/Bumbledb/Values.lean: encode_interval_order`; the fixed family's
+  one word is trivially the scalar embedding, `encode_fixed_order_u64`):
+  the property the pointwise check and the coverage walk stand on. A
+  stored fixed start at or past the Q2 bound (`start + w < MAX_END`) is
+  corruption, exactly as an inverted general interval is. A `bytes<N>` field contributes
   its ⌈N/8⌉ padded words — memcmp order over the uniform-width padded encodings is
   value-byte order, which is all the determinant needs (order *operations* on `bytes<N>`
   stay refused at the query surface; sortedness is the index's need, not a
@@ -371,6 +379,12 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   (start, end) — the image layer has no 16-byte column kind, membership and overlap
   lower to word comparisons over the pair (`40-execution.md`), and every existing
   kernel shape (predicate scan, compaction, gather, fold) applies unchanged. A
+  fixed-width interval field (`interval<E, w>` — 8 stored bytes, the start)
+  fills the SAME two columns: the image derivation computes
+  `end = start + w` in the order-preserving word domain (the bias is
+  additive, so the derived end is exact for either element), so membership
+  and Allen classify over derived bounds through kernels that never learn a
+  width existed. A
   `bytes<N>` field generalizes the same precedent: ⌈N/8⌉ parallel word columns
   (one plain word column for N ≤ 8), with the trailing pad validated zero at
   decode. The multi-byte unit exists only in `fact_bytes` and determinant keys, where
@@ -474,9 +488,8 @@ design — recorded so nobody re-derives it:
   LMDB never shrinks its file; length reflects peak usage.
 - **Several `_data` entries per fact by design**: fact (`F`) + membership hash
   (`M`) + one FD determinant (`U`) per key + one reverse edge (`R`) per satisfied
-  containment direction, per window whose φ the fact satisfies, and per order
-  mark on the relation. This is deliberate rent for O(log n) commit-time
-  judgment checks and stays.
+  containment direction and per window whose φ the fact satisfies. This is
+  deliberate rent for O(log n) commit-time judgment checks and stays.
 - **16 KB pages** on Apple Silicon (LMDB uses the OS page size) — chunkier
   B-tree overhead than SQLite's 4 KB pages with varint-packed rows.
 

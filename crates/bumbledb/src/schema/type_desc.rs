@@ -13,7 +13,10 @@ impl ValueType {
             Self::I64 => TypeDesc::I64,
             Self::String => TypeDesc::String,
             Self::FixedBytes { len } => TypeDesc::FixedBytes { len: *len },
-            Self::Interval { element } => TypeDesc::Interval { element: *element },
+            Self::Interval { element, width } => TypeDesc::Interval {
+                element: *element,
+                width: *width,
+            },
         }
     }
 }

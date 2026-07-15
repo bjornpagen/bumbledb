@@ -16,18 +16,61 @@ Bytes(N), N ∈ 1..=64     ⌈N/8⌉ × 8 bytes in facts: the N raw bytes, zero-
                          (a nonzero pad byte is corruption); never interned
 Interval(element)        16 bytes: start ‖ end, each the element encoding;
                          element ∈ {U64, I64}; strictly start < end
+Interval(element, w)     8 bytes: the START only — interval<E, w>, w ≥ 1;
+                         the width is the type, the end derives as start + w,
+                         and start + w < MAX_END holds by construction (Q2:
+                         a stored start at or past the bound is corruption)
 ```
 
 The order-preservation claims are the order-embedding theorems
 (`lean/Bumbledb/Values.lean: encode_u64_order_embedding`,
-`encode_i64_order_embedding`).
-Six pure value types (`bytes<N>` replaced variable `bytes`; the enum died —
-its obituary below; a vocabulary is a **closed relation**, § closed relations,
-not a type). The width is part of `bytes<N>`'s type, so `bytes<16>` and
-`bytes<32>` are different types and a width change is a new theory, fed to the
-fingerprint. Type equality is **structural equality of the description**;
-unification, comparison legality, and dependency compatibility are all just
-that equality. There is no `name` field anywhere in the type layer.
+`encode_i64_order_embedding`; the fixed-width family's is trivially the
+scalar embedding of its starts — `encode_fixed_order_u64`).
+Six structural shapes, two of them parameterized families — and the roster
+grows honestly by saying so: `bytes<N>` and the fixed-width intervals
+`interval<u64, w>` / `interval<i64, w>` are ONE type per parameter value,
+the `bytes<N>` precedent generalized (`bytes<N>` replaced variable `bytes`;
+the enum died — its obituary below; a vocabulary is a **closed relation**,
+§ closed relations, not a type). The width is part of the type, so
+`bytes<16>` and `bytes<32>` — and `interval<u64, 1>` and `interval<u64, 2>`,
+and `interval<u64, w>` against `interval<u64>` — are different types and a
+width change is a new theory, fed to the fingerprint. Type equality is
+**structural equality of the description**; unification, comparison
+legality, and dependency compatibility are all just that equality. There is
+no `name` field anywhere in the type layer.
+
+**THE ADMISSION RULE (normative): a type parameter is admitted iff it
+CHANGES THE ENCODING.** `bytes<N>`'s length sizes the field; `interval<E, w>`'s
+width halves it — one word instead of two, the end derived, never stored
+(`lean/Bumbledb/Values.lean: encodeAt`, the one-word arm;
+`value_eq_iff_encode_eq` carries identity on the start alone). A parameter
+that merely CHECKS values — a refinement like `u64 where v < 100`, a CHECK
+constraint in type costume — changes no byte and is therefore NOT a type:
+two "types" differing only in a predicate would carry identical encodings,
+and *a type is an encoding* would be false. Predicate parameters stay
+refused (Tier 3 — `lean/Bumbledb/Countermodels.lean` § the Q2
+ray-exclusion, the refusal's recorded boundary); everything relational
+belongs to the statement layer, and a per-value rule that is not a
+dependency is the host's to refuse at construction.
+
+**`interval<E, w>` in one paragraph.** The value is the half-open
+`[s, s + w)`; the carrier is the start under the Q2 bound
+`start + w < MAX_END` — wide values are unrepresentable, and no fixed-width
+value is ever a ray (`lean/Bumbledb/Values.lean: FixedU64.not_ray`): the
+one slot the general type spells at the ceiling would denote an unbounded
+tail, so the bound makes it unconstructible
+(`lean/Bumbledb/Countermodels.lean: unit_slot_at_ceiling_unconstructible`);
+rays stay exclusive to the general type. `Interval::fixed(start, w)` is the
+parsing constructor that discharges the bound. The measure of a fixed-width
+value is the constant `w`, and the measure position ACCEPTS it trivially —
+the recorded choice (`lean/Bumbledb/Values.lean: fixed_measure_const_u64`):
+`Duration` is total on non-rays, and a value-independent answer is a
+theorem, not an error. Membership, Allen, and the pointwise judgments all
+read the derived `[s, s + w)` through the same machinery the general type
+feeds (`lean/Bumbledb/Query/Membership.lean: pointMem_fixed_u64`;
+`lean/Bumbledb/Schema.lean: Header.isInterval` answers `true` for the
+family, so `intervalSplit` and both pointwise judgments engage with zero
+changes to any dependency judgment).
 
 **The decision rule for byte-shaped data: intern what repeats; inline what
 identifies.** `str` is the reuse-shaped population (names, labels: low cardinality,

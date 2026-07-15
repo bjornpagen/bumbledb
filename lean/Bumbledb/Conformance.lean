@@ -86,6 +86,16 @@ def renderValue : Value → String
   | { type := .interval .i64, val := iv } =>
     "{\"interval_i64\":[" ++ toString iv.start.val ++ "," ++
       toString iv.«end».val ++ "]}"
+  -- The fixed-width family: start + width render (injective — the
+  -- width is the type's, and the tag separates the family from the
+  -- general spelling). No corpus case carries one yet; the arm keeps
+  -- the renderer total and honest.
+  | { type := .intervalFixed .u64 w, val := v } =>
+    "{\"interval_u64_fixed\":[" ++ toString v.val.val ++ "," ++
+      toString w ++ "]}"
+  | { type := .intervalFixed .i64 w, val := v } =>
+    "{\"interval_i64_fixed\":[" ++ toString v.val.val ++ "," ++
+      toString w ++ "]}"
 
 /-- One answer row: a value array. -/
 def renderRow (row : List Value) : String :=
@@ -500,6 +510,22 @@ def packVals : List Value → Except String (List Value)
       | none => Except.error "a mixed-type Pack input"
     .ok ((pack ivs).map fun iv => ⟨.interval .u64, iv⟩)
   | vals@({ type := .interval .i64, val := _ } :: _) => do
+    let ivs ← vals.mapM fun v =>
+      match v.intervalI64 with
+      | some iv => Except.ok iv
+      | none => Except.error "a mixed-type Pack input"
+    .ok ((pack ivs).map fun iv => ⟨.interval .i64, iv⟩)
+  -- Fixed-width claims pack through their derived intervals
+  -- (`Value.intervalU64`'s fixed arm); the packed output is the
+  -- GENERAL type — coalescing does not preserve a width, so Pack's
+  -- result column is `interval<E>`, exactly the engine's typing.
+  | vals@({ type := .intervalFixed .u64 _, val := _ } :: _) => do
+    let ivs ← vals.mapM fun v =>
+      match v.intervalU64 with
+      | some iv => Except.ok iv
+      | none => Except.error "a mixed-type Pack input"
+    .ok ((pack ivs).map fun iv => ⟨.interval .u64, iv⟩)
+  | vals@({ type := .intervalFixed .i64 _, val := _ } :: _) => do
     let ivs ← vals.mapM fun v =>
       match v.intervalI64 with
       | some iv => Except.ok iv

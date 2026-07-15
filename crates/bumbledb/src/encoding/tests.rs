@@ -108,9 +108,11 @@ fn mixed_layout() -> FactLayout {
         TypeDesc::FixedBytes { len: 12 },
         TypeDesc::Interval {
             element: IntervalElement::U64,
+            width: None,
         },
         TypeDesc::Interval {
             element: IntervalElement::I64,
+            width: None,
         },
     ])
 }
@@ -684,4 +686,177 @@ fn fact_hash_is_full_32_byte_blake3() {
     assert_eq!(hash.len(), 32);
     assert_eq!(hash, *blake3::hash(bytes).as_bytes());
     assert_ne!(fact_hash(b"a"), fact_hash(b"b"));
+}
+
+// ---------------------------------------------------------------------
+// The fixed-width interval family — interval<E, w>: one stored word (the
+// start), the end derived from the TYPE's width, the Q2 bound
+// (`start + w < MAX_END`) the corruption line
+// (`lean/Bumbledb/Values.lean: FixedU64.not_ray`).
+// ---------------------------------------------------------------------
+
+/// A one-fixed-field layout per element domain, width `w`.
+fn fixed_layout(element: IntervalElement, width: u64) -> FactLayout {
+    FactLayout::new(&[
+        TypeDesc::U64,
+        TypeDesc::Interval {
+            element,
+            width: Some(width),
+        },
+    ])
+}
+
+#[test]
+fn fixed_interval_round_trips_one_word() {
+    // The encoding is the start word — 8 bytes, not 16 — and decode
+    // re-derives the end from the layout's constant width.
+    for (start, width) in [(0u64, 1u64), (3, 5), (1 << 40, 1 << 20), (u64::MAX - 3, 1)] {
+        let layout = fixed_layout(IntervalElement::U64, width);
+        assert_eq!(layout.fact_width(), 16, "8-byte scalar + 8-byte start");
+        let interval = crate::Interval::<u64>::fixed(start, width).expect("in-domain fixed value");
+        let mut fact = Vec::new();
+        encode_fact(
+            &[ValueRef::U64(9), ValueRef::FixedIntervalU64(interval)],
+            &layout,
+            &mut fact,
+        );
+        assert_eq!(field_bytes(&fact, &layout, 1), encode_u64(start));
+        assert_eq!(
+            decode_field(&fact, &layout, 1),
+            Ok(ValueRef::FixedIntervalU64(interval))
+        );
+    }
+    for (start, width) in [(i64::MIN, 7u64), (-1, 2), (0, 1), (i64::MAX - 3, 1)] {
+        let layout = fixed_layout(IntervalElement::I64, width);
+        let interval = crate::Interval::<i64>::fixed(start, width).expect("in-domain fixed value");
+        let mut fact = Vec::new();
+        encode_fact(
+            &[ValueRef::U64(9), ValueRef::FixedIntervalI64(interval)],
+            &layout,
+            &mut fact,
+        );
+        assert_eq!(field_bytes(&fact, &layout, 1), encode_i64(start));
+        assert_eq!(
+            decode_field(&fact, &layout, 1),
+            Ok(ValueRef::FixedIntervalI64(interval))
+        );
+    }
+}
+
+#[test]
+fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
+    // Stored starts at or past `MAX_END − w` would derive a ceiling or
+    // overflowed end — corruption, never a value; the boundary's inside
+    // edge decodes. Both element ceilings encode to the same word, so
+    // one word-domain sweep covers the u64 face...
+    for width in [1u64, 5, 1 << 33] {
+        let layout = fixed_layout(IntervalElement::U64, width);
+        let bound = u64::MAX - width; // start + w == MAX_END: barred
+        for start in [bound, bound + 1, u64::MAX] {
+            let mut fact = Vec::new();
+            encode_fact(
+                &[ValueRef::U64(0), ValueRef::U64(start)],
+                &layout,
+                &mut fact,
+            );
+            assert_eq!(
+                decode_field(&fact, &layout, 1),
+                Err(CorruptionError::InvalidFixedIntervalStart(encode_u64(
+                    start
+                ))),
+                "start {start} under width {width} sits at/past the Q2 bound"
+            );
+        }
+        let inside = bound - 1;
+        let mut fact = Vec::new();
+        encode_fact(
+            &[ValueRef::U64(0), ValueRef::U64(inside)],
+            &layout,
+            &mut fact,
+        );
+        assert_eq!(
+            decode_field(&fact, &layout, 1),
+            Ok(ValueRef::FixedIntervalU64(
+                crate::Interval::<u64>::fixed(inside, width).expect("inside the bound")
+            ))
+        );
+    }
+    // ...and the i64 face rejects at ITS ceiling (`i64::MAX` encodes to
+    // the same u64::MAX word — one bound, two domains).
+    let layout = fixed_layout(IntervalElement::I64, 4);
+    let mut fact = Vec::new();
+    encode_fact(
+        &[ValueRef::U64(0), ValueRef::I64(i64::MAX - 4)],
+        &layout,
+        &mut fact,
+    );
+    assert_eq!(
+        decode_field(&fact, &layout, 1),
+        Err(CorruptionError::InvalidFixedIntervalStart(encode_i64(
+            i64::MAX - 4
+        )))
+    );
+}
+
+/// The fixed encoding is trivially the scalar embedding
+/// (`lean/Bumbledb/Values.lean: encode_fixed_order_u64`): the one stored
+/// word is `encode_u64`/`encode_i64` of the start, so the exhaustive
+/// scalar suites above ARE this family's order proof. This arm pins the
+/// residue those suites cannot see: across a dense start grid and width
+/// extremes, the stored word ordering equals start ordering AND the
+/// derived ends stay exact — dense grid, the Q2 boundary, w extremes.
+#[test]
+fn exhaustive_fixed_interval_start_word_preserves_start_order() {
+    for width in [1u64, 2, 255, 1 << 32, u64::MAX - 2] {
+        let layout = fixed_layout(IntervalElement::U64, width);
+        let ceiling = u64::MAX - width; // the least barred start
+        let mut starts = std::collections::BTreeSet::new();
+        starts.extend(0..=64u64);
+        starts.extend((0..=8).map(|k| ceiling.saturating_sub(k + 1)));
+        let starts: Vec<u64> = starts.into_iter().filter(|s| *s < ceiling).collect();
+        let mut encoded = Vec::new();
+        for &start in &starts {
+            let interval =
+                crate::Interval::<u64>::fixed(start, width).expect("inside the Q2 bound");
+            assert_eq!(interval.end(), start + width, "the derived end is exact");
+            let mut fact = Vec::new();
+            encode_fact(
+                &[ValueRef::U64(0), ValueRef::FixedIntervalU64(interval)],
+                &layout,
+                &mut fact,
+            );
+            encoded.push(field_bytes(&fact, &layout, 1).to_vec());
+        }
+        for (i, x) in starts.iter().enumerate() {
+            for (j, y) in starts.iter().enumerate() {
+                assert_eq!(
+                    encoded[i].cmp(&encoded[j]),
+                    x.cmp(y),
+                    "width {width}: {x} vs {y}"
+                );
+            }
+        }
+    }
+    // The i64 face across the sign boundary: start order = word order.
+    let layout = fixed_layout(IntervalElement::I64, 3);
+    let starts: Vec<i64> = (-40..=40).collect();
+    let encoded: Vec<Vec<u8>> = starts
+        .iter()
+        .map(|&start| {
+            let interval = crate::Interval::<i64>::fixed(start, 3).expect("inside the Q2 bound");
+            assert_eq!(interval.end(), start + 3, "the derived end is exact");
+            let mut fact = Vec::new();
+            encode_fact(
+                &[ValueRef::U64(0), ValueRef::FixedIntervalI64(interval)],
+                &layout,
+                &mut fact,
+            );
+            field_bytes(&fact, &layout, 1).to_vec()
+        })
+        .collect();
+    for (i, x) in starts.iter().enumerate() {
+        for (j, y) in starts.iter().enumerate() {
+            assert_eq!(encoded[i].cmp(&encoded[j]), x.cmp(y), "{x} vs {y}");
+        }
+    }
 }
