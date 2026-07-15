@@ -9,6 +9,7 @@
 pub mod calendar;
 pub mod cli;
 pub mod clockproxy;
+pub mod closure;
 pub mod compare;
 pub mod conformance;
 pub mod corpus;

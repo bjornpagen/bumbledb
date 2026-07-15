@@ -77,6 +77,7 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
         .iter()
         .map(|f| f.name)
         .chain(crate::calendar::families::all().iter().map(|f| f.name))
+        .chain(crate::closure::all().iter().map(|f| f.name))
         .chain(families::write_families().iter().map(|f| f.name))
         .collect();
     if let Some(filter) = &args.families {
@@ -166,6 +167,21 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     }
     let flames = std::mem::take(&mut run.flames);
     drop(run);
+
+    // The closure lane (the roster extension): its own scratch world,
+    // verified inline (the recursion surface is translator-
+    // inexpressible, so it sits outside the stamped registry), timed
+    // under the same protocol — report-only rows beside the reads. It
+    // runs after the stamped read families (its corpus load commits
+    // fsync) and before the write families (it times reads).
+    reads.extend(crate::closure::bench_families(
+        cfg,
+        &out_dir.join("scratch"),
+        &selected,
+        proto,
+        args.alloc,
+        args.proxy_per_rep,
+    )?);
 
     // Write families run AFTER every read family (measured): an
     // fsync drops the core to its DVFS floor with
