@@ -176,7 +176,7 @@ part of the spec.
   field splits to `some` at ANY written position, two intervals and
   all-scalar split to `none`.
 
-## Extension residents (cardinality windows, order marks, E3)
+## Extension residents (cardinality windows, E3)
 
 * `unit_window_two_children` — the `1..1` window refuted by one
   parent with two distinct children (the bare-`==` rows, reread):
@@ -191,12 +191,6 @@ part of the spec.
   (`selTrue_group_union` / `selFalse_group_union` — each literal's
   child group transfers whole). Counts over a union do not decompose;
   the admitted count-vectors of a union window are not a product set.
-
-* `order_gap` and `order_duplicate` — the two ways a hand-numbered
-  position column lies: positions `{1, 3}` break downward closure at
-  2, and two distinct rows at position 1 break uniqueness. What the
-  order mark's judgment convicts on a store no generator ever
-  touched.
 
 * `joined_window_blast` — the E1 shape (a window over a joined pair
   of atoms) has NO oracle-bounded enforcement plan, and the refusal
@@ -1306,84 +1300,6 @@ theorem disjunctive_window_not_literal_conjunction :
       rw [selFalse_group_union]
       exact h01.2 g hg hψ
 
-/-! ## The gap and the duplicate (extension 2, `Order.lean`)
-
-The two ways a hand-numbered position column lies: a gap under an
-attained position, and two rows at one position. One group (the
-shared key at field 0), positions at field 1. -/
-
-/-- The position field of the order countermodels. -/
-def ordPosField : FieldId := ⟨1⟩
-
-/-- The gap model's first row: position 1. -/
-def gapRowOne : Fact :=
-  fun i => if i.id = 1 then ⟨.u64, ⟨1, by omega⟩⟩ else keyVal
-
-/-- The gap model's second row: position 3 — position 2 is missing. -/
-def gapRowThree : Fact :=
-  fun i => if i.id = 1 then ⟨.u64, ⟨3, by omega⟩⟩ else keyVal
-
-/-- The gapped relation: one group, positions `{1, 3}`. -/
-def gapRel : Set Fact := fun f => f = gapRowOne ∨ f = gapRowThree
-
-/-- **The gap countermodel (port).** Positions `{1, 3}` refute the
-order mark: downward closure demands a member at 2 below the attained
-3, and none exists. Hand-numbered spacing (`2,3,5,8`-style encodings)
-is exactly this violation. -/
-theorem order_gap : ¬ OrderMark gapRel ordPosField keyProj := by
-  intro h
-  have hgrp := h (gapRowOne.project keyProj)
-  have h3 : gapRowThree ∈
-      GroupOf gapRel keyProj (gapRowOne.project keyProj) :=
-    ⟨Or.inr rfl, rfl⟩
-  obtain ⟨g, hg, hord⟩ :=
-    hgrp.closed gapRowThree h3 2 (by decide) (by decide)
-  cases hg.1 with
-  | inl h1 =>
-    rw [h1] at hord
-    exact absurd hord (by decide)
-  | inr h1 =>
-    rw [h1] at hord
-    exact absurd hord (by decide)
-
-/-- The duplicate model's first row: position 1, payload `true` at
-field 2. -/
-def dupRowTrue : Fact := fun i =>
-  if i.id = 2 then ⟨.bool, true⟩
-  else if i.id = 1 then ⟨.u64, ⟨1, by omega⟩⟩ else keyVal
-
-/-- The duplicate model's second row: position 1 again, payload
-`false`. -/
-def dupRowFalse : Fact := fun i =>
-  if i.id = 2 then ⟨.bool, false⟩
-  else if i.id = 1 then ⟨.u64, ⟨1, by omega⟩⟩ else keyVal
-
-/-- The duplicated relation: one group, two distinct facts at
-position 1. -/
-def dupRel : Set Fact := fun f => f = dupRowTrue ∨ f = dupRowFalse
-
-/-- The two duplicate rows are distinct facts. -/
-theorem dupRows_ne : dupRowTrue ≠ dupRowFalse := by
-  intro heq
-  have hb : (true : Bool) = false :=
-    congrArg (fun f : Fact => Value.asBool (f ⟨2⟩)) heq
-  cases hb
-
-/-- **The duplicate countermodel (port).** Two distinct facts at
-position 1 refute the order mark: uniqueness would force them equal,
-and the payload observer refuses. -/
-theorem order_duplicate :
-    ¬ OrderMark dupRel ordPosField keyProj := by
-  intro h
-  have hgrp := h (dupRowTrue.project keyProj)
-  have hT : dupRowTrue ∈
-      GroupOf dupRel keyProj (dupRowTrue.project keyProj) :=
-    ⟨Or.inl rfl, rfl⟩
-  have hF : dupRowFalse ∈
-      GroupOf dupRel keyProj (dupRowTrue.project keyProj) :=
-    ⟨Or.inr rfl, rfl⟩
-  exact dupRows_ne (hgrp.unique dupRowTrue dupRowFalse hT hF rfl)
-
 /-! ## The recursion walls (Exec/Fixpoint)
 
 Two countermodels fence the stratified fixpoint's two premises:
@@ -1599,8 +1515,8 @@ parent tag, the pre-state joined sets at both tags are empty, and
 both gain a pair from the one insert. -/
 
 /-- The joined-window model's grouping projection: the parent tag at
-field 1 (`ordPosField`). -/
-def blastGrp : List FieldId := [ordPosField]
+field 1. -/
+def blastGrp : List FieldId := [⟨1⟩]
 
 /-- The pre-instance: relation 0 (the A side) holds the two join
 facts — shared join key `keyVal` at field 0, distinct parent tags at

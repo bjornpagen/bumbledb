@@ -16,9 +16,8 @@
 //! U  FD determinants      resolves back + per-group pointwise disjointness
 //! R  reverse edges  resolves back to a live source inside φ (the heart:
 //!                   the one namespace with no online verification) —
-//!                   containment, window, and order edges alike
-//! marks             the order-mark walk over every group, plus the
-//!                   closed-parent window roster
+//!                   containment and window edges alike
+//! marks             the closed-parent window roster
 //! S  counters       row count and high-water against the F tallies
 //! _dict             dangling-id statistic (the accepted leak)
 //! ```
@@ -45,9 +44,7 @@
 //! F scan on their parent side (every ψ-selected parent counts its child
 //! group through the commit path's own walk —
 //! [`StoreFinding::WindowViolation`]); closed parents re-check in the
-//! marks pass. **Order marks** are walked whole in the marks pass —
-//! every group, the commit path's own ordered walk
-//! ([`StoreFinding::OrderViolation`]).
+//! marks pass.
 //!
 //! Findings are data, not errors: a desynced store returns `Ok` with a
 //! populated report and the *caller* decides fatality. `Err` is
@@ -172,16 +169,6 @@ pub enum StoreFinding {
         fact: Box<[u8]>,
         /// The observed child-group count.
         count: u64,
-    },
-    /// An order statement globally violated by the committed state: a
-    /// group breaking the ordinal discipline or the ranked monotonicity
-    /// (`lean/Bumbledb/Order.lean: OrderMark` / `RankedOrderMark`) — the
-    /// commit path's own ordered group walk, run over every group.
-    OrderViolation {
-        statement: StatementId,
-        defect: crate::error::OrderDefect,
-        /// The convicting group member — canonical bytes.
-        fact: Box<[u8]>,
     },
     /// The stored `S` row count disagrees with the `F`-scan cardinality.
     RowCountDesync {

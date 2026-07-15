@@ -1173,21 +1173,15 @@ mod citation_set {
     }
 }
 
-// ---------- the extension forms (windows and order marks) ----------
+// ---------- the extension form (windows) ----------
 
 mod marks {
     use super::*;
 
     const HOLDER: RelationId = RelationId(0);
     const ACCOUNT: RelationId = RelationId(1);
-    const ITEM: RelationId = RelationId(2);
-    const STEP: RelationId = RelationId(3);
-    const KIND_RANK: RelationId = RelationId(4);
-    /// Materialized: the `Holder` key (0), the `KindRank` key (1), the window (2),
-    /// the item order (3), the ranked step order (4).
-    const WINDOW: u16 = 2;
-    const ITEM_ORDER: u16 = 3;
-    const STEP_ORDER: u16 = 4;
+    /// Materialized: the `Holder` key (0), the window (1).
+    const WINDOW: u16 = 1;
 
     fn window(statement: u16) -> Violation {
         Violation::Cardinality {
@@ -1195,17 +1189,8 @@ mod marks {
         }
     }
 
-    fn order(statement: u16) -> Violation {
-        Violation::Order {
-            statement: StatementId(statement),
-        }
-    }
-
     /// Holder(id, tag; key id); Account(holder, kind, num) with
-    /// `Account(holder | kind == 1) in 1..2 per Holder(id)`;
-    /// Item(doc, pos, note) with `order Item(pos) per Item(doc)`;
-    /// Step(flow, pos, kind) ranked by `kind -> KindRank(rank)` over
-    /// KindRank(kind, rank; key kind).
+    /// `Account(holder | kind == 1) in 1..2 per Holder(id)`.
     fn schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1223,37 +1208,10 @@ mod marks {
                         field("num", ValueType::U64),
                     ],
                 },
-                RelationDescriptor {
-                    extension: None,
-                    name: "Item".into(),
-                    fields: vec![
-                        field("doc", ValueType::U64),
-                        field("pos", ValueType::U64),
-                        field("note", ValueType::U64),
-                    ],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "Step".into(),
-                    fields: vec![
-                        field("flow", ValueType::U64),
-                        field("pos", ValueType::U64),
-                        field("kind", ValueType::U64),
-                    ],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "KindRank".into(),
-                    fields: vec![field("kind", ValueType::U64), field("rank", ValueType::U64)],
-                },
             ],
             statements: vec![
                 StatementDescriptor::Functionality {
                     relation: HOLDER,
-                    projection: Box::new([FieldId(0)]),
-                },
-                StatementDescriptor::Functionality {
-                    relation: KIND_RANK,
                     projection: Box::new([FieldId(0)]),
                 },
                 StatementDescriptor::Cardinality {
@@ -1269,25 +1227,6 @@ mod marks {
                     hi: Some(2),
                     target: side(HOLDER, &[0], &[]),
                 },
-                StatementDescriptor::Order {
-                    relation: ITEM,
-                    position: FieldId(1),
-                    grouping: Box::new([FieldId(0)]),
-                    ranking: None,
-                },
-                StatementDescriptor::Order {
-                    relation: STEP,
-                    position: FieldId(1),
-                    grouping: Box::new([FieldId(0)]),
-                    ranking: Some(bumbledb::schema::RankChain {
-                        link: FieldId(2),
-                        hops: Box::new([bumbledb::schema::RankHop {
-                            relation: KIND_RANK,
-                            key: FieldId(0),
-                            read: FieldId(1),
-                        }]),
-                    }),
-                },
             ],
         }
     }
@@ -1301,24 +1240,6 @@ mod marks {
             ACCOUNT,
             vec![Value::U64(holder), Value::U64(kind), Value::U64(num)],
         )
-    }
-
-    fn item(doc: u64, pos: u64, note: u64) -> (RelationId, Vec<Value>) {
-        (
-            ITEM,
-            vec![Value::U64(doc), Value::U64(pos), Value::U64(note)],
-        )
-    }
-
-    fn step(flow: u64, pos: u64, kind: u64) -> (RelationId, Vec<Value>) {
-        (
-            STEP,
-            vec![Value::U64(flow), Value::U64(pos), Value::U64(kind)],
-        )
-    }
-
-    fn kind_rank(kind: u64, rank: u64) -> (RelationId, Vec<Value>) {
-        (KIND_RANK, vec![Value::U64(kind), Value::U64(rank)])
     }
 
     #[test]
@@ -1367,50 +1288,6 @@ mod marks {
                     deletes: vec![holder(7), account(7, 1, 0)],
                     inserts: vec![],
                     verdict: Ok(()),
-                },
-            ],
-        );
-    }
-
-    #[test]
-    fn order_discipline() {
-        run(
-            &schema(),
-            vec![
-                Case {
-                    name: "adjacent positions are exactly 1..k",
-                    base: vec![],
-                    deletes: vec![],
-                    inserts: vec![item(1, 1, 10), item(1, 2, 11), item(1, 3, 12)],
-                    verdict: Ok(()),
-                },
-                Case {
-                    name: "the gap convicts",
-                    base: vec![],
-                    deletes: vec![],
-                    inserts: vec![item(1, 1, 10), item(1, 3, 12)],
-                    verdict: Err(order(ITEM_ORDER)),
-                },
-                Case {
-                    name: "the duplicate convicts",
-                    base: vec![],
-                    deletes: vec![],
-                    inserts: vec![item(1, 1, 10), item(1, 1, 11)],
-                    verdict: Err(order(ITEM_ORDER)),
-                },
-                Case {
-                    name: "a lone position 2 is not 1-based",
-                    base: vec![],
-                    deletes: vec![],
-                    inserts: vec![item(1, 2, 10)],
-                    verdict: Err(order(ITEM_ORDER)),
-                },
-                Case {
-                    name: "a removal can break downward closure",
-                    base: vec![item(1, 1, 10), item(1, 2, 11)],
-                    deletes: vec![item(1, 1, 10)],
-                    inserts: vec![],
-                    verdict: Err(order(ITEM_ORDER)),
                 },
             ],
         );
@@ -1542,81 +1419,6 @@ mod marks {
                     deletes: vec![account(1, 1, 0), account(1, 1, 1)],
                     inserts: vec![account(1, 1, 0)],
                     verdict: Err(window(1)),
-                },
-            ],
-        );
-    }
-
-    /// The one-transaction renumber and the order-side
-    /// delete-then-reinsert seam (the touched group is re-walked; the
-    /// net-nothing delta commits, the renumber commits whole).
-    #[test]
-    fn order_renumber_and_reinsert_seams() {
-        run(
-            &schema(),
-            vec![
-                Case {
-                    name: "a one-txn renumber commits",
-                    base: vec![item(1, 1, 10), item(1, 2, 11)],
-                    deletes: vec![item(1, 2, 11)],
-                    inserts: vec![item(1, 2, 12), item(1, 3, 11)],
-                    verdict: Ok(()),
-                },
-                Case {
-                    name: "a net-nothing delete-reinsert leaves the ordered group green",
-                    base: vec![item(1, 1, 10), item(1, 2, 11)],
-                    deletes: vec![item(1, 1, 10)],
-                    inserts: vec![item(1, 1, 10)],
-                    verdict: Ok(()),
-                },
-                Case {
-                    name: "a net-nothing reinsert beside a real deletion breaks closure",
-                    base: vec![item(1, 1, 10), item(1, 2, 11)],
-                    deletes: vec![item(1, 1, 10), item(1, 2, 11)],
-                    inserts: vec![item(1, 2, 11)],
-                    verdict: Err(order(ITEM_ORDER)),
-                },
-            ],
-        );
-    }
-
-    #[test]
-    fn ranked_monotonicity() {
-        run(
-            &schema(),
-            vec![
-                Case {
-                    name: "monotone ranks commit",
-                    base: vec![kind_rank(10, 1), kind_rank(20, 2)],
-                    deletes: vec![],
-                    inserts: vec![step(1, 1, 10), step(1, 2, 20)],
-                    verdict: Ok(()),
-                },
-                Case {
-                    name: "an inversion convicts",
-                    base: vec![kind_rank(10, 1), kind_rank(20, 2)],
-                    deletes: vec![],
-                    inserts: vec![step(1, 1, 20), step(1, 2, 10)],
-                    verdict: Err(order(STEP_ORDER)),
-                },
-                Case {
-                    name: "a rankless member imposes nothing",
-                    base: vec![kind_rank(10, 1), kind_rank(20, 2)],
-                    deletes: vec![],
-                    inserts: vec![step(1, 1, 10), step(1, 2, 30), step(1, 3, 20)],
-                    verdict: Ok(()),
-                },
-                Case {
-                    name: "a hop rewrite convicts an untouched group",
-                    base: vec![
-                        kind_rank(10, 1),
-                        kind_rank(20, 2),
-                        step(1, 1, 10),
-                        step(1, 2, 20),
-                    ],
-                    deletes: vec![kind_rank(10, 1)],
-                    inserts: vec![kind_rank(10, 3)],
-                    verdict: Err(order(STEP_ORDER)),
                 },
             ],
         );

@@ -38,16 +38,15 @@ use std::ops::Bound;
 
 use heed::{AnyTls, RoTxn};
 
-use super::plan::{CommitPlan, OrderScope};
+use super::plan::CommitPlan;
 use super::{decode_row_id, fact_by_row};
 use crate::encoding::{FactLayout, encode_u64, field_bytes};
-use crate::error::{CorruptionError, Direction, Error, OrderDefect, Result, Violation, Violations};
+use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
     AxiomIndex, CardinalityStatement, CompiledCheck, ContainmentId, DisjointDeterminantProof,
-    Enforcement, FieldId, KeyId, OrderStatement, RelationId, Schema, SealedRankChain, StatementId,
-    StatementView, WindowId,
+    Enforcement, FieldId, KeyId, RelationId, Schema, StatementId, StatementView, WindowId,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -74,16 +73,14 @@ impl<'state, 'env, 'delta> FinalStateView<'state, 'env, 'delta> {
 }
 
 /// Judges the whole statement phase against one named final state —
-/// containments (both directions), cardinality windows (per touched
-/// parent), and order marks (per touched group) — and seals the complete
-/// violation set of the phase
+/// containments (both directions) and cardinality windows (per touched
+/// parent) — and seals the complete violation set of the phase
 /// (`lean/Bumbledb/Txn.lean: rejection_is_complete`, the statement arm).
 pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Option<Violations>> {
     let mut violations = Vec::new();
     check_source(view, &mut violations)?;
     check_target(view, &mut violations)?;
     check_windows(view, &mut violations)?;
-    check_orders(view, &mut violations)?;
     Ok(Violations::seal(violations))
 }
 
@@ -136,7 +133,7 @@ type InternResolver<'a> = dyn FnMut(&[u8]) -> Result<Option<u64>> + 'a;
 
 /// Pre-encoded selections for every `Containment` and `Cardinality`
 /// statement, built once per commit — the commit-local scratch that keeps
-/// literal encoding out of the per-fact loops. (Order marks carry no σ.)
+/// literal encoding out of the per-fact loops.
 pub(crate) struct Selections {
     /// Dense by [`ContainmentId`]; every slot is a containment by type.
     checks: Box<[SideChecks]>,
@@ -604,48 +601,6 @@ pub(super) fn check_windows(
     Ok(())
 }
 
-/// The order-mark judgment (`docs/architecture/30-dependencies.md`
-/// § enforcement): every TOUCHED group — every grouping tuple any delta
-/// fact of the relation projects to; a dirty `by`-hop relation escalates
-/// to EVERY group (`lean/Bumbledb/Txn/DeltaRestriction.lean:
-/// rankedTouched`) — is walked once in position order
-/// (`lean/Bumbledb/Oracle.lean: order_plan_decides`): uniqueness,
-/// 1-basedness, and downward closure fall out of one `positions are
-/// exactly 1..k` sweep of the group's `R` keys, and the ranked form adds
-/// the key-backed hop chase per member
-/// (`lean/Bumbledb/Oracle.lean: ranked_order_plan_decides`).
-pub(super) fn check_orders(
-    view: &FinalStateView<'_, '_, '_>,
-    violations: &mut Vec<Violation>,
-) -> Result<()> {
-    let FinalStateView { txn, schema, plan } = view;
-    let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
-    let mut span = obs::span(obs::names::JUDGMENT_ORDERS, obs::Category::Commit);
-    let mut walked = 0u64;
-    for check in &plan.order_checks {
-        let statement = schema.order(check.order);
-        match &check.scope {
-            OrderScope::Groups(groups) => {
-                for group in groups {
-                    walked += 1;
-                    if checker.check_order_walk(statement, Some(group.as_bytes()), violations)? {
-                        // The statement is convicted; further groups can
-                        // add no citation (the seal dedups per statement).
-                        break;
-                    }
-                }
-            }
-            OrderScope::AllGroups => {
-                walked += 1;
-                checker.check_order_walk(statement, None, violations)?;
-            }
-        }
-    }
-    span.set_args(walked, 0);
-    span.end();
-    Ok(())
-}
-
 /// Lays one child fact's parent-tuple bytes down in the window's
 /// target-key determinant order — the `R` key-bytes segment of a window
 /// edge, the child-group walk's prefix, and the source half of the
@@ -1060,153 +1015,6 @@ impl<'a> Checker<'a> {
             }
         }
         Ok(count)
-    }
-
-    /// One ordered walk of an order statement's `R` keys — one group
-    /// (`group = Some`) or every group in sequence (`group = None`, the
-    /// ranked escalation's whole-namespace walk). Positions must read
-    /// exactly `1..k` per group — uniqueness, 1-basedness, and downward
-    /// closure in one sweep (`lean/Bumbledb/Order.lean: OrdinalGroup`) —
-    /// and under a sealed `by` chain the ranks read via the key-backed
-    /// hop probes must be non-decreasing in position order
-    /// (`lean/Bumbledb/Order.lean: ranked_tiebreak_lex` — rank decides
-    /// first, the residual order is the position order itself). Returns
-    /// whether the statement was convicted; the walk stops there — one
-    /// citation per statement is the sealed set's identity anyway.
-    pub(crate) fn check_order_walk(
-        &mut self,
-        statement: &OrderStatement,
-        group: Option<&[u8]>,
-        violations: &mut Vec<Violation>,
-    ) -> Result<bool> {
-        let relation = self.schema.relation(statement.relation);
-        let group_width: usize = statement
-            .grouping
-            .iter()
-            .map(|field| relation.field(*field).value_type.type_desc().width())
-            .sum();
-        // Own prefix scratch: the ranked chase below reuses `self.key`.
-        let mut prefix: KeyBuf = [0; MAX_KEY];
-        let p_len = keys::reverse_prefix(&mut prefix, statement.id, group.unwrap_or(&[]));
-        let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
-            (Bound::Included(&prefix[..p_len]), Bound::Unbounded);
-        let mut current_group: Vec<u8> = Vec::new();
-        let mut in_group = false;
-        let mut expected: u64 = 1;
-        let mut prev_pos: Option<[u8; 8]> = None;
-        let mut prev_rank: Option<[u8; 8]> = None;
-        for entry in self.data.range(self.txn, &bounds)? {
-            let (k, _) = entry?;
-            if !k.starts_with(&prefix[..p_len]) {
-                break;
-            }
-            let Some((_, key_bytes, src_rel, src_row)) = keys::parse_reverse_key(k) else {
-                return Err(Error::Corruption(CorruptionError::MalformedValue(
-                    "R key shape",
-                )));
-            };
-            if key_bytes.len() != group_width + 8 {
-                return Err(Error::Corruption(CorruptionError::MalformedValue(
-                    "R key width",
-                )));
-            }
-            if src_rel != statement.relation {
-                return Err(Error::Corruption(CorruptionError::MalformedValue(
-                    "R key source relation",
-                )));
-            }
-            let (group_bytes, pos_bytes) = key_bytes.split_at(group_width);
-            let pos: [u8; 8] = pos_bytes
-                .try_into()
-                .expect("the split leaves exactly the 8-byte position tail");
-            if !in_group || group_bytes != current_group.as_slice() {
-                in_group = true;
-                current_group.clear();
-                current_group.extend_from_slice(group_bytes);
-                expected = 1;
-                prev_pos = None;
-                prev_rank = None;
-            }
-            if pos != encode_u64(expected) {
-                let fact = fact_by_row(self.data, self.txn, src_rel, src_row)?;
-                let defect = if prev_pos == Some(pos) {
-                    OrderDefect::DuplicatePosition
-                } else {
-                    OrderDefect::PositionGap
-                };
-                violations.push(Violation::Order {
-                    statement: statement.id,
-                    defect,
-                    fact: fact.into(),
-                });
-                return Ok(true);
-            }
-            if let Some(chain) = &statement.ranking {
-                let fact = fact_by_row(self.data, self.txn, src_rel, src_row)?;
-                if let Some(rank) = self.chain_rank(chain, statement.relation, fact)? {
-                    // Canonical u64 encodings are order embeddings, so
-                    // byte compare IS rank compare.
-                    if prev_rank.is_some_and(|prev| rank < prev) {
-                        violations.push(Violation::Order {
-                            statement: statement.id,
-                            defect: OrderDefect::RankOrder,
-                            fact: fact.into(),
-                        });
-                        return Ok(true);
-                    }
-                    prev_rank = Some(rank);
-                }
-            }
-            prev_pos = Some(pos);
-            expected += 1;
-        }
-        Ok(false)
-    }
-
-    /// One fact's rank under a sealed `by` chain: chase the key-backed
-    /// hops — per hop one keyed `U` probe (a closed hop relation scans
-    /// its ≤256 sealed axioms instead), one `F` get, one payload slice
-    /// (`lean/Bumbledb/Oracle.lean: chain_cost_hops` — one consultation
-    /// per hop, honest by `point_probe_honest`). A hop miss means the
-    /// fact HAS no rank — the relational reading
-    /// (`lean/Bumbledb/Order.lean: RankChain.rankOf`): rankless facts
-    /// impose no monotonicity, so `None`, never an error. The rank stays
-    /// in its canonical 8-byte encoding — an order embedding, compared as
-    /// bytes.
-    fn chain_rank(
-        &mut self,
-        chain: &SealedRankChain,
-        relation: RelationId,
-        fact: &[u8],
-    ) -> Result<Option<[u8; 8]>> {
-        let layout = self.schema.relation(relation).layout();
-        let mut running: &[u8] = field_bytes(fact, layout, usize::from(chain.link.0));
-        for hop in &chain.hops {
-            let hop_relation = self.schema.relation(hop.relation);
-            let hop_layout = hop_relation.layout();
-            let hop_fact: &[u8] = if let Some(rows) = hop_relation.extension() {
-                match rows.iter().find(|row| {
-                    field_bytes(&row.fact, hop_layout, usize::from(hop.key.0)) == running
-                }) {
-                    Some(row) => &row.fact,
-                    None => return Ok(None),
-                }
-            } else {
-                let key_statement = self.schema.key(hop.key_statement);
-                let u_len =
-                    keys::determinant_key(&mut self.key, hop.relation, key_statement.id, running);
-                let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
-                    return Ok(None);
-                };
-                let row_id = decode_row_id(value)?;
-                fact_by_row(self.data, self.txn, hop.relation, row_id)?
-            };
-            running = field_bytes(hop_fact, hop_layout, usize::from(hop.read.0));
-        }
-        let rank: [u8; 8] = running.try_into().map_err(|_| {
-            Error::Corruption(CorruptionError::MalformedValue("rank payload width"))
-        })?;
-        Ok(Some(rank))
     }
 
     /// The per-segment target-selection check: with an empty σ the determinant

@@ -9,13 +9,12 @@ wants statement-vocabulary standing — enters the vocabulary by
 inhabiting `AdmissibleForm`. The type IS the acceptance gate's
 checklist (`docs/architecture/30-dependencies.md` § the acceptance
 gate), and an inhabitant is the whole mathematical case for
-acceptance: reason about exact operators before writing Rust. Six
-forms inhabit it below — the four fact-level forms
-(`functionalityForm`, `containmentForm`, `cardinalityForm`,
-`orderForm`) and the two pointwise forms (`pointwiseForm`,
-`coverageForm`); each instantiation
-pulls the campaign's waves together — the Level-0 denotation
-(`Dependencies.lean` / `Cardinality.lean` / `Order.lean`), the
+acceptance: reason about exact operators before writing Rust. Five
+forms inhabit it below — the three fact-level forms
+(`functionalityForm`, `containmentForm`, `cardinalityForm`) and the
+two pointwise forms (`pointwiseForm`, `coverageForm`); each
+instantiation pulls the campaign's waves together — the Level-0
+denotation (`Dependencies.lean` / `Cardinality.lean`), the
 executable judge (`Decide.lean`), the delta restriction
 (`Txn/DeltaRestriction.lean`), and the order-oracle plan
 (`Oracle.lean`) — so "this form is accepted" is the existence of ONE
@@ -45,8 +44,7 @@ never a vibe.
   instances under the merge premise plus the form's DECLARED checker
   premise (`Decide.lean`'s per-form checkers; every inhabitant below
   declares the trivial premise — the field exists so a form whose
-  judge needs an acceptance rule, the ranked form's hop keys, must
-  say so in the open).
+  judge needs an acceptance rule must say so in the open).
 * **`DeltaCheck` / `delta_restricts`** — the delta-restricted check
   and THE restriction theorem: over a holding pre-state, the final
   state satisfies the judgment IFF the restricted check passes
@@ -85,13 +83,12 @@ pattern, per form, as one theorem of the structure.
   `Judgment` field IS `Statement.judgment`'s arm.
 * **Quarantine as surface-extensionality (the formulation recorded).**
   The tasked candidate — invariance under value-preserving instance
-  isomorphism — collapses here: order marks read ordinals and
-  selections read declared literal sets, so the only isomorphisms
-  available preserve every stored value on every read position, i.e.
-  they fix the surfaces pointwise. The cleaner statement is the
-  factoring itself: the judgment is a function of the consulted
-  surfaces' fact sets, nothing else — no minted value, no other
-  relation, no host state can move a verdict.
+  isomorphism — collapses here: selections read declared literal
+  sets, so the only isomorphisms available preserve every stored
+  value on every read position, i.e. they fix the surfaces pointwise.
+  The cleaner statement is the factoring itself: the judgment is a
+  function of the consulted surfaces' fact sets, nothing else — no
+  minted value, no other relation, no host state can move a verdict.
 * **The oracle-plan field's shape.** Every inhabitant is a
   single-key form, so the field is stated over
   `Oracle.OrderedOracle (List Value) P Fact` families indexed by `Ix`,
@@ -101,26 +98,15 @@ pattern, per form, as one theorem of the structure.
   field gives it one). The per-form `Planned` theorems of
   `Oracle.lean` discharge the fact-level fields; the acceptance
   premises price the probes there
-  (`Oracle.accepted_target_key_prices_the_probe`), unchanged.
-* **The ranked order form is NOT an inhabitant — a structural
-  refusal, not a queue entry.** Two of the type's fields refuse it,
-  each on principle: (a) `touched_delta_bounded` — the ranked
-  touched notion escalates to EVERY group on a dirty hop
-  (`Txn.rankedTouched`, the recorded narrowing there), and an
-  arbitrary group key is no delta fact's projection, so the ranked
-  form's probe count is NOT delta-bounded; (b) the `Verdict` field
-  reads each surface at the ONE touched key, while a rank chase
-  probes hop buckets at ANSWER-DEPENDENT keys — exactly the read
-  shape whose exclusion makes
-  `Countermodels.joined_window_form_uninhabitable` true (a
-  chase-shaped verdict could reach the blast countermodel's parent
-  rows through the child's tag field). Widening either field would
-  trade away the E1 refusal. The ranked form's admission case is the
-  plan calculus, arm for arm: `Oracle.ranked_order_plan_decides`
-  with the proved per-hop pricing (`Oracle.chainConsult_iff_via`,
-  `Oracle.chain_cost_hops`), its checker `rankedB_iff` under the
-  declared hop-key rule, and its delta restriction
-  `Txn.ranked_order_delta_restriction` with the escalation recorded.
+  (`Oracle.accepted_target_key_prices_the_probe`), unchanged. The
+  `Verdict` field reads each surface at the ONE touched key, and
+  `touched_delta_bounded` forces every touched key to be a delta
+  fact's projection — the two fences whose joint exclusion makes
+  `Countermodels.joined_window_form_uninhabitable` true; an
+  answer-dependent (chase-shaped) read or an every-group escalation
+  is structurally refused here, which is part of why the order-mark
+  forms left the vocabulary (`docs/architecture/30-dependencies.md`
+  § refused: order marks).
 
 ## Narrowings recorded (law 5: narrow and record)
 
@@ -144,26 +130,18 @@ pattern, per form, as one theorem of the structure.
   (`Exec/Sweep.lean: sweep_ignores_spent_segments`, the recorded
   license in `Oracle.lean`).
 
-## The window and order-mark inhabitants: acceptance and enforcement discharged
+## The window inhabitant: acceptance and enforcement discharged
 
-The engine ACCEPTS both forms at declaration (2026-07-14:
-`StatementDescriptor::Cardinality` / `::Order`; the gate arms in
-`schema/validate.rs` check exactly these inhabitants' acceptance
-premises — the window's target key and interval refusal, the order
-mark's shape rules — and the ranked form's acceptance case is the
-plan calculus, per the structural-refusal record above) and JUDGES
-both per commit for WRITABLE subjects: the checker and delta
-machinery these terms describe are
-`storage/commit/judgment.rs::check_windows` / `::check_orders` over
-`storage/commit/plan.rs`'s touched sets. A CLOSED subject's order
-mark is plain-only — the engine refuses the ranked form there at the
-gate (`SchemaError::RankedOrderClosedSubject`, the sound narrowing
-recorded in `Order.lean` § narrowings) — and the plain discipline is
-decided at validate against the sealed extension, so no commit walk
-is owed for it. No
-`Bridge.lean` row cites this module directly: the acceptance rows
-cite the plan theorems (`Oracle.lean`), the enforcement rows cite
-the delta-restriction theorems (`Txn/DeltaRestriction.lean`), and
+The engine ACCEPTS the form at declaration (2026-07-14:
+`StatementDescriptor::Cardinality`; the gate arm in
+`schema/validate.rs` checks exactly this inhabitant's acceptance
+premises — the window's target key and interval refusal) and JUDGES
+it per commit: the checker and delta machinery this term describes
+are `storage/commit/judgment.rs::check_windows` over
+`storage/commit/plan.rs`'s touched sets. No
+`Bridge.lean` row cites this module directly: the acceptance row
+cites the plan theorem (`Oracle.lean`), the enforcement row cites
+the delta-restriction theorem (`Txn/DeltaRestriction.lean`), and
 the FD and containment fields' mechanisms are already ledgered by
 the modules they come from.
 -/
@@ -583,53 +561,7 @@ theorem cardinalityForm_denotes {T : Theory} {I : Instance}
       (Statement.cardinality src w tgt).judgment T I :=
   Iff.rfl
 
-/-! ## Inhabitant 4 — the order mark (accepted and enforced)
-
-Denotation `OrderMark` (`Order.lean`); checker `orderMarkB`
-(`orderMarkB_iff`); restriction `order_delta_restriction`; plan
-`order_plan_decides` at one prefix walk per touched group
-(`order_plan_consultations`). -/
-
-/-- The plain order-mark form: `order A(pos) per A(G)`. -/
-def orderForm :
-    AdmissibleForm (RelId × FieldId × List FieldId) Unit where
-  Judgment := fun p T I => OrderMark (T.den I p.1) p.2.1 p.2.2
-  surface := fun p _ T I => T.den I p.1
-  surfaceProj := fun p _ => p.2.2
-  quarantined := by
-    intro p T I J h
-    have hden : T.den I p.1 = T.den J p.1 := h ()
-    show OrderMark (T.den I p.1) p.2.1 p.2.2 ↔
-      OrderMark (T.den J p.1) p.2.1 p.2.2
-    rw [hden]
-  check := fun p T W => orderMarkB (W.rows p.1) p.2.1 p.2.2
-  checkPremise := fun _ _ _ => True
-  check_decides := fun p T W hclosed _ =>
-    orderMarkB_iff (theoryDen_denotes hclosed p.1) p.2.1 p.2.2
-  DeltaCheck := fun p T I d => Txn.orderDeltaCheck T I d p.1 p.2.1 p.2.2
-  delta_restricts := fun p T I d hpre =>
-    Txn.order_delta_restriction hpre
-  Touched := fun p d => d.projected p.1 p.2.2
-  touched_delta_bounded := by
-    rintro p d t ⟨f, hf, hproj⟩
-    exact ⟨(), p.1, f, hf, hproj⟩
-  probe := fun _ _ => .walk
-  Verdict := fun p _ _ ans =>
-    OrdinalGroup (fun f => f ∈ ans ()) p.2.1
-  plan_decides := by
-    intro p T I d P ple o hfacts hkeys
-    exact Oracle.order_plan_decides T I d p.1 p.2.1 p.2.2 P ple (o ())
-      (hfacts ()) (fun f => hkeys () f)
-
-/-- The plain order form's judgment IS the statement dispatcher's
-arm. -/
-theorem orderForm_denotes {T : Theory} {I : Instance} {R : RelId}
-    {pos : FieldId} {G : List FieldId} :
-    orderForm.Judgment (R, pos, G) T I ↔
-      (Statement.order R pos G none).judgment T I :=
-  Iff.rfl
-
-/-! ## Inhabitant 5 — functionality, pointwise (the interval FD)
+/-! ## Inhabitant 4 — functionality, pointwise (the interval FD)
 
 Denotation `PointwiseKey` (`Dependencies.lean`); checker
 `pointwiseKeyB` (`pointwiseKeyB_iff`); restriction
@@ -699,7 +631,7 @@ theorem pointwiseForm_denotes {T : Theory} {I : Instance} {R : RelId}
   show PointwiseKey (T.den I R) S i ↔ _
   simp only [Statement.judgment, hsplit]
 
-/-! ## Inhabitant 6 — containment, pointwise (coverage)
+/-! ## Inhabitant 5 — containment, pointwise (coverage)
 
 Denotation `Coverage` (`Dependencies.lean`); checker `coverageB`
 (`coverageB_iff` — the proved sweep inside); restriction

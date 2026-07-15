@@ -117,7 +117,7 @@ fn random_field(rng: &mut Rng, idx: usize) -> FieldDescriptor {
 }
 
 fn random_type(rng: &mut Rng) -> ValueType {
-    match rng.range(8) {
+    match rng.range(7) {
         0 => ValueType::Bool,
         1 | 2 => ValueType::U64,
         3 => ValueType::I64,
@@ -244,7 +244,7 @@ fn interval_value(rng: &mut Rng, element: IntervalElement) -> Value {
 }
 
 fn random_statement(rng: &mut Rng, relations: &[RelationDescriptor]) -> StatementDescriptor {
-    match rng.range(8) {
+    match rng.range(7) {
         0 | 1 => {
             let relation = random_relation_id(rng, relations.len());
             StatementDescriptor::Functionality {
@@ -260,7 +260,7 @@ fn random_statement(rng: &mut Rng, relations: &[RelationDescriptor]) -> Statemen
         // windows (`lo > hi`), the `0..*` vacuity, the `1..1` keyed-`==`
         // shape, and interval-projected sides
         // (`CardinalityIntervalPosition`) are all a draw away.
-        5 | 6 => StatementDescriptor::Cardinality {
+        _ => StatementDescriptor::Cardinality {
             source: random_side(rng, relations),
             lo: rng.range(4),
             hi: if rng.chance(1, 3) {
@@ -270,38 +270,6 @@ fn random_statement(rng: &mut Rng, relations: &[RelationDescriptor]) -> Statemen
             },
             target: random_side(rng, relations),
         },
-        // The order mark: position/grouping ids free (dangling fields,
-        // interval groupings, non-u64 positions — the engine's roster
-        // lines), an optional ranked chain whose hops dangle as freely
-        // (`RankHopUnkeyed`, `RankChainTypeMismatch`).
-        _ => {
-            let relation = random_relation_id(rng, relations.len());
-            let ranking = if rng.chance(1, 3) {
-                let hop_count = 1 + draw(rng, 2);
-                let hops = (0..hop_count)
-                    .map(|_| {
-                        let hop_relation = random_relation_id(rng, relations.len());
-                        bumbledb::schema::RankHop {
-                            relation: hop_relation,
-                            key: random_field_id(rng, field_span(relations, hop_relation)),
-                            read: random_field_id(rng, field_span(relations, hop_relation)),
-                        }
-                    })
-                    .collect();
-                Some(bumbledb::schema::RankChain {
-                    link: random_field_id(rng, field_span(relations, relation)),
-                    hops,
-                })
-            } else {
-                None
-            };
-            StatementDescriptor::Order {
-                relation,
-                position: random_field_id(rng, field_span(relations, relation)),
-                grouping: random_projection(rng, relations, relation),
-                ranking,
-            }
-        }
     }
 }
 
@@ -447,8 +415,8 @@ mod tests {
     /// every outcome `Ok` or a typed error, any panic a red run with
     /// its seed named — with the generated surface itself asserted:
     /// both verdict classes, both classical forms, the cardinality
-    /// window at both spellings (a ceiling and the `*`), the order mark
-    /// plain and ranked, and the literal-set selections, each reached.
+    /// window at both spellings (a ceiling and the `*`), and the
+    /// literal-set selections, each reached.
     #[test]
     fn the_descriptor_sweep_reaches_every_statement_form_without_panicking() {
         use bumbledb::schema::{LiteralSet, StatementDescriptor};
@@ -461,8 +429,6 @@ mod tests {
         let mut containment = 0u64;
         let mut window_bounded = 0u64;
         let mut window_star = 0u64;
-        let mut order_plain = 0u64;
-        let mut order_ranked = 0u64;
         let mut set_selection = 0u64;
         for seed in 0..SWEEP {
             let descriptor = random_descriptor(&mut Rng::new(seed));
@@ -486,13 +452,6 @@ mod tests {
                             window_star += 1;
                         }
                     }
-                    StatementDescriptor::Order { ranking, .. } => {
-                        if ranking.is_some() {
-                            order_ranked += 1;
-                        } else {
-                            order_plain += 1;
-                        }
-                    }
                 }
             }
             let verdict = catch_unwind(AssertUnwindSafe(|| {
@@ -514,16 +473,14 @@ mod tests {
             ("containment", containment),
             ("bounded window", window_bounded),
             ("star window", window_star),
-            ("plain order", order_plain),
-            ("ranked order", order_ranked),
             ("set-selection", set_selection),
         ] {
             assert!(count > 0, "the sweep never reached: {label}");
         }
         eprintln!(
             "sweep: {accepted} accepted / {rejected} rejected; forms: fd {functionality}, \
-             ind {containment}, window {window_bounded}+{window_star}*, order \
-             {order_plain}+{order_ranked}r, sets {set_selection}"
+             ind {containment}, window {window_bounded}+{window_star}*, \
+             sets {set_selection}"
         );
     }
 }

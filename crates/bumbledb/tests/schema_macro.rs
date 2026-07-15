@@ -192,7 +192,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
                 source: statement.source.clone(),
                 target: statement.target.clone(),
             },
-            StatementView::Cardinality(..) | StatementView::Order(..) => {
+            StatementView::Cardinality(..) => {
                 unreachable!("this fixture declares keys and containments only")
             }
         })
@@ -283,9 +283,7 @@ fn the_equality_pair_seals_mirror_links() {
     let schema = declared();
     let mirrors: Vec<Option<StatementId>> = (0..8)
         .map(|id| match schema.statement(StatementId(id)) {
-            StatementView::Key(_, _)
-            | StatementView::Cardinality(..)
-            | StatementView::Order(..) => None,
+            StatementView::Key(_, _) | StatementView::Cardinality(..) => None,
             StatementView::Containment(_, statement) => statement.mirror,
         })
         .collect();
@@ -1152,9 +1150,8 @@ mod redundant_superkey_warning {
 
 mod extension_forms {
     //! The dependency-vocabulary extension's grammar: literal-set
-    //! selections, the cardinality window (`in lo..hi per`, `*` the
-    //! no-ceiling spelling), and the order mark with its `by` chain
-    //! (`docs/architecture/30-dependencies.md`).
+    //! selections and the cardinality window (`in lo..hi per`, `*` the
+    //! no-ceiling spelling) (`docs/architecture/30-dependencies.md`).
 
     use bumbledb::schema::{LiteralSet, StatementDescriptor, StatementView};
     use bumbledb::{StatementId, Theory as _, Value};
@@ -1179,14 +1176,11 @@ mod extension_forms {
 
         Task(parent | state == {1, 2}) in 1..3 per Parent(id);
         Task(parent) in 1..* per Parent(id);
-        order Task(pos) per Task(parent);
-        order Task(pos) per Task(parent) by prio -> Priority(weight);
     }
 
     /// The macro lowers every extension form: the set selection lands as
-    /// `LiteralSet::Many`, the window bounds land verbatim (`*` = None),
-    /// and the `by` hop resolves the closed relation's synthetic id as
-    /// its key.
+    /// `LiteralSet::Many` and the window bounds land verbatim
+    /// (`*` = None).
     #[test]
     fn the_extension_forms_lower_and_validate() {
         let schema = Tracker
@@ -1194,7 +1188,7 @@ mod extension_forms {
             .validate()
             .expect("the declared schema is valid");
         // Materialized order: Parent.id's fresh auto-key, Priority's
-        // closed auto-key, then the four declared statements.
+        // closed auto-key, then the two declared statements.
         assert!(matches!(
             schema.statement(StatementId(2)),
             StatementView::Cardinality(_, _)
@@ -1210,23 +1204,6 @@ mod extension_forms {
         );
         let star = &schema.windows()[1];
         assert_eq!((star.lo, star.hi), (1, None));
-
-        assert!(matches!(
-            schema.statement(StatementId(4)),
-            StatementView::Order(_, _)
-        ));
-        let plain = &schema.orders()[0];
-        assert_eq!(plain.position, Tracker::TASK_POS);
-        assert_eq!(plain.grouping[..], [Tracker::TASK_PARENT]);
-        assert!(plain.ranking.is_none());
-
-        let ranked = &schema.orders()[1];
-        let chain = ranked.ranking.as_ref().expect("the chain sealed");
-        assert_eq!(chain.link, Tracker::TASK_PRIO);
-        assert_eq!(chain.hops[0].relation, Tracker::PRIORITY);
-        // The inferred hop key: the closed relation's synthetic id.
-        assert_eq!(chain.hops[0].key, Tracker::PRIORITY_ID);
-        assert_eq!(chain.hops[0].read, Tracker::PRIORITY_WEIGHT);
     }
 
     /// A singleton braced set is the equality spelling — `{1}` lowers to

@@ -44,13 +44,6 @@ soundness, whole.
 * **Cardinality window** — the touched parent keys
   (`touchedParents`): every parent key tuple any delta source fact
   projects to, plus the delta's ψ-selected parents themselves.
-* **Order mark** — the touched groups (`Delta.projected` at the
-  grouping list): every grouping tuple any delta fact of the relation
-  projects to. The RANKED form escalates: a delta touching any `by`
-  hop relation touches EVERY group (`rankedTouched`) — a hop write
-  can reorder ranks in a group the relation's own delta never
-  touched, so the group-local notion is honest only for chain-clean
-  deltas (the narrowing below).
 
 ## The load-bearing premise (item 4)
 
@@ -67,28 +60,20 @@ store sweeper). The checks here quantify over RAW instances, not
 `State`, precisely so the countermodel can exhibit the missing
 premise.
 
-## Discharged (2026-07-14): the window and order-mark CHECKS
+## Discharged (2026-07-14): the window CHECK
 
-The engine both ACCEPTS the window and order-mark forms at declaration
-(`StatementDescriptor::Cardinality` / `::Order`, the gate arms in
-`schema/validate.rs`) and ENFORCES them per commit: the
-delta-restricted checks this module states are the Rust checker's
+The engine both ACCEPTS the window form at declaration
+(`StatementDescriptor::Cardinality`, the gate arm in
+`schema/validate.rs`) and ENFORCES it per commit: the
+delta-restricted check this module states is the Rust checker's
 consultation plan, implemented as stated — the touched-parent set is
 `storage/commit/plan.rs`'s window derivation
-(`cardinality_delta_restriction`'s ledger row), the touched-group set
-with the ranked escalation is its order derivation
-(`order_delta_restriction`'s and `ranked_order_delta_restriction`'s
-rows), and `storage/commit/judgment.rs::check_windows` /
-`::check_orders` judge exactly those sets against the final state.
+(`cardinality_delta_restriction`'s ledger row), and
+`storage/commit/judgment.rs::check_windows` judges exactly that set
+against the final state.
 
 ## Narrowings recorded (law 5: narrow and record)
 
-* **A dirty hop relation touches every group** (`rankedTouched`). The
-  ranked order mark's rank reads probe the chain's hop relations, so
-  a hop-relation write invalidates rank comparisons in arbitrary
-  groups; the touched notion escalates to all groups rather than
-  claiming a finer bound this model cannot prove. A finer notion
-  (chasing link values backward) is checker mechanism, unmodeled.
 * **Touched notions are SETS.** The engine's plan is deduplicated
   lists in scan order — iteration order and dedup are representation
   mechanism, exactly the `violationSet` narrowing (`Txn.lean`).
@@ -103,10 +88,8 @@ rows), and `storage/commit/judgment.rs::check_windows` /
   tuple; a removed fact leaves only pre-state facts behind, already
   keyed by the premise), and the Applier probes inserted determinant
   images only — the removes clause is a strict superset on those two
-  forms, kept because the ORDER form reads the same notion and its
-  removes are load-bearing (a removal can break downward closure).
-  Same license as `touchedParents`: wider touched only re-checks
-  more.
+  forms, kept for the one shape of the definition. Same license as
+  `touchedParents`: wider touched only re-checks more.
 * **`touchedWindow` is a strict superset on two of its four
   clauses.** The backward proof spends only source-ADDS (an added
   demand) and target-REMOVES (`coverage_untouched_point` — withdrawn
@@ -201,22 +184,12 @@ theorem den_untouched_iff {T : Theory} {I : Instance} {d : Delta}
     · exact h'
     · exact absurd h' hr
 
-/-- A relation the delta never touches denotes the same fact set in
-the final state — the relation-level unchanged lemma the rank-chain
-stability walks hop by hop. -/
-theorem den_clean_rel_eq {T : Theory} {I : Instance} {d : Delta}
-    {R : RelId} (ha : ∀ f, f ∉ d.adds R) (hr : ∀ f, f ∉ d.removes R) :
-    T.den (d.applyTo I) R = T.den I R := by
-  funext f
-  exact propext (den_untouched_iff (ha f) (hr f))
-
-/-! ## The projected touched tuples (FDs and order marks) -/
+/-! ## The projected touched tuples (the FD forms) -/
 
 /-- The delta-projected tuples of relation `R` at field list `X` —
-the per-form touched data of three forms: the scalar FD (`X` the
-determinant: touched determinant tuples), the pointwise FD (`X` the
-scalar prefix: touched groups), and the order mark (`X` the grouping:
-touched groups). -/
+the per-form touched data of two forms: the scalar FD (`X` the
+determinant: touched determinant tuples) and the pointwise FD (`X`
+the scalar prefix: touched groups). -/
 def Delta.projected (d : Delta) (R : RelId) (X : List FieldId) :
     Set (List Value) :=
   fun t => ∃ f, (f ∈ d.adds R ∨ f ∈ d.removes R) ∧ f.project X = t
@@ -529,190 +502,7 @@ theorem cardinality_delta_restriction {T : Theory} {I : Instance}
       rw [cardinality_untouched_group_eq ht]
       exact hpre g hg₀ hψ
 
-/-! ## Form 6 — the order mark -/
-
-/-- The delta-restricted plain-order check: the ordinal discipline
-judged only at TOUCHED groups, against the final state. -/
-def orderDeltaCheck (T : Theory) (I : Instance) (d : Delta)
-    (R : RelId) (pos : FieldId) (G : List FieldId) : Prop :=
-  ∀ t, t ∈ d.projected R G →
-    OrdinalGroup (GroupOf (T.den (d.applyTo I) R) G t) pos
-
-/-- **Untouched implies unchanged, order form** (the task's explicit
-demand): an untouched group's fact set is UNCHANGED under `applyTo` —
-a delta fact projecting to the group would have touched it. -/
-theorem order_untouched_group_eq {T : Theory} {I : Instance}
-    {d : Delta} {R : RelId} {G : List FieldId} {t : List Value}
-    (hun : t ∉ d.projected R G) :
-    GroupOf (T.den (d.applyTo I) R) G t =
-      GroupOf (T.den I R) G t := by
-  funext f
-  refine propext ⟨?_, ?_⟩
-  · intro h
-    obtain ⟨hf, hproj⟩ := mem_groupOf.mp h
-    refine mem_groupOf.mpr ⟨?_, hproj⟩
-    rcases den_final_pre_or_added hf with h' | h'
-    · exact h'
-    · exact absurd ⟨f, Or.inl h', hproj⟩ hun
-  · intro h
-    obtain ⟨hf, hproj⟩ := mem_groupOf.mp h
-    refine mem_groupOf.mpr ⟨?_, hproj⟩
-    rcases den_pre_final_or_removed hf with h' | h'
-    · exact h'
-    · exact absurd ⟨f, Or.inr h', hproj⟩ hun
-
-/-- **The plain order-mark restriction theorem.** Over a
-pre-state holding the mark, the final state holds it IFF the
-touched-groups check passes: an untouched group's fact set is
-unchanged (`order_untouched_group_eq`), so its ordinal discipline is
-the pre-state's. -/
-theorem order_delta_restriction {T : Theory} {I : Instance}
-    {d : Delta} {R : RelId} {pos : FieldId} {G : List FieldId}
-    (hpre : OrderMark (T.den I R) pos G) :
-    OrderMark (T.den (d.applyTo I) R) pos G ↔
-      orderDeltaCheck T I d R pos G := by
-  constructor
-  · intro h t _
-    exact h t
-  · intro hc t
-    by_cases ht : t ∈ d.projected R G
-    · exact hc t ht
-    · rw [order_untouched_group_eq ht]
-      exact hpre t
-
-/-! ## Form 6, ranked — the chain-dirtiness escalation -/
-
-/-- The touched groups of a RANKED order mark: the relation's own
-delta-projected groups, ESCALATED by chain dirtiness — a delta
-touching any `by` hop relation touches every group (the recorded
-narrowing: a hop write can reorder ranks in a group the relation's
-own delta never touched). -/
-def rankedTouched (d : Delta) (R : RelId) (G : List FieldId)
-    (c : RankChain) : Set (List Value) :=
-  fun t => t ∈ d.projected R G ∨
-    ∃ hop, hop ∈ c.hops ∧
-      ∃ f, f ∈ d.adds hop.relation ∨ f ∈ d.removes hop.relation
-
-/-- One group's whole ranked discipline: the ordinal discipline plus
-rank monotonicity within the group — `RankedOrderMark` read at one
-grouping tuple. -/
-def rankedGroupOk (T : Theory) (I : Instance) (R : Set Fact)
-    (pos : FieldId) (G : List FieldId) (c : RankChain)
-    (t : List Value) : Prop :=
-  OrdinalGroup (GroupOf R G t) pos ∧
-    ∀ f g, f ∈ GroupOf R G t → g ∈ GroupOf R G t →
-      ∀ rf rg, c.rankOf T I f rf → c.rankOf T I g rg → rf < rg →
-        (f pos).ordinal < (g pos).ordinal
-
-/-- The delta-restricted ranked-order check: the per-group ranked
-discipline judged only at TOUCHED groups (chain dirtiness included),
-against the final state and its ranks. -/
-def rankedOrderDeltaCheck (T : Theory) (I : Instance) (d : Delta)
-    (R : RelId) (pos : FieldId) (G : List FieldId) (c : RankChain) :
-    Prop :=
-  ∀ t, t ∈ rankedTouched d R G c →
-    rankedGroupOk T (d.applyTo I) (T.den (d.applyTo I) R) pos G c t
-
-/-- A hop over a delta-clean relation reads identically at the final
-state — `den_clean_rel_eq` through `RankHop.eval`. -/
-theorem hopEval_clean {T : Theory} {I : Instance} {d : Delta}
-    {hop : RankHop}
-    (hclean : ∀ f, ¬(f ∈ d.adds hop.relation ∨
-      f ∈ d.removes hop.relation))
-    (v w : Value) :
-    hop.eval T (d.applyTo I) v w ↔ hop.eval T I v w := by
-  have hden : T.den (d.applyTo I) hop.relation =
-      T.den I hop.relation :=
-    den_clean_rel_eq (fun f hf => hclean f (Or.inl hf))
-      (fun f hf => hclean f (Or.inr hf))
-  unfold RankHop.eval
-  rw [hden]
-
-/-- A chain over delta-clean hop relations evaluates identically at
-the final state — hop by hop. -/
-theorem chainEval_clean {T : Theory} {I : Instance} {d : Delta} :
-    ∀ (hops : List RankHop),
-      (∀ hop, hop ∈ hops → ∀ f, ¬(f ∈ d.adds hop.relation ∨
-        f ∈ d.removes hop.relation)) →
-      ∀ v w, (chainEval T (d.applyTo I) hops v w ↔
-        chainEval T I hops v w)
-  | [], _, _, _ => Iff.rfl
-  | hop :: rest, hclean, v, w =>
-    ⟨fun ⟨u, he, hr⟩ =>
-      ⟨u, (hopEval_clean (hclean hop List.mem_cons_self) v u).mp he,
-        (chainEval_clean rest
-          (fun h hm => hclean h (List.mem_cons_of_mem hop hm))
-          u w).mp hr⟩,
-     fun ⟨u, he, hr⟩ =>
-      ⟨u, (hopEval_clean (hclean hop List.mem_cons_self) v u).mpr he,
-        (chainEval_clean rest
-          (fun h hm => hclean h (List.mem_cons_of_mem hop hm))
-          u w).mpr hr⟩⟩
-
-/-- Ranks are stable over a delta-clean chain — `chainEval_clean`
-through `RankChain.rankOf`. -/
-theorem rankOf_clean {T : Theory} {I : Instance} {d : Delta}
-    {c : RankChain}
-    (hclean : ∀ hop, hop ∈ c.hops → ∀ f,
-      ¬(f ∈ d.adds hop.relation ∨ f ∈ d.removes hop.relation))
-    (f : Fact) (r : Nat) :
-    c.rankOf T (d.applyTo I) f r ↔ c.rankOf T I f r := by
-  unfold RankChain.rankOf
-  constructor
-  · intro h
-    obtain ⟨w, hw, hr⟩ := h
-    exact ⟨w, (chainEval_clean c.hops hclean _ w).mp hw, hr⟩
-  · intro h
-    obtain ⟨w, hw, hr⟩ := h
-    exact ⟨w, (chainEval_clean c.hops hclean _ w).mpr hw, hr⟩
-
-/-- **The ranked order-mark restriction theorem.** Over
-a pre-state holding the ranked mark, the final state holds it IFF the
-touched-groups check passes. The untouched case spends BOTH unchanged
-lemmas: the group's fact set is unchanged
-(`order_untouched_group_eq`) and — because an untouched group implies
-a clean chain, by the escalation — its ranks are unchanged
-(`rankOf_clean`), so the group's whole ranked verdict is the
-pre-state's. -/
-theorem ranked_order_delta_restriction {T : Theory} {I : Instance}
-    {d : Delta} {R : RelId} {pos : FieldId} {G : List FieldId}
-    {c : RankChain}
-    (hpre : RankedOrderMark T I (T.den I R) pos G c) :
-    RankedOrderMark T (d.applyTo I) (T.den (d.applyTo I) R)
-      pos G c ↔
-      rankedOrderDeltaCheck T I d R pos G c := by
-  constructor
-  · intro h t _
-    exact ⟨h.mark t, fun f g hf hg rf rg hrf hrg hlt =>
-      h.mono t f g hf hg rf rg hrf hrg hlt⟩
-  · intro hc
-    have huntouched : ∀ t, t ∉ rankedTouched d R G c →
-        GroupOf (T.den (d.applyTo I) R) G t =
-          GroupOf (T.den I R) G t ∧
-        ∀ f r, (c.rankOf T (d.applyTo I) f r ↔ c.rankOf T I f r) := by
-      intro t ht
-      have hproj : t ∉ d.projected R G := fun h => ht (Or.inl h)
-      have hclean : ∀ hop, hop ∈ c.hops → ∀ f,
-          ¬(f ∈ d.adds hop.relation ∨ f ∈ d.removes hop.relation) :=
-        fun hop hm f hf => ht (Or.inr ⟨hop, hm, f, hf⟩)
-      exact ⟨order_untouched_group_eq hproj,
-        fun f r => rankOf_clean hclean f r⟩
-    refine ⟨?_, ?_⟩
-    · intro t
-      by_cases ht : t ∈ rankedTouched d R G c
-      · exact (hc t ht).1
-      · rw [(huntouched t ht).1]
-        exact hpre.mark t
-    · intro t f g hf hg rf rg hrf hrg hlt
-      by_cases ht : t ∈ rankedTouched d R G c
-      · exact (hc t ht).2 f g hf hg rf rg hrf hrg hlt
-      · obtain ⟨hgeq, hrk⟩ := huntouched t ht
-        rw [hgeq] at hf hg
-        exact hpre.mono t f g hf hg rf rg ((hrk f rf).mp hrf)
-          ((hrk g rg).mp hrg) hlt
-
 /-! ## The per-statement dispatch and the composition theorem -/
-
 /-- One statement's delta-restricted check — `Statement.judgment`'s
 dispatch, arm for arm, each form replaced by its restricted check.
 This is the consultation plan the commit pipeline runs INSTEAD of the
@@ -731,8 +521,6 @@ def deltaCheck (T : Theory) (I : Instance) (d : Delta) :
         tgt.relation tgt.selection U j
     | _, _ => containmentDeltaCheck T I d src tgt
   | .cardinality src w tgt => cardinalityDeltaCheck T I d src w tgt
-  | .order R pos G none => orderDeltaCheck T I d R pos G
-  | .order R pos G (some c) => rankedOrderDeltaCheck T I d R pos G c
 
 /-- **The per-statement restriction theorem.** Over a pre-state
 holding one statement, the final state satisfies the statement IFF
@@ -776,14 +564,6 @@ theorem statement_delta_restriction (T : Theory) (I : Instance)
   | cardinality src w tgt =>
     simp only [Statement.judgment, deltaCheck] at hpre ⊢
     exact cardinality_delta_restriction hpre
-  | order R pos G rk =>
-    cases rk with
-    | none =>
-      simp only [Statement.judgment, deltaCheck] at hpre ⊢
-      exact order_delta_restriction hpre
-    | some c =>
-      simp only [Statement.judgment, deltaCheck] at hpre ⊢
-      exact ranked_order_delta_restriction hpre
 
 /-- The exact form over the lifecycle: a committed state's final
 state models the theory IFF every declared statement's
@@ -810,7 +590,7 @@ the incremental judgment convicts exactly what the full judgment
 convicts, so running only the restricted checks at commit loses
 nothing. Bridge: `storage/commit/judgment.rs::judge` +
 `storage/commit/apply.rs::apply` run every form's restricted check
-(FD, containment, window, and order — module doc § discharged), and
+(FD, containment, and window — module doc § discharged), and
 equivalent-under-premise
 rather than literally these; the two recorded coincidences: (1) the
 Applier's FD probe covers only inserted determinant images while

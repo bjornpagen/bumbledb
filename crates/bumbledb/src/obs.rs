@@ -184,8 +184,6 @@ pub mod names {
     pub const JUDGMENT_TARGET: &str = "judgment_target";
     /// Phase 3, cardinality windows. (touched parents judged, -)
     pub const JUDGMENT_WINDOWS: &str = "judgment_windows";
-    /// Phase 3, order marks. (touched groups walked, -)
-    pub const JUDGMENT_ORDERS: &str = "judgment_orders";
     /// Phase 4. (pending interns flushed, -)
     pub const COUNTERS_FLUSH: &str = "counters_flush";
     /// Phase 5: the LMDB commit alone — the fsync-bound number. (-, -)

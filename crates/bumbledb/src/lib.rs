@@ -119,7 +119,7 @@ pub use api::stats::{
     CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
     INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats,
 };
-pub use error::{Direction, Error, OrderDefect, OverflowKind, Result, Violation, Violations};
+pub use error::{Direction, Error, OverflowKind, Result, Violation, Violations};
 pub use interval::Interval;
 /// The statically-empty fold's off switch (`ir/normalize/fold.rs`):
 /// reachable only under the `fold-off` fuzz-oracle feature. History,

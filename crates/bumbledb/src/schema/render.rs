@@ -44,19 +44,6 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
             hi: statement.hi,
             target: &statement.target,
         },
-        StatementView::Order(_, statement) => RenderedStatement::Order {
-            relation: statement.relation,
-            position: statement.position,
-            grouping: &statement.grouping,
-            ranking: statement.ranking.as_ref().map(|chain| RenderedChain {
-                link: chain.link,
-                hops: chain
-                    .hops
-                    .iter()
-                    .map(|hop| (hop.relation, hop.read))
-                    .collect(),
-            }),
-        },
     };
     Rendered {
         names: &SealedNames(schema),
@@ -109,24 +96,6 @@ pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String
             lo: *lo,
             hi: *hi,
             target,
-        },
-        StatementDescriptor::Order {
-            relation,
-            position,
-            grouping,
-            ranking,
-        } => RenderedStatement::Order {
-            relation: *relation,
-            position: *position,
-            grouping,
-            ranking: ranking.as_ref().map(|chain| RenderedChain {
-                link: chain.link,
-                hops: chain
-                    .hops
-                    .iter()
-                    .map(|hop| (hop.relation, hop.read))
-                    .collect(),
-            }),
         },
     };
     Rendered {
@@ -254,8 +223,7 @@ impl Names for DeclaredNames<'_> {
                 .filter_map(|statement| match statement {
                     StatementDescriptor::Containment { source, target } => Some((source, target)),
                     StatementDescriptor::Functionality { .. }
-                    | StatementDescriptor::Cardinality { .. }
-                    | StatementDescriptor::Order { .. } => None,
+                    | StatementDescriptor::Cardinality { .. } => None,
                 }),
             |id| {
                 self.0
@@ -289,14 +257,6 @@ struct Rendered<'a> {
     id: StatementId,
 }
 
-/// A `by` chain reduced to what the notation spells: the link field and
-/// each hop's `K(read)` — the hop key is inferred, never written
-/// (`docs/architecture/30-dependencies.md` § the order mark).
-struct RenderedChain {
-    link: FieldId,
-    hops: Vec<(RelationId, FieldId)>,
-}
-
 enum RenderedStatement<'a> {
     Key {
         relation: RelationId,
@@ -313,12 +273,6 @@ enum RenderedStatement<'a> {
         lo: u64,
         hi: Option<u64>,
         target: &'a Side,
-    },
-    Order {
-        relation: RelationId,
-        position: FieldId,
-        grouping: &'a [FieldId],
-        ranking: Option<RenderedChain>,
     },
 }
 
@@ -372,26 +326,6 @@ impl fmt::Display for Rendered<'_> {
                 }
                 write!(f, " per ")?;
                 side(f, self.names, target)
-            }
-            RenderedStatement::Order {
-                relation,
-                position,
-                grouping,
-                ref ranking,
-            } => {
-                write!(f, "order ")?;
-                side_parts(f, self.names, relation, &[position], &[])?;
-                write!(f, " per ")?;
-                side_parts(f, self.names, relation, grouping, &[])?;
-                if let Some(chain) = ranking {
-                    write!(f, " by ")?;
-                    field_name(f, self.names, relation, chain.link)?;
-                    for (hop_relation, read) in &chain.hops {
-                        write!(f, " -> ")?;
-                        side_parts(f, self.names, *hop_relation, &[*read], &[])?;
-                    }
-                }
-                Ok(())
             }
         }
     }

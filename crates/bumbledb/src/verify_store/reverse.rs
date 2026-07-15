@@ -3,10 +3,8 @@
 //! deletes without verification (`docs/architecture/50-storage.md`
 //! § R-delete verification) while target-side judgment trusts its prefixes
 //! as the survivor authority. Every edge must resolve to a live source
-//! fact that re-derives the same key bytes — a containment or window edge
-//! additionally still inside its φ (the commit path's own satisfaction
-//! helper); an order edge carries no σ, its key bytes are the grouping
-//! projection with the position tail.
+//! fact that re-derives the same key bytes and still sits inside its φ
+//! (the commit path's own satisfaction helper).
 
 use crate::error::Result;
 use crate::schema::{Enforcement, StatementView};
@@ -25,7 +23,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             s.malformed(key, "R key shape");
             continue;
         };
-        // The statement id must name a containment, window, or order
+        // The statement id must name a containment or window
         // statement whose source is the embedded relation — anything else
         // is not an R key the schema could ever have written.
         let (expected_relation, closed_target) = match schema.statement_checked(sid) {
@@ -35,7 +33,6 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                     .then_some(statement.target.relation),
             ),
             Some(StatementView::Cardinality(_, statement)) => (statement.source.relation, None),
-            Some(StatementView::Order(_, statement)) => (statement.relation, None),
             _ => {
                 s.malformed(key, "R key statement");
                 continue;
@@ -69,8 +66,8 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         }
         let layout = schema.relation(source_rel).layout();
 
-        // R→F: the source must be live, re-derive these key bytes, and —
-        // for the σ-gated statement kinds — still sit inside φ. A
+        // R→F: the source must be live, re-derive these key bytes, and
+        // still sit inside φ. A
         // wrong-width fact was already convicted by the F pass and cannot
         // be sliced, so it passes here.
         let backs = match s.fact(source_rel, source_row)? {
@@ -109,10 +106,6 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                         judgment::window_child_image(statement, layout, fact, &mut derived);
                         derived.as_bytes() == key_bytes
                     }
-                }
-                Some(StatementView::Order(_, statement)) => {
-                    keys::determinant_image(layout, &statement.edge_projection, fact, &mut derived);
-                    derived.as_bytes() == key_bytes
                 }
                 _ => unreachable!("the statement arm was classified above"),
             },

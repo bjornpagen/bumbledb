@@ -1,9 +1,9 @@
 # 30 — Dependencies
 
 This chapter owns every invariant the engine enforces on committed states. There are
-exactly **four statement forms** — the two original judgments (functionality,
-containment) and the two extension forms (the cardinality window, the order
-mark) — all statements *about queries*, and nothing else:
+exactly **three statement forms** — the two original judgments (functionality,
+containment) and the one extension form (the cardinality window) — all
+statements *about queries*, and nothing else:
 no constraint kinds, no modes, no triggers, no deferral. The words *unique key*,
 *referential constraint*, *primary key*, *check constraint*, *exclusion constraint*, *cascade*,
 and *restrict* name nothing here; where one of them used to name something, this
@@ -97,7 +97,7 @@ without any staging concept (`50-storage.md` delta write path).
 ordering obligations onto the caller, and fights the accumulate-then-commit write
 path. **Reverses if:** never — semantics.
 
-## The extension forms
+## The extension form
 
 **Cardinality window.** `A(X | φ) in lo..hi per B(Y | ψ)`: per selected target
 fact, the count of selected source facts sharing its projected tuple lies in the
@@ -116,37 +116,39 @@ and keyed `==` is exactly the `1..1` window
 key premises staying acceptance's). The upper bound is load-bearing, not
 decorative (`lean/Bumbledb/Countermodels.lean: unit_window_two_children`).
 
-**Order mark.** `order R(pos) per R(grp) [by link -> K(rank) ...]`: per parent
-group, positions are exactly `1..k` — duplicate-free, 1-based, contiguous
-(`lean/Bumbledb/Order.lean: OrderMark`; `lean/Bumbledb/Schema.lean:
-Statement.order`) — and, when a `by` chain is spelled, monotone with the chased
-ranks, ties broken by exactly the lexicographic (rank, position) order
-(`lean/Bumbledb/Order.lean: RankedOrderMark`, `ranked_tiebreak_lex`). A
-hand-built row set is judged exactly like a generated one — which is what keeps
-hand-numbered columns honest; the gap and the duplicate are the two ways such a
-column lies (`lean/Bumbledb/Countermodels.lean: order_gap`, `order_duplicate`).
-The uniqueness half is the original key judgment on a restricted fact set
-(`lean/Bumbledb/Subsumption.lean: order_group_functionality`), and dropping the
-chain only weakens the judgment
-(`lean/Bumbledb/Order.lean: ranked_order_shadow`).
-
-Both forms' sides are **single atoms, permanently** (the E1 refusal: a join
+The form's sides are **single atoms, permanently** (the E1 refusal: a join
 inside the judge breaks the linear per-statement cost model — the shape is
 proved uninhabitable at the gate type,
 `lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`).
 
-**Both forms are accepted at declaration and judged per commit.** Acceptance
-seals each statement's plan handle (the window's resolved target key; the
-ranked chain's per-hop key witnesses), and the commit pipeline runs exactly
-the plans the calculus prices (`lean/Bumbledb/Oracle.lean:
-cardinality_plan_decides`, `order_plan_decides`, `ranked_order_plan_decides`):
-per touched parent one keyed parent probe and one child-group walk; per
-touched group one position-ordered walk, the ranked form chasing its sealed
-hops per member. The touched sets are the delta-restriction theorems'
-(`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`, `rankedTouched`),
-and both forms' violations join the statement phase's complete citation set
-(§ judged on final states). `Db::verify_store` re-verifies both forms
+**The form is accepted at declaration and judged per commit.** Acceptance
+seals the statement's plan handle (the window's resolved target key), and the
+commit pipeline runs exactly the plan the calculus prices
+(`lean/Bumbledb/Oracle.lean: cardinality_plan_decides`):
+per touched parent one keyed parent probe and one child-group walk. The
+touched set is the delta-restriction theorem's
+(`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`),
+and the form's violations join the statement phase's complete citation set
+(§ judged on final states). `Db::verify_store` re-verifies the form
 globally — the sweeper's half of the division of authority.
+
+**Refused: order marks (plain and ranked).** The `order R(pos) per R(grp)
+[by …]` statement form — per parent group, positions exactly `1..k`, the
+ranked variant monotone with key-chased ranks — shipped for one day and left
+the vocabulary whole. **Alternative:** keep them (they shipped for one day).
+**Why it lost:** no censused workload; O(k) renumbering is intrinsic to the
+contiguity invariant, not to any checker — fractional indexing is the
+industry answer and needs only a keyed position; the keyword-led syntax broke
+the operator-algebra surface; and the admission calculus had already
+structurally refused the ranked form's chase (`touched_delta_bounded` fails
+under the every-group escalation — the E1 exclusion's sibling), with the
+one-day shipped form's only adversarial finding living exactly there (the
+ranked-on-closed blocker, 5b45b87b's closeout). Replacements, both named:
+fractional indexing over `R(group, pos) -> R` (host-side; cookbook), and the
+exact-partition interval recipe for tiling contiguity (cookbook, the ordering
+triple). **Reverses if:** a censused workload demands enforced unit-step
+sequences — and then it returns as the interval recipe plus the fixed-width
+type, never as a statement form.
 
 ## Statements: the schema surface
 
@@ -154,10 +156,7 @@ Dependencies are declared as standalone statements between relation blocks — t
 macro surface is the algebra with ASCII operator images (`⊆` is not a Rust token):
 `->` for FD, `<=` for ⊆ (the subset order *is* an order), `==` for set equality,
 `in lo..hi per` for the cardinality window (`*` the no-ceiling spelling),
-`order R(pos) per R(grp) [by link -> K(rank)]` for the order mark (both atoms
-name one relation; a `by` hop spells its read field only — the hop key resolves
-to the relation's one single-field key at expansion, and an ambiguous key is an
-expansion error), `(fields)` for projection, `| field == literal` for selection
+`(fields)` for projection, `| field == literal` for selection
 with `| field == {A, B}` the literal-set binding.
 
 ```rust
@@ -212,20 +211,14 @@ order-oracle plan calculus (`lean/Bumbledb/Oracle.lean: acceptance_gate`), and t
 gate itself is one inhabited type: each single-key statement form's case for
 acceptance is its `lean/Bumbledb/Admission.lean: AdmissibleForm` term — denotation,
 executable judge, delta restriction, oracle plan, and creation-quarantine
-compliance, the checklist as a type. Six forms inhabit it (scalar and pointwise
-FD, scalar and coverage IND, the window, the plain order mark — every one
+compliance, the checklist as a type. Five forms inhabit it (scalar and pointwise
+FD, scalar and coverage IND, the window — every one
 accepted at declaration and judged per commit); a future form enters the vocabulary by
 inhabiting it first, and the E1 joined-window shape is proved uninhabitable on
 the plan field (`lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`).
-The ranked order mark sits outside the type by design, not by omission: a rank
-chase probes answer-dependent keys and a dirty hop touches every group — the
-two read shapes whose refusal IS the E1 fence — so its acceptance case is the
-plan calculus directly (`lean/Bumbledb/Oracle.lean: ranked_order_plan_decides`,
-per-hop pricing proved, `lean/Bumbledb/Oracle.lean: chain_cost_hops`) with the
-touched-set escalation recorded
-(`lean/Bumbledb/Txn/DeltaRestriction.lean: rankedTouched`); the engine accepts
-the ranked form exactly by sealing that plan — one declared-key witness per hop
-(`schema/validate.rs::validate_rank_chain`).
+An answer-dependent (chase-shaped) read or an every-group escalation is
+structurally refused by the same fences — which is part of why the order-mark
+forms left the vocabulary (§ refused: order marks above).
 Concretely, validation demands:
 
 - **FD:** key form, no selection; at most **one** interval-typed field, and it must
@@ -280,32 +273,10 @@ Concretely, validation demands:
   containment's: a closed target compiles the member-set plan through the same
   key rule (projection = the synthetic id), and a window between constants is
   decided at validate outright.
-- **Order mark:** position field u64 (`OrderPositionNotU64` — the ordinal
-  reading is of u64 numerals, `lean/Bumbledb/Order.lean: Value.ordinal`),
-  grouping a non-empty duplicate-free scalar projection
-  (`OrderGroupingInterval`; the degenerate empty grouping is refused — one
-  "group" must never be the whole relation, the walk-pricing narrowing of
-  `lean/Bumbledb/Admission.lean`); the promised plan is one prefix walk per
-  touched group (`lean/Bumbledb/Oracle.lean: order_plan_decides`,
-  `order_plan_consultations`). For the RANKED form, every `by` hop must resolve
-  a **declared single-field key** of its relation (`RankHopUnkeyed`) — the
-  demand that makes the rank read deterministic
-  (`lean/Bumbledb/Subsumption.lean: chain_eval_deterministic`) and each chase
-  probe a unit consultation (`lean/Bumbledb/Oracle.lean: chain_cost_hops`,
-  honest by `point_probe_honest`) — with the chain type-consistent hop to hop
-  (`RankChainTypeMismatch`) and the final payload u64 (`OrderRankNotU64`);
-  acceptance seals one key witness per hop, which IS the ranked plan's handle.
-  A PLAIN order mark on a closed relation is decided at validate (the whole
-  discipline over the sealed axioms); the RANKED form on a closed subject is
-  refused outright (`RankedOrderClosedSubject`): closed rows ride no delta and
-  no sweep, so the ranked clause — whose ranks read through writable hop
-  relations — would be judged nowhere (the sound narrowing recorded in
-  `lean/Bumbledb/Order.lean` § narrowings).
 - **Statements between constants** (both sides closed) are decided at validate
   outright: a declaration the ground axioms refute — a source axiom outside the
-  member set, a declared key two axioms collide under, a parent axiom whose
-  child count falls outside its window, or a closed order group with a gap or
-  duplicate — is a schema error, not
+  member set, a declared key two axioms collide under, or a parent axiom whose
+  child count falls outside its window — is a schema error, not
   a latent judgment, because a theory whose axioms refute its own statement has no
   model to commit (`lean/Bumbledb/Schema.lean: den_closed_constant` — a closed
   relation denotes the same sealed fact set at every instance).
@@ -323,15 +294,15 @@ discipline of acceptance — an accepted statement is a *measured promise*, exac
 like an accepted optimization (`00-product.md`).
 
 The sealed representation is a sum with homogeneous typed arenas — keys,
-containments, windows, order marks.
+containments, windows.
 `FieldSet` gives each projection canonical set identity (sorted and
 duplicate-free), while `Projection` retains statement order beside that set so
 validation compares identity and execution derives the target-key permutation.
-Validation is the only mint for `KeyId`, `ContainmentId`, `WindowId`, and
-`OrderId`: a key witness resolves
+Validation is the only mint for `KeyId`, `ContainmentId`, and `WindowId`:
+a key witness resolves
 totally through `Schema::key`, a containment witness resolves totally through
-`Schema::containment` (windows and order marks through `Schema::window` /
-`Schema::order`), and `Schema::dependents` carries containment witnesses indexed
+`Schema::containment` (windows through `Schema::window`), and
+`Schema::dependents` carries containment witnesses indexed
 by a key witness. The global `StatementId` order survives as a separate sum-typed
 spine; `Schema::statement` parses it into the corresponding borrowed typed arm for
 fingerprint identity, storage, diagnostics, and rendering. Downstream code consumes
@@ -548,20 +519,6 @@ untouched by it. The phases:
   fact's bytes. A floored window may share the containment's probe
   machinery (`lean/Bumbledb/Subsumption.lean: window_floor_containment`)
   but never skips its own check.
-- Order mark: per **touched group** — every grouping tuple any delta fact
-  projects to, removes included (a removal can break downward closure);
-  a delta touching any `by`-hop relation escalates to EVERY group
-  (`lean/Bumbledb/Txn/DeltaRestriction.lean: rankedTouched`) — one
-  position-ordered walk of the group's `R` keys checks uniqueness,
-  1-basedness, and downward closure as one positions-are-exactly-`1..k`
-  sweep (`lean/Bumbledb/Oracle.lean: order_plan_decides`); the ranked
-  form additionally chases each member's sealed key-backed hops — one
-  keyed probe per hop (`lean/Bumbledb/Oracle.lean: chain_cost_hops`) — and
-  demands ranks non-decreasing in position order
-  (`lean/Bumbledb/Order.lean: ranked_tiebreak_lex`; a hop miss means no
-  rank and imposes nothing — the relational reading). A broken group
-  convicts with the statement id, the defect kind, and a convicting
-  member's bytes.
 
 **Domain quantification, worked.** `Severity(id) <= Handler(severity)` with
 `Severity` closed and `Handler(severity) -> Handler` declared says *every severity
@@ -616,11 +573,6 @@ final position, or determinant width overflow; IND whose target projection match
 of the target (or, with an interval position, no pointwise key carrying it) —
 the same line covering a window's target projection, the rule being one;
 an interval-typed position in a window projection (the v0 refusal above);
-an order-mark position field that is not u64; an interval-typed order-mark
-grouping field (and the empty grouping falls to the empty-projection line);
-a `by` hop whose key field no declared single-field key backs; a `by` chain
-whose running type disagrees with a hop's key field; a `by` chain whose final
-payload is not u64;
 duplicate statements (identical normalized sides and form — write it once), where
 two FDs over one field *set* are duplicates regardless of projection order (the
 order shapes only the determinant, and key resolution is by set) and two
@@ -630,7 +582,7 @@ type-mismatch case, called out because it is the one migration authors will hit)
 an interval position on a containment with a closed side (the v0 refusal above);
 a closed-target projection that is not the synthetic id (no key matches — the
 handle is the one probe-able identity); a statement between constants that the
-ground axioms refute (containment, window, and order-mark forms alike).
+ground axioms refute (containment and window forms alike).
 FD-with-selection and non-key FD forms are not rejected here — they are
 **unrepresentable**: the descriptor cannot carry them, and the macro grammar
 rejects the utterance (`70-api.md`).

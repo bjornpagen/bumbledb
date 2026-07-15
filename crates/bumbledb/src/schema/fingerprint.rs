@@ -28,9 +28,11 @@ use crate::value::Value;
 /// one byte stream), and a closed relation's ground axioms hash after its
 /// fields. `v3`: the dependency-vocabulary extension — every selection
 /// binding hashes a literal COUNT before its literals (the disjunctive
-/// set form), and the two new statement forms take tags 2 (cardinality
-/// window) and 3 (order mark).
-const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v3";
+/// set form), and the two new statement forms took tags 2 (cardinality
+/// window) and 3 (order mark). `v4`: the order purge — the statement
+/// spine sum shrank (tag 3 no longer exists), so the label bumps
+/// (the version-bump law; nothing deployed carries an order statement).
+const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v4";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
@@ -51,14 +53,12 @@ pub struct SchemaFingerprint(pub [u8; 32]);
 ///   each: handle bytes, then the row's canonical fact bytes, each
 ///   length-prefixed like everything else);
 /// - the dependency statements in **materialized order** — for each: the
-///   judgment form (Functionality = 0, Containment = 1, Cardinality = 2,
-///   Order = 3) and its body — sides as (relation id, projection field-id
+///   judgment form (Functionality = 0, Containment = 1, Cardinality = 2)
+///   and its body — sides as (relation id, projection field-id
 ///   list in statement order, selection list as (field id, literal count,
 ///   literal values in canonical set order) bindings in statement order);
 ///   a cardinality window adds `lo` and the `hi` presence tag + bound
-///   between its sides; an order mark hashes relation, position, the
-///   grouping list, and the ranking presence tag + link + hop
-///   (relation, key, read) triples.
+///   between its sides.
 fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
     put_bytes(out, FORMAT_VERSION_LABEL);
     put_len(out, schema.relations().len());
@@ -89,10 +89,8 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             }
         }
     }
-    let statement_count = schema.keys().len()
-        + schema.containments().len()
-        + schema.windows().len()
-        + schema.orders().len();
+    let statement_count =
+        schema.keys().len() + schema.containments().len() + schema.windows().len();
     put_len(out, statement_count);
     for index in 0..statement_count {
         let id = StatementId(u16::try_from(index).expect("statement count fits u16"));
@@ -122,28 +120,6 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                     }
                 }
                 put_side(out, &statement.target);
-            }
-            StatementView::Order(_, statement) => {
-                out.push(3);
-                put_relation_id(out, statement.relation);
-                put_field_id(out, statement.position);
-                put_len(out, statement.grouping.len());
-                for field in &statement.grouping {
-                    put_field_id(out, *field);
-                }
-                match &statement.ranking {
-                    None => out.push(0),
-                    Some(chain) => {
-                        out.push(1);
-                        put_field_id(out, chain.link);
-                        put_len(out, chain.hops.len());
-                        for hop in &chain.hops {
-                            put_relation_id(out, hop.relation);
-                            put_field_id(out, hop.key);
-                            put_field_id(out, hop.read);
-                        }
-                    }
-                }
             }
         }
     }
@@ -305,12 +281,12 @@ mod tests {
     #[test]
     fn golden_fingerprint_pins_the_hash() {
         // Pinned: the canonical encoding (and therefore blake3 of it)
-        // must not drift while the format label stays `v3`. `base()` covers
+        // must not drift while the format label stays `v4`. `base()` covers
         // every literal-adjacent input: fresh auto-keys, a declared key,
         // and a containment with a selection literal.
         assert_eq!(
             hex_of(&base_fingerprint()),
-            "8580c7306e642f4b958d1bd224d603e53d3bca7fcb8caec80b727e8ef81a9436"
+            "1e5963bb9a5f3165c1aa3738791cf5b426cf5b2c8196aaef4e606811dd9aedcf"
         );
     }
 
@@ -338,7 +314,7 @@ mod tests {
         );
         assert_eq!(
             hex_of(&fingerprint(&schema)),
-            "5d3fa9359bc9e1c7fd7821398715bb3ba2234a2772ab97fd771744a400d248f9"
+            "9e2cf875bbedd38baada9bc454b3a445a1a331b0d62c1d92d22d2de05170d33f"
         );
     }
 
@@ -489,7 +465,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v3");
+        expected.extend_from_slice(b"bumbledb-schema-v4");
         expected.extend_from_slice(&1u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&1u32.to_le_bytes()); // name len
         expected.extend_from_slice(b"R");
@@ -545,7 +521,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v3");
+        expected.extend_from_slice(b"bumbledb-schema-v4");
         expected.extend_from_slice(&2u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"Holder");
@@ -662,7 +638,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v3");
+        expected.extend_from_slice(b"bumbledb-schema-v4");
         expected.extend_from_slice(&1u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&8u32.to_le_bytes());
         expected.extend_from_slice(b"Currency");

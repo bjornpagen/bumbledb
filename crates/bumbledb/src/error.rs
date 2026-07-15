@@ -249,63 +249,6 @@ pub enum SchemaError {
         relation: RelationId,
         field: FieldId,
     },
-    /// Roster "an order mark's position column is not u64": the ordinal
-    /// reading is of u64 numerals
-    /// (`lean/Bumbledb/Order.lean: Value.ordinal`), and any other type
-    /// never satisfies the 1-based discipline — refused at declaration,
-    /// never a vacuously-failing statement.
-    OrderPositionNotU64 {
-        statement: StatementId,
-        relation: RelationId,
-        field: FieldId,
-    },
-    /// Roster "an interval-typed grouping field on an order mark": the
-    /// walked group is keyed by scalar bytes; an interval grouping would
-    /// conflate the group with its point-family.
-    OrderGroupingInterval {
-        statement: StatementId,
-        relation: RelationId,
-        field: FieldId,
-    },
-    /// Roster "a ranked order mark on a closed subject" — refused v0: a
-    /// closed relation's rows never enter a delta, so its mark writes no
-    /// order `R` edges and no commit walk or store sweep would ever judge
-    /// the ranked clause — yet the ranks are read through `by` hop
-    /// relations whose instances mutate after declaration, so the clause
-    /// is NOT decided by the sealed extension either. The engine narrows
-    /// the model's admission (`lean/Bumbledb/Admission.lean: orderForm`
-    /// admits the shape) in the sound direction: refusal at the gate. The
-    /// plain form on a closed subject stays — its whole discipline is the
-    /// 1..k walk over the sealed axioms, decided at validate outright.
-    RankedOrderClosedSubject {
-        statement: StatementId,
-        relation: RelationId,
-    },
-    /// Roster "a `by` hop whose key field is no declared key of its
-    /// relation": the key demand is what makes the rank read
-    /// deterministic (`lean/Bumbledb/Subsumption.lean:
-    /// chain_eval_deterministic`) and the per-hop unit probe honest
-    /// (`lean/Bumbledb/Oracle.lean: chain_cost_hops`).
-    RankHopUnkeyed {
-        statement: StatementId,
-        relation: RelationId,
-        field: FieldId,
-    },
-    /// Roster "a `by` chain whose running value's type disagrees with a
-    /// hop's key field" — the positional structural-type rule along the
-    /// chain. Carries the 0-based hop index.
-    RankChainTypeMismatch {
-        statement: StatementId,
-        hop: usize,
-    },
-    /// Roster "a `by` chain whose final payload is not u64": the rank is
-    /// the final read's ordinal
-    /// (`lean/Bumbledb/Order.lean: RankChain.rankOf`).
-    OrderRankNotU64 {
-        statement: StatementId,
-        relation: RelationId,
-        field: FieldId,
-    },
     /// Roster ">1 interval position": two interval fields in one FD
     /// projection would be 2-D exclusion, which the ordered determinant cannot
     /// answer. Carries the second interval field.
@@ -901,23 +844,6 @@ pub enum Direction {
     TargetRequired,
 }
 
-/// Which discipline of an order mark a walked group broke — typed, an id
-/// never a string (`docs/architecture/30-dependencies.md` § the extension
-/// forms: the gap and the duplicate are the two ways a hand-numbered
-/// column lies; the ranked form adds rank monotonicity).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderDefect {
-    /// Two distinct facts of one group carry one position
-    /// (`lean/Bumbledb/Order.lean: OrdinalGroup.unique`).
-    DuplicatePosition,
-    /// Positions are not exactly `1..k`: a gap, or a group not starting
-    /// at 1 (`lean/Bumbledb/Order.lean: OrdinalGroup.based` / `.closed`).
-    PositionGap,
-    /// The ranked form's monotonicity: a strictly smaller rank sits
-    /// strictly later (`lean/Bumbledb/Order.lean: RankedOrderMark.mono`).
-    RankOrder,
-}
-
 /// One violated statement of a rejected commit — the element of
 /// [`Violations`]. Payloads carry the statement id and canonical fact
 /// bytes, never storage row ids (`docs/architecture/10-data-model.md`).
@@ -963,18 +889,6 @@ pub enum Violation {
         /// count past the ceiling).
         count: u64,
     },
-    /// An `Order` statement violated by the final state: a touched group
-    /// whose positions break the ordinal discipline, or — for the ranked
-    /// form — whose ranks break monotonicity
-    /// (`lean/Bumbledb/Order.lean: OrderMark` / `RankedOrderMark`).
-    Order {
-        statement: StatementId,
-        defect: OrderDefect,
-        /// The convicting fact: the group member at the broken position
-        /// (duplicate or gap), or the member whose rank sits out of
-        /// order.
-        fact: Box<[u8]>,
-    },
 }
 
 impl Violation {
@@ -984,22 +898,21 @@ impl Violation {
         match self {
             Self::Functionality { statement, .. }
             | Self::Containment { statement, .. }
-            | Self::Cardinality { statement, .. }
-            | Self::Order { statement, .. } => *statement,
+            | Self::Cardinality { statement, .. } => *statement,
         }
     }
 
     /// The citation identity — [`Violations`]' sort and dedup key:
     /// statement id (materialized order), then direction (source before
-    /// target; key, window, and order statements have none). Witness
+    /// target; key and window statements have none). Witness
     /// facts, counts, and defect kinds are deliberately outside the
     /// identity: a statement is cited once per direction, whatever the
     /// count of facts convicting it.
     fn citation(&self) -> (StatementId, Option<Direction>) {
         match self {
-            Self::Functionality { statement, .. }
-            | Self::Cardinality { statement, .. }
-            | Self::Order { statement, .. } => (*statement, None),
+            Self::Functionality { statement, .. } | Self::Cardinality { statement, .. } => {
+                (*statement, None)
+            }
             Self::Containment {
                 statement,
                 direction,

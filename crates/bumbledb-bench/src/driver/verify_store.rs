@@ -53,8 +53,7 @@ fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
         | StoreFinding::FactWithoutReverseEdge { statement, .. }
         | StoreFinding::ReverseEdgeWithoutFact { statement, .. }
         | StoreFinding::JudgmentViolation { statement, .. }
-        | StoreFinding::WindowViolation { statement, .. }
-        | StoreFinding::OrderViolation { statement, .. } => Some(*statement),
+        | StoreFinding::WindowViolation { statement, .. } => Some(*statement),
         StoreFinding::FactWithoutMembership { .. }
         | StoreFinding::MembershipWithoutFact { .. }
         | StoreFinding::RowCountDesync { .. }

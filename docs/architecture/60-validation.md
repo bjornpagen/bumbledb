@@ -64,13 +64,13 @@ whichever oracle turns out wrong.
 the same lane). Commit verdicts get the same treatment as answer sets: the
 executable judge is *proved* to render the model judge's verdict phase for
 phase with the same per-phase violation sets
-(`lean/Bumbledb/Decide.lean: Txn.judgeB_agrees_of_declared`; the checker face
+(`lean/Bumbledb/Decide.lean: Txn.judgeB_agrees`; the checker face
 is `lean/Bumbledb/Decide.lean: holdsB_iff_holds`), so running it judges the
 engine against the spec's own two-phase judgment
 (`lean/Bumbledb/Txn.lean: judge_key_preempts`).
 `crates/bumbledb-bench/src/conformance/judgment.rs` serializes hand-authored
-`(theory, instance, delta)` fixtures — both classical forms, both extension
-forms at their window and order boundaries, the two-phase preemption mix,
+`(theory, instance, delta)` fixtures — both classical forms, the window
+form at its boundaries, the two-phase preemption mix,
 set-selections, the delete-then-reinsert touched-group seam, and the
 permuted-interval lock (a containment written interval-first against a
 pointwise key declared scalar-first, accepted set-canonically —
@@ -113,10 +113,7 @@ the `S` counters against the `F` scan — including the `R`-delete class the
 commit path defers, `50-storage.md`), and **every judgment form re-verified
 globally** over the full committed state through the commit path's own probes —
 the scalar probe and coverage walk per source fact, the child-group count per
-ψ-selected window parent, the ordered group walk per order-mark group (writable
-subjects; a closed subject's mark is plain-only by the gate refusal
-`RankedOrderClosedSubject` and was decided at validate against the sealed
-extension) — the class no incremental check can see: an incremental form
+ψ-selected window parent — the class no incremental check can see: an incremental form
 wrong once, long ago, preserved by every commit since. Findings are report
 data, never errors; CLI-wrapped as `bumbledb-bench verify-store` (nonzero exit
 on non-empty findings, zero otherwise).

@@ -1314,18 +1314,15 @@ fn an_uncovered_domain_quantification_is_a_judgment_violation() {
     assert_eq!(db.verify_store().expect("verify").findings, vec![]);
 }
 
-// ---------- the extension forms (windows and order marks) ----------
+// ---------- the extension form (windows) ----------
 
 const M_HOLDER: RelationId = RelationId(0);
 const M_ACCOUNT: RelationId = RelationId(1);
-const M_ITEM: RelationId = RelationId(2);
-/// Materialized: Holder key (0), the window (1), the order mark (2).
+/// Materialized: Holder key (0), the window (1).
 const M_WINDOW: StatementId = StatementId(1);
-const M_ORDER: StatementId = StatementId(2);
 
 /// Holder(id, tag; key id), Account(holder, kind, num) with
-/// `Account(holder | kind == 1) in 1..2 per Holder(id)`, and
-/// Item(doc, pos, note) with `order Item(pos) per Item(doc)`.
+/// `Account(holder | kind == 1) in 1..2 per Holder(id)`.
 fn marks_schema() -> SchemaDescriptor {
     let plain = |name: &str| FieldDescriptor {
         name: name.into(),
@@ -1343,11 +1340,6 @@ fn marks_schema() -> SchemaDescriptor {
                 extension: None,
                 name: "Account".into(),
                 fields: vec![plain("holder"), plain("kind"), plain("num")],
-            },
-            RelationDescriptor {
-                extension: None,
-                name: "Item".into(),
-                fields: vec![plain("doc"), plain("pos"), plain("note")],
             },
         ],
         statements: vec![
@@ -1372,26 +1364,17 @@ fn marks_schema() -> SchemaDescriptor {
                     selection: Box::new([]),
                 },
             },
-            StatementDescriptor::Order {
-                relation: M_ITEM,
-                position: FieldId(1),
-                grouping: Box::new([FieldId(0)]),
-                ranking: None,
-            },
         ],
     }
 }
 
-/// One committed, green store: holder 1 with one kind-1 account, and doc
-/// 1's items at positions 1 and 2 (rows 0 and 1).
+/// One committed, green store: holder 1 with one kind-1 account.
 fn marks_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
     let db = Db::create(dir.path(), marks_schema()).expect("create");
     db.write(|tx| {
         tx.insert_dyn(M_HOLDER, &[Value::U64(1), Value::U64(0)])?;
-        tx.insert_dyn(M_ACCOUNT, &[Value::U64(1), Value::U64(1), Value::U64(0)])?;
-        tx.insert_dyn(M_ITEM, &[Value::U64(1), Value::U64(1), Value::U64(10)])?;
-        tx.insert_dyn(M_ITEM, &[Value::U64(1), Value::U64(2), Value::U64(11)])
+        tx.insert_dyn(M_ACCOUNT, &[Value::U64(1), Value::U64(1), Value::U64(0)])
             .map(|_| ())
     })
     .expect("green base commit");
@@ -1446,69 +1429,6 @@ fn a_missing_window_edge_is_found_and_the_group_recounted() {
     );
 }
 
-/// The one committed order edge under `M_ORDER ‖ key_bytes`, located by
-/// prefix scan (row ids follow the plan's `(relation, fact_hash)` order,
-/// so a test never assumes them).
-fn order_edge(db: &Db<SchemaDescriptor>, key_bytes: &[u8]) -> (Vec<u8>, u64) {
-    let txn = db.env().read_txn().expect("read txn");
-    let prefix = key(|b| keys::reverse_prefix(b, M_ORDER, key_bytes));
-    let data = db.env().data();
-    let bounds: (std::ops::Bound<&[u8]>, std::ops::Bound<&[u8]>) = (
-        std::ops::Bound::Included(prefix.as_slice()),
-        std::ops::Bound::Unbounded,
-    );
-    let mut range = data.range(txn.raw(), &bounds).expect("range");
-    let (k, _) = range.next().expect("one edge").expect("kv");
-    assert!(k.starts_with(&prefix), "the fixture wrote this order edge");
-    let (_, _, _, row) = keys::parse_reverse_key(k).expect("R key shape");
-    (k.to_vec(), row)
-}
-
-/// The R-delete-blind class, order form: a raw-deleted order edge is the
-/// missing-edge finding, and the whole-group walk reads the survivor as
-/// a group that no longer starts at 1.
-#[test]
-fn a_missing_order_edge_is_found_and_the_group_rewalked() {
-    let (_dir, db) = marks_fixture("verify-marks-order-edge");
-    // The (doc 1, pos 1) item's edge: key bytes are doc ‖ pos.
-    let mut edge = Vec::new();
-    edge.extend_from_slice(&encode_u64(1));
-    edge.extend_from_slice(&encode_u64(1));
-    let (r, row_id) = order_edge(&db, &edge);
-    raw_write(&db, |txn| {
-        let data = txn.env().data();
-        assert!(
-            data.delete(txn.raw_mut(), &r).expect("raw delete"),
-            "the fixture wrote this order edge"
-        );
-    });
-    let survivor = {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(1), ValueRef::U64(2), ValueRef::U64(11)],
-            db.schema().relation(M_ITEM).layout(),
-            &mut bytes,
-        );
-        bytes
-    };
-    assert_eq!(
-        db.verify_store().expect("verify").findings,
-        vec![
-            StoreFinding::FactWithoutReverseEdge {
-                statement: M_ORDER,
-                relation: M_ITEM,
-                row_id,
-                reverse_key: r.into(),
-            },
-            StoreFinding::OrderViolation {
-                statement: M_ORDER,
-                defect: crate::error::OrderDefect::PositionGap,
-                fact: survivor.into(),
-            },
-        ]
-    );
-}
-
 /// A stray window edge (no live fact re-derives it) is the R pass's
 /// finding, exactly as a containment's.
 #[test]
@@ -1526,47 +1446,5 @@ fn a_stray_window_edge_is_convicted() {
             statement: M_WINDOW,
             reverse_key: r.into(),
         }]
-    );
-}
-
-/// A stray order edge is convicted by the R pass AND read by the group
-/// walk — a phantom position breaks downward closure. The stray names a
-/// LIVE row (the pos-2 item) so the walk can cite its bytes; a stray
-/// naming no row at all is the R pass's finding alone (the walk's fetch
-/// is the corruption another pass owns).
-#[test]
-fn a_stray_order_edge_is_convicted_and_walked() {
-    let (_dir, db) = marks_fixture("verify-marks-stray-order");
-    // The live (doc 1, pos 2) item's row carries the phantom edge.
-    let mut real = Vec::new();
-    real.extend_from_slice(&encode_u64(1));
-    real.extend_from_slice(&encode_u64(2));
-    let (_, live_row) = order_edge(&db, &real);
-    let mut edge = Vec::new();
-    edge.extend_from_slice(&encode_u64(1));
-    edge.extend_from_slice(&encode_u64(9));
-    let r = key(|b| keys::reverse_key(b, M_ORDER, &edge, M_ITEM, live_row));
-    raw_write(&db, |txn| {
-        let data = txn.env().data();
-        data.put(txn.raw_mut(), &r, &[]).expect("plant stray edge");
-    });
-    let findings = db.verify_store().expect("verify").findings;
-    assert!(
-        findings.contains(&StoreFinding::ReverseEdgeWithoutFact {
-            statement: M_ORDER,
-            reverse_key: r.clone().into(),
-        }),
-        "the stray edge resolves no fact: {findings:?}"
-    );
-    assert!(
-        findings.iter().any(|finding| matches!(
-            finding,
-            StoreFinding::OrderViolation {
-                statement,
-                defect: crate::error::OrderDefect::PositionGap,
-                ..
-            } if *statement == M_ORDER
-        )),
-        "the phantom position 9 breaks closure: {findings:?}"
     );
 }

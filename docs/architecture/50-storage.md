@@ -40,8 +40,7 @@ M | relation_id | fact_hash         -> row_id         membership        (reader:
 U | relation_id | statement | key   -> row_id         FD determinants         (reader: functionality checks — put-conflict and neighbor probes —
                                                       key-probe lookups, WriteTx key reads, coverage walks)
 R | statement | key | source_rel | source_row -> ()   statement-scoped edges  (readers: target-side containment checks on delete/shrink;
-                                                      the window judgment's child-group count walk; the order judgment's
-                                                      position-ordered group walk)
+                                                      the window judgment's child-group count walk)
 Q | relation_id | field_id          -> next_u64       fresh sequences  (reader: alloc)
 S | relation_id | stat              -> u64            counters: stat 0 = row count (readers: the planner,
                                                       and image build's cross-check against the F scan);
@@ -92,18 +91,13 @@ facts, never interned, so the key hash carries no type tag: forward
   satisfies — conditional containments write reverse edges only for facts inside
   their σ, so the arm-validity and totality directions of a `==` each get exactly
   the edges they need. Bidirectional statements are two statement ids, symmetric
-  entries. The two extension forms write the same machinery under their own
-  statement ids: a **cardinality window** writes one edge per φ-satisfying
+  entries. The extension form writes the same machinery under its own
+  statement id: a **cardinality window** writes one edge per φ-satisfying
   child fact, `key` = the child's projection in target-key determinant order —
   the window judgment's child-group count is one prefix walk of that bucket
   (reader: `check_windows`; the window's edges exist for closed TARGETS too,
   where they are the count's only index — unlike a closed-target containment,
-  whose member test needs none). An **order mark** writes one edge per fact of
-  the marked relation (the form has no σ), `key` = the grouping projection's
-  bytes with the 8-byte position encoding as its tail — order embeddings, so
-  one group's entries walk in position order (reader: `check_orders`,
-  uniqueness/1-basedness/downward-closure in one sweep,
-  `lean/Bumbledb/Oracle.lean: order_plan_decides`).
+  whose member test needs none).
 - The `statement` component of every `U` and `R` key is always the
   fingerprint-pinned `StatementId`. Validation-minted `KeyId` and
   `ContainmentId` witnesses exist only in the sealed in-memory schema and never
@@ -121,7 +115,12 @@ facts, never interned, so the key hash carries no type tag: forward
   version bump turns that whole class into a loud open-time refusal. Version 3 is
   the dependency-vocabulary extension: the canonical schema encoding moved
   (literal-set selections, the window and order-mark statement forms), so every
-  v2 fingerprint was computed under a retired encoding.
+  v2 fingerprint was computed under a retired encoding. Version 4 is the order
+  purge: the statement spine sum shrank when the order-mark form and its
+  `R`-edge namespace left the vocabulary
+  (`docs/architecture/30-dependencies.md` § refused: order marks), so every v3
+  fingerprint was computed under a retired encoding — nothing deployed carries
+  an order statement.
 
 **Decision: one `_data` database with first-byte namespaces.** **Alternative:** one
 LMDB database per namespace (enables per-namespace append mode and integer-key layouts).
@@ -247,18 +246,6 @@ variant agreement.
      φ-selected axioms are counted by an honest ≤256-row extension scan. A
      count under the floor or over the ceiling records a violation carrying
      the statement id, the parent fact's bytes, and the observed count.
-   - **Order marks:** every TOUCHED group — the delta-projected grouping
-     tuples, escalated to every group of the statement when any `by`-hop
-     relation is dirty (`lean/Bumbledb/Txn/DeltaRestriction.lean:
-     rankedTouched`) — is walked once in position order over its `R` keys:
-     positions must read exactly `1..k` (`lean/Bumbledb/Oracle.lean:
-     order_plan_decides`), and under a sealed rank chain each member's rank is
-     chased through the hops (one keyed `U` probe + one `F` get per hop, a
-     closed hop relation scanning its axioms;
-     `lean/Bumbledb/Oracle.lean: chain_cost_hops`) and must be non-decreasing
-     (`lean/Bumbledb/Order.lean: ranked_tiebreak_lex`). The plain walk needs
-     no `F` get on the accept path — group and position live in the key
-     bytes; a conviction fetches the offending member's bytes once.
    Any failure → typed error carrying the statement id, abort. The probe primitive
    ("does any fact match / does no fact match") is shared with the query executor's
    anti-probe (`40-execution.md`) — one mechanism, two callers.

@@ -30,7 +30,7 @@ pub use tuple::Tuple;
 
 use std::collections::BTreeSet;
 
-use bumbledb::schema::{RankChain, SchemaDescriptor, Side, StatementDescriptor, ValueType};
+use bumbledb::schema::{SchemaDescriptor, Side, StatementDescriptor, ValueType};
 use bumbledb::{Direction, RelationId, StatementId, Value};
 
 use tuple::{endpoints, overlaps};
@@ -86,7 +86,7 @@ pub struct Delta {
 /// ascending, source before target within one statement) — the same
 /// total object as the engine's sealed `Violations`.
 ///
-/// The statement phase can mix containment, cardinality, and order
+/// The statement phase can mix containment and cardinality
 /// citations in one rejection, so [`sealed`] sorts by the explicit
 /// citation key ([`Violation::citation`]) — the engine's own sort key —
 /// never the derived variant order.
@@ -105,12 +105,6 @@ pub enum Violation {
     Cardinality {
         statement: StatementId,
     },
-    /// An order mark failed: some group's positions are not exactly
-    /// `1..k`, or — ranked — a smaller rank sits later
-    /// (`lean/Bumbledb/Order.lean: OrderMark` / `RankedOrderMark`).
-    Order {
-        statement: StatementId,
-    },
     /// A delete or insert named a closed relation — refused before the
     /// delta, exactly the engine's `Error::ClosedRelationWrite`.
     ClosedRelationWrite {
@@ -126,9 +120,9 @@ impl Violation {
     /// citations; its key only has to be total.
     fn citation(self) -> (u16, u8, u32) {
         match self {
-            Self::Functionality { statement }
-            | Self::Cardinality { statement }
-            | Self::Order { statement } => (statement.0, 0, 0),
+            Self::Functionality { statement } | Self::Cardinality { statement } => {
+                (statement.0, 0, 0)
+            }
             Self::Containment {
                 statement,
                 direction,
@@ -420,10 +414,10 @@ impl NaiveDb {
                 }
             }
         }
-        // The extension forms join the statement phase whole
+        // The window form joins the statement phase whole
         // (`lean/Bumbledb/Txn.lean` — the statement-phase violation set
-        // carries containment, cardinality, and order citations): the
-        // model judges every parent and every group of the FINAL state —
+        // carries containment and cardinality citations): the
+        // model judges every parent of the FINAL state —
         // the full judgment the engine's delta-restricted checks are
         // provably equal to over a clean pre-state
         // (`lean/Bumbledb/Txn/DeltaRestriction.lean:
@@ -438,19 +432,6 @@ impl NaiveDb {
                 } => {
                     if self.window_violated(state, source, *lo, *hi, target) {
                         found.push(Violation::Cardinality {
-                            statement: statement_id(sid),
-                        });
-                    }
-                }
-                StatementDescriptor::Order {
-                    relation,
-                    position,
-                    grouping,
-                    ranking,
-                } => {
-                    if self.order_violated(state, *relation, *position, grouping, ranking.as_ref())
-                    {
-                        found.push(Violation::Order {
                             statement: statement_id(sid),
                         });
                     }
@@ -493,88 +474,6 @@ impl NaiveDb {
             let count = u64::try_from(count).expect("fact count fits u64");
             count < lo || hi.is_some_and(|hi| count > hi)
         })
-    }
-
-    /// Does some group break the ordinal discipline — positions not
-    /// exactly `1..k` — or, ranked, the rank monotonicity
-    /// (`lean/Bumbledb/Order.lean: OrderMark` / `RankedOrderMark`)?
-    fn order_violated(
-        &self,
-        state: &[BTreeSet<Tuple>],
-        relation: RelationId,
-        position: bumbledb::FieldId,
-        grouping: &[bumbledb::FieldId],
-        ranking: Option<&RankChain>,
-    ) -> bool {
-        let mut groups: std::collections::BTreeMap<Tuple, Vec<&Tuple>> =
-            std::collections::BTreeMap::new();
-        for fact in &state[relation.0 as usize] {
-            let key = Tuple(
-                grouping
-                    .iter()
-                    .map(|field| fact.0[field.0 as usize].clone())
-                    .collect(),
-            );
-            groups.entry(key).or_default().push(fact);
-        }
-        for members in groups.values() {
-            // (position ordinal, rank) per member, position-sorted — the
-            // ordinal reading is total (`lean/Bumbledb/Order.lean:
-            // Value.ordinal`: a u64 reads its numeral, junk reads 0).
-            let mut ordered: Vec<(u64, Option<u64>)> = members
-                .iter()
-                .map(|fact| {
-                    let ordinal = match &fact.0[position.0 as usize] {
-                        Value::U64(v) => *v,
-                        _ => 0,
-                    };
-                    let rank = ranking.and_then(|chain| self.rank_of(state, chain, fact));
-                    (ordinal, rank)
-                })
-                .collect();
-            ordered.sort_unstable_by_key(|(ordinal, _)| *ordinal);
-            let contiguous = ordered.iter().enumerate().all(|(index, (ordinal, _))| {
-                *ordinal == u64::try_from(index).expect("fact count fits u64") + 1
-            });
-            if !contiguous {
-                return true;
-            }
-            // Rank monotonicity in position order, among rank-carrying
-            // members (a hop miss means no rank, imposing nothing —
-            // `lean/Bumbledb/Order.lean: RankChain.rankOf` is
-            // relational).
-            let mut prev: Option<u64> = None;
-            for (_, rank) in ordered {
-                let Some(rank) = rank else { continue };
-                if prev.is_some_and(|prev| rank < prev) {
-                    return true;
-                }
-                prev = Some(rank);
-            }
-        }
-        false
-    }
-
-    /// One fact's rank under a `by` chain, relationally: per hop, find
-    /// the (key-backed, hence unique) fact of the hop relation carrying
-    /// the running value at the key field, read the payload; the final
-    /// value's ordinal is the rank. `None` when a hop misses — the fact
-    /// has no rank (`lean/Bumbledb/Order.lean: RankChain.rankOf`).
-    fn rank_of(&self, state: &[BTreeSet<Tuple>], chain: &RankChain, fact: &Tuple) -> Option<u64> {
-        let mut running: Value = fact.0[chain.link.0 as usize].clone();
-        for hop in &chain.hops {
-            let candidate = match &self.extensions[hop.relation.0 as usize] {
-                Some(rows) => rows.iter().find(|row| row.0[hop.key.0 as usize] == running),
-                None => state[hop.relation.0 as usize]
-                    .iter()
-                    .find(|row| row.0[hop.key.0 as usize] == running),
-            }?;
-            running = candidate.0[hop.read.0 as usize].clone();
-        }
-        match running {
-            Value::U64(v) => Some(v),
-            _ => Some(0),
-        }
     }
 
     /// Does inserting `fact` leave two distinct facts agreeing on the

@@ -535,8 +535,8 @@ fn a_satisfied_closed_to_closed_containment_validates() {
 }
 
 /// The task/parent fixture the extension-form tests share: Parent(id key)
-/// and Task(parent, pos, rank, flag) — the window's target key, an order
-/// mark's grouping, and a rankable payload.
+/// and Task(parent, pos, prio, flag) — the window's target key plus
+/// selectable payloads.
 fn task_tree() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -551,7 +551,7 @@ fn task_tree() -> SchemaDescriptor {
                 fields: vec![
                     field("parent", ValueType::U64),
                     field("pos", ValueType::U64),
-                    field("rank", ValueType::U64),
+                    field("prio", ValueType::U64),
                     field("flag", ValueType::Bool),
                 ],
             },
@@ -658,83 +658,6 @@ fn a_satisfied_closed_to_closed_window_validates() {
     };
     decl.validate()
         .expect("each severity counts exactly one kind axiom");
-}
-
-/// `order Task(pos) per Task(parent)` seals into the order arena — the
-/// plain mark's acceptance (`lean/Bumbledb/Admission.lean: orderForm`;
-/// the promised plan is `lean/Bumbledb/Oracle.lean: order_plan_decides`).
-#[test]
-fn a_plain_order_mark_validates() {
-    let mut decl = task_tree();
-    decl.statements
-        .push(order_mark(RelationId(1), FieldId(1), &[FieldId(0)], None));
-    let schema = decl.validate().expect("the mark passes the gate");
-    assert_eq!(schema.orders().len(), 1);
-    let order = schema.order(OrderId(0));
-    assert_eq!(order.position, FieldId(1));
-    assert!(order.ranking.is_none());
-    assert!(matches!(
-        schema.statement(StatementId(1)),
-        StatementView::Order(OrderId(0), _)
-    ));
-}
-
-/// A ranked mark whose one hop probes a declared single-field key seals
-/// the hop's key witness — the enforcement plan the model prices per hop
-/// (`lean/Bumbledb/Oracle.lean: ranked_order_plan_decides`,
-/// `chain_cost_hops`), accepted at declaration exactly because the plan
-/// seals.
-#[test]
-fn a_ranked_order_mark_with_a_keyed_hop_validates() {
-    let mut decl = task_tree();
-    // Priority(id key, weight) — the rank vocabulary the chain reads.
-    decl.relations.push(RelationDescriptor {
-        extension: None,
-        name: "Priority".into(),
-        fields: vec![field("id", ValueType::U64), field("weight", ValueType::U64)],
-    });
-    decl.statements.push(fd(RelationId(2), &[FieldId(0)]));
-    decl.statements.push(order_mark(
-        RelationId(1),
-        FieldId(1),
-        &[FieldId(0)],
-        Some(RankChain {
-            link: FieldId(2),
-            hops: Box::new([RankHop {
-                relation: RelationId(2),
-                key: FieldId(0),
-                read: FieldId(1),
-            }]),
-        }),
-    ));
-    let schema = decl.validate().expect("the keyed chain passes the gate");
-    let order = schema.order(OrderId(0));
-    let chain = order.ranking.as_ref().expect("the chain sealed");
-    assert_eq!(chain.link, FieldId(2));
-    // The sealed hop carries the declared key's witness — Priority's FD
-    // is the second key statement (Parent's is first).
-    assert_eq!(chain.hops[0].key_statement, KeyId(1));
-}
-
-/// An order mark on a closed relation whose axioms are contiguous per
-/// group is decided satisfied at validate — the axioms ARE the final
-/// state.
-#[test]
-fn a_contiguous_closed_order_mark_validates() {
-    let decl = SchemaDescriptor {
-        relations: vec![closed(
-            "Step",
-            vec![field("phase", ValueType::U64), field("pos", ValueType::U64)],
-            vec![
-                row("A", vec![Value::U64(0), Value::U64(1)]),
-                row("B", vec![Value::U64(0), Value::U64(2)]),
-                row("C", vec![Value::U64(1), Value::U64(1)]),
-            ],
-        )],
-        statements: vec![order_mark(RelationId(0), FieldId(2), &[FieldId(1)], None)],
-    };
-    decl.validate()
-        .expect("each phase's positions are exactly 1..k");
 }
 
 /// A literal-set σ seals — and seals CANONICALLY: the sealed side sorts

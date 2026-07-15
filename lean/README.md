@@ -27,7 +27,7 @@ project needs no build programmability.
 ## The refinement chain
 
 - **Level 0 — denotations**: what every construct means
-  (`Values`, `Schema`, `Cardinality`, `Order`, `Dependencies`,
+  (`Values`, `Schema`, `Cardinality`, `Dependencies`,
   `Subsumption`, `Query/Syntax`, `Query/Denotation`,
   `Query/Membership`, `Query/Aggregates`).
 - **Level 1 — abstract algorithms**: each semantics-bearing algorithm
@@ -48,10 +48,8 @@ project needs no build programmability.
   calculus: the acceptance gate as one inhabited structure
   (`AdmissibleForm`) — per single-key form one term bundling the
   denotation, the executable judge, the delta restriction, the
-  oracle plan, and quarantine compliance (six inhabitants; the
-  ranked order form sits outside the type by design — its recorded
-  refusal and its plan-calculus coverage live in that module's
-  doc); a future form enters the vocabulary by inhabiting the
+  oracle plan, and quarantine compliance (five inhabitants); a
+  future form enters the vocabulary by inhabiting the
   type, and the refused E1 shape is proved uninhabitable in
   `Countermodels`.
 - **Level 2 — the lifecycle**: transactions, final-state judgment,

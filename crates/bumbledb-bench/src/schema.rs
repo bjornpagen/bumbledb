@@ -197,14 +197,14 @@ mod tests {
     /// The golden fingerprint: changing the schema re-baselines every
     /// corpus digest and report — this test makes that a deliberate act,
     /// never an accident. Update the constant ONLY alongside a conscious
-    /// schema change. Last moved by the dependency-vocabulary extension:
-    /// the canonical schema encoding is `v3` (literal-set selections and
-    /// the two new statement forms enter the stream).
+    /// schema change. Last moved by the order purge: the canonical
+    /// schema encoding is `v4` (the order-mark statement form left the
+    /// spine and the format label bumped).
     #[test]
     fn the_fingerprint_is_pinned() {
         assert_eq!(
             fingerprint_hex(),
-            "8fe8ca29ce8bce48286e1d3652d8f28e15d557f7b4eadcec2c468de7e0a9e9fb",
+            "358f472a242053ba8150e174850284a78a5725206bce6ed58afd6fc79a6a7d98",
             "the ledger schema changed — re-baseline corpora and reports deliberately"
         );
     }

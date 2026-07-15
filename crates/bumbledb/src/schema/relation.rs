@@ -1,8 +1,7 @@
 //! Field, layout, and statement-index accessors on a validated relation.
 
 use super::{
-    ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, OrderId, Relation, SealedRow,
-    WindowId,
+    ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, Relation, SealedRow, WindowId,
 };
 
 impl Relation {
@@ -67,11 +66,5 @@ impl Relation {
     #[must_use]
     pub fn window_targets(&self) -> &[WindowId] {
         &self.window_targets
-    }
-
-    /// `Order` statements on this relation.
-    #[must_use]
-    pub fn order_marks(&self) -> &[OrderId] {
-        &self.order_marks
     }
 }

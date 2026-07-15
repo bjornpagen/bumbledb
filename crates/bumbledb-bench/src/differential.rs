@@ -174,9 +174,6 @@ pub fn cited(violations: &bumbledb::Violations) -> Vec<Violation> {
             bumbledb::Violation::Cardinality { statement, .. } => Violation::Cardinality {
                 statement: *statement,
             },
-            bumbledb::Violation::Order { statement, .. } => Violation::Order {
-                statement: *statement,
-            },
         })
         .collect()
 }

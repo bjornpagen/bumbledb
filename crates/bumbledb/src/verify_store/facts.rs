@@ -149,16 +149,13 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     check_extension_sources(s, &mut checker)
 }
 
-/// F→R for the extension forms, plus the global window judgment. Per
+/// F→R for the window form, plus the global window judgment. Per
 /// window whose source is this relation and whose φ the fact satisfies,
-/// the window edge must exist; per order mark on this relation, the mark
-/// edge must exist (grouping bytes ‖ position tail). Per window whose
+/// the window edge must exist. Per window whose
 /// TARGET is this relation and whose ψ the fact satisfies, the child
 /// group is counted through the commit path's own walk
 /// ([`judgment::Checker::check_window`]) — a count outside the window is
-/// [`StoreFinding::WindowViolation`]. (Order groups are walked whole in
-/// the marks pass — a per-fact ride would re-walk each group once per
-/// member.)
+/// [`StoreFinding::WindowViolation`].
 fn check_marks(
     s: &mut Sweep<'_, '_>,
     checker: &mut judgment::Checker<'_>,
@@ -178,19 +175,6 @@ fn check_marks(
             continue;
         }
         judgment::window_child_image(statement, layout, fact, determinant);
-        let r_len = keys::reverse_key(scratch, statement.id, determinant.as_bytes(), rel, row_id);
-        if s.data.get(txn.raw(), &scratch[..r_len])?.is_none() {
-            s.push(StoreFinding::FactWithoutReverseEdge {
-                statement: statement.id,
-                relation: rel,
-                row_id,
-                reverse_key: scratch[..r_len].into(),
-            });
-        }
-    }
-    for &order_id in relation.order_marks() {
-        let statement = schema.order(order_id);
-        keys::determinant_image(layout, &statement.edge_projection, fact, determinant);
         let r_len = keys::reverse_key(scratch, statement.id, determinant.as_bytes(), rel, row_id);
         if s.data.get(txn.raw(), &scratch[..r_len])?.is_none() {
             s.push(StoreFinding::FactWithoutReverseEdge {

@@ -20,9 +20,8 @@ Three arms, dispatched by file name (`lean/conformance/README.md`):
   delta)`, apply the delta by row-set arithmetic, and run the PROVED
   two-phase judge — `Txn.judgeB` (`Bumbledb/Decide.lean`), which
   agrees with the model's `Txn.judge` verdict and violation sets phase
-  for phase (`Txn.judgeB_agrees_of_declared`; the corpus's ranked
-  fixtures declare their hop keys, so the agreement is
-  instance-premise-free). The recorded verdict is compared WHOLE:
+  for phase (`Txn.judgeB_agrees`, under no premise beyond the
+  closed-roster merge). The recorded verdict is compared WHOLE:
   accept, or the rejecting phase plus the per-phase violation set as
   statement indices. The decode + index glue below is IO-shell
   material (this file), never spec: `verdictOf` spends `judgeB` for
@@ -132,15 +131,6 @@ def decodeWindow (j : Json) : Except String Window := do
   | some h => return ⟨lo, some (← h.getNat?)⟩
   | none => return ⟨lo, none⟩
 
-def decodeHop (j : Json) : Except String RankHop := do
-  return { relation := ⟨← natKey j "relation"⟩,
-           key := ⟨← natKey j "key"⟩,
-           read := ⟨← natKey j "read"⟩ }
-
-def decodeChain (j : Json) : Except String RankChain := do
-  return ⟨⟨← natKey j "link"⟩,
-    ← (← (← j.getObjVal? "hops").getArr?).toList.mapM decodeHop⟩
-
 /-- One declared statement, in the materialized order the file pins
 (indices ARE the engine's statement ids). -/
 def decodeStatement (j : Json) : Except String Statement := do
@@ -154,12 +144,6 @@ def decodeStatement (j : Json) : Except String Statement := do
     return .cardinality (← decodeSide (← c.getObjVal? "source"))
       (← decodeWindow (← c.getObjVal? "window"))
       (← decodeSide (← c.getObjVal? "target"))
-  if let some o := objKey? j "order" then
-    let ranking ← match objKey? o "ranking" with
-      | some r => do pure (some (← decodeChain r))
-      | none => pure none
-    return .order ⟨← natKey o "relation"⟩ ⟨← natKey o "position"⟩
-      (← decodeFieldIds (← o.getObjVal? "grouping")) ranking
   .error "unknown statement form"
 
 /-- The recorded engine verdict: accept, or the rejecting phase with
@@ -267,7 +251,7 @@ def finalWorld (c : JCase) : RowInstance :=
 /-! ## The verdict — `judgeB`, index-tagged -/
 
 /-- The executable judge's verdict with citation indices: `judgeB`
-renders accept/reject (the PROVED artifact — `judgeB_agrees_of_declared`);
+renders accept/reject (the PROVED artifact — `judgeB_agrees`);
 the indices re-run `judgeB`'s own phase filters (`isKey && !checkB`)
 over the position-tagged statement list, so the cited set is
 `keyViolationsB`/`statementViolationsB` by position. -/

@@ -173,10 +173,7 @@ position 0):
     {"containment":{"source":SIDE,"target":SIDE}},
     {"cardinality":{"source":SIDE,
                     "window":{"lo":1,"hi":2},   // "hi" absent = *
-                    "target":SIDE}},
-    {"order":{"relation":3,"position":1,"grouping":[0],
-              "ranking":{"link":2,"hops":[     // absent = plain mark
-                {"relation":4,"key":0,"read":1}]}}}]},
+                    "target":SIDE}}]},
                                             // SIDE = {"relation","projection",
                                             //   "selection":[[field,[lit…]]…]}
                                             // — a literal SET reads
@@ -202,9 +199,9 @@ verdict); judgment fixtures carry no strings and no masks — the two
 value tags that would need a per-case context.
 
 The starter roster covers: both classical forms (scalar key;
-containment — scalar, coverage, and the closed member set), both
-extension forms (windows at floor/ceiling/`n..n`/`0..*`/empty-parent;
-order marks plain and ranked), the two-phase preemption mix,
+containment — scalar, coverage, and the closed member set), the
+extension form (windows at floor/ceiling/`n..n`/`0..*`/empty-parent),
+the two-phase preemption mix,
 set-selections deciding a verdict, the delete-then-reinsert
 touched-group seam, and the permuted-interval lock — a statement
 written `Claim(span, id) <= Slot(span, id)` against the pointwise key

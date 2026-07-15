@@ -1,5 +1,4 @@
 import Bumbledb.Cardinality
-import Bumbledb.Order
 
 /-!
 # Dependencies — the dependency theory (Level 0, PRD 03)
@@ -9,11 +8,10 @@ pointwise), containment, coverage, keyed equality, exact partition,
 and `holds` — what it means for a committed instance to model its
 theory. Statements ported from the audited inventory
 (`docs/formal/GPT55DependencyTheory.lean`) onto the in-tree base.
-The extension forms seat their readings here too:
-`Statement.judgment` dispatches the cardinality-window and order-mark
-forms to their denotations (`Cardinality.lean`, `Order.lean`), and
-the extension-vs-original subsumption theorems live downstream in
-`Subsumption.lean`.
+The extension form seats its reading here too:
+`Statement.judgment` dispatches the cardinality-window form to its
+denotation (`Cardinality.lean`), and the extension-vs-original
+subsumption theorems live downstream in `Subsumption.lean`.
 
 ## Acceptance ≠ denotation (the load-bearing distinction)
 
@@ -245,12 +243,10 @@ interval field is the pointwise lifting, whatever its written
 position (the FieldSet doctrine — `Header.intervalSplit`).
 Gate-refused shapes default to the scalar reading (recorded
 narrowing — `holds` is consumed on accepted theories only). The
-extension forms read their own denotations: a cardinality statement
+extension form reads its own denotation: a cardinality statement
 is the per-parent window judgment (`Cardinality.lean` — window
 projections refuse interval positions at the gate, the recorded v0
-trigger, so no split is consulted); an order statement is the
-per-group ordinal discipline, ranked exactly when a `by` chain is
-spelled (`Order.lean`). -/
+trigger, so no split is consulted). -/
 def Statement.judgment (T : Theory) (I : Instance) :
     Statement → Prop
   | .functionality R X =>
@@ -270,10 +266,6 @@ def Statement.judgment (T : Theory) (I : Instance) :
     CardinalityWindow (T.den I src.relation) src.selection
       src.projection w (T.den I tgt.relation) tgt.selection
       tgt.projection
-  | .order R pos G none =>
-    OrderMark (T.den I R) pos G
-  | .order R pos G (some c) =>
-    RankedOrderMark T I (T.den I R) pos G c
 
 /-- `holds T I` — a committed instance models its theory: every
 declared statement's judgment holds of the final state. This is the

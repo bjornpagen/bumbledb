@@ -323,16 +323,11 @@ fn unresolvable_names_fall_back_to_id_placeholders() {
 }
 
 /// The extension forms render back in the exact grammar: the window with
-/// both bound spellings, the set selection in braces (canonical order),
-/// and the order mark with and without its `by` chain.
+/// both bound spellings, the set selection in braces (canonical order).
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one golden walk over every extension form, clearer kept together"
-)]
 fn extension_forms_render_in_the_grammar() {
-    use crate::schema::tests::{cardinality, order_mark, side_where_sets};
-    use crate::schema::{LiteralSet, OrderId, RankChain, RankHop, StatementView, WindowId};
+    use crate::schema::tests::{cardinality, side_where_sets};
+    use crate::schema::{LiteralSet, StatementView, WindowId};
 
     let decl = SchemaDescriptor {
         relations: vec![
@@ -379,20 +374,6 @@ fn extension_forms_render_in_the_grammar() {
                 None,
                 side(RelationId(0), &[FieldId(0)]),
             ),
-            order_mark(RelationId(1), FieldId(1), &[FieldId(0)], None),
-            order_mark(
-                RelationId(1),
-                FieldId(1),
-                &[FieldId(0), FieldId(3)],
-                Some(RankChain {
-                    link: FieldId(2),
-                    hops: Box::new([RankHop {
-                        relation: RelationId(2),
-                        key: FieldId(0),
-                        read: FieldId(1),
-                    }]),
-                }),
-            ),
         ],
     };
 
@@ -405,14 +386,6 @@ fn extension_forms_render_in_the_grammar() {
         render_declared(&decl, StatementId(3)),
         "Task(parent) in 1..* per Parent(id)"
     );
-    assert_eq!(
-        render_declared(&decl, StatementId(4)),
-        "order Task(pos) per Task(parent)"
-    );
-    assert_eq!(
-        render_declared(&decl, StatementId(5)),
-        "order Task(pos) per Task(parent, state) by prio -> Priority(weight)"
-    );
 
     // Sealed-side rendering — the set now canonical (sorted).
     let schema = decl.validate().expect("the extension forms validate");
@@ -424,21 +397,13 @@ fn extension_forms_render_in_the_grammar() {
         render(&schema, StatementId(3)),
         "Task(parent) in 1..* per Parent(id)"
     );
-    assert_eq!(
-        render(&schema, StatementId(4)),
-        "order Task(pos) per Task(parent)"
-    );
-    assert_eq!(
-        render(&schema, StatementId(5)),
-        "order Task(pos) per Task(parent, state) by prio -> Priority(weight)"
-    );
     // The spine agrees with the arenas.
     assert!(matches!(
         schema.statement(StatementId(2)),
         StatementView::Cardinality(WindowId(0), _)
     ));
     assert!(matches!(
-        schema.statement(StatementId(5)),
-        StatementView::Order(OrderId(1), _)
+        schema.statement(StatementId(3)),
+        StatementView::Cardinality(WindowId(1), _)
     ));
 }

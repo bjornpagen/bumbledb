@@ -1,4 +1,3 @@
-import Bumbledb.Subsumption
 import Bumbledb.Txn
 import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Fixpoint
@@ -11,21 +10,15 @@ sets; on finite, row-listed instances it is DECIDABLE, and this
 module is that fact made executable: one Boolean checker per
 statement form, each proved sound AND complete against its
 `Statement.judgment` denotation (`funcB_iff`, `pointwiseKeyB_iff`,
-`containB_iff`, `coverageB_iff`, `cardinalityB_iff`,
-`orderMarkB_iff`, `rankedB_iff`), composed into the per-statement
-dispatcher (`Statement.checkB`, `Statement.checkB_iff`), the
-whole-theory executable judge (`holdsB`, `holdsB_iff_holds`, the
-derived `decideJudgment`/`decideHolds`), and the two-phase
-`Txn.judgeB` — key phase then statement phase, mirroring `Txn.judge`
-and proved to agree with its verdict and its violation sets, phase
-for phase, with NO instance-side premise beyond the merge: under the
-hop-key rule's acceptance form (`RankKeysDeclared`, a fact of the
-theory alone) the agreement covers every row instance, hop-key
-violators included (`Txn.judgeB_agrees_of_declared`; the key phase
-is chain-premise-free, `Txn.mem_keyViolationsB`, and a clean key
-phase derives the semantic premise, `rankKeysHold_of_clean_keys`,
-that the conditioned form `Txn.judgeB_agrees` spends together with
-`Txn.mem_statementViolationsB`).
+`containB_iff`, `coverageB_iff`, `cardinalityB_iff`), composed into
+the per-statement dispatcher (`Statement.checkB`,
+`Statement.checkB_iff`), the whole-theory executable judge
+(`holdsB`, `holdsB_iff_holds`, the derived
+`decideJudgment`/`decideHolds`), and the two-phase `Txn.judgeB` —
+key phase then statement phase, mirroring `Txn.judge` and proved to
+agree with its verdict and its violation sets, phase for phase, with
+NO instance-side premise beyond the merge (`Txn.judgeB_agrees`,
+`Txn.mem_keyViolationsB`, `Txn.mem_statementViolationsB`).
 
 Placement recorded: the file sits at the tree root beside `Txn.lean`
 because its subject is the WRITE-side judgment — statements,
@@ -44,13 +37,13 @@ executable evaluator's tuple-fact reading, `Exec/Fixpoint.lean`) and
 `Query/Denotation.lean`) — `RowInstance.world` / `RowInstance.den`
 reuse both, never duplicate them. Rows rather than bare `Fact`
 functions is forced, not stylistic: `Fact` is `FieldId → Value` with
-no decidable equality, and the key and order judgments CONCLUDE fact
+no decidable equality, and the key judgments CONCLUDE fact
 equality — a row's finite support is what makes tuple-fact equality
 decidable (`rowEqB_iff`: agreement on the shared index range, filler
 beyond it). Recorded narrowing: the checkers judge instances whose
 facts are row-denoted — exactly the conformance corpus's world shape.
 
-## The premises — acceptance enters as hypotheses (the tree's rule)
+## The premise — acceptance enters as a hypothesis (the tree's rule)
 
 * **`WorldCarriesClosed`** — the world carries each sealed ground
   roster at its relation (the conformance lane's merge:
@@ -60,24 +53,6 @@ facts are row-denoted — exactly the conformance corpus's world shape.
   not a row list, so its members' equality is not decidable in place;
   the merge premise is the honest boundary, and it is what the lane
   already does.
-* **`RankKeysHold`** — every declared `by` chain's hop relation is
-  keyed on the hop's key field, semantically, on the judged instance:
-  the ranked checker reads ranks through the deterministic list probe
-  (`chainEvalL`), and `chain_eval_deterministic`
-  (`Subsumption.lean`) is what licenses that function reading of the
-  relational `chainEval` — `chainEvalL_complete` spends it hop by
-  hop. This is the ranked form's acceptance rule spent semantically,
-  carried as a hypothesis wherever a theorem needs it, never a
-  conjunct of any denotation — `Dependencies.lean`'s discipline,
-  unchanged. The premise fails on exactly the instances that violate
-  a declared rank-hop key, so nothing conditioned on it says
-  anything there — which is why the TWO-PHASE agreement does not
-  stop at it: `RankKeysDeclared` is the same rule in acceptance form
-  (the hop key is a DECLARED scalar functionality statement), an
-  instance-free premise under which the agreement is total — a
-  hop-key violator convicts in the chain-premise-free key phase on
-  both sides, and a clean key phase derives `RankKeysHold`
-  (`rankKeysHold_of_clean_keys`).
 
 ## The sweep is spent where union coverage demands it
 
@@ -101,12 +76,12 @@ over `(theory, instance, delta)` documents serialized by
 verdict and the per-phase violation sets against what the engine and
 the naive model agreed on — engine verdict vs naive verdict vs this
 judge, the write-side third oracle. `Bridge.lean` carries the rows
-(`holdsB_iff_holds`, `Txn.judgeB_agrees_of_declared`); the corpus
+(`holdsB_iff_holds`, `Txn.judgeB_agrees`); the corpus
 format lives in `lean/conformance/README.md` § judgment cases.
 
 ## Narrowings recorded (law 5: narrow and record)
 
-* The row carrier and the two premises — above.
+* The row carrier and the merge premise — above.
 * `Txn.judgeB` returns `Option (List Statement)`: `none` accepts; a
   rejection's LIST may repeat a statement the theory declares twice.
   Agreement with `Txn.judge` is stated as membership equality with
@@ -114,8 +89,8 @@ format lives in `lean/conformance/README.md` § judgment cases.
   carries no duplicates or order by construction) applied to the
   executable face.
 * Decidability lands as premise-carrying named `def`s
-  (`decideJudgment`, `decideHolds`), never `instance`s: the premises
-  are per-theory semantic facts instance resolution cannot see.
+  (`decideJudgment`, `decideHolds`), never `instance`s: the premise
+  is a per-theory semantic fact instance resolution cannot see.
 * The interval checkers are stated per element domain (`U64`/`I64`
   concretely) — the tree's precedent (`encode_interval_order` and its
   U64 companion): an abstract order class would buy generality no
@@ -123,11 +98,6 @@ format lives in `lean/conformance/README.md` § judgment cases.
   and `coverRowB` (a u64 arm AND an i64 arm, each vacuously true on
   the other domain) keeps the checkers total with no typing premise —
   the same totalization move as `Value.points`.
-* `orderMarkB`'s downward-closure clause enumerates `1..k` for each
-  attained position `k` (`List.range'`) — executable and exact
-  against `OrdinalGroup.closed`; the count is data-dependent, and
-  cost is not this file's subject (law 3: abstract cost lives in
-  `Oracle.lean`, measured cost in the docs).
 -/
 
 namespace Bumbledb
@@ -908,258 +878,6 @@ theorem cardinalityB_iff {LA LB : List Row} {A B : Set Fact}
     rw [List.length_map] at h1
     exact h1
 
-/-! ## Order marks -/
-
-/-- The plain order-mark checker: per listed row's group — 1-based,
-per-group ordinal uniqueness, and downward closure (`1..k` enumerated
-below each attained `k`). -/
-def orderMarkB (L : List Row) (pos : FieldId) (G : List FieldId) : Bool :=
-  L.all fun a =>
-    decide (1 ≤ (Query.tupleFact a pos).ordinal) &&
-    (L.all fun b =>
-      !decide ((Query.tupleFact a).project G =
-        (Query.tupleFact b).project G) ||
-      (!decide ((Query.tupleFact a pos).ordinal =
-          (Query.tupleFact b pos).ordinal) ||
-        rowEqB a b)) &&
-    ((List.range' 1 (Query.tupleFact a pos).ordinal).all fun n =>
-      L.any fun b =>
-        decide ((Query.tupleFact b).project G =
-          (Query.tupleFact a).project G) &&
-        decide ((Query.tupleFact b pos).ordinal = n))
-
-/-- `orderMarkB` decides `OrderMark` on the listed denotation: a
-group not realized by a listed row is empty, and an empty group is
-ordinally disciplined vacuously. -/
-theorem orderMarkB_iff {L : List Row} {A : Set Fact} (hA : Denotes L A)
-    (pos : FieldId) (G : List FieldId) :
-    orderMarkB L pos G = true ↔ OrderMark A pos G := by
-  unfold orderMarkB OrderMark
-  rw [List.all_eq_true]
-  constructor
-  · intro h t
-    refine ⟨?_, ?_, ?_⟩
-    · intro f g hf hg hord
-      obtain ⟨hfA, hft⟩ := hf
-      obtain ⟨hgA, hgt⟩ := hg
-      obtain ⟨a, ha, rfl⟩ := (hA f).mp hfA
-      obtain ⟨b, hb, rfl⟩ := (hA g).mp hgA
-      obtain ⟨hxy, -⟩ := andB_iff.mp (h a ha)
-      obtain ⟨-, h2⟩ := andB_iff.mp hxy
-      have h2' := List.all_eq_true.mp h2 b hb
-      rw [impB_iff] at h2'
-      have h3 := h2' (decide_eq_true (hft.trans hgt.symm))
-      rw [impB_iff] at h3
-      exact rowEqB_iff.mp (h3 (decide_eq_true hord))
-    · intro f hf
-      obtain ⟨hfA, hft⟩ := hf
-      obtain ⟨a, ha, rfl⟩ := (hA f).mp hfA
-      exact of_decide_eq_true
-        ((andB_iff.mp
-          ((andB_iff.mp (h a ha)).1)).1)
-    · intro f hf n h1 hn
-      obtain ⟨hfA, hft⟩ := hf
-      obtain ⟨a, ha, rfl⟩ := (hA f).mp hfA
-      have hcl := (andB_iff.mp (h a ha)).2
-      have hmem : n ∈ List.range' 1 (Query.tupleFact a pos).ordinal :=
-        List.mem_range'_1.mpr ⟨h1, by omega⟩
-      obtain ⟨b, hb, hcond⟩ := List.any_eq_true.mp
-        (List.all_eq_true.mp hcl n hmem)
-      obtain ⟨hbG, hbn⟩ := andB_iff.mp hcond
-      exact ⟨Query.tupleFact b,
-        ⟨(hA _).mpr ⟨b, hb, rfl⟩, (of_decide_eq_true hbG).trans hft⟩,
-        of_decide_eq_true hbn⟩
-  · intro h a ha
-    have hf : Query.tupleFact a ∈
-        GroupOf A G ((Query.tupleFact a).project G) :=
-      ⟨(hA _).mpr ⟨a, ha, rfl⟩, rfl⟩
-    refine andB_iff.mpr ⟨andB_iff.mpr ⟨?_, ?_⟩, ?_⟩
-    · exact decide_eq_true
-        ((h ((Query.tupleFact a).project G)).based _ hf)
-    · refine List.all_eq_true.mpr fun b hb => ?_
-      rw [impB_iff]
-      intro hproj
-      rw [impB_iff]
-      intro hord
-      have hg : Query.tupleFact b ∈
-          GroupOf A G ((Query.tupleFact a).project G) :=
-        ⟨(hA _).mpr ⟨b, hb, rfl⟩, (of_decide_eq_true hproj).symm⟩
-      exact rowEqB_iff.mpr
-        ((h ((Query.tupleFact a).project G)).unique _ _ hf hg
-          (of_decide_eq_true hord))
-    · refine List.all_eq_true.mpr fun n hn => ?_
-      obtain ⟨h1, h2⟩ := List.mem_range'_1.mp hn
-      obtain ⟨g, hg, hgo⟩ :=
-        (h ((Query.tupleFact a).project G)).closed _ hf n h1
-          (by omega)
-      obtain ⟨hgA, hgt⟩ := hg
-      obtain ⟨b, hb, rfl⟩ := (hA g).mp hgA
-      exact List.any_eq_true.mpr ⟨b, hb, andB_iff.mpr
-        ⟨decide_eq_true hgt, decide_eq_true hgo⟩⟩
-
-/-! ## Ranked order marks — the chain probe, key-justified -/
-
-/-- The executable chain evaluation: probe each hop's ROW LIST for
-the running value at the key field, read the payload, continue.
-`chainEval` (`Order.lean`) is deliberately relational; this function
-reading is licensed by the hop key premises through
-`chain_eval_deterministic` — `chainEvalL_complete` spends it. -/
-def chainEvalL (W : RowInstance) : List RankHop → Value → Option Value
-  | [], v => some v
-  | hop :: rest, v =>
-    match (W.rows hop.relation).find? fun b =>
-        decide (Query.tupleFact b hop.key = v) with
-    | some b => chainEvalL W rest (Query.tupleFact b hop.read)
-    | none => none
-
-/-- The probe is sound with NO key premise: a found row is a
-relational witness. -/
-theorem chainEvalL_sound {T : Theory} {W : RowInstance}
-    (hden : ∀ R, Denotes (W.rows R) (T.den W.den R)) :
-    ∀ (hops : List RankHop) (v w : Value),
-      chainEvalL W hops v = some w → chainEval T W.den hops v w
-  | [], v, w, h => Option.some.inj h
-  | hop :: rest, v, w, h => by
-    unfold chainEvalL at h
-    cases hf : (W.rows hop.relation).find? fun b =>
-        decide (Query.tupleFact b hop.key = v) with
-    | none =>
-      rw [hf] at h
-      exact nomatch h
-    | some b =>
-      rw [hf] at h
-      have hb' := List.find?_some hf
-      exact ⟨Query.tupleFact b hop.read,
-        ⟨Query.tupleFact b,
-          (hden hop.relation _).mpr ⟨b, List.mem_of_find?_eq_some hf, rfl⟩,
-          of_decide_eq_true hb', rfl⟩,
-        chainEvalL_sound hden rest _ w h⟩
-
-/-- The probe is complete under the hop key premises: the relational
-chain forces the probe to succeed, and `chain_eval_deterministic`
-(`Subsumption.lean`), spent one hop at a time, makes the found row's
-payload THE chain value — the function reading, justified. -/
-theorem chainEvalL_complete {T : Theory} {W : RowInstance}
-    (hden : ∀ R, Denotes (W.rows R) (T.den W.den R)) :
-    ∀ (hops : List RankHop),
-      (∀ hop, hop ∈ hops →
-        Functionality (T.den W.den hop.relation) [hop.key]) →
-      ∀ (v w : Value), chainEval T W.den hops v w →
-        chainEvalL W hops v = some w
-  | [], _, v, w, h => congrArg some h
-  | hop :: rest, hkeys, v, w, h => by
-    obtain ⟨u, huhop, hrest⟩ := h
-    obtain ⟨g, hgden, hgkey, hgread⟩ := huhop
-    obtain ⟨r0, hr0, hg0⟩ := (hden hop.relation g).mp hgden
-    cases hf : (W.rows hop.relation).find? fun b =>
-        decide (Query.tupleFact b hop.key = v) with
-    | none =>
-      exact absurd (decide_eq_true (show Query.tupleFact r0 hop.key = v
-          by rw [← hg0]; exact hgkey))
-        (List.find?_eq_none.mp hf r0 hr0)
-    | some b =>
-      have hb' := List.find?_some hf
-      have hbkey : Query.tupleFact b hop.key = v := of_decide_eq_true hb'
-      have hbmem := List.mem_of_find?_eq_some hf
-      have hkey1 : ∀ h', h' ∈ [hop] →
-          Functionality (T.den W.den h'.relation) [h'.key] := by
-        intro h' hh'
-        rw [List.mem_singleton] at hh'
-        rw [hh']
-        exact hkeys hop (List.mem_cons_self ..)
-      have hu : u = Query.tupleFact b hop.read :=
-        chain_eval_deterministic [hop] hkey1 v u
-          (Query.tupleFact b hop.read)
-          ⟨u, ⟨g, hgden, hgkey, hgread⟩, rfl⟩
-          ⟨Query.tupleFact b hop.read,
-            ⟨Query.tupleFact b,
-              (hden hop.relation _).mpr ⟨b, hbmem, rfl⟩, hbkey, rfl⟩,
-            rfl⟩
-      simp only [chainEvalL]
-      rw [hf]
-      show chainEvalL W rest (Query.tupleFact b hop.read) = some w
-      rw [← hu]
-      exact chainEvalL_complete hden rest
-        (fun h' hh' => hkeys h' (List.mem_cons_of_mem hop hh')) u w hrest
-
-/-- The rank-monotonicity checker: within a group, a strictly smaller
-probed rank sits strictly earlier. -/
-def rankMonoB (W : RowInstance) (L : List Row) (pos : FieldId)
-    (G : List FieldId) (c : RankChain) : Bool :=
-  L.all fun a => L.all fun b =>
-    !decide ((Query.tupleFact a).project G =
-      (Query.tupleFact b).project G) ||
-    (match chainEvalL W c.hops (Query.tupleFact a c.link),
-           chainEvalL W c.hops (Query.tupleFact b c.link) with
-     | some wa, some wb =>
-       !decide (wa.ordinal < wb.ordinal) ||
-       decide ((Query.tupleFact a pos).ordinal <
-         (Query.tupleFact b pos).ordinal)
-     | _, _ => true)
-
-/-- The ranked checker decides `RankedOrderMark` under the hop key
-premises (the form's acceptance rule, spent semantically — the
-hypothesis, never a denotation conjunct). -/
-theorem rankedB_iff {T : Theory} {W : RowInstance}
-    (hden : ∀ R, Denotes (W.rows R) (T.den W.den R)) {R : RelId}
-    {pos : FieldId} {G : List FieldId} {c : RankChain}
-    (hkeys : ∀ hop, hop ∈ c.hops →
-      Functionality (T.den W.den hop.relation) [hop.key]) :
-    (orderMarkB (W.rows R) pos G && rankMonoB W (W.rows R) pos G c) =
-        true ↔
-      RankedOrderMark T W.den (T.den W.den R) pos G c := by
-  rw [andB_iff]
-  constructor
-  · rintro ⟨h1, h2⟩
-    refine ⟨(orderMarkB_iff (hden R) pos G).mp h1, ?_⟩
-    intro t f g hf hg rf rg hrf hrg hlt
-    obtain ⟨hfA, hft⟩ := hf
-    obtain ⟨hgA, hgt⟩ := hg
-    obtain ⟨a, ha, rfl⟩ := (hden R f).mp hfA
-    obtain ⟨b, hb, rfl⟩ := (hden R g).mp hgA
-    obtain ⟨w1, hw1, hw1o⟩ := hrf
-    obtain ⟨w2, hw2, hw2o⟩ := hrg
-    have he1 := chainEvalL_complete hden c.hops hkeys _ _ hw1
-    have he2 := chainEvalL_complete hden c.hops hkeys _ _ hw2
-    have h3 := List.all_eq_true.mp
-      (List.all_eq_true.mp (show (W.rows R).all _ = true from h2) a ha)
-      b hb
-    rw [impB_iff] at h3
-    have h4 := h3 (decide_eq_true (hft.trans hgt.symm))
-    rw [he1, he2] at h4
-    have h5 : (!decide (w1.ordinal < w2.ordinal) ||
-        decide ((Query.tupleFact a pos).ordinal <
-          (Query.tupleFact b pos).ordinal)) = true := h4
-    rw [impB_iff] at h5
-    exact of_decide_eq_true
-      (h5 (decide_eq_true (show w1.ordinal < w2.ordinal by
-        rw [hw1o, hw2o]; exact hlt)))
-  · intro h
-    refine ⟨(orderMarkB_iff (hden R) pos G).mpr h.mark, ?_⟩
-    refine List.all_eq_true.mpr fun a ha =>
-      List.all_eq_true.mpr fun b hb => ?_
-    rw [impB_iff]
-    intro hproj
-    cases h1 : chainEvalL W c.hops (Query.tupleFact a c.link) with
-    | none => rfl
-    | some wa =>
-      cases h2 : chainEvalL W c.hops (Query.tupleFact b c.link) with
-      | none => rfl
-      | some wb =>
-        show (!decide (wa.ordinal < wb.ordinal) ||
-          decide ((Query.tupleFact a pos).ordinal <
-            (Query.tupleFact b pos).ordinal)) = true
-        rw [impB_iff]
-        intro hlt
-        refine decide_eq_true ?_
-        exact h.mono ((Query.tupleFact a).project G) _ _
-          ⟨(hden R _).mpr ⟨a, ha, rfl⟩, rfl⟩
-          ⟨(hden R _).mpr ⟨b, hb, rfl⟩, (of_decide_eq_true hproj).symm⟩
-          wa.ordinal wb.ordinal
-          ⟨wa, chainEvalL_sound hden c.hops _ _ h1, rfl⟩
-          ⟨wb, chainEvalL_sound hden c.hops _ _ h2, rfl⟩
-          (of_decide_eq_true hlt)
-
 /-! ## The per-statement dispatcher -/
 
 /-- One statement's checker — `Statement.judgment`'s dispatch,
@@ -1181,18 +899,11 @@ def Statement.checkB (T : Theory) (W : RowInstance) : Statement → Bool
   | .cardinality src w tgt =>
     cardinalityB (W.rows src.relation) src.selection src.projection w
       (W.rows tgt.relation) tgt.selection tgt.projection
-  | .order R pos G none => orderMarkB (W.rows R) pos G
-  | .order R pos G (some c) =>
-    orderMarkB (W.rows R) pos G && rankMonoB W (W.rows R) pos G c
 
 /-- `checkB` decides `Statement.judgment` on the row-denoted
-instance, under the merge premise — plus, for a RANKED order
-statement only, its hop key premises (the acceptance rule, spent). -/
+instance, under the merge premise. -/
 theorem Statement.checkB_iff {T : Theory} {W : RowInstance}
-    (hclosed : WorldCarriesClosed T W) {st : Statement}
-    (hkeys : ∀ R pos G c, st = .order R pos G (some c) →
-      ∀ hop, hop ∈ c.hops →
-        Functionality (T.den W.den hop.relation) [hop.key]) :
+    (hclosed : WorldCarriesClosed T W) {st : Statement} :
     st.checkB T W = true ↔ st.judgment T W.den := by
   cases st with
   | functionality R X =>
@@ -1237,65 +948,8 @@ theorem Statement.checkB_iff {T : Theory} {W : RowInstance}
     exact cardinalityB_iff (theoryDen_denotes hclosed src.relation)
       (theoryDen_denotes hclosed tgt.relation) src.selection
       src.projection w tgt.selection tgt.projection
-  | order R pos G ranking =>
-    cases ranking with
-    | none =>
-      simp only [Statement.checkB, Statement.judgment]
-      exact orderMarkB_iff (theoryDen_denotes hclosed R) pos G
-    | some c =>
-      simp only [Statement.checkB, Statement.judgment]
-      exact rankedB_iff (theoryDen_denotes hclosed)
-        (hkeys R pos G c rfl)
 
 /-! ## The whole-theory executable judge -/
-
-/-- The declared-chain key premise, theory-wide: every hop of every
-DECLARED `by` chain is key-backed on the judged instance — the ranked
-form's acceptance rule, spent semantically (`rank_of_deterministic`'s
-premise, quantified over the theory's statements). -/
-def RankKeysHold (T : Theory) (I : Instance) : Prop :=
-  ∀ R pos G c, Statement.order R pos G (some c) ∈ T.statements →
-    ∀ hop, hop ∈ c.hops → Functionality (T.den I hop.relation) [hop.key]
-
-/-- The theory-wide premise, restricted to one declared statement —
-what `Statement.checkB_iff` consumes. -/
-theorem rankKeys_at {T : Theory} {I : Instance}
-    (hkeys : RankKeysHold T I) {st : Statement}
-    (hst : st ∈ T.statements) :
-    ∀ R pos G c, st = .order R pos G (some c) →
-      ∀ hop, hop ∈ c.hops →
-        Functionality (T.den I hop.relation) [hop.key] :=
-  fun R pos G c heq hop hh => hkeys R pos G c (heq ▸ hst) hop hh
-
-/-- The declared-chain key premise in its ACCEPTANCE form — a fact of
-the THEORY, no instance mentioned: every declared `by` chain's hop
-key is itself a DECLARED scalar functionality statement. This is the
-ranked form's gate rule as the schema states it; the semantic
-`RankKeysHold` is derived from it exactly when the key phase is
-clean (`rankKeysHold_of_clean_keys`), which is what frees the
-two-phase agreement of any instance-side premise
-(`Txn.judgeB_agrees_of_declared`). -/
-def RankKeysDeclared (T : Theory) : Prop :=
-  ∀ R pos G c, Statement.order R pos G (some c) ∈ T.statements →
-    ∀ hop, hop ∈ c.hops →
-      Statement.functionality hop.relation [hop.key] ∈ T.statements ∧
-      T.header.intervalSplit hop.relation [hop.key] = none
-
-/-- A clean key phase spends the declared hop keys into the semantic
-premise: with no key violation, every declared scalar functionality
-statement's judgment holds of the judged instance — so every
-declared hop key IS a `Functionality` there. -/
-theorem rankKeysHold_of_clean_keys {T : Theory} {I : Instance}
-    (hdecl : RankKeysDeclared T)
-    (hk : ¬ (Txn.keyViolationSet T I).Nonempty) :
-    RankKeysHold T I := by
-  intro R pos G c hst hop hh
-  obtain ⟨hfmem, hscalar⟩ := hdecl R pos G c hst hop hh
-  have hjudg : (Statement.functionality hop.relation
-      [hop.key]).judgment T I :=
-    Classical.byContradiction fun hj => hk ⟨_, ⟨hfmem, hj⟩, rfl⟩
-  simp only [Statement.judgment, hscalar] at hjudg
-  exact hjudg
 
 /-- **`holdsB` — the whole-theory executable judge**: every declared
 statement's checker accepts. -/
@@ -1303,35 +957,30 @@ def holdsB (T : Theory) (W : RowInstance) : Bool :=
   T.statements.all fun st => st.checkB T W
 
 /-- **`holdsB` decides `holds`** on the row-denoted instance, under
-the merge premise and the declared-chain key premise. -/
+the merge premise. -/
 theorem holdsB_iff_holds {T : Theory} {W : RowInstance}
-    (hclosed : WorldCarriesClosed T W)
-    (hkeys : RankKeysHold T W.den) :
+    (hclosed : WorldCarriesClosed T W) :
     holdsB T W = true ↔ holds T W.den := by
   unfold holdsB holds
   rw [List.all_eq_true]
-  exact forall_congr' fun st => forall_congr' fun hst =>
-    Statement.checkB_iff hclosed (rankKeys_at hkeys hst)
+  exact forall_congr' fun st => forall_congr' fun _ =>
+    Statement.checkB_iff hclosed
 
 /-- One statement's judgment, decided — `Decidable` by the checker
 (premise-carrying named def; recorded narrowing in the module doc). -/
 def decideJudgment {T : Theory} {W : RowInstance}
-    (hclosed : WorldCarriesClosed T W) (st : Statement)
-    (hkeys : ∀ R pos G c, st = .order R pos G (some c) →
-      ∀ hop, hop ∈ c.hops →
-        Functionality (T.den W.den hop.relation) [hop.key]) :
+    (hclosed : WorldCarriesClosed T W) (st : Statement) :
     Decidable (st.judgment T W.den) :=
   decidable_of_iff (st.checkB T W = true)
-    (Statement.checkB_iff hclosed hkeys)
+    (Statement.checkB_iff hclosed)
 
 /-- **`Decidable (holds T I)` on finite instances** — the module's
 headline, as a term: the whole-theory judgment is decided by
 `holdsB`. -/
 def decideHolds {T : Theory} {W : RowInstance}
-    (hclosed : WorldCarriesClosed T W)
-    (hkeys : RankKeysHold T W.den) :
+    (hclosed : WorldCarriesClosed T W) :
     Decidable (holds T W.den) :=
-  decidable_of_iff (holdsB T W = true) (holdsB_iff_holds hclosed hkeys)
+  decidable_of_iff (holdsB T W = true) (holdsB_iff_holds hclosed)
 
 /-! ## The two-phase executable judge -/
 
@@ -1359,24 +1008,9 @@ def judgeB (T : Theory) (W : RowInstance) : Option (List Statement) :=
     | v => some v
   | v => some v
 
-/-- The hop-key argument `Statement.checkB_iff` takes, vacuous for a
-KEY statement: `isKey` selects the functionality constructor, never
-an order statement, so the ranked premise is unreachable — which is
-why the key phase consumes no chain premise. -/
-theorem keyStatement_vacuous_hkeys {T : Theory} {I : Instance}
-    {st : Statement} (hk : st.isKey = true) :
-    ∀ R pos G c, st = .order R pos G (some c) →
-      ∀ hop, hop ∈ c.hops →
-        Functionality (T.den I hop.relation) [hop.key] := by
-  intro R pos G c heq
-  rw [heq] at hk
-  exact nomatch hk
-
 /-- The executable key citations are exactly `Txn.keyViolationSet`,
-membership for membership — NO chain premise: a key statement is a
-functionality statement, whose checker consumes the merge premise
-only. The phase that convicts a hop-key-violating instance must not
-itself assume hop keys, and does not. -/
+membership for membership: a key statement is a functionality
+statement, whose checker consumes the merge premise only. -/
 theorem mem_keyViolationsB {T : Theory} {W : RowInstance}
     (hclosed : WorldCarriesClosed T W) {st : Statement} :
     st ∈ keyViolationsB T W ↔ st ∈ Txn.keyViolationSet T W.den := by
@@ -1386,23 +1020,19 @@ theorem mem_keyViolationsB {T : Theory} {W : RowInstance}
     obtain ⟨hmem, hcond⟩ := List.mem_filter.mp h
     obtain ⟨h1, h2⟩ := andB_iff.mp hcond
     refine ⟨⟨hmem, fun hj => ?_⟩, h1⟩
-    rw [(Statement.checkB_iff hclosed
-      (keyStatement_vacuous_hkeys h1)).mpr hj] at h2
+    rw [(Statement.checkB_iff hclosed).mpr hj] at h2
     exact nomatch h2
   · rintro ⟨⟨hmem, hj⟩, hk⟩
     refine List.mem_filter.mpr ⟨hmem, andB_iff.mpr ⟨hk, ?_⟩⟩
     cases hc : st.checkB T W with
     | false => rfl
     | true =>
-      exact absurd
-        ((Statement.checkB_iff hclosed
-          (keyStatement_vacuous_hkeys hk)).mp hc) hj
+      exact absurd ((Statement.checkB_iff hclosed).mp hc) hj
 
 /-- The executable statement citations are exactly
 `Txn.statementViolationSet`, membership for membership. -/
 theorem mem_statementViolationsB {T : Theory} {W : RowInstance}
-    (hclosed : WorldCarriesClosed T W)
-    (hkeys : RankKeysHold T W.den) {st : Statement} :
+    (hclosed : WorldCarriesClosed T W) {st : Statement} :
     st ∈ statementViolationsB T W ↔
       st ∈ Txn.statementViolationSet T W.den := by
   unfold statementViolationsB
@@ -1411,8 +1041,7 @@ theorem mem_statementViolationsB {T : Theory} {W : RowInstance}
     obtain ⟨hmem, hcond⟩ := List.mem_filter.mp h
     obtain ⟨h1, h2⟩ := andB_iff.mp hcond
     refine ⟨⟨hmem, fun hj => ?_⟩, ?_⟩
-    · rw [(Statement.checkB_iff hclosed
-        (rankKeys_at hkeys hmem)).mpr hj] at h2
+    · rw [(Statement.checkB_iff hclosed).mpr hj] at h2
       exact nomatch h2
     · cases hk : st.isKey with
       | false => rfl
@@ -1426,18 +1055,16 @@ theorem mem_statementViolationsB {T : Theory} {W : RowInstance}
     · cases hc : st.checkB T W with
       | false => rfl
       | true =>
-        exact absurd
-          ((Statement.checkB_iff hclosed
-            (rankKeys_at hkeys hmem)).mp hc) hj
+        exact absurd ((Statement.checkB_iff hclosed).mp hc) hj
 
 /-- **The two-phase agreement**: `judgeB` and `Txn.judge` render one
-verdict — accept together (and the accepted state is the judged
-instance), or reject in the SAME phase, the executable citation list
-and the model's violation set agreeing member for member
-(`mem_keyViolationsB` / `mem_statementViolationsB`). -/
+verdict on EVERY row instance — accept together (and the accepted
+state is the judged instance), or reject in the SAME phase, the
+executable citation list and the model's violation set agreeing
+member for member (`mem_keyViolationsB` /
+`mem_statementViolationsB`). No premise beyond the merge. -/
 theorem judgeB_agrees {T : Theory} {W : RowInstance}
-    (hclosed : WorldCarriesClosed T W)
-    (hkeys : RankKeysHold T W.den) :
+    (hclosed : WorldCarriesClosed T W) :
     (judgeB T W = none ∧
       ∃ h, Txn.judge T W.den = .ok ⟨W.den, h⟩) ∨
     (judgeB T W = some (keyViolationsB T W) ∧
@@ -1451,15 +1078,13 @@ theorem judgeB_agrees {T : Theory} {W : RowInstance}
       refine List.filter_eq_nil_iff.mpr fun st hst => ?_
       intro hcond
       obtain ⟨-, h2⟩ := andB_iff.mp hcond
-      rw [(Statement.checkB_iff hclosed
-        (rankKeys_at hkeys hst)).mpr (hh st hst)] at h2
+      rw [(Statement.checkB_iff hclosed).mpr (hh st hst)] at h2
       exact nomatch h2
     have hstmt : statementViolationsB T W = [] := by
       refine List.filter_eq_nil_iff.mpr fun st hst => ?_
       intro hcond
       obtain ⟨-, h2⟩ := andB_iff.mp hcond
-      rw [(Statement.checkB_iff hclosed
-        (rankKeys_at hkeys hst)).mpr (hh st hst)] at h2
+      rw [(Statement.checkB_iff hclosed).mpr (hh st hst)] at h2
       exact nomatch h2
     unfold judgeB
     rw [hkey, hstmt]
@@ -1485,47 +1110,13 @@ theorem judgeB_agrees {T : Theory} {W : RowInstance}
       obtain ⟨st, hv⟩ := hex
       have hne : statementViolationsB T W ≠ [] :=
         List.ne_nil_of_mem
-          ((mem_statementViolationsB hclosed hkeys).mpr
+          ((mem_statementViolationsB hclosed).mpr
             (Txn.statement_phase_all hk hv))
       unfold judgeB
       rw [hkey]
       cases hsv : statementViolationsB T W with
       | nil => exact absurd hsv hne
       | cons a l => rfl
-
-/-- **The two-phase agreement, instance-premise-free.** Under the
-merge premise and the ACCEPTANCE form of the hop-key rule
-(`RankKeysDeclared` — a fact of the theory, not of the judged
-instance), `judgeB` and `Txn.judge` render one verdict on EVERY row
-instance, hop-key-violating instances included: an instance breaking
-a declared rank-hop key convicts in the key phase on both sides (the
-hop key is a declared functionality statement and the key phase
-consumes no chain premise — `mem_keyViolationsB`), and a clean key
-phase yields the semantic premise (`rankKeysHold_of_clean_keys`)
-that the conditioned agreement (`judgeB_agrees`) spends. -/
-theorem judgeB_agrees_of_declared {T : Theory} {W : RowInstance}
-    (hclosed : WorldCarriesClosed T W)
-    (hdecl : RankKeysDeclared T) :
-    (judgeB T W = none ∧
-      ∃ h, Txn.judge T W.den = .ok ⟨W.den, h⟩) ∨
-    (judgeB T W = some (keyViolationsB T W) ∧
-      Txn.judge T W.den = .reject (Txn.keyViolationSet T W.den)) ∨
-    (judgeB T W = some (statementViolationsB T W) ∧
-      Txn.judge T W.den =
-        .reject (Txn.statementViolationSet T W.den)) := by
-  by_cases hk : (Txn.keyViolationSet T W.den).Nonempty
-  · have hh : ¬ holds T W.den := by
-      obtain ⟨st, ⟨⟨hmem, hj⟩, -⟩⟩ := hk
-      exact fun h => hj (h st hmem)
-    refine Or.inr (Or.inl ⟨?_, Txn.judge_key_preempts hh hk⟩)
-    obtain ⟨st, hstv⟩ := hk
-    have hne : keyViolationsB T W ≠ [] :=
-      List.ne_nil_of_mem ((mem_keyViolationsB hclosed).mpr hstv)
-    unfold judgeB
-    cases hkv : keyViolationsB T W with
-    | nil => exact absurd hkv hne
-    | cons a l => rfl
-  · exact judgeB_agrees hclosed (rankKeysHold_of_clean_keys hdecl hk)
 
 end Txn
 

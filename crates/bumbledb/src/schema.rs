@@ -49,10 +49,6 @@ pub struct ContainmentId(pub(crate) u16);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WindowId(pub(crate) u16);
 
-/// Witness index into [`Schema::orders`] — minted only by validation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct OrderId(pub(crate) u16);
-
 /// The element domain of an Interval: closed to the two orderable scalars.
 /// A flat enum, deliberately — no `Interval(Box<ValueType>)` recursion, so
 /// illegal elements are unrepresentable rather than rejected.
@@ -252,34 +248,6 @@ pub struct Side {
     pub selection: Box<[(FieldId, LiteralSet)]>,
 }
 
-/// One key-backed hop of an order mark's `by` chain: `-> K(read)` —
-/// resolve the running value against `key` (a declared key of
-/// `relation`), read the `read` payload
-/// (`lean/Bumbledb/Schema.lean: RankHop`). The key demand is what makes
-/// the read deterministic
-/// (`lean/Bumbledb/Subsumption.lean: chain_eval_deterministic`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RankHop {
-    pub relation: RelationId,
-    /// The key field the running value probes — must resolve a declared
-    /// single-field key of `relation` (the acceptance gate's demand).
-    pub key: FieldId,
-    /// The payload field the hop reads.
-    pub read: FieldId,
-}
-
-/// The `by` chain of a ranked order mark
-/// (`lean/Bumbledb/Schema.lean: RankChain`): the starting field of the
-/// ordered relation, then the key-backed hops, the final `read` being the
-/// rank payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RankChain {
-    /// The field of the ordered relation the chain starts from.
-    pub link: FieldId,
-    /// The key-backed hops, in chain order.
-    pub hops: Box<[RankHop]>,
-}
-
 /// One dependency statement: a judgment about queries
 /// (`docs/architecture/30-dependencies.md`). Statements are anonymous —
 /// their identity is their materialized-order [`StatementId`]. There is no
@@ -308,21 +276,6 @@ pub enum StatementDescriptor {
         /// The inclusive upper count bound; `None` is `*`.
         hi: Option<u64>,
         target: Side,
-    },
-    /// `order R(pos) per R(grp) [by link -> K(read) ...]`: the order
-    /// mark — per parent group, positions are exactly `1..k` (1-based,
-    /// duplicate-free, contiguous), monotone with the `by` ranks when a
-    /// chain is spelled (`lean/Bumbledb/Order.lean: OrderMark` /
-    /// `RankedOrderMark`; `lean/Bumbledb/Schema.lean: Statement.order`).
-    Order {
-        relation: RelationId,
-        /// The ordinal column — u64 by the acceptance gate.
-        position: FieldId,
-        /// The grouping projection: ordered, non-empty, duplicate-free,
-        /// scalar.
-        grouping: Box<[FieldId]>,
-        /// The optional `by` chain of key-backed hops.
-        ranking: Option<RankChain>,
     },
 }
 
@@ -661,50 +614,6 @@ pub struct CardinalityStatement {
     pub(crate) checks: CompiledSides,
 }
 
-/// One sealed key-backed hop: the declared-key witness rides along, so
-/// the hop's unit probe price is licensed by construction
-/// (`lean/Bumbledb/Oracle.lean: chain_cost_hops` — one consultation per
-/// hop, honest because the probed bucket is keyed).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SealedRankHop {
-    pub relation: RelationId,
-    pub key: FieldId,
-    pub read: FieldId,
-    /// The declared key of `relation` whose field set is `{key}` — minted
-    /// by validation, the hop's sealed plan handle.
-    pub(crate) key_statement: KeyId,
-}
-
-/// One sealed `by` chain: link field plus key-backed hops in chain order.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SealedRankChain {
-    pub link: FieldId,
-    pub hops: Box<[SealedRankHop]>,
-}
-
-/// One sealed order mark: `order R(pos) per R(grp) [by …]`. Accepted at
-/// declaration (`lean/Bumbledb/Oracle.lean: order_plan_decides` /
-/// `ranked_order_plan_decides` are the promised plans); commit-time
-/// judging is the enforcement stage's work.
-#[derive(Debug)]
-pub struct OrderStatement {
-    /// Materialized-order identity. It is not an arena index.
-    pub id: StatementId,
-    pub relation: RelationId,
-    /// The ordinal column — u64 by the acceptance gate.
-    pub position: FieldId,
-    /// The grouping projection: ordered, non-empty, duplicate-free,
-    /// scalar.
-    pub grouping: Box<[FieldId]>,
-    /// The mark's `R`-edge projection: grouping fields then the position
-    /// field — sealed once so the plan derivation slices one projection
-    /// (`docs/architecture/50-storage.md` § key layout: the group prefix
-    /// is the walk's key, the position tail is the walk's order).
-    pub(crate) edge_projection: Box<[FieldId]>,
-    /// The sealed `by` chain, each hop carrying its declared-key witness.
-    pub ranking: Option<SealedRankChain>,
-}
-
 /// The global materialized-order spine: a [`StatementId`] selects one typed
 /// arena and one slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -712,7 +621,6 @@ pub enum StatementRef {
     Key(KeyId),
     Containment(ContainmentId),
     Cardinality(WindowId),
-    Order(OrderId),
 }
 
 /// A borrowed sealed statement for display and other order-preserving walks.
@@ -722,7 +630,6 @@ pub enum StatementView<'schema> {
     Key(KeyId, &'schema KeyStatement),
     Containment(ContainmentId, &'schema ContainmentStatement),
     Cardinality(WindowId, &'schema CardinalityStatement),
-    Order(OrderId, &'schema OrderStatement),
 }
 
 impl StatementView<'_> {
@@ -733,7 +640,6 @@ impl StatementView<'_> {
             Self::Key(_, statement) => statement.id,
             Self::Containment(_, statement) => statement.id,
             Self::Cardinality(_, statement) => statement.id,
-            Self::Order(_, statement) => statement.id,
         }
     }
 }
@@ -774,8 +680,6 @@ pub struct Relation {
     /// a delta parent touches its own key tuple
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`).
     window_targets: Box<[WindowId]>,
-    /// `Order` statements on this relation.
-    order_marks: Box<[OrderId]>,
 }
 
 /// The sealed schema witness. Unconstructible except through
@@ -787,7 +691,6 @@ pub struct Schema {
     keys: Box<[KeyStatement]>,
     containments: Box<[ContainmentStatement]>,
     windows: Box<[CardinalityStatement]>,
-    orders: Box<[OrderStatement]>,
     /// The materialized statement list; [`StatementId`] indexes this spine.
     order: Box<[StatementRef]>,
     /// `target_key -> dependents`, indexed by [`KeyId`].
@@ -880,12 +783,6 @@ impl Schema {
         &self.windows
     }
 
-    /// All sealed order marks, in typed-arena order.
-    #[must_use]
-    pub fn orders(&self) -> &[OrderStatement] {
-        &self.orders
-    }
-
     /// A cardinality window selected by its validation-minted witness.
     #[must_use]
     pub fn window(&self, id: WindowId) -> &CardinalityStatement {
@@ -897,19 +794,6 @@ impl Schema {
     #[must_use]
     pub fn window_checked(&self, id: WindowId) -> Option<&CardinalityStatement> {
         self.windows.get(usize::from(id.0))
-    }
-
-    /// An order mark selected by its validation-minted witness.
-    #[must_use]
-    pub fn order(&self, id: OrderId) -> &OrderStatement {
-        &self.orders[usize::from(id.0)]
-    }
-
-    /// The bounds-checked sibling of [`Schema::order`] for ids arriving
-    /// as dynamic data.
-    #[must_use]
-    pub fn order_checked(&self, id: OrderId) -> Option<&OrderStatement> {
-        self.orders.get(usize::from(id.0))
     }
 
     /// Non-fatal diagnostics recorded while sealing this schema.
@@ -969,7 +853,6 @@ impl Schema {
             StatementRef::Cardinality(window) => {
                 StatementView::Cardinality(window, self.window(window))
             }
-            StatementRef::Order(order) => StatementView::Order(order, self.order(order)),
         }
     }
 

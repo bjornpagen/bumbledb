@@ -174,35 +174,11 @@ def ledger : List Obligation := [
     "schema/validate.rs::validate_cardinality (crates/bumbledb/src/schema/validate.rs); CardinalityStatement (crates/bumbledb/src/schema.rs)"
     "a_cardinality_window_over_a_declared_key_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_a_window_with_an_interval_position (crates/bumbledb/src/schema/tests/reject.rs); rejects_a_window_whose_target_is_no_key (crates/bumbledb/src/schema/tests/reject.rs)",
 
-  .row @Oracle.order_plan_decides
-    `Bumbledb.Oracle.order_plan_decides
-    "The plain order mark has a sealed enforcement plan — one prefix walk per touched group — so the gate accepts the form at declaration once the position column is u64 and the grouping is a non-empty scalar projection."
-    "schema/validate.rs::validate_order (crates/bumbledb/src/schema/validate.rs); OrderStatement (crates/bumbledb/src/schema.rs)"
-    "a_plain_order_mark_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_an_order_position_that_is_not_u64 (crates/bumbledb/src/schema/tests/reject.rs); rejects_an_interval_grouping_field (crates/bumbledb/src/schema/tests/reject.rs)",
-
-  .row @Oracle.ranked_order_plan_decides
-    `Bumbledb.Oracle.ranked_order_plan_decides
-    "The ranked order mark's plan seals per hop — every by-chain hop resolves a declared single-field key of its relation, which is what makes the rank read deterministic and each chase probe a unit consultation — so acceptance admits the ranked form exactly when every hop's key witness seals."
-    "schema/validate.rs::validate_rank_chain (crates/bumbledb/src/schema/validate.rs); SealedRankHop (crates/bumbledb/src/schema.rs)"
-    "a_ranked_order_mark_with_a_keyed_hop_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_an_unkeyed_rank_hop (crates/bumbledb/src/schema/tests/reject.rs); rejects_a_non_u64_rank_payload (crates/bumbledb/src/schema/tests/reject.rs)",
-
   .row @Txn.cardinality_delta_restriction
     `Bumbledb.Txn.cardinality_delta_restriction
     "Over a clean pre-state the window holds of the final state iff the touched-parents check passes — every parent key any delta child projects to, plus the delta's ψ-selected parents, each judged by one keyed parent probe and one child-group walk against the final state."
     "judgment.rs::check_windows (crates/bumbledb/src/storage/commit/judgment.rs); Checker::check_window (crates/bumbledb/src/storage/commit/judgment.rs); plan.rs::mark_ops (crates/bumbledb/src/storage/commit/plan.rs)"
-    "window_floor_convicts_a_childless_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); window_removal_recounts_the_touched_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); window_and_order_verdicts_agree_with_the_model (crates/bumbledb-bench/src/differential/tests/marks.rs)",
-
-  .row @Txn.order_delta_restriction
-    `Bumbledb.Txn.order_delta_restriction
-    "Over a clean pre-state the order mark holds of the final state iff every touched group — every grouping tuple any delta fact projects to, removes included — passes one position-ordered walk: uniqueness, 1-basedness, and downward closure are one positions-are-exactly-1..k sweep."
-    "judgment.rs::check_orders (crates/bumbledb/src/storage/commit/judgment.rs); Checker::check_order_walk (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "order_gap_convicts (crates/bumbledb/src/storage/commit/tests/marks.rs); order_removal_breaking_closure_convicts (crates/bumbledb/src/storage/commit/tests/marks.rs); a_missing_order_edge_is_found_and_the_group_rewalked (crates/bumbledb/src/verify_store/tests.rs)",
-
-  .row @Txn.ranked_order_delta_restriction
-    `Bumbledb.Txn.ranked_order_delta_restriction
-    "The ranked form's rank reads chase the sealed key-backed hops per walked member, and a delta touching any hop relation escalates the touched set to every group — a hop write can reorder ranks in a group the relation's own delta never touched. The engine's surface is WRITABLE subjects only: a ranked mark on a CLOSED subject is gate-refused (the typed RankedOrderClosedSubject — closed rows ride no delta, so the escalated walk would read an empty namespace and the clause would be judged nowhere, the sound narrowing recorded in Order.lean § narrowings)."
-    "Checker::chain_rank (crates/bumbledb/src/storage/commit/judgment.rs); plan.rs::order_checks (crates/bumbledb/src/storage/commit/plan.rs); schema/validate.rs::validate_order (crates/bumbledb/src/schema/validate.rs)"
-    "ranked_inversion_convicts (crates/bumbledb/src/storage/commit/tests/marks.rs); ranked_dirty_hop_relation_touches_every_group (crates/bumbledb/src/storage/commit/tests/marks.rs); ranked_rankless_members_impose_nothing (crates/bumbledb/src/storage/commit/tests/marks.rs); rejects_a_ranked_order_mark_on_a_closed_subject (crates/bumbledb/src/schema/tests/reject.rs); create_refuses_a_ranked_order_mark_on_a_closed_subject (crates/bumbledb/tests/edge.rs)",
+    "window_floor_convicts_a_childless_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); window_removal_recounts_the_touched_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); window_verdicts_agree_with_the_model (crates/bumbledb-bench/src/differential/tests/marks.rs)",
 
   .row @functionality_unique_witness `Bumbledb.functionality_unique_witness
     "Under a functionality statement there is at most one fact per determinant tuple — a key proves uniqueness, never existence."
@@ -578,13 +554,13 @@ def ledger : List Obligation := [
   /- ## The judgment conformance lane (Decide.lean) -/
 
   .row @holdsB_iff_holds `Bumbledb.holdsB_iff_holds
-    "On row-listed finite instances the whole-theory judgment is decided by the executable checker, statement by statement, under the closed-roster merge and the hop-key premise — the write-side third oracle's license."
+    "On row-listed finite instances the whole-theory judgment is decided by the executable checker, statement by statement, under the closed-roster merge — the write-side third oracle's license."
     "render_fixture (crates/bumbledb-bench/src/conformance/judgment.rs); SchemaDescriptor::materialized_statements (crates/bumbledb/src/schema.rs)"
     "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs)",
 
-  .row @Txn.judgeB_agrees_of_declared `Bumbledb.Txn.judgeB_agrees_of_declared
-    "The executable two-phase judge renders the model judge's verdict on EVERY row instance — accept together, or reject in the same phase with the same per-phase violation sets — with the hop-key rule spent in its acceptance form, a fact of the theory alone."
-    "judge (crates/bumbledb/src/storage/commit/judgment.rs); validate_order (crates/bumbledb/src/schema/validate.rs); generate_judgment_corpus (crates/bumbledb-bench/src/conformance/judgment.rs)"
+  .row @Txn.judgeB_agrees `Bumbledb.Txn.judgeB_agrees
+    "The executable two-phase judge renders the model judge's verdict on EVERY row instance — accept together, or reject in the same phase with the same per-phase violation sets — under no premise beyond the closed-roster merge."
+    "judge (crates/bumbledb/src/storage/commit/judgment.rs); generate_judgment_corpus (crates/bumbledb-bench/src/conformance/judgment.rs)"
     "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); the_corpus_replays_byte_identical_from_its_provenance (crates/bumbledb-bench/src/conformance.rs)"
 
 ]
@@ -592,7 +568,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 92 := rfl
+theorem ledger_count : ledger.length = 88 := rfl
 
 end Bridge
 end Bumbledb

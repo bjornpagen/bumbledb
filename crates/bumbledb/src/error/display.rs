@@ -12,8 +12,8 @@ use std::fmt;
 use crate::schema::{Schema, SchemaDescriptor, StatementId, render};
 
 use super::{
-    CorruptionError, Direction, Error, FactShapeError, OrderDefect, SchemaError,
-    TargetKeyCandidate, ValidationError, Violation,
+    CorruptionError, Direction, Error, FactShapeError, SchemaError, TargetKeyCandidate,
+    ValidationError, Violation,
 };
 
 fn field_set(f: &mut fmt::Formatter<'_>, projection: &[crate::schema::FieldId]) -> fmt::Result {
@@ -95,25 +95,6 @@ impl fmt::Display for Violation {
                 "statement {}: cardinality violated — a parent's child-group count ({count}) falls outside the window",
                 statement.0
             ),
-            Self::Order {
-                statement, defect, ..
-            } => match defect {
-                OrderDefect::DuplicatePosition => write!(
-                    f,
-                    "statement {}: order violated — two facts of one group carry one position",
-                    statement.0
-                ),
-                OrderDefect::PositionGap => write!(
-                    f,
-                    "statement {}: order violated — a group's positions are not exactly 1..k",
-                    statement.0
-                ),
-                OrderDefect::RankOrder => write!(
-                    f,
-                    "statement {}: order violated — a smaller rank sits later than a larger one",
-                    statement.0
-                ),
-            },
         }
     }
 }
@@ -488,62 +469,6 @@ impl fmt::Display for SchemaError {
                 "statement {}: interval field {} on relation {} in a cardinality window — \
                  a window counts facts per parent, and an interval position would make the \
                  count ambiguous between facts and points",
-                s.0, fd.0, r.0
-            ),
-            Self::OrderPositionNotU64 {
-                statement: s,
-                relation: r,
-                field: fd,
-            } => write!(
-                f,
-                "statement {}: order position field {} on relation {} must be u64 — \
-                 positions are 1-based ordinals",
-                s.0, fd.0, r.0
-            ),
-            Self::OrderGroupingInterval {
-                statement: s,
-                relation: r,
-                field: fd,
-            } => write!(
-                f,
-                "statement {}: interval grouping field {} on relation {} in an order mark — \
-                 groups are keyed by scalar bytes",
-                s.0, fd.0, r.0
-            ),
-            Self::RankedOrderClosedSubject {
-                statement: s,
-                relation: r,
-            } => write!(
-                f,
-                "statement {}: ranked order mark on closed relation {} — the ranks read \
-                 through writable hop relations no walk over a closed subject ever judges; \
-                 declare the plain form or open the subject",
-                s.0, r.0
-            ),
-            Self::RankHopUnkeyed {
-                statement: s,
-                relation: r,
-                field: fd,
-            } => write!(
-                f,
-                "statement {}: `by` hop against relation {}, field {} which no declared key \
-                 backs — declare the single-field key `R(field) -> R` the hop probes",
-                s.0, r.0, fd.0
-            ),
-            Self::RankChainTypeMismatch { statement: s, hop } => write!(
-                f,
-                "statement {}: `by` chain type mismatch at hop {hop} — the running value's \
-                 type must equal the hop's key field type",
-                s.0
-            ),
-            Self::OrderRankNotU64 {
-                statement: s,
-                relation: r,
-                field: fd,
-            } => write!(
-                f,
-                "statement {}: rank payload field {} on relation {} must be u64 — the rank \
-                 is the final read's ordinal",
                 s.0, fd.0, r.0
             ),
         }
@@ -1038,20 +963,6 @@ impl fmt::Display for DisplayWith<'_> {
                             f,
                             "cardinality violated: `{rendered}` — a parent's child-group count ({count}) falls outside the window"
                         )?,
-                        Violation::Order { defect, .. } => match defect {
-                            OrderDefect::DuplicatePosition => write!(
-                                f,
-                                "order violated: `{rendered}` — two facts of one group carry one position"
-                            )?,
-                            OrderDefect::PositionGap => write!(
-                                f,
-                                "order violated: `{rendered}` — a group's positions are not exactly 1..k"
-                            )?,
-                            OrderDefect::RankOrder => write!(
-                                f,
-                                "order violated: `{rendered}` — a smaller rank sits later than a larger one"
-                            )?,
-                        },
                     }
                 }
                 Ok(())
@@ -1098,13 +1009,7 @@ impl SchemaError {
             | Self::DuplicateStatement { statement, .. }
             | Self::DegenerateSelectionSet { statement, .. }
             | Self::DuplicateSelectionLiteral { statement, .. }
-            | Self::CardinalityIntervalPosition { statement, .. }
-            | Self::OrderPositionNotU64 { statement, .. }
-            | Self::OrderGroupingInterval { statement, .. }
-            | Self::RankedOrderClosedSubject { statement, .. }
-            | Self::RankHopUnkeyed { statement, .. }
-            | Self::RankChainTypeMismatch { statement, .. }
-            | Self::OrderRankNotU64 { statement, .. } => Some(*statement),
+            | Self::CardinalityIntervalPosition { statement, .. } => Some(*statement),
         }
     }
 

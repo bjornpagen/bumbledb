@@ -7,7 +7,7 @@ LMDB, built by and for one user (Bjorn Pagen) and his applications. It is Postgr
 relational elegance with the parts its owner hates removed: no SQL, no bag semantics,
 no nulls, no layer cake — and a constraint system Postgres cannot follow:
 **invariants are judgments about queries** (functionality and containment, plus
-the cardinality-window and order-mark extension forms,
+the cardinality-window extension form,
 `30-dependencies.md`), judged once per commit against the transaction's final state,
 which makes totality of sum types, conditional reference targets, and pointwise
 temporal keys *statable* — and makes the SQL constraint zoo (unique, referential,

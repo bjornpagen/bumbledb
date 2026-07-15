@@ -159,9 +159,6 @@ pub enum Inexpressible {
     /// judgment with a pinned statement id — the same class as the other
     /// two judgment kinds.
     CardinalityJudgment,
-    /// An order-mark verdict: contiguity and rank monotonicity per group
-    /// are not SQL constraints.
-    OrderJudgment,
     /// A program rule reading its own predicate through two or more
     /// atoms — the non-linear form. `SQLite`'s recursive CTE admits
     /// exactly one reference to the recursive table per arm, and an
@@ -218,7 +215,6 @@ pub fn sqlite_expressible(case: &LaneCase<'_>) -> Result<(), Inexpressible> {
         LaneCase::Judgment(StatementDescriptor::Cardinality { .. }) => {
             Err(Inexpressible::CardinalityJudgment)
         }
-        LaneCase::Judgment(StatementDescriptor::Order { .. }) => Err(Inexpressible::OrderJudgment),
     }
 }
 

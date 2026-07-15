@@ -40,9 +40,14 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 /// changed (literal-set selections, the cardinality-window and
 /// order-mark statement forms), so every stored fingerprint of a v2
 /// store is computed under a retired encoding (every encoding change
-/// bumps — `docs/architecture/50-storage.md` § open-time checks). No
-/// other version opens and no migration path exists — ETL is the story.
-pub const FORMAT_VERSION: u32 = 3;
+/// bumps — `docs/architecture/50-storage.md` § open-time checks).
+/// Version 4: the order purge — the statement spine sum shrank (the
+/// order-mark form and its `R`-edge namespace left the vocabulary), so
+/// the canonical schema encoding changed again; nothing deployed
+/// carries an order statement, and a v3 store's fingerprint is computed
+/// under a retired encoding. No other version opens and no migration
+/// path exists — ETL is the story.
+pub const FORMAT_VERSION: u32 = 4;
 
 /// The persisted storage transaction id: the generation a snapshot
 /// witnessed and a state-changing commit advances. This is not the

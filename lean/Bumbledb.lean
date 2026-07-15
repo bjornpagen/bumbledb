@@ -1,7 +1,6 @@
 import Bumbledb.Values
 import Bumbledb.Schema
 import Bumbledb.Cardinality
-import Bumbledb.Order
 import Bumbledb.Dependencies
 import Bumbledb.Subsumption
 import Bumbledb.Query.Syntax

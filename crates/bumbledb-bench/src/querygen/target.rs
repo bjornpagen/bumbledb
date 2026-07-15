@@ -873,7 +873,7 @@ mod tests {
             StatementView::Key(_, statement) => {
                 panic!("statement {} is a key: {statement:?}", id.0)
             }
-            StatementView::Cardinality(..) | StatementView::Order(..) => {
+            StatementView::Cardinality(..) => {
                 panic!("statement {} is an extension form", id.0)
             }
         };

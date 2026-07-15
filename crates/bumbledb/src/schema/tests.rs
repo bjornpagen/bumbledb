@@ -111,21 +111,6 @@ pub(crate) fn cardinality(
     }
 }
 
-/// `order relation(position) per relation(grouping) [by ranking]`.
-pub(crate) fn order_mark(
-    relation: RelationId,
-    position: FieldId,
-    grouping: &[FieldId],
-    ranking: Option<RankChain>,
-) -> StatementDescriptor {
-    StatementDescriptor::Order {
-        relation,
-        position,
-        grouping: grouping.into(),
-        ranking,
-    }
-}
-
 /// Holder(id fresh, name string) + Account(id fresh, holder u64, status u64),
 /// with the statement `Account(holder) <= Holder(id)`.
 fn ledger_slice() -> SchemaDescriptor {

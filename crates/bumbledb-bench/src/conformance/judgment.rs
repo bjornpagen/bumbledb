@@ -4,9 +4,8 @@
 //! denotation; this lane compares COMMIT VERDICTS against the
 //! executable judge: `lean/Bumbledb/Decide.lean: Txn.judgeB`, proved
 //! to agree with the model's `Txn.judge` verdict and violation sets
-//! phase for phase (`Txn.judgeB_agrees_of_declared` — the corpus's
-//! ranked fixtures declare their hop keys, so the agreement carries no
-//! instance-side premise). One JSON document per case: the theory
+//! phase for phase (`Txn.judgeB_agrees`). One JSON document per case:
+//! the theory
 //! (sealed relations, ground axioms, the MATERIALIZED statement list —
 //! indices are the engine's statement ids), the committed pre-state,
 //! one delta, and the verdict both Rust oracles agreed on — accept, or
@@ -16,7 +15,7 @@
 //! **The verdict is compared per phase.** A key (functionality)
 //! violation preempts the statement phase on all three oracles
 //! (`lean/Bumbledb/Txn.lean: judge_key_preempts`); the statement phase
-//! cites containment, cardinality, and order violations together. The
+//! cites containment and cardinality violations together. The
 //! containment `Direction` is a Rust-side refinement below the Lean
 //! altitude (`Txn.lean`'s violation sets are per-statement), so the
 //! serialized set deduplicates a statement cited in both directions —
@@ -32,8 +31,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, LiteralSet, RankChain, RankHop, RelationDescriptor,
-    RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, LiteralSet, RelationDescriptor, RelationId, Row,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{Db, Interval, Value};
 
@@ -103,34 +102,26 @@ fn iv(start: u64, end: u64) -> Value {
     Value::IntervalU64(Interval::<u64>::new(start, end).expect("fixture intervals are nonempty"))
 }
 
-// ---------- the marks world: window + order + ranked order ----------
+// ---------- the marks world: the window over set-selected children ----------
 
 const HOLDER: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 const ITEM: RelationId = RelationId(2);
-const STEP: RelationId = RelationId(3);
-const KIND_RANK: RelationId = RelationId(4);
 
 /// Holder(id, tag; key id); Account(holder, kind, num) windowed
 /// `Account(holder | kind ∈ {1, 2}) in 1..2 per Holder(id)` — a
-/// SET selection, so the lane's σ compares disjunctively; Item ordered
-/// per doc; Step ranked per flow by `kind -> KindRank(rank)`.
+/// SET selection, so the lane's σ compares disjunctively; Item is
+/// unconstrained payload data riding the same commits.
 fn marks_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             u64_relation("Holder", &["id", "tag"]),
             u64_relation("Account", &["holder", "kind", "num"]),
             u64_relation("Item", &["doc", "pos", "note"]),
-            u64_relation("Step", &["flow", "pos", "kind"]),
-            u64_relation("KindRank", &["kind", "rank"]),
         ],
         statements: vec![
             StatementDescriptor::Functionality {
                 relation: HOLDER,
-                projection: Box::new([FieldId(0)]),
-            },
-            StatementDescriptor::Functionality {
-                relation: KIND_RANK,
                 projection: Box::new([FieldId(0)]),
             },
             StatementDescriptor::Cardinality {
@@ -145,25 +136,6 @@ fn marks_schema() -> SchemaDescriptor {
                 lo: 1,
                 hi: Some(2),
                 target: side(HOLDER, &[0]),
-            },
-            StatementDescriptor::Order {
-                relation: ITEM,
-                position: FieldId(1),
-                grouping: Box::new([FieldId(0)]),
-                ranking: None,
-            },
-            StatementDescriptor::Order {
-                relation: STEP,
-                position: FieldId(1),
-                grouping: Box::new([FieldId(0)]),
-                ranking: Some(RankChain {
-                    link: FieldId(2),
-                    hops: Box::new([RankHop {
-                        relation: KIND_RANK,
-                        key: FieldId(0),
-                        read: FieldId(1),
-                    }]),
-                }),
             },
         ],
     }
@@ -189,17 +161,6 @@ fn item(doc: u64, pos: u64, note: u64) -> (RelationId, Vec<Value>) {
         ITEM,
         vec![Value::U64(doc), Value::U64(pos), Value::U64(note)],
     )
-}
-
-fn step(flow: u64, pos: u64, kind: u64) -> (RelationId, Vec<Value>) {
-    (
-        STEP,
-        vec![Value::U64(flow), Value::U64(pos), Value::U64(kind)],
-    )
-}
-
-fn kind_rank(kind: u64, rank: u64) -> (RelationId, Vec<Value>) {
-    (KIND_RANK, vec![Value::U64(kind), Value::U64(rank)])
 }
 
 // ---------- the exactness world: n..n and 0..* windows ----------
@@ -319,8 +280,8 @@ fn cur_account(id: u64, currency: u64) -> (RelationId, Vec<Value>) {
 }
 
 /// The starter roster: both classical forms (scalar key, containment —
-/// pointwise key and coverage through the permuted world), both new
-/// forms (window, order — ranked included), the two-phase preemption
+/// pointwise key and coverage through the permuted world), the window
+/// form, the two-phase preemption
 /// mix, set-selections, the exactness/vacuity/empty-parent window
 /// boundaries, the delete-then-reinsert touched-group seam, and the
 /// permuted-interval docketed lock.
@@ -335,16 +296,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             schema: marks_schema(),
             base: vec![],
             deletes: vec![],
-            inserts: vec![
-                holder(7),
-                account(7, 1, 0),
-                kind_rank(10, 1),
-                kind_rank(20, 2),
-                step(1, 1, 10),
-                step(1, 2, 20),
-                item(1, 1, 10),
-                item(1, 2, 11),
-            ],
+            inserts: vec![holder(7), account(7, 1, 0), item(1, 1, 10), item(1, 2, 11)],
         },
         JudgmentFixture {
             name: "judgment-window-floor-childless",
@@ -366,27 +318,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
             base: vec![holder(7), account(7, 1, 0), account(7, 2, 1)],
             deletes: vec![],
             inserts: vec![account(7, 2, 2)],
-        },
-        JudgmentFixture {
-            name: "judgment-order-gap",
-            schema: marks_schema(),
-            base: vec![],
-            deletes: vec![],
-            inserts: vec![item(2, 1, 20), item(2, 3, 21)],
-        },
-        JudgmentFixture {
-            name: "judgment-order-duplicate",
-            schema: marks_schema(),
-            base: vec![],
-            deletes: vec![],
-            inserts: vec![item(3, 1, 1), item(3, 1, 2)],
-        },
-        JudgmentFixture {
-            name: "judgment-ranked-inversion",
-            schema: marks_schema(),
-            base: vec![kind_rank(10, 1), kind_rank(20, 2)],
-            deletes: vec![],
-            inserts: vec![step(2, 1, 20), step(2, 2, 10)],
         },
         JudgmentFixture {
             name: "judgment-preemption-mix",
@@ -660,34 +591,6 @@ fn push_statements(out: &mut String, schema: &SchemaDescriptor) {
                 push_side(out, target);
                 out.push_str("}}");
             }
-            StatementDescriptor::Order {
-                relation,
-                position,
-                grouping,
-                ranking,
-            } => {
-                let _ = write!(
-                    out,
-                    "{{\"order\":{{\"relation\":{},\"position\":{},\"grouping\":",
-                    relation.0, position.0
-                );
-                push_field_ids(out, grouping);
-                if let Some(chain) = ranking {
-                    let _ = write!(out, ",\"ranking\":{{\"link\":{},\"hops\":[", chain.link.0);
-                    for (position, hop) in chain.hops.iter().enumerate() {
-                        if position > 0 {
-                            out.push(',');
-                        }
-                        let _ = write!(
-                            out,
-                            "{{\"relation\":{},\"key\":{},\"read\":{}}}",
-                            hop.relation.0, hop.key.0, hop.read.0
-                        );
-                    }
-                    out.push_str("]}");
-                }
-                out.push_str("}}");
-            }
         }
     }
     out.push(']');
@@ -744,8 +647,7 @@ fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
                 .map(|violation| match violation {
                     Violation::Functionality { statement }
                     | Violation::Containment { statement, .. }
-                    | Violation::Cardinality { statement }
-                    | Violation::Order { statement } => statement.0,
+                    | Violation::Cardinality { statement } => statement.0,
                     Violation::ClosedRelationWrite { .. } => {
                         panic!("judgment fixture {name} wrote a closed relation")
                     }

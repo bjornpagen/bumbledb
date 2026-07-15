@@ -28,11 +28,10 @@ relations as instance-independent sealed constants.
   decidability-firewall tripwire's recorded edge
   (`docs/architecture/30-dependencies.md` § the decidability
   firewall) is the same decision docs-side, executed 2026-07-14.
-* **Statements are the four judgment forms**: functionality and
-  containment exactly as `StatementDescriptor`, plus the two
-  extension forms — cardinality windows and order marks — with their
-  denotations in `Cardinality.lean` and `Order.lean`. No constraint
-  kinds, no modes, no triggers.
+* **Statements are the three judgment forms**: functionality and
+  containment exactly as `StatementDescriptor`, plus the cardinality
+  window extension form with its denotation in `Cardinality.lean`.
+  No constraint kinds, no modes, no triggers.
 * **Ground axioms are constants of the THEORY.** A closed relation's
   extension is sealed at declaration and `Instance`-independent by
   type (`Theory.den` never consults the instance for it) —
@@ -332,13 +331,12 @@ theorem Header.intervalSplit_some {h : Header} {R : RelId}
   · simp only [Header.intervalSplit, hfil] at hs
     exact nomatch hs
 
-/-! ## Extension syntax — windows and rank chains
+/-! ## Extension syntax — windows
 
-The two statement forms the dependency-vocabulary extension adds
-carry syntax of their own: the count window of
-`A(X | φ) in n..m per B(Y | ψ)` and the `by` chain of
-`order A(pos) per A(parent) by … -> K(rank)`. Syntax only — the
-denotations live in `Cardinality.lean` and `Order.lean`. -/
+The statement form the dependency-vocabulary extension adds carries
+syntax of its own: the count window of `A(X | φ) in n..m per
+B(Y | ψ)`. Syntax only — the denotation lives in
+`Cardinality.lean`. -/
 
 /-- A cardinality window `n..m`. `hi = none` is the `*` spelling —
 the ONLY spelling of "no upper bound", and the DEFAULT posture: the
@@ -351,30 +349,6 @@ structure Window where
   /-- The inclusive upper count bound; `none` is `*`. -/
   hi : Option Nat
 
-/-- One key-backed hop of an order mark's `by` chain: `-> K(read)` —
-resolve the running value against `K`'s key field, read the payload
-field. Each hop is an already-declared inclusion at acceptance; the
-judgment reads it relationally (`RankHop.eval`, `Order.lean`), and
-the acceptance gate's key premise is what makes the read
-deterministic (`chain_eval_deterministic`, `Subsumption.lean`). -/
-structure RankHop where
-  /-- The relation the hop resolves against. -/
-  relation : RelId
-  /-- The key field the running value probes. -/
-  key : FieldId
-  /-- The payload field the hop reads. -/
-  read : FieldId
-
-/-- The `by` chain of a ranked order mark:
-`by A(link) -> K₁(read₁) -> … -> Kₙ(readₙ)` — the starting field of
-the ordered relation, then the key-backed hops, the final `read`
-being the rank payload. -/
-structure RankChain where
-  /-- The field of the ordered relation the chain starts from. -/
-  link : FieldId
-  /-- The key-backed hops, in chain order. -/
-  hops : List RankHop
-
 /-! ## Statements — the declared forms -/
 
 /-- One side of a containment: the single-atom query `R(X | φ)`.
@@ -386,11 +360,11 @@ structure Atom where
   selection : Selection
 
 /-- A declared dependency statement — the two original judgment forms
-(`crate::schema::StatementDescriptor`) plus the two extension forms
-(cardinality windows and order marks), judged in the STATEMENT phase
-like every other statement. `==` is not a form: the macro lowers it
-to two adjacent containments, each judged independently. Readings
-live in `Statement.judgment`. -/
+(`crate::schema::StatementDescriptor`) plus the cardinality-window
+extension form, judged in the STATEMENT phase like every other
+statement. `==` is not a form: the macro lowers it to two adjacent
+containments, each judged independently. Readings live in
+`Statement.judgment`. -/
 inductive Statement where
   /-- `R(X) -> R`: functionality, key form only (the acceptance
   gate refuses non-key and selected FDs — they are relation splits
@@ -405,14 +379,6 @@ inductive Statement where
   `<=`: `Y` must be a key of `B` — an ACCEPTANCE premise, never a
   conjunct of the denotation. -/
   | cardinality (source : Atom) (window : Window) (target : Atom)
-  /-- `order A(pos) per A(parent) [by … -> K(rank)]`: the order
-  mark's judgment — per parent group, positions are exactly `1..k`
-  (1-based, duplicate-free, contiguous), monotone with the `by` ranks
-  when a chain is spelled (`OrderMark` / `RankedOrderMark`,
-  `Order.lean`). A hand-built row set is judged exactly like a
-  generated one. -/
-  | order (relation : RelId) (position : FieldId)
-      (grouping : List FieldId) (ranking : Option RankChain)
 
 /-! ## Theories, instances, ground axioms -/
 

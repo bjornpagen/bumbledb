@@ -106,17 +106,6 @@ form's delta-restricted check (`planObligation`, `acceptance_gate`).
   (`cardinality_plan_decides`); total consultations = touched parents
   + total touched-group sizes, as an equation
   (`window_plan_consultations`).
-* **Order mark** — a prefix walk per touched group (`orderPlan`,
-  `order_plan_consultations` = 1 + group size): the ordinal verdict
-  over the walked group IS `orderDeltaCheck` (`order_plan_decides`);
-  the ranked form adds rank reads INSIDE the calculus — every chase
-  step is a `pointProbe` evaluation (`chainConsult`, whose probe
-  transcript `chainConsult_iff_via` pins), the per-chase price is a
-  proved equation (`chain_cost_hops`: one consultation per hop,
-  composed from `EnforcementPlan.consultations`), the chase equals
-  the denotational chain (`chainConsult_eval`), and the
-  walks-plus-chases verdict decides the ranked check
-  (`ranked_order_plan_decides`).
 
 ## The acceptance premises, spent
 
@@ -165,14 +154,6 @@ fact-level fidelity to its delta-restricted check.
   (`Txn.lean`), unchanged. The window count theorem takes the touched
   parents as any list because the price is per-parent-walk, whatever
   order the engine visits them.
-* **The ranked hop chase reads one bucket per hop.** Each chase step
-  IS a `pointProbe` evaluation (`chainConsult_iff_via` pins the probe
-  transcript), and the per-chase price composes from
-  `EnforcementPlan.consultations` as a proved equation
-  (`chain_cost_hops` — one consultation per hop); under the
-  key-backed hop acceptance rule each probed bucket is a
-  subsingleton (`point_probe_honest`), which is what keeps the unit
-  price per hop honest.
 * **The reverse-demand walk reads the whole source bucket.** The
   engine's reverse index is φ-gated per statement and its scan stops
   at the first surviving demand — clipping, representation below
@@ -185,23 +166,20 @@ fact-level fidelity to its delta-restricted check.
   demand spent. On an unkeyed group the abstract count would
   understate, which is exactly why the gate refuses unkeyed targets.
 
-## The window and order-mark plans: acceptance and checker discharged
+## The window plan: acceptance and checker discharged
 
-The engine ACCEPTS the window and order-mark forms at declaration
-(2026-07-14: `StatementDescriptor::Cardinality` / `::Order`; the gate
-arms `validate_cardinality` / `validate_order` in
-`schema/validate.rs` resolve exactly the keys these plans price —
-the window's target key, the ranked form's per-hop keys — so "the
-plan is sealable" is what acceptance checks, and the `Bridge.lean`
-acceptance rows cite the plan theorems). The Rust CHECKER runs the
-plans as stated: `windowPlan`'s per-touched-parent child-group walk
-is `storage/commit/judgment.rs::Checker::check_window`, `orderPlan`'s
-per-touched-group position-ordered walk is `::check_order_walk`, and
-the ranked chase's one-probe-per-hop transcript is `::chain_rank` —
-the enforcement discharge rows cite the delta-restriction theorems
-these plans decide. The FD, containment, and
-coverage plans price mechanisms the ledger already carries
-(`Applier`, `judgment.rs`, the sweep); those arms add no rows.
+The engine ACCEPTS the window form at declaration (2026-07-14:
+`StatementDescriptor::Cardinality`; the gate arm
+`validate_cardinality` in `schema/validate.rs` resolves exactly the
+key this plan prices — the window's target key — so "the plan is
+sealable" is what acceptance checks, and the `Bridge.lean`
+acceptance row cites the plan theorem). The Rust CHECKER runs the
+plan as stated: `windowPlan`'s per-touched-parent child-group walk
+is `storage/commit/judgment.rs::Checker::check_window` — the
+enforcement discharge row cites the delta-restriction theorem this
+plan decides. The FD, containment, and coverage plans price
+mechanisms the ledger already carries (`Applier`, `judgment.rs`, the
+sweep); those arms add no rows.
 -/
 
 namespace Bumbledb
@@ -516,10 +494,6 @@ def indReverseWalk (t : List Value) : EnforcementPlan (List Value) P :=
 def windowPlan (t : List Value) : EnforcementPlan (List Value) P :=
   .prefixWalk t
 
-/-- Order mark: one prefix walk of a touched group. -/
-def orderPlan (t : List Value) : EnforcementPlan (List Value) P :=
-  .prefixWalk t
-
 /-- Pointwise FD: the neighbor probe at the inserted interval's
 start. -/
 def neighborPlan {α : Type} [LT α] (g : K) (iv : Interval α) :
@@ -569,12 +543,6 @@ theorem coverage_plan_consultations {α : Type} [LT α]
     (g : K) :
     (coveragePlan (α := α) g).consultations o =
       1 + (o.consult g).length := rfl
-
-/-- Order mark: one entry seek + one read per group member. -/
-theorem order_plan_consultations
-    (o : OrderedOracle (List Value) P Fact ple) (t : List Value) :
-    (orderPlan (P := P) t).consultations o =
-      1 + (o.consult t).length := rfl
 
 /-- The sealed member test consults nothing. -/
 theorem member_test_consultations (o : OrderedOracle K P β ple) :
@@ -811,261 +779,6 @@ theorem cardinality_plan_decides (T : Theory) (I : Instance)
   exact ⟨fun h g hg hψ ht => (hadm _).mp (h g hg hψ ht),
     fun h g hg hψ ht => (hadm _).mpr (h g hg hψ ht)⟩
 
-/-! ## Form 6 — the order mark -/
-
-/-- The order plan obligation: against every conforming oracle over
-the relation's grouping index, the per-touched-group ordinal verdict
-decides `orderDeltaCheck`. -/
-def OrderPlanned (T : Theory) (I : Instance) (d : Txn.Delta)
-    (R : RelId) (pos : FieldId) (grp : List FieldId) : Prop :=
-  ∀ (P : Type) (ple : P → P → Prop)
-    (o : OrderedOracle (List Value) P Fact ple),
-    o.facts = T.den (d.applyTo I) R →
-    (∀ f, o.groupOf f = f.project grp) →
-    ((∀ t, t ∈ d.projected R grp →
-        OrdinalGroup (fun f => f ∈ (orderPlan (P := P) t).answers o)
-          pos) ↔
-      Txn.orderDeltaCheck T I d R pos grp)
-
-/-- **The order plan theorem** (a prefix walk per touched group,
-`order_plan_consultations`): the walked group IS the group, so the
-ordinal verdict over the answers IS the delta-restricted mark. -/
-theorem order_plan_decides (T : Theory) (I : Instance) (d : Txn.Delta)
-    (R : RelId) (pos : FieldId) (grp : List FieldId) :
-    OrderPlanned T I d R pos grp := by
-  intro P ple o hfacts hkey
-  have hset : ∀ t : List Value,
-      (fun f => f ∈ (orderPlan (P := P) t).answers o) =
-        GroupOf (T.den (d.applyTo I) R) grp t := by
-    intro t
-    funext f
-    apply propext
-    show f ∈ o.consult t ↔ _
-    rw [o.consult_mem t f, hfacts, hkey f]
-    exact Iff.rfl
-  constructor
-  · intro h t ht
-    have h' := h t ht
-    rw [hset t] at h'
-    exact h'
-  · intro h t ht
-    rw [hset t]
-    exact h t ht
-
-/-! ## Form 6, ranked — hop reads through the oracle -/
-
-/-- One `by` chain read through hop-relation consultations: chase the
-key-backed hops bucket by bucket — every step an
-`EnforcementPlan.pointProbe` evaluation against that hop's oracle,
-so the chase never leaves the calculus. Under the key-backed
-acceptance rule each bucket is a subsingleton (`point_probe_honest`);
-the probe transcript and the per-hop price are
-`chainConsult_iff_via` and `chain_cost_hops` below. -/
-def chainConsult
-    (oH : RankHop → OrderedOracle (List Value) P Fact ple) :
-    List RankHop → Value → Value → Prop
-  | [], v, w => v = w
-  | hop :: rest, v, w =>
-    ∃ g, g ∈ (EnforcementPlan.pointProbe (P := P) [v]).answers (oH hop) ∧
-      chainConsult oH rest (g hop.read) w
-
-/-- One chase pinned to its probe transcript: `ks` lists the key the
-chase descends at each hop — the plan terms, minted by the chase
-itself, one `pointProbe` per hop. -/
-def chainVia (oH : RankHop → OrderedOracle (List Value) P Fact ple) :
-    List RankHop → List Value → Value → Value → Prop
-  | [], [], v, w => v = w
-  | hop :: rest, k :: ks, v, w =>
-    k = v ∧
-      ∃ g, g ∈ (EnforcementPlan.pointProbe (P := P) [k]).answers (oH hop) ∧
-        chainVia oH rest ks (g hop.read) w
-  | _, _, _, _ => False
-
-/-- **The probe transcript exists, one key per hop**: a chase IS the
-evaluation of `hops.length` point probes — the transcript is exactly
-as long as the chain, so the ranked form's rank reads are counted
-sanctioned probes, never an unpriced side channel. -/
-theorem chainConsult_iff_via
-    (oH : RankHop → OrderedOracle (List Value) P Fact ple) :
-    ∀ (hops : List RankHop) (v w : Value),
-      chainConsult oH hops v w ↔
-        ∃ ks, ks.length = hops.length ∧ chainVia oH hops ks v w
-  | [], v, w => by
-    constructor
-    · intro h
-      exact ⟨[], rfl, h⟩
-    · rintro ⟨ks, hlen, hvia⟩
-      cases ks with
-      | nil => exact hvia
-      | cons k ks' => exact nomatch hlen
-  | hop :: rest, v, w => by
-    constructor
-    · rintro ⟨g, hg, hrest⟩
-      obtain ⟨ks, hlen, hvia⟩ :=
-        (chainConsult_iff_via oH rest _ w).mp hrest
-      exact ⟨v :: ks, by simp [hlen], rfl, g, hg, hvia⟩
-    · rintro ⟨ks, hlen, hvia⟩
-      cases ks with
-      | nil => exact nomatch hlen
-      | cons k ks' =>
-        obtain ⟨rfl, g, hg, hvia'⟩ := hvia
-        exact ⟨g, hg, (chainConsult_iff_via oH rest _ w).mpr
-          ⟨ks', by simpa using hlen, hvia'⟩⟩
-
-/-- The price of one chase: each hop's probe priced against ITS hop's
-oracle — the per-hop consultation sum, in the calculus's own
-currency. -/
-def chainCost (oH : RankHop → OrderedOracle (List Value) P Fact ple) :
-    List RankHop → List Value → Nat
-  | hop :: rest, k :: ks =>
-    (EnforcementPlan.pointProbe (P := P) [k]).consultations (oH hop) +
-      chainCost oH rest ks
-  | _, _ => 0
-
-/-- **The ranked hop count, proved**: a chase prices at exactly one
-point probe per hop — `hops.length` consultations, composed from
-`EnforcementPlan.consultations`, for every transcript the chain
-admits. The keyed-bucket honesty of each unit is
-`point_probe_honest` under the hop acceptance rule. -/
-theorem chain_cost_hops
-    (oH : RankHop → OrderedOracle (List Value) P Fact ple) :
-    ∀ (hops : List RankHop) (ks : List Value),
-      ks.length = hops.length →
-      chainCost oH hops ks = hops.length
-  | [], [], _ => rfl
-  | [], k :: ks, hlen => nomatch hlen
-  | hop :: rest, [], hlen => nomatch hlen
-  | hop :: rest, k :: ks, hlen => by
-    show 1 + chainCost oH rest ks = rest.length + 1
-    rw [chain_cost_hops oH rest ks (by simpa using hlen)]
-    omega
-
-/-- The oracle chain read equals the denotational chain — hop by hop
-through each oracle's soundness and completeness. -/
-theorem chainConsult_eval {T : Theory} {J : Instance}
-    (oH : RankHop → OrderedOracle (List Value) P Fact ple) :
-    ∀ (hops : List RankHop),
-      (∀ hop, hop ∈ hops →
-        (oH hop).facts = T.den J hop.relation ∧
-        ∀ g, (oH hop).groupOf g = g.project [hop.key]) →
-      ∀ v w, chainConsult oH hops v w ↔ chainEval T J hops v w
-  | [], _, _, _ => Iff.rfl
-  | hop :: rest, hh, v, w => by
-    obtain ⟨hfacts, hkey⟩ := hh hop List.mem_cons_self
-    constructor
-    · rintro ⟨g, hg, hrest⟩
-      obtain ⟨hgf, hgk⟩ := ((oH hop).consult_mem [v] g).mp hg
-      rw [hkey g] at hgk
-      have hkv : g hop.key = v := by
-        have hgk' : [g hop.key] = [v] := hgk
-        injection hgk' with h1 _
-      rw [hfacts] at hgf
-      exact ⟨g hop.read, ⟨g, hgf, hkv, rfl⟩,
-        (chainConsult_eval oH rest
-          (fun h hm => hh h (List.mem_cons_of_mem hop hm)) _ w).mp
-          hrest⟩
-    · rintro ⟨u, ⟨g, hgden, hgk, hgr⟩, hrest⟩
-      refine ⟨g, ((oH hop).consult_mem [v] g).mpr ⟨?_, ?_⟩, ?_⟩
-      · rw [hfacts]
-        exact hgden
-      · rw [hkey g]
-        show [g hop.key] = [v]
-        rw [hgk]
-      · rw [hgr]
-        exact (chainConsult_eval oH rest
-          (fun h hm => hh h (List.mem_cons_of_mem hop hm)) u w).mpr
-          hrest
-
-/-- The rank a chain of consultations assigns a fact — `rankOf`'s
-oracle face. -/
-def rankConsult (oH : RankHop → OrderedOracle (List Value) P Fact ple)
-    (c : RankChain) (f : Fact) (r : Nat) : Prop :=
-  ∃ w, chainConsult oH c.hops (f c.link) w ∧ w.ordinal = r
-
-/-- The oracle rank equals the denotational rank. -/
-theorem rankConsult_rankOf {T : Theory} {J : Instance}
-    (oH : RankHop → OrderedOracle (List Value) P Fact ple)
-    (c : RankChain)
-    (hH : ∀ hop, hop ∈ c.hops →
-      (oH hop).facts = T.den J hop.relation ∧
-      ∀ g, (oH hop).groupOf g = g.project [hop.key])
-    (f : Fact) (r : Nat) :
-    rankConsult oH c f r ↔ c.rankOf T J f r := by
-  unfold rankConsult RankChain.rankOf
-  constructor
-  · rintro ⟨w, hw, hr⟩
-    exact ⟨w, (chainConsult_eval oH c.hops hH _ w).mp hw, hr⟩
-  · rintro ⟨w, hw, hr⟩
-    exact ⟨w, (chainConsult_eval oH c.hops hH _ w).mpr hw, hr⟩
-
-/-- The ranked order plan obligation: the grouping-index walks plus
-the hop-oracle rank reads decide `rankedOrderDeltaCheck`. -/
-def RankedOrderPlanned (T : Theory) (I : Instance) (d : Txn.Delta)
-    (R : RelId) (pos : FieldId) (grp : List FieldId) (c : RankChain) :
-    Prop :=
-  ∀ (P P' : Type) (ple : P → P → Prop) (ple' : P' → P' → Prop)
-    (o : OrderedOracle (List Value) P Fact ple)
-    (oH : RankHop → OrderedOracle (List Value) P' Fact ple'),
-    o.facts = T.den (d.applyTo I) R →
-    (∀ f, o.groupOf f = f.project grp) →
-    (∀ hop, hop ∈ c.hops →
-      (oH hop).facts = T.den (d.applyTo I) hop.relation ∧
-      ∀ g, (oH hop).groupOf g = g.project [hop.key]) →
-    ((∀ t, t ∈ Txn.rankedTouched d R grp c →
-        OrdinalGroup (fun f => f ∈ (orderPlan (P := P) t).answers o)
-          pos ∧
-        (∀ f g, f ∈ (orderPlan (P := P) t).answers o →
-          g ∈ (orderPlan (P := P) t).answers o →
-          ∀ rf rg, rankConsult oH c f rf → rankConsult oH c g rg →
-            rf < rg → (f pos).ordinal < (g pos).ordinal)) ↔
-      Txn.rankedOrderDeltaCheck T I d R pos grp c)
-
-/-- **The ranked order plan theorem**: the per-touched-group walk
-plus the hop-consultation rank reads ARE the delta-restricted ranked
-check — the walk answers the group (`order_plan_decides`'s move) and
-`rankConsult_rankOf` answers the ranks. Every rank read is a counted
-point probe (`chainConsult_iff_via` — the transcript;
-`chain_cost_hops` — one consultation per hop), so this form's
-consultation count is a theorem like every other form's: per touched
-group, `order_plan_consultations` for the walk plus `hops.length`
-per chased member. -/
-theorem ranked_order_plan_decides (T : Theory) (I : Instance)
-    (d : Txn.Delta) (R : RelId) (pos : FieldId) (grp : List FieldId)
-    (c : RankChain) : RankedOrderPlanned T I d R pos grp c := by
-  intro P P' ple ple' o oH hfacts hkey hH
-  have hmem : ∀ (t : List Value) (f : Fact),
-      f ∈ (orderPlan (P := P) t).answers o ↔
-        f ∈ GroupOf (T.den (d.applyTo I) R) grp t := by
-    intro t f
-    show f ∈ o.consult t ↔ _
-    rw [o.consult_mem t f, hfacts, hkey f]
-    exact Iff.rfl
-  have hset : ∀ t : List Value,
-      (fun f => f ∈ (orderPlan (P := P) t).answers o) =
-        GroupOf (T.den (d.applyTo I) R) grp t := by
-    intro t
-    funext f
-    exact propext (hmem t f)
-  have hrk : ∀ (f : Fact) (r : Nat),
-      rankConsult oH c f r ↔ c.rankOf T (d.applyTo I) f r :=
-    fun f r => rankConsult_rankOf oH c hH f r
-  constructor
-  · intro h t ht
-    obtain ⟨h1, h2⟩ := h t ht
-    rw [hset t] at h1
-    refine ⟨h1, ?_⟩
-    intro f g hf hg rf rg hrf hrg hlt
-    exact h2 f g ((hmem t f).mpr hf) ((hmem t g).mpr hg) rf rg
-      ((hrk f rf).mpr hrf) ((hrk g rg).mpr hrg) hlt
-  · intro h t ht
-    obtain ⟨h1, h2⟩ := h t ht
-    constructor
-    · rw [hset t]
-      exact h1
-    · intro f g hf hg rf rg hrf hrg hlt
-      exact h2 f g ((hmem t f).mp hf) ((hmem t g).mp hg) rf rg
-        ((hrk f rf).mp hrf) ((hrk g rg).mp hrg) hlt
-
 /-! ## Form 2 — the pointwise FD (the sweep's altitude) -/
 
 /-- The pointwise-FD plan obligation, at the interval altitude: for
@@ -1230,8 +943,6 @@ def planObligation (T : Theory) (I : Instance) (d : Txn.Delta) :
     | some _, some _ => CoveragePlanned
     | _, _ => ContainmentPlanned T I d src tgt
   | .cardinality src w tgt => WindowPlanned T I d src w tgt
-  | .order R pos grp none => OrderPlanned T I d R pos grp
-  | .order R pos grp (some c) => RankedOrderPlanned T I d R pos grp c
 
 /-- **The acceptance-gate theorem.** Every `Statement` constructor
 HAS its plan term: each accepted form's delta-restricted check is
@@ -1277,10 +988,6 @@ theorem acceptance_gate (T : Theory) (I : Instance) (d : Txn.Delta) :
         exact containment_plan_decides T I d src tgt
   | cardinality src w tgt =>
     exact cardinality_plan_decides T I d src w tgt
-  | order R pos grp rk =>
-    cases rk with
-    | none => exact order_plan_decides T I d R pos grp
-    | some c => exact ranked_order_plan_decides T I d R pos grp c
 
 end Oracle
 end Bumbledb

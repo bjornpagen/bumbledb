@@ -100,15 +100,9 @@ bumbledb::schema! {
 - **Dependency statements:** `Rel(fields...) -> Rel;` (FD, key form only),
   `A(fields... | field == Literal, ...) <= B(fields...);` (containment),
   `==` for bidirectional,
-  `A(fields... | ...) in lo..hi per B(fields... | ...);` (the cardinality
+  and `A(fields... | ...) in lo..hi per B(fields... | ...);` (the cardinality
   window — `lo`/`hi` non-negative integers, `hi` alternatively `*` for no
-  ceiling), and
-  `order Rel(pos) per Rel(grp, ...) [by link -> K(read) -> ...];` (the order
-  mark — both atoms name one relation; each `by` hop spells its read field
-  only, its key resolving at expansion to the hop relation's one single-field
-  key: a closed relation's synthetic `id`, or the unique candidate among
-  `fresh` auto-keys and declared one-field FDs — zero or several candidates
-  are expansion errors naming the relation).
+  ceiling).
   Projection lists are positional between the two sides;
   selections follow `|` as comma-separated `field == literal` pairs, or
   `field == {A, B}` for a literal-set binding (read disjunctively; `{L}`

@@ -35,11 +35,10 @@ mod common;
 /// Account(id fresh, holder u64) +
 /// Busy(id fresh, person u64, slot interval<u64>) +
 /// Item(doc u64, pos u64, note u64), with
-/// `Posting(account) <= Account(id)`,
-/// `Item(doc) in 1..4096 per Account(id)` (the cardinality window), and
-/// `order Item(pos) per Item(doc)` (the order mark) — the marks
-/// machinery lives in the store the read windows measure, and the
-/// window/order-heavy write family churns it between them.
+/// `Posting(account) <= Account(id)` and
+/// `Item(doc) in 1..4096 per Account(id)` (the cardinality window) — the
+/// marks machinery lives in the store the read windows measure, and the
+/// window-heavy write family churns it between them.
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -160,13 +159,6 @@ fn schema() -> SchemaDescriptor {
                     selection: Box::new([]),
                 },
             },
-            // `order Item(pos) per Item(doc)`: chains are exactly 1..k.
-            StatementDescriptor::Order {
-                relation: RelationId(3),
-                position: FieldId(1),
-                grouping: Box::new([FieldId(0)]),
-                ranking: None,
-            },
         ],
     }
 }
@@ -258,7 +250,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
             }
         }
         // The marks chains: every account parents an Item chain (the
-        // window floor is 1), positions exactly 1..k (the order mark).
+        // window floor is 1), positions kept 1..k by the writer.
         // Steady-state docs 0..20 share one length; ladder docs 20..25
         // escalate per ITEM_LADDER.
         for doc in 0..20u64 {
@@ -747,17 +739,17 @@ fn marks_query() -> Query {
     })
 }
 
-/// The window/order-heavy write family (docs/architecture/60-validation.md
+/// The window-heavy write family (docs/architecture/60-validation.md
 /// § the allocation gate): warm commits that churn the marks machinery —
 /// per round, five window parents each take a tail append (window count
-/// +1, positions stay exactly 1..k+1), a net-nothing delete-reinsert of
-/// the head (the touched-group re-judge — the count walk and the ordinal
-/// walk both run on a delta that nets to nothing,
+/// +1), a net-nothing delete-reinsert of
+/// the head (the touched-parent re-judge — the count walk runs on a
+/// delta that nets to nothing,
 /// `lean/Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound`),
 /// and then a restoring commit removes the tails. The write delta's arena
 /// is per-commit by design (`docs/architecture/50-storage.md` § memory
 /// discipline) — the family's assertions are the judgment's (every round
-/// commits green through live windows and ordered groups) and the read
+/// commits green through live windows) and the read
 /// windows' (the caller re-runs the steady-state gate after the churn:
 /// post-commit rebuild is sanctioned in warmup, then the pools must
 /// re-converge to zero).
@@ -781,7 +773,7 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
             }
             Ok(())
         })
-        .expect("marks write round commits through live windows and orders");
+        .expect("marks write round commits through live windows");
         db.write(|tx| {
             for doc in 0..5u64 {
                 // The restoring removal: chains return to 1..=ITEM_CHAIN.
@@ -1042,8 +1034,8 @@ fn zero_warm_allocation_gate() {
         let mut key_probe = db.prepare(&key_probe_query())?;
         gate("key_probe", &mut key_probe, snap, &key_probe_params);
 
-        // The marks family, steady state: rotating window-parented,
-        // ordered groups — the store's window counts and order marks are
+        // The marks family, steady state: rotating window-parented
+        // groups — the store's window counts are
         // rent paid at commit time, and the read pools over the marked
         // relation converge like any other scan.
         let marks_params: Vec<Vec<BindValue<'_>>> =
@@ -1151,12 +1143,12 @@ fn zero_warm_allocation_gate() {
     })
     .expect("gate");
 
-    // The window/order-heavy write family, then both marks windows over
-    // the churned store: the writes ran the count walk and the ordinal
-    // walk sixteen commits deep; the steady-state window must re-converge
+    // The window-heavy write family, then both marks windows over
+    // the churned store: the writes ran the count walk
+    // sixteen commits deep; the steady-state window must re-converge
     // to zero after the sanctioned post-commit rebuild (warmup), and the
     // escalation window walks the ITEM_LADDER groups — strictly longer
-    // ordered chains per rung, growth only on new high-waters, repeats
+    // chains per rung, growth only on new high-waters, repeats
     // silent.
     marks_write_family(&db);
     db.read(|snap| {

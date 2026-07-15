@@ -40,11 +40,7 @@
 //! `A(X | σ) <= B(Y | ψ)` (containment), `==` lowered here to the two
 //! adjacent containments, `A <= B` first;
 //! `A(X | σ) in lo..hi per B(Y | ψ)` (the cardinality window — `*` is the
-//! no-ceiling spelling, `in 1..* per`); and
-//! `order R(pos) per R(grp) [by link -> K(read) ...]` (the order mark —
-//! both atoms name one relation; each `by` hop spells its read field only,
-//! the hop key resolving to the relation's one single-field key at
-//! expansion). Selection literals are typed
+//! no-ceiling spelling, `in 1..* per`). Selection literals are typed
 //! against the selected field in the macro (a bare handle resolves through
 //! the selected field's newtype to its closed relation's row id); interval
 //! literals are written `start..end`, half-open; a binding may carry a
@@ -218,17 +214,6 @@ struct Side {
     selection: Vec<(String, Literals)>,
 }
 
-/// One hop of an order mark's `by` chain as written: `-> K(read)`. The
-/// hop's key field is not spelled — it resolves to the relation's one
-/// single-field key at emission (a closed relation's synthetic id, a
-/// `fresh` field's auto-key, or a declared one-field FD), and an
-/// ambiguous or missing key is an expansion panic naming the relation.
-#[derive(Debug, Clone)]
-struct Hop {
-    relation: String,
-    read: String,
-}
-
 /// One parsed dependency statement. `==` never reaches here: it is lowered
 /// at parse into two adjacent `Containment`s, `A <= B` first.
 #[derive(Debug, Clone)]
@@ -248,14 +233,6 @@ enum Statement {
         lo: String,
         hi: Option<String>,
         target: Side,
-    },
-    /// `order R(pos) per R(grp) [by link -> K(read) ...];` — both atoms
-    /// name the same relation (checked at parse).
-    Order {
-        relation: String,
-        position: String,
-        grouping: Vec<String>,
-        ranking: Option<(String, Vec<Hop>)>,
     },
 }
 
@@ -789,77 +766,6 @@ fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<S
     expect_punct(tokens, ';');
 }
 
-/// Parses one order mark, the `order` keyword already consumed:
-/// `order R(pos) per R(grp) [by link -> K(read) ...];`. Both atoms name
-/// one relation — the order mark is a statement about ONE relation's
-/// ordinal geometry — and each `->` hop spells its read field only (the
-/// hop key resolves at emission).
-fn parse_order_statement(tokens: &mut Tokens, statements: &mut Vec<Statement>) {
-    let relation = expect_ident(tokens, "the ordered relation's name");
-    let group = take_group(tokens, Delimiter::Parenthesis, "the position field");
-    let mut position_tokens = group.into_iter().peekable();
-    let position = expect_ident(&mut position_tokens, "the position field's name");
-    assert!(
-        position_tokens.peek().is_none(),
-        "schema!: `order {relation}(..)` takes exactly one position field"
-    );
-    let per = expect_ident(tokens, "`per` after the position atom");
-    assert_eq!(
-        per, "per",
-        "schema!: expected `per` after the position atom, found `{per}`"
-    );
-    let grouping_relation = expect_ident(tokens, "the grouping atom's relation name");
-    assert_eq!(
-        grouping_relation, relation,
-        "schema!: an order mark names one relation — `order {relation}(..) per \
-         {relation}(..)`, found `{grouping_relation}`"
-    );
-    let group = take_group(tokens, Delimiter::Parenthesis, "the grouping field list");
-    let mut grouping_tokens = group.into_iter().peekable();
-    let mut grouping = Vec::new();
-    while grouping_tokens.peek().is_some() {
-        grouping.push(expect_ident(&mut grouping_tokens, "a grouping field name"));
-        if peek_punct(&mut grouping_tokens, ',') {
-            grouping_tokens.next();
-        }
-    }
-    let ranking = if peek_ident(tokens).as_deref() == Some("by") {
-        tokens.next();
-        let link = expect_ident(tokens, "the `by` chain's link field");
-        let mut hops = Vec::new();
-        while peek_punct(tokens, '-') {
-            tokens.next();
-            expect_punct(tokens, '>');
-            let hop_relation = expect_ident(tokens, "a hop's relation name");
-            let group = take_group(tokens, Delimiter::Parenthesis, "a hop's read field");
-            let mut hop_tokens = group.into_iter().peekable();
-            let read = expect_ident(&mut hop_tokens, "the hop's read field name");
-            assert!(
-                hop_tokens.peek().is_none(),
-                "schema!: a `by` hop reads exactly one field — `-> {hop_relation}(field)`"
-            );
-            hops.push(Hop {
-                relation: hop_relation,
-                read,
-            });
-        }
-        assert!(
-            !hops.is_empty(),
-            "schema!: a `by` chain needs at least one `-> K(read)` hop"
-        );
-        Some((link, hops))
-    } else {
-        None
-    };
-    statements.push(Statement::Order {
-        relation,
-        position,
-        grouping,
-        ranking,
-    });
-    expect_punct(tokens, ';');
-}
-
 /// Parses the whole `schema!` body: the `pub Name;` header first, then
 /// relation blocks and dependency statements in any order.
 fn parse_schema(input: TokenStream) -> SchemaAst {
@@ -892,7 +798,16 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
             let body = take_group(&mut tokens, Delimiter::Brace, "a relation body");
             schema.relations.push(parse_relation(name, body));
         } else if ident == "order" {
-            parse_order_statement(&mut tokens, &mut schema.statements);
+            // The order-mark form left the vocabulary whole
+            // (`docs/architecture/30-dependencies.md` § refused: order
+            // marks) — the old spelling is unrepresentable, rejected by
+            // the grammar itself, never the validator.
+            panic!(
+                "schema!: `order` statements no longer exist — order is a derivation, \
+                 not a dependency: use fractional indexing over a keyed position, or \
+                 the exact-partition interval recipe \
+                 (docs/architecture/30-dependencies.md § refused: order marks)"
+            );
         } else {
             parse_statement(ident, &mut tokens, &mut schema.statements);
         }
@@ -1163,50 +1078,6 @@ fn side_expr(relations: &[Relation], closed: &BTreeMap<&str, &Relation>, side: &
     )
 }
 
-/// Resolves a `by` hop's key field — the single-field key of the hop's
-/// relation this invocation declares: a closed relation's synthetic `id`
-/// (the one probe-able identity), or the unique candidate among `fresh`
-/// auto-keys and declared one-field FDs. Zero or several candidates panic
-/// naming the relation — the notation spells only the read field, so an
-/// ambiguous key cannot be disambiguated in-grammar.
-fn hop_key_field(schema: &SchemaAst, relation: &Relation) -> String {
-    if relation.closed.is_some() {
-        return "id".to_owned();
-    }
-    let mut candidates: Vec<&str> = relation
-        .fields
-        .iter()
-        .filter(|field| field.fresh)
-        .map(|field| field.name.as_str())
-        .collect();
-    for statement in &schema.statements {
-        if let Statement::Functionality {
-            relation: r,
-            projection,
-        } = statement
-            && *r == relation.name
-            && let [field] = projection.as_slice()
-            && !candidates.contains(&field.as_str())
-        {
-            candidates.push(field);
-        }
-    }
-    match candidates.as_slice() {
-        [field] => (*field).to_owned(),
-        [] => panic!(
-            "schema!: a `by` hop probes relation `{}`, which declares no single-field \
-             key — declare `{}(field) -> {};` for the field the hop resolves against",
-            relation.name, relation.name, relation.name
-        ),
-        _ => panic!(
-            "schema!: a `by` hop probes relation `{}`, which declares several \
-             single-field keys ({}) — the hop key is inferred and must be unique",
-            relation.name,
-            candidates.join(", ")
-        ),
-    }
-}
-
 /// Renders one parsed statement as its `StatementDescriptor` expression,
 /// ids resolved from declaration order.
 fn statement_expr(
@@ -1249,60 +1120,7 @@ fn statement_expr(
                 side_expr(&schema.relations, closed, target),
             )
         }
-        Statement::Order {
-            relation,
-            position,
-            grouping,
-            ranking,
-        } => order_statement_expr(schema, relation, position, grouping, ranking.as_ref()),
     }
-}
-
-/// Renders one order mark, hop keys resolved through [`hop_key_field`].
-fn order_statement_expr(
-    schema: &SchemaAst,
-    relation: &str,
-    position: &str,
-    grouping: &[String],
-    ranking: Option<&(String, Vec<Hop>)>,
-) -> String {
-    let index = relation_index(&schema.relations, relation);
-    let declaration = &schema.relations[index];
-    let ranking_expr = match ranking {
-        None => "::std::option::Option::None".to_owned(),
-        Some((link, hops)) => {
-            let mut rendered = String::new();
-            for hop in hops {
-                let hop_index = relation_index(&schema.relations, &hop.relation);
-                let hop_declaration = &schema.relations[hop_index];
-                let key = hop_key_field(schema, hop_declaration);
-                let _ = write!(
-                    rendered,
-                    "::bumbledb::schema::RankHop {{ \
-                         relation: ::bumbledb::schema::RelationId({hop_index}), \
-                         key: ::bumbledb::schema::FieldId({}), \
-                         read: ::bumbledb::schema::FieldId({}) }},",
-                    field_index(hop_declaration, &key),
-                    field_index(hop_declaration, &hop.read),
-                );
-            }
-            format!(
-                "::std::option::Option::Some(::bumbledb::schema::RankChain {{ \
-                     link: ::bumbledb::schema::FieldId({}), \
-                     hops: ::std::boxed::Box::new([{rendered}]) }})",
-                field_index(declaration, link),
-            )
-        }
-    };
-    format!(
-        "::bumbledb::schema::StatementDescriptor::Order {{ \
-             relation: ::bumbledb::schema::RelationId({index}), \
-             position: ::bumbledb::schema::FieldId({}), \
-             grouping: ::std::boxed::Box::new([{}]), \
-             ranking: {ranking_expr} }},",
-        field_index(declaration, position),
-        field_id_list(declaration, grouping),
-    )
 }
 
 fn emit_schema_def(out: &mut String, schema: &SchemaAst, closed: &BTreeMap<&str, &Relation>) {
