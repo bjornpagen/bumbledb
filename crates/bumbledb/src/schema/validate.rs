@@ -35,16 +35,43 @@ impl SchemaDescriptor {
     ///
     /// # Panics
     ///
-    /// Only on programmer-invariant violations: declaration counts exceeding
-    /// the id widths (2³² relations, 2¹⁶ fields per relation, 2¹⁶
-    /// statements).
+    /// Only on one programmer-invariant violation: more than 2³²
+    /// relations (unreachable — the descriptors alone exceed memory).
+    /// Field and statement counts need no panic path: the derived
+    /// column count and the materialized statement count are typed
+    /// rejections ([`SchemaError::RelationTooManyColumns`],
+    /// [`SchemaError::TooManyStatements`]) checked before any u16 id is
+    /// minted.
     #[expect(
         clippy::too_many_lines,
         reason = "the one materialized-order sealing pass — one arm per \
                   statement form, clearer kept together"
     )]
     pub fn validate(self) -> Result<Schema, SchemaError> {
+        // The derived-column cap runs FIRST — before
+        // `materialized_statements` or the field loop mints any u16 id
+        // from a field index (a fresh field's auto-key carries its
+        // sealed index). See `derived_columns` for the bound.
+        for (rel_idx, decl) in self.relations.iter().enumerate() {
+            let columns = derived_columns(decl);
+            if columns > usize::from(u16::MAX) {
+                return Err(SchemaError::RelationTooManyColumns {
+                    relation: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
+                    columns,
+                });
+            }
+        }
+
         let descriptors = self.materialized_statements();
+        // The statement-id space is u16 (`StatementId`, and the
+        // per-kind Key/Containment/Window ids it bounds): a
+        // materialized roster past it is a typed rejection before any
+        // per-statement validation walks it — never the id-mint expect.
+        if descriptors.len() > 1 << 16 {
+            return Err(SchemaError::TooManyStatements {
+                count: descriptors.len(),
+            });
+        }
 
         let mut relations = Vec::with_capacity(self.relations.len());
         for (rel_idx, decl) in self.relations.into_iter().enumerate() {
@@ -249,8 +276,9 @@ pub(super) fn mirror_of(descriptors: &[StatementDescriptor], index: usize) -> Op
         .map(|(other, _)| statement_id(other))
 }
 
-/// The materialized-order [`StatementId`] for a list index (validation
-/// panics before 2¹⁶ statements are exceeded).
+/// The materialized-order [`StatementId`] for a list index (the typed
+/// [`SchemaError::TooManyStatements`] gate runs before any id is
+/// minted, so the expect is a true invariant).
 fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
 }
@@ -1312,6 +1340,30 @@ fn compile_member_set(target: &Relation, side: &Side, rows: &[super::SealedRow])
         }
     }
     members
+}
+
+/// One relation's derived column count, for the pre-pass cap in
+/// [`SchemaDescriptor::validate`]: the image's column index is u16
+/// (`crate::image::ColumnSpan`, `column_spans`), so the count is capped
+/// as a typed rejection ([`SchemaError::RelationTooManyColumns`]) —
+/// never discovered at image-build time. An interval field spans two
+/// word columns, a `bytes<N>` field its `⌈N/8⌉` — never counted below
+/// one: `bytes<0>` is invalid, but its width rejection runs only after
+/// the u16 field ids are minted, so the cap must be a true lower bound
+/// on any legal repair of the declaration. A closed relation's
+/// synthetic id contributes its word column. With every field at least
+/// one column, the cap also keeps every `FieldId` within u16.
+fn derived_columns(decl: &RelationDescriptor) -> usize {
+    usize::from(decl.extension.is_some())
+        + decl
+            .fields
+            .iter()
+            .map(|field| match field.value_type {
+                ValueType::Interval { .. } => 2,
+                ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(len).max(1),
+                _ => 1,
+            })
+            .sum::<usize>()
 }
 
 /// One relation: field checks (duplicate names, enum shape, fresh typing,

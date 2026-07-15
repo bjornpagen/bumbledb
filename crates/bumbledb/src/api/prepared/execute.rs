@@ -359,22 +359,25 @@ impl<S> PreparedQuery<'_, S> {
             }
             if let ValueType::FixedBytes { len } = ty {
                 // Inline value: the padded words come straight off the
-                // fact — no dictionary.
-                let words = match crate::exec::dispatch::fact_operand(
+                // fact — no dictionary, and no temporary heap (the
+                // operand's fixed block slices straight into the
+                // caller's buffer; this is the point fast lane).
+                match crate::exec::dispatch::fact_operand(
                     self.schema,
                     key_probe.relation,
                     fact,
                     *field,
                 )? {
-                    crate::exec::dispatch::FactOperand::Word(word) => vec![word],
+                    crate::exec::dispatch::FactOperand::Word(word) => {
+                        out.push_fixed_bytes(*len, &[word]);
+                    }
                     crate::exec::dispatch::FactOperand::Block { words, count } => {
-                        words[..usize::from(count)].to_vec()
+                        out.push_fixed_bytes(*len, &words[..usize::from(count)]);
                     }
                     crate::exec::dispatch::FactOperand::Pair(..) => {
                         unreachable!("validated: bytes<N> finds read bytes<N> fields")
                     }
-                };
-                out.push_fixed_bytes(*len, &words);
+                }
                 continue;
             }
             let word =

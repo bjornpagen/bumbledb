@@ -17,9 +17,14 @@ pub use decode::{
     decode_bool, decode_field, decode_fixed_interval_start, decode_i64, decode_u64, field_bytes,
     field_word_bytes,
 };
-pub use encode::{
-    encode_bool, encode_fact, encode_fixed_bytes, encode_i64, encode_literal, encode_u64,
-};
+pub use encode::{encode_bool, encode_fact, encode_i64, encode_literal, encode_u64};
+// The bytes<N> padder's production users live inside this module (the
+// type-aware `encode_literal` and `encode_fact` arms) — the bind path
+// resolves through `ir::normalize::fixed_bytes_word_buf` instead (no
+// Vec on the warm path). The re-export survives for the byte-level
+// test fixtures.
+#[cfg(test)]
+pub(crate) use encode::encode_fixed_bytes;
 // The two-half interval encoders' production users live inside this
 // module (the type-aware `encode_literal` and `encode_fact` arms); the
 // crate-wide re-export survives for the byte-level test fixtures (the

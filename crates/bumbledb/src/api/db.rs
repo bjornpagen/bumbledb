@@ -201,13 +201,6 @@ pub trait Fresh: Sized {
 /// generic error parameter here would force turbofish annotations on
 /// every plain `Ok(())` closure.
 pub struct Db<S> {
-    env: Environment,
-    cache: ImageCache,
-    writer: Mutex<()>,
-    /// The thread currently inside [`Db::write`] (0 = none): a nested
-    /// `write` on the same thread would self-deadlock on the writer
-    /// mutex forever, so it panics loudly instead.
-    writer_thread: std::sync::atomic::AtomicU64,
     /// The reader cache: one parked LMDB read
     /// transaction, reused while no commit has intervened. Sound because
     /// this handle is the environment's ONLY writer (exclusive lock at
@@ -217,7 +210,22 @@ pub struct Db<S> {
     /// fixed cost) is skipped entirely. Readers
     /// `try_lock`: contended readers fall back to a fresh transaction,
     /// never block.
+    ///
+    /// Declared BEFORE `env` — fields drop in declaration order, and
+    /// the parked transaction owns its own env clone: it must close
+    /// before `env` releases the advisory lock, or the drop opens a
+    /// window where another handle acquires the lock while heed still
+    /// holds the path open and surfaces `EnvAlreadyOpened` as an
+    /// untyped `Lmdb` error (pinned by
+    /// `dropping_the_handle_never_leaks_an_env_already_opened_window`).
     read_cache: Mutex<Option<ParkedReader>>,
+    env: Environment,
+    cache: ImageCache,
+    writer: Mutex<()>,
+    /// The thread currently inside [`Db::write`] (0 = none): a nested
+    /// `write` on the same thread would self-deadlock on the writer
+    /// mutex forever, so it panics loudly instead.
+    writer_thread: std::sync::atomic::AtomicU64,
     /// Commits since open (monotone; bumped only when a commit changed
     /// state). The parked reader's validity token.
     commit_seq: std::sync::atomic::AtomicU64,

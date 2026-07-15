@@ -186,6 +186,14 @@ impl<S> Db<S> {
     /// already committed — a failing chunk aborts that chunk whole,
     /// leaving prior chunks committed, and the count makes the partial
     /// import sizable and resumable. Per fact as [`WriteTx::insert`].
+    ///
+    /// # Panics
+    ///
+    /// Inside a [`Db::write`] closure on the same thread: `bulk_load`
+    /// chunks through `Db::write` internally, so it inherits the
+    /// non-reentrancy panic (the assert fires before the delta or LMDB
+    /// is touched — the outer transaction aborts cleanly by unwind).
+    /// Run the import outside the transaction.
     pub fn bulk_load<'f, F, I>(&self, facts: I) -> std::result::Result<u64, BulkLoadError>
     where
         F: Fact<'f, Schema = S>,
@@ -203,6 +211,11 @@ impl<S> Db<S> {
     ///
     /// As [`Db::bulk_load`]; shape problems are typed `FactShape` errors,
     /// as [`WriteTx::insert_dyn`].
+    ///
+    /// # Panics
+    ///
+    /// As [`Db::bulk_load`] — the same chunking loop runs through
+    /// [`Db::write`], so the same non-reentrancy panic applies.
     pub fn bulk_load_dyn<I>(
         &self,
         rel: RelationId,

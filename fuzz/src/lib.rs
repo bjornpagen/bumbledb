@@ -667,6 +667,8 @@ fn schema_variant(rejection: &SchemaError) -> &'static str {
         SchemaError::FreshOnNonU64 { .. } => "FreshOnNonU64",
         SchemaError::FixedBytesWidthOutOfRange { .. } => "FixedBytesWidthOutOfRange",
         SchemaError::IntervalWidthOutOfRange { .. } => "IntervalWidthOutOfRange",
+        SchemaError::RelationTooManyColumns { .. } => "RelationTooManyColumns",
+        SchemaError::TooManyStatements { .. } => "TooManyStatements",
         SchemaError::EmptyExtension { .. } => "EmptyExtension",
         SchemaError::ExtensionTooManyRows { .. } => "ExtensionTooManyRows",
         SchemaError::DuplicateExtensionHandle { .. } => "DuplicateExtensionHandle",

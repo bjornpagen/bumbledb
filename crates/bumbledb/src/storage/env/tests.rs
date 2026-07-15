@@ -348,6 +348,86 @@ fn ephemeral_refusal_on_a_foreign_env_leaves_the_data_file_byte_identical() {
     );
 }
 
+/// The fingerprint-mismatch non-mutation lock: a store that passes the
+/// probe's version and kind checks but carries a DIFFERENT schema
+/// fingerprint (the engine's own surface reaches this shape —
+/// `Db::compact` of an ephemeral store writes a small `data.mdb` with
+/// the ephemeral kind; a host with a skewed schema then reopens it)
+/// must refuse `SchemaMismatch` BEFORE the `MDB_WRITEMAP` reopen whose
+/// ftruncate would inflate `data.mdb` to the full 4 GiB map. The
+/// refusal leaves the file byte-identical.
+#[test]
+fn ephemeral_schema_mismatch_refusal_leaves_the_data_file_byte_identical() {
+    let dir = TempDir::new("env-ephemeral-fingerprint-untouched");
+    // A small data file carrying the ephemeral kind: forge the kind on a
+    // durable-created store (the compacted-ephemeral shape, without the
+    // 4 GiB fixture an ephemeral create would leave behind).
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_STORE_KIND, &[StoreKind::Ephemeral.meta_byte()])
+            .expect("mark ephemeral kind");
+    });
+
+    let data = dir.path().join("data.mdb");
+    let before = std::fs::read(&data).expect("read data.mdb before");
+    assert!(
+        before.len() < 1 << 30,
+        "fixture data file unexpectedly large: {} bytes",
+        before.len()
+    );
+
+    let err = Environment::ephemeral(dir.path(), &other_schema()).unwrap_err();
+    assert!(matches!(err, Error::SchemaMismatch { .. }), "{err:?}");
+
+    // Length via metadata first: a 4 GiB ftruncate must fail loudly, not
+    // by allocating 4 GiB into the byte compare.
+    let after_len = std::fs::metadata(&data).expect("stat data.mdb after").len();
+    assert_eq!(
+        before.len() as u64,
+        after_len,
+        "the refusal changed data.mdb's length"
+    );
+    let after = std::fs::read(&data).expect("read data.mdb after");
+    assert_eq!(before, after, "the refusal changed data.mdb's bytes");
+}
+
+/// The fingerprint-missing twin: a v5 store with the ephemeral kind but
+/// NO fingerprint key refuses `Corruption(MetaMissing)` before the
+/// `MDB_WRITEMAP` reopen — byte-identical, same as every other refusal.
+#[test]
+fn ephemeral_fingerprint_missing_refusal_leaves_the_data_file_byte_identical() {
+    let dir = TempDir::new("env-ephemeral-no-fingerprint-untouched");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_STORE_KIND, &[StoreKind::Ephemeral.meta_byte()])
+            .expect("mark ephemeral kind");
+        env.meta
+            .delete(wtxn, META_FINGERPRINT)
+            .expect("delete fingerprint key");
+    });
+
+    let data = dir.path().join("data.mdb");
+    let before = std::fs::read(&data).expect("read data.mdb before");
+
+    let err = Environment::ephemeral(dir.path(), &schema()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Corruption(crate::error::CorruptionError::MetaMissing)
+        ),
+        "{err:?}"
+    );
+
+    let after_len = std::fs::metadata(&data).expect("stat data.mdb after").len();
+    assert_eq!(
+        before.len() as u64,
+        after_len,
+        "the refusal changed data.mdb's length"
+    );
+    let after = std::fs::read(&data).expect("read data.mdb after");
+    assert_eq!(before, after, "the refusal changed data.mdb's bytes");
+}
+
 /// A stored `u64::MAX` dictionary counter —
 /// the miss sentinel, never mintable — is typed Corruption at the
 /// read, not an assert.

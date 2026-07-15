@@ -1,4 +1,4 @@
-use crate::encoding::{encode_bool, encode_fixed_bytes, encode_i64};
+use crate::encoding::{encode_bool, encode_i64};
 use crate::image::view::Const;
 use crate::ir::Value;
 
@@ -35,26 +35,35 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
 }
 
 /// A `bytes<N>` value's column-form constant: the padded words (readers:
-/// this lowering and the bind path — one definition of the word form).
+/// this lowering — prepare-time, allocation sanctioned). The bind path
+/// resolves through [`fixed_bytes_word_buf`] instead, writing into
+/// pooled slots (the allocation contract's steady-state clause).
 pub(crate) fn fixed_bytes_const(raw: &[u8]) -> Const {
-    let words = fixed_bytes_words(raw);
-    match &words[..] {
-        [word] => Const::Word(*word),
-        many => Const::Words(many.into()),
+    let (words, count) = fixed_bytes_word_buf(raw);
+    match count {
+        1 => Const::Word(words[0]),
+        n => Const::Words(words[..n].into()),
     }
 }
 
-/// A `bytes<N>` value's `⌈N/8⌉` column words: the padded canonical bytes
-/// as big-endian words — exactly what the image's word columns hold.
-fn fixed_bytes_words(raw: &[u8]) -> Vec<u64> {
-    let mut padded = Vec::with_capacity(raw.len().div_ceil(8) * 8);
-    encode_fixed_bytes(raw, &mut padded);
-    let (words, tail) = padded.as_chunks::<8>();
-    debug_assert!(tail.is_empty(), "encode_fixed_bytes pads to whole words");
-    words
-        .iter()
-        .map(|chunk| u64::from_be_bytes(*chunk))
-        .collect()
+/// A `bytes<N>` value's `⌈N/8⌉` column words in a fixed buffer — the
+/// padded canonical bytes as big-endian words, exactly what the image's
+/// word columns hold, with zero heap traffic (8 words is the validated
+/// 64-byte ceiling). Returns the buffer and the span's word count.
+pub(crate) fn fixed_bytes_word_buf(raw: &[u8]) -> ([u64; 8], usize) {
+    debug_assert!(
+        raw.len() <= crate::encoding::MAX_FIXED_BYTES,
+        "bytes<N> widths are 1..=64"
+    );
+    let mut words = [0u64; 8];
+    let mut count = 0;
+    for (word, chunk) in words.iter_mut().zip(raw.chunks(8)) {
+        let mut padded = [0u8; 8];
+        padded[..chunk.len()].copy_from_slice(chunk);
+        *word = u64::from_be_bytes(padded);
+        count += 1;
+    }
+    (words, count)
 }
 
 /// The column word of a point literal — the interval element domain: U64

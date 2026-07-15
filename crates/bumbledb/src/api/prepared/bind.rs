@@ -129,6 +129,40 @@ impl<S> PreparedQuery<'_, S> {
                 Ok(())
             }
             ParamSpec::Scalar { ty, point } => {
+                // The one non-inline scalar kind, resolved IN PLACE: a
+                // `bytes<N>` param's padded words land in the slot's
+                // pooled `Const::Words` box (N > 8; the width is the
+                // type, so past the first bind the box always fits) or
+                // an inline `Const::Word` — zero allocator traffic on a
+                // warm re-bind (the steady-state clause; every other
+                // scalar kind is inline by construction).
+                if let ValueType::FixedBytes { len } = ty {
+                    let mismatch = Error::ParamTypeMismatch {
+                        param,
+                        expected: ty.clone(),
+                    };
+                    let BindValue::FixedBytes(bytes) = value else {
+                        return Err(mismatch);
+                    };
+                    if bytes.len() != usize::from(*len) {
+                        return Err(mismatch);
+                    }
+                    let (words, count) = crate::ir::normalize::fixed_bytes_word_buf(bytes);
+                    if *point && count == 1 && words[0] == u64::MAX {
+                        return Err(Error::PointParamAtCeiling { param });
+                    }
+                    if count == 1 {
+                        self.resolved_params[idx] = Const::Word(words[0]);
+                    } else if let Const::Words(slot) = &mut self.resolved_params[idx]
+                        && slot.len() == count
+                    {
+                        slot.copy_from_slice(&words[..count]);
+                    } else {
+                        self.resolved_params[idx] = Const::Words(words[..count].into());
+                    }
+                    self.missed_params[idx] = false;
+                    return Ok(());
+                }
                 let Some((resolved, missed)) = convert_scalar(txn, value, ty)? else {
                     return Err(Error::ParamTypeMismatch {
                         param,
@@ -203,17 +237,25 @@ impl<S> PreparedQuery<'_, S> {
             }
         }
         // Sets are sets: sorted, deduplicated — span-wise for multi-word
-        // elements (docs/architecture/20-query-ir.md, § param sets).
+        // elements (docs/architecture/20-query-ir.md, § param sets),
+        // and IN PLACE either way: the pooled `Vec` is the only storage
+        // (a warm re-bind touches no allocator — the contract's pooled
+        // set clause). The span width is a compile-time array size,
+        // dispatched once per bind.
         if element_width == 1 {
             words.sort_unstable();
             words.dedup();
         } else {
-            let mut spans: Vec<&[u64]> = words.chunks_exact(element_width).collect();
-            spans.sort_unstable();
-            spans.dedup();
-            let sorted: Vec<u64> = spans.into_iter().flatten().copied().collect();
-            words.clear();
-            words.extend_from_slice(&sorted);
+            match element_width {
+                2 => sort_dedup_spans::<2>(&mut words),
+                3 => sort_dedup_spans::<3>(&mut words),
+                4 => sort_dedup_spans::<4>(&mut words),
+                5 => sort_dedup_spans::<5>(&mut words),
+                6 => sort_dedup_spans::<6>(&mut words),
+                7 => sort_dedup_spans::<7>(&mut words),
+                8 => sort_dedup_spans::<8>(&mut words),
+                _ => unreachable!("bytes<N> spans are 2..=8 words (N ≤ 64)"),
+            }
         }
         // Per-element intern misses resolved to the never-minted
         // sentinel; a sentinel matches nothing under `Eq`, so
@@ -241,6 +283,25 @@ fn param_id(idx: usize) -> ParamId {
     ParamId(u16::try_from(idx).expect("param ids fit u16"))
 }
 
+/// Sorts and deduplicates the pooled word `Vec` span-wise, in place: the
+/// flat words reinterpreted as `[u64; K]` spans (lexicographic array
+/// order IS span order over big-endian column words), `sort_unstable`
+/// plus a manual dedup sweep, then a truncate — zero allocator traffic,
+/// pooled capacity preserved.
+fn sort_dedup_spans<const K: usize>(words: &mut Vec<u64>) {
+    let (spans, tail) = words.as_chunks_mut::<K>();
+    debug_assert!(tail.is_empty(), "one whole span per element");
+    spans.sort_unstable();
+    let mut kept = spans.len().min(1);
+    for idx in 1..spans.len() {
+        if spans[idx] != spans[kept - 1] {
+            spans[kept] = spans[idx];
+            kept += 1;
+        }
+    }
+    words.truncate(kept * K);
+}
+
 /// One set element's column-word span, appended to `out`; `Ok(None)` =
 /// element type mismatch (the caller names the position). A String miss
 /// resolves to the never-minted sentinel intern id (per-element miss
@@ -253,6 +314,20 @@ fn element_words(
     expected: &ValueType,
     out: &mut Vec<u64>,
 ) -> Result<Option<usize>> {
+    // The `bytes<N>` element, straight into the pooled span storage —
+    // no `Const` intermediary, no per-element heap (the scalar slot's
+    // in-place discipline, span-shaped).
+    if let ValueType::FixedBytes { len } = expected {
+        let Value::FixedBytes(raw) = value else {
+            return Ok(None);
+        };
+        if raw.len() != usize::from(*len) {
+            return Ok(None);
+        }
+        let (words, count) = crate::ir::normalize::fixed_bytes_word_buf(raw);
+        out.extend_from_slice(&words[..count]);
+        return Ok(Some(count));
+    }
     let Some(view) = element_view(value) else {
         return Ok(None);
     };
@@ -268,15 +343,15 @@ fn element_words(
             out.push(u64::from(byte));
             1
         }
-        Const::Words(words) => {
-            out.extend_from_slice(&words);
-            words.len()
-        }
         Const::Interval { .. } => {
             unreachable!("validated: no interval-typed param sets (IntervalParamSet)")
         }
-        Const::Param(_) | Const::ParamSet(_) | Const::WordSet(_) | Const::PendingIntern { .. } => {
-            unreachable!("convert_scalar resolves to column form")
+        Const::Words(_)
+        | Const::Param(_)
+        | Const::ParamSet(_)
+        | Const::WordSet(_)
+        | Const::PendingIntern { .. } => {
+            unreachable!("convert_scalar resolves scalar kinds to inline column form")
         }
     }))
 }
@@ -455,8 +530,17 @@ fn resolve_filter_into(
                 }
             }
             let resolved = match value {
-                Const::Word(_) | Const::Byte(_) | Const::Words(_) | Const::Interval { .. } => {
-                    value.clone()
+                Const::Word(_) | Const::Byte(_) | Const::Interval { .. } => value.clone(),
+                // A multi-word `bytes<N>` constant: written into the
+                // slot's pooled `Words` box in place — the `Words` twin
+                // of the `WordSet` arms below (a `Box` clone is a heap
+                // hit the steady-state contract forbids, and this arm
+                // runs per execution whenever the query carries any
+                // param).
+                Const::Words(words) => {
+                    write_compare(dst, *field, *op, None);
+                    write_words_value(dst, words);
+                    return Ok(true);
                 }
                 Const::Param(param) => {
                     if missed[usize::from(param.0)] && *op == CmpOp::Eq && !negated {
@@ -464,7 +548,14 @@ fn resolve_filter_into(
                     }
                     // A negated Eq miss keeps the sentinel word bind
                     // stored — it matches nothing.
-                    params[usize::from(param.0)].clone()
+                    match &params[usize::from(param.0)] {
+                        Const::Words(words) => {
+                            write_compare(dst, *field, *op, None);
+                            write_words_value(dst, words);
+                            return Ok(true);
+                        }
+                        other => other.clone(),
+                    }
                 }
                 Const::ParamSet(param) => {
                     debug_assert_eq!(*op, CmpOp::Eq, "validated: sets only under Eq");
@@ -643,6 +734,23 @@ fn write_word_set_value(dst: &mut FilterPredicate, words: &[u64]) {
     }
 }
 
+/// Writes a multi-word `bytes<N>` constant into a `Compare` slot's
+/// value, reusing its existing `Words` box when the span width matches —
+/// it always does past the first execution: the constant's width is a
+/// plan constant (the type is the width).
+fn write_words_value(dst: &mut FilterPredicate, words: &[u64]) {
+    let FilterPredicate::Compare { value, .. } = dst else {
+        unreachable!("write_compare just shaped the slot")
+    };
+    if let Const::Words(dst_words) = value
+        && dst_words.len() == words.len()
+    {
+        dst_words.copy_from_slice(words);
+    } else {
+        *value = Const::Words(words.into());
+    }
+}
+
 /// A set element viewed through the bind vocabulary — the borrow
 /// adapter between owned set storage ([`Value`]) and the one conversion
 /// rule ([`convert_scalar`]). `None` = non-UTF-8 `String` bytes: a
@@ -714,13 +822,9 @@ fn convert_scalar(
             Some(id) => Const::Word(id),
             None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
         },
-        // The length is the type; the padded words are the column form —
-        // zero dictionary traffic, no miss to flag.
-        (BindValue::FixedBytes(bytes), ValueType::FixedBytes { len })
-            if bytes.len() == usize::from(*len) =>
-        {
-            crate::ir::normalize::fixed_bytes_const(bytes)
-        }
+        // `bytes<N>` never reaches here: both callers resolve it in
+        // place through `fixed_bytes_word_buf` first (pooled slots, no
+        // per-bind heap) — the arm's absence is deliberate, not a gap.
         _ => return Ok(None),
     };
     Ok(Some((resolved, false)))
