@@ -2099,6 +2099,19 @@ mod tests {
         eprintln!("{}", report.coverage_line());
     }
 
+    /// Regenerates the JUDGMENT arm's `judgment-*.json` cases only —
+    /// the fixtures are deterministic (hand-authored, no wall-clock
+    /// budgets), so this is safe on any machine; the query and program
+    /// cases keep their bytes.
+    #[test]
+    #[ignore = "regenerates the checked-in judgment cases; run deliberately"]
+    fn regenerate_the_judgment_conformance_corpus() {
+        let dir = corpus_dir();
+        for (name, document) in judgment::generate_judgment_corpus() {
+            std::fs::write(dir.join(&name), document).expect("write a judgment case");
+        }
+    }
+
     /// The engine+naive half of the comparator, no Lean toolchain
     /// needed: replay every checked-in case from its provenance (fresh
     /// worlds, fresh engine executions, naive parity asserted inside)

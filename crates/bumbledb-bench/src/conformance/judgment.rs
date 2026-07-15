@@ -163,6 +163,41 @@ fn item(doc: u64, pos: u64, note: u64) -> (RelationId, Vec<Value>) {
     )
 }
 
+// ---------- the ledger world: containment and cardinality together ----------
+
+/// Holder(id, tag; key id); Account(holder, kind, num) under BOTH
+/// statement forms at once: the reference containment
+/// `Account(holder) <= Holder(id)` (statement 1) and the window
+/// `Account(holder | kind == 1) in 1..2 per Holder(id)` (statement 2)
+/// — the one roster schema whose statement phase can cite containment
+/// and cardinality TOGETHER, so the ordered multi-citation verdict
+/// surface (`lean/Main.lean: RVerdict`'s list `BEq`, ascending indices
+/// via `verdictOf`) is actually exercised.
+fn ledger_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            u64_relation("Holder", &["id", "tag"]),
+            u64_relation("Account", &["holder", "kind", "num"]),
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: HOLDER,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: side(ACCOUNT, &[0]),
+                target: side(HOLDER, &[0]),
+            },
+            StatementDescriptor::Cardinality {
+                source: side_where(ACCOUNT, &[0], &[(1, LiteralSet::One(Value::U64(1)))]),
+                lo: 1,
+                hi: Some(2),
+                target: side(HOLDER, &[0]),
+            },
+        ],
+    }
+}
+
 // ---------- the exactness world: n..n and 0..* windows ----------
 
 /// Holder + Account under `in 2..2 per` (exactness) and a second
@@ -612,6 +647,54 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 lane_u(2, u64::MAX - 6),
                 lane_i(1, i64::MIN),
                 lane_i(2, i64::MAX - 6),
+            ],
+        },
+        // The multi-citation statement phase: one delta violating the
+        // containment (statement 1 — account 8 references no holder;
+        // kind 5 sits outside the window's σ) AND the window floor
+        // (statement 2 — holder 9 lands childless) with clean keys.
+        // The recorded verdict is the ordered ASCENDING list [1, 2]
+        // mixing citation kinds — the whole-list comparison surface
+        // (`lean/Main.lean: RVerdict` list `BEq`, `verdictOf`'s indexed
+        // filterMap) exercised beyond length 1 for the first time.
+        JudgmentFixture {
+            name: "judgment-statement-mixed-citations",
+            schema: ledger_schema(),
+            base: vec![holder(7), account(7, 1, 0)],
+            deletes: vec![],
+            inserts: vec![account(8, 5, 0), holder(9)],
+        },
+        // One containment cited in BOTH directions by one delta: the
+        // deleted slot uncovers the held-before claim (target
+        // direction) while the inserted claim lands uncovered (source
+        // direction). The `Direction` refinement sits below the Lean
+        // altitude, so the serialized set must collapse the double
+        // citation to the single statement id — the `ids.dedup()` rule
+        // the README records, previously covered by no case.
+        JudgmentFixture {
+            name: "judgment-containment-both-directions",
+            schema: permuted_schema(),
+            base: vec![slot(5, 10, 20), claim(12, 18, 5)],
+            deletes: vec![slot(5, 10, 20)],
+            inserts: vec![claim(40, 50, 5)],
+        },
+        // The multi-key rejection: overlapping playlist spans collide
+        // on statement 0's pointwise key while overlapping unit slots
+        // collide on statement 1's — the key phase's COMPLETE set is
+        // the ascending pair [0, 1]
+        // (`lean/Bumbledb/Txn.lean: judge_key_preempts` drops the
+        // simultaneous containment convictions), where every prior
+        // key-phase case cited exactly one statement.
+        JudgmentFixture {
+            name: "judgment-multi-key-collisions",
+            schema: playlist_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![
+                playlist(1, 0, 3),
+                playlist(1, 2, 5),
+                unit_slot(1, 0, 100),
+                unit_slot(1, 0, 999),
             ],
         },
     ]
@@ -1071,4 +1154,136 @@ pub fn replay_judgment_case(name: &str) -> String {
         .find(|fixture| fixture.name == name)
         .unwrap_or_else(|| panic!("unknown judgment fixture {name}: stale corpus"));
     render_fixture(&fixture)
+}
+
+#[cfg(test)]
+mod tests {
+    use bumbledb::{Direction, StatementId};
+
+    use super::*;
+
+    /// The serialized violation set is a WHOLE ordered list
+    /// (`lean/Main.lean: RVerdict` derives `BEq` — order-sensitive), and
+    /// `lane_verdict` owes it two invariants the corpus now also
+    /// exercises: ascending statement order survives mixed citation
+    /// kinds, and a containment cited in both directions collapses to
+    /// ONE id (the `Direction` refinement sits below the Lean
+    /// altitude). The dedup is adjacency-dependent, so this pin catches
+    /// a reorder-before-dedup regression directly.
+    #[test]
+    fn lane_verdict_orders_and_dedups_the_citation_list() {
+        let both_directions = Verdict::Aborted(vec![
+            Violation::Containment {
+                statement: StatementId(1),
+                direction: Direction::SourceUnsatisfied,
+            },
+            Violation::Containment {
+                statement: StatementId(1),
+                direction: Direction::TargetRequired,
+            },
+        ]);
+        match lane_verdict("pin-both-directions", &both_directions) {
+            JVerdict::Reject {
+                key_phase,
+                violations,
+            } => {
+                assert!(!key_phase, "containment is the statement phase");
+                assert_eq!(violations, vec![1], "both directions are one citation");
+            }
+            JVerdict::Accept => panic!("an aborted verdict never reads accept"),
+        }
+
+        let mixed = Verdict::Aborted(vec![
+            Violation::Containment {
+                statement: StatementId(1),
+                direction: Direction::SourceUnsatisfied,
+            },
+            Violation::Cardinality {
+                statement: StatementId(2),
+            },
+        ]);
+        match lane_verdict("pin-mixed-kinds", &mixed) {
+            JVerdict::Reject {
+                key_phase,
+                violations,
+            } => {
+                assert!(!key_phase);
+                assert_eq!(violations, vec![1, 2], "ascending across citation kinds");
+            }
+            JVerdict::Accept => panic!("an aborted verdict never reads accept"),
+        }
+
+        let multi_key = Verdict::Aborted(vec![
+            Violation::Functionality {
+                statement: StatementId(0),
+            },
+            Violation::Functionality {
+                statement: StatementId(1),
+            },
+        ]);
+        match lane_verdict("pin-multi-key", &multi_key) {
+            JVerdict::Reject {
+                key_phase,
+                violations,
+            } => {
+                assert!(key_phase, "an all-functionality set is the key phase");
+                assert_eq!(violations, vec![0, 1], "the complete ascending key set");
+            }
+            JVerdict::Accept => panic!("an aborted verdict never reads accept"),
+        }
+    }
+
+    /// The both-directions fixture really cites its containment TWICE
+    /// pre-dedup — one source-direction conviction for the inserted
+    /// uncovered claim, one target-direction conviction for the claim
+    /// the deleted slot uncovers — so the corpus case exercises the
+    /// dedup path, not a single-citation lookalike.
+    #[test]
+    fn the_both_directions_fixture_cites_two_directions() {
+        let fixture = fixtures()
+            .into_iter()
+            .find(|fixture| fixture.name == "judgment-containment-both-directions")
+            .expect("the fixture is on the roster");
+        let dir = ScratchDir::new("judgment-both-directions-pin");
+        let db = Db::create(&dir.0, fixture.schema.clone()).expect("create the pin store");
+        let base = Delta {
+            deletes: vec![],
+            inserts: fixture.base.clone(),
+        };
+        assert!(
+            matches!(differential::engine_write(&db, &base), Verdict::Committed),
+            "the base state is green"
+        );
+        let delta = Delta {
+            deletes: fixture.deletes.clone(),
+            inserts: fixture.inserts.clone(),
+        };
+        match differential::engine_write(&db, &delta) {
+            Verdict::Aborted(violations) => {
+                let directions: Vec<Direction> = violations
+                    .iter()
+                    .map(|violation| match violation {
+                        Violation::Containment {
+                            statement,
+                            direction,
+                        } => {
+                            assert_eq!(statement.0, 1, "the one containment statement");
+                            *direction
+                        }
+                        other => panic!("only containment citations expected, got {other:?}"),
+                    })
+                    .collect();
+                assert_eq!(
+                    directions.len(),
+                    2,
+                    "both directions cited before the dedup"
+                );
+                assert_ne!(
+                    directions[0], directions[1],
+                    "one citation per direction, not a doubled one"
+                );
+            }
+            Verdict::Committed => panic!("the fixture must reject"),
+        }
+    }
 }

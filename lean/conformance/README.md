@@ -119,7 +119,7 @@ checks.
 The query corpus is Tiny-scale, valid-arm only. Per-build coverage is
 logged by the builder and the comparator (`Report::coverage_line`);
 the checked-in corpus was built at **219/325 expressible** (200 seeded
-+ 19 hand cases), plus the 20 hand judgment cases outside the report
++ 19 hand cases), plus the 23 hand judgment cases outside the report
 (they have no expressibility gate):
 
 * **hostile arm** — not drawn at all: structurally-free IR types
@@ -218,7 +218,13 @@ touched-group seam, and the permuted-interval lock — a statement
 written `Claim(span, id) <= Slot(span, id)` against the pointwise key
 DECLARED `(id, span)`: accepted through the set-canonical key
 resolution (`Bumbledb/Schema.lean: Header.intervalSplit`), judged as
-coverage, three-way agreed.
+coverage, three-way agreed. The whole-list comparison surface is
+exercised beyond singletons: a statement phase citing containment AND
+cardinality as the ascending pair (`judgment-statement-mixed-citations`,
+`[1,2]`), one containment cited in both directions and collapsed to one
+id (`judgment-containment-both-directions` — the dedup rule above,
+pinned pre-dedup by a unit test), and a two-key rejection
+(`judgment-multi-key-collisions`, `[0,1]`).
 
 ## Program cases — the recursive third oracle
 
