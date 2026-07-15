@@ -157,6 +157,13 @@ pub enum SchemaError {
         relation: RelationId,
         columns: usize,
     },
+    /// A statement roster past the u16 id space: the MATERIALIZED
+    /// statements (declared plus the fresh/closed auto-keys) number
+    /// more than 65,536 — rejected typed at the declaration boundary,
+    /// never the id-mint expect. Carries the materialized count.
+    TooManyStatements {
+        count: usize,
+    },
 
     // --- Closed-relation roster (10-data-model § closed relations) ---
     /// A closed relation with no rows is a vocabulary of nothing — write

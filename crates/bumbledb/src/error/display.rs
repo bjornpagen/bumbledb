@@ -257,6 +257,10 @@ impl fmt::Display for SchemaError {
                  image cap (an interval field spans two columns, bytes<N> its ⌈N/8⌉)",
                 r.0
             ),
+            Self::TooManyStatements { count } => write!(
+                f,
+                "{count} materialized statements exceed the 65,536-statement id space"
+            ),
             Self::EmptyExtension { relation: r } => write!(
                 f,
                 "relation {}: a closed relation with no rows is a vocabulary of nothing — write no relation",
@@ -1016,6 +1020,7 @@ impl SchemaError {
             | Self::IntervalWidthOutOfRange { .. }
             | Self::FreshOnNonU64 { .. }
             | Self::RelationTooManyColumns { .. }
+            | Self::TooManyStatements { .. }
             | Self::EmptyExtension { .. }
             | Self::ExtensionTooManyRows { .. }
             | Self::DuplicateExtensionHandle { .. }
