@@ -95,6 +95,15 @@ pub(crate) fn write_families(
             });
         }
     }
+    // The window-judgment lane (the roster extension): its own twin
+    // scratch worlds, engine-only rows — after the ledger commit rows
+    // (same fsync-bound class), before bulk (which stays last).
+    out.extend(crate::windowed::write_families(
+        cfg,
+        &scratch.join("windowed"),
+        selected,
+    )?);
+
     // bulk stays LAST: seconds of fsync — nothing
     // may measure after it in this process.
     if selected("bulk") {

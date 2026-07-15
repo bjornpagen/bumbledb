@@ -34,4 +34,5 @@ pub mod trace_out;
 pub mod translate;
 pub mod tripwires;
 pub mod verify;
+pub mod windowed;
 pub mod writebench;
