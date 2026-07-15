@@ -287,7 +287,7 @@ fn bulk_load_traces_one_span_per_chunk() {
     let n = 4096 * 2 + 2048;
     obs::start_capture();
     let loaded = db
-        .bulk_load(R, (0..n).map(|v| vec![Value::U64(v)]))
+        .bulk_load_dyn(R, (0..n).map(|v| vec![Value::U64(v)]))
         .expect("bulk");
     let events = obs::finish_capture();
     assert_eq!(loaded, n);

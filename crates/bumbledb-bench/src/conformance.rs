@@ -227,7 +227,7 @@ pub fn build_world(seed: u64) -> World {
             target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
             target::ids::IMPORT_BATCH => {} // loaded with its entries
             _ => {
-                db.bulk_load(rel, target::corpus_relation_rows(cfg, rel))
+                db.bulk_load_dyn(rel, target::corpus_relation_rows(cfg, rel))
                     .expect("conformance target bulk load");
             }
         }
@@ -239,7 +239,7 @@ pub fn build_world(seed: u64) -> World {
     // vocabulary, so the `0..TARGET_RELATIONS` sweep skips it — its own
     // load here (statement-free payload, no draws: every earlier
     // relation's corpus stream is byte-stable).
-    db.bulk_load(
+    db.bulk_load_dyn(
         target::ids::LANE,
         target::corpus_relation_rows(cfg, target::ids::LANE),
     )

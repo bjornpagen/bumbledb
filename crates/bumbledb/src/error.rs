@@ -382,13 +382,13 @@ pub enum SchemaError {
 }
 
 /// A mis-shaped dynamic fact on the untyped write surface
-/// (`insert_dyn`/`delete_dyn`/`bulk_load`): ETL input is data, so shape
+/// (`insert_dyn`/`delete_dyn`/`bulk_load_dyn`): ETL input is data, so shape
 /// problems are typed errors, not panics (`docs/architecture/70-api.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FactShapeError {
     /// The relation id is outside the schema — ETL input is data, so an
     /// out-of-range id at the dynamic surface (`insert_dyn`/`delete_dyn`/
-    /// `bulk_load`/`scan`/`fresh_field`) is a typed error, never an index
+    /// `bulk_load_dyn`/`scan`/`fresh_field`) is a typed error, never an index
     /// panic.
     UnknownRelation { relation: RelationId },
     /// The field id is outside its relation — the field sibling of

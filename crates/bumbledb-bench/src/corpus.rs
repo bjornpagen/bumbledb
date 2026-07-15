@@ -50,7 +50,7 @@ pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbl
     let mut facts = 0u64;
     for rel in 0..ids::RELATIONS {
         let rel = RelationId(rel);
-        facts += db.bulk_load(rel, relation_rows(cfg, rel))?;
+        facts += db.bulk_load_dyn(rel, relation_rows(cfg, rel))?;
     }
     Ok(LoadStats::of(facts, start.elapsed()))
 }

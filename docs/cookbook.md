@@ -1001,7 +1001,7 @@ let native = query!(Closure {
     reach(c) | Parent(child: c, parent: m), reach(0: m);
     (c) | reach(0: c);
 });
-let mut prepared = db.prepare_program(&native)?;
+let mut prepared = db.prepare(&native)?;
 ```
 
 (the compiled copy runs beside the loop in `cookbook.rs`, both dialects
@@ -1170,7 +1170,7 @@ theory is a hard `SchemaMismatch` — the engine refuses to reinterpret facts
 it judged under different laws. Migration is extract, transform, load:
 `scan` exports every fact of a relation as typed values under one snapshot
 (one generation — the export is a consistent instant), the host transforms,
-and `bulk_load` imports into a store created under the new theory. The
+and `bulk_load_dyn` imports into a store created under the new theory. The
 engine owns both ends; the host owns exactly the middle, because the
 semantic transform is the part that cannot be generic.
 
@@ -1178,7 +1178,7 @@ Three laws make the loop honest. **Load containment targets first** — every
 chunk commits through the ordinary final-state judgment, so a `Salary` fact
 whose `Employee` has not landed yet is a rejection (with the complete
 violation set cited), not a deferral. **Fresh identity survives** —
-`bulk_load` takes explicit values for every field, `fresh` ones included,
+`bulk_load_dyn` takes explicit values for every field, `fresh` ones included,
 so facts keep their ids across the move, and the mint sequence catches up
 past the imported high water: the next `alloc` cannot collide. **The new
 theory judges the old data** — every dependency of the new schema holds of

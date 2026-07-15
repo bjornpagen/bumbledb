@@ -233,7 +233,7 @@ pub(super) fn load_target_stores(
             target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
             target::ids::IMPORT_BATCH => {} // loaded with its entries
             _ => {
-                db.bulk_load(rel, target::corpus_relation_rows(cfg, rel))
+                db.bulk_load_dyn(rel, target::corpus_relation_rows(cfg, rel))
                     .expect("target bulk load");
             }
         }

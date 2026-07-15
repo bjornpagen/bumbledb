@@ -541,6 +541,42 @@ impl From<Query> for Program {
     }
 }
 
+/// A borrowed query-or-program at the prepare boundary —
+/// [`crate::Db::prepare`]'s one argument (`impl Into<ProgramRef<'_>>`),
+/// so `db.prepare(&query)` and `db.prepare(&program)` land on the ONE
+/// entry point. Borrowed by decision, not convenience: an owned
+/// `impl Into<Program>` was rejected because the `&Query → Program`
+/// conversion would clone an **unvalidated** condition tree — a
+/// recursive `Clone`/`Drop` ahead of the iterative nesting screen, which
+/// is exactly the stack exhaustion the trust-boundary law exists to
+/// refuse (`20-query-ir.md` § validation boundary). Hostile IR is
+/// touched by nothing before validation; the owned embedding
+/// (`From<Query> for Program`) remains for hosts building programs from
+/// queries they own.
+#[derive(Debug, Clone, Copy)]
+pub enum ProgramRef<'p> {
+    /// A query — the degenerate one-predicate program, prepared through
+    /// the query pipeline byte for byte
+    /// (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`).
+    Query(&'p Query),
+    /// A program — validated under the program roster; a no-`Idb`
+    /// program routes back into the query pipeline as its output
+    /// predicate's query.
+    Program(&'p Program),
+}
+
+impl<'p> From<&'p Query> for ProgramRef<'p> {
+    fn from(query: &'p Query) -> Self {
+        Self::Query(query)
+    }
+}
+
+impl<'p> From<&'p Program> for ProgramRef<'p> {
+    fn from(program: &'p Program) -> Self {
+        Self::Program(program)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

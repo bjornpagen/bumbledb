@@ -214,8 +214,7 @@ fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
 fn pin_program<S: Theory + Copy>(tag: &str, theory: S, program: &bumbledb::Program) -> String {
     let dir = TempDir::new(tag);
     let db = Db::create(dir.path(), theory).expect("create the theory's store");
-    db.prepare_program(program)
-        .expect("the golden program validates");
+    db.prepare(program).expect("the golden program validates");
     let schema: Schema = theory.descriptor().validate().expect("a landed theory");
     bumbledb::ir::render::render_program(&schema, program)
 }

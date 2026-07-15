@@ -28,7 +28,7 @@ pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores,
     for (rel, rows) in (scenario.rows)(seed) {
         let rows: Vec<Vec<Value>> = rows.collect();
         total += rows.len() as u64;
-        db.bulk_load(rel, rows.iter().cloned())
+        db.bulk_load_dyn(rel, rows.iter().cloned())
             .map_err(|e| format!("{}: bulk_load: {e}", scenario.name))?;
         corpus::insert_rows(&conn, schema.relation(rel), rows.into_iter())
             .map_err(|e| format!("{}: sqlite insert: {e}", scenario.name))?;

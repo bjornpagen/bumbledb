@@ -50,9 +50,10 @@ mod read;
 mod snapshot;
 mod write;
 
-/// Facts per write transaction in [`Db::bulk_load`] — the documented
-/// chunking convenience (`40-storage.md`): large imports amortize commit
-/// overhead without building one unbounded delta.
+/// Facts per write transaction in [`Db::bulk_load`] /
+/// [`Db::bulk_load_dyn`] — the documented chunking convenience
+/// (`40-storage.md`): large imports amortize commit overhead without
+/// building one unbounded delta.
 const BULK_CHUNK: usize = 4096;
 
 /// The process-local commit sequence protecting parked-reader reuse. It
@@ -254,7 +255,7 @@ impl<S> Db<S> {
     /// [`Db::render_query`]'s program twin
     /// ([`crate::ir::render::render_program`]): interior predicates
     /// named `p{id}`, output rules bare — the diagnostic surface for
-    /// programs [`Db::prepare_program`] rejects. Allocates; diagnostics
+    /// programs [`Db::prepare`] rejects. Allocates; diagnostics
     /// only.
     #[must_use]
     pub fn render_program(&self, program: &crate::ir::Program) -> String {

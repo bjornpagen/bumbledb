@@ -426,7 +426,7 @@ fn a_bulk_load_error_keeps_its_committed_count_through_question_mark() {
         .map(|i| vec![Value::String(format!("v{i}").into_bytes().into())])
         .chain(std::iter::once(vec![]))
         .collect();
-    let surfaced: Result<u64> = db.bulk_load(named, facts).map_err(Error::from);
+    let surfaced: Result<u64> = db.bulk_load_dyn(named, facts).map_err(Error::from);
     match surfaced.unwrap_err() {
         Error::BulkLoad { committed, error } => {
             assert_eq!(committed, BULK_CHUNK as u64, "the whole first chunk");
@@ -489,7 +489,7 @@ fn writes_to_a_closed_relation_are_refused_before_the_delta() {
     // `bulk_load` shares `insert_dyn`'s per-fact entry: the first fact is
     // refused and no chunk commits.
     let bulk = db
-        .bulk_load(currency, vec![vec![Value::U64(9)]])
+        .bulk_load_dyn(currency, vec![vec![Value::U64(9)]])
         .expect_err("closed relations refuse bulk loads");
     assert_eq!(bulk.committed, 0);
     assert!(matches!(

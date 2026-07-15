@@ -295,9 +295,7 @@ pub(crate) fn engine_program<S>(
     program: &bumbledb::Program,
     params: &[ParamValue],
 ) -> BTreeSet<Tuple> {
-    let mut prepared = db
-        .prepare_program(program)
-        .expect("differential programs validate");
+    let mut prepared = db.prepare(program).expect("differential programs validate");
     let args = crate::families::param_args(params);
     let buffer = db
         .read(|snap| snap.execute_collect_args(&mut prepared, &args))

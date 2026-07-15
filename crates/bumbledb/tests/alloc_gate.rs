@@ -1097,7 +1097,7 @@ fn zero_warm_allocation_gate() {
             .iter()
             .map(|cap| vec![BindValue::U64(*cap)])
             .collect();
-        let mut recursive = db.prepare_program(&recursive_program())?;
+        let mut recursive = db.prepare(&recursive_program())?;
         gate("recursive", &mut recursive, snap, &recursive_params);
 
         // The high-water window (docs/architecture/40-execution.md § CI
@@ -1116,7 +1116,7 @@ fn zero_warm_allocation_gate() {
             .iter()
             .map(|cap| vec![BindValue::U64(*cap)])
             .collect();
-        let mut recursive_escalation_q = db.prepare_program(&recursive_program())?;
+        let mut recursive_escalation_q = db.prepare(&recursive_program())?;
         escalation_gate(
             "recursive-escalation",
             &mut recursive_escalation_q,

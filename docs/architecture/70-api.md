@@ -215,7 +215,7 @@ Both are emission; the grammar is untouched.
 - **The two-store staging pattern** (the sighting the surface exists for): build
   an ephemeral store — bulk imports, judged exactly as a durable store judges —
   read/repair until the theory holds, then ETL the survivors into the durable
-  store (`snap.scan` → `bulk_load`, § ETL below) and delete the directory. The
+  store (`snap.scan` → `bulk_load_dyn`, § ETL below) and delete the directory. The
   staging side pays no fullfsync per commit (the small-commit shape measured
   ~90x over durable-on-SSD and ~4.4x over a plain ramdisk store, device tax
   1.0–1.1x, `docs/reports/ramdisk-phase-r.md` § R6); the durable side's
@@ -237,13 +237,23 @@ Both are emission; the grammar is untouched.
 
 ## Transactions
 
-- `db.read(|snap| ...)` — one LMDB read snapshot; executes *prepared* queries
-  (`db.prepare(&Query)` and `db.prepare_program(&Program)` are the two entries —
-  pin-at-prepare, `40-execution.md`; a no-`Idb` program prepares as its output
-  predicate's query, byte for byte, and a recursive program executes under the
-  fixpoint driver with the host-settable budget
+- `db.read(|snap| ...)` — one LMDB read snapshot; executes *prepared* queries.
+  **`db.prepare(...)` is the ONE prepare entry** (the unified-prepare ruling,
+  frozen 2026-07-15): it takes `impl Into<ProgramRef<'_>>`, so `db.prepare(&query)`
+  and `db.prepare(&program)` both land on it — pin-at-prepare, `40-execution.md`.
+  A query is the degenerate one-predicate program
+  (`From<Query> for Program` is the owned embedding;
+  `lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`); a no-`Idb` program
+  prepares as its output predicate's query, byte for byte, and a recursive
+  program executes under the fixpoint driver with the host-settable budget
   `prepared.set_fixpoint_budget(rounds, tuples)` — `40-execution.md` § the
-  fixpoint driver); sees
+  fixpoint driver. **`ProgramRef` borrows by decision, not convenience**: an
+  owned `impl Into<Program>` was rejected because the `&Query → Program`
+  conversion clones an *unvalidated* condition tree — a recursive `Clone`/`Drop`
+  ahead of the iterative nesting screen, exactly the stack exhaustion the
+  trust-boundary law refuses (`20-query-ir.md` § validation boundary; found by
+  the adversarial sweep the moment the owned spelling was tried). The read
+  closure sees
   a consistent generation (the snapshot-sourced tx id, `50-storage.md`) — every
   read is a function of that one state and nothing else
   (`lean/Bumbledb/Txn.lean: snapshot_reads_one_state`). A prepared
@@ -279,8 +289,9 @@ Both are emission; the grammar is untouched.
   without reading a max (`10-data-model.md`); `insert(&fact) -> bool` (changed-state
   report); `delete(&fact) -> bool`; `_dyn` forms of both for ETL tooling.
   `FreshExhausted` raises eagerly at the `alloc` call (the sequence state is knowable
-  immediately), not at commit. Bulk import is `Db::bulk_load` — a `Db`-level method,
-  not a write-closure operation (see the ETL section).
+  immediately), not at commit. Bulk import is `Db::bulk_load` (typed) /
+  `Db::bulk_load_dyn` (the ETL/FFI lane) — `Db`-level methods,
+  not write-closure operations (see the ETL section).
 - **WriteTx point reads (decision):** `tx.contains(&fact) -> bool` (membership — the `insert`/`delete`
   return value's read-only sibling) and `tx.get::<F>(key) -> Option<F<'_>>` — lookup
   of the full fact through any key FD of its relation (typed via the key's newtype
@@ -354,7 +365,7 @@ The public write surface has exactly three epistemic classes:
 |---|---|---|
 | snapshot-derived, generation-witnessed | `Db::write_from` | the snapshot's generation is compared inside the writer critical section before the closure runs |
 | final-state point-read inside the write transaction | `Db::write` plus `WriteTx::{contains,get,get_dyn}` | the point read observes base + pending delta while the single-writer lock is held |
-| unconditional | `Db::write` without a point-read premise; `Db::bulk_load` | there is no read-derived premise to witness |
+| unconditional | `Db::write` without a point-read premise; `Db::bulk_load` / `Db::bulk_load_dyn` | there is no read-derived premise to witness |
 
 **Dependencies prove surviving derived facts sound; the WITNESS proves the
 derivation saw the state it claims; nothing proves completeness — recompute
@@ -527,17 +538,25 @@ The **export
 surface is a full-relation scan**: `snap.scan(relation)` yields *dynamic* facts
 (`Result<Vec<Value>>` — per-item corruption is a hard error and the stream fuses)
 over `F` in row_id order (a storage iteration, not a query — streams, not sets); the
-typed sibling `snap.scan_facts::<F>()` decodes into the generated structs. The
-dynamic form pairs with `Db::bulk_load(relation, facts)`: chunks of 4096 per
-transaction, each chunk atomic, prior chunks committed on failure with the committed
-count carried on `BulkLoadError` — and kept through `?`: the conversion into the
-workspace error lands in `Error::BulkLoad { committed, error }`, never dropping the
-count (it is the resumability payload the type exists for). The returned/carried
-count is **facts that changed
+typed sibling `snap.scan_facts::<F>()` decodes into the generated structs.
+
+**Bulk import is two lanes over ONE chunking mechanism** (the typed-bulk ruling,
+frozen 2026-07-15 — it closed the "typed everywhere except bulk" gap):
+`Db::bulk_load(facts)` takes an iterator of **generated fact structs** (the
+relation is `F::RELATION` — no id parameter to mismatch), and
+`Db::bulk_load_dyn(relation, facts)` takes `Vec<Value>` rows — the ETL/FFI lane
+that pairs with `snap.scan`'s dynamic export and with foreign hosts speaking the
+manifest's ids. Both lanes share the contract verbatim: chunks of 4096 per
+transaction, each chunk atomic and fully judged, prior chunks committed on failure
+with the committed count carried on `BulkLoadError` — and kept through `?`: the
+conversion into the workspace error lands in `Error::BulkLoad { committed, error }`,
+never dropping the count (it is the resumability payload the type exists for). The
+returned/carried count is **facts that changed
 state** (idempotent re-inserts are consumed but not counted) — changed-not-consumed
 semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids)
 are typed `FactShape` errors (decided: ETL input is data, not code — no panics on the
-import path). Interval fields accept only the checked `Interval<T>` carried by
+import path); the typed lane makes shape errors unrepresentable and keeps only the
+judgment. Interval fields accept only the checked `Interval<T>` carried by
 `Value`, so `start ≥ end` cannot enter this path. Explicit fresh values preserve
 identity (high-water advances past them). Untyped fresh minting is
 resolve-once/mint-per-fact:
@@ -625,17 +644,58 @@ carries the ids as data, the memoized one-copy result heap crosses a language
 boundary where a borrowed result could not, and the dyn write surface's typed
 errors are the portable half of the API.
 
-## OPEN (this doc's honest list)
+## The freeze, and the OPEN ledger
+
+**FREEZE IS DECLARED at this commit (2026-07-15).** The surface above — the
+`schema!` grammar (owner-evolvable by its own standing ruling), the environment
+lifecycle (`create`/`open`/`ephemeral`), the unified `db.prepare`, the
+transaction closures with their point reads and the generation witness, the two
+bulk lanes, the scan exports, and the error taxonomy — is the v0 embedding API.
+Everything below is DEFERRED, each item with the **trigger** that reopens it;
+nothing on this list ships without its trigger firing, and nothing off this list
+ships without a new ruling.
+
+- **`tx.insert_all` batch sugar** (one call, many typed facts inside a write
+  closure). Trigger: **dogfooding pain** — a real host import loop inside
+  `db.write` where the per-fact `insert` call reads as noise or measures as
+  overhead. Until then the `for` loop is the surface, and bulk import already
+  has `Db::bulk_load`.
+- **Multi-key typed `tx.get` disambiguation** — the typed signature when a
+  relation carries several key FDs over the same newtype. Trigger: a **real
+  schema** exhibiting the collision (the `_dyn` form is unambiguous today; the
+  typed sugar waits for the usage that names its shape).
+- **Answer sorting / `FromAnswers` derive** in `bumbledb-query` (the
+  ordering/limit conveniences fold in here — host-side, on the bench-crate
+  quarantine like the `query!` macro; answers are sets and the engine never
+  orders). Trigger: **week-one dogfooding** — the first real host that sorts
+  and destructures `Answers` by hand tells us the derive's shape.
+- **`write_from` retry helper.** REFUSED as engine surface — retry is host
+  policy and **the host owns the loop** (the staleness-signal doctrine
+  verbatim). The blessed host snippet, in full:
+
+  ```rust
+  loop {
+      let attempt = db.read(|snap| {
+          let premises = snap.execute_collect(&mut deriving_query, &args)?; // read
+          let delta = compute(&premises);                                   // compute
+          db.write_from(snap, |tx| delta.apply(tx))                         // witnessed write
+      });
+      match attempt {
+          Err(bumbledb::Error::GenerationMoved { .. }) => continue, // premises stale: re-derive
+          other => break other,                                     // done, or a real error
+      }
+  }
+  ```
+
+  (`crates/bumbledb-query/tests/cookbook.rs` recipe 27 pins the pattern,
+  retries counted.) Nothing here can become engine surface without hiding
+  policy — the loop's shape IS the host's policy.
+- **Multi-process story** (closed as out-of-envelope for v0; the future item
+  lives here). Trigger: a second process with a legitimate claim on one store —
+  today that is the ETL story's job.
 
 Resolved by ruling or implementation (recorded above): the `Answers` shape;
-the dynamic-fact ETL form; plan introspection's versioned surface (`snap.introspect(&mut prepared, params)
--> (Answers, String)` — ANALYZE semantics, rendered-text report); WriteTx point
-reads (decided).
-
-Still open:
-
-- Ordering/limit conveniences on answers (host-side; shape undecided).
-- The typed signature for multi-key `tx.get` disambiguation when a relation carries
-  several key FDs over the same newtype (the `_dyn` form is unambiguous today;
-  the typed sugar waits for real usage).
-- Multi-process story (closed as out-of-envelope for v0; future item lives here).
+the dynamic-fact ETL form; plan introspection's versioned surface
+(`snap.introspect(&mut prepared, params) -> (Answers, String)` — ANALYZE
+semantics, rendered-text report); WriteTx point reads; the unified `prepare`;
+the typed bulk lane.

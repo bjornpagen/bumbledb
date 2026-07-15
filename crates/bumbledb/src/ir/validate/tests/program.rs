@@ -489,7 +489,7 @@ fn an_idb_carrying_query_refuses_at_the_query_boundary() {
     // A bare `Query` has no predicate address space
     // (`IdbSignatures::EMPTY`), and a `ValidatedQuery` cannot carry a
     // fixpoint — recursion's surface is the program boundary
-    // (`Db::prepare_program`), so the `Idb` atom refuses with the
+    // (`Db::prepare`), so the `Idb` atom refuses with the
     // screen's own vocabulary.
     let query = Query {
         head: vec![HeadTerm::Var],

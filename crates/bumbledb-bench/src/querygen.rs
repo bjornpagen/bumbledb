@@ -19,7 +19,7 @@
 //! The **recursive-shape arm** ([`random_program`],
 //! `shapes_recursive.rs`) is its own entry beside [`random_query`], not
 //! a [`Shape`] row: it emits `Program`s that prepare through
-//! `db.prepare_program` and execute under the fixpoint driver, so its
+//! `db.prepare` and execute under the fixpoint driver, so its
 //! differential runs engine-vs-naive on every program and
 //! naive-vs-`SQLite` where expressible (plus the Lean conformance arm)
 //! — the shipping law's estate

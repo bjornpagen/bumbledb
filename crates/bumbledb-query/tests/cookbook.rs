@@ -1622,7 +1622,7 @@ fn r24_closure_idiom_reaches_the_exact_set() {
         (c) | reach(0: c);
     });
     let mut native_q = db
-        .prepare_program(&native)
+        .prepare(&native)
         .expect("prepare the engine-native closure");
     let ids_of = |out: &Answers| -> BTreeSet<u64> {
         (0..out.len())
@@ -1722,7 +1722,7 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
         (total: Sum(minor)) | Posting(id, account: a, minor), sub(0: a);
     });
     let mut native_q = db
-        .prepare_program(&native)
+        .prepare(&native)
         .expect("prepare the engine-native rollup");
     let native_sum = |snap: &Snapshot<'_, Accounts>,
                       native_q: &mut PreparedQuery<'_, Accounts>,
@@ -1962,11 +1962,11 @@ fn r28_migration_is_etl() {
     // Load containment targets first; explicit fresh values keep identity.
     let v2 = Db::create(dir_v2.path(), r28::Payroll).expect("create the v2 store");
     let loaded = v2
-        .bulk_load(r28::Employee::RELATION, employees)
+        .bulk_load_dyn(r28::Employee::RELATION, employees)
         .expect("load employees");
     assert_eq!(loaded, 3);
     let loaded = v2
-        .bulk_load(r28::Salary::RELATION, salaries)
+        .bulk_load_dyn(r28::Salary::RELATION, salaries)
         .expect("load salaries");
     assert_eq!(loaded, 3);
 

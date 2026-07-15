@@ -161,7 +161,7 @@ evaluation no stage-0 rows; statistics pin nothing for an `Idb`
 occurrence and cost on the ladder's delta/accumulated floors
 (`plan/selectivity.rs`); view binding takes the per-round
 transient-image bind, never the cache or the memo.
-`Db::prepare_program` is the surface: a no-`Idb` program prepares as
+`Db::prepare` is the surface: a no-`Idb` program prepares as
 its output predicate's query — zero new code paths, which is what it
 denotes (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`) —
 and a recursive program prepares its delta-variant plans and executes
@@ -863,7 +863,7 @@ executable whole (no fence stands between validation and the driver).
 The trust-boundary law extends
 verbatim: the adversarial sweep drives hostile `Program`s (random
 predicate ids, injected `Idb` reads, phantom targets) through
-`prepare_program` and reddens on any panic.
+the unified `Db::prepare` and reddens on any panic.
 
 Per-rule rejections: unknown
 relation/field ids; duplicate FieldId in one atom's bindings; variable type conflicts
