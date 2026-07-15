@@ -41,6 +41,15 @@ cargo test -p bumbledb --features ground-off
 echo "==> bumbledb with the fold-off fuzz-oracle feature (tests)"
 cargo test -p bumbledb --features fold-off
 
+# The fuzz crate is detached from the workspace on purpose (the
+# crucible packet (git ecec1dc3)): `cargo fuzz` builds its targets, so
+# every --workspace invocation above skips fuzz/src entirely — a
+# breakage there would pass this gate unseen (the fixit record). This
+# lane compiles and lints it; the corpus REPLAY (plain `cargo test` in
+# fuzz/, ~8 min) stays a CI lane, not a per-commit gate.
+echo "==> fuzz crate (out-of-workspace): clippy -D warnings"
+cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
+
 # The bench crate must build and lint with the engine's observability on
 # (docs/architecture/60-validation.md); the harness tests run under both configs.
 echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"
