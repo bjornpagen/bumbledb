@@ -217,52 +217,78 @@ fn scratch_env(dir: &Path, flags: heed::EnvFlags) -> heed::Env {
     unsafe { options.open(dir).expect("scratch env opens") }
 }
 
-/// One timed LMDB commit loop against a scratch environment: `facts`
-/// puts of 24-byte keys and 16-byte values per commit (the order of the
-/// engine's fact-row shape), repeated `commits` times.
-fn scratch_commits(env: &heed::Env, commits: u32, facts: u32, seq: &mut u64) -> Vec<Duration> {
-    use heed::types::Bytes;
+/// Creates the one named database of a scratch environment (its own
+/// committing transaction, outside any timed window).
+fn scratch_db(env: &heed::Env) -> heed::Database<heed::types::Bytes, heed::types::Bytes> {
     let mut wtxn = env.write_txn().expect("open write txn");
-    let db: heed::Database<Bytes, Bytes> = env
+    let db = env
         .create_database(&mut wtxn, None)
         .expect("create scratch db");
     wtxn.commit().expect("commit db creation");
-    let mut samples = Vec::with_capacity(commits as usize);
-    for _ in 0..commits {
-        let start = Instant::now();
-        let mut wtxn = env.write_txn().expect("open write txn");
-        for _ in 0..facts {
-            *seq += 1;
-            let mut key = [0u8; 24];
-            key[0] = b'F';
-            key[8..16].copy_from_slice(&seq.to_be_bytes());
-            let value = seq.to_le_bytes();
-            let mut payload = [0u8; 16];
-            payload[..8].copy_from_slice(&value);
-            db.put(&mut wtxn, &key, &payload).expect("put");
-        }
-        wtxn.commit().expect("commit");
-        samples.push(start.elapsed());
-    }
-    samples
+    db
 }
 
-struct FlagCells {
+/// One timed LMDB commit against a scratch environment: `facts` puts of
+/// 24-byte keys and 16-byte values (the order of the engine's fact-row
+/// shape). One commit per call so the R4 cells can interleave.
+fn one_scratch_commit(
+    env: &heed::Env,
+    db: &heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    facts: u32,
+    seq: &mut u64,
+) -> Duration {
+    let start = Instant::now();
+    let mut wtxn = env.write_txn().expect("open write txn");
+    for _ in 0..facts {
+        *seq += 1;
+        let mut key = [0u8; 24];
+        key[0] = b'F';
+        key[8..16].copy_from_slice(&seq.to_be_bytes());
+        let value = seq.to_le_bytes();
+        let mut payload = [0u8; 16];
+        payload[..8].copy_from_slice(&value);
+        db.put(&mut wtxn, &key, &payload).expect("put");
+    }
+    wtxn.commit().expect("commit");
+    start.elapsed()
+}
+
+/// One R4 flag configuration under measurement: its live scratch
+/// environment and the samples it has accumulated so far.
+struct FlagCell {
     name: &'static str,
+    env: heed::Env,
+    db: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    seq: u64,
     small: Vec<Duration>,
     bulk: Vec<Duration>,
 }
 
-fn flag_cells(root: &Path, name: &'static str, flags: heed::EnvFlags) -> FlagCells {
-    let dir = root.join(name.replace('|', "-"));
-    std::fs::create_dir_all(&dir).expect("create scratch env dir");
-    let env = scratch_env(&dir, flags);
-    let mut seq = 0u64;
-    FlagCells {
-        name,
-        small: scratch_commits(&env, SMALL_COMMITS, SMALL_FACTS, &mut seq),
-        bulk: scratch_commits(&env, BULK_COMMITS, BULK_FACTS, &mut seq),
+/// The quiet-machine band for an R4 bulk cell: max/min spread within
+/// 2x. Quiet runs on the pinned machine measure ~1.1–1.3x; the one
+/// recorded co-tenant-contaminated run measured 2.9x (and printed a
+/// spurious 2.27x trigger ratio). A run outside the band is not
+/// decision-grade.
+const R4_SPREAD_BAND: f64 = 2.0;
+
+/// Prints a warning per bulk cell whose spread exceeds the band;
+/// returns whether any did.
+fn r4_noise_guard(cells: &[FlagCell]) -> bool {
+    let mut noisy = false;
+    for c in cells {
+        let (min, max) = spread(&c.bulk);
+        let ratio = max.as_secs_f64() / min.as_secs_f64().max(f64::EPSILON);
+        if ratio > R4_SPREAD_BAND {
+            noisy = true;
+            println!(
+                "R4 WARNING: {} bulk spread {ratio:.2}x exceeds the quiet-machine band \
+                 (max/min <= {R4_SPREAD_BAND}x) — co-tenant load suspected; the trigger \
+                 ratios below are NOT decision-grade, re-run on a quiet machine",
+                c.name
+            );
+        }
     }
+    noisy
 }
 
 // ---------------------------------------------------------------------
@@ -382,7 +408,13 @@ fn ramdisk_phase_r() {
             r3_ssd.as_secs_f64() / r3_ram.as_secs_f64().max(f64::EPSILON)
         );
 
-        // R4: the LMDB flag deltas, on this ram disk.
+        // R4: the LMDB flag deltas, on this ram disk. The cells are
+        // INTERLEAVED per repetition (the fact ledger's co-tenancy
+        // remedy: interleaved same-session A/B stays valid under
+        // ambient load) — sequential per-config blocks absorb a
+        // co-tenant load spike asymmetrically, and one contaminated
+        // sequential rerun printed a spurious 2.27x trigger against a
+        // quiet-machine ~1.1x (the fixit record).
         let r4_root = disk.store_dir("r4");
         let configs = [
             ("default", heed::EnvFlags::empty()),
@@ -392,23 +424,64 @@ fn ramdisk_phase_r() {
                 heed::EnvFlags::WRITE_MAP.union(heed::EnvFlags::NO_SYNC),
             ),
         ];
-        let mut bulk_medians = Vec::new();
-        for (name, flags) in configs {
-            let cells = flag_cells(&r4_root, name, flags);
-            println!("R4 hfs+ {name} small: {}", cell(&cells.small));
-            println!("R4 hfs+ {name} bulk:  {}", cell(&cells.bulk));
-            bulk_medians.push((cells.name, median(cells.bulk)));
+        let mut cells: Vec<FlagCell> = configs
+            .into_iter()
+            .map(|(name, flags)| {
+                let dir = r4_root.join(name.replace('|', "-"));
+                std::fs::create_dir_all(&dir).expect("create scratch env dir");
+                let env = scratch_env(&dir, flags);
+                let db = scratch_db(&env);
+                FlagCell {
+                    name,
+                    env,
+                    db,
+                    seq: 0,
+                    small: Vec::new(),
+                    bulk: Vec::new(),
+                }
+            })
+            .collect();
+        for _ in 0..SMALL_COMMITS {
+            for c in &mut cells {
+                let sample = one_scratch_commit(&c.env, &c.db, SMALL_FACTS, &mut c.seq);
+                c.small.push(sample);
+            }
         }
-        let default_bulk = bulk_medians[0].1.as_secs_f64();
-        for (name, med) in &bulk_medians[1..] {
+        for _ in 0..BULK_COMMITS {
+            for c in &mut cells {
+                let sample = one_scratch_commit(&c.env, &c.db, BULK_FACTS, &mut c.seq);
+                c.bulk.push(sample);
+            }
+        }
+        for c in &cells {
+            println!("R4 hfs+ {} small: {}", c.name, cell(&c.small));
+            println!("R4 hfs+ {} bulk:  {}", c.name, cell(&c.bulk));
+        }
+        // The quiet-machine guard: a warned run's ratios must not
+        // reopen (or re-close) the Phase-2 decision.
+        let noisy = r4_noise_guard(&cells);
+        let noise_tag = if noisy {
+            " [NOISY — not decision-grade]"
+        } else {
+            ""
+        };
+        let default_bulk = median(cells[0].bulk.clone()).as_secs_f64();
+        for c in &cells[1..] {
             println!(
-                "R4 trigger ratio ({name} vs default, bulk shape): {:.2}x",
-                default_bulk / med.as_secs_f64().max(f64::EPSILON)
+                "R4 trigger ratio ({} vs default, bulk shape){noise_tag}: {:.2}x",
+                c.name,
+                default_bulk / median(c.bulk.clone()).as_secs_f64().max(f64::EPSILON)
             );
         }
 
         // R5: memory growth against store growth (vm_stat deltas —
-        // signed: the whole machine moves under the sample).
+        // signed: the whole machine moves under the sample). Only the
+        // WIRED delta is decision-grade here: it reproduces at ~0
+        // (ram-disk pages are not wired). The file-backed delta is
+        // ambient-noise-dominated — recorded runs measured +172 MiB,
+        // +708 MiB, and NEGATIVE for the same ~190 MiB store (the
+        // fixit record) — so no budgeting rule may stand on it; the
+        // worst-case RAM bound is the attach size.
         let before = vm_sample();
         let r5_dir = disk.store_dir("r5");
         let r5_db = Db::create(&r5_dir, Meter).expect("store creates");
@@ -423,6 +496,11 @@ fn ramdisk_phase_r() {
             kib(after.wired - before.wired),
             kib(after.file_backed - before.file_backed),
             kib(after.free - before.free)
+        );
+        println!(
+            "R5 note: only the wired delta is decision-grade (~0: ram-disk pages are not \
+             wired); the file-backed delta is ambient-dominated and carries no budgeting \
+             rule — worst-case RAM is the attach size"
         );
     }
     println!("hfs+ ram disk detached");

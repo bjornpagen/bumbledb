@@ -15,8 +15,8 @@ cargo test -p bumbledb --release --test ramdisk_phase_r -- --ignored --nocapture
 | Machine | Mac14,5 — Apple M2 Max, 96 GiB (the pinned fact-ledger machine) |
 | macOS | 15.7.7 (build 24G720) |
 | Toolchain | rustc 1.99.0-nightly (be8e82435 2026-07-11), release profile |
-| Date | 2026-07-15 |
-| Runs | three back-to-back runs; the table records the third, and the two prior runs agree within their spreads (the R4 trigger ratio measured 1.16x, 1.12x, 1.14x) |
+| Date | 2026-07-15 (re-stamped the same day with the interleaved R4 harness — the fixit record) |
+| Runs | three back-to-back runs of the interleaved harness; the table records the third, and the two prior runs agree within their spreads (the R4 trigger ratio measured 1.10x, 1.14x, 1.12x). Recorded quiet-machine band across ALL banked runs, widest observed: **1.09x–1.26x** (the original sequential harness stamped 1.12–1.16x; independent quiet re-runs measured 1.09x, 1.12x, 1.15x, and once 1.26x). One co-tenant-contaminated sequential run printed 2.27x and is *excluded* — that incident is why the harness now interleaves its cells and carries the quiet-machine guard (see R4) |
 | Ram disks | `hdiutil attach -nomount ram://4194304` (2 GiB), formatted `diskutil erasevolume HFS+` (non-journaled by name) and `APFS`; every disk detached by the harness's drop guard — `hdiutil info` shows none after each run |
 
 Harness placement (a recorded decision): an engine integration test, not
@@ -50,15 +50,16 @@ internal SSD (APFS, the system temp dir).
 
 | Cell | small (16 facts) | bulk (4096 facts) |
 |---|---|---|
-| internal SSD | 4.979 ms (3.899–7.132) | 17.198 ms (16.101–25.283) |
-| HFS+ ramdisk | 0.207 ms (0.167–0.277) | 10.942 ms (10.019–12.468) |
-| APFS ramdisk | 0.676 ms (0.278–0.996) | 9.995 ms (9.837–10.630) |
+| internal SSD | 4.916 ms (3.868–9.169) | 17.476 ms (16.057–25.984) |
+| HFS+ ramdisk | 0.236 ms (0.209–0.294) | 10.426 ms (9.601–13.355) |
+| APFS ramdisk | 0.656 ms (0.262–0.797) | 9.993 ms (9.712–10.814) |
 
-The SSD small-commit median matches the ~4 ms fullfsync baseline
-expectation. The ramdisk removes the fullfsync floor: ~24x on small
-commits (HFS+), ~1.6–1.7x on bulk chunks (where insert work, not sync,
-dominates). APFS pays ~0.4 ms more than HFS+ per small commit
-(journal/container overhead) and slightly less on bulk.
+The SSD small-commit median matches the ~4–5 ms fullfsync baseline
+expectation. The ramdisk removes the fullfsync floor: ~21x on small
+commits (HFS+; ~21–24x across banked runs), ~1.7x on bulk chunks
+(where insert work, not sync, dominates). APFS pays ~0.4 ms more than
+HFS+ per small commit (journal/container overhead) and slightly less
+on bulk.
 
 ## R3 — the DVFS dividend
 
@@ -66,11 +67,11 @@ dominates). APFS pays ~0.4 ms more than HFS+ per small commit
 
 | Cell | 128 commits | ratio |
 |---|---|---|
-| internal SSD | 617.986 ms (~4.8 ms/commit) | — |
-| HFS+ ramdisk | 6.550 ms (~0.05 ms/commit) | **94.3x** |
+| internal SSD | 634.074 ms (~5.0 ms/commit) | — |
+| HFS+ ramdisk | 6.341 ms (~0.05 ms/commit) | **100.0x** |
 
-The per-commit arithmetic from R2 predicts ~24x; the measured aggregate
-ratio is ~90–95x (all three runs) — the fsync DVFS floor is real: a
+The per-commit arithmetic from R2 predicts ~21x; the measured aggregate
+ratio is ~94–100x (all banked runs) — the fsync DVFS floor is real: a
 back-to-back fullfsync loop holds the cores at low frequency, so the
 ramdisk buys more than the subtraction of the sync itself.
 
@@ -78,23 +79,34 @@ ramdisk buys more than the subtraction of the sync itself.
 
 Scratch heed environments on the HFS+ ramdisk (never the engine's env —
 the engine's flags are law), 24-byte keys / 16-byte values, same two
-commit shapes. Medians (min–max), n=64 small / n=8 bulk:
+commit shapes. The three flag cells are **interleaved per repetition**
+(the fact ledger's co-tenancy remedy: interleaved same-session A/B
+stays valid under ambient load) — the original sequential per-config
+blocks absorbed a co-tenant load spike asymmetrically, and one
+contaminated rerun printed a spurious 2.27x trigger against a
+quiet-machine ~1.1x. The harness also carries a **quiet-machine
+guard**: it prints a warning whenever any bulk cell's max/min spread
+exceeds 2x (quiet runs measure ~1.1–1.3x; the contaminated run
+measured 2.9x), and a warned run's trigger ratios are branded not
+decision-grade. Medians (min–max), n=64 small / n=8 bulk:
 
 | Flags | small (16 puts) | bulk (4096 puts) |
 |---|---|---|
-| default | 0.051 ms (0.039–0.074) | 0.833 ms (0.720–0.893) |
-| `MDB_NOSYNC` | 0.006 ms (0.005–0.015) | 0.732 ms (0.635–0.784) |
-| `MDB_WRITEMAP\|MDB_NOSYNC` | 0.003 ms (0.002–0.015) | 0.731 ms (0.599–0.744) |
+| default | 0.049 ms (0.037–0.070) | 0.811 ms (0.695–0.865) |
+| `MDB_NOSYNC` | 0.007 ms (0.006–0.015) | 0.743 ms (0.633–0.788) |
+| `MDB_WRITEMAP\|MDB_NOSYNC` | 0.003 ms (0.003–0.014) | 0.726 ms (0.600–0.745) |
 
 **The trigger does not fire.** The Phase-2 trigger is
 `WRITEMAP|NOSYNC >= 2x` over plain-ramdisk-default on the bulk-load
-shape; measured **1.14x** (1.16x and 1.12x on the two prior runs). The
-flags win big only on the smallest commits (~17x on 16-put commits,
-where per-commit sync/write overhead is the whole cost), but small
-commits on the plain ramdisk are already at 0.05 ms — a per-commit
-saving of ~48 µs that no adversarial lane is bounded by. On the shape
-that moves wall-clock time (bulk load), the plain ramdisk already
-captures the win.
+shape; measured **1.12x** (1.10x and 1.14x on the two prior interleaved
+runs; the recorded quiet-machine band across all banked runs is
+**1.09x–1.26x, widest observed** — nowhere near the bar). The flags win
+big only on the smallest commits (~16x on 16-put commits, where
+per-commit sync/write overhead is the whole cost), but small commits on
+the plain ramdisk are already at 0.05 ms — a per-commit saving of
+~46 µs that no adversarial lane is bounded by. On the shape that moves
+wall-clock time (bulk load), the plain ramdisk already captures the
+win.
 
 ## R5 — memory reality
 
@@ -104,12 +116,19 @@ signed and rough — the whole machine moves under the sample.
 
 | Store on disk (`du`) | wired delta | file-backed delta | free delta |
 |---|---|---|---|
-| 186,564 KiB | -3,136 KiB | +172,432 KiB | -409,584 KiB |
+| 186,564 KiB | +0 KiB | +186,256 KiB | -367,936 KiB |
 
-Ram-disk pages surface as **file-backed UBC pages, roughly 1:1 with
-store bytes**, not as wired kernel memory. Practical rule: budget
-ramdisk RAM at attach size worst-case, at store size typical; the pages
-are reclaimable pressure on the UBC, not a wired floor.
+What reproduces, and what does not (honesty over coverage — the fixit
+record): the **wired delta is ~0 in every banked run** (+0, -576, +0
+here; -3,136, -496, +0 earlier) — ram-disk pages are not wired kernel
+memory. The **file-backed delta does not reproduce**: recorded runs
+measured +172,432 KiB, +708,304 KiB, and **-661,968 KiB** for the same
+186,564 KiB store — ambient machine activity dominates the single
+vm_stat sample, so no budgeting rule may stand on it (the earlier
+"roughly 1:1 with store bytes" rule is withdrawn). What stands:
+ram-disk pages surface as reclaimable UBC pressure, not a wired floor,
+and the worst-case RAM cost is bounded by the **attach size** (the
+`ram://` device is the ceiling). Budget at attach size.
 
 ## Verdict carried into Phase 2
 
@@ -121,19 +140,25 @@ are reclaimable pressure on the UBC, not a wired floor.
 **Decision: Phase 2 refused — no `Db::ephemeral`, no engine code
 lands.** **Alternative:** an ephemeral constructor setting
 `MDB_WRITEMAP|MDB_NOSYNC` on RAM-backed paths (durable `create`/`open`
-untouched). **Why it lost:** the trigger measured 1.14x
-(1.12–1.16x across three runs) on the bulk-load shape against the
->=2x bar — the plain ramdisk already captures the win (24x
-small-commit latency, ~94x on back-to-back commit loops, 1.6x bulk vs
-the SSD), and an engine surface that buys a further 1.1x while
-adding a second flag regime, a RAM-backedness contract inside the
-dependency law, and a WRITEMAP crash-atomicity question is complexity
-the numbers refuse to pay for. The no-sync-mode law stands whole:
-durability is LMDB defaults, and `NOSYNC`/`WRITEMAP`/`MAPASYNC` remain
-inexpressible through the engine's types
-(`docs/architecture/50-storage.md`). **Reverses if:** a workload
-sights ephemeral stores where the flag delta matters — a lane bounded
-by sub-100 µs commit cadence on RAM (the small-commit shape shows
-~17x there: 51 µs → 3 µs, R4), or a bulk-shaped run whose re-measured
-trigger ratio reaches 2x. The harness above prints the trigger
-arithmetic; re-run it before reopening the decision.
+untouched). **Why it lost:** the trigger measured 1.12x on the
+bulk-load shape against the >=2x bar (1.09x–1.26x, the widest band
+observed across every banked quiet-machine run) — the plain ramdisk
+already captures the win (~21x small-commit latency, ~94–100x on
+back-to-back commit loops, ~1.7x bulk vs the SSD), and an engine
+surface that buys a further ~1.1x while adding a second flag regime, a
+RAM-backedness contract inside the dependency law, and a WRITEMAP
+crash-atomicity question is complexity the numbers refuse to pay for.
+The no-sync-mode law stands whole: durability is LMDB defaults, and
+`NOSYNC`/`WRITEMAP`/`MAPASYNC` remain inexpressible through the
+engine's types (`docs/architecture/50-storage.md`). **Reverses if:** a
+workload sights ephemeral stores where the flag delta matters — a lane
+bounded by sub-100 µs commit cadence on RAM (the small-commit shape
+shows ~16x there: 49 µs → 3 µs, R4), or a bulk-shaped run whose
+re-measured trigger ratio reaches 2x. **The re-run protocol (the
+quiet-machine rule):** run the harness above on an otherwise-quiet
+machine — a co-tenant load once inflated a sequential run to a
+spurious 2.27x. The harness interleaves the flag cells per repetition
+and prints a warning when any bulk cell's max/min spread leaves the
+2x quiet-machine band; a warned run's ratios are not decision-grade
+and neither reopen nor re-close this decision. Reopen only on an
+unwarned run whose trigger ratio reaches 2x.
