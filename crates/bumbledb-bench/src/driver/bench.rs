@@ -6,7 +6,8 @@ use crate::cli::{BenchArgs, CorpusArgs};
 use crate::corpus_gen::{self, GenConfig};
 use crate::harness::Protocol;
 use crate::schema::Ledger;
-use crate::{clockproxy, families, report, sqlite_run, verify};
+use crate::storemode::StoreMode;
+use crate::{clockproxy, corpus, families, report, sqlite_run, verify};
 
 use super::corpus::gen_config;
 use super::write_families::write_families;
@@ -77,6 +78,7 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
         .iter()
         .map(|f| f.name)
         .chain(crate::calendar::families::all().iter().map(|f| f.name))
+        .chain(crate::closure::all().iter().map(|f| f.name))
         .chain(families::write_families().iter().map(|f| f.name))
         .collect();
     if let Some(filter) = &args.families {
@@ -92,6 +94,29 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
     Ok((paths, verified))
 }
 
+/// One ephemeral read twin: the corpus loaded into a scratch sibling
+/// under the ephemeral constructor, compacted into place (the loader
+/// law's geometry — the stamped durable corpus ships compacted, so the
+/// twin must too), then reopened ephemeral for the timed lanes.
+fn ephemeral_twin<S: bumbledb::schema::Theory + Copy>(
+    root: &Path,
+    name: &str,
+    schema: S,
+    load: impl FnOnce(&Db<S>) -> Result<(), String>,
+) -> Result<Db<S>, String> {
+    let target = root.join(name);
+    let _ = std::fs::remove_dir_all(&target);
+    let load_dir = root.join(format!("{name}-load"));
+    let _ = std::fs::remove_dir_all(&load_dir);
+    let db = StoreMode::Ephemeral.create(&load_dir, schema)?;
+    load(&db)?;
+    db.compact(&target)
+        .map_err(|e| format!("compact {name}: {e:?}"))?;
+    drop(db);
+    std::fs::remove_dir_all(&load_dir).map_err(|e| format!("remove {name}-load: {e}"))?;
+    Db::ephemeral(&target, schema).map_err(|e| format!("open ephemeral {name}: {e:?}"))
+}
+
 /// `bench`. Returns the exit code: 0 when every selected gate family
 /// won (and the budget held where it gates), 1 otherwise.
 ///
@@ -103,6 +128,10 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
 /// # Panics
 ///
 /// Only on tool-invariant violations.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the run is one linear protocol: reads, closure lane, writes, report
 pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let cfg = gen_config(&args.corpus);
     let (paths, verified) = bench_preflight(args, cfg)?;
@@ -117,12 +146,44 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     });
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
 
-    let db = Db::open(&paths.db, Ledger).map_err(|e| format!("open db: {e:?}"))?;
+    let mode = if args.ephemeral {
+        StoreMode::Ephemeral
+    } else {
+        StoreMode::Durable
+    };
+    // The ephemeral read twins: `Db::ephemeral` on the stamped durable
+    // corpus is the typed `StoreKindMismatch` refusal (the kind is
+    // on-disk identity), so an ephemeral run loads the SAME generated
+    // corpus (the stamp's digest identity) fresh into ephemeral stores
+    // and compacts them into place — the compact keeps the timed
+    // store's geometry identical to the stamped corpus's (live-sized,
+    // `docs/architecture/50-storage.md`). The kind marker rides the
+    // compacted `_meta`, so the copy reopens ephemeral.
+    let (db, cal_db) = if args.ephemeral {
+        let root = out_dir.join("ephemeral-corpus");
+        eprintln!("bench: loading the ephemeral read twins (same corpus, ephemeral kind)");
+        (
+            ephemeral_twin(&root, "db", Ledger, |db| {
+                corpus::load_bumbledb(db, cfg)
+                    .map(drop)
+                    .map_err(|e| format!("load bumbledb: {e:?}"))
+            })?,
+            ephemeral_twin(&root, "cal-db", crate::calendar::Scheduling, |db| {
+                crate::calendar::corpus::load_bumbledb(db, cfg)
+                    .map(drop)
+                    .map_err(|e| format!("load calendar: {e:?}"))
+            })?,
+        )
+    } else {
+        (
+            Db::open(&paths.db, Ledger).map_err(|e| format!("open db: {e:?}"))?,
+            Db::open(&paths.cal_db, crate::calendar::Scheduling)
+                .map_err(|e| format!("open calendar db: {e:?}"))?,
+        )
+    };
     let conn =
         sqlite_run::open_for_bench(&paths.oracle).map_err(|e| format!("open oracle: {e}"))?;
     sqlite_run::FairnessCheck::run(&conn)?;
-    let cal_db = Db::open(&paths.cal_db, crate::calendar::Scheduling)
-        .map_err(|e| format!("open calendar db: {e:?}"))?;
     let cal_conn = sqlite_run::open_for_bench(&paths.cal_oracle)
         .map_err(|e| format!("open calendar oracle: {e}"))?;
     sqlite_run::FairnessCheck::run_calendar(&cal_conn)?;
@@ -167,12 +228,28 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let flames = std::mem::take(&mut run.flames);
     drop(run);
 
+    // The closure lane (the roster extension): its own scratch world,
+    // verified inline (the recursion surface is translator-
+    // inexpressible, so it sits outside the stamped registry), timed
+    // under the same protocol — report-only rows beside the reads. It
+    // runs after the stamped read families (its corpus load commits
+    // fsync) and before the write families (it times reads).
+    reads.extend(crate::closure::bench_families(
+        cfg,
+        &out_dir.join("scratch"),
+        &selected,
+        proto,
+        args.alloc,
+        args.proxy_per_rep,
+        mode,
+    )?);
+
     // Write families run AFTER every read family (measured): an
     // fsync drops the core to its DVFS floor with
     // demand-driven recovery, so any read family measured in that
     // shadow reads slow-clock time. `bulk` (seconds of fsync) is last
     // of all — asserted inside write_families.
-    let writes = write_families(cfg, &out_dir.join("scratch"), &selected)?;
+    let writes = write_families(cfg, &out_dir.join("scratch"), &selected, mode)?;
 
     // Cache residency needs the engine's trace feature (the obs build).
     #[cfg(feature = "obs")]
@@ -192,6 +269,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
             scale: cfg.scale.label(),
             seed: cfg.seed,
             samples: proto.samples,
+            store: mode.label(),
         },
         corpus_digest: corpus_gen::digest_hex(&corpus_gen::corpus_digest(cfg)),
         verify_stamp: if verified {

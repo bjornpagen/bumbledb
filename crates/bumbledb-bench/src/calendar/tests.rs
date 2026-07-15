@@ -19,12 +19,14 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 }
 
 /// The id registry matches declaration order, and the statement roster
-/// is complete: nine ordinary relations plus the two closed
+/// is complete: ten ordinary relations plus the two closed
 /// vocabularies (`Rsvp`/`Arm`), six fresh auto-keys, the two closed
-/// auto-keys, the twelve declared containments (working-hours coverage
-/// and the two vocabulary containments among them), the declared keys
-/// (`Attendance(event, person)`, `Claim(source)`, and the three
-/// pointwise keys), and the `==` pair lowered to its two directions.
+/// auto-keys, the thirteen declared containments (working-hours
+/// coverage, the two vocabulary containments, and the fixed-width
+/// `Slot(room)` among them), the declared keys
+/// (`Attendance(event, person)`, `Claim(source)`, and the four
+/// pointwise keys — `Slot(room, span)` is the fixed-width one), and
+/// the `==` pair lowered to its two directions.
 #[test]
 fn the_schema_is_statement_complete() {
     let s = schema();
@@ -38,6 +40,7 @@ fn the_schema_is_statement_complete() {
         "Room",
         "Booking",
         "WorkHours",
+        "Slot",
         "Rsvp",
         "Arm",
     ]
@@ -47,7 +50,7 @@ fn the_schema_is_statement_complete() {
         let rel = bumbledb::RelationId(u32::try_from(idx).expect("small"));
         assert_eq!(s.relation(rel).name(), *name);
     }
-    assert_eq!(s.relations().len(), 11);
+    assert_eq!(s.relations().len(), 12);
     for rel in 0..ids::RELATIONS {
         assert!(
             !s.relation(bumbledb::RelationId(rel)).is_closed(),
@@ -89,13 +92,18 @@ fn the_schema_is_statement_complete() {
     );
     assert_eq!(
         pointwise,
-        vec![ids::CLAIM, ids::BOOKING, ids::WORK_HOURS],
-        "the pointwise keys: per-person claims, room exclusion, per-person hours"
+        vec![ids::CLAIM, ids::BOOKING, ids::WORK_HOURS, ids::SLOT],
+        "the pointwise keys: per-person claims, room exclusion, per-person hours, \
+         and the fixed-width slot grid"
     );
-    // The `==` lowers to two containments; with the twelve declared
-    // ones (incl. the working-hours coverage and the two vocabulary
-    // containments) that is fourteen total.
-    assert_eq!(containments.len(), 14, "twelve declared + the == pair");
+    // The `==` lowers to two containments; with the thirteen declared
+    // ones (incl. the working-hours coverage, the two vocabulary
+    // containments, and Slot(room)) that is fifteen total.
+    assert_eq!(containments.len(), 15, "thirteen declared + the == pair");
+    assert!(
+        containments.contains(&(ids::SLOT, ids::ROOM)),
+        "the fixed-width slot grid's room containment"
+    );
     assert!(
         containments.contains(&(ids::ATTENDANCE, ids::RSVP))
             && containments.contains(&(ids::CLAIM, ids::CLAIM_ARM)),

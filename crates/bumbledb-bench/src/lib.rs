@@ -9,6 +9,7 @@
 pub mod calendar;
 pub mod cli;
 pub mod clockproxy;
+pub mod closure;
 pub mod compare;
 pub mod conformance;
 pub mod corpus;
@@ -27,10 +28,12 @@ pub mod scenarios;
 pub mod schema;
 pub mod sqlite_run;
 pub mod sqlmap;
+pub mod storemode;
 #[cfg(test)]
 mod stress;
 pub mod trace_out;
 pub mod translate;
 pub mod tripwires;
 pub mod verify;
+pub mod windowed;
 pub mod writebench;

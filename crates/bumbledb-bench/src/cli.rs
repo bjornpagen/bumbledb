@@ -49,6 +49,9 @@ pub struct BenchArgs {
     pub samples: Option<u32>,
     pub trace: bool,
     pub alloc: bool,
+    /// Time against `Db::ephemeral` stores (the in-memory
+    /// characterization lane) instead of the durable constructors.
+    pub ephemeral: bool,
     /// Per-rep proxy stamps + normalized p50 — the
     /// confirm-run mode for suspicious findings.
     pub proxy_per_rep: bool,

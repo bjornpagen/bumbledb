@@ -136,12 +136,16 @@ pub(crate) fn non_posting_relations() -> impl Iterator<Item = RelationId> {
 /// # Panics
 ///
 /// On scratch I/O failures.
-pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, String> {
+pub fn bulk_bumbledb(
+    cfg: GenConfig,
+    scratch: &Path,
+    mode: crate::storemode::StoreMode,
+) -> Result<Measurement, String> {
     let proto = write_protocol("bulk");
     let mut pending = VecDeque::new();
     for sample in 0..proto.warmups + proto.samples {
         let dir = scratch.join(format!("bulk-bumbledb-{sample}"));
-        let db = Db::create(&dir, Ledger).map_err(|e| format!("create: {e:?}"))?;
+        let db = mode.create(&dir, Ledger)?;
         for rel in non_posting_relations() {
             db.bulk_load_dyn(rel, corpus_gen::relation_rows(cfg, rel))
                 .map_err(|e| format!("seed: {e:?}"))?;
@@ -282,7 +286,8 @@ mod tests {
     #[test]
     fn bulk_reports_positive_throughput() {
         let dir = scratch("bulk");
-        let ours = bulk_bumbledb(CFG, &dir).expect("bulk bumbledb");
+        let ours =
+            bulk_bumbledb(CFG, &dir, crate::storemode::StoreMode::Durable).expect("bulk bumbledb");
         let sizes = Sizes::of(CFG.scale);
         assert_eq!(
             ours.work,

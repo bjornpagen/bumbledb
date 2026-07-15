@@ -47,6 +47,11 @@ pub const WORK_SEGMENTS: usize = 4;
 /// (tentative/declined alternating) — the DU arms all populated.
 pub const ATTENDANCE_PER_EVENT: u64 = 3;
 
+/// The fixed slot width, in corpus time units — the `Slot.span` TYPE's
+/// width (`interval<i64, 7200>`): every slot is exactly two hours, and
+/// the encoding stores only the start word.
+pub const SLOT_WIDTH: i64 = 2 * HOUR;
+
 /// The calendar corpus shape: person count plus the density envelope —
 /// everything else derives. [`CalSizes::of`] carries the scale points;
 /// the naive lane shrinks every axis through [`CalSizes::unit`].
@@ -59,6 +64,9 @@ pub struct CalSizes {
     pub min_segments: u64,
     pub accounts: u64,
     pub rooms: u64,
+    /// Fixed-width slots per room (the fixed-width interval lane's
+    /// grid density — [`slot_span`] owns the layout).
+    pub slots_per_room: u64,
     /// Derived totals (one O(persons) closed-form walk, no RNG).
     pub events: u64,
     pub claims: u64,
@@ -91,6 +99,9 @@ impl CalSizes {
     fn derive(persons: u64, max_segments: u64, min_segments: u64) -> Self {
         let accounts = (persons / 8).max(1);
         let rooms = (persons / 16).max(1);
+        // The fixed-width slot grid: dense enough for witnesses at unit
+        // scale (16), a real scan mass at the standard points (256).
+        let slots_per_room = if persons <= 32 { 16 } else { 256 };
         let mut events = 0u64;
         let mut claims = 0u64;
         let mut bookings = 0u64;
@@ -100,6 +111,7 @@ impl CalSizes {
             min_segments,
             accounts,
             rooms,
+            slots_per_room,
             events: 0,
             claims: 0,
             attendances: 0,
@@ -155,7 +167,8 @@ impl CalSizes {
             ids::ROOM => self.rooms,
             ids::BOOKING => self.bookings,
             ids::WORK_HOURS => self.persons * WORK_SEGMENTS as u64,
-            _ => unreachable!("nine calendar relations"),
+            ids::SLOT => self.rooms * self.slots_per_room,
+            _ => unreachable!("ten calendar relations"),
         }
     }
 
@@ -420,6 +433,40 @@ fn claim_row(sizes: &CalSizes, row: &SegmentRow) -> Vec<Value> {
     ]
 }
 
+/// Slot `k` of any room's fixed-width grid: triples of two-hour slots —
+/// gapped, gapped, **abutting** (the neighbor-probe boundary as data,
+/// the claim chain's every-third-abuts discipline) — one triple per
+/// `8 × HOUR`, disjoint per room by construction (the pointwise
+/// `Slot(room, span) -> Slot` key holds without an RNG). Fixed-width
+/// values are never rays and always exactly [`SLOT_WIDTH`] wide — the
+/// type admits nothing else.
+///
+/// # Panics
+///
+/// Never in practice: grid arithmetic stays far below [`CAL_HORIZON`].
+#[must_use]
+pub fn slot_span(k: u64) -> (i64, i64) {
+    let triple = i64::try_from(k / 3).expect("fits");
+    let offset = match k % 3 {
+        0 => 0,
+        1 => 3 * HOUR,
+        // Abuts slot 1's end (3h + 2h = 5h into the triple).
+        _ => 5 * HOUR,
+    };
+    let start = CAL_BASE + triple * 8 * HOUR + offset;
+    (start, start + SLOT_WIDTH)
+}
+
+/// One slot row: room-major grid order (`i = room × slots_per_room + k`).
+fn slot_row(sizes: &CalSizes, i: u64) -> Vec<Value> {
+    let room = i / sizes.slots_per_room;
+    let (start, end) = slot_span(i % sizes.slots_per_room);
+    vec![
+        Value::U64(room),
+        Value::IntervalI64(Interval::<i64>::new(start, end).expect("nonempty fixed slot")),
+    ]
+}
+
 /// One person's working-hour rows.
 fn work_rows(seed: u64, person: u64) -> Vec<Vec<Value>> {
     work_chain(seed, person)
@@ -493,6 +540,9 @@ pub fn relation_rows_sized(
                 }),
         ),
         ids::WORK_HOURS => Box::new((0..sizes.persons).flat_map(move |p| work_rows(seed, p))),
-        _ => unreachable!("nine calendar relations"),
+        ids::SLOT => {
+            Box::new((0..sizes.rooms * sizes.slots_per_room).map(move |i| slot_row(&sizes, i)))
+        }
+        _ => unreachable!("ten calendar relations"),
     }
 }

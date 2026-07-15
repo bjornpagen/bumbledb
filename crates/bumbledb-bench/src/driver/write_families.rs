@@ -4,6 +4,7 @@ use bumbledb::Db;
 
 use crate::corpus_gen::GenConfig;
 use crate::schema::Ledger;
+use crate::storemode::StoreMode;
 use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebench};
 
 #[expect(
@@ -25,6 +26,7 @@ pub(crate) fn write_families(
     cfg: GenConfig,
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
+    mode: StoreMode,
 ) -> Result<Vec<report::WriteFamilyReport>, String> {
     // The scratch-corpus write families, table-driven: one entry per
     // family, an engine runner beside its `SQLite` mirror.
@@ -60,7 +62,7 @@ pub(crate) fn write_families(
     let mut out = Vec::new();
     if PAIRED.iter().any(|(name, ..)| selected(name)) || selected("commit_witnessed") {
         eprintln!("bench: loading the scratch write corpus");
-        let db = Db::create(&scratch.join("db"), Ledger).map_err(|e| format!("{e:?}"))?;
+        let db = mode.create(&scratch.join("db"), Ledger)?;
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("{e:?}"))?;
         let (conn, _) =
             corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg).map_err(|e| format!("{e}"))?;
@@ -95,6 +97,16 @@ pub(crate) fn write_families(
             });
         }
     }
+    // The window-judgment lane (the roster extension): its own twin
+    // scratch worlds, engine-only rows — after the ledger commit rows
+    // (same fsync-bound class), before bulk (which stays last).
+    out.extend(crate::windowed::write_families(
+        cfg,
+        &scratch.join("windowed"),
+        selected,
+        mode,
+    )?);
+
     // bulk stays LAST: seconds of fsync — nothing
     // may measure after it in this process.
     if selected("bulk") {
@@ -106,7 +118,7 @@ pub(crate) fn write_families(
             .protocol;
         let ((ours, theirs), ghz) = clockproxy::stamped(|| {
             Ok((
-                writebench::bulk_bumbledb(cfg, scratch)?,
+                writebench::bulk_bumbledb(cfg, scratch, mode)?,
                 sqlite_run::bulk(cfg, scratch)?,
             ))
         })?;

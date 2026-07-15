@@ -38,6 +38,36 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 32,
             },
         },
+        // The window-judgment rows (the roster extension,
+        // `crate::windowed`): commit_single's protocol against the twin
+        // worlds — the window-free control, the bounded fan-cap, and
+        // the {0} exclusion. Engine-only by decision (the
+        // commit_witnessed precedent: a trigger emulation would time
+        // the emulation, not the engine).
+        WriteFamily {
+            name: "commit_window_baseline",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        WriteFamily {
+            name: "commit_window_admission",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        WriteFamily {
+            name: "commit_window_exclusion",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
         WriteFamily {
             name: "bulk",
             kind: Kind::Report,
