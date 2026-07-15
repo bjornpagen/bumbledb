@@ -35,5 +35,13 @@ blake3 = "1"
 bumbledb-macros = { path = "../bumbledb-macros" }
 heed = { version = "0.22", default-features = false } # no serde codecs: the engine reads raw bytes; the dependency law's serde grep stays empty
 
+# The phase-R measurement harness (tests/ramdisk_phase_r.rs) opens scratch
+# heed environments with the flags the engine forbids, to price them. The
+# crate is already in the dependency set above — this adds no node to the
+# graph; the bench crate cannot host the experiment (its quarantine is
+# rusqlite and nothing else).
+[dev-dependencies]
+heed = { version = "0.22", default-features = false }
+
 [lints]
 workspace = true
