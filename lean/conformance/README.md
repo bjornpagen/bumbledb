@@ -207,7 +207,20 @@ altitude (the Lean violation sets are per-statement), so a statement
 cited in both directions appears once. Closed-relation writes are
 outside this lane (a typed refusal before any judgment, not a
 verdict); judgment fixtures carry no strings and no masks — the two
-value tags that would need a per-case context.
+value tags that would need a per-case context. Closed-SOURCE
+containments (domain quantification) are also outside the lane, and
+deliberately: the engine's verdict is delta-restricted
+(`Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound`,
+sound only under its holds-before premise) while `Txn.judgeB` reads
+the whole final state — a store whose targets have not landed accepts
+every untouching commit yet judges reject in full state
+(`Bumbledb/Countermodels.lean: incremental_verdict_needs_holds`; the
+offline sweeper owns the class per
+`docs/architecture/30-dependencies.md` § "Domain quantification,
+worked"), so such a fixture would be a guaranteed mismatch on a
+correct engine verdict. No fixture declares a closed source; the Rust
+half is pinned by
+`domain_quantification_judgments_are_outside_the_lane`.
 
 The starter roster covers: both classical forms (scalar key;
 containment — scalar, coverage, and the closed member set), the

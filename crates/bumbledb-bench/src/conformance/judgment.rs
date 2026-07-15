@@ -26,6 +26,24 @@
 //! written only after the engine and the naive model agreed on the
 //! verdict — a disagreement panics as a trophy, exactly the query
 //! lane's rule.
+//!
+//! **Closed-SOURCE containments (domain quantification) are outside
+//! this lane** — the recorded fence: the engine's verdict is
+//! delta-restricted (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+//! delta_restricted_commit_sound` — sound only under the holds-before
+//! premise) while `Txn.judgeB` judges the whole final state, and a
+//! closed source is exactly where the premise fails — a store whose
+//! targets have not landed violates the statement in the full-state
+//! reading while every commit that never touches the target records
+//! accept (`lean/Bumbledb/Countermodels.lean:
+//! incremental_verdict_needs_holds`; the sweeper owns the class,
+//! `docs/architecture/30-dependencies.md` § "Domain quantification,
+//! worked"). A fixture in this class is a GUARANTEED three-way
+//! mismatch on a doctrinally-correct engine verdict (demonstrated
+//! 2026-07-15: the docs' worked example rendered "accept", judgeB
+//! rejected), so no roster fixture declares a closed source —
+//! `domain_quantification_judgments_are_outside_the_lane` pins the
+//! Rust half and the reason.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -1285,5 +1303,74 @@ mod tests {
             }
             Verdict::Committed => panic!("the fixture must reject"),
         }
+    }
+
+    /// The domain-quantification fence (module doc, "Closed-SOURCE
+    /// containments are outside this lane"): a closed-source
+    /// containment's holds-before premise fails on a store whose
+    /// targets have not landed, so the engine's delta-restricted
+    /// verdict (accept — the commit touches nothing the statement
+    /// reads) and Lean's full-state `Txn.judgeB` (reject — the
+    /// axioms have no handlers) DISAGREE by design: the offline
+    /// sweeper owns the class (`docs/architecture/30-dependencies.md`
+    /// § "Domain quantification, worked"). Demonstrated 2026-07-15:
+    /// rendering this exact fixture and running `lake exe conformance`
+    /// over it reports MISMATCH (recorded accept, judged reject) — a
+    /// guaranteed false trophy, which is why NO roster fixture may
+    /// declare a closed source. This pin holds the Rust half: both
+    /// oracles accept the unrelated commit under the
+    /// violated-in-full-state theory, exactly the delta-restricted
+    /// verdict the spec licenses.
+    #[test]
+    fn domain_quantification_judgments_are_outside_the_lane() {
+        const SEVERITY: RelationId = RelationId(0);
+        const HANDLER: RelationId = RelationId(1);
+        const NOTE: RelationId = RelationId(2);
+        let schema = SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: Some(Box::new([
+                        Row {
+                            handle: "Low".into(),
+                            values: Box::new([]),
+                        },
+                        Row {
+                            handle: "High".into(),
+                            values: Box::new([]),
+                        },
+                    ])),
+                    name: "Severity".into(),
+                    fields: vec![],
+                },
+                u64_relation("Handler", &["severity", "who"]),
+                u64_relation("Note", &["id"]),
+            ],
+            statements: vec![
+                StatementDescriptor::Functionality {
+                    relation: HANDLER,
+                    projection: Box::new([FieldId(0)]),
+                },
+                StatementDescriptor::Containment {
+                    source: side(SEVERITY, &[0]),
+                    target: side(HANDLER, &[0]),
+                },
+            ],
+        };
+        let dir = ScratchDir::new("judgment-domain-quantification-pin");
+        let db = Db::create(&dir.0, schema.clone()).expect("create the pin store");
+        let mut naive = NaiveDb::new(&schema);
+        let delta = Delta {
+            deletes: vec![],
+            inserts: vec![(NOTE, vec![Value::U64(1)])],
+        };
+        assert!(
+            matches!(differential::engine_write(&db, &delta), Verdict::Committed),
+            "the engine's delta-restricted judgment accepts a commit that never \
+             touches the statement — the sweeper's class, not the commit's"
+        );
+        assert!(
+            naive.apply(&delta).is_ok(),
+            "the naive model matches the delta-restricted verdict"
+        );
     }
 }
