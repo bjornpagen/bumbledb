@@ -2,9 +2,10 @@
 # The RAM-backed scratch volume for the adversarial lanes
 # (docs/architecture/60-validation.md § the ramdisk sanction). Verify,
 # differential, and fuzz lanes may run their scratch stores on RAM —
-# they check answers, not wall clocks. Timed write families refuse
-# RAM-backed volumes (the device-honesty rule; the bench crate's
-# detector enforces it).
+# they check answers, not wall clocks. Every timed lane refuses
+# RAM-backed volumes: `bench` checks its corpus `--dir` (the read
+# families time against it) and its write scratch alike (the
+# device-honesty rule; the bench crate's detector enforces it).
 #
 # Subcommands:
 #   create  [--size-gib N] [--apfs] [--name NAME]  attach + format + mount; prints the mount path
@@ -19,7 +20,10 @@
 #   export BUMBLEDB_SCRATCH_DIR="$(scripts/ramdisk.sh path || scripts/ramdisk.sh create)"
 #
 # The verify corpus lanes need no env var — `--dir` already points them
-# anywhere, the ram disk included.
+# anywhere, the ram disk included. `bench` is the opposite: it refuses
+# a RAM-backed `--dir` with the device-honesty refusal (a timed number
+# measured on RAM is a lie). Scratch and verify on the ram disk: yes;
+# bench: no.
 #
 # The sentinel: create writes `.bumbledb-ramdisk` (first line the magic
 # below, second line the backing identity) at the volume root. It is the
@@ -114,8 +118,12 @@ cmd_create_mac() {
   # 512-byte sectors: GiB * 2^21.
   dev="$(hdiutil attach -nomount "ram://$((SIZE_GIB * 2097152))" | head -n 1 | awk '{print $1}')"
   # The teardown law: a create that fails past the attach detaches its
-  # own device before exiting.
-  trap 'hdiutil detach "$dev" >/dev/null 2>&1 || hdiutil detach -force "$dev" >/dev/null 2>&1 || true' EXIT
+  # own device before exiting. The device name is expanded into the
+  # trap string NOW (double quotes): `dev` is function-local, and an
+  # EXIT trap fires after the function scope is torn down — under
+  # `set -u` a deferred `$dev` dies as 'unbound variable' and the
+  # wired device leaks (reproduced; the fixit record).
+  trap "hdiutil detach '$dev' >/dev/null 2>&1 || hdiutil detach -force '$dev' >/dev/null 2>&1 || true" EXIT
   diskutil erasevolume "$FS" "$NAME" "$dev" >/dev/null
   printf '%s\n%s\n' "$MAGIC" "$dev" >"$(sentinel "$mnt")"
   trap - EXIT
@@ -148,8 +156,11 @@ cmd_create_linux() {
   fi
   mkdir -p "$mnt"
   if [ "$(id -u)" = 0 ]; then
-    # A mount that fails leaves no half-made volume behind.
-    trap 'umount "$mnt" >/dev/null 2>&1 || true; rmdir "$mnt" >/dev/null 2>&1 || true' EXIT
+    # A mount that fails leaves no half-made volume behind. Expanded at
+    # trap-set time (double quotes): `mnt` is function-local and the
+    # EXIT trap outlives the function scope — the same unbound-variable
+    # leak the macOS arm had (the fixit record).
+    trap "umount '$mnt' >/dev/null 2>&1 || true; rmdir '$mnt' >/dev/null 2>&1 || true" EXIT
     # noswap (kernel 6.4+) keeps the scratch honest RAM; older kernels
     # refuse the option, so fall back without it.
     mount -t tmpfs -o "size=${SIZE_GIB}G,noswap" bumbledb-scratch "$mnt" 2>/dev/null ||

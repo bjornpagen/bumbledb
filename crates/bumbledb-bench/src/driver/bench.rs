@@ -56,6 +56,16 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
     if args.alloc && args.trace {
         return Err("--alloc and --trace are mutually exclusive modes".to_owned());
     }
+    // The device-honesty rule is symmetric (docs/architecture/
+    // 60-validation.md): EVERY timed lane refuses a RAM-backed target.
+    // The read families time against the corpus under --dir, so the
+    // corpus dir is checked exactly like the write scratch (which
+    // write_families checks itself). Before ensure_corpus: refuse
+    // before generating anything onto the ram disk. The verify/
+    // differential/fuzz lanes stay exempt — they check answers, not
+    // wall clocks.
+    crate::devhonesty::assert_disk_backed(&args.corpus.dir, "the timed read families")
+        .map_err(|refusal| refusal.to_string())?;
     let paths = ensure_corpus(&args.corpus.dir, cfg)?;
     let verified = stamp_is_fresh(&paths, cfg);
     if !verified && !args.i_am_lying {

@@ -107,8 +107,8 @@ mod on_a_live_ram_disk {
             .expect_err("a RAM-backed path must refuse");
         assert!(refusal.identity.ram_backed);
 
-        // The timed family, end to end: the driver's write families
-        // refuse before loading any corpus.
+        // The timed write families, end to end: the driver refuses
+        // before loading any corpus.
         let err = crate::driver::write_families::write_families(
             crate::corpus_gen::GenConfig {
                 seed: 7,
@@ -121,6 +121,35 @@ mod on_a_live_ram_disk {
         assert!(
             err.contains("device honesty") && err.contains("RAM-backed"),
             "the refusal must say why by name: {err}"
+        );
+
+        // The timed read families, end to end: the rule is symmetric
+        // (the fixit record) — `bench --dir <ramdisk>` refuses in
+        // preflight, before generating any corpus there (the corpus
+        // dir on the ram disk stays empty).
+        let corpus_dir = disk.mount.join("corpus");
+        let err = crate::driver::cmd_bench(&crate::cli::BenchArgs {
+            corpus: crate::cli::CorpusArgs {
+                scale: crate::corpus_gen::Scale::Tiny,
+                seed: 7,
+                dir: corpus_dir.clone(),
+            },
+            families: None,
+            samples: None,
+            trace: false,
+            alloc: false,
+            proxy_per_rep: false,
+            out: None,
+            i_am_lying: true,
+        })
+        .expect_err("a timed read run against a RAM-backed --dir must refuse");
+        assert!(
+            err.contains("device honesty") && err.contains("RAM-backed"),
+            "the read-lane refusal must say why by name: {err}"
+        );
+        assert!(
+            !corpus_dir.exists(),
+            "the refusal must land before any corpus is generated on the ram disk"
         );
     }
 }

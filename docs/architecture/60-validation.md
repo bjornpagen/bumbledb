@@ -609,11 +609,13 @@ respect) — they check answers, not wall clocks, and the ram disk buys
 them the fullfsync floor back (~24x per small commit, ~94x on
 back-to-back commit loops on the pinned M2 Max —
 `docs/reports/ramdisk-phase-r.md`). Timing is governed by the
-device-honesty rule: the timed write families refuse to run on a
-RAM-backed volume with a named refusal
-(`crates/bumbledb-bench/src/devhonesty.rs` — the detector resolves the
-volume's mount identity and its `ram://`-image backing), because an
-fsync-bound number measured on RAM is a number physics never signed.
+device-honesty rule, and the rule is symmetric: every timed family —
+read and write alike — refuses to run against a RAM-backed volume with
+a named refusal (`crates/bumbledb-bench/src/devhonesty.rs` — the
+detector resolves the volume's mount identity and its `ram://`-image
+backing; `bench` checks both its corpus `--dir` and its write scratch),
+because a timed number measured on RAM is a number physics never
+signed. The exemption is exactly the untimed lanes above.
 Scope note: the crash target stays valid on a ramdisk — its adversary
 is process-kill ordering (the child aborts mid-commit and the parent
 autopsies the surviving bytes), which a RAM-backed filesystem preserves

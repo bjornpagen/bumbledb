@@ -1,9 +1,11 @@
 //! The device-honesty instrument (docs/architecture/60-validation.md §
 //! the ramdisk sanction): a RAM-backed-path detector and the refusal
-//! the timed write families raise against it. Verify, differential, and
-//! fuzz lanes are exempt — they check answers, not wall clocks, and may
-//! run on the ram disk (`scripts/ramdisk.sh`); a *timed* number
-//! measured on RAM would be a lie told with a straight face.
+//! every timed family raises against it — the read families check their
+//! corpus `--dir` (`driver::bench`), the write families their scratch
+//! (`driver::write_families`). Verify, differential, and fuzz lanes are
+//! exempt — they check answers, not wall clocks, and may run on the ram
+//! disk (`scripts/ramdisk.sh`); a *timed* number measured on RAM would
+//! be a lie told with a straight face.
 //!
 //! Mechanism (macOS, the canonical machine): the volume identity comes
 //! from the `mount` table (the longest mount-point prefix of the
