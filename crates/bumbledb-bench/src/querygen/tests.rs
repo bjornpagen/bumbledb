@@ -492,7 +492,7 @@ fn check_miss(
 ///   verified DYNAMICALLY (the base rules alone already denote the
 ///   fixpoint);
 /// * every program passes the engine's whole program roster, prepares
-///   through `Db::prepare_program`, and EXECUTES under the fixpoint
+///   through `Db::prepare`, and EXECUTES under the fixpoint
 ///   driver — the engine's answers set-equal to the naive stratified
 ///   fixpoint on every program, and every `WITH
 ///   RECURSIVE`-expressible one through `SQLite` too; the
@@ -543,7 +543,7 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         }
     }
     // The engine over the same org rows: the third oracle — programs
-    // prepare through `Db::prepare_program` and execute under the
+    // prepare through `Db::prepare` and execute under the
     // fixpoint driver.
     let dir = crate::fixture::TempDir::new("recursive-arm-engine");
     let engine = bumbledb::Db::create(dir.path(), target::descriptor()).expect("create engine");
@@ -647,7 +647,7 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
     {
         let program = budget_program.expect("the linear row is asserted ≥ 1 below");
         let mut prepared = engine
-            .prepare_program(&program)
+            .prepare(&program)
             .expect("the drawn closure validates");
         prepared.set_fixpoint_budget(0, u64::MAX);
         let error = engine

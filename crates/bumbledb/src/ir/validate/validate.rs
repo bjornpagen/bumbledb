@@ -44,7 +44,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     // [`IdbSignatures::EMPTY`] — and a `ValidatedQuery` cannot carry a
     // fixpoint. Recursion's surface is the program boundary
     // ([`validate_program`], executed by
-    // [`crate::Db::prepare_program`]'s per-stratum driver); the
+    // [`crate::Db::prepare`]'s per-stratum driver); the
     // degenerate embedding runs the other way — a no-`Idb` program IS
     // its output query (`lean/Bumbledb/Exec/Fixpoint.lean:
     // degenerate_embedding`).

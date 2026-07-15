@@ -1,6 +1,6 @@
 use std::sync::PoisonError;
 
-use super::{BULK_CHUNK, BulkLoadError, CommitSeq, Db, Snapshot, WriteTx, WriterThreadReset};
+use super::{BULK_CHUNK, BulkLoadError, CommitSeq, Db, Fact, Snapshot, WriteTx, WriterThreadReset};
 use crate::error::{Error, Result};
 use crate::ir::Value;
 use crate::schema::RelationId;
@@ -168,8 +168,10 @@ impl<S> Db<S> {
         Ok(out)
     }
 
-    /// Imports dynamic facts in chunks of 4096 per write
-    /// transaction — the same delta mechanism at scale. Explicit fresh
+    /// Imports typed facts in chunks of 4096 per write transaction — the
+    /// same delta mechanism at scale, over the generated fact structs
+    /// (the typed lane is the bulk surface too — the unified-surface
+    /// ruling, `docs/architecture/70-api.md` § ETL). Explicit fresh
     /// values preserve identity: the high-water mark advances past them.
     /// Returns the number of facts that changed state.
     ///
@@ -183,13 +185,43 @@ impl<S> Db<S> {
     /// [`BulkLoadError`]: the underlying error plus how many facts had
     /// already committed — a failing chunk aborts that chunk whole,
     /// leaving prior chunks committed, and the count makes the partial
-    /// import sizable and resumable. Shape problems are typed `FactShape`
-    /// errors, as [`WriteTx::insert_dyn`].
-    pub fn bulk_load<I>(&self, rel: RelationId, facts: I) -> std::result::Result<u64, BulkLoadError>
+    /// import sizable and resumable. Per fact as [`WriteTx::insert`].
+    pub fn bulk_load<'f, F, I>(&self, facts: I) -> std::result::Result<u64, BulkLoadError>
+    where
+        F: Fact<'f, Schema = S>,
+        I: IntoIterator<Item = F>,
+    {
+        self.bulk_chunks(facts.into_iter(), |tx, fact| tx.insert(&fact))
+    }
+
+    /// [`Db::bulk_load`]'s dynamic sibling (the ETL/FFI lane, pairing
+    /// with [`Snapshot::scan`]'s dynamic export): one [`Value`] row per
+    /// fact, in declaration order. Same chunking, same partial-import
+    /// contract.
+    ///
+    /// # Errors
+    ///
+    /// As [`Db::bulk_load`]; shape problems are typed `FactShape` errors,
+    /// as [`WriteTx::insert_dyn`].
+    pub fn bulk_load_dyn<I>(
+        &self,
+        rel: RelationId,
+        facts: I,
+    ) -> std::result::Result<u64, BulkLoadError>
     where
         I: IntoIterator<Item = Vec<Value>>,
     {
-        let mut iter = facts.into_iter();
+        self.bulk_chunks(facts.into_iter(), |tx, values| tx.insert_dyn(rel, &values))
+    }
+
+    /// The one chunking loop under both bulk lanes: 4096 facts per write
+    /// transaction, each chunk atomic, the committed count carried on
+    /// failure.
+    fn bulk_chunks<T>(
+        &self,
+        mut facts: impl Iterator<Item = T>,
+        mut apply: impl FnMut(&mut WriteTx<'_, S>, T) -> Result<bool>,
+    ) -> std::result::Result<u64, BulkLoadError> {
         let mut total = 0u64;
         loop {
             let mut exhausted = false;
@@ -201,12 +233,12 @@ impl<S> Db<S> {
                 crate::obs::span(crate::obs::names::BULK_CHUNK, crate::obs::Category::Commit);
             self.write(|tx| {
                 for _ in 0..BULK_CHUNK {
-                    let Some(values) = iter.next() else {
+                    let Some(fact) = facts.next() else {
                         exhausted = true;
                         break;
                     };
                     submitted += 1;
-                    if tx.insert_dyn(rel, &values)? {
+                    if apply(tx, fact)? {
                         chunk += 1;
                     }
                 }

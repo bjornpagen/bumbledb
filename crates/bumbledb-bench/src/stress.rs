@@ -117,7 +117,7 @@ fn bulk_load_survives_commit_pressure() {
         let dir = root.join(format!("db-{i}"));
         let db = Db::create(&dir, Ledger).expect("create store");
         let loaded = db
-            .bulk_load(ids::HOLDER, rows())
+            .bulk_load_dyn(ids::HOLDER, rows())
             .unwrap_or_else(|e| panic!("iteration {i}: {e}"));
         assert_eq!(loaded, FACTS, "iteration {i}: short load");
         drop(db);

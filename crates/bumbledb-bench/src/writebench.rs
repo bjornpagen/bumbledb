@@ -143,7 +143,7 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
         let dir = scratch.join(format!("bulk-bumbledb-{sample}"));
         let db = Db::create(&dir, Ledger).map_err(|e| format!("create: {e:?}"))?;
         for rel in non_posting_relations() {
-            db.bulk_load(rel, corpus_gen::relation_rows(cfg, rel))
+            db.bulk_load_dyn(rel, corpus_gen::relation_rows(cfg, rel))
                 .map_err(|e| format!("seed: {e:?}"))?;
         }
         pending.push_back(db);
@@ -153,10 +153,10 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
     harness::measure(proto, || {
         let db = pending.borrow_mut().pop_front().expect("pre-seeded store");
         let mut facts = db
-            .bulk_load(ids::POSTING, corpus_gen::relation_rows(cfg, ids::POSTING))
+            .bulk_load_dyn(ids::POSTING, corpus_gen::relation_rows(cfg, ids::POSTING))
             .map_err(|e| format!("bulk: {e:?}"))?;
         facts += db
-            .bulk_load(
+            .bulk_load_dyn(
                 ids::POSTING_TAG,
                 corpus_gen::relation_rows(cfg, ids::POSTING_TAG),
             )
@@ -226,7 +226,7 @@ mod tests {
     fn containment_target_db(dir: &Path) -> Db<Ledger> {
         let db = Db::create(dir, Ledger).expect("create");
         for rel in non_posting_relations() {
-            db.bulk_load(rel, corpus_gen::relation_rows(CFG, rel))
+            db.bulk_load_dyn(rel, corpus_gen::relation_rows(CFG, rel))
                 .expect("seed");
         }
         db

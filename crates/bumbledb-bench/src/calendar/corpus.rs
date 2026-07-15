@@ -65,7 +65,7 @@ pub fn load_bumbledb_sized(
     let start = Instant::now();
     let mut facts = 0u64;
     for rel in ORDER {
-        facts += db.bulk_load(rel, relation_rows_sized(cfg, sizes, rel))?;
+        facts += db.bulk_load_dyn(rel, relation_rows_sized(cfg, sizes, rel))?;
     }
     let mut pending: Vec<(RelationId, Vec<Value>)> = Vec::with_capacity(CHUNK + 4);
     for (attendances, claim) in du_cluster_rows(cfg, sizes) {

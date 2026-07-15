@@ -182,6 +182,23 @@ fn ephemeral_refusal_on_a_durable_store_leaves_the_data_file_byte_identical() {
     .expect("read back");
 }
 
+/// The timed-lane lock (`docs/architecture/60-validation.md` device
+/// honesty; `70-api.md` § environment lifecycle): every timed bench lane
+/// opens its target through `Db::open`
+/// (`crates/bumbledb-bench/src/driver/bench.rs`), and `Db::open` on an
+/// ephemeral store is the typed refusal above — so a timed lane
+/// structurally CANNOT time an ephemeral store, and no lane carries a
+/// kind check of its own. This test is that argument's pin.
+#[test]
+fn timed_lanes_structurally_cannot_time_an_ephemeral_store() {
+    let dir = common::TempDir::new("ephemeral-timed-lane-lock");
+    drop(Db::ephemeral(dir.path(), Staging).expect("create ephemeral"));
+    assert!(matches!(
+        Db::open(dir.path(), Staging),
+        Err(Error::StoreKindMismatch { .. })
+    ));
+}
+
 /// The matrix's create edge: `Db::create` on an ephemeral store refuses
 /// as it refuses every initialized directory — re-initializing `_meta`
 /// over live data is the corruption `AlreadyInitialized` exists for; the

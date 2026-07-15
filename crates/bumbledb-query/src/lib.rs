@@ -1606,7 +1606,7 @@ fn expand(input: TokenStream) -> Parse<String> {
 /// theory's id constants; predicate names are macro-local and never
 /// survive expansion (the IR carries bare `PredId`s); everything
 /// semantic beyond names surfaces as the validation roster's typed
-/// errors at `Db::prepare` / `Db::prepare_program`.
+/// errors at `Db::prepare`.
 ///
 /// ```ignore
 /// let unavailable = bumbledb_query::query!(Calendar {

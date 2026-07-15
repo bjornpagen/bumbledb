@@ -20,7 +20,7 @@
 //! - Query through [`Db::prepare`] ([`ir::Query`] is the IR) and execute
 //!   inside [`Db::read`] snapshots into a reusable [`Answers`] —
 //!   results are sets; the host sorts.
-//! - Migrate by ETL: [`Snapshot::scan`] exports, [`Db::bulk_load`] imports
+//! - Migrate by ETL: [`Snapshot::scan`] exports, [`Db::bulk_load_dyn`] imports
 //!   (schema change = a new database, never in place).
 //!
 //! Newtypes are the nominal safety layer — mixing two of them is a host
@@ -158,7 +158,7 @@ pub use storage::env::StoreKind;
 pub use ir::{
     AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm,
     MAX_CONDITION_DEPTH, MAX_PREDICATES, MAX_RULES, MaskTerm, ParamId, PredId, PredicateDef,
-    Program, Query, Rule, Term, Value, VarId,
+    Program, ProgramRef, Query, Rule, Term, Value, VarId,
 };
 pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
 pub use verify_store::{StoreFinding, StoreReport};

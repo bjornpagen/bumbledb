@@ -198,7 +198,7 @@ fn sqlite_answers(nodes: u64, edges: &[(u64, u64)], program: &Program) -> BTreeS
 }
 
 /// The engine over the same graph: a real store, the program prepared
-/// through `Db::prepare_program` and executed under the fixpoint driver
+/// through `Db::prepare` and executed under the fixpoint driver
 /// — [`crate::differential::engine_program`] is the shared leg.
 fn engine_answers(nodes: u64, edges: &[(u64, u64)], program: &Program) -> BTreeSet<Tuple> {
     // Parallel golden tests each get their own store (the fixture
@@ -576,7 +576,7 @@ mod strata_parity {
             let program = random_program(&mut rng);
             let (negations, folds) = offending_pairs(&program);
             let unsealed = unsealed_predicates(&program);
-            match db.prepare_program(&program).map(|_| ()) {
+            match db.prepare(&program).map(|_| ()) {
                 Ok(()) => {
                     accepted += 1;
                     assert!(
@@ -681,7 +681,7 @@ mod strata_parity {
                 .collect(),
             output: PredId(0),
         };
-        match db.prepare_program(&program).map(|_| ()) {
+        match db.prepare(&program).map(|_| ()) {
             Err(bumbledb::Error::Validation(ValidationError::TooManyPredicates { count })) => {
                 assert_eq!(count, over, "the payload is the definitional count");
             }

@@ -420,7 +420,7 @@ time the emulation, not the engine.
   the reachable set below a node whose children are leaves — and verified
   dynamically: the base rules alone denote the fixpoint). Every program
   passes the engine's whole program roster, prepares through
-  `Db::prepare_program`, and EXECUTES under the fixpoint driver — engine
+  `Db::prepare`, and EXECUTES under the fixpoint driver — engine
   answers set-equal to the naive fixpoint on every program, and every
   expressible one through SQLite too. **The budget-trip row is active and
   constructed, never hoped for** (`RecursiveCoverage::budget_trip`): a drawn

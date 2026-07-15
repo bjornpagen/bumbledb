@@ -3,7 +3,8 @@
 //! read{point lookup, join, aggregate} → mutate via delete+insert → read
 //! again; the write-closure abort contracts; the threading contract; the
 //! commit-time statement judgments with their rendered diagnostics; and
-//! the export → `bulk_load` ETL round trip.
+//! the export → bulk-import ETL round trip on both lanes (`bulk_load`
+//! typed, `bulk_load_dyn` dynamic).
 
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, Value, VarId};
 use bumbledb::schema::FieldId;
@@ -385,11 +386,11 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
     // identity.
     let new = Db::create(dir_new.path(), Ledger).expect("create new");
     let loaded = new
-        .bulk_load(Holder::RELATION, holders)
+        .bulk_load_dyn(Holder::RELATION, holders)
         .expect("load holders");
     assert_eq!(loaded, 3);
     let loaded = new
-        .bulk_load(Account::RELATION, accounts)
+        .bulk_load_dyn(Account::RELATION, accounts)
         .expect("load accounts");
     assert_eq!(loaded, 3);
 
@@ -660,7 +661,7 @@ fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
         })
         .collect();
     let loaded = bulk
-        .bulk_load(Holder::RELATION, facts.clone())
+        .bulk_load_dyn(Holder::RELATION, facts.clone())
         .expect("bulk load");
     assert_eq!(loaded, n);
     for chunk in facts.chunks(512) {
@@ -700,13 +701,58 @@ fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
     let fail = Db::create(dir_fail.path(), Ledger).expect("create");
     let mut bad = facts;
     bad[4_099] = vec![Value::U64(0)]; // arity mismatch in the second chunk
-    let err = fail.bulk_load(Holder::RELATION, bad).unwrap_err();
+    let err = fail.bulk_load_dyn(Holder::RELATION, bad).unwrap_err();
     assert_eq!(err.committed, 4_096, "the complete first chunk persisted");
     assert!(matches!(err.error, bumbledb::Error::FactShape(_)));
     let persisted = fail
         .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
         .expect("scan");
     assert_eq!(persisted, 4_096);
+}
+
+/// The typed bulk lane (`70-api.md` § ETL, the unified-surface ruling):
+/// the generated fact structs as the bulk surface — same chunking, same
+/// changed-state count, same partial-import contract as the dynamic
+/// lane, with the judgment running per chunk exactly as any write.
+#[test]
+fn typed_bulk_load_spans_chunks_and_carries_the_committed_count() {
+    use bumbledb::Fresh as _;
+    let dir = common::TempDir::new("api-bulk-typed");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+
+    // > one chunk (chunk = 4096), straight from the generated structs.
+    let n = 4_100u64;
+    let names = ["ada", "bob", "eve"];
+    let holder = |i: u64| Holder {
+        id: HolderId::from_fresh(i),
+        name: names[usize::try_from(i % 3).expect("small")],
+    };
+    let loaded = db.bulk_load((0..n).map(holder)).expect("typed bulk load");
+    assert_eq!(loaded, n);
+    // Changed-state semantics: the idempotent re-import consumes every
+    // fact and counts none.
+    let again = db.bulk_load((0..n).map(holder)).expect("typed re-import");
+    assert_eq!(again, 0);
+    let persisted = db
+        .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
+        .expect("scan");
+    assert_eq!(persisted, usize::try_from(n).expect("64-bit"));
+
+    // Mid-stream judgment failure: `Account(holder) <= Holder(id)` — the
+    // second chunk's dangling holder rejects that chunk whole at commit,
+    // prior chunks stay committed, and the count rides the error.
+    let account = |i: u64| Account {
+        id: AccountId::from_fresh(i),
+        holder: HolderId::from_fresh(if i == 4_099 { n + 7 } else { i % 3 }),
+        balance: 1,
+    };
+    let err = db.bulk_load((0..n).map(account)).unwrap_err();
+    assert_eq!(err.committed, 4_096, "the complete first chunk persisted");
+    assert!(matches!(err.error, bumbledb::Error::CommitRejected { .. }));
+    let accounts = db
+        .read(|snap| Ok(snap.scan_facts::<Account>()?.count()))
+        .expect("scan accounts");
+    assert_eq!(accounts, 4_096);
 }
 
 #[test]
@@ -1308,7 +1354,7 @@ fn out_of_range_relation_ids_are_typed_errors() {
     .expect("write closes cleanly");
 
     let err = db
-        .bulk_load(bogus, vec![vec![Value::U64(1)]])
+        .bulk_load_dyn(bogus, vec![vec![Value::U64(1)]])
         .map(|_| ())
         .unwrap_err();
     assert!(is_unknown(&err.error), "{:?}", err.error);
@@ -1442,10 +1488,10 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
 
 /// The degenerate-equivalence contract (20-query-ir.md § engine recursion; the
 /// theorem is `lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`):
-/// a one-predicate, no-`Idb` `Program` prepares through the program
-/// boundary (`Db::prepare_program` — the whole program roster, then the
-/// output predicate's ordinary pipeline) and executes identically to
-/// its `Query` form, end to end.
+/// a one-predicate, no-`Idb` `Program` prepares through the ONE unified
+/// `Db::prepare` entry — the query-shaped dispatch routes it into the
+/// output predicate's ordinary query pipeline — and executes identically
+/// to its `Query` form, end to end.
 #[test]
 fn a_degenerate_program_executes_as_its_query() {
     let dir = common::TempDir::new("api-degenerate-program");
@@ -1470,7 +1516,7 @@ fn a_degenerate_program_executes_as_its_query() {
     let query = join_query();
     let mut as_query = db.prepare(&query).expect("prepare query");
     let mut as_program = db
-        .prepare_program(&bumbledb::Program::from(query))
+        .prepare(&bumbledb::Program::from(query))
         .expect("prepare degenerate program");
     db.read(|snap| {
         let query_answers = snap.execute_collect(&mut as_query, &[])?;
@@ -1482,7 +1528,7 @@ fn a_degenerate_program_executes_as_its_query() {
         );
         assert_eq!(query_answers.len(), 3);
         // The byte-identity check: a no-`Idb` program takes ZERO new
-        // code paths — `prepare_program` routes the degenerate form
+        // code paths — the unified `prepare` routes the degenerate form
         // through `prepare` verbatim, so the introspection reports (the
         // rendered query, the plans, the counted stats) are the same
         // bytes.
@@ -1505,7 +1551,7 @@ fn a_degenerate_program_executes_as_its_query() {
 /// absorbs, the fixpoint closes in one growing round
 /// (`lean/Bumbledb/Exec/Fixpoint.lean: program_eval_sound`).
 #[test]
-fn prepare_program_executes_recursion_under_the_driver() {
+fn prepare_executes_recursion_under_the_driver() {
     use bumbledb::ir::{AtomSource, HeadTerm};
     let dir = common::TempDir::new("api-program-driver");
     let db = Db::create(dir.path(), Ledger).expect("create");
@@ -1552,7 +1598,7 @@ fn prepare_program_executes_recursion_under_the_driver() {
         }],
         output: bumbledb::PredId(0),
     };
-    let mut recursive_prepared = db.prepare_program(&program).expect("recursion executes");
+    let mut recursive_prepared = db.prepare(&program).expect("recursion executes");
     let mut base_prepared = db.prepare(&Query::single(base)).expect("prepare base");
     db.read(|snap| {
         let closure = snap.execute_collect(&mut recursive_prepared, &[])?;
@@ -1657,8 +1703,8 @@ fn recursive_answers_agree_scalar_and_vectorized() {
             })
             .collect()
     };
-    let mut vectorized = db.prepare_program(&closure_program()).expect("prepare");
-    let mut scalar = db.prepare_program(&closure_program()).expect("prepare");
+    let mut vectorized = db.prepare(&closure_program()).expect("prepare");
+    let mut scalar = db.prepare(&closure_program()).expect("prepare");
     scalar.set_batch_size(1);
     db.read(|snap| {
         let vectorized = pairs(&snap.execute_collect(&mut vectorized, &[])?);
@@ -1709,7 +1755,7 @@ fn fixpoint_profile_reports_strata_rounds_and_deltas() {
         Ok(())
     })
     .expect("write");
-    let mut prepared = db.prepare_program(&closure_program()).expect("prepare");
+    let mut prepared = db.prepare(&closure_program()).expect("prepare");
     db.read(|snap| {
         let (answers, stats) = snap.profile(&mut prepared, &[])?;
         assert_eq!(answers.len(), 16, "the closure's hand answer");
@@ -1823,7 +1869,7 @@ fn a_tight_fixpoint_budget_trips_with_the_typed_error() {
         }],
         output: bumbledb::PredId(0),
     };
-    let mut prepared = db.prepare_program(&program).expect("recursion executes");
+    let mut prepared = db.prepare(&program).expect("recursion executes");
     prepared.set_fixpoint_budget(0, u64::MAX);
     let error = db
         .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))

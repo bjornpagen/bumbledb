@@ -643,7 +643,7 @@ fn adversarial_ir_never_panics() {
 /// `Program` data — the trust-boundary law extended to the R1 cut):
 /// random programs over hostile predicate/relation ids in one lane, and
 /// plausible queries embedded as programs with injected `Idb` reads in
-/// the other, driven through `Db::prepare_program`. Every outcome must
+/// the other, driven through `Db::prepare`. Every outcome must
 /// be `Ok` or a typed error — an accepted `Idb`-carrying program now
 /// runs the whole per-predicate prepare pipeline (delta variants
 /// included), so the sweep covers the planner side of recursion too.
@@ -686,9 +686,7 @@ fn adversarial_program_never_panics() {
             }
             program
         };
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            db.prepare_program(&program).map(|_| ())
-        }));
+        let outcome = catch_unwind(AssertUnwindSafe(|| db.prepare(&program).map(|_| ())));
         #[expect(
             clippy::match_wild_err_arm,
             reason = "the test intentionally rejects every non-target error uniformly"
@@ -697,7 +695,7 @@ fn adversarial_program_never_panics() {
             Ok(Ok(())) => ok += 1,
             Ok(Err(_)) => rejected += 1,
             Err(_) => panic!(
-                "prepare_program panicked on IR data (seed {seed}) — the trust-boundary                  law is violated by:
+                "prepare panicked on program IR data (seed {seed}) — the trust-boundary                  law is violated by:
 {program:#?}"
             ),
         }
