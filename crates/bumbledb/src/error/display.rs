@@ -784,6 +784,12 @@ impl fmt::Display for Error {
             Self::EnvironmentLocked => {
                 write!(f, "another live handle holds this environment's lock")
             }
+            Self::StoreKindMismatch { found, expected } => {
+                write!(
+                    f,
+                    "the store on disk is {found}, this constructor opens {expected} stores"
+                )
+            }
             Self::Io(err) => write!(f, "io: {err}"),
             Self::Lmdb(err) => write!(f, "lmdb: {err}"),
             Self::ReadersFull { max_readers } => {

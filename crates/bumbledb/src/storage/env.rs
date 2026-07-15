@@ -9,6 +9,7 @@ use heed::{AnyTls, Database, RoTxn, RwTxn, WithoutTls};
 mod acquire_lock;
 mod create;
 mod debug;
+mod ephemeral;
 mod maintenance;
 mod open;
 mod open_env;
@@ -45,9 +46,64 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 /// order-mark form and its `R`-edge namespace left the vocabulary), so
 /// the canonical schema encoding changed again; nothing deployed
 /// carries an order statement, and a v3 store's fingerprint is computed
-/// under a retired encoding. No other version opens and no migration
-/// path exists — ETL is the story.
-pub const FORMAT_VERSION: u32 = 4;
+/// under a retired encoding. Version 5: the store-kind marker — every
+/// store now carries a `_meta` kind byte ([`StoreKind`]) that open
+/// reads and refuses on mismatch; a new meta key consulted at open is
+/// an encoding change, so it bumps (the version-bump law,
+/// `docs/architecture/50-storage.md` § open-time checks; nothing
+/// deployed carries a v4 store). No other version opens and no
+/// migration path exists — ETL is the story.
+pub const FORMAT_VERSION: u32 = 5;
+
+/// The store KIND, marked on disk in `_meta` beside the format version
+/// and fingerprint (`docs/architecture/50-storage.md`). A kind is a
+/// property of the STORE, never a mode of a handle: `Db::create`/
+/// `Db::open` mint and open only durable stores, `Db::ephemeral` only
+/// ephemeral ones, and the cross-open is the typed
+/// [`crate::error::Error::StoreKindMismatch`] — parse, don't validate.
+/// The kind carries the durability claim (an ephemeral store does not
+/// promise to survive a machine crash), so it is device-independent:
+/// ephemeral-on-SSD is legitimate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreKind {
+    /// Durability is LMDB defaults — fsync per commit; a committed
+    /// posting survives power loss (`00-product.md`).
+    Durable,
+    /// A scratch/staging store: the environment carries
+    /// `MDB_WRITEMAP|MDB_NOSYNC`, so commits skip the fullfsync
+    /// boundary. Process-kill atomicity is unchanged (the crashpoint
+    /// sweep runs against this kind too); a machine crash loses the
+    /// store by definition — the kind says so.
+    Ephemeral,
+}
+
+impl StoreKind {
+    /// The persisted `_meta` byte.
+    pub(crate) const fn meta_byte(self) -> u8 {
+        match self {
+            Self::Durable => 0,
+            Self::Ephemeral => 1,
+        }
+    }
+
+    /// Decodes the persisted `_meta` byte; `None` is corrupt data.
+    pub(crate) const fn from_meta_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Durable),
+            1 => Some(Self::Ephemeral),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for StoreKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Durable => "durable",
+            Self::Ephemeral => "ephemeral",
+        })
+    }
+}
 
 /// The persisted storage transaction id: the generation a snapshot
 /// witnessed and a state-changing commit advances. This is not the
@@ -110,11 +166,17 @@ const META_FORMAT_VERSION: &[u8] = &[0];
 const META_FINGERPRINT: &[u8] = &[1];
 const META_TX_ID: &[u8] = &[2];
 const META_DICT_NEXT_ID: &[u8] = &[3];
+const META_STORE_KIND: &[u8] = &[4];
 
 /// The LMDB substrate: environment plus the three named databases.
 ///
-/// Durability is LMDB defaults — fsync per commit; `NOSYNC`/`WRITEMAP`/
-/// `MAPASYNC` are not expressible through this type.
+/// On a durable store, durability is LMDB defaults — fsync per commit;
+/// `NOSYNC`/`WRITEMAP`/`MAPASYNC` are not expressible through the
+/// durable constructors (`create`/`open` pass [`StoreKind::Durable`] to
+/// `open_env`, which derives flags from the kind alone — there is no
+/// flag parameter to reach). An ephemeral store
+/// ([`Environment::ephemeral`]) carries `WRITEMAP|NOSYNC`, and its kind
+/// is marked on disk so the durable constructors refuse it typed.
 pub struct Environment {
     env: heed::Env<WithoutTls>,
     meta: Database<Bytes, Bytes>,

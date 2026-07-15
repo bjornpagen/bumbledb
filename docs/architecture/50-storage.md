@@ -1,7 +1,9 @@
 # 50 — Storage
 
 LMDB is the only durable backend (decision recorded in `00-product.md`), accessed
-through `heed`. Durability (fsync per commit; no `NOSYNC`/`WRITEMAP`/`MAPASYNC`), write
+through `heed`. Durability (fsync per commit on durable stores; the durable
+constructors cannot express `NOSYNC`/`WRITEMAP`/`MAPASYNC` — the ephemeral store
+KIND below is a different store, never a mode), write
 atomicity, and reader snapshot isolation come from real LMDB transactions. Single
 writer, many reader threads, one process (`00-product.md`).
 **Decision: `heed`.** **Alternative:** `lmdb-rkv`/raw FFI. **Why it lost:** heed is the
@@ -47,9 +49,9 @@ S | relation_id | stat              -> u64            counters: stat 0 = row cou
                                                       stat 1 = row_id high-water (reader: commit's row-id assignment)
 ```
 
-Plus `_meta` (format version, schema fingerprint, storage tx id, and the dictionary
-next-id counter — the delta's pending-intern design mints provisional ids against it
-from read snapshots) and `_dict` (**str-only** — `bytes<N>` values are inline in
+Plus `_meta` (format version, store kind, schema fingerprint, storage tx id, and the
+dictionary next-id counter — the delta's pending-intern design mints provisional ids
+against it from read snapshots) and `_dict` (**str-only** — `bytes<N>` values are inline in
 facts, never interned, so the key hash carries no type tag: forward
 `blake3(bytes) → id`, reverse `id → bytes`; collision axiom in
 `10-data-model.md`). Key components are big-endian
@@ -114,7 +116,8 @@ facts, never interned, so the key hash carries no type tag: forward
 - Key-component widths: `relation_id` u32, `field_id` u16, statement id u16, `row_id`
   u64 — all big-endian; ids assigned by declaration/materialized order and pinned by
   the fingerprint.
-- Open-time checks, in order: storage format version, then schema fingerprint — each
+- Open-time checks, in order: storage format version, then store kind, then schema
+  fingerprint — each
   mismatch is a hard failure. No other format version opens and no migration path
   exists (ETL is the story, `70-api.md`; compatibility is never a design input,
   `00-product.md`). **Every on-disk encoding change bumps the version** — the
@@ -128,7 +131,11 @@ facts, never interned, so the key hash carries no type tag: forward
   `R`-edge namespace left the vocabulary
   (`docs/architecture/30-dependencies.md` § refused: order marks), so every v3
   fingerprint was computed under a retired encoding — nothing deployed carries
-  an order statement.
+  an order statement. Version 5 is the store-kind marker: every store carries a
+  `_meta` kind byte (§ the ephemeral store kind) that open consults — a new meta
+  key read at open is an encoding change, so it bumps (nothing deployed carries a
+  v4 store; a v4 store would otherwise open with the kind key absent, which is
+  exactly the silent-default class the bump law exists to refuse).
 
 **Decision: one `_data` database with first-byte namespaces.** **Alternative:** one
 LMDB database per namespace (enables per-namespace append mode and integer-key layouts).
@@ -270,7 +277,9 @@ variant agreement.
    immutable plan and re-committed — each retry an obs event
    (`commit_sync_retry`), the escaping error carrying the count. The contract is
    untouched: a retry re-runs the full write-and-sync, so every commit that
-   reports success fsynced — no sync mode exists, and none may be born.
+   reports success fsynced — no sync mode exists on a durable store, and none
+   may be born (the ephemeral store KIND is not a mode: § the ephemeral store
+   kind).
 
 User operation order inside the closure is therefore semantically irrelevant
 (`lean/Bumbledb/Txn.lean: final_state_judgment_order_free`); the
@@ -367,6 +376,68 @@ absence, counters, and dictionary bounds over one snapshot. The complete
 claim × pass × deterministic corruption-fixture coverage ledger is the verifier
 matrix (`docs/prd-constitution/22-verifier-matrix.md` § Results); an empty
 finding list is backed by every row there, not by a smoke test.
+
+## The ephemeral store kind
+
+A store IS a kind, marked on disk: `_meta` carries a kind byte (0 durable,
+1 ephemeral) beside the format version and fingerprint, written at creation and
+read at every open — after the version check, before the fingerprint. The durable
+constructors (`Db::create`/`Db::open`) mint and open only durable stores;
+`Db::ephemeral` (`70-api.md` § environment lifecycle) only ephemeral ones; the
+cross-open matrix is four cells, all typed
+(`crates/bumbledb/tests/ephemeral.rs`): open-on-durable and
+ephemeral-on-ephemeral succeed, open-on-ephemeral and ephemeral-on-durable are the
+typed `StoreKindMismatch` naming found and expected kinds. Parse, don't validate:
+holding a `Db` handle proves the store's kind, so the durable surface can never
+quietly read a store that skipped its fsyncs.
+
+An ephemeral environment differs from a durable one in exactly one thing: the
+LMDB flags `MDB_WRITEMAP|MDB_NOSYNC` (set inside `storage/env/open_env.rs`, the
+one raw-open chokepoint, where the flags are DERIVED from the kind — no flag
+parameter exists, so the durable paths structurally cannot reach them; the unsafe
+policy allowance and safety comments live there). `NOTLS`, the advisory lock, the
+map size, the reader table, fingerprint verification, the whole write path, the
+dependency judgment, and WriteTx point-read semantics are identical — proven by
+the durable/ephemeral differential oracle (`60-validation.md`).
+
+What the kind renounces is machine-crash (power-loss) durability and nothing
+else. **The crash-sweep verdict (empirical, 2026-07-15):** the deterministic
+crashpoint sweep — every named commit-pipeline point × the ops-prefix matrix,
+`fuzz/tests/crash.rs` — runs against ephemeral stores too, and every combination
+recovers all-or-nothing under `WRITEMAP|NOSYNC` exactly as the durable table
+above claims: reopen, `verify_store` green, contents at the expected side, victim
+replay — no third observable outcome, so WRITEMAP shipped (had any point shown
+partial state, the recorded fallback was NOSYNC-only). This is the expected LMDB
+result — WRITEMAP changes *how* dirty pages are written (through the map instead
+of `pwrite`), not the meta-page commit protocol that atomicity stands on; NOSYNC
+removes the fsync, which only a power loss can exploit — and the sweep is the
+proof the expectation is not doing the work.
+
+The kind is **device-independent**: ephemeral-on-SSD is legitimate, and
+ephemeral-on-ramdisk buys the flags' latency on top of the device's. The kind
+carries the no-durability claim, not the device, so no lie is possible — a
+machine crash loses an ephemeral store by the store's own definition. (The
+device-honesty rule for *timed* lanes is the orthogonal axis: `60-validation.md`.)
+
+Lean owns none of this: durability and crash recovery are mechanism, outside the
+model (`lean/README.md` § what Lean does NOT own), so the store kind adds no
+Bridge row and the census expects no citation here — the sweep and the
+differential oracle are the evidence.
+
+**Decision: a distinct constructor and an on-disk KIND marker, `WRITEMAP|NOSYNC`.**
+**Alternative 1:** a sync-mode flag on `create`/`open`. **Why it lost:** a mode is
+a runtime claim nobody can read back; a kind is parsed at open and refuses
+mismatches typed — and the durability law (`00-product.md`) stays whole: *no sync
+mode exists on a durable store, and none may be born.* **Alternative 2:** the
+earlier RAM-backed-device precondition (the phase-2 refusal's shape: ephemeral
+only on RAM-backed paths). **Why it lost (superseded):** it tied the API's truth
+conditions to device identity, which the kind marker makes unnecessary — the
+marker, not the medium, carries the claim. **Alternative 3:** NOSYNC without
+WRITEMAP. **Why it lost:** the sweep convicted nothing (no third outcome at any
+crashpoint) and the R4 cells price WRITEMAP|NOSYNC fastest on the small-commit
+shape the feature exists for. **Reverses if:** any crashpoint ever shows a
+non-all-or-nothing recovery on an ephemeral store — drop WRITEMAP first, the
+kind and surface stay.
 
 ## The columnar image cache (the hot representation)
 

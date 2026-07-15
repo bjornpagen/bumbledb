@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bumbledb::{CRASHPOINTS, CrashpointSide, Db, RelationId};
+use bumbledb::{CRASHPOINTS, CrashpointSide, Db, RelationId, StoreKind};
 use bumbledb_bench::corpus_gen::Rng;
 use bumbledb_bench::corpus_gen::opgen::{self, CrashScenario};
 use bumbledb_bench::differential::Verdict as WriteVerdict;
@@ -60,6 +60,13 @@ const CELL_VAR: &str = "BUMBLEDB_CRASH_CELL";
 const INPUT_VAR: &str = "BUMBLEDB_CRASH_INPUT";
 /// The engine hook's own switch — armed by the CHILD, mid-process.
 const ARM_VAR: &str = "BUMBLEDB_CRASHPOINT";
+/// The store-kind axis (the ephemeral campaign): set (to any value) when
+/// the child's victim store is `Db::ephemeral` — `WRITEMAP|NOSYNC`
+/// instead of the durable defaults. Process-kill atomicity is the SAME
+/// claim on both kinds (`docs/architecture/50-storage.md` § the
+/// ephemeral store kind): the adversary here is abort ordering, not
+/// power loss, and NOSYNC only renounces the latter.
+const EPHEMERAL_VAR: &str = "BUMBLEDB_CRASH_EPHEMERAL";
 
 /// The fuzz-binary entry: parent by default; the child path when the
 /// parent's spawn marked this process. Both derive the identical
@@ -86,7 +93,7 @@ pub fn run(data: &[u8]) {
     }
     let (case, index) = derive(data);
     let input = TempInput::new(data);
-    run_case(&case, index, |store, point| {
+    run_case_kind(&case, index, StoreKind::Durable, |store, point| {
         // Re-enter this same fuzz binary in libFuzzer single-input mode.
         // `-handle_abrt=0`: the abort must be a raw death — no crash
         // report, no artifact from the child (the parent's own panics
@@ -100,6 +107,7 @@ pub fn run(data: &[u8]) {
             .env(STORE_VAR, store)
             .env(POINT_VAR, point)
             .env_remove(ARM_VAR)
+            .env_remove(EPHEMERAL_VAR)
             .stdin(Stdio::null())
             .output()
             .expect("spawn the crash child")
@@ -112,8 +120,14 @@ pub fn run(data: &[u8]) {
 pub fn replay(data: &[u8]) {
     let (case, index) = derive(data);
     let input = TempInput::new(data);
-    run_case(&case, index, |store, point| {
-        spawn_test_child(store, point, INPUT_VAR, input.path().as_os_str())
+    run_case_kind(&case, index, StoreKind::Durable, |store, point| {
+        spawn_test_child(
+            store,
+            point,
+            StoreKind::Durable,
+            INPUT_VAR,
+            input.path().as_os_str(),
+        )
     });
 }
 
@@ -128,14 +142,30 @@ pub fn replay(data: &[u8]) {
 /// When the armed point never fires, and on every recovery-oracle
 /// violation ([`run_case`]).
 pub fn sweep(cell: usize, index: usize) {
+    sweep_kind(cell, index, StoreKind::Durable);
+}
+
+/// The sweep's ephemeral twin: the identical crashpoint × matrix
+/// product against a `Db::ephemeral` store — the empirical arm of the
+/// claim that `WRITEMAP|NOSYNC` preserves process-kill all-or-nothing
+/// atomicity (there is no third observable outcome on either kind).
+///
+/// # Panics
+///
+/// As [`sweep`].
+pub fn sweep_ephemeral(cell: usize, index: usize) {
+    sweep_kind(cell, index, StoreKind::Ephemeral);
+}
+
+fn sweep_kind(cell: usize, index: usize, kind: StoreKind) {
     let case = opgen::crash_matrix_scenario(cell);
-    let outcome = run_case(&case, index, |store, point| {
-        spawn_test_child(store, point, CELL_VAR, cell.to_string().as_ref())
+    let outcome = run_case_kind(&case, index, kind, |store, point| {
+        spawn_test_child(store, point, kind, CELL_VAR, cell.to_string())
     });
     assert_eq!(
         outcome,
         Outcome::Aborted,
-        "cell {cell}: crashpoint {} never fired on its matrix victim",
+        "cell {cell} ({kind}): crashpoint {} never fired on its matrix victim",
         CRASHPOINTS[index].0
     );
 }
@@ -186,7 +216,11 @@ fn derive(data: &[u8]) -> (CrashScenario, usize) {
 fn child_body(case: &CrashScenario) {
     let store = PathBuf::from(std::env::var_os(STORE_VAR).expect("the child store dir"));
     let point = std::env::var(POINT_VAR).expect("the armed crashpoint name");
-    let db = match Db::create(&store, target::Target) {
+    let db = match if std::env::var_os(EPHEMERAL_VAR).is_some() {
+        Db::ephemeral(&store, target::Target)
+    } else {
+        Db::create(&store, target::Target)
+    } {
         Ok(db) => db,
         Err(err) => panic!("the crash child failed to create its store: {err:?}"),
     };
@@ -208,10 +242,12 @@ fn child_body(case: &CrashScenario) {
 fn spawn_test_child(
     store: &Path,
     point: &str,
+    kind: StoreKind,
     steer_var: &str,
-    steer_value: &std::ffi::OsStr,
+    steer_value: impl AsRef<std::ffi::OsStr>,
 ) -> Output {
-    Command::new(std::env::current_exe().expect("test binary path"))
+    let mut command = Command::new(std::env::current_exe().expect("test binary path"));
+    command
         .args([
             "crash_child",
             "--exact",
@@ -223,7 +259,12 @@ fn spawn_test_child(
         .env(POINT_VAR, point)
         .env(steer_var, steer_value)
         .env_remove(CHILD_VAR)
-        .env_remove(ARM_VAR)
+        .env_remove(ARM_VAR);
+    match kind {
+        StoreKind::Ephemeral => command.env(EPHEMERAL_VAR, "1"),
+        StoreKind::Durable => command.env_remove(EPHEMERAL_VAR),
+    };
+    command
         .stdin(Stdio::null())
         .output()
         .expect("spawn the crash child")
@@ -239,17 +280,19 @@ enum Outcome {
     Clean,
 }
 
-/// One full case: fresh store, spawn, classify, autopsy.
-fn run_case(
+/// One full case: fresh store of the given kind, spawn, classify,
+/// autopsy.
+fn run_case_kind(
     case: &CrashScenario,
     index: usize,
+    kind: StoreKind,
     spawn: impl FnOnce(&Path, &str) -> Output,
 ) -> Outcome {
     let (name, side) = CRASHPOINTS[index];
     let store = StoreDir::new();
     let output = spawn(store.path(), name);
     let outcome = classify(&output, name);
-    verify_recovery(store.path(), case, side, outcome);
+    verify_recovery(store.path(), case, side, kind, outcome);
     outcome
 }
 
@@ -278,7 +321,13 @@ fn classify(output: &Output, point: &str) -> Outcome {
 /// The four recovery oracles, judged against the naive model — the same
 /// model state the child's engine walked through, re-derived here from
 /// the shared scenario (rejected prefix commits change neither side).
-fn verify_recovery(store: &Path, case: &CrashScenario, side: CrashpointSide, outcome: Outcome) {
+fn verify_recovery(
+    store: &Path,
+    case: &CrashScenario,
+    side: CrashpointSide,
+    kind: StoreKind,
+    outcome: Outcome,
+) {
     let mut model = NaiveDb::new(&target::descriptor());
     for delta in &case.prefix {
         let _ = model.apply(delta);
@@ -300,10 +349,15 @@ fn verify_recovery(store: &Path, case: &CrashScenario, side: CrashpointSide, out
         },
     };
     // Oracle 1: the corpse reopens — no wedged environment, no stale
-    // lock the dead writer left behind.
-    let db = match Db::open(store, target::Target) {
+    // lock the dead writer left behind. The reopen constructor matches
+    // the kind (the cross-open matrix is typed refusals,
+    // `crates/bumbledb/tests/ephemeral.rs`).
+    let db = match match kind {
+        StoreKind::Durable => Db::open(store, target::Target),
+        StoreKind::Ephemeral => Db::ephemeral(store, target::Target),
+    } {
         Ok(db) => db,
-        Err(err) => panic!("the store did not reopen after the crash: {err:?}"),
+        Err(err) => panic!("the {kind} store did not reopen after the crash: {err:?}"),
     };
     // Oracle 2: the store's own auditor agrees.
     assert_audit(&db, expected, "crash recovery");

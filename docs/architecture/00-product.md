@@ -116,9 +116,28 @@ language. **Reverses if:** never — owner axiom.
   unrepresentable here. Across transactions, read-compute-write is optimistic:
   witnessed by snapshots (`write_from`, `70-api.md` § conditional writes), checked
   in O(1) at commit.
-- **Durability: fsync per commit** (LMDB defaults; no `NOSYNC`/`WRITEMAP`/`MAPASYNC`).
-  A committed posting survives power loss — it's a ledger. SQLite is benchmarked at
-  `synchronous=FULL` for fairness.
+- **Durability: fsync per commit on durable stores** (LMDB defaults). A committed
+  posting survives power loss — it's a ledger. The law's scope is the durable store
+  KIND: no sync mode exists on a durable store, and none may be born —
+  `NOSYNC`/`WRITEMAP`/`MAPASYNC` are not expressible through the durable
+  constructors. SQLite is benchmarked at `synchronous=FULL` for fairness.
+  **The carve-out (a decision, not a mode): the ephemeral store kind.**
+  `Db::ephemeral` births a store whose `_meta` carries an ephemeral-kind marker and
+  whose environment carries `WRITEMAP|NOSYNC` (`50-storage.md` § the ephemeral store
+  kind): a different store KIND with a different constructor and an on-disk marker —
+  never a flag on `create`/`open` — so the cross-open is a typed refusal and no
+  durable store can quietly lose its guarantee. The sighting is the ephemeral
+  relational engine: staging stores judged before ETL into a durable store, analysis
+  working sets, scratch stores — the small-commit shape where the flags measured
+  ~16x scratch-side (`docs/reports/ramdisk-phase-r.md` § R4). The owner's doctrine, recorded
+  verbatim: "everything we can do to make dogfooding easier is upgraded to a
+  feature." **Alternative:** an ephemeral constructor gated on a RAM-backed-device
+  precondition. **Why it lost:** the KIND carries the no-machine-crash-durability
+  claim, not the device — ephemeral-on-SSD is legitimate (a machine crash loses an
+  ephemeral store by definition, so no lie is possible), and a device precondition
+  would smuggle device identity into the API's truth conditions. **Reverses if:** a
+  workload demands durable semantics from a scratch store — which is spelled
+  `Db::create` plus ETL, so never.
 
 ## Target hardware
 

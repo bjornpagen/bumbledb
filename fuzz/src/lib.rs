@@ -293,6 +293,7 @@ fn engine_write(db: &Db<target::Target>, delta: &Delta) -> WriteVerdict {
             | Error::SchemaMismatch { .. }
             | Error::AlreadyInitialized
             | Error::EnvironmentLocked
+            | Error::StoreKindMismatch { .. }
             | Error::Io(_)
             | Error::Lmdb(_)
             | Error::ReadersFull { .. }
@@ -365,6 +366,7 @@ fn query_refusal(err: Error) -> Answers {
         | Error::SchemaMismatch { .. }
         | Error::AlreadyInitialized
         | Error::EnvironmentLocked
+        | Error::StoreKindMismatch { .. }
         | Error::Io(_)
         | Error::Lmdb(_)
         | Error::ReadersFull { .. }
@@ -623,6 +625,7 @@ fn schema_rejection(err: Error) -> (&'static str, SchemaError) {
         | Error::SchemaMismatch { .. }
         | Error::AlreadyInitialized
         | Error::EnvironmentLocked
+        | Error::StoreKindMismatch { .. }
         | Error::Io(_)
         | Error::Lmdb(_)
         | Error::ReadersFull { .. }
@@ -712,8 +715,8 @@ impl StoreDir {
         // docs/architecture/60-validation.md § the ramdisk sanction) —
         // the verify/fuzz lanes check answers, not clocks, so RAM is
         // sanctioned for them. Unset, the system temp dir stands.
-        let root = std::env::var_os("BUMBLEDB_SCRATCH_DIR")
-            .map_or_else(std::env::temp_dir, PathBuf::from);
+        let root =
+            std::env::var_os("BUMBLEDB_SCRATCH_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
         let path = root.join(format!("bumbledb-fuzz-{}-{seq}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create fuzz store dir");

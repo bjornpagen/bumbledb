@@ -181,11 +181,13 @@ Both are emission; the grammar is untouched.
 ## Environment lifecycle
 
 - `Db::open(path, Ledger)` — no tuning parameters: map size, max readers, and LMDB
-  flags are internal (fsync durability per `00-product.md`); the schema definition
+  flags are internal (fsync durability on durable stores per `00-product.md`;
+  flags are derived from the store KIND, never from a parameter); the schema definition
   (`Theory` — the macro's header struct, or a runtime-built `SchemaDescriptor`,
   which implements the trait as itself) is validated here (typed `SchemaError` on an
   invalid declaration) and what gets fingerprint-verified. Open verifies format
-  version, then schema fingerprint; each mismatch is a typed hard failure.
+  version, then store kind, then schema fingerprint; each mismatch is a typed
+  hard failure.
   `Db::create(path, Ledger)`
   initializes a fresh environment with the schema's fingerprint — and **refuses a
   directory that already holds any LMDB environment** (`AlreadyInitialized`): a
@@ -194,12 +196,37 @@ Both are emission; the grammar is untouched.
   database, or a non-empty unnamed root). The one exception is a half-created bumbledb
   store — a crash between directory creation and the meta commit leaves an empty root,
   and create recovers it.
+- `Db::ephemeral(path, Ledger)` — the ephemeral store KIND's one constructor
+  (`50-storage.md` § the ephemeral store kind; never a flag on `create`/`open`).
+  A missing or empty directory initializes a fresh ephemeral store — the kind
+  marked in `_meta` at birth — and an existing ephemeral store reopens under the
+  same version/kind/fingerprint checks as `open` (create-or-open: a scratch store
+  earns the convenience because a mistaken fresh store at a typo'd path destroys
+  nothing durable; the dogfooding doctrine, `00-product.md`). The environment
+  carries `WRITEMAP|NOSYNC`; every semantic — judgment, point reads, queries,
+  locking — is identical to a durable store, and only machine-crash durability is
+  renounced, by the store's own on-disk claim. Device-independent:
+  ephemeral-on-SSD is legitimate.
+- **The cross-open matrix is typed** (`crates/bumbledb/tests/ephemeral.rs`):
+  `Db::open` on an ephemeral store and `Db::ephemeral` on a durable store are each
+  `StoreKindMismatch { found, expected }`; `Db::create` on any initialized
+  directory stays `AlreadyInitialized` (create never reads a store, so the kind
+  never gets a say).
+- **The two-store staging pattern** (the sighting the surface exists for): build
+  an ephemeral store — bulk imports, judged exactly as a durable store judges —
+  read/repair until the theory holds, then ETL the survivors into the durable
+  store (`snap.scan` → `bulk_load`, § ETL below) and delete the directory. The
+  staging side pays no fullfsync per commit (the small-commit shape measured
+  ~16x scratch-side, `docs/reports/ramdisk-phase-r.md` § R4); the durable side's
+  guarantees never dilute because the kinds cannot cross-open.
 - One process, one handle (`00-product.md`): every open holds an exclusive advisory
   lock on `<dir>/bumbledb.lock`; a second live handle on the same path — in this
   process or another — is `EnvironmentLocked` at open time. The handle is shareable
-  across threads; drop closes and releases the lock.
+  across threads; drop closes and releases the lock. Ephemeral stores included —
+  the lock, like every other mechanism, does not vary by kind.
 - Dev-reset conveniences (delete + recreate) are host-side; production open never
-  destroys data.
+  destroys data. `Db::ephemeral` never destroys data either — it opens or
+  initializes, and deletion of a spent staging store is the host's explicit act.
 
 ## Transactions
 
@@ -453,7 +480,10 @@ proposition the commit checks in one integer compare.
 
 ## Errors (taxonomy skeleton)
 
-- **Open errors:** `FormatMismatch`, `SchemaMismatch`, `Io`, `Lmdb`.
+- **Open errors:** `FormatMismatch`, `StoreKindMismatch { found, expected }` (the
+  kind marker read after the version, before the fingerprint — the cross-open
+  matrix, § environment lifecycle), `SchemaMismatch`, `AlreadyInitialized`,
+  `EnvironmentLocked`, `Io`, `Lmdb`.
 - **Schema errors** (declaration boundary, `30-dependencies.md` roster included):
   typed, enumerated, returned from `Db::create`/`Db::open` — where the definition's
   descriptor is validated — before any environment exists.

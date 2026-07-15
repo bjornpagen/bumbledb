@@ -174,6 +174,7 @@ fn judge(db: &Db<target::Target>, query: &Query) -> Verdict {
             | Error::SchemaMismatch { .. }
             | Error::AlreadyInitialized
             | Error::EnvironmentLocked
+            | Error::StoreKindMismatch { .. }
             | Error::Io(_)
             | Error::Lmdb(_)
             | Error::ReadersFull { .. }

@@ -622,6 +622,26 @@ autopsies the surviving bytes), which a RAM-backed filesystem preserves
 exactly; only power-loss durability is lost, and no test tests power
 loss.
 
+**The ephemeral store kind's evidence** (`50-storage.md` § the
+ephemeral store kind; Lean owns none of it — durability and crash are
+mechanism, outside the model, so no Bridge row and no citation exist
+to expect). Two instruments: (1) the **durable/ephemeral differential
+oracle** (`crates/bumbledb/tests/ephemeral.rs`) — one deterministic
+ops sequence replayed against a `Db::create` store and a
+`Db::ephemeral` store, asserting identical commit verdicts, identical
+COMPLETE violation sets, identical WriteTx point reads, and identical
+full relation contents: the flags change the durability mechanism,
+never a semantic; plus the typed cross-open matrix in the same file.
+(2) The **ephemeral crashpoint sweep** (`fuzz/tests/crash.rs`) — the
+identical crashpoint × ops-prefix matrix with the victim store built
+by `Db::ephemeral`: all-or-nothing recovery under `WRITEMAP|NOSYNC`,
+no third observable outcome (the empirical verdict WRITEMAP shipped
+on). Device honesty is unchanged and orthogonal: *ephemeral* is a
+store kind (an on-disk durability claim), *RAM-backed* is a device
+fact — the timed lanes' refusal keys on the device, never the kind,
+and an ephemeral store on the SSD is as legitimate as a durable store
+on a ramdisk is for the untimed lanes.
+
 ## Small worlds, Miri, and ASAN — the charter's complement
 
 Where a domain is finite and small, random exploration is strictly worse than

@@ -1045,6 +1045,19 @@ pub enum Error {
     /// one — holds the environment's advisory lock. One writer, many
     /// reader threads, one handle, one process (`00-product.md`).
     EnvironmentLocked,
+    /// The store on disk is not the KIND this constructor opens
+    /// (`docs/architecture/50-storage.md` § the ephemeral store kind):
+    /// `Db::open` reached an ephemeral store, or `Db::ephemeral` reached
+    /// a durable one. The kind is a property of the store, marked in
+    /// `_meta` at creation — never a mode of a handle — so the durable
+    /// surface can never quietly read a store that skipped its fsyncs,
+    /// and the ephemeral surface can never quietly strip a durable
+    /// store's guarantee. Checked after the format version, before the
+    /// fingerprint.
+    StoreKindMismatch {
+        found: crate::storage::env::StoreKind,
+        expected: crate::storage::env::StoreKind,
+    },
     Io(std::io::Error),
     Lmdb(heed::Error),
 
