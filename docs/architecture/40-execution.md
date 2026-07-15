@@ -143,19 +143,27 @@ no residual concept; we own filter placement because there is no external optimi
 ## The paper's core, adopted
 
 - **GHT** (§3.1): trie; internal nodes are hash maps keyed by tuples; leaves are vectors.
-- **Plan** (§3.2): a list of nodes, each a list of subatoms; the plan partitions every
-  positive atom occurrence's variables; per node, no two subatoms share an atom
-  occurrence (validity quantifies over **occurrences** — self-joins are ordinary), and
-  the cover set is every subatom whose variables are **exactly** the node's new
-  variables.
+- **Plan** (§3.2): a list of nodes, each a list of subatoms; a valid plan
+  partitions every positive occurrence's variables and its covers bind exactly
+  each node's new variables — the validity clauses are the definition
+  `lean/Bumbledb/Exec/Plan.lean: PlanValid` (quantified over **occurrences**, so
+  self-joins are ordinary), and the theorem validity buys: any valid plan of an
+  accepted rule computes the rule's denotation, negations and residuals as
+  post-filters, `lean/Bumbledb/Exec/Plan.lean: valid_plan_sound`.
   **Deviation from the paper's Definition** ("containing all new variables"): a
   subatom that also carries an already-bound variable is iterable per the paper, but
   under dynamic cover choice the executor would *rebind* the bound variable without
   re-checking the occurrence that bound it — wrong results on skewed data (found by
-  audit, demonstrated with a triangle query, pinned by a regression test). Restricting
-  covers to exactly-the-new-variables loses nothing: every `binary2fj` node's opening
-  subatom qualifies (its variables are exactly the remainder), and GJ-style
-  single-variable covers all qualify. The alternative — equality-checking a mixed
+  audit, demonstrated with a triangle query, pinned by a regression test, and
+  mechanized: `lean/Bumbledb/Countermodels.lean: loose_cover_rebinds` executes the
+  paper's rule — `lean/Bumbledb/Exec/Plan.lean: PaperPlanValid`, the strictly wider
+  admission per `lean/Bumbledb/Exec/Plan.lean: PlanValid.paper` — on that triangle
+  instance and derives the tuple the denotation refuses). Restricting
+  covers to exactly-the-new-variables loses nothing: every rule keeps at least
+  one valid plan
+  (`lean/Bumbledb/Exec/Plan.lean: every_rule_plannable` — the left-deep
+  one-variable-per-node construction), and every `binary2fj` node's opening
+  subatom qualifies (its variables are exactly the remainder). The alternative — equality-checking a mixed
   cover's old variables per iterated entry — buys generality no plan shape here needs.
 - **Execution** (§3.3 vocabulary, pipelined implementation): the root or an absorb
   node supplies pending binding tuples plus carried cursor sets. Each middle node
@@ -209,7 +217,9 @@ field→column maps; the node list with subatom partitions; per-node cover sets;
 occurrence trie schemas derived per §3.3; per-node residual **and anti-probe** lists;
 per-atom filter lists; the binding-slot layout (below); and the optional
 `DistinctWitness` (below). Validated once at construction; nothing
-downstream re-checks.
+downstream re-checks — validity is what the soundness theorem takes as its premise
+(`lean/Bumbledb/Exec/Plan.lean: valid_plan_sound`), so the witness carries the whole
+licence.
 
 ## Set semantics in the executor
 
@@ -419,11 +429,17 @@ here and nowhere like Postgres because no deferral modes exist: every readable
 snapshot satisfies every accepted statement
 (`lean/Bumbledb/Txn.lean: committed_states_model`), which is how
 `elimination_sound`'s containment premise is discharged — removal is
-proved result-identical under the projection sink
-(`lean/Bumbledb/Exec/Rewrites.lean: elimination_sound`); the aggregate face
-(key-ness of Y keeping a dead non-key variable from multiplying the fold
-domain, `plan/ground.rs`'s module-doc argument) is a recorded pending
-obligation on the admission-calculus docket, not yet a theorem. The marks' readers: plan introspection
+proved result-identical under both sinks: the projection sink
+(`lean/Bumbledb/Exec/Rewrites.lean: elimination_sound`) and the aggregate
+sink, as two theorems — key-ness of Y keeps a dead non-key variable from
+multiplying the fold domain
+(`lean/Bumbledb/Exec/Dedup.lean: elimination_agg_fold_domain`, the bijective
+projection, whose key premise pays off as the count transport between the
+engine's full-slot fold domain and the surviving-slot domain,
+`lean/Bumbledb/Exec/Dedup.lean: elimination_agg_domain_counts`), with answer
+identity fiber for fiber at the surviving-slot reading
+(`lean/Bumbledb/Exec/Dedup.lean: elimination_agg_sound`; the pair's recorded
+scope is that module's doc). The marks' readers: plan introspection
 and the structured stats (each mark rendered with its licensing statement
 through `schema/render.rs`), and the DP, which sees a smaller problem.
 **Alternative:** no rewrite — leave redundant existence walks to D2's

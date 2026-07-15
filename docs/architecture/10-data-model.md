@@ -220,10 +220,9 @@ for this was the last
 SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
 
 - A `Fresh` field must be `U64`. The database mints its values: monotonic per
-  (relation, field), never re-issuing any value observable in a committed state —
-  generator-returned or explicitly supplied alike; aborted transactions don't
-  advance the committed sequence
-  (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
+  (relation, field), never re-issuing any value observable in a committed state
+  (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable` — explicit supplies
+  and aborted runs are that model's own cases).
 - **The usage pattern this exists for** — insert a new fact without ever reading a max:
 
   ```rust

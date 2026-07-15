@@ -32,12 +32,28 @@ project needs no build programmability.
   `Query/Membership`, `Query/Aggregates`).
 - **Level 1 — abstract algorithms**: each semantics-bearing algorithm
   as a small pure Lean function, PROVED equal to its denotation
-  (`Exec/Sweep`, `Exec/Dedup`, `Exec/Rewrites`, and `Exec/Fixpoint` —
-  which deliberately carries both levels of the one feature: the
-  stratified denotation and the fueled round loop, proved to agree).
+  (`Exec/Sweep`, `Exec/Dedup`, `Exec/Rewrites`, `Exec/Plan` — the
+  Free Join plan formalism at the mathematical level: plan validity,
+  plan soundness against the rule denotation, plannability — and
+  `Exec/Fixpoint` — which deliberately carries both levels of the one
+  feature: the stratified denotation and the fueled round loop,
+  proved to agree).
   Where an algorithm needs a premise the denotation does not supply,
   Lean forces the premise to be named — those names are exactly the
-  engine's witness types.
+  engine's witness types. `Oracle` sits at this level too (placement
+  recorded 2026-07-14, the admission calculus): enforcement plans as
+  witness terms over an abstract ordered oracle, each accepted form's
+  delta-restricted check decided at a proved consultation count —
+  law 3's abstract-cost scoping, spent. `Admission` closes that
+  calculus: the acceptance gate as one inhabited structure
+  (`AdmissibleForm`) — per single-key form one term bundling the
+  denotation, the executable judge, the delta restriction, the
+  oracle plan, and quarantine compliance (six inhabitants; the
+  ranked order form sits outside the type by design — its recorded
+  refusal and its plan-calculus coverage live in that module's
+  doc); a future form enters the vocabulary by inhabiting the
+  type, and the refused E1 shape is proved uninhabitable in
+  `Countermodels`.
 - **Level 2 — the lifecycle**: transactions, final-state judgment,
   generation witnesses, ETL — a state machine with its invariance
   theorems (`Txn`), plus the fresh-mint allocation model

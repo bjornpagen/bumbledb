@@ -384,14 +384,12 @@ same position is interval **value equality** (identity, `10-data-model.md`).
 Var, Param, ParamSet, and Literal all participate under the same rule, and the
 rule is a proved lowering, not a convention: rewriting each membership binding
 to the `PointIn` predicate form preserves the rule's answers over the whole
-term roster and repeated variables — positive atoms in full, negated atoms
-under the theorem's membership-free hypothesis
-(`lean/Bumbledb/Query/Membership.lean: membership_lowering_preserves`; a
-negated membership binding has no pre-lowered IR form, so its normative
-semantics is the surface judgment itself, with
-`lean/Bumbledb/Query/Membership.lean: surface_antiprobe_filters` as the filter
-form the engine realizes and the negated-atom answer-preservation extension the
-module's recorded remaining gap). The
+term roster and repeated variables, both atom polarities included — positive
+bindings
+(`lean/Bumbledb/Query/Membership.lean: membership_lowering_preserves`),
+negated bindings into the anti-probe's filter form
+(`lean/Bumbledb/Query/Membership.lean: membership_lowering_preserves_negated`;
+the polarity split and its scoping are that module's recorded narrowing). The
 domain ceiling is the ray's ∞, never a point (`10-data-model.md` § the
 point-domain law): a ceiling literal at any interval position (membership
 bindings and `PointIn` operands) is a validation error, a ceiling-bound point
@@ -424,10 +422,9 @@ containment `<=` (views) are three predicates with three names.
 
 ## The Allen operator (the interval-pair coordinate system)
 
-The 13 Allen basic relations are jointly exhaustive and pairwise disjoint over
-nonempty half-open intervals (the type's preconditions, `10-data-model.md`):
-every configuration of two intervals is **exactly one** of them
-(`lean/Bumbledb/Query/Aggregates.lean: allen_jepd`). The set of all
+Every configuration of two nonempty half-open intervals (the type's
+preconditions, `10-data-model.md`) is **exactly one** of the 13 Allen basic
+relations (`lean/Bumbledb/Query/Aggregates.lean: allen_jepd`). The set of all
 interval-pair predicates is therefore the powerset 2¹³, and the IR carries it as
 exactly that: `Allen { mask }` between two interval terms of one element type,
 satisfied by mask membership of the pair's classification
@@ -479,15 +476,17 @@ the validation boundary.
 Constraint-side unification (no semantics change): the pointwise key
 judgment — per-group pairwise disjointness
 (`lean/Bumbledb/Dependencies.lean: pointwise_key_disjoint`) — is the statement
-"every pair satisfies `DISJOINT`" (`30-dependencies.md`); the checker's
-neighbor probe is its O(log n) enforcement plan. One vocabulary, both sides
-of the engine.
+"every pair satisfies `DISJOINT`", as a theorem: sharing no point IS
+classification into the `DISJOINT` composite
+(`lean/Bumbledb/Query/Aggregates.lean: points_disjoint_iff_disjoint_mask`);
+the checker's neighbor probe is its O(log n) enforcement plan. One
+vocabulary, both sides of the engine.
 
 ## The measure (the denotation's one arithmetic)
 
 **Vocabulary is pinned:** surface `Duration`, IR `Measure`; the denotation is
-point-set cardinality (`lean/Bumbledb/Values.lean: measure_finite` — for a
-bounded interval, exactly end minus start, type u64 for both element types),
+point-set cardinality (`lean/Bumbledb/Values.lean: measure_finite` — u64 for
+both element types),
 and rays are refused at evaluation
 (`lean/Bumbledb/Values.lean: measure_ray_none`; `MeasureOfRay`). It is the one
 arithmetic the denotation defines (`10-data-model.md`); everything else that

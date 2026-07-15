@@ -42,25 +42,33 @@ nothing (`normalize.rs` pass 1) — is answer-invisible, and
   never appears in a binding (`ValidationError::DurationInBinding`),
   so the arm is unreachable on accepted rules and the parking only
   keeps the definition total.
-* **Negated membership atoms have no pre-lowered IR form.** The
-  lowering names the interval field's value with a fresh variable; a
-  fresh variable under negation is unsafe by construction
+* **Negated membership atoms have no pre-lowered RULE form.** The
+  positive lowering names the interval field's value with a fresh
+  variable; a fresh variable under negation is unsafe by construction
   (`NegatedVariableUnbound` — `Safe` forbids it), so no rule of the
-  modeled syntax expresses an anti-probe filter. The surface judgment
-  ITSELF is the normative semantics of a negated membership binding,
-  and `surface_antiprobe_filters` is the filter form the engine's
-  identical-for-both-roles lowering realizes (`lower_atom`, "positive
-  or negated — the rules are identical"). Hence the syntactic theorem
-  `membership_lowering_preserves` carries the membership-free-negated
-  hypothesis, while `lowerMembership_preserves_surface` — the
-  full-roster half — carries none. **The recorded REMAINING GAP:** no
-  theorem yet states answer preservation for a NEGATED membership
-  binding against an anti-probe-filter form of the denotation (a
-  filter-carrying negated judgment this tree does not define); until
-  one is stated and proved, the honest scope of
-  `membership_lowering_preserves` is exactly its hypothesis, and doc
-  claims must cite it so scoped
-  (`docs/architecture/20-query-ir.md` § membership is a typing rule).
+  modeled syntax expresses a negated membership binding after
+  lowering. Its lowered home is therefore NOT a rule but the
+  anti-probe OCCURRENCE the engine actually executes
+  (`ir/normalize/normalize.rs::lower_atom`, "positive or negated —
+  the rules are identical"; the `AntiProbe` descriptor carries the
+  membership filters, evaluated inside the probe). **The formerly
+  recorded remaining gap, closed (2026-07-14, the admission-calculus
+  docket):** `AntiOccurrence` is the filter-carrying negated
+  judgment, `Atom.lowerNegated` the role-blind lowering onto it, and
+  `membership_lowering_preserves_negated` states answer preservation
+  for the FULL roster — negated membership bindings included — with
+  no membership-free hypothesis: the lowered rule's positive atoms
+  read the pre-lowered `Matches`/`PointIn` form and its negated atoms
+  reject by anti-probe (`antiProbeRuleAnswers`).
+  `antiprobe_eq_antijoin_of_negFree` composes the anti-probe
+  denotation back to the plain anti-join on membership-free negated
+  atoms, so `membership_lowering_preserves` — the pre-lowered-rule
+  fragment, which keeps its hypothesis because it speaks the rule
+  syntax — is the composition of the two. No safety subtlety
+  appeared: assignments are total at this level and `Safe` pins every
+  negated-atom variable positively, so the anti-probe's `PointIn`
+  filters only ever read bound values — exactly the engine's
+  point-membership scan.
 * **The fresh mint is the canonical ceiling supply**
   (`Rule.freshVar`). Answers are projection-determined, so the
   variable names the lowering introduces are answer-invisible; the
@@ -1169,9 +1177,11 @@ theorem lowerMembership_preserves_surface (Γ : Typing) (C : Classify)
 rule's bivalent surface denotation equals THE denotation
 (`ruleAnswers`, the pre-lowered `Matches`/`PointIn` form) of its
 lowering, whenever the negated atoms are membership-free — the one
-fragment the modeled IR can spell (recorded narrowing: a negated
-membership binding has no pre-lowered rule form; its normative reading
-is the surface judgment, `surface_antiprobe_filters` its filter form).
+fragment the pre-lowered RULE syntax can spell (recorded narrowing: a
+negated membership binding has no pre-lowered rule form; its lowered
+home is the anti-probe occurrence, and
+`membership_lowering_preserves_negated` below carries the full roster
+against that form with no hypothesis).
 The engine's normalize and the naive model each re-derive this
 lowering; this theorem is the arbiter both are measured against.
 Bridge: `ir/normalize/normalize.rs::is_membership` + `lower_atom` (the
@@ -1187,6 +1197,192 @@ theorem membership_lowering_preserves (Γ : Typing) (C : Classify)
     (surface_eq_denotation_of_free ?_ ?_ t)
   · exact lowerFuel_posFree _ Γ r (Nat.le_refl _)
   · exact lowerFuel_negFree _ Γ r hneg
+
+/-! ## The negated lowering — the anti-probe occurrence form
+
+A negated membership binding has no pre-lowered RULE form (the mint
+is unsafe under negation — module doc), so its lowered home is the
+OCCURRENCE the engine executes: the anti-probe, domain bindings plus
+membership filters, evaluated inside the probe. This section defines
+that form, proves the role-blind lowering onto it answer-preserving
+for the full roster (`membership_lowering_preserves_negated`, no
+membership-free hypothesis), and composes it back to the plain
+anti-join on membership-free negated atoms
+(`antiprobe_eq_antijoin_of_negFree`) — closing the formerly recorded
+remaining gap. -/
+
+/-- A negated occurrence in the engine's lowered form: the domain
+bindings (value reads — the anti-probe's probe keys) plus the
+membership filters, each read as a same-fact `PointIn` against the
+probed fact. Bridge: `ir/normalize/normalize.rs::lower_atom`
+(role-blind: pass 1 keeps the domain bindings, pass 2 lowers the
+membership positions to `PointIn`/`FieldsPointIn`/`AnyPointIn`
+filters) and the `AntiProbe` descriptor (`probe_bindings` are the
+occurrence's vars; its filters evaluate inside the probe). -/
+structure AntiOccurrence where
+  /-- The probed relation. -/
+  relation : RelId
+  /-- The value-read bindings — the probe keys. -/
+  domain : List (FieldId × Term)
+  /-- The membership positions — `PointIn` filters over the probed
+  fact's interval fields. -/
+  filters : List (FieldId × Term)
+
+/-- The role-blind lowering of one negated atom: partition its
+bindings by the membership status — exactly `lower_atom`'s two
+passes, with no mint (a filter reads the fact in place; nothing
+binds). -/
+def Atom.lowerNegated (Γ : Typing) (a : Atom) : AntiOccurrence :=
+  { relation := a.relation
+    domain :=
+      a.bindings.filter fun b => !(Γ.membership a.relation b.1 b.2)
+    filters :=
+      a.bindings.filter fun b => Γ.membership a.relation b.1 b.2 }
+
+/-- A fact PASSES an anti-occurrence: it matches the domain bindings
+by value and every membership filter's term selects a value whose
+point lies in the fact's interval at the filter's field. A variable
+scalar-anchored in the SAME negated atom needs no special case: the
+domain binding pins `σ v` to the probed fact's field, so the filter's
+read of `σ v` IS the engine's `FieldsPointIn` same-fact composition. -/
+def AntiMatches (f : Fact) (o : AntiOccurrence) (σ : Assignment)
+    (ρ : ParamEnv) : Prop :=
+  Matches f ⟨o.relation, o.domain⟩ σ ρ ∧
+  ∀ b, b ∈ o.filters → ∃ x, Term.selects ρ σ b.2 x ∧ x.pointMem (f b.1)
+
+/-- The anti-probe rejection: no fact of the relation passes — the
+`¬∃` the executor realizes by probe, filters inside. -/
+def AntiOccurrence.rejects (o : AntiOccurrence) (I : Instance)
+    (σ : Assignment) (ρ : ParamEnv) : Prop :=
+  ¬ ∃ f, f ∈ I o.relation ∧ AntiMatches f o σ ρ
+
+/-- The surface judgment IS the anti-occurrence pass, fact for fact —
+`surfaceMatches_iff_occurrence` with the filter half carried by the
+filtered binding list instead of the in-place quantification. -/
+theorem surfaceMatches_iff_antiMatches {Γ : Typing} {f : Fact}
+    {a : Atom} {σ : Assignment} {ρ : ParamEnv} :
+    SurfaceMatches Γ f a σ ρ ↔ AntiMatches f (a.lowerNegated Γ) σ ρ := by
+  rw [surfaceMatches_iff_occurrence]
+  unfold AntiMatches Atom.lowerNegated
+  constructor
+  · rintro ⟨hdom, hflt⟩
+    refine ⟨hdom, fun b hb => ?_⟩
+    obtain ⟨hmem, hm⟩ := List.mem_filter.mp hb
+    exact hflt b hmem hm
+  · rintro ⟨hdom, hflt⟩
+    refine ⟨hdom, fun b hb hm => ?_⟩
+    exact hflt b (List.mem_filter.mpr ⟨hb, hm⟩)
+
+/-- A negated atom's surface rejection is exactly its anti-probe's
+rejection — the negated case of the lowering, one atom at a time. -/
+theorem lowerNegated_rejects_iff {Γ : Typing} {a : Atom}
+    {σ : Assignment} {ρ : ParamEnv} {I : Instance} :
+    (¬ ∃ f, f ∈ I a.relation ∧ SurfaceMatches Γ f a σ ρ) ↔
+      (a.lowerNegated Γ).rejects I σ ρ :=
+  ⟨fun hn ⟨f, hf, h⟩ => hn ⟨f, hf, surfaceMatches_iff_antiMatches.mpr h⟩,
+   fun hn ⟨f, hf, h⟩ => hn ⟨f, hf, surfaceMatches_iff_antiMatches.mp h⟩⟩
+
+/-- The lowered rule denotation the engine executes: positive atoms
+and conditions in the pre-lowered `Matches`/`Condition.holds` form
+(the `ruleAnswers` reading), negated occurrences rejecting by
+anti-probe. Bridge: `ir/normalize/normalize.rs::normalize_rule` — the
+occurrence list plus the `anti_probes` descriptors. -/
+def antiProbeDerives (Γ : Typing) (C : Classify) (r : Rule)
+    (I : Instance) (ρ : ParamEnv) (σ : Assignment) : Prop :=
+  (∀ a, a ∈ r.atoms → ∃ f, f ∈ I a.relation ∧ Matches f a σ ρ) ∧
+  (∀ a, a ∈ r.negated → (a.lowerNegated Γ).rejects I σ ρ) ∧
+  (∀ t, t ∈ r.conditions → Condition.holds C ρ σ t)
+
+/-- One rule's answers under the anti-probe reading of its negated
+atoms. -/
+def antiProbeRuleAnswers (Γ : Typing) (C : Classify) (r : Rule)
+    (I : Instance) (ρ : ParamEnv) : Set AnswerTuple :=
+  fun t => ∃ σ, antiProbeDerives Γ C r I ρ σ ∧ t = r.finds.map σ
+
+/-- Membership in the anti-probe answers, unfolded. -/
+theorem mem_antiProbeRuleAnswers {Γ : Typing} {C : Classify} {r : Rule}
+    {I : Instance} {ρ : ParamEnv} {t : AnswerTuple} :
+    t ∈ antiProbeRuleAnswers Γ C r I ρ ↔
+      ∃ σ, antiProbeDerives Γ C r I ρ σ ∧ t = r.finds.map σ :=
+  Iff.rfl
+
+/-- On a rule whose POSITIVE atoms are membership-free, the surface
+denotation IS the anti-probe denotation: positives collapse to
+`Matches` (`surfaceMatches_of_membershipFree`), and every negated
+atom — membership bindings or not — reads through its anti-probe
+(`lowerNegated_rejects_iff`). -/
+theorem surface_eq_antiprobe_of_posFree {Γ : Typing} {C : Classify}
+    {r : Rule} {I : Instance} {ρ : ParamEnv}
+    (hpos : ∀ a, a ∈ r.atoms → Atom.membershipFree Γ a) :
+    ∀ t, t ∈ surfaceRuleAnswers Γ C r I ρ ↔
+      t ∈ antiProbeRuleAnswers Γ C r I ρ := by
+  intro t
+  constructor
+  · rintro ⟨σ, ⟨hp, hn, hc⟩, rfl⟩
+    refine ⟨σ, ⟨?_, ?_, hc⟩, rfl⟩
+    · intro a ha
+      obtain ⟨f, hf, hm⟩ := hp a ha
+      exact ⟨f, hf, (surfaceMatches_of_membershipFree (hpos a ha)).mp hm⟩
+    · intro a ha
+      exact lowerNegated_rejects_iff.mp (hn a ha)
+  · rintro ⟨σ, ⟨hp, hn, hc⟩, rfl⟩
+    refine ⟨σ, ⟨?_, ?_, hc⟩, rfl⟩
+    · intro a ha
+      obtain ⟨f, hf, hm⟩ := hp a ha
+      exact ⟨f, hf, (surfaceMatches_of_membershipFree (hpos a ha)).mpr hm⟩
+    · intro a ha
+      exact lowerNegated_rejects_iff.mpr (hn a ha)
+
+/-- **The negated case, closed — the full-roster lowering theorem.**
+A written rule's bivalent surface denotation equals the anti-probe
+denotation of its lowering, with NO hypothesis: positive membership
+bindings lower to the minted `PointIn` conditions
+(`Rule.lowerMembership`, run to exhaustion), and every negated atom's
+membership bindings lower to its anti-probe's `PointIn` filters
+(`Atom.lowerNegated` under the lowered typing — the mints are fresh
+for the untouched negated atoms, so their membership statuses are
+unchanged, `lowerFuel_negFree`'s argument). This is the arbiter for
+the engine's role-blind `lower_atom` on NEGATED occurrences, the half
+`membership_lowering_preserves` could not spell in rule syntax.
+Bridge: `ir/normalize/normalize.rs::lower_atom` ("positive or negated
+— the rules are identical"); the `AntiProbe` descriptors carry the
+filters the executor evaluates inside the probe. -/
+theorem membership_lowering_preserves_negated (Γ : Typing)
+    (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv) :
+    ∀ t, t ∈ surfaceRuleAnswers Γ C r I ρ ↔
+      t ∈ antiProbeRuleAnswers (r.lowerMembership Γ).1 C
+        (r.lowerMembership Γ).2 I ρ :=
+  fun t => (lowerMembership_preserves_surface Γ C r I ρ t).trans
+    (surface_eq_antiprobe_of_posFree
+      (lowerFuel_posFree _ Γ r (Nat.le_refl _)) t)
+
+/-- **The anti-join composition.** On membership-free negated atoms
+the anti-probe denotation IS the plain anti-join denotation
+(`ruleAnswers`): the filters are empty and the domain is the whole
+binding list, so a pass is a match and a rejection is the `¬∃` of
+`derives`. Composing this with
+`membership_lowering_preserves_negated` recovers exactly
+`membership_lowering_preserves`'s scope — the hypothesis there is the
+price of speaking rule syntax, not a semantic boundary. -/
+theorem antiprobe_eq_antijoin_of_negFree {Γ : Typing} {C : Classify}
+    {r : Rule} {I : Instance} {ρ : ParamEnv}
+    (hneg : ∀ a, a ∈ r.negated → Atom.membershipFree Γ a) :
+    ∀ t, t ∈ antiProbeRuleAnswers Γ C r I ρ ↔
+      t ∈ ruleAnswers C r I ρ := by
+  intro t
+  constructor
+  · rintro ⟨σ, ⟨hp, hn, hc⟩, rfl⟩
+    refine mem_ruleAnswers.mpr ⟨σ, ⟨hp, ?_, hc⟩, rfl⟩
+    rintro a ha ⟨f, hf, hm⟩
+    exact lowerNegated_rejects_iff.mpr (hn a ha)
+      ⟨f, hf, (surfaceMatches_of_membershipFree (hneg a ha)).mpr hm⟩
+  · rintro ⟨σ, ⟨hp, hn, hc⟩, rfl⟩
+    refine ⟨σ, ⟨hp, ?_, hc⟩, rfl⟩
+    intro a ha
+    refine lowerNegated_rejects_iff.mp ?_
+    rintro ⟨f, hf, hm⟩
+    exact hn a ha
+      ⟨f, hf, (surfaceMatches_of_membershipFree (hneg a ha)).mp hm⟩
 
 end Query
 end Bumbledb

@@ -3,7 +3,10 @@ import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
 import Bumbledb.Exec.Fixpoint
+import Bumbledb.Exec.Plan
 import Bumbledb.Txn
+import Bumbledb.Txn.DeltaRestriction
+import Bumbledb.Admission
 
 /-!
 # Countermodels — the design scratchpad (PRD 02 onward, grows all campaign)
@@ -102,6 +105,20 @@ part of the spec.
   (`Txn.judge`'s signature; `Txn.final_state_judgment_order_free`)
   and why `judgment.rs::FinalStateView` is a type, not a discipline.
 
+* `incremental_verdict_needs_holds` — the delta-restricted judgment's
+  load-bearing premise (`Txn/DeltaRestriction.lean`): WITHOUT
+  `holds(pre)`, the restricted verdict accepts a violating final
+  state — a pre-existing key violation in an untouched binding
+  survives an empty delta whose touched set is empty, so every
+  restricted check passes vacuously while the final state does not
+  hold. Inside the lifecycle the premise is free (`State.models`);
+  outside it, this countermodel is exactly why `Db::verify_store`
+  exists — the sweeper re-runs both judgment forms globally, owning
+  the class no incremental check can see ("an incremental form wrong
+  once, long ago, preserved by every commit since" —
+  `docs/architecture/60-validation.md` § the store sweeper, the
+  division of authority).
+
 * `stale_but_sound` — the maintenance protocol's freshness gap: a
   committed state (it `holds` its theory) whose derived relation is
   SOUND (its containment backs every derived fact — vacuously, here)
@@ -180,6 +197,32 @@ part of the spec.
   2, and two distinct rows at position 1 break uniqueness. What the
   order mark's judgment convicts on a store no generator ever
   touched.
+
+* `joined_window_blast` — the E1 shape (a window over a joined pair
+  of atoms) has NO oracle-bounded enforcement plan, and the refusal
+  is BY REPRESENTATION (the admission-calculus resident; the
+  countermodel section below).
+
+* `joined_window_form_uninhabitable` — the blast composed against
+  the acceptance gate's type (`Admission.lean: AdmissibleForm`): the
+  E1 shape at its own grouping discipline has NO oracle-plan field —
+  two runs whose touched consultations agree while the judgment
+  differs, so "prohibitively expensive" is a type error (the section
+  at the end of this file).
+
+## The Free Join wrong-cover resident (the plan formalism)
+
+* `loose_cover_rebinds` — the paper's looser cover rule ("containing
+  all new variables", Free Join §3.2), refuted on the triangle query:
+  a plan the paper's definition accepts (`loose_plan_paper_valid`)
+  and bumbledb's exactly-new-variables rule refuses
+  (`loose_plan_not_valid`) whose loose execution REBINDS an
+  already-bound variable from the cover's facts without re-checking
+  the occurrence that bound it, emitting a tuple outside the rule's
+  denotation. This is `docs/architecture/40-execution.md` § the
+  paper's core — the audit-found deviation paragraph — mechanized;
+  until now it was prose plus a Rust regression test. The valid-plan
+  side is `Exec/Plan.lean: valid_plan_sound`.
 -/
 
 namespace Bumbledb.Countermodels
@@ -695,6 +738,72 @@ theorem stale_but_sound :
   cases List.mem_singleton.mp hst
   intro f hf _
   exact absurd hf.1 child_ne_parent
+
+/-! ## The delta-restriction premise countermodel (wave 2)
+
+`Txn/DeltaRestriction.lean`'s restriction theorems all assume the
+PRE-state holds the statement. This is that premise's countermodel:
+the two-row fixture (`rowTrue`/`rowFalse` — same key projection,
+distinct facts) as a pre-instance under a one-key theory, judged by
+the delta-restricted check against an EMPTY delta. The touched set is
+empty, so every restricted check passes vacuously — and the final
+state (the pre-state, unchanged) violates the key. -/
+
+/-- The one-key theory's header: field 0 scalar `u64` (the shared
+key), field 1 `bool` (the discriminating payload) — all-scalar, so
+the FD reads classically. -/
+def fdHeader : Header := ⟨fun _ => [.u64, .bool]⟩
+
+/-- The one-key theory: `R(field0) -> R`, nothing else. -/
+def fdTheory : Theory :=
+  ⟨fdHeader, fun _ => none, [.functionality ⟨0⟩ keyProj]⟩
+
+/-- The VIOLATING pre-instance: both rows stand, agreeing on the key
+projection while distinct — no `Txn.State` can carry it, which is the
+type-level half of this countermodel. -/
+def violInstance : Instance := fun _ => twoTarget
+
+/-- The empty delta: nothing added, nothing removed — no binding is
+touched. -/
+def emptyDelta : Txn.Delta :=
+  ⟨fun _ => fun _ => False, fun _ => fun _ => False⟩
+
+/-- **The countermodel (the load-bearing premise).** WITHOUT
+`holds(pre)`, the delta-restricted verdict accepts a violating final
+state: every statement's restricted check passes over the violating
+pre-instance and the empty delta (the touched determinant set is
+empty), while the final state does not hold — the pre-existing
+violation in an untouched binding survives, unjudged. Inside the
+lifecycle the premise is free (`Txn.State.models`); outside it, this
+is exactly why `Db::verify_store` exists: the sweeper re-runs both
+judgment forms globally over the full committed state, owning the
+class no incremental check can see
+(`docs/architecture/60-validation.md` § the store sweeper — the
+division of authority the delta-restricted judgment implies). -/
+theorem incremental_verdict_needs_holds :
+    (∀ st, st ∈ fdTheory.statements →
+      Txn.deltaCheck fdTheory violInstance emptyDelta st) ∧
+    ¬ holds fdTheory (emptyDelta.applyTo violInstance) := by
+  have hsplit : fdTheory.header.intervalSplit ⟨0⟩ keyProj = none := rfl
+  constructor
+  · intro st hst
+    cases List.mem_singleton.mp hst
+    simp only [Txn.deltaCheck, hsplit]
+    intro f g hf hg htouch hproj
+    obtain ⟨f', hf', -⟩ := Txn.mem_projected.mp htouch
+    rcases hf' with h | h
+    · exact False.elim h
+    · exact False.elim h
+  · intro h
+    have hj := h _ (List.mem_singleton.mpr rfl)
+    simp only [Statement.judgment, hsplit] at hj
+    have hT : rowTrue ∈
+        fdTheory.den (emptyDelta.applyTo violInstance) ⟨0⟩ :=
+      Or.inl ⟨Or.inl rfl, fun hf => hf⟩
+    have hF : rowFalse ∈
+        fdTheory.den (emptyDelta.applyTo violInstance) ⟨0⟩ :=
+      Or.inl ⟨Or.inr rfl, fun hf => hf⟩
+    exact rowTrue_ne_rowFalse (hj rowTrue rowFalse hT hF rfl)
 
 /-! ## The unkeyed double-count countermodel (PRD 07)
 
@@ -1461,5 +1570,847 @@ theorem succ_prefixed_infinite (X : Set Nat)
     (hl _).mp (succ_prefixed_all X hpre _)
   have := le_foldr_max l _ hmem
   omega
+
+/-! ## The join-blast countermodel (the admission calculus, E1)
+
+The E1 shape — a window over a JOINED pair of atoms — has no
+oracle-bounded enforcement plan, and the refusal is BY
+REPRESENTATION, twice over, the strongest kind: `Statement`'s sides
+are single `Atom`s (one `RelId` each — a joined side is unwritable),
+and every `EnforcementPlan` evaluation answers from one oracle
+(`Oracle.plan_answers_sound`) whose fact surface the per-form
+conformance pins hold to ONE stored relation's denotation — the pins,
+not the evaluation lemma alone, are what keep a join surface out
+(the gate-type composition is `joined_window_form_uninhabitable`
+below). This countermodel is the refusal's mathematical face: the
+touched-group license every sanctioned plan spends — the
+untouched-implies-unchanged lemmas of `Txn/DeltaRestriction.lean`
+(`cardinality_untouched_group_eq` for the single-atom window) — is
+FALSE for the joined shape. One inserted fact on one join side
+changes the joined child set at parent groups NEITHER relation's
+delta projects to at the grouping, one group per matching join
+partner: deciding the shape costs consultations proportional to the
+JOIN, not to the touched groups, which is exactly the blast radius
+the acceptance gate's cost law refuses
+(`docs/architecture/30-dependencies.md` § the acceptance gate). The
+two-parent witness below is the seed: the delta projects to no
+parent tag, the pre-state joined sets at both tags are empty, and
+both gain a pair from the one insert. -/
+
+/-- The joined-window model's grouping projection: the parent tag at
+field 1 (`ordPosField`). -/
+def blastGrp : List FieldId := [ordPosField]
+
+/-- The pre-instance: relation 0 (the A side) holds the two join
+facts — shared join key `keyVal` at field 0, distinct parent tags at
+field 1 (`rowTrue`/`rowFalse` reread) — and relation 1 (the B side)
+is empty. -/
+def blastPre : Instance := fun R f =>
+  R = parentRel ∧ (f = rowTrue ∨ f = rowFalse)
+
+/-- The delta: ONE B-side fact lands — `winParent` (the join key at
+every field, so its parent-tag projection is `[keyVal]`, matching
+neither A-side tag). -/
+def blastDelta : Txn.Delta :=
+  ⟨fun R f => R = childRel ∧ f = winParent, fun _ _ => False⟩
+
+/-- The E1 shape's would-be child set at parent tag `t`: the (a, b)
+pairs joined on field 0 whose A side projects to `t` — the object a
+joined window would count per parent. -/
+def JoinedChildren (A B : Set Fact) (t : List Value) :
+    Set (Fact × Fact) :=
+  fun p => p.1 ∈ A ∧ p.2 ∈ B ∧ p.1 ⟨0⟩ = p.2 ⟨0⟩ ∧
+    p.1.project blastGrp = t
+
+/-- The join key is not the `true` tag — the two value types
+differ. -/
+theorem keyVal_ne_valTrue : keyVal ≠ valTrue :=
+  fun h => nomatch congrArg Value.type h
+
+/-- The join key is not the `false` tag. -/
+theorem keyVal_ne_valFalse : keyVal ≠ valFalse :=
+  fun h => nomatch congrArg Value.type h
+
+/-- **The countermodel (E1).** The joined shape's blast radius: the
+delta's grouping projection touches NO parent tag on either relation
+(the first three conjuncts — the touched-group license has nothing to
+re-check), both parent tags' joined child sets are empty in the
+pre-state, and BOTH gain a pair in the final state from the one
+inserted B-fact. Untouched-implies-unchanged fails at every parent a
+join partner reaches — consultations proportional to the join, the
+cost law's refused shape. -/
+theorem joined_window_blast :
+    (∀ t, t ∉ blastDelta.projected parentRel blastGrp) ∧
+    [valTrue] ∉ blastDelta.projected childRel blastGrp ∧
+    [valFalse] ∉ blastDelta.projected childRel blastGrp ∧
+    (∀ p, p ∉ JoinedChildren (blastPre parentRel)
+      (blastPre childRel) [valTrue]) ∧
+    (∀ p, p ∉ JoinedChildren (blastPre parentRel)
+      (blastPre childRel) [valFalse]) ∧
+    (rowTrue, winParent) ∈ JoinedChildren
+      (blastDelta.applyTo blastPre parentRel)
+      (blastDelta.applyTo blastPre childRel) [valTrue] ∧
+    (rowFalse, winParent) ∈ JoinedChildren
+      (blastDelta.applyTo blastPre parentRel)
+      (blastDelta.applyTo blastPre childRel) [valFalse] := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rintro t ⟨f, hf | hf, -⟩
+    · exact child_ne_parent hf.1.symm
+    · exact hf
+  · rintro ⟨f, hf | hf, hproj⟩
+    · obtain ⟨-, rfl⟩ := hf
+      have h1 : ([keyVal] : List Value) = [valTrue] := hproj
+      injection h1 with h2 _
+      exact keyVal_ne_valTrue h2
+    · exact hf
+  · rintro ⟨f, hf | hf, hproj⟩
+    · obtain ⟨-, rfl⟩ := hf
+      have h1 : ([keyVal] : List Value) = [valFalse] := hproj
+      injection h1 with h2 _
+      exact keyVal_ne_valFalse h2
+    · exact hf
+  · rintro p ⟨-, hB, -, -⟩
+    exact child_ne_parent hB.1
+  · rintro p ⟨-, hB, -, -⟩
+    exact child_ne_parent hB.1
+  · exact ⟨Or.inl ⟨⟨rfl, Or.inl rfl⟩, fun h => h⟩,
+      Or.inr ⟨rfl, rfl⟩, rfl, rfl⟩
+  · exact ⟨Or.inl ⟨⟨rfl, Or.inr rfl⟩, fun h => h⟩,
+      Or.inr ⟨rfl, rfl⟩, rfl, rfl⟩
+
+/-! ## The Free Join wrong-cover countermodel (the plan formalism)
+
+The paper's cover Definition ("containing all new variables") lets a
+subatom that ALSO carries an already-bound variable be iterated. On
+skewed data the executor then REBINDS the bound variable from the
+cover's facts without re-checking the occurrence that bound it —
+earlier nodes are never revisited. The triangle query below is the
+`docs/architecture/40-execution.md` § the-paper's-core deviation
+paragraph, mechanized: `R = {(1,2)}`, `S = {(3,4)}`, `T = {(1,4)}`;
+the loose plan iterates `R` whole, then lets `S`'s subatom `(b, c)`
+cover node 2 (whose one new variable is `c`), rebinding `b` from 2 to
+3 and emitting `(1, 3, 4)` — but `R(1,3)` is not a fact, so the tuple
+is outside the denotation. Bumbledb's exactly-new-variables rule
+refuses the plan (`loose_plan_not_valid` — node 2 has no cover), and
+every plan it accepts computes the denotation
+(`Exec/Plan.lean: valid_plan_sound`). -/
+
+/-- The triangle's variables: `a`, `b`, `c`. -/
+def triA : Query.VarId := ⟨0⟩
+/-- Triangle variable `b`. -/
+def triB : Query.VarId := ⟨1⟩
+/-- Triangle variable `c`. -/
+def triC : Query.VarId := ⟨2⟩
+
+/-- The three edge relations. -/
+def triR : RelId := ⟨0⟩
+/-- Edge relation `S`. -/
+def triS : RelId := ⟨1⟩
+/-- Edge relation `T`. -/
+def triT : RelId := ⟨2⟩
+
+/-- `R(a, b)`. -/
+def triAtomR : Query.Atom :=
+  ⟨triR, [(⟨0⟩, .var triA), (⟨1⟩, .var triB)]⟩
+/-- `S(b, c)`. -/
+def triAtomS : Query.Atom :=
+  ⟨triS, [(⟨0⟩, .var triB), (⟨1⟩, .var triC)]⟩
+/-- `T(a, c)`. -/
+def triAtomT : Query.Atom :=
+  ⟨triT, [(⟨0⟩, .var triA), (⟨1⟩, .var triC)]⟩
+
+/-- The triangle rule: find `(a, b, c)` from `R(a,b), S(b,c),
+T(a,c)` — safe, well-typed, condition-free. -/
+def triRule : Query.Rule :=
+  ⟨[triA, triB, triC], [triAtomR, triAtomS, triAtomT], [], []⟩
+
+/-- The four `u64` values the instance spends. -/
+def tri1 : Value := ⟨.u64, ⟨1, by omega⟩⟩
+/-- Value 2. -/
+def tri2 : Value := ⟨.u64, ⟨2, by omega⟩⟩
+/-- Value 3. -/
+def tri3 : Value := ⟨.u64, ⟨3, by omega⟩⟩
+/-- Value 4. -/
+def tri4 : Value := ⟨.u64, ⟨4, by omega⟩⟩
+
+/-- `R`'s one fact: `(1, 2)`. -/
+def triFactR : Fact := fun i => if i = ⟨0⟩ then tri1 else tri2
+/-- `S`'s one fact: `(3, 4)`. -/
+def triFactS : Fact := fun i => if i = ⟨0⟩ then tri3 else tri4
+/-- `T`'s one fact: `(1, 4)`. -/
+def triFactT : Fact := fun i => if i = ⟨0⟩ then tri1 else tri4
+
+/-- The skewed instance: one fact per edge relation, and NO triangle
+(`R(1,3)` would be needed to close one through `S`'s fact). -/
+def triInst : Instance := fun R f =>
+  (R = triR ∧ f = triFactR) ∨ (R = triS ∧ f = triFactS) ∨
+    (R = triT ∧ f = triFactT)
+
+/-- The wrong-cover plan: node 1 iterates `R` whole (variables
+`a, b`); node 2 joins `S` and `T`, its one new variable `c`. `S`'s
+subatom carries `(b, c)` and `T`'s `(a, c)` — each contains the new
+variable, NEITHER is exactly it. -/
+def triLoosePlan : Query.Plan :=
+  [[⟨0, [triA, triB]⟩], [⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩]]
+
+/-- The rebound assignment the loose execution emits:
+`a = 1, b = 3, c = 4`. -/
+def triLooseOut : Query.Assignment := fun v =>
+  if v.id = 0 then tri1 else if v.id = 1 then tri3 else tri4
+
+/-- The node-1 binding the loose execution extends: `a = 1, b = 2`
+(and `c` already at its final value — the totalization device). -/
+def triMid : Query.Assignment := fun v =>
+  if v.id = 1 then tri2 else triLooseOut v
+
+/-- The loose plan satisfies the PAPER's validity whole — partition,
+placement, occurrence-disjointness, and the paper's cover rule. -/
+theorem loose_plan_paper_valid : Query.PaperPlanValid triRule triLoosePlan := by
+  refine
+    { occScoped := ?_, complete := ?_, coversVar := ?_, onceVar := ?_,
+      occDisjoint := ?_, covered := ?_ }
+  · intro n hn s hs
+    rcases List.mem_cons.mp hn with rfl | hn'
+    · rw [List.mem_singleton.mp hs]
+      exact ⟨triAtomR, rfl, fun v hv => hv⟩
+    rcases List.mem_cons.mp hn' with rfl | hn''
+    · rcases List.mem_cons.mp hs with rfl | hs'
+      · exact ⟨triAtomS, rfl, fun v hv => hv⟩
+      rcases List.mem_cons.mp hs' with rfl | hs''
+      · exact ⟨triAtomT, rfl, fun v hv => hv⟩
+      · exact absurd hs'' List.not_mem_nil
+    · exact absurd hn'' List.not_mem_nil
+  · intro i hi
+    match i, hi with
+    | 0, _ =>
+      exact ⟨[⟨0, [triA, triB]⟩], List.mem_cons_self,
+        ⟨0, [triA, triB]⟩, List.mem_cons_self, rfl⟩
+    | 1, _ =>
+      exact ⟨[⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩],
+        List.mem_cons_of_mem _ List.mem_cons_self,
+        ⟨1, [triB, triC]⟩, List.mem_cons_self, rfl⟩
+    | 2, _ =>
+      exact ⟨[⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩],
+        List.mem_cons_of_mem _ List.mem_cons_self,
+        ⟨2, [triA, triC]⟩,
+        List.mem_cons_of_mem _ List.mem_cons_self, rfl⟩
+  · intro i a hia v hv
+    match i, hia with
+    | 0, hia =>
+      obtain rfl : triAtomR = a := Option.some.inj hia
+      rcases List.mem_cons.mp hv with rfl | hv'
+      · exact ⟨[⟨0, [triA, triB]⟩], List.mem_cons_self,
+          ⟨0, [triA, triB]⟩, List.mem_cons_self, rfl,
+          List.mem_cons_self⟩
+      rcases List.mem_cons.mp hv' with rfl | hv''
+      · exact ⟨[⟨0, [triA, triB]⟩], List.mem_cons_self,
+          ⟨0, [triA, triB]⟩, List.mem_cons_self, rfl,
+          List.mem_cons_of_mem _ List.mem_cons_self⟩
+      · exact absurd hv'' List.not_mem_nil
+    | 1, hia =>
+      obtain rfl : triAtomS = a := Option.some.inj hia
+      rcases List.mem_cons.mp hv with rfl | hv'
+      · exact ⟨[⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩],
+          List.mem_cons_of_mem _ List.mem_cons_self,
+          ⟨1, [triB, triC]⟩, List.mem_cons_self, rfl,
+          List.mem_cons_self⟩
+      rcases List.mem_cons.mp hv' with rfl | hv''
+      · exact ⟨[⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩],
+          List.mem_cons_of_mem _ List.mem_cons_self,
+          ⟨1, [triB, triC]⟩, List.mem_cons_self, rfl,
+          List.mem_cons_of_mem _ List.mem_cons_self⟩
+      · exact absurd hv'' List.not_mem_nil
+    | 2, hia =>
+      obtain rfl : triAtomT = a := Option.some.inj hia
+      rcases List.mem_cons.mp hv with rfl | hv'
+      · exact ⟨[⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩],
+          List.mem_cons_of_mem _ List.mem_cons_self,
+          ⟨2, [triA, triC]⟩,
+          List.mem_cons_of_mem _ List.mem_cons_self, rfl,
+          List.mem_cons_self⟩
+      rcases List.mem_cons.mp hv' with rfl | hv''
+      · exact ⟨[⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩],
+          List.mem_cons_of_mem _ List.mem_cons_self,
+          ⟨2, [triA, triC]⟩,
+          List.mem_cons_of_mem _ List.mem_cons_self, rfl,
+          List.mem_cons_of_mem _ List.mem_cons_self⟩
+      · exact absurd hv'' List.not_mem_nil
+  · have hpos : ∀ (k : Nat) (n : Query.PlanNode) (i : Nat) (v : Query.VarId),
+        triLoosePlan[k]? = some n →
+        (∃ s, s ∈ n ∧ s.occ = i ∧ v ∈ s.vars) →
+        (k = 0 ∧ i = 0) ∨ (k = 1 ∧ (i = 1 ∨ i = 2)) := by
+      intro k n i v hk hs
+      match k, hk with
+      | 0, hk =>
+        obtain rfl := Option.some.inj hk
+        obtain ⟨s, hs, hocc, -⟩ := hs
+        rw [List.mem_singleton.mp hs] at hocc
+        exact Or.inl ⟨rfl, hocc.symm⟩
+      | 1, hk =>
+        obtain rfl := Option.some.inj hk
+        obtain ⟨s, hs, hocc, -⟩ := hs
+        rcases List.mem_cons.mp hs with rfl | hs'
+        · exact Or.inr ⟨rfl, Or.inl hocc.symm⟩
+        rcases List.mem_cons.mp hs' with rfl | hs''
+        · exact Or.inr ⟨rfl, Or.inr hocc.symm⟩
+        · exact absurd hs'' List.not_mem_nil
+    intro i v k₁ k₂ n₁ n₂ h₁ h₂ e₁ e₂
+    rcases hpos k₁ n₁ i v h₁ e₁ with ⟨rfl, hi₁⟩ | ⟨rfl, hi₁⟩ <;>
+      rcases hpos k₂ n₂ i v h₂ e₂ with ⟨rfl, hi₂⟩ | ⟨rfl, hi₂⟩
+    · rfl
+    · rcases hi₂ with h | h <;>
+        exact absurd (hi₁.symm.trans h) (by decide)
+    · rcases hi₁ with h | h <;>
+        exact absurd (h.symm.trans hi₂) (by decide)
+    · rfl
+  · intro n hn s₁ hs₁ s₂ hs₂ hocc
+    rcases List.mem_cons.mp hn with rfl | hn'
+    · rw [List.mem_singleton.mp hs₁, List.mem_singleton.mp hs₂]
+    rcases List.mem_cons.mp hn' with rfl | hn''
+    · rcases List.mem_cons.mp hs₁ with rfl | hs₁' <;>
+        rcases List.mem_cons.mp hs₂ with rfl | hs₂'
+      · rfl
+      · rcases List.mem_cons.mp hs₂' with rfl | h
+        · exact absurd hocc (by decide)
+        · exact absurd h List.not_mem_nil
+      · rcases List.mem_cons.mp hs₁' with rfl | h
+        · exact absurd hocc (by decide)
+        · exact absurd h List.not_mem_nil
+      · rcases List.mem_cons.mp hs₁' with rfl | h
+        · rcases List.mem_cons.mp hs₂' with rfl | h'
+          · rfl
+          · exact absurd h' List.not_mem_nil
+        · exact absurd h List.not_mem_nil
+    · exact absurd hn'' List.not_mem_nil
+  · intro k n hk
+    match k, hk with
+    | 0, hk =>
+      obtain rfl := Option.some.inj hk
+      exact ⟨⟨0, [triA, triB]⟩, List.mem_cons_self,
+        fun v hv => And.left hv⟩
+    | 1, hk =>
+      obtain rfl := Option.some.inj hk
+      refine ⟨⟨1, [triB, triC]⟩, List.mem_cons_self, fun v hv => ?_⟩
+      obtain ⟨h1, h2⟩ := hv
+      rcases List.mem_cons.mp h1 with rfl | h1'
+      · exact List.mem_cons_self
+      rcases List.mem_cons.mp h1' with rfl | h1''
+      · exact List.mem_cons_of_mem _ List.mem_cons_self
+      rcases List.mem_cons.mp h1'' with rfl | h1'''
+      · exact absurd (by decide :
+          triA ∈ Query.planVars (triLoosePlan.take 1)) h2
+      rcases List.mem_cons.mp h1''' with rfl | h1''''
+      · exact List.mem_cons_of_mem _ List.mem_cons_self
+      · exact absurd h1'''' List.not_mem_nil
+
+/-- Bumbledb's exactly-new-variables rule REFUSES the loose plan:
+node 2's one new variable is `c`, and both subatoms carry a bound
+variable beside it — no cover exists. -/
+theorem loose_plan_not_valid : ¬ Query.PlanValid triRule triLoosePlan := by
+  intro hv
+  obtain ⟨s, hs, hiff⟩ :=
+    hv.covered 1 [⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩] rfl
+  rcases List.mem_cons.mp hs with rfl | hs'
+  · obtain ⟨-, hnb⟩ := (hiff triB).mp List.mem_cons_self
+    exact hnb (by decide)
+  rcases List.mem_cons.mp hs' with rfl | hs''
+  · obtain ⟨-, hnb⟩ := (hiff triA).mp List.mem_cons_self
+    exact hnb (by decide)
+  · exact absurd hs'' List.not_mem_nil
+
+/-- **The countermodel.** The loose execution of the paper-valid plan
+emits `(1, 3, 4)` — `b` REBOUND from `S`'s fact, `R` never
+re-checked — and the denotation refuses it: no fact `R(1, 3)` exists.
+The paper's cover rule is unsound under never-revisit execution;
+bumbledb's exactly-new-variables restriction
+(`Exec/Plan.lean: PlanValid.covered`) is what `valid_plan_sound`
+stands on, and the engine pins the same instance as a Rust
+regression test (`40-execution.md` § the paper's core, the deviation
+paragraph). -/
+theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
+    [tri1, tri3, tri4]
+        ∈ Query.looseAnswers C triRule triLoosePlan triInst ρ ∧
+    [tri1, tri3, tri4] ∉ Query.ruleAnswers C triRule triInst ρ := by
+  constructor
+  · refine ⟨triLooseOut, ?_, ?_, ?_, ?_⟩
+    · show triLooseOut ∈ Query.looseNodeStep triRule triInst ρ
+        [[⟨0, [triA, triB]⟩]] [⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩]
+        (Query.looseNodeStep triRule triInst ρ []
+          [⟨0, [triA, triB]⟩] fun _ => True)
+      refine ⟨triMid, ?_, ⟨1, [triB, triC]⟩, List.mem_cons_self,
+        ?_, ?_, ?_⟩
+      · -- node 1: R's subatom covers itself, binding a = 1, b = 2
+        refine ⟨triMid, trivial, ⟨0, [triA, triB]⟩,
+          List.mem_cons_self, fun v hv => And.left hv,
+          fun v _ => rfl, ?_⟩
+        intro s hs
+        rw [List.mem_singleton.mp hs]
+        refine ⟨triAtomR, rfl, triFactR, Or.inl ⟨rfl, rfl⟩, ?_⟩
+        intro b hb _
+        rcases List.mem_cons.mp hb with rfl | hb'
+        · exact (by decide : triMid triA = triFactR ⟨0⟩)
+        rcases List.mem_cons.mp hb' with rfl | hb''
+        · exact (by decide : triMid triB = triFactR ⟨1⟩)
+        · exact absurd hb'' List.not_mem_nil
+      · -- the paper cover: S's subatom contains the new variable c
+        intro v hv
+        obtain ⟨h1, h2⟩ := hv
+        rcases List.mem_cons.mp h1 with rfl | h1'
+        · exact List.mem_cons_self
+        rcases List.mem_cons.mp h1' with rfl | h1''
+        · exact List.mem_cons_of_mem _ List.mem_cons_self
+        rcases List.mem_cons.mp h1'' with rfl | h1'''
+        · exact absurd (by decide :
+            triA ∈ Query.planVars [[⟨0, [triA, triB]⟩]]) h2
+        rcases List.mem_cons.mp h1''' with rfl | h1''''
+        · exact List.mem_cons_of_mem _ List.mem_cons_self
+        · exact absurd h1'''' List.not_mem_nil
+      · -- the REBIND: off the cover's variables the binding is kept
+        intro v hv
+        have hb : ¬ v.id = 1 := by
+          intro h
+          apply hv
+          have : v = triB := by
+            cases v
+            simp only at h
+            rw [h]
+            rfl
+          rw [this]
+          exact List.mem_cons_self
+        show triLooseOut v = if v.id = 1 then tri2 else triLooseOut v
+        rw [if_neg hb]
+      · -- node 2's probes: S and T both consistent with (1, 3, 4)
+        intro s hs
+        rcases List.mem_cons.mp hs with rfl | hs'
+        · refine ⟨triAtomS, rfl, triFactS, Or.inr (Or.inl ⟨rfl, rfl⟩), ?_⟩
+          intro b hb _
+          rcases List.mem_cons.mp hb with rfl | hb'
+          · exact (by decide : triLooseOut triB = triFactS ⟨0⟩)
+          rcases List.mem_cons.mp hb' with rfl | hb''
+          · exact (by decide : triLooseOut triC = triFactS ⟨1⟩)
+          · exact absurd hb'' List.not_mem_nil
+        rcases List.mem_cons.mp hs' with rfl | hs''
+        · refine ⟨triAtomT, rfl, triFactT, Or.inr (Or.inr ⟨rfl, rfl⟩), ?_⟩
+          intro b hb _
+          rcases List.mem_cons.mp hb with rfl | hb'
+          · exact (by decide : triLooseOut triA = triFactT ⟨0⟩)
+          rcases List.mem_cons.mp hb' with rfl | hb''
+          · exact (by decide : triLooseOut triC = triFactT ⟨1⟩)
+          · exact absurd hb'' List.not_mem_nil
+        · exact absurd hs'' List.not_mem_nil
+    · intro a ha
+      exact absurd ha List.not_mem_nil
+    · intro c hc
+      exact absurd hc List.not_mem_nil
+    · exact (by decide : ([tri1, tri3, tri4] : List Value)
+        = [triLooseOut triA, triLooseOut triB, triLooseOut triC])
+  · intro hmem
+    obtain ⟨σ, hder, hproj⟩ := Query.mem_ruleAnswers.mp hmem
+    obtain ⟨hpos, -, -⟩ := hder
+    have hproj' : [tri1, tri3, tri4] = [σ triA, σ triB, σ triC] := hproj
+    injection hproj' with h1 hrest
+    injection hrest with h2 hrest2
+    obtain ⟨f, hf, hm⟩ := hpos triAtomR List.mem_cons_self
+    rcases hf with ⟨-, rfl⟩ | ⟨habs, -⟩ | ⟨habs, -⟩
+    · have hsel : σ triB = triFactR ⟨1⟩ :=
+        hm (⟨1⟩, .var triB) (List.mem_cons_of_mem _ List.mem_cons_self)
+      rw [← h2] at hsel
+      exact absurd hsel (by decide)
+    · exact absurd habs (by decide)
+    · exact absurd habs (by decide)
+
+/-! ## The E1 shape is UNINHABITABLE (the admission calculus, closed)
+
+`joined_window_blast` above is the blast radius as data; this section
+composes it against the acceptance gate's TYPE
+(`Admission.lean: AdmissibleForm`): the E1 joined-window shape,
+pinned at its own declared discipline — the joined judgment as the
+`Judgment` field, the two joined relations as the consulted surfaces,
+the parent-tag grouping as both surface projections — admits NO
+`plan_decides` term. The argument is the blast's two-run reading: the
+same delta over two pre-states (`blastPre` and the empty instance),
+both holding the joined window, whose final states agree on EVERY
+consultation at every delta-derived touched key (`touched_delta_
+bounded` forces the keys; the only delta fact projects to `[keyVal]`,
+and both parent-side consultations there are empty) — yet the joined
+judgment is FALSE in one final state and TRUE in the other
+(`joined_window_blast`'s two gained pairs). A verdict function of the
+touched consultations would have to be both, so the field is empty:
+"prohibitively expensive" is a type error, not an opinion.
+
+Constructions local to this refutation: `listOracle` (a conforming
+oracle over any listed fact set, trivial position order — the
+countermodels' oracle builder; its filter decides tuple equality
+through the eval machinery's `DecidableEq Value`,
+`Query/Denotation.lean`), the open theory `admTheory` (every relation
+open, so the denotation is the instance), and the two concrete oracle
+families `blastOracle1`/`blastOracle2`.
+
+The pins are the E1 shape's own declaration, not a loophole: a window
+form groups parents by its grouping projection, and those are the
+surfaces its plan may key — the same discipline `cardinalityForm`
+(`Admission.lean`) inhabits successfully at one atom. Degenerate
+groupings that scan a whole relation are refused by the gate's
+acceptance rules on the docs side (`Admission.lean`'s recorded
+narrowing), which is why the countermodel pins the grouping. -/
+
+/-- Every list is pairwise-related under the trivial relation — the
+countermodel oracles' order obligation. -/
+theorem pairwise_trivial {α : Type} : ∀ l : List α,
+    l.Pairwise (fun _ _ => True)
+  | [] => List.Pairwise.nil
+  | _ :: rest =>
+    List.Pairwise.cons (fun _ _ => trivial) (pairwise_trivial rest)
+
+/-- One group of a listed fact set, by filtered projection. -/
+def groupList (L : List Fact) (proj : List FieldId)
+    (t : List Value) : List Fact :=
+  L.filter fun f => decide (f.project proj = t)
+
+/-- Membership in a filtered group. -/
+theorem mem_groupList {L : List Fact} {proj : List FieldId}
+    {t : List Value} {f : Fact} :
+    f ∈ groupList L proj t ↔ f ∈ L ∧ f.project proj = t := by
+  unfold groupList
+  rw [List.mem_filter]
+  constructor
+  · rintro ⟨h1, h2⟩
+    exact ⟨h1, of_decide_eq_true h2⟩
+  · rintro ⟨h1, h2⟩
+    exact ⟨h1, decide_eq_true h2⟩
+
+/-- A conforming oracle over any LISTED fact set, at the trivial
+position order: consultation filters the list, and the neighbor reads
+answer the group's head (extremal vacuously — every position relates
+to every other). The countermodels' oracle builder. -/
+def listOracle (A : Set Fact) (L : List Fact)
+    (hmem : ∀ f, f ∈ A ↔ f ∈ L) (hnd : L.Nodup)
+    (proj : List FieldId) :
+    Oracle.OrderedOracle (List Value) Unit Fact (fun _ _ => True) where
+  facts := A
+  groupOf := fun f => f.project proj
+  posOf := fun _ => ()
+  consult := groupList L proj
+  consult_mem := by
+    intro g f
+    constructor
+    · intro h
+      obtain ⟨h1, h2⟩ := mem_groupList.mp h
+      exact ⟨(hmem f).mpr h1, h2⟩
+    · rintro ⟨h1, h2⟩
+      exact mem_groupList.mpr ⟨(hmem f).mp h1, h2⟩
+  consult_nodup := fun _ => hnd.filter _
+  consult_ordered := fun _ => pairwise_trivial _
+  pred := fun g _ =>
+    match groupList L proj g with
+    | [] => none
+    | f :: _ => some f
+  succ := fun g _ =>
+    match groupList L proj g with
+    | [] => none
+    | f :: _ => some f
+  pred_mem := by
+    intro g p f h
+    have hf : f ∈ groupList L proj g := by
+      revert h
+      cases hL : groupList L proj g with
+      | nil => intro h; exact nomatch h
+      | cons a rest =>
+        intro h
+        have ha : a = f := Option.some.inj h
+        rw [← ha]
+        exact List.mem_cons_self ..
+    obtain ⟨h1, h2⟩ := mem_groupList.mp hf
+    exact ⟨(hmem f).mpr h1, h2, trivial⟩
+  pred_greatest := fun _ _ _ _ _ _ _ _ => trivial
+  pred_none := by
+    intro g p hnone f hfacts hgrp _
+    have hf : f ∈ groupList L proj g :=
+      mem_groupList.mpr ⟨(hmem f).mp hfacts, hgrp⟩
+    revert hnone
+    cases hL : groupList L proj g with
+    | nil =>
+      rw [hL] at hf
+      exact fun _ => nomatch hf
+    | cons a rest => exact fun hnone => nomatch hnone
+  succ_mem := by
+    intro g p f h
+    have hf : f ∈ groupList L proj g := by
+      revert h
+      cases hL : groupList L proj g with
+      | nil => intro h; exact nomatch h
+      | cons a rest =>
+        intro h
+        have ha : a = f := Option.some.inj h
+        rw [← ha]
+        exact List.mem_cons_self ..
+    obtain ⟨h1, h2⟩ := mem_groupList.mp hf
+    exact ⟨(hmem f).mpr h1, h2, trivial⟩
+  succ_least := fun _ _ _ _ _ _ _ _ => trivial
+  succ_none := by
+    intro g p hnone f hfacts hgrp _
+    have hf : f ∈ groupList L proj g :=
+      mem_groupList.mpr ⟨(hmem f).mp hfacts, hgrp⟩
+    revert hnone
+    cases hL : groupList L proj g with
+    | nil =>
+      rw [hL] at hf
+      exact fun _ => nomatch hf
+    | cons a rest => exact fun hnone => nomatch hnone
+
+/-- The empty window `0..0`: no joined pair per parent — the E1
+declaration under refutation. -/
+def joinedWindow : Window := ⟨0, some 0⟩
+
+/-- The empty window holds of an empty set. -/
+theorem window_admits_empty {α : Type} {s : Set α}
+    (hempty : ∀ a, a ∉ s) : joinedWindow.admits s := by
+  refine ⟨Set.atLeast_zero s, ?_⟩
+  intro m _ l _ hmem
+  cases l with
+  | nil => exact Nat.zero_le m
+  | cons a l' => exact absurd (hmem a (List.mem_cons_self ..)) (hempty a)
+
+/-- The empty window refuses any inhabited set. -/
+theorem window_refuses_inhabited {α : Type} {s : Set α} {a : α}
+    (ha : a ∈ s) : ¬ joinedWindow.admits s := by
+  rintro ⟨-, hup⟩
+  have hle := hup 0 rfl [a]
+    (List.Pairwise.cons (fun b hb => nomatch hb) List.Pairwise.nil)
+    (fun b hb => by rcases List.mem_singleton.mp hb with rfl; exact ha)
+  have h1 : (1 : Nat) ≤ 0 := hle
+  omega
+
+/-- The E1 judgment under refutation: at every parent tag, no joined
+child pair — `joinedWindow` over `JoinedChildren`, the joined shape's
+would-be denotation. -/
+def joinedWindowJudgment (T : Theory) (I : Instance) : Prop :=
+  ∀ t, joinedWindow.admits
+    (JoinedChildren (T.den I parentRel) (T.den I childRel) t)
+
+/-- The open theory of the refutation: every relation open, so the
+denotation IS the instance (`admTheory_den`). -/
+def admTheory : Theory := ⟨⟨fun _ => []⟩, fun _ => none, []⟩
+
+/-- An open theory denotes the instance itself. -/
+theorem admTheory_den (I : Instance) (R : RelId) :
+    admTheory.den I R = I R :=
+  rfl
+
+/-- The second run's pre-instance: empty. -/
+def blastEmpty : Instance := fun _ _ => False
+
+/-- `blastPre`'s child side is empty. -/
+theorem blastPre_child_empty : ∀ f, f ∉ blastPre childRel :=
+  fun _ h => child_ne_parent h.1
+
+/-- Run 1's final parent side lists exactly the two tagged rows. -/
+theorem final_blast_parent_mem (f : Fact) :
+    f ∈ admTheory.den (blastDelta.applyTo blastPre) parentRel ↔
+      f ∈ [rowTrue, rowFalse] := by
+  rw [admTheory_den]
+  constructor
+  · rintro (⟨⟨-, h⟩, -⟩ | ⟨hc, -⟩)
+    · rcases h with rfl | rfl
+      · exact List.mem_cons_self ..
+      · exact List.mem_cons_of_mem _ (List.mem_cons_self ..)
+    · exact absurd hc.symm child_ne_parent
+  · intro h
+    rcases List.mem_cons.mp h with rfl | h
+    · exact Or.inl ⟨⟨rfl, Or.inl rfl⟩, fun hf => hf⟩
+    · rcases List.mem_singleton.mp h with rfl
+      exact Or.inl ⟨⟨rfl, Or.inr rfl⟩, fun hf => hf⟩
+
+/-- Either run's final child side lists exactly the inserted fact —
+the pre-state child side is empty in both. -/
+theorem final_blast_child_mem (I : Instance)
+    (hI : ∀ f, f ∉ I childRel) (f : Fact) :
+    f ∈ admTheory.den (blastDelta.applyTo I) childRel ↔
+      f ∈ [winParent] := by
+  rw [admTheory_den]
+  constructor
+  · rintro (⟨h, -⟩ | ⟨-, rfl⟩)
+    · exact absurd h (hI f)
+    · exact List.mem_cons_self ..
+  · intro h
+    rcases List.mem_singleton.mp h with rfl
+    exact Or.inr ⟨rfl, rfl⟩
+
+/-- Run 2's final parent side is empty — the delta writes only the
+child relation. -/
+theorem final_blastEmpty_parent_empty :
+    ∀ f, f ∉ admTheory.den (blastDelta.applyTo blastEmpty) parentRel := by
+  rintro f (⟨h, -⟩ | ⟨hc, -⟩)
+  · exact h
+  · exact child_ne_parent hc.symm
+
+/-- The two tagged rows are distinct facts. -/
+theorem nodup_pair : ([rowTrue, rowFalse] : List Fact).Nodup :=
+  List.Pairwise.cons
+    (fun _ hb => by
+      rcases List.mem_singleton.mp hb with rfl
+      exact rowTrue_ne_rowFalse)
+    (List.Pairwise.cons (fun _ hb => nomatch hb) List.Pairwise.nil)
+
+/-- A singleton fact list is duplicate-free. -/
+theorem nodup_single : ([winParent] : List Fact).Nodup :=
+  List.Pairwise.cons (fun _ hb => nomatch hb) List.Pairwise.nil
+
+/-- Neither tagged row projects to the delta-derived key: the touched
+consultation of run 1's parent oracle is EMPTY — exactly the blast's
+first three conjuncts read at the filter. -/
+theorem pair_group_keyVal_empty :
+    groupList [rowTrue, rowFalse] blastGrp [keyVal] = [] := by
+  unfold groupList
+  refine List.filter_eq_nil_iff.mpr fun f hf => ?_
+  intro hd
+  have hproj := of_decide_eq_true hd
+  rcases List.mem_cons.mp hf with rfl | hf
+  · have h1 : ([valTrue] : List Value) = [keyVal] := hproj
+    injection h1 with h2 _
+    exact keyVal_ne_valTrue h2.symm
+  · rcases List.mem_singleton.mp hf with rfl
+    have h1 : ([valFalse] : List Value) = [keyVal] := hproj
+    injection h1 with h2 _
+    exact keyVal_ne_valFalse h2.symm
+
+/-- Run 1's oracle family: the final state over `blastPre`. -/
+def blastOracle1 : Bool →
+    Oracle.OrderedOracle (List Value) Unit Fact (fun _ _ => True)
+  | true =>
+    listOracle (admTheory.den (blastDelta.applyTo blastPre) parentRel)
+      [rowTrue, rowFalse] final_blast_parent_mem nodup_pair blastGrp
+  | false =>
+    listOracle (admTheory.den (blastDelta.applyTo blastPre) childRel)
+      [winParent] (final_blast_child_mem blastPre blastPre_child_empty)
+      nodup_single blastGrp
+
+/-- Run 2's oracle family: the final state over the empty
+pre-instance. -/
+def blastOracle2 : Bool →
+    Oracle.OrderedOracle (List Value) Unit Fact (fun _ _ => True)
+  | true =>
+    listOracle (admTheory.den (blastDelta.applyTo blastEmpty) parentRel)
+      []
+      (fun f => ⟨fun h => absurd h (final_blastEmpty_parent_empty f),
+        fun h => nomatch h⟩)
+      List.Pairwise.nil blastGrp
+  | false =>
+    listOracle (admTheory.den (blastDelta.applyTo blastEmpty) childRel)
+      [winParent] (final_blast_child_mem blastEmpty fun _ h => h)
+      nodup_single blastGrp
+
+/-- **The E1 shape has no `AdmissibleForm` term** — the oracle-plan
+field is uninhabitable at the shape's own discipline: the joined
+judgment over the two joined relations, both keyed at the parent-tag
+grouping. The two runs' touched consultations agree list for list
+while the final judgments differ (`joined_window_blast`'s gained
+pair), so `plan_decides` would convict and acquit one verdict — the
+acceptance gate's cost law as a type error. -/
+theorem joined_window_form_uninhabitable :
+    ¬ ∃ F : Admission.AdmissibleForm Unit Bool,
+      (∀ T I, F.Judgment () T I ↔ joinedWindowJudgment T I) ∧
+      (∀ T I, F.surface () true T I = T.den I parentRel) ∧
+      (∀ T I, F.surface () false T I = T.den I childRel) ∧
+      F.surfaceProj () true = blastGrp ∧
+      F.surfaceProj () false = blastGrp := by
+  rintro ⟨F, hJ, hsp, hsc, hpp, hpc⟩
+  -- the two conforming families
+  have hfacts1 : ∀ ix, (blastOracle1 ix).facts =
+      F.surface () ix admTheory (blastDelta.applyTo blastPre) := by
+    intro ix
+    cases ix
+    · exact (hsc admTheory (blastDelta.applyTo blastPre)).symm
+    · exact (hsp admTheory (blastDelta.applyTo blastPre)).symm
+  have hkeys1 : ∀ ix f, (blastOracle1 ix).groupOf f =
+      f.project (F.surfaceProj () ix) := by
+    intro ix f
+    cases ix
+    · rw [hpc]; exact rfl
+    · rw [hpp]; exact rfl
+  have hfacts2 : ∀ ix, (blastOracle2 ix).facts =
+      F.surface () ix admTheory (blastDelta.applyTo blastEmpty) := by
+    intro ix
+    cases ix
+    · exact (hsc admTheory (blastDelta.applyTo blastEmpty)).symm
+    · exact (hsp admTheory (blastDelta.applyTo blastEmpty)).symm
+  have hkeys2 : ∀ ix f, (blastOracle2 ix).groupOf f =
+      f.project (F.surfaceProj () ix) := by
+    intro ix f
+    cases ix
+    · rw [hpc]; exact rfl
+    · rw [hpp]; exact rfl
+  have h1 := F.plan_decides () admTheory blastPre blastDelta Unit
+    (fun _ _ => True) blastOracle1 hfacts1 hkeys1
+  have h2 := F.plan_decides () admTheory blastEmpty blastDelta Unit
+    (fun _ _ => True) blastOracle2 hfacts2 hkeys2
+  -- every touched key is the one delta fact's projection
+  have htouch : ∀ t, t ∈ F.Touched () blastDelta → t = [keyVal] := by
+    intro t ht
+    obtain ⟨ix, R, f, hf, hproj⟩ :=
+      F.touched_delta_bounded () blastDelta t ht
+    have hfw : f = winParent := by
+      rcases hf with hf | hf
+      · exact hf.2
+      · exact hf.elim
+    subst hfw
+    cases ix
+    · rw [hpc] at hproj
+      exact hproj.symm
+    · rw [hpp] at hproj
+      exact hproj.symm
+  -- the touched consultations agree across the runs
+  have hcons : ∀ ix, (blastOracle1 ix).consult [keyVal] =
+      (blastOracle2 ix).consult [keyVal] := by
+    intro ix
+    cases ix
+    · rfl
+    · show groupList [rowTrue, rowFalse] blastGrp [keyVal] =
+        groupList [] blastGrp [keyVal]
+      rw [pair_group_keyVal_empty]
+      rfl
+  have hans : ∀ t, t ∈ F.Touched () blastDelta →
+      (fun ix => ((F.probe () ix).toPlan t).answers (blastOracle1 ix)) =
+      (fun ix =>
+        ((F.probe () ix).toPlan t).answers (blastOracle2 ix)) := by
+    intro t ht
+    funext ix
+    rw [Admission.ProbeShape.toPlan_answers,
+      Admission.ProbeShape.toPlan_answers, htouch t ht]
+    exact hcons ix
+  -- run 2: pre and final both hold, so the delta check passes
+  have hpre2 : F.Judgment () admTheory blastEmpty :=
+    (hJ admTheory blastEmpty).mpr fun t =>
+      window_admits_empty fun pr hpr => hpr.1
+  have hfin2 : F.Judgment () admTheory
+      (blastDelta.applyTo blastEmpty) :=
+    (hJ admTheory (blastDelta.applyTo blastEmpty)).mpr fun t =>
+      window_admits_empty fun pr hpr =>
+        final_blastEmpty_parent_empty pr.1 hpr.1
+  have hdc2 : F.DeltaCheck () admTheory blastEmpty blastDelta :=
+    (F.delta_restricts () admTheory blastEmpty blastDelta hpre2).mp
+      hfin2
+  -- transfer the verdicts to run 1, whose consultations agree
+  have hlhs1 : ∀ t, t ∈ F.Touched () blastDelta →
+      F.Verdict () blastDelta t
+        (fun ix =>
+          ((F.probe () ix).toPlan t).answers (blastOracle1 ix)) := by
+    intro t ht
+    rw [hans t ht]
+    exact h2.mpr hdc2 t ht
+  have hdc1 := h1.mp hlhs1
+  -- run 1: pre holds, so the delta check forces the final judgment —
+  -- which the gained joined pair refutes
+  have hpre1 : F.Judgment () admTheory blastPre :=
+    (hJ admTheory blastPre).mpr fun t =>
+      window_admits_empty fun pr hpr =>
+        blastPre_child_empty pr.2 hpr.2.1
+  have hfin1 : F.Judgment () admTheory
+      (blastDelta.applyTo blastPre) :=
+    (F.delta_restricts () admTheory blastPre blastDelta hpre1).mpr
+      hdc1
+  have hjw := (hJ admTheory (blastDelta.applyTo blastPre)).mp hfin1
+  exact window_refuses_inhabited
+    joined_window_blast.2.2.2.2.2.1 (hjw [valTrue])
 
 end Bumbledb.Countermodels

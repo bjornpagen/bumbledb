@@ -1,4 +1,5 @@
 import Bumbledb.Query.Aggregates
+import Bumbledb.Exec.Rewrites
 
 /-!
 # Exec/Dedup — seen-set union and the elision licences (Level 1, PRD 07)
@@ -9,7 +10,31 @@ mechanism fence): the seen-set is a first-occurrence fold
 the `DistinctWitness` licence (`distinct_witness_licence`), the
 `DisjointWitness` licence (`disjoint_witness_licence`), and the
 multi-rule union regime's head-projection key law
-(`union_regime_head_projection`).
+(`union_regime_head_projection`). The aggregate face of ELIMINATION
+lives here too (2026-07-14, the admission-calculus docket — this
+module is where the fold domains live, hence the `Exec/Rewrites`
+import): `elimination_agg_fold_domain` proves the eliminated
+occurrence's key-backed join contributes exactly one extension per
+surviving binding — the containment supplies existence
+(`elim_extension_exists`), the target key uniqueness
+(`elim_extension_unique`) — so the distinct-full-binding domain the
+fold reads projects bijectively onto the surviving slots. The
+aggregate face is then TWO theorems, deliberately:
+`elimination_agg_domain_counts` (the key premise spent — the
+full-slot-array domain the engine's sink keys and the surviving-slot
+domain carry the same counts, floor and ceiling) and
+`elimination_agg_sound` (the containment spent — answer identity
+fiber for fiber, both folds read at the surviving slots; its carrier
+`aggAnswersOn` is the normative `aggAnswers` with the fiber handed
+through the slot projection, definitionally —
+`aggAnswersOn_eq_aggAnswers`, the recorded link). Recorded
+scope, loudly: an arbitrary abstract fold cannot be STATED over both
+domains at once (the two domains' tuples have different widths), so
+no single theorem carries "answer identity for the engine's
+full-slot fold" for every fold parameter — a count-observing fold
+gets it from the counts transport, a surviving-slot-reading fold
+from the fiber identity, and any further fold shape must name which
+of the two it spends.
 
 ## Bridge notes (the exact Rust consumers)
 
@@ -650,5 +675,498 @@ theorem syntactic_disjointness_sound {C : Classify} {q : Query}
     (hsyn : ProvablyDisjointRules q R fld K) :
     DisjointArms C q I ρ :=
   hsyn.imp fun hpin => armPin_disjoint hkey hpin
+
+/-! ## The aggregate face of elimination — one extension per binding
+
+`elimination_sound` (`Exec/Rewrites.lean`) is the projection-sink
+face: answer SETS agree, so containment existence plus deadness
+suffice. The aggregate sink folds the distinct FULL-BINDING domain of
+each group fiber, and there set identity of answers is not enough —
+a dropped occurrence whose dead variable took two values per
+surviving binding would multiply the fold domain (Sum double-counts;
+`plan/ground.rs:44-51` is the engine's module-doc argument). The
+theorems below spend what the projection face never needed: the
+KEY-NESS of `Y` (condition 1's full-key demand — `join_covers_full_key`
+joins on a declared key of the target, entering here as the
+`Functionality` hypothesis per the module narrowing, discharged on
+committed instances by `holds`) and its FULL coverage by the join
+pairs. Containment supplies the extension's existence
+(`elim_extension_exists`), the key its uniqueness
+(`elim_extension_unique`); `elimination_agg_fold_domain` packages
+both as a bijective projection of the fold domain, and
+`elimination_agg_sound` composes the answer identity — fiber for
+fiber, the same key tuple over the same distinct slot-tuple domain,
+which is exactly the domain `agg_over_distinct_bindings` hands every
+fold (any one listing of it, dedup'd, feeds both sides). -/
+
+/-- The dropped rule derives wherever the original does — dropping a
+positive atom only removes constraints (elimination's easy direction,
+at the BINDING level; `elimination_sound` states it for answer
+sets). -/
+theorem elim_derives_drop {C : Classify} {I : Instance} {ρ : ParamEnv}
+    {r r' : Rule} {a b : Atom} {X Y : List FieldId} {φ ψ : Selection}
+    (hs : ElimStep r r' a b X Y φ ψ) {σ : Assignment}
+    (h : derives C r I ρ σ) : derives C r' I ρ σ := by
+  obtain ⟨pre, post, hr, hr'⟩ := hs.atoms_split
+  obtain ⟨hp, hn, hc⟩ := h
+  refine ⟨?_, ?_, ?_⟩
+  · intro x hx
+    refine hp x ?_
+    rw [hr'] at hx
+    rw [hr]
+    rcases List.mem_append.mp hx with h' | h'
+    · exact List.mem_append.mpr (Or.inl h')
+    · exact List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ h'))
+  · intro x hx
+    exact hn x (hs.negated_eq ▸ hx)
+  · intro c hc'
+    exact hc c (hs.conditions_eq ▸ hc')
+
+/-- **Existence — the containment's payoff at the binding level**
+(the forward half of `elimination_sound`, which keeps only the answer
+sets; the aggregate face needs the binding correspondence itself):
+every assignment deriving the dropped rule extends to one deriving
+the original, agreeing on every surviving variable. The extension is
+`elimAssign` — live variables keep their values, the dead ones read
+the containment witness's fields. -/
+theorem elim_extension_exists {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
+    {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
+    (hcont : Containment (I a.relation) φ X (I b.relation) ψ Y)
+    {σ : Assignment} (hσ : derives C r' I ρ σ) :
+    ∃ σ', derives C r I ρ σ' ∧ ∀ v, v ∈ r'.allVars → σ' v = σ v := by
+  obtain ⟨pre, post, hr, hr'⟩ := hs.atoms_split
+  obtain ⟨hatoms, hneg, hconds⟩ := hσ
+  obtain ⟨fa, hfa, hma⟩ := hatoms a hs.source
+  have hφ : φ.satisfies fa := by
+    intro s hsmem
+    obtain ⟨c, hcmem, hca⟩ := hs.carries_phi s hsmem
+    exact (hma _ hca) ▸ hcmem
+  obtain ⟨g, hg, hψ, hgproj⟩ := hcont fa hfa hφ
+  have hlive : ∀ v, v ∈ r'.allVars → σ v = elimAssign σ r' b g v :=
+    fun v hv => (elimAssign_live hv).symm
+  have hmb : Matches g b (elimAssign σ r' b g) ρ := by
+    intro bd hbd
+    rcases hs.target_bindings bd hbd with ⟨v, hv⟩ | ⟨c, hc, hcψ⟩
+    · rw [hv]
+      show elimAssign σ r' b g v = g bd.1
+      have hvb : (bd.1, Term.var v) ∈ b.bindings := by
+        rw [← hv]
+        exact hbd
+      rcases hs.join_or_dead bd.1 v hvb with ⟨p, hp, hpi, hpa⟩ | hdead
+      · have hvlive : v ∈ r'.allVars := by
+          refine mem_allVars.mpr (Or.inr (Or.inl ⟨a, hs.source, ?_⟩))
+          exact List.mem_flatMap.mpr
+            ⟨(p.1, Term.var v), hpa, by simp [Term.vars]⟩
+        have h1 : elimAssign σ r' b g v = σ v := (hlive v hvlive).symm
+        have h2 : σ v = fa p.1 := hma _ hpa
+        have h3 : fa p.1 = g p.2 := project_eq_zip hgproj.symm p hp
+        rw [h1, h2, h3, hpi]
+      · exact elimAssign_dead hdead hs.var_functional hvb
+    · rw [hc]
+      show c = g bd.1
+      exact (Selection.satisfies_singleton hψ hcψ).symm
+  refine ⟨elimAssign σ r' b g, ⟨?_, ?_, ?_⟩,
+    fun v hv => elimAssign_live hv⟩
+  · intro x hx
+    rw [hr] at hx
+    rcases List.mem_append.mp hx with hx' | hx'
+    · have hxr' : x ∈ r'.atoms := by
+        rw [hr']
+        exact List.mem_append.mpr (Or.inl hx')
+      obtain ⟨f, hf, hmf⟩ := hatoms x hxr'
+      refine ⟨f, hf, (matches_congr fun v hv => ?_).mp hmf⟩
+      exact hlive v (mem_allVars.mpr (Or.inr (Or.inl ⟨x, hxr', hv⟩)))
+    · rcases List.mem_cons.mp hx' with rfl | hx''
+      · exact ⟨g, hg, hmb⟩
+      · have hxr' : x ∈ r'.atoms := by
+          rw [hr']
+          exact List.mem_append.mpr (Or.inr hx'')
+        obtain ⟨f, hf, hmf⟩ := hatoms x hxr'
+        refine ⟨f, hf, (matches_congr fun v hv => ?_).mp hmf⟩
+        exact hlive v (mem_allVars.mpr (Or.inr (Or.inl ⟨x, hxr', hv⟩)))
+  · intro n hn
+    have hn' : n ∈ r'.negated := hs.negated_eq ▸ hn
+    rintro ⟨f, hf, hmf⟩
+    refine hneg n hn' ⟨f, hf, (matches_congr fun v hv => ?_).mpr hmf⟩
+    exact hlive v
+      (mem_allVars.mpr (Or.inr (Or.inr (Or.inl ⟨n, hn', hv⟩))))
+  · intro c hc
+    have hc' : c ∈ r'.conditions := hs.conditions_eq ▸ hc
+    refine (condHolds_congr C ρ σ (elimAssign σ r' b g) c
+      fun v hv => ?_).mp (hconds c hc')
+    exact hlive v
+      (mem_allVars.mpr (Or.inr (Or.inr (Or.inr ⟨c, hc', hv⟩))))
+
+/-- **Uniqueness — the target key's payoff.** Two assignments
+deriving the ORIGINAL rule that agree on the surviving variables
+agree on EVERY variable of the rule: the join pairs pin the dropped
+atom's witness fact's whole key tuple (`hYfull` — condition 1's
+full-key demand, the join covers every field of `Y`), the key pins
+the witness (`hkey` — the declared target key's semantic judgment,
+the module narrowing: keys enter as `Functionality` hypotheses), and
+the witness pins every variable the dropped atom binds. This is what
+keeps a dead non-key variable from multiplying the fold domain — the
+distinct-full-binding key COLLAPSES onto the surviving slots. -/
+theorem elim_extension_unique {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
+    {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
+    (hkey : Functionality (I b.relation) Y)
+    (hYfull : ∀ j, j ∈ Y → ∃ i, (i, j) ∈ X.zip Y)
+    {σ₁ σ₂ : Assignment}
+    (h₁ : derives C r I ρ σ₁) (h₂ : derives C r I ρ σ₂)
+    (hagree : ∀ v, v ∈ r'.allVars → σ₁ v = σ₂ v) :
+    ∀ v, v ∈ r.allVars → σ₁ v = σ₂ v := by
+  obtain ⟨pre, post, hr, hr'⟩ := hs.atoms_split
+  have hbmem : b ∈ r.atoms := by
+    rw [hr]
+    exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
+  obtain ⟨g₁, hg₁, hm₁⟩ := h₁.1 b hbmem
+  obtain ⟨g₂, hg₂, hm₂⟩ := h₂.1 b hbmem
+  -- the join pins the two witnesses' whole key tuples together
+  have hproj : g₁.project Y = g₂.project Y := by
+    refine (Fact.project_eq_iff g₁ g₂ Y).mpr fun j hj => ?_
+    obtain ⟨i, hij⟩ := hYfull j hj
+    obtain ⟨v, hva, hvb⟩ := hs.join_covers (i, j) hij
+    have hvlive : v ∈ r'.allVars :=
+      mem_allVars.mpr (Or.inr (Or.inl ⟨a, hs.source,
+        List.mem_flatMap.mpr
+          ⟨(i, Term.var v), hva, by simp [Term.vars]⟩⟩))
+    have e₁ : σ₁ v = g₁ j := hm₁ _ hvb
+    have e₂ : σ₂ v = g₂ j := hm₂ _ hvb
+    rw [← e₁, ← e₂, hagree v hvlive]
+  have hgg : g₁ = g₂ := hkey g₁ g₂ hg₁ hg₂ hproj
+  intro v hv
+  rcases mem_allVars.mp hv with hf | ⟨x, hx, hvx⟩ | ⟨x, hx, hvx⟩ |
+    ⟨c, hc, hvc⟩
+  · exact hagree v (mem_allVars.mpr (Or.inl (hs.finds_eq ▸ hf)))
+  · -- a positive atom: a survivor, or the dropped atom itself
+    rw [hr] at hx
+    rcases List.mem_append.mp hx with hx' | hx'
+    · refine hagree v (mem_allVars.mpr (Or.inr (Or.inl ⟨x, ?_, hvx⟩)))
+      rw [hr']
+      exact List.mem_append.mpr (Or.inl hx')
+    · rcases List.mem_cons.mp hx' with heq | hx''
+      · -- the dropped atom: the one witness pins the value
+        rw [heq] at hvx
+        obtain ⟨bd, hbd, hvbd⟩ := List.mem_flatMap.mp hvx
+        rcases hs.target_bindings bd hbd with ⟨v', hv'⟩ | ⟨c', hc', -⟩
+        · rw [hv'] at hvbd
+          have hvv : v = v' := by simpa [Term.vars] using hvbd
+          subst hvv
+          have hvb : (bd.1, Term.var v) ∈ b.bindings := by
+            rw [← hv']
+            exact hbd
+          have e₁ : σ₁ v = g₁ bd.1 := hm₁ _ hvb
+          have e₂ : σ₂ v = g₂ bd.1 := hm₂ _ hvb
+          rw [e₁, e₂, hgg]
+        · rw [hc'] at hvbd
+          simp [Term.vars] at hvbd
+      · refine hagree v (mem_allVars.mpr (Or.inr (Or.inl ⟨x, ?_, hvx⟩)))
+        rw [hr']
+        exact List.mem_append.mpr (Or.inr hx'')
+  · exact hagree v (mem_allVars.mpr (Or.inr (Or.inr (Or.inl
+      ⟨x, hs.negated_eq ▸ hx, hvx⟩))))
+  · exact hagree v (mem_allVars.mpr (Or.inr (Or.inr (Or.inr
+      ⟨c, hs.conditions_eq ▸ hc, hvc⟩))))
+
+/-! ### The fold domain, projected -/
+
+/-- The variable a key position reads — `KeyTerm`'s one variable,
+either face. -/
+def KeyTerm.varOf : KeyTerm → VarId
+  | .var v => v
+  | .measure v => v
+
+/-- The evaluated group key reads only its key variables. -/
+theorem keyTuple_congr {keys : List KeyTerm} {σ σ' : Assignment}
+    (h : ∀ k, k ∈ keys → σ k.varOf = σ' k.varOf) :
+    keyTuple keys σ = keyTuple keys σ' := by
+  unfold keyTuple
+  refine List.map_congr_left fun k hk => ?_
+  cases k with
+  | var v => exact congrArg some (h _ hk)
+  | measure v => exact congrArg Value.measure? (h _ hk)
+
+/-- The distinct slot-tuple domain of one group fiber: the fiber's
+bindings read through a slot list — the value-level carrier of the
+binding seen-set key (the module narrowing: the model keys whole
+values; `SlotWidth` word layout is mechanism). This is the set
+`agg_over_distinct_bindings`' dedup'd listings enumerate. -/
+def GroupSlots (C : Classify) (r : Rule) (I : Instance) (ρ : ParamEnv)
+    (keys : List KeyTerm) (gk : List (Option Value))
+    (slots : List VarId) : Set (List Value) :=
+  fun t => ∃ σ, σ ∈ Group C r I ρ keys gk ∧ t = slots.map σ
+
+/-- Dropping a prefix of a mapped append reads the suffix — the
+slot-tuple projection, as a list identity. -/
+theorem map_drop_append {α β : Type} (f : α → β) :
+    ∀ (l₁ l₂ : List α), ((l₁ ++ l₂).map f).drop l₁.length = l₂.map f
+  | [], _ => rfl
+  | x :: xs, l₂ => by
+    simp only [List.cons_append, List.map_cons, List.length_cons,
+      List.drop_succ_cons]
+    exact map_drop_append f xs l₂
+
+/-- **The aggregate face of elimination — the fold domain projects
+bijectively.** Lay the original rule's slot array as the dropped
+atom's slots (`slotsE`, rule variables) followed by the surviving
+slots (`slots'`, exactly the surviving rule's variables); then, fiber
+for fiber: (1) the surviving-slot projection of the original rule's
+distinct binding domain IS the dropped rule's domain — into because
+dropping only removes constraints (`elim_derives_drop`), onto because
+the containment extends every surviving binding
+(`elim_extension_exists`); and (2) the projection merges NOTHING —
+two full bindings agreeing on the surviving slots are one slot tuple
+(`elim_extension_unique`: the target key pins the witness, the
+witness pins the dead variables). Exactly one extension per binding,
+so every fold of the distinct binding set reads the same domain
+through either rule. Bridge: `plan/ground.rs::join_covers_full_key`
+(condition 1 joins on a declared key of the target — the `hkey`/
+`hYfull` premises' acceptance form); the elimination differential
+under aggregate sinks is the empirical arm. -/
+theorem elimination_agg_fold_domain {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
+    {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
+    (hcont : Containment (I a.relation) φ X (I b.relation) ψ Y)
+    (hkey : Functionality (I b.relation) Y)
+    (hYfull : ∀ j, j ∈ Y → ∃ i, (i, j) ∈ X.zip Y)
+    {keys : List KeyTerm}
+    (hkeys : ∀ k, k ∈ keys → KeyTerm.varOf k ∈ r'.allVars)
+    {slotsE slots' : List VarId}
+    (hE : ∀ v, v ∈ slotsE → v ∈ r.allVars)
+    (hcov : ∀ v, v ∈ r'.allVars → v ∈ slots')
+    (hmem : ∀ v, v ∈ slots' → v ∈ r'.allVars)
+    (gk : List (Option Value)) :
+    (∀ t', t' ∈ GroupSlots C r' I ρ keys gk slots' ↔
+       ∃ t, t ∈ GroupSlots C r I ρ keys gk (slotsE ++ slots') ∧
+         t.drop slotsE.length = t') ∧
+    (∀ t₁ t₂, t₁ ∈ GroupSlots C r I ρ keys gk (slotsE ++ slots') →
+       t₂ ∈ GroupSlots C r I ρ keys gk (slotsE ++ slots') →
+       t₁.drop slotsE.length = t₂.drop slotsE.length → t₁ = t₂) := by
+  constructor
+  · intro t'
+    constructor
+    · rintro ⟨σ, ⟨hd, hk⟩, rfl⟩
+      obtain ⟨σ', hd', hag⟩ := elim_extension_exists hs hcont hd
+      refine ⟨(slotsE ++ slots').map σ', ⟨σ', ⟨hd', ?_⟩, rfl⟩, ?_⟩
+      · rw [keyTuple_congr fun k hk' => hag _ (hkeys k hk')]
+        exact hk
+      · rw [map_drop_append]
+        exact List.map_congr_left fun v hv => hag v (hmem v hv)
+    · rintro ⟨t, ⟨σ, ⟨hd, hk⟩, rfl⟩, rfl⟩
+      exact ⟨σ, ⟨elim_derives_drop hs hd, hk⟩,
+        map_drop_append σ slotsE slots'⟩
+  · rintro t₁ t₂ ⟨σ₁, ⟨hd₁, hk₁⟩, rfl⟩ ⟨σ₂, ⟨hd₂, hk₂⟩, rfl⟩ hdrop
+    rw [map_drop_append, map_drop_append] at hdrop
+    have hag : ∀ v, v ∈ r'.allVars → σ₁ v = σ₂ v :=
+      fun v hv => map_eq_agree hdrop v (hcov v hv)
+    have hall := elim_extension_unique hs hkey hYfull hd₁ hd₂ hag
+    refine List.map_congr_left fun v hv => ?_
+    rcases List.mem_append.mp hv with hvE | hv'
+    · exact hall v (hE v hvE)
+    · exact hag v (hmem v hv')
+
+/-- **The keyed count transport — where the target key bites for the
+engine's own fold shape.** The engine's aggregate sink keys the
+ORIGINAL rule's full slot array (`exec/sink.rs:384-388`); fiber for
+fiber, that full-binding distinct domain and the dropped rule's
+surviving-slot domain carry the SAME counts — every floor and every
+ceiling transports both ways through `elimination_agg_fold_domain`'s
+bijective projection (injectivity — the key premise's half — keeps
+the pushed list duplicate-free; surjectivity — the containment's
+half — lifts every surviving tuple). So a fold that observes its
+domain through its size (the distinct-binding count) is
+answer-identical across the elimination at the FULL slot array;
+`elimination_agg_sound` below is the companion identity at the
+surviving-slot reading. The recorded scope: an arbitrary abstract
+fold cannot be STATED over both domains at once (their tuples have
+different widths), so the aggregate face is this pair of theorems —
+the count transport spending the key, the fiber identity spending
+the containment — composed in prose nowhere: each claim is exactly
+one of the two statements. -/
+theorem elimination_agg_domain_counts {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
+    {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
+    (hcont : Containment (I a.relation) φ X (I b.relation) ψ Y)
+    (hkey : Functionality (I b.relation) Y)
+    (hYfull : ∀ j, j ∈ Y → ∃ i, (i, j) ∈ X.zip Y)
+    {keys : List KeyTerm}
+    (hkeys : ∀ k, k ∈ keys → KeyTerm.varOf k ∈ r'.allVars)
+    {slotsE slots' : List VarId}
+    (hE : ∀ v, v ∈ slotsE → v ∈ r.allVars)
+    (hcov : ∀ v, v ∈ r'.allVars → v ∈ slots')
+    (hmem : ∀ v, v ∈ slots' → v ∈ r'.allVars)
+    (gk : List (Option Value)) (n : Nat) :
+    ((GroupSlots C r I ρ keys gk (slotsE ++ slots')).AtLeast n ↔
+       (GroupSlots C r' I ρ keys gk slots').AtLeast n) ∧
+    ((GroupSlots C r I ρ keys gk (slotsE ++ slots')).AtMost n ↔
+       (GroupSlots C r' I ρ keys gk slots').AtMost n) := by
+  obtain ⟨honto, hinj⟩ :=
+    elimination_agg_fold_domain hs hcont hkey hYfull hkeys hE hcov
+      hmem gk
+  have hpush : ∀ t,
+      t ∈ GroupSlots C r I ρ keys gk (slotsE ++ slots') →
+      t.drop slotsE.length ∈ GroupSlots C r' I ρ keys gk slots' :=
+    fun t ht => (honto _).mpr ⟨t, ht, rfl⟩
+  -- pushing a duplicate-free member list keeps it duplicate-free —
+  -- the injectivity half, spent
+  have hnodup_map : ∀ l : List (List Value),
+      (∀ u, u ∈ l →
+        u ∈ GroupSlots C r I ρ keys gk (slotsE ++ slots')) →
+      l.Nodup → (l.map (List.drop slotsE.length)).Nodup := by
+    intro l
+    induction l with
+    | nil => exact fun _ _ => List.Pairwise.nil
+    | cons t l ih =>
+      intro hsub hnd
+      obtain ⟨hne, hnd'⟩ := List.pairwise_cons.mp hnd
+      refine List.pairwise_cons.mpr
+        ⟨?_, ih (fun u hu => hsub u (List.mem_cons_of_mem t hu)) hnd'⟩
+      intro u hu heq
+      obtain ⟨v, hv, rfl⟩ := List.mem_map.mp hu
+      exact hne v hv (hinj t v (hsub t List.mem_cons_self)
+        (hsub v (List.mem_cons_of_mem t hv)) heq)
+  -- lifting a duplicate-free member list of the dropped domain —
+  -- the surjectivity half, spent
+  have hlift : ∀ l' : List (List Value), l'.Nodup →
+      (∀ u, u ∈ l' → u ∈ GroupSlots C r' I ρ keys gk slots') →
+      ∃ l : List (List Value), l.Nodup ∧
+        (∀ u, u ∈ l →
+          u ∈ GroupSlots C r I ρ keys gk (slotsE ++ slots')) ∧
+        l.map (List.drop slotsE.length) = l' := by
+    intro l'
+    induction l' with
+    | nil =>
+      intro _ _
+      refine ⟨[], List.Pairwise.nil, ?_, rfl⟩
+      intro u hu
+      cases hu
+    | cons u l' ih =>
+      intro hnd hsub
+      obtain ⟨hne, hnd'⟩ := List.pairwise_cons.mp hnd
+      obtain ⟨l, hlnd, hlsub, hlmap⟩ :=
+        ih hnd' (fun v hv => hsub v (List.mem_cons_of_mem u hv))
+      obtain ⟨t, htmem, htdrop⟩ :=
+        (honto u).mp (hsub u List.mem_cons_self)
+      refine ⟨t :: l, List.pairwise_cons.mpr ⟨?_, hlnd⟩, ?_, ?_⟩
+      · intro v hv heq
+        have hu' : u ∈ l' := by
+          rw [← htdrop, heq, ← hlmap]
+          exact List.mem_map.mpr ⟨v, hv, rfl⟩
+        exact hne u hu' rfl
+      · intro v hv
+        rcases List.mem_cons.mp hv with rfl | hv'
+        · exact htmem
+        · exact hlsub v hv'
+      · show (t :: l).map (List.drop slotsE.length) = u :: l'
+        simp only [List.map_cons, hlmap, htdrop]
+  constructor
+  · constructor
+    · rintro ⟨l, hnd, hsub, hlen⟩
+      refine ⟨l.map (List.drop slotsE.length),
+        hnodup_map l hsub hnd, ?_, ?_⟩
+      · intro u hu
+        obtain ⟨v, hv, rfl⟩ := List.mem_map.mp hu
+        exact hpush v (hsub v hv)
+      · rw [List.length_map]
+        exact hlen
+    · rintro ⟨l', hnd, hsub, hlen⟩
+      obtain ⟨l, hlnd, hlsub, hlmap⟩ := hlift l' hnd hsub
+      have hlen' : l'.length = l.length := by
+        rw [← hlmap, List.length_map]
+      exact ⟨l, hlnd, hlsub, by omega⟩
+  · constructor
+    · intro h l' hnd hsub
+      obtain ⟨l, hlnd, hlsub, hlmap⟩ := hlift l' hnd hsub
+      have hle := h l hlnd hlsub
+      have hlen' : l'.length = l.length := by
+        rw [← hlmap, List.length_map]
+      omega
+    · intro h l hnd hsub
+      have hle := h (l.map (List.drop slotsE.length))
+        (hnodup_map l hsub hnd) ?_
+      · rw [List.length_map] at hle
+        exact hle
+      · intro u hu
+        obtain ⟨v, hv, rfl⟩ := List.mem_map.mp hu
+        exact hpush v (hsub v hv)
+
+/-- Aggregate answers with each fiber read through its distinct
+slot-tuple domain — `aggAnswers` with the group's carrier made the
+value-level seen-set key the sinks actually fold
+(`exec/sink.rs:384-388`, the slot-array key). -/
+def aggAnswersOn (C : Classify) (r : Rule) (I : Instance)
+    (ρ : ParamEnv) (keys : List KeyTerm) (slots : List VarId)
+    (fold : List (Option Value) → Set (List Value) → AnswerTuple) :
+    Set AnswerTuple :=
+  fun t => ∃ σ, derives C r I ρ σ ∧
+    t = fold (keyTuple keys σ)
+      (GroupSlots C r I ρ keys (keyTuple keys σ) slots)
+
+/-- `aggAnswersOn` IS the normative `aggAnswers`
+(`Query/Aggregates.lean`) with each group fiber handed to the fold
+through the slot projection — the two denotations differ only in
+which face of the fiber the abstract fold receives, definitionally.
+No new answer notion was minted here; this is the recorded link. -/
+theorem aggAnswersOn_eq_aggAnswers (C : Classify) (r : Rule)
+    (I : Instance) (ρ : ParamEnv) (keys : List KeyTerm)
+    (slots : List VarId)
+    (fold : List (Option Value) → Set (List Value) → AnswerTuple) :
+    aggAnswersOn C r I ρ keys slots fold =
+      aggAnswers C r I ρ keys
+        (fun gk grp => fold gk
+          (fun t => ∃ σ, σ ∈ grp ∧ t = slots.map σ)) := rfl
+
+/-- **`elimination_agg_sound` — removal is result-identical under the
+aggregate sink, at the surviving-slot reading.** With BOTH fold
+domains read at the surviving slots, the original and dropped rules
+emit identical aggregate rows: every inhabited fiber of one is an
+inhabited fiber of the other with the SAME key tuple over the SAME
+distinct slot-tuple domain, and `agg_over_distinct_bindings` is the
+composition point (any one listing of that shared domain, dedup'd,
+is the fold input of both sides — no fold observes the dropped
+atom). This statement spends the CONTAINMENT only — no key premise
+appears, honestly: the key's work is the OTHER half of the aggregate
+face, `elimination_agg_domain_counts` (the full-slot-array domain
+the engine's sink actually keys has the same counts as this
+surviving-slot domain), and the module doc records why the two
+halves do not fuse into one abstract-fold statement. -/
+theorem elimination_agg_sound {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {r r' : Rule} {a b : Atom} {X Y : List FieldId}
+    {φ ψ : Selection} (hs : ElimStep r r' a b X Y φ ψ)
+    (hcont : Containment (I a.relation) φ X (I b.relation) ψ Y)
+    {keys : List KeyTerm}
+    (hkeys : ∀ k, k ∈ keys → KeyTerm.varOf k ∈ r'.allVars)
+    {slots' : List VarId} (hmem : ∀ v, v ∈ slots' → v ∈ r'.allVars)
+    (fold : List (Option Value) → Set (List Value) → AnswerTuple) :
+    ∀ t, t ∈ aggAnswersOn C r I ρ keys slots' fold ↔
+      t ∈ aggAnswersOn C r' I ρ keys slots' fold := by
+  have hfiber : ∀ gk : List (Option Value),
+      GroupSlots C r I ρ keys gk slots' =
+        GroupSlots C r' I ρ keys gk slots' := by
+    intro gk
+    funext u
+    refine propext ?_
+    constructor
+    · rintro ⟨σ, ⟨hd, hk⟩, rfl⟩
+      exact ⟨σ, ⟨elim_derives_drop hs hd, hk⟩, rfl⟩
+    · rintro ⟨σ, ⟨hd, hk⟩, rfl⟩
+      obtain ⟨σ', hd', hag⟩ := elim_extension_exists hs hcont hd
+      refine ⟨σ', ⟨hd', ?_⟩, ?_⟩
+      · rw [keyTuple_congr fun k hk' => hag _ (hkeys k hk')]
+        exact hk
+      · exact List.map_congr_left fun v hv => (hag v (hmem v hv)).symm
+  intro t
+  constructor
+  · rintro ⟨σ, hd, rfl⟩
+    refine ⟨σ, elim_derives_drop hs hd, ?_⟩
+    rw [hfiber]
+  · rintro ⟨σ, hd, rfl⟩
+    obtain ⟨σ', hd', hag⟩ := elim_extension_exists hs hcont hd
+    refine ⟨σ', hd', ?_⟩
+    have hkeq : keyTuple keys σ' = keyTuple keys σ :=
+      keyTuple_congr fun k hk' => hag _ (hkeys k hk')
+    rw [hkeq, hfiber]
 
 end Bumbledb.Query

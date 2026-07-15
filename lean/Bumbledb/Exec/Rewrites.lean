@@ -88,13 +88,24 @@ one determinant get, static emptiness is a refuted condition.
   suffice; the key-ness of Y (condition 1's full-key demand,
   acceptance-side) is what the AGGREGATE face spends — key-ness keeps
   a dead non-key variable from multiplying the binding-set fold domain
-  (`ground.rs:44-51`). The aggregate face is a recorded PENDING
-  obligation: no theorem in this tree yet states removal preserving
-  the binding-set fold domain (it would compose with PRD 05's folds),
-  and it joins the admission-calculus docket — doc claims cite the
-  projection-face theorem only
-  (`docs/architecture/40-execution.md` § the grounding rewrite). The
-  full-key coverage premise enters here only through the join-value
+  (`ground.rs:44-51`). The aggregate face lives in `Exec/Dedup.lean`
+  where the fold domains live, as THREE named pieces (2026-07-14,
+  the admission-calculus docket): `elim_extension_exists` (the
+  containment's extension, binding-level) and
+  `elim_extension_unique` (the target key pins it — key-ness and
+  full-key coverage enter there as the `Functionality` and
+  zip-coverage hypotheses) compose into
+  `elimination_agg_fold_domain` (the distinct-full-binding domain of
+  each group fiber projects bijectively onto the surviving slots),
+  spent by `elimination_agg_domain_counts` (the key's payoff: the
+  engine's full-slot-array domain and the surviving-slot domain
+  carry the same counts) beside `elimination_agg_sound` (answer
+  identity fiber for fiber, both folds at the surviving-slot
+  reading — the containment's payoff, no key premise). The recorded
+  scope is Dedup's module doc: no single abstract-fold statement
+  spans both domains (different tuple widths), so "discharged" means
+  exactly this pair, each claim one theorem. Here, only the
+  projection face's full-key premise enters, through the join-value
   transfer.
 * **`var_functional`**: an eliminable occurrence binds each variable at
   one field — repeated variables keep their first binding and lower the

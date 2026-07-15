@@ -12,8 +12,13 @@ import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
 import Bumbledb.Exec.Fixpoint
+import Bumbledb.Exec.Plan
 import Bumbledb.Txn
 import Bumbledb.Txn.Fresh
+import Bumbledb.Txn.DeltaRestriction
+import Bumbledb.Decide
+import Bumbledb.Oracle
+import Bumbledb.Admission
 import Bumbledb.Bridge
 import Bumbledb.Countermodels
 import Bumbledb.Conformance

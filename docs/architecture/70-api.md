@@ -271,12 +271,10 @@ Both are emission; the grammar is untouched.
 - **Dependencies are judged at commit against the final state**
   (`30-dependencies.md`): the `CommitRejected` error surfaces from the commit, not
   from the offending call site, carrying the failing phase's COMPLETE violation set
-  (`lean/Bumbledb/Txn.lean: rejection_is_complete` — complete within its phase,
-  sound, and
-  nonempty) — every violated
-  statement of that phase, cited once (per direction for a containment), in materialized statement
-  order — each citation with the statement id (renderable back to the algebra
-  through the schema) and the offending fact's bytes. The whole transaction aborts.
+  (`lean/Bumbledb/Txn.lean: rejection_is_complete`) — each citation with the
+  statement id (renderable back to the algebra through the schema) and the
+  offending fact's bytes, in materialized statement order
+  (`30-dependencies.md` owns the payload contract). The whole transaction aborts.
 
 ## Conditional writes — the generation witness
 
@@ -307,9 +305,9 @@ The public write surface has exactly three epistemic classes:
 
 **Dependencies prove surviving derived facts sound; the WITNESS proves the
 derivation saw the state it claims; nothing proves completeness — recompute
-under a new witness** (`lean/Bumbledb/Txn.lean: derived_soundness_vs_freshness`
-— soundness holds in every committed state; freshness is not a property any
-committed state can carry). In particular, the engine does not retry, secretly run
+under a new witness**
+(`lean/Bumbledb/Txn.lean: derived_soundness_vs_freshness`). In particular, the
+engine does not retry, secretly run
 a derivation, or claim that a stored relation equals a query result. Automatic
 retries and hidden derivation semantics are host policy disguised as engine
 behavior; query-defined/materialized-view equality remains D5 territory in the
@@ -451,8 +449,7 @@ proposition the commit checks in one integer compare.
   remains usable.
 - **Write errors:** `CommitRejected` (raised at commit, against the final state,
   carrying the failing phase's COMPLETE violation set in statement order —
-  `lean/Bumbledb/Txn.lean: rejection_is_complete`, complete within its phase,
-  sound, and nonempty), `GenerationMoved`
+  `lean/Bumbledb/Txn.lean: rejection_is_complete`), `GenerationMoved`
   (the witness compare, § conditional writes — carrying the two generations),
   `ForeignSnapshot` (a witness of another database), `FreshExhausted`,
   `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write transaction — and

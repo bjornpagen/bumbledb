@@ -281,7 +281,8 @@ final-state judgment's SPEC — dependencies are properties of
 COMMITTED databases, checked once at commit against the transaction's
 final state; Txn (PRD 09) consumes this.
 Bridge: `storage/commit/judgment.rs::judge` (delta-restricted, sound
-because an untouched binding cannot change a judgment's truth) and
+because an untouched binding keeps its pre-state verdict — the
+restriction theorems, `Txn/DeltaRestriction.lean`) and
 `Db::verify_store` (the global re-verification). -/
 def holds (T : Theory) (I : Instance) : Prop :=
   ∀ s, s ∈ T.statements → s.judgment T I

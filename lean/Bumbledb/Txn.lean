@@ -382,7 +382,8 @@ committed state. The induction over `commit` is absorbed by the type:
 state from the very proof it just judged — so the proof term is one
 field projection, which is the design working as intended.
 Bridge: `judgment.rs::judge` (delta-restricted, sound because an
-untouched binding cannot change a judgment's truth) and
+untouched binding keeps its pre-state verdict —
+`Txn/DeltaRestriction.lean: delta_restricted_commit_sound`) and
 `Db::verify_store` (the global re-verification). -/
 theorem committed_states_model {T : Theory} {s₀ s : State T}
     (_ : Reachable T s₀ s) : holds T s.inst :=

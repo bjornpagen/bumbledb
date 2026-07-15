@@ -67,11 +67,10 @@ the statement id and the offending fact's bytes (never storage row ids —
 `10-data-model.md`); the set is sealed — nonempty, sorted, deduplicated — by
 its only constructor, so an under-reported rejection is unrepresentable. One
 preemption, from the enforcement structure
-itself: key (`Functionality`) violations preempt the containment judgment, because
-the containment probes are defined over the *keyed* final state (determinants are the
-probe index), which exists only when every key statement holds — so one rejection
-is the complete set of violated key statements, or the complete set of violated
-containment statements, never a mix
+itself: the containment probes are defined over the *keyed* final state
+(determinants are the probe index), which exists only when every key statement
+holds — so key violations preempt the statement phase and no rejection ever
+mixes the two
 (`lean/Bumbledb/Txn.lean: rejection_never_mixes`). Within the containment set, the two
 directions partition the final state's source facts: a fact inserted this commit
 is judged source-side only, a pre-existing survivor target-side — one statement is
@@ -139,27 +138,54 @@ around them.
 **The representation is general; the accepted vocabulary is closed.** A statement is
 accepted only if the checker has an enforcement plan costing **O(log n) per
 delta-touched fact** (amortized; coverage walks below add the touched-window term).
+Each accepted form's plan — and its consultation count — is a theorem of the
+order-oracle plan calculus (`lean/Bumbledb/Oracle.lean: acceptance_gate`), and the
+gate itself is one inhabited type: each single-key statement form's case for
+acceptance is its `lean/Bumbledb/Admission.lean: AdmissibleForm` term — denotation,
+executable judge, delta restriction, oracle plan, and creation-quarantine
+compliance, the checklist as a type. Six forms inhabit it (scalar and pointwise
+FD, scalar and coverage IND, the window, the plain order mark — the last two
+spec-ahead, like their checkers); a future form enters the vocabulary by
+inhabiting it first, and the E1 joined-window shape is proved uninhabitable on
+the plan field (`lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`).
+The ranked order mark sits outside the type by design, not by omission: a rank
+chase probes answer-dependent keys and a dirty hop touches every group — the
+two read shapes whose refusal IS the E1 fence — so its acceptance case is the
+plan calculus directly (`lean/Bumbledb/Oracle.lean: ranked_order_plan_decides`,
+per-hop pricing proved, `lean/Bumbledb/Oracle.lean: chain_cost_hops`) with the
+touched-set escalation recorded
+(`lean/Bumbledb/Txn/DeltaRestriction.lean: rankedTouched`).
 Concretely, validation demands:
 
 - **FD:** key form, no selection; at most **one** interval-typed field, and it must
   be the **final** projection position (the neighbor probe needs the scalar prefix
-  as its group — two interval positions would be 2-D exclusion, which the ordered
+  as its group — one point probe per touched fact scalar
+  (`lean/Bumbledb/Oracle.lean: fd_plan_decides`), two neighbor probes pointwise
+  (`lean/Bumbledb/Oracle.lean: neighbor_probe_decides`); two interval positions
+  would be 2-D exclusion, which the ordered
   determinant index cannot answer; SQL:2011 imposes the same last-position rule for the same
   reason). Determinant key width must fit `MAX_DETERMINANT_WIDTH` (`50-storage.md`) — rejected
   at declaration, never discovered at write time.
 - **IND:** the target projection Y must be a permutation of some declared key of B
-  (probe-ability: one determinant get answers "is this tuple present"); if any position is
+  (probe-ability: one determinant get answers "is this tuple present" — the probe
+  arms decide the delta-restricted check,
+  `lean/Bumbledb/Oracle.lean: containment_plan_decides`, and the key premise is
+  what prices the unit probe,
+  `lean/Bumbledb/Oracle.lean: accepted_target_key_prices_the_probe`); if any position is
   interval-typed, that key must carry the interval (pointwise — coverage needs the
   target's intervals disjoint and ordered, which its own key provides as a theorem,
   not a requirement on the user). Validation seals that theorem as a
   `DisjointDeterminantProof`; interval enforcement and the coverage checker require the
-  token, so the forward sweep cannot be selected by an unchecked flag. Each
+  token, so the forward sweep cannot be selected by an unchecked flag (the entry
+  seek + prefix walk verdict is the denotation under it —
+  `lean/Bumbledb/Oracle.lean: coverage_walk_decides`). Each
   direction of `==` passes the gate
   independently. Selections may appear on either side; a selected field may not also
   be projected (a constant column — write the statement you mean).
 - **IND into a closed target:** the target side is stage-1-known, so there is no
   key search and no probe strategy — the enforcement plan is **the answer set
-  itself**. Y must be exactly the synthetic id (the handle is the one probe-able
+  itself** (`lean/Bumbledb/Oracle.lean: member_test_decides` — zero oracle
+  consultations). Y must be exactly the synthetic id (the handle is the one probe-able
   identity of a closed relation); ψ is applied to the sealed extension at validate
   and the surviving declaration ids compile to a 256-bit member set (the ≤256 roster cap
   exists exactly to fix this width). The ψ-selected form gives sub-vocabularies —
@@ -250,7 +276,10 @@ containment — undecidable outright — and commit-time enforcement would requi
 materializing every constrained view per commit. **Alternative:**
 deductive-database constraints over views. **Why it lost:** the undecidability
 above, plus the acceptance gate's own rule — no O(log n) enforcement plan
-exists for a fixpoint's blast radius. **Reverses if:** never for recursive
+exists for a fixpoint's blast radius (the join blast radius is the countermodel,
+`lean/Bumbledb/Countermodels.lean: joined_window_blast`, composed into the gate
+type's uninhabitability,
+`lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`). **Reverses if:** never for recursive
 predicates; a non-recursive-view variant re-opens only with its own theory
 review, as a new decision.
 
@@ -266,9 +295,9 @@ one interval field written anywhere is the pointwise judgment
 `FieldSet` canonicalization above.
 
 - **FD, pointwise:** per scalar group, pairwise-disjoint point sets
-  (`lean/Bumbledb/Dependencies.lean: pointwise_key_disjoint`) — every per-group
-  pair satisfies `DISJOINT` (`20-query-ir.md` § the Allen operator; one
-  vocabulary, both sides of the engine). The "exclusion constraint" is not a
+  (`lean/Bumbledb/Dependencies.lean: pointwise_key_disjoint`) — the query
+  surface's own `DISJOINT` vocabulary (`20-query-ir.md` § the Allen operator),
+  one vocabulary on both sides of the engine. The "exclusion constraint" is not a
   feature of this system; it is this judgment on this type. Enforcement is two
   ordered-neighbor probes per touched fact (`50-storage.md`) — the O(log n) plan
   for the pairwise statement. Rays need no case of their own — "at most one
@@ -358,7 +387,11 @@ keyword features.
 
 The commit pipeline evaluates every statement **restricted to delta-touched
 bindings** against the final state — the incremental form of the judgment, sound
-because an untouched binding cannot change a judgment's truth. The generation
+because an untouched binding keeps its pre-state verdict
+(`lean/Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound` — the
+composition across the whole theory; its holds-before premise is the sweeper's
+half of the division of authority,
+`lean/Bumbledb/Countermodels.lean: incremental_verdict_needs_holds`). The generation
 witness (`70-api.md` § conditional writes) runs before this pipeline entirely —
 an aborted witnessed write never reaches judgment, and judgment semantics are
 untouched by it. The phases:

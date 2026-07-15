@@ -1153,6 +1153,112 @@ theorem allen_disjoint {a b : Interval α} {r₁ r₂ : AllenRel}
     (h₁ : r₁.holds a b) (h₂ : r₂.holds a b) : r₁ = r₂ :=
   (holds_classify h₁).symm.trans (holds_classify h₂)
 
+/-- **`DISJOINT` is the point statement.** Two nonempty half-open
+intervals share no point exactly when their classification lands in
+the `DISJOINT` composite — before ∪ meets ∪ met-by ∪ after,
+`INTERSECTS`' complement (`docs/architecture/20-query-ir.md` § the
+Allen operator's named constants). This is the vocabulary tie the
+pointwise key judgment cites: per-group pairwise disjointness
+(`Dependencies.pointwise_key_disjoint`) and the query surface's
+`DISJOINT` mask are one statement — one vocabulary, both sides of
+the engine, as a theorem. -/
+theorem points_disjoint_iff_disjoint_mask (a b : Interval α) :
+    (∀ x, ¬(x ∈ a.points ∧ x ∈ b.points)) ↔
+      classifyI a b ∈
+        ([.before, .meets, .metBy, .after] : AllenMask) := by
+  constructor
+  · intro h
+    cases hcl : classifyI a b with
+    | before => exact .head _
+    | meets => exact .tail _ (.head _)
+    | metBy => exact .tail _ (.tail _ (.head _))
+    | after => exact .tail _ (.tail _ (.tail _ (.head _)))
+    | overlaps =>
+      have hh := classify_holds a b
+      rw [hcl] at hh
+      obtain ⟨h1, h2, h3⟩ := hh
+      exact absurd ⟨⟨LinearElem.le_of_lt h1, h2⟩,
+        ⟨LinearElem.le_refl b.start, b.h⟩⟩ (h b.start)
+    | starts =>
+      have hh := classify_holds a b
+      rw [hcl] at hh
+      obtain ⟨h1, h2⟩ := hh
+      refine absurd ⟨⟨LinearElem.le_refl a.start, a.h⟩,
+        ⟨?_, LinearElem.lt_trans a.h h2⟩⟩ (h a.start)
+      rw [← h1]
+      exact LinearElem.le_refl a.start
+    | during =>
+      have hh := classify_holds a b
+      rw [hcl] at hh
+      obtain ⟨h1, h2⟩ := hh
+      exact absurd ⟨⟨LinearElem.le_refl a.start, a.h⟩,
+        ⟨LinearElem.le_of_lt h1, LinearElem.lt_trans a.h h2⟩⟩
+        (h a.start)
+    | finishes =>
+      have hh := classify_holds a b
+      rw [hcl] at hh
+      obtain ⟨h1, h2⟩ := hh
+      refine absurd ⟨⟨LinearElem.le_refl a.start, a.h⟩,
+        ⟨LinearElem.le_of_lt h1, ?_⟩⟩ (h a.start)
+      rw [← h2]
+      exact a.h
+    | equals =>
+      have hh := classify_holds a b
+      rw [hcl] at hh
+      obtain ⟨h1, h2⟩ := hh
+      refine absurd ⟨⟨LinearElem.le_refl a.start, a.h⟩,
+        ⟨?_, ?_⟩⟩ (h a.start)
+      · rw [← h1]
+        exact LinearElem.le_refl a.start
+      · rw [← h2]
+        exact a.h
+    | finishedBy =>
+      have hh := classify_holds a b
+      rw [hcl] at hh
+      obtain ⟨h1, h2⟩ := hh
+      refine absurd ⟨⟨LinearElem.le_of_lt h1, ?_⟩,
+        ⟨LinearElem.le_refl b.start, b.h⟩⟩ (h b.start)
+      rw [h2]
+      exact b.h
+    | contains =>
+      have hh := classify_holds a b
+      rw [hcl] at hh
+      obtain ⟨h1, h2⟩ := hh
+      exact absurd ⟨⟨LinearElem.le_of_lt h1, LinearElem.lt_trans b.h h2⟩,
+        ⟨LinearElem.le_refl b.start, b.h⟩⟩ (h b.start)
+    | startedBy =>
+      have hh := classify_holds a b
+      rw [hcl] at hh
+      obtain ⟨h1, h2⟩ := hh
+      refine absurd ⟨⟨?_, LinearElem.lt_trans b.h h2⟩,
+        ⟨LinearElem.le_refl b.start, b.h⟩⟩ (h b.start)
+      rw [h1]
+      exact LinearElem.le_refl b.start
+    | overlappedBy =>
+      have hh := classify_holds a b
+      rw [hcl] at hh
+      obtain ⟨h1, h2, h3⟩ := hh
+      exact absurd ⟨⟨LinearElem.le_refl a.start, a.h⟩,
+        ⟨LinearElem.le_of_lt h1, h2⟩⟩ (h a.start)
+  · intro hmem x hx
+    have hxa : a.start ≤ x ∧ x < a.«end» := hx.1
+    have hxb : b.start ≤ x ∧ x < b.«end» := hx.2
+    have hh := classify_holds a b
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hmem
+    rcases hmem with hcl | hcl | hcl | hcl <;> rw [hcl] at hh
+    · exact LinearElem.lt_irrefl x
+        (LinearElem.lt_of_lt_of_le (LinearElem.lt_trans hxa.2 hh) hxb.1)
+    · refine LinearElem.lt_irrefl x (LinearElem.lt_of_lt_of_le ?_ hxb.1)
+      show x < b.start
+      rw [← hh]
+      exact hxa.2
+    · refine LinearElem.lt_irrefl x (LinearElem.lt_of_lt_of_le ?_ hxa.1)
+      show x < a.start
+      rw [← hh]
+      exact hxb.2
+    · exact LinearElem.lt_irrefl x
+        (LinearElem.lt_of_lt_of_le (LinearElem.lt_trans hxb.2 hh) hxa.1)
+
 end Allen
 
 /-! ## The converse — the mask algebra's involution -/
