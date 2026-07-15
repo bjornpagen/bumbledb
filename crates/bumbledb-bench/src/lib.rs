@@ -13,6 +13,7 @@ pub mod compare;
 pub mod conformance;
 pub mod corpus;
 pub mod corpus_gen;
+pub mod devhonesty;
 pub mod differential;
 pub mod driver;
 pub mod families;

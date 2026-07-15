@@ -707,7 +707,14 @@ static STORE_SEQ: AtomicU64 = AtomicU64::new(0);
 impl StoreDir {
     pub(crate) fn new() -> Self {
         let seq = STORE_SEQ.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("bumbledb-fuzz-{}-{seq}", std::process::id()));
+        // BUMBLEDB_SCRATCH_DIR points the fuzz lanes' scratch stores at
+        // a RAM-backed volume (`scripts/ramdisk.sh`,
+        // docs/architecture/60-validation.md § the ramdisk sanction) —
+        // the verify/fuzz lanes check answers, not clocks, so RAM is
+        // sanctioned for them. Unset, the system temp dir stands.
+        let root = std::env::var_os("BUMBLEDB_SCRATCH_DIR")
+            .map_or_else(std::env::temp_dir, PathBuf::from);
+        let path = root.join(format!("bumbledb-fuzz-{}-{seq}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create fuzz store dir");
         Self(path)
