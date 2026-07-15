@@ -88,10 +88,12 @@ model's recorded fact, not an oversight.
 * **Closed-target key resolution is STRICTER than
   `TargetKeyAccepted`.** A containment into a closed relation resolves
   only the synthetic `[FieldId(0)]` id key
-  (`schema/validate.rs:734-742`); a user-declared non-id key on a
+  (`schema/validate.rs::resolve_target_key`, the sealed-extension
+  arm); a user-declared non-id key on a
   closed relation satisfies `TargetKeyAccepted` here yet Rust refuses
   the containment — acceptance strictly narrower, sound direction.
-  Likewise `ClosedContainmentInterval` (`validate.rs:485-498`) refuses
+  Likewise `ClosedContainmentInterval`
+  (`schema/validate.rs::validate_containment`) refuses
   interval-typed projections under a closed target outright — a v0
   refusal this model does not restate.
 -/

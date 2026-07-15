@@ -62,8 +62,8 @@ parameter that merely checks values would be a CHECK constraint
   v4.32.0 has no `Set`, and mathlib is refused.
 * **`Value` mirrors the STORABLE sum, not the literal Rust enum.**
   `crate::value::Value` carries a seventh, panic-guarded `AllenMask`
-  variant (`encode_literal`'s `unreachable!`,
-  `encoding/encode.rs:96`) that no `TypeDesc` arm admits and no
+  variant (`encoding/encode.rs::encode_literal`'s
+  `unreachable!`) that no `TypeDesc` arm admits and no
   extension row survives `value_matches` carrying; and the str carrier
   is split across two Rust types — `Value::String` holds raw UTF-8 the
   encoder refuses, while `encode_fact`'s `ValueRef::String(u64)` arm
@@ -76,7 +76,7 @@ parameter that merely checks values would be a CHECK constraint
   unobservable while the mint invariant holds, so the spec stays
   silent.
 * **`fixedBytes n` is total over ℕ here; Rust declares `1..=64`
-  only** (`MAX_FIXED_BYTES`, `encoding.rs:27-31`). The extra
+  only** (`encoding.rs::MAX_FIXED_BYTES`). The extra
   generality is dead — widths no code implements —
   and `value_eq_iff_encode_eq` is proved uniformly in `n`, so nothing
   false rides it.
@@ -104,7 +104,8 @@ parameter that merely checks values would be a CHECK constraint
   intern ids are bare `u64` words (`Ord` in Rust, as any word is),
   and the refusal is enforced at the validation boundary instead —
   `Error::OrderComparisonOnString`
-  (`ir/validate/context.rs:292`) rejects the comparison on accepted
+  (`ir/validate/context.rs::screen_order_operand`) rejects the
+  comparison on accepted
   rules. The model's refusal is strictly stronger (unwritable vs
   dynamically rejected) — sound direction, recorded like its
   siblings above.

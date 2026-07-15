@@ -90,7 +90,8 @@ relations as instance-independent sealed constants.
   the FD-side interval-finality demand — the neighbor probe's
   mechanism, not semantics — and the σ shape refusals
   `SelectedFieldProjected` and `DuplicateSelectionField`,
-  `validate.rs:645-651`, `:666-671`, which narrow the accepted σ
+  `schema/validate.rs::validate_side_selection` and
+  `::validate_side_shape`, which narrow the accepted σ
   fragment below `Selection`'s representable shapes, sound direction)
   are validator mechanism this level does not restate — only the
   exact-field-set target-key rule is modeled (`Dependencies.lean`),
