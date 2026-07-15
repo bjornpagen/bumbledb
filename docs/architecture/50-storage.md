@@ -414,10 +414,16 @@ removes the fsync, which only a power loss can exploit — and the sweep is the
 proof the expectation is not doing the work.
 
 The kind is **device-independent**: ephemeral-on-SSD is legitimate, and
-ephemeral-on-ramdisk buys the flags' latency on top of the device's. The kind
+ephemeral-on-ramdisk buys the flags' latency on top of the device's — measured
+at a 1.0–1.1x device tax, so nearly nothing
+(`docs/reports/ramdisk-phase-r.md` § R6). The kind
 carries the no-durability claim, not the device, so no lie is possible — a
 machine crash loses an ephemeral store by the store's own definition. (The
 device-honesty rule for *timed* lanes is the orthogonal axis: `60-validation.md`.)
+One stated consequence of WRITEMAP: the data file is ftruncated to the full
+4 GiB map at open, so on a filesystem without sparse files (an HFS+ ram disk;
+APFS is sparse) the volume must hold map size + slack or open refuses with a
+typed `StorageFull`-carrying `Lmdb` error (§ R6's harness note).
 
 Lean owns none of this: durability and crash recovery are mechanism, outside the
 model (`lean/README.md` § what Lean does NOT own), so the store kind adds no

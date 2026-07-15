@@ -217,7 +217,8 @@ Both are emission; the grammar is untouched.
   read/repair until the theory holds, then ETL the survivors into the durable
   store (`snap.scan` → `bulk_load`, § ETL below) and delete the directory. The
   staging side pays no fullfsync per commit (the small-commit shape measured
-  ~16x scratch-side, `docs/reports/ramdisk-phase-r.md` § R4); the durable side's
+  ~90x over durable-on-SSD and ~4.4x over a plain ramdisk store, device tax
+  1.0–1.1x, `docs/reports/ramdisk-phase-r.md` § R6); the durable side's
   guarantees never dilute because the kinds cannot cross-open.
 - One process, one handle (`00-product.md`): every open holds an exclusive advisory
   lock on `<dir>/bumbledb.lock`; a second live handle on the same path — in this

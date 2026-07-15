@@ -73,9 +73,18 @@ impl RamDisk {
     /// creates a synthesized container). `diskutil erasevolume` mounts
     /// the volume at `/Volumes/<label>`.
     fn attach(personality: &str, label: &str) -> Self {
+        Self::attach_sized(personality, label, RAM_SECTORS)
+    }
+
+    /// [`RamDisk::attach`] with an explicit sector count. R6 needs it:
+    /// an EPHEMERAL store's `MDB_WRITEMAP` ftruncates the data file to
+    /// the full 4 GiB map size at open, and HFS+ has no sparse files,
+    /// so the disk must hold the whole map plus slack (a recorded
+    /// consequence — `docs/reports/ramdisk-phase-r.md` § R6).
+    fn attach_sized(personality: &str, label: &str, sectors: u64) -> Self {
         let dev = run(
             "hdiutil",
-            &["attach", "-nomount", &format!("ram://{RAM_SECTORS}")],
+            &["attach", "-nomount", &format!("ram://{sectors}")],
         )
         .trim()
         .to_owned();
@@ -148,27 +157,34 @@ fn cell(samples: &[Duration]) -> String {
     )
 }
 
+/// One timed committing write of `facts` inserts through the engine's
+/// typed insert path; `bucket` persists across calls so interleaved
+/// cells (R6) keep their own running payloads.
+fn one_engine_commit(db: &Db<Meter>, facts: u32, bucket: &mut u64) -> Duration {
+    let start = Instant::now();
+    db.write(|tx| {
+        for _ in 0..facts {
+            let id: SampleId = tx.alloc()?;
+            *bucket += 1;
+            tx.insert(&Sample {
+                id,
+                bucket: *bucket,
+                amount: 7,
+            })?;
+        }
+        Ok(())
+    })
+    .expect("committing write succeeds");
+    start.elapsed()
+}
+
 /// One timed committing write of `facts` inserts, repeated `commits`
 /// times; returns per-commit wall times.
 fn timed_commits(db: &Db<Meter>, commits: u32, facts: u32) -> Vec<Duration> {
     let mut samples = Vec::with_capacity(commits as usize);
     let mut bucket = 0u64;
     for _ in 0..commits {
-        let start = Instant::now();
-        db.write(|tx| {
-            for _ in 0..facts {
-                let id: SampleId = tx.alloc()?;
-                bucket += 1;
-                tx.insert(&Sample {
-                    id,
-                    bucket,
-                    amount: 7,
-                })?;
-            }
-            Ok(())
-        })
-        .expect("committing write succeeds");
-        samples.push(start.elapsed());
+        samples.push(one_engine_commit(db, facts, &mut bucket));
     }
     samples
 }
@@ -531,4 +547,142 @@ fn ramdisk_phase_r() {
     println!("apfs ram disk detached");
 
     println!("== phase R complete — verify with: hdiutil info ==");
+}
+
+// ---------------------------------------------------------------------
+// R6: the ephemeral constructor, priced through the REAL surface
+// ---------------------------------------------------------------------
+
+/// One R6 cell: a live engine store (durable or ephemeral, SSD or
+/// ramdisk) accumulating interleaved samples of both commit shapes.
+struct EngineFlagCell {
+    name: &'static str,
+    db: Db<Meter>,
+    bucket: u64,
+    small: Vec<Duration>,
+    bulk: Vec<Duration>,
+}
+
+/// R6 (the ephemeral admission's number): the small-commit shape
+/// through the REAL constructor — `Db::ephemeral` vs `Db::create` on
+/// the same HFS+ ramdisk, plus ephemeral-on-SSD (the kind is
+/// device-independent) and create-on-SSD as the fullfsync anchor. The
+/// four cells are INTERLEAVED per repetition (the R4 co-tenancy
+/// remedy), medians with min–max spreads, under the quiet-machine
+/// guard — which hangs on the bulk shape exactly as R4's does (the
+/// sub-100 µs small cells absorb single-commit outliers that make a
+/// max/min band meaningless there; the bulk cells are the steady
+/// co-tenancy witness). Run manually in release:
+///
+/// ```sh
+/// cargo test -p bumbledb --release --test ramdisk_phase_r -- --ignored --nocapture ramdisk_phase_r_ephemeral
+/// ```
+#[test]
+#[ignore = "the R6 measurement harness: attaches a real ram disk and runs timed commits; run manually in release with --ignored --nocapture"]
+fn ramdisk_phase_r_ephemeral() {
+    let pid = std::process::id();
+    println!("== phase R6: the ephemeral constructor (pid {pid}) ==");
+    let sw_vers = run("sw_vers", &["-buildVersion"]);
+    println!("macOS build: {}", sw_vers.trim());
+
+    let ssd_dir = common::TempDir::new("ramdisk-phase-r6-ssd");
+    let hfs_label = format!("bumbleR6-hfs-{pid}");
+    // 6 GiB, not the default 2: WRITEMAP ftruncates the ephemeral
+    // store's data file to the full 4 GiB map at open, and HFS+ has no
+    // sparse files (the SSD cells sit on APFS, which does — no
+    // preallocation there). Ephemeral-on-HFS+ needs map size + slack.
+    let disk = RamDisk::attach_sized("HFS+", &hfs_label, 12_582_912);
+    println!("attached {} at {}", disk.dev, disk.mount.display());
+
+    // Cells declared AFTER the disk so their environments close before
+    // the drop guard detaches it.
+    let mut cells = [
+        EngineFlagCell {
+            name: "create @ ssd",
+            db: Db::create(&ssd_dir.path().join("create"), Meter).expect("store creates"),
+            bucket: 0,
+            small: Vec::new(),
+            bulk: Vec::new(),
+        },
+        EngineFlagCell {
+            name: "ephemeral @ ssd",
+            db: Db::ephemeral(&ssd_dir.path().join("ephemeral"), Meter).expect("store creates"),
+            bucket: 0,
+            small: Vec::new(),
+            bulk: Vec::new(),
+        },
+        EngineFlagCell {
+            name: "create @ hfs+ ramdisk",
+            db: Db::create(&disk.store_dir("create"), Meter).expect("store creates"),
+            bucket: 0,
+            small: Vec::new(),
+            bulk: Vec::new(),
+        },
+        EngineFlagCell {
+            name: "ephemeral @ hfs+ ramdisk",
+            db: Db::ephemeral(&disk.store_dir("ephemeral"), Meter).expect("store creates"),
+            bucket: 0,
+            small: Vec::new(),
+            bulk: Vec::new(),
+        },
+    ];
+    for _ in 0..SMALL_COMMITS {
+        for c in &mut cells {
+            let sample = one_engine_commit(&c.db, SMALL_FACTS, &mut c.bucket);
+            c.small.push(sample);
+        }
+    }
+    for _ in 0..BULK_COMMITS {
+        for c in &mut cells {
+            let sample = one_engine_commit(&c.db, BULK_FACTS, &mut c.bucket);
+            c.bulk.push(sample);
+        }
+    }
+    for c in &cells {
+        println!("R6 {} small: {}", c.name, cell(&c.small));
+        println!("R6 {} bulk:  {}", c.name, cell(&c.bulk));
+    }
+
+    // The quiet-machine guard, R4's discipline verbatim: the bulk
+    // cells' max/min spread against the 2x band.
+    let mut noisy = false;
+    for c in &cells {
+        let (min, max) = spread(&c.bulk);
+        let ratio = max.as_secs_f64() / min.as_secs_f64().max(f64::EPSILON);
+        if ratio > R4_SPREAD_BAND {
+            noisy = true;
+            println!(
+                "R6 WARNING: {} bulk spread {ratio:.2}x exceeds the quiet-machine band \
+                 (max/min <= {R4_SPREAD_BAND}x) — co-tenant load suspected; the ratios \
+                 below are NOT decision-grade, re-run on a quiet machine",
+                c.name
+            );
+        }
+    }
+    let noise_tag = if noisy {
+        " [NOISY — not decision-grade]"
+    } else {
+        ""
+    };
+    let med = |index: usize| median(cells[index].small.clone()).as_secs_f64();
+    let ratio = |num: usize, den: usize| med(num) / med(den).max(f64::EPSILON);
+    println!(
+        "R6 flags dividend, ramdisk (create/ephemeral medians){noise_tag}: {:.1}x",
+        ratio(2, 3)
+    );
+    println!(
+        "R6 flags dividend, ssd (create/ephemeral medians){noise_tag}: {:.1}x",
+        ratio(0, 1)
+    );
+    println!(
+        "R6 staging win, create@ssd / ephemeral@ramdisk{noise_tag}: {:.1}x",
+        ratio(0, 3)
+    );
+    println!(
+        "R6 device tax on ephemeral, ssd/ramdisk medians{noise_tag}: {:.1}x",
+        ratio(1, 3)
+    );
+
+    drop(cells);
+    println!("== phase R6 complete — verify with: hdiutil info ==");
 }

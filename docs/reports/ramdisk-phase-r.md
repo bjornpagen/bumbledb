@@ -135,30 +135,94 @@ and the worst-case RAM cost is bounded by the **attach size** (the
 - R1: fullfsync is accepted on both ram-disk filesystems — no stop.
 - R4: the trigger (>=2x on bulk-shaped commits) did **not** fire.
 
-## The Phase-2 refusal (the decision record)
+## R6 — the ephemeral constructor, priced through the real surface
 
-**Decision: Phase 2 refused — no `Db::ephemeral`, no engine code
-lands.** **Alternative:** an ephemeral constructor setting
-`MDB_WRITEMAP|MDB_NOSYNC` on RAM-backed paths (durable `create`/`open`
-untouched). **Why it lost:** the trigger measured 1.12x on the
-bulk-load shape against the >=2x bar (1.09x–1.26x, the widest band
-observed across every banked quiet-machine run) — the plain ramdisk
-already captures the win (~21x small-commit latency, ~94–100x on
-back-to-back commit loops, ~1.7x bulk vs the SSD), and an engine
-surface that buys a further ~1.1x while adding a second flag regime, a
-RAM-backedness contract inside the dependency law, and a WRITEMAP
-crash-atomicity question is complexity the numbers refuse to pay for.
-The no-sync-mode law stands whole: durability is LMDB defaults, and
-`NOSYNC`/`WRITEMAP`/`MAPASYNC` remain inexpressible through the
-engine's types (`docs/architecture/50-storage.md`). **Reverses if:** a
-workload sights ephemeral stores where the flag delta matters — a lane
-bounded by sub-100 µs commit cadence on RAM (the small-commit shape
-shows ~16x there: 49 µs → 3 µs, R4), or a bulk-shaped run whose
-re-measured trigger ratio reaches 2x. **The re-run protocol (the
-quiet-machine rule):** run the harness above on an otherwise-quiet
-machine — a co-tenant load once inflated a sequential run to a
-spurious 2.27x. The harness interleaves the flag cells per repetition
-and prints a warning when any bulk cell's max/min spread leaves the
-2x quiet-machine band; a warned run's ratios are not decision-grade
-and neither reopen nor re-close this decision. Reopen only on an
-unwarned run whose trigger ratio reaches 2x.
+Appended 2026-07-15, after the owner ruling admitted `Db::ephemeral`
+(see the amended Phase-2 record below). The R4 cells priced raw
+scratch heed environments; R6 prices the SHIPPED constructor — the
+full engine write path (typed inserts, judgment, counters) on the four
+cells the decision names, interleaved per repetition, under the R4
+quiet-machine guard on the bulk shape (the sub-100 µs small cells
+absorb single-commit outliers that make a max/min band meaningless;
+the bulk cells are the steady co-tenancy witness). Harness:
+`ramdisk_phase_r_ephemeral` in the same file; the HFS+ ram disk is
+**6 GiB for this test** — a recorded consequence: an ephemeral store's
+`MDB_WRITEMAP` ftruncates the data file to the full 4 GiB map at open,
+and HFS+ has no sparse files, so ephemeral-on-HFS+ needs map size +
+slack (the SSD cells sit on APFS, which is sparse — `du` stays small
+there; a 2 GiB HFS+ disk refuses with `StorageFull`, typed).
+
+Three back-to-back unwarned runs; the table records the third; the
+two prior runs agree (dividend ratios 4.5x/4.2x/4.4x on the ramdisk,
+device tax 1.1x/1.0x/1.0x). Medians (min–max), n=64 small / n=8 bulk:
+
+| Cell | small (16 facts) | bulk (4096 facts) |
+|---|---|---|
+| `Db::create` @ SSD | 4.864 ms (3.696–7.835) | 14.220 ms (13.136–15.216) |
+| `Db::ephemeral` @ SSD | 0.054 ms (0.037–0.098) | 9.090 ms (8.543–9.792) |
+| `Db::create` @ HFS+ ramdisk | 0.228 ms (0.121–0.345) | 9.809 ms (8.844–11.567) |
+| `Db::ephemeral` @ HFS+ ramdisk | 0.052 ms (0.035–0.121) | 9.135 ms (8.396–9.909) |
+
+What the cells say (run-1 create@ssd small printed a 9.1 ms median
+under momentary fullfsync pressure — recorded, not averaged in):
+
+- **The flags dividend on the ramdisk, small commits: ~4.4x**
+  (228 µs → 52 µs; 4.5x/4.2x/4.4x across runs). Smaller than R4's ~16x
+  scratch-side because the engine's per-commit work (encode, judgment,
+  counters) now shares the bill with the sync — the saving is real
+  (~180 µs/commit) and the shape is the staging cadence.
+- **The flags dividend against durable-on-SSD, small commits:
+  ~90x** (83x–158x banked; the fullfsync floor plus DVFS, cf. R3).
+  This is the two-store staging pattern's actual before/after.
+- **Ephemeral is device-independent in practice: the SSD/ramdisk tax
+  on ephemeral stores measured 1.0–1.1x** on small commits and ~1.0x
+  bulk — with the kind's flags, the device stops mattering, which is
+  what makes ephemeral-on-SSD a legitimate (and zero-setup) cell.
+- **The bulk shape re-confirms the R4 refusal's arithmetic through
+  the real constructor: 1.07x–1.12x** (create vs ephemeral on the
+  ramdisk) — the plain ramdisk path needs no flags on bulk loads,
+  exactly as the 1.14x-vs-2x-bar record said. On the SSD, ephemeral
+  bulk is 1.56x over durable bulk (the per-chunk fullfsync).
+
+## The Phase-2 record (amended 2026-07-15: refusal → admission)
+
+**The original decision (2026-07-15, superseded the same day, kept
+verbatim in history):** Phase 2 refused — no `Db::ephemeral` — because
+the R4 trigger (>=2x on the bulk-load shape) measured 1.12x
+(1.09x–1.26x band), the plain ramdisk already captured the bulk win,
+and the proposed RAM-backedness contract plus the unanswered WRITEMAP
+crash-atomicity question were complexity the numbers refused to pay
+for. **Its reversal clause was:** "a workload sights ephemeral stores
+where the flag delta matters — a lane bounded by sub-100 µs commit
+cadence on RAM (the small-commit shape shows ~16x there: 49 µs → 3 µs,
+R4)."
+
+**The reversal fired (the owner ruling, 2026-07-15):** the sighting is
+the ephemeral relational engine — staging stores judged before
+ETL-to-durable, analysis working sets, scratch stores — a lane bounded
+by exactly the small-commit cadence the clause names. The owner's
+doctrine, recorded verbatim: **"everything we can do to make dogfooding
+easier is upgraded to a feature."**
+
+**Decision (standing): `Db::ephemeral` lands first-class as a store
+KIND** — a distinct constructor, an on-disk `_meta` kind marker, and
+`MDB_WRITEMAP|MDB_NOSYNC` derived from the kind
+(`docs/architecture/50-storage.md` § the ephemeral store kind).
+**Alternative (the refusal's shape):** an ephemeral constructor
+preconditioned on RAM-backed paths. **Why it lost:** the kind carries
+the no-machine-crash-durability claim, not the device — R6 measured
+the device tax on ephemeral stores at 1.0–1.1x, so ephemeral-on-SSD is
+both legitimate and nearly free, and a device precondition would have
+refused the pattern's cheapest deployment for nothing. **What
+dissolved the refusal's two costs:** the WRITEMAP crash-atomicity
+question is now answered empirically (the deterministic crashpoint
+sweep runs against ephemeral stores — every point × prefix cell
+recovers all-or-nothing; `fuzz/tests/crash.rs`), and the RAM-backedness
+contract is gone (no device precondition exists). **What the refusal
+got right and keeps:** the bulk-shape trigger still does not fire —
+R6 re-measured it at 1.07x–1.12x through the real constructor — so the
+plain-ramdisk path needs no flags and the DURABLE constructors remain
+exactly as they were; the durability law stands whole on the durable
+kind (`00-product.md`). **Reverses if:** the crash sweep ever convicts
+a crashpoint on an ephemeral store (drop WRITEMAP, keep the kind), or
+the staging sighting itself is retired.

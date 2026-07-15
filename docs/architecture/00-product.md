@@ -128,8 +128,10 @@ language. **Reverses if:** never — owner axiom.
   never a flag on `create`/`open` — so the cross-open is a typed refusal and no
   durable store can quietly lose its guarantee. The sighting is the ephemeral
   relational engine: staging stores judged before ETL into a durable store, analysis
-  working sets, scratch stores — the small-commit shape where the flags measured
-  ~16x scratch-side (`docs/reports/ramdisk-phase-r.md` § R4). The owner's doctrine, recorded
+  working sets, scratch stores — the small-commit shape where the flags measure
+  ~4.4x over the plain ramdisk and ~90x over durable-on-SSD through the real
+  constructor, with a 1.0–1.1x device tax that makes ephemeral-on-SSD nearly free
+  (`docs/reports/ramdisk-phase-r.md` § R6). The owner's doctrine, recorded
   verbatim: "everything we can do to make dogfooding easier is upgraded to a
   feature." **Alternative:** an ephemeral constructor gated on a RAM-backed-device
   precondition. **Why it lost:** the KIND carries the no-machine-crash-durability
