@@ -158,6 +158,10 @@ impl fmt::Display for CorruptionError {
                 "fixed-width interval start {bytes:02x?}: start + w at or past the domain ceiling"
             ),
             Self::MetaMissing => write!(f, "the _meta database is absent or malformed"),
+            Self::StoreKindInvalid => write!(
+                f,
+                "the _meta store-kind marker is present but not a valid kind encoding"
+            ),
             Self::DanglingInternId(id) => write!(f, "intern id {id} has no dictionary entry"),
             Self::MissingFact { relation, row_id } => {
                 write!(f, "relation {}: row {row_id} has no fact", relation.0)

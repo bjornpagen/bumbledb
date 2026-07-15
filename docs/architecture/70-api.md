@@ -228,6 +228,12 @@ Both are emission; the grammar is untouched.
 - Dev-reset conveniences (delete + recreate) are host-side; production open never
   destroys data. `Db::ephemeral` never destroys data either — it opens or
   initializes, and deletion of a spent staging store is the host's explicit act.
+  Nor does it MUTATE on refusal: an existing data file is probed through a plain
+  durable-flagged open (no `WRITEMAP`, so no 4 GiB ftruncate) before the
+  ephemeral flags are ever applied, so a refused probe — a durable store, a
+  foreign LMDB environment, a stale or forged store — leaves `data.mdb`
+  byte-identical (pinned by the byte-identity tests in
+  `crates/bumbledb/tests/ephemeral.rs` and `storage/env/tests.rs`).
 
 ## Transactions
 

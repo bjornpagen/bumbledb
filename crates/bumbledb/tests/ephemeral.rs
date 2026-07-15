@@ -113,6 +113,75 @@ fn ephemeral_on_an_ephemeral_store_reopens_with_contents() {
     .expect("read back");
 }
 
+/// Matrix cell 3's non-mutation lock (`docs/architecture/70-api.md`:
+/// `Db::ephemeral` never destroys data — and never mutates on refusal):
+/// the refusal on a durable store leaves `data.mdb` byte-identical.
+/// `MDB_WRITEMAP` ftruncates the data file to the full 4 GiB map at
+/// open, so a constructor that opened with the ephemeral flags BEFORE
+/// verifying the kind would permanently resize the durable store it
+/// refuses (the fixit record); the probe-first open must leave the
+/// file's length and bytes untouched, and the store must still open
+/// durable with its contents intact.
+#[test]
+fn ephemeral_refusal_on_a_durable_store_leaves_the_data_file_byte_identical() {
+    let dir = common::TempDir::new("ephemeral-refusal-no-mutation");
+    let db = Db::create(dir.path(), Staging).expect("create durable");
+    let holder = db
+        .write(|tx| {
+            let id: HolderId = tx.alloc()?;
+            tx.insert(&Holder { id, name: "ada" })?;
+            Ok(id)
+        })
+        .expect("commit one row");
+    drop(db);
+
+    let data = dir.path().join("data.mdb");
+    let before = std::fs::read(&data).expect("read data.mdb before the refusal");
+    // A real store's data file is orders of magnitude below the 4 GiB
+    // map — the assertion below would be vacuous otherwise.
+    assert!(
+        before.len() < 1 << 30,
+        "fixture data file unexpectedly large: {} bytes",
+        before.len()
+    );
+
+    let err = Db::ephemeral(dir.path(), Staging)
+        .err()
+        .expect("ephemeral must refuse the kind");
+    assert!(
+        matches!(
+            err,
+            Error::StoreKindMismatch {
+                found: StoreKind::Durable,
+                expected: StoreKind::Ephemeral,
+            }
+        ),
+        "{err:?}"
+    );
+
+    let after = std::fs::read(&data).expect("read data.mdb after the refusal");
+    assert_eq!(
+        before.len(),
+        after.len(),
+        "the refusal changed data.mdb's length"
+    );
+    assert_eq!(before, after, "the refusal changed data.mdb's bytes");
+
+    // The durable store is untouched in behavior too: open green, row intact.
+    let db = Db::open(dir.path(), Staging).expect("the durable store still opens");
+    db.write(|tx| {
+        assert!(
+            tx.contains(&Holder {
+                id: holder,
+                name: "ada",
+            })?,
+            "the durable store's contents survive the refused probe"
+        );
+        Ok(())
+    })
+    .expect("read back");
+}
+
 /// The matrix's create edge: `Db::create` on an ephemeral store refuses
 /// as it refuses every initialized directory — re-initializing `_meta`
 /// over live data is the corruption `AlreadyInitialized` exists for; the

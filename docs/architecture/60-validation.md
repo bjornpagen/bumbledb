@@ -616,6 +616,13 @@ detector resolves the volume's mount identity and its `ram://`-image
 backing; `bench` checks both its corpus `--dir` and its write scratch),
 because a timed number measured on RAM is a number physics never
 signed. The exemption is exactly the untimed lanes above.
+Sizing note: the script's default volume is 5 GiB because an ephemeral
+store's data file is ftruncated to the full 4 GiB map at open
+(`MDB_WRITEMAP`, `50-storage.md` § the ephemeral store kind) and the
+default HFS+ personality has no sparse files — a smaller volume makes
+every `Db::ephemeral` open (the ephemeral crashpoint sweep under
+`BUMBLEDB_SCRATCH_DIR` included) refuse with the typed
+StorageFull-carrying `Lmdb` error, loudly but uselessly.
 Scope note: the crash target stays valid on a ramdisk — its adversary
 is process-kill ordering (the child aborts mid-commit and the parent
 autopsies the surviving bytes), which a RAM-backed filesystem preserves

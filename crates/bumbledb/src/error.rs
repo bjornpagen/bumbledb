@@ -41,6 +41,11 @@ pub enum CorruptionError {
     /// The `_meta` database or one of its required keys is absent or
     /// malformed: the environment is not a usable bumbledb database.
     MetaMissing,
+    /// The `_meta` store-kind marker is PRESENT but undecodable — a
+    /// wrong-width value or a byte no [`crate::StoreKind`] encodes to.
+    /// Distinct from [`CorruptionError::MetaMissing`]: the key exists,
+    /// so this is corrupt data, not a missing key.
+    StoreKindInvalid,
     /// An intern id with no reverse dictionary entry — a fact referencing it
     /// is corrupt.
     DanglingInternId(u64),

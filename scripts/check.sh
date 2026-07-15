@@ -50,6 +50,16 @@ cargo test -p bumbledb --features fold-off
 echo "==> fuzz crate (out-of-workspace): clippy -D warnings"
 cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
 
+# The deterministic crashpoint sweeps — durable and ephemeral — ARE a
+# per-commit gate (the fixit record): the ephemeral admission's reversal
+# clause ("reverses if the crash sweep ever convicts a crashpoint on an
+# ephemeral store") needs a standing executed lane, and the sweeps are
+# SECONDS (~1s durable, ~0.5s ephemeral) — this is NOT the ~8-min corpus
+# replay, which stays a CI lane. The filter matches both sweep parents
+# and excludes the replay test and the ignored crash-child body.
+echo "==> fuzz crate: deterministic crashpoint sweeps (durable + ephemeral)"
+cargo test --manifest-path fuzz/Cargo.toml --test crash every_crashpoint_recovers
+
 # The bench crate must build and lint with the engine's observability on
 # (docs/architecture/60-validation.md); the harness tests run under both configs.
 echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"

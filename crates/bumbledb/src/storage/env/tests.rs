@@ -177,6 +177,177 @@ fn the_snapshot_past_the_reader_table_is_a_typed_error() {
     env.read_txn().expect("snapshot after release");
 }
 
+/// Forges the `_meta` of a freshly created durable store at `dir` and
+/// closes it: the marker-matrix fixture (a stale or hostile store on
+/// disk, no live handle).
+fn forge_meta(dir: &TempDir, forge: impl FnOnce(&Environment, &mut heed::RwTxn)) {
+    let env = Environment::create(dir.path(), &schema()).expect("create fixture store");
+    let mut wtxn = env.env.write_txn().expect("txn");
+    forge(&env, &mut wtxn);
+    wtxn.commit().expect("commit forgery");
+}
+
+/// The stale/forged marker matrix (the fixit record: the reviewer's
+/// probes, made permanent). Row 1 — a pre-v5 store (version 4, no kind
+/// key, exactly what a v4 store looks like): BOTH constructors refuse
+/// `FormatMismatch { found: 4 }` — the version check runs before the
+/// kind check, so no silent kind adoption is reachable.
+#[test]
+fn a_v4_store_without_a_kind_key_is_a_format_mismatch_on_both_constructors() {
+    let dir = TempDir::new("env-marker-v4-no-kind");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_FORMAT_VERSION, &4u32.to_le_bytes())
+            .expect("backdate version");
+        env.meta
+            .delete(wtxn, META_STORE_KIND)
+            .expect("delete kind key");
+    });
+    for err in [
+        Environment::open(dir.path(), &schema()).unwrap_err(),
+        Environment::ephemeral(dir.path(), &schema()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                err,
+                Error::FormatMismatch {
+                    found: 4,
+                    expected: FORMAT_VERSION
+                }
+            ),
+            "{err:?}"
+        );
+    }
+}
+
+/// Marker matrix row 2 — a v5 store with the kind key DELETED: the key
+/// is absent, so BOTH constructors refuse `Corruption(MetaMissing)` —
+/// never silent adoption of either kind.
+#[test]
+fn a_v5_store_with_the_kind_key_deleted_is_meta_missing_on_both_constructors() {
+    let dir = TempDir::new("env-marker-kind-deleted");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .delete(wtxn, META_STORE_KIND)
+            .expect("delete kind key");
+    });
+    for err in [
+        Environment::open(dir.path(), &schema()).unwrap_err(),
+        Environment::ephemeral(dir.path(), &schema()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(crate::error::CorruptionError::MetaMissing)
+            ),
+            "{err:?}"
+        );
+    }
+}
+
+/// Marker matrix row 3 — a garbage kind byte (7, which no kind encodes
+/// to): the key is PRESENT but undecodable, so BOTH constructors refuse
+/// `Corruption(StoreKindInvalid)` — corrupt data, not a missing key,
+/// and never silent adoption.
+#[test]
+fn a_garbage_kind_byte_is_store_kind_invalid_on_both_constructors() {
+    let dir = TempDir::new("env-marker-garbage-kind");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_STORE_KIND, &[7u8])
+            .expect("plant garbage kind");
+    });
+    for err in [
+        Environment::open(dir.path(), &schema()).unwrap_err(),
+        Environment::ephemeral(dir.path(), &schema()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(crate::error::CorruptionError::StoreKindInvalid)
+            ),
+            "{err:?}"
+        );
+    }
+}
+
+/// Marker matrix row 4 — a wide kind value (two bytes where the
+/// encoding is exactly one): present but undecodable, so BOTH
+/// constructors refuse `Corruption(StoreKindInvalid)`.
+#[test]
+fn a_wide_kind_value_is_store_kind_invalid_on_both_constructors() {
+    let dir = TempDir::new("env-marker-wide-kind");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_STORE_KIND, &[0u8, 0u8])
+            .expect("plant wide kind");
+    });
+    for err in [
+        Environment::open(dir.path(), &schema()).unwrap_err(),
+        Environment::ephemeral(dir.path(), &schema()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(crate::error::CorruptionError::StoreKindInvalid)
+            ),
+            "{err:?}"
+        );
+    }
+}
+
+/// The foreign-env non-mutation lock (the twin of the durable-store
+/// byte-identity test in `tests/ephemeral.rs`): `Environment::ephemeral`
+/// probed against someone else's LMDB environment refuses
+/// `AlreadyInitialized` and leaves the foreign `data.mdb` byte-identical
+/// — the probe runs without `MDB_WRITEMAP`, so the 4 GiB ftruncate never
+/// touches an environment the refusal protects.
+#[test]
+#[expect(
+    unsafe_code,
+    reason = "building the FOREIGN LMDB environment fixture requires heed's unsafe raw open; the engine under test never runs this code"
+)]
+fn ephemeral_refusal_on_a_foreign_env_leaves_the_data_file_byte_identical() {
+    let dir = TempDir::new("env-ephemeral-foreign-untouched");
+    {
+        let mut options = heed::EnvOpenOptions::new();
+        options.map_size(10 << 20).max_dbs(2);
+        // SAFETY: this path is opened by no other handle in the process,
+        // and the env is dropped (closed) before the probe below runs.
+        let env = unsafe { options.open(dir.path()).expect("foreign env opens") };
+        let mut wtxn = env.write_txn().expect("txn");
+        let theirs = env
+            .create_database::<Bytes, Bytes>(&mut wtxn, Some("theirs"))
+            .expect("foreign named db");
+        theirs
+            .put(&mut wtxn, b"their-key", b"their-value")
+            .expect("foreign row");
+        wtxn.commit().expect("commit foreign contents");
+    }
+
+    let data = dir.path().join("data.mdb");
+    let before = std::fs::read(&data).expect("read foreign data.mdb before");
+    assert!(
+        before.len() < 1 << 30,
+        "fixture data file unexpectedly large: {} bytes",
+        before.len()
+    );
+
+    let err = Environment::ephemeral(dir.path(), &schema()).unwrap_err();
+    assert!(matches!(err, Error::AlreadyInitialized), "{err:?}");
+
+    let after = std::fs::read(&data).expect("read foreign data.mdb after");
+    assert_eq!(
+        before.len(),
+        after.len(),
+        "the refusal changed the foreign data.mdb's length"
+    );
+    assert_eq!(
+        before, after,
+        "the refusal changed the foreign data.mdb's bytes"
+    );
+}
+
 /// A stored `u64::MAX` dictionary counter —
 /// the miss sentinel, never mintable — is typed Corruption at the
 /// read, not an assert.

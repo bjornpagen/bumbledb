@@ -10,10 +10,9 @@ use crate::schema::fingerprint::{SchemaFingerprint, fingerprint};
 
 use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;
-use super::read_meta::read_u32;
+use super::read_meta::{read_store_kind, read_u32};
 use super::{
-    Environment, FORMAT_VERSION, META_FINGERPRINT, META_FORMAT_VERSION, META_STORE_KIND,
-    NEXT_INSTANCE, StoreKind,
+    Environment, FORMAT_VERSION, META_FINGERPRINT, META_FORMAT_VERSION, NEXT_INSTANCE, StoreKind,
 };
 
 impl Environment {
@@ -26,7 +25,8 @@ impl Environment {
     /// `EnvironmentLocked` if another handle holds the environment;
     /// `FormatMismatch`, then `StoreKindMismatch`, then `SchemaMismatch`;
     /// `Corruption(MetaMissing)` if the environment lacks bumbledb's
-    /// databases or meta keys; `Lmdb` otherwise.
+    /// databases or meta keys; `Corruption(StoreKindInvalid)` on a
+    /// present-but-undecodable kind marker; `Lmdb` otherwise.
     pub fn open(path: &Path, schema: &Schema) -> Result<Self> {
         let lock = acquire_lock(path)?;
         let env = open_env(path, StoreKind::Durable)?;
@@ -66,11 +66,7 @@ impl Environment {
                 expected: FORMAT_VERSION,
             });
         }
-        let found_kind = meta
-            .get(&rtxn, META_STORE_KIND)?
-            .and_then(|b| <[u8; 1]>::try_from(b).ok())
-            .and_then(|[byte]| StoreKind::from_meta_byte(byte))
-            .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
+        let found_kind = read_store_kind(&meta, &rtxn)?;
         if found_kind != expected_kind {
             return Err(Error::StoreKindMismatch {
                 found: found_kind,

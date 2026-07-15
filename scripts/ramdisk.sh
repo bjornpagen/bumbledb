@@ -31,6 +31,16 @@
 # it did not create, and any future std-only RAM-backedness check may
 # parse it instead of the platform mount tables.
 #
+# Sizing: the default is 5 GiB because an EPHEMERAL store's data file
+# is ftruncated to the full 4 GiB map at open (`MDB_WRITEMAP`,
+# docs/architecture/50-storage.md § the ephemeral store kind), and the
+# default filesystem (HFS+) has no sparse files — a volume below
+# map size + slack refuses every `Db::ephemeral` open with a typed
+# StorageFull-carrying Lmdb error, which breaks the sanctioned
+# BUMBLEDB_SCRATCH_DIR wiring for the ephemeral crashpoint sweep (the
+# fixit record). Shrink below 5 GiB only for lanes that open no
+# ephemeral store.
+#
 # macOS arm (the canonical M2 Max): hdiutil ram:// needs no sudo; the
 # default filesystem is non-journaled HFS+ (`diskutil erasevolume HFS+`
 # — the journaled personality is spelled "Journaled HFS+"); --apfs is
@@ -49,7 +59,7 @@ set -euo pipefail
 
 MAGIC="bumbledb-ramdisk-v1"
 NAME="bumbledb-scratch"
-SIZE_GIB=2
+SIZE_GIB=5
 FS="HFS+"
 
 usage() {

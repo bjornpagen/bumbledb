@@ -730,6 +730,23 @@ impl StoreDir {
 
 impl Drop for StoreDir {
     fn drop(&mut self) {
+        // Truncate the data file before unlinking it. An EPHEMERAL
+        // store's data.mdb was ftruncated to the full 4 GiB map
+        // (`MDB_WRITEMAP`) and its dirty pages outlive the close in the
+        // page cache — a plain unlink on a non-sparse volume (the HFS+
+        // ramdisk, `scripts/ramdisk.sh`) then frees the blocks
+        // ASYNCHRONOUSLY, seconds later, so back-to-back crash-sweep
+        // cases outrun reclamation and die StorageFull even on a volume
+        // that comfortably holds one store (the fixit record).
+        // `set_len(0)` discards the dirty pages and frees the blocks
+        // synchronously; on durable stores and non-RAM volumes it is a
+        // harmless no-op-sized truncate.
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .write(true)
+            .open(self.0.join("data.mdb"))
+        {
+            let _ = file.set_len(0);
+        }
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
