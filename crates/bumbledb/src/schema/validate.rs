@@ -36,8 +36,9 @@ impl SchemaDescriptor {
     /// # Panics
     ///
     /// Only on programmer-invariant violations: declaration counts exceeding
-    /// the id widths (2³² relations, 2¹⁶ fields per relation, 2¹⁶
-    /// statements).
+    /// the id widths (2³² relations, 2¹⁶ statements). Field counts need no
+    /// panic path: the derived column count is a typed rejection
+    /// ([`SchemaError::RelationTooManyColumns`]), and fields ≤ columns.
     #[expect(
         clippy::too_many_lines,
         reason = "the one materialized-order sealing pass — one arm per \
@@ -1317,6 +1318,29 @@ fn validate_relation(
         });
     }
     fields.extend(declared);
+
+    // The image's column index is u16 (`crate::image::ColumnSpan`,
+    // `column_spans`): an interval field spans two word columns, a
+    // `bytes<N>` field its ⌈N/8⌉, every other field one. The derived
+    // COLUMN count is capped here as a typed rejection — never
+    // discovered at image-build time. The same gate keeps every
+    // `FieldId` within u16 through the loop below: a field occupies at
+    // least one column except `bytes<0>`, whose own width rejection
+    // must fire at an index within u16 for the gate's sum to hold.
+    let columns: usize = fields
+        .iter()
+        .map(|field| match field.value_type {
+            ValueType::Interval { .. } => 2,
+            ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(len),
+            _ => 1,
+        })
+        .sum();
+    if columns > usize::from(u16::MAX) {
+        return Err(SchemaError::RelationTooManyColumns {
+            relation: rel_id,
+            columns,
+        });
+    }
 
     for (idx, field) in fields.iter().enumerate() {
         let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));

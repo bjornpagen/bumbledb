@@ -145,6 +145,18 @@ pub enum SchemaError {
         field: FieldId,
         width: u64,
     },
+    /// A relation whose derived COLUMN count overflows the image's u16
+    /// column index (`crate::image::ColumnSpan`): an interval field
+    /// spans two word columns, a `bytes<N>` field its ⌈N/8⌉, every
+    /// other field one — the declaration is rejected here, never
+    /// discovered at image-build time (the same declaration-boundary
+    /// discipline as [`SchemaError::DeterminantKeyTooWide`]). The gate
+    /// also keeps every `FieldId` within u16: a field occupies at
+    /// least one column.
+    RelationTooManyColumns {
+        relation: RelationId,
+        columns: usize,
+    },
 
     // --- Closed-relation roster (10-data-model § closed relations) ---
     /// A closed relation with no rows is a vocabulary of nothing — write

@@ -114,6 +114,72 @@ fn rejects_interval_widths_outside_the_range() {
     }
 }
 
+#[test]
+fn rejects_a_relation_whose_derived_column_count_overflows_u16() {
+    // The image's column index is u16 (`crate::image::ColumnSpan`): an
+    // interval field spans two word columns, a bytes<N> field ⌈N/8⌉.
+    // A relation whose fields multiply out past 65,535 columns must be
+    // a typed rejection at the declaration boundary — never a
+    // query-time panic in `column_spans`.
+    let wide = |name: String, count: usize, value_type: ValueType, columns: usize| {
+        let decl = one_relation(
+            (0..count)
+                .map(|i| field(&format!("{name}{i}"), value_type.clone()))
+                .collect(),
+        );
+        assert_eq!(
+            decl.validate().unwrap_err(),
+            SchemaError::RelationTooManyColumns {
+                relation: RelationId(0),
+                columns,
+            }
+        );
+    };
+    // 9,000 bytes<64> fields: 9,000 × 8 = 72,000 columns.
+    wide(
+        "hash".into(),
+        9_000,
+        ValueType::FixedBytes { len: 64 },
+        72_000,
+    );
+    // 33,000 interval fields: 66,000 columns.
+    wide(
+        "span".into(),
+        33_000,
+        ValueType::Interval {
+            element: IntervalElement::U64,
+            width: None,
+        },
+        66_000,
+    );
+    // 70,000 scalar fields: past the FieldId width too — the same typed
+    // rejection, never the `field count fits u16` expect.
+    wide("x".into(), 70_000, ValueType::U64, 70_000);
+}
+
+#[test]
+fn the_column_count_boundary_is_exact() {
+    // 8,191 bytes<64> fields (65,528 columns) plus 7 u64 fields land
+    // exactly on 65,535 — the widest legal relation validates; one more
+    // column is the typed rejection.
+    let mut fields: Vec<FieldDescriptor> = (0..8_191)
+        .map(|i| field(&format!("hash{i}"), ValueType::FixedBytes { len: 64 }))
+        .collect();
+    fields.extend((0..7).map(|i| field(&format!("x{i}"), ValueType::U64)));
+    assert!(
+        one_relation(fields.clone()).validate().is_ok(),
+        "65,535 columns validate"
+    );
+    fields.push(field("one_too_many", ValueType::U64));
+    assert_eq!(
+        one_relation(fields).validate().unwrap_err(),
+        SchemaError::RelationTooManyColumns {
+            relation: RelationId(0),
+            columns: 65_536,
+        }
+    );
+}
+
 // --- The statement roster ---
 
 /// Two relations with no fresh ids: statement ids equal declaration order.
