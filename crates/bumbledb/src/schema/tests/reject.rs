@@ -1638,3 +1638,68 @@ fn rejects_interval_positions_across_element_domains_whatever_the_widths() {
         }
     );
 }
+
+/// PINNED, UNRULED — the F1 panic class (recorded UNFIXED 2026-07-14,
+/// owner decision): `SchemaDescriptor::validate` PANICS at the
+/// id-width caps instead of refusing typed. The declaration counts
+/// here are host-supplied data at the public `Db::create` trust
+/// boundary, and the query boundary's own caps are all typed refusals
+/// (`ValidationError::TooManyRules` / `TooManyPredicates` /
+/// `TooManyAtoms` / `TooManyVariables`), so the schema boundary
+/// diverges from the engine's typed-refusal law
+/// (`lean/Bumbledb/Admission.lean`: acceptance and refusal are a typed
+/// gate verdict, never a crash; `lean/Bumbledb/Query/Syntax.lean`
+/// records boundary caps as hostile-input mechanism with typed engine
+/// forms). `validate()`'s rustdoc records the panics as
+/// programmer-invariant — the posture this test contests. Ignored
+/// until the owner rules: either typed `SchemaError` caps (e.g.
+/// `TooManyStatements` / `TooManyFields`) land — then un-ignore — or
+/// the panic posture is re-ratified and this pin is deleted with the
+/// ruling cited. Today both bodies panic at the `u16::try_from`
+/// mints ("statement count fits u16", `statement_id`; "field count
+/// fits u16", the field-id mint in `validate_relation`).
+#[test]
+#[ignore = "owner question (F1 residue): the id-width caps panic instead of returning a typed SchemaError"]
+fn the_id_width_caps_refuse_typed_rather_than_panicking() {
+    // 2^16 + 1 one-field relations, one Functionality statement each:
+    // the statement mint crosses u16.
+    let count = u32::from(u16::MAX) + 1;
+    let relations: Vec<RelationDescriptor> = (0..=count)
+        .map(|idx| RelationDescriptor {
+            extension: None,
+            name: format!("R{idx}").into(),
+            fields: vec![field("id", ValueType::U64)],
+        })
+        .collect();
+    let statements = (0..=count)
+        .map(|idx| StatementDescriptor::Functionality {
+            relation: RelationId(idx),
+            projection: Box::new([FieldId(0)]),
+        })
+        .collect();
+    let decl = SchemaDescriptor {
+        relations,
+        statements,
+    };
+    assert!(
+        decl.validate().is_err(),
+        "past-2^16 statement declarations are hostile input: a typed SchemaError, never a panic"
+    );
+
+    // One relation with 2^16 + 1 u64 fields: the field-id mint
+    // crosses u16.
+    let decl = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Wide".into(),
+            fields: (0..=count)
+                .map(|idx| field(&format!("f{idx}"), ValueType::U64))
+                .collect(),
+        }],
+        statements: vec![],
+    };
+    assert!(
+        decl.validate().is_err(),
+        "past-2^16 field declarations are hostile input: a typed SchemaError, never a panic"
+    );
+}

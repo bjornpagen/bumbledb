@@ -432,8 +432,11 @@ impl Executor {
             scratch.pending_len = 0;
         }
         // D2 state: a fresh epoch outlives any prior execution's
-        // cancellations without clearing the high-water table.
-        self.cancel_epoch = self.cancel_epoch.wrapping_add(1);
+        // cancellations without clearing the high-water table — except
+        // at wrap-around, where the table IS cleared (`cancel.rs`: a
+        // stale stamp aliasing a recycled epoch would cancel a live
+        // origin and silently drop answers).
+        self.advance_cancel_epoch();
         self.next_origin = 0;
         self.all_cancelled = false;
         self.origin_overflow = false;

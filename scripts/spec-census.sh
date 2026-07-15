@@ -10,7 +10,13 @@
 #       target, or trophy;
 #   (c) every `lean/…` citation in docs/architecture/ and
 #       docs/cookbook.md resolves to a real file — and, when it names a
-#       declaration (`lean/….lean: name`), to a real declaration in it.
+#       declaration (`lean/….lean: name`), to a real declaration in it;
+#   (d) every backticked `path.rs::symbol` citation in lean/ doc
+#       comments resolves: some file under crates/*/src or fuzz/src
+#       whose path ends with the cited path contains the symbol's
+#       final `::`-segment word-bounded. (Line-number citations inside
+#       lean doc comments are NOT checked — they drift silently; prefer
+#       the symbol form, which this check keeps honest.)
 #
 # Parse contract (recorded in Bridge.lean's module doc): mechanism and
 # instrument strings are semicolon-joined tokens, each either
@@ -111,8 +117,45 @@ while IFS= read -r cite; do
   fi
 done < <(grep -ohE 'lean/[A-Za-z0-9_/.-]+\.lean: *[A-Za-z_][A-Za-z0-9_.]*' "${docs[@]}" | sort -u)
 
+# ---- (d): lean-side rust symbol citations ----------------------------
+# The normative spec's doc comments anchor recorded narrowings to rust
+# code. Line-number anchors drift silently (the 2026-07-15 fidelity
+# review found four drifted ranges); symbol anchors are checkable, so
+# they are what this lane keeps honest: `path.rs::symbol` in backticks,
+# path resolved as a suffix under crates/*/src or fuzz/src, the
+# symbol's final `::`-segment grepped word-bounded in a matching file.
+
+lean_cites=0
+while IFS= read -r cite; do
+  [ -n "$cite" ] || continue
+  lean_cites=$((lean_cites + 1))
+  path="${cite%%::*}"
+  sym="${cite#*::}"
+  final="${sym##*::}"
+  found=0
+  while IFS= read -r cand; do
+    if grep -qw -- "$final" "$cand"; then
+      found=1
+      break
+    fi
+  done < <([ -f "$path" ] && printf '%s\n' "$path"; \
+           find crates/*/src fuzz/src -type f -path "*/$path" 2>/dev/null; \
+           find crates/*/src fuzz/src -type f -name "$path" 2>/dev/null)
+  if [ "$found" -ne 1 ]; then
+    echo "spec-census: FAIL — lean cites '$cite' but no crates/*/src or fuzz/src file matching '$path' contains '$final'" >&2
+    fail=1
+  fi
+done < <(grep -rhoIE --include='*.lean' --include='*.md' --exclude-dir=.lake \
+           '`[A-Za-z0-9_/.-]+\.rs::[A-Za-z0-9_:]+`' lean/ \
+           | sed 's/^`//; s/`$//' | sort -u)
+
+if [ "$lean_cites" -eq 0 ]; then
+  echo "spec-census: FAIL — no lean-side symbol citations found (convention drifted?)" >&2
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved"

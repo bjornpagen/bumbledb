@@ -46,6 +46,12 @@ one determinant get, static emptiness is a refuted condition.
   interval-final keys included — or the full-fact `M` fallback);
   `crates/bumbledb/src/api/prepared/build.rs:335`
   (`PreparedRule::KeyProbe` minted).
+* **The subsumption sweep** — `plan/ground.rs::subsume` (classical
+  UCQ minimization restricted to the normalized-form witness;
+  `plan/ground.rs::subsumes`, the ordered-pair check), wired after
+  grounding at `api/prepared/build.rs::ground_program`: the deleted
+  rules are filtered out of the prepared program. Unmodeled — see the
+  narrowings.
 * **The statically-empty fold** —
   `crates/bumbledb/src/ir/normalize/fold.rs:78-96` (`fold`:
   participating occurrences only — a negated occurrence's contradiction
@@ -83,6 +89,29 @@ one determinant get, static emptiness is a refuted condition.
   guarantee (`domain_within_ids`) and a negated membership the
   condition grammar cannot write; the modeled step grounds positive
   occurrences only.
+* **Rule subsumption is unmodeled** (`plan/ground.rs::subsume`, wired
+  at `api/prepared/build.rs::ground_program`): after grounding, a rule
+  whose normalized body contains a sibling's — identical `finds`,
+  identical participating-atom multiset with the keeper's per-atom
+  filters ⊆ the candidate's, the keeper's residual sets ⊆ the
+  candidate's, and every keeper negated atom present in the candidate
+  — is DELETED from the prepared program: a sixth denotation-affecting
+  rewrite `RewriteStep` does not name, so `rewrite_composition`'s
+  chain never represents it. The witness implies candidate-answers ⊆
+  keeper-answers under both the projection and head-projection union
+  regimes (every conjunct is either shared verbatim or only shrinks
+  the candidate's binding set), and deleting a rule whose answers a
+  kept rule covers preserves the union — hand-verified, NOT proved;
+  the general-form refusal (CQ-homomorphism minimization, NP-hard) is
+  the engine's own recorded fence (`plan/ground.rs`'s module doc). The
+  ground-off dual-pipeline differential (the fuzz rewrites target) and
+  the prepare-level instruments
+  (`the_dnf_residue_subsumes_the_filtered_rule`,
+  `crates/bumbledb/src/plan/ground/tests.rs`;
+  `crates/bumbledb/src/api/prepared/tests/ground.rs`) stand as the
+  empirical check until a `subsume` step constructor and its
+  rule-containment lemma land — the recorded narrowing, and the one
+  live rewrite whose soundness rests on record rather than theorem.
 * **`elimination_sound` is the projection-sink face.** For
   set-semantics `ruleAnswers`, containment existence plus deadness
   suffice; the key-ness of Y (condition 1's full-key demand,
@@ -1589,9 +1618,10 @@ inductive Rewrites (T : Theory) (C : Classify) : Query → Query → Prop
 /-- **Item 5 — `rewrite_composition`.** ANY sequence of grounding,
 elimination (chained-source pairs included) and kill steps preserves
 `queryAnswers` on every instance holding the theory and agreeing with
-its ground axioms — the prepare pipeline's licence to chain. Falls
-out of items 1, 2 and 4 by induction over the chain, one rewrite per
-step. -/
+its ground axioms — the prepare pipeline's licence to chain for the
+MODELED steps (the subsumption deletion runs outside this chain — the
+recorded narrowing in the module doc). Falls out of items 1, 2 and 4
+by induction over the chain, one rewrite per step. -/
 theorem rewrite_composition {T : Theory} {C : Classify} {q q' : Query}
     (h : Rewrites T C q q') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :

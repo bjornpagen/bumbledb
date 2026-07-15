@@ -211,8 +211,15 @@ mod tests {
         assert!(Interval::<i64>::fixed(i64::MAX - 1, 1).is_none());
         assert!(Interval::<i64>::fixed(i64::MAX - 2, 1).is_some());
         assert!(Interval::<i64>::fixed(-1, u64::MAX).is_none());
-        // The widest representable i64 fixed value.
-        assert!(Interval::<i64>::fixed(i64::MIN, u64::MAX - 2).is_some());
+        // The widest representable fixed values, exactly at the Q2
+        // bound (`0 < w ∧ start + w < maxEnd`, `FixedI64`/`FixedU64`):
+        // i64's widest is `w = u64::MAX - 1` at `start = i64::MIN`
+        // (derived end `i64::MAX - 1`, strictly below the ceiling);
+        // one wider hits the ceiling and is unconstructible.
+        assert!(Interval::<i64>::fixed(i64::MIN, u64::MAX - 1).is_some());
+        assert!(Interval::<i64>::fixed(i64::MIN, u64::MAX).is_none());
+        assert!(Interval::<u64>::fixed(0, u64::MAX - 1).is_some());
+        assert!(Interval::<u64>::fixed(0, u64::MAX).is_none());
     }
 
     #[test]

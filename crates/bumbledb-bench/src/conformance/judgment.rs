@@ -26,6 +26,24 @@
 //! written only after the engine and the naive model agreed on the
 //! verdict — a disagreement panics as a trophy, exactly the query
 //! lane's rule.
+//!
+//! **Closed-SOURCE containments (domain quantification) are outside
+//! this lane** — the recorded fence: the engine's verdict is
+//! delta-restricted (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+//! delta_restricted_commit_sound` — sound only under the holds-before
+//! premise) while `Txn.judgeB` judges the whole final state, and a
+//! closed source is exactly where the premise fails — a store whose
+//! targets have not landed violates the statement in the full-state
+//! reading while every commit that never touches the target records
+//! accept (`lean/Bumbledb/Countermodels.lean:
+//! incremental_verdict_needs_holds`; the sweeper owns the class,
+//! `docs/architecture/30-dependencies.md` § "Domain quantification,
+//! worked"). A fixture in this class is a GUARANTEED three-way
+//! mismatch on a doctrinally-correct engine verdict (demonstrated
+//! 2026-07-15: the docs' worked example rendered "accept", judgeB
+//! rejected), so no roster fixture declares a closed source —
+//! `domain_quantification_judgments_are_outside_the_lane` pins the
+//! Rust half and the reason.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -161,6 +179,41 @@ fn item(doc: u64, pos: u64, note: u64) -> (RelationId, Vec<Value>) {
         ITEM,
         vec![Value::U64(doc), Value::U64(pos), Value::U64(note)],
     )
+}
+
+// ---------- the ledger world: containment and cardinality together ----------
+
+/// Holder(id, tag; key id); Account(holder, kind, num) under BOTH
+/// statement forms at once: the reference containment
+/// `Account(holder) <= Holder(id)` (statement 1) and the window
+/// `Holder(id) <={1..2} Account(holder | kind == 1)` (statement 2)
+/// — the one roster schema whose statement phase can cite containment
+/// and cardinality TOGETHER, so the ordered multi-citation verdict
+/// surface (`lean/Main.lean: RVerdict`'s list `BEq`, ascending indices
+/// via `verdictOf`) is actually exercised.
+fn ledger_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            u64_relation("Holder", &["id", "tag"]),
+            u64_relation("Account", &["holder", "kind", "num"]),
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: HOLDER,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: side(ACCOUNT, &[0]),
+                target: side(HOLDER, &[0]),
+            },
+            StatementDescriptor::Cardinality {
+                source: side_where(ACCOUNT, &[0], &[(1, LiteralSet::One(Value::U64(1)))]),
+                lo: 1,
+                hi: Some(2),
+                target: side(HOLDER, &[0]),
+            },
+        ],
+    }
 }
 
 // ---------- the exactness world: {n} and {0} windows ----------
@@ -617,6 +670,54 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 lane_u(2, u64::MAX - 6),
                 lane_i(1, i64::MIN),
                 lane_i(2, i64::MAX - 6),
+            ],
+        },
+        // The multi-citation statement phase: one delta violating the
+        // containment (statement 1 — account 8 references no holder;
+        // kind 5 sits outside the window's σ) AND the window floor
+        // (statement 2 — holder 9 lands childless) with clean keys.
+        // The recorded verdict is the ordered ASCENDING list [1, 2]
+        // mixing citation kinds — the whole-list comparison surface
+        // (`lean/Main.lean: RVerdict` list `BEq`, `verdictOf`'s indexed
+        // filterMap) exercised beyond length 1 for the first time.
+        JudgmentFixture {
+            name: "judgment-statement-mixed-citations",
+            schema: ledger_schema(),
+            base: vec![holder(7), account(7, 1, 0)],
+            deletes: vec![],
+            inserts: vec![account(8, 5, 0), holder(9)],
+        },
+        // One containment cited in BOTH directions by one delta: the
+        // deleted slot uncovers the held-before claim (target
+        // direction) while the inserted claim lands uncovered (source
+        // direction). The `Direction` refinement sits below the Lean
+        // altitude, so the serialized set must collapse the double
+        // citation to the single statement id — the `ids.dedup()` rule
+        // the README records, previously covered by no case.
+        JudgmentFixture {
+            name: "judgment-containment-both-directions",
+            schema: permuted_schema(),
+            base: vec![slot(5, 10, 20), claim(12, 18, 5)],
+            deletes: vec![slot(5, 10, 20)],
+            inserts: vec![claim(40, 50, 5)],
+        },
+        // The multi-key rejection: overlapping playlist spans collide
+        // on statement 0's pointwise key while overlapping unit slots
+        // collide on statement 1's — the key phase's COMPLETE set is
+        // the ascending pair [0, 1]
+        // (`lean/Bumbledb/Txn.lean: judge_key_preempts` drops the
+        // simultaneous containment convictions), where every prior
+        // key-phase case cited exactly one statement.
+        JudgmentFixture {
+            name: "judgment-multi-key-collisions",
+            schema: playlist_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![
+                playlist(1, 0, 3),
+                playlist(1, 2, 5),
+                unit_slot(1, 0, 100),
+                unit_slot(1, 0, 999),
             ],
         },
     ]
@@ -1076,4 +1177,205 @@ pub fn replay_judgment_case(name: &str) -> String {
         .find(|fixture| fixture.name == name)
         .unwrap_or_else(|| panic!("unknown judgment fixture {name}: stale corpus"));
     render_fixture(&fixture)
+}
+
+#[cfg(test)]
+mod tests {
+    use bumbledb::{Direction, StatementId};
+
+    use super::*;
+
+    /// The serialized violation set is a WHOLE ordered list
+    /// (`lean/Main.lean: RVerdict` derives `BEq` — order-sensitive), and
+    /// `lane_verdict` owes it two invariants the corpus now also
+    /// exercises: ascending statement order survives mixed citation
+    /// kinds, and a containment cited in both directions collapses to
+    /// ONE id (the `Direction` refinement sits below the Lean
+    /// altitude). The dedup is adjacency-dependent, so this pin catches
+    /// a reorder-before-dedup regression directly.
+    #[test]
+    fn lane_verdict_orders_and_dedups_the_citation_list() {
+        let both_directions = Verdict::Aborted(vec![
+            Violation::Containment {
+                statement: StatementId(1),
+                direction: Direction::SourceUnsatisfied,
+            },
+            Violation::Containment {
+                statement: StatementId(1),
+                direction: Direction::TargetRequired,
+            },
+        ]);
+        match lane_verdict("pin-both-directions", &both_directions) {
+            JVerdict::Reject {
+                key_phase,
+                violations,
+            } => {
+                assert!(!key_phase, "containment is the statement phase");
+                assert_eq!(violations, vec![1], "both directions are one citation");
+            }
+            JVerdict::Accept => panic!("an aborted verdict never reads accept"),
+        }
+
+        let mixed = Verdict::Aborted(vec![
+            Violation::Containment {
+                statement: StatementId(1),
+                direction: Direction::SourceUnsatisfied,
+            },
+            Violation::Cardinality {
+                statement: StatementId(2),
+            },
+        ]);
+        match lane_verdict("pin-mixed-kinds", &mixed) {
+            JVerdict::Reject {
+                key_phase,
+                violations,
+            } => {
+                assert!(!key_phase);
+                assert_eq!(violations, vec![1, 2], "ascending across citation kinds");
+            }
+            JVerdict::Accept => panic!("an aborted verdict never reads accept"),
+        }
+
+        let multi_key = Verdict::Aborted(vec![
+            Violation::Functionality {
+                statement: StatementId(0),
+            },
+            Violation::Functionality {
+                statement: StatementId(1),
+            },
+        ]);
+        match lane_verdict("pin-multi-key", &multi_key) {
+            JVerdict::Reject {
+                key_phase,
+                violations,
+            } => {
+                assert!(key_phase, "an all-functionality set is the key phase");
+                assert_eq!(violations, vec![0, 1], "the complete ascending key set");
+            }
+            JVerdict::Accept => panic!("an aborted verdict never reads accept"),
+        }
+    }
+
+    /// The both-directions fixture really cites its containment TWICE
+    /// pre-dedup — one source-direction conviction for the inserted
+    /// uncovered claim, one target-direction conviction for the claim
+    /// the deleted slot uncovers — so the corpus case exercises the
+    /// dedup path, not a single-citation lookalike.
+    #[test]
+    fn the_both_directions_fixture_cites_two_directions() {
+        let fixture = fixtures()
+            .into_iter()
+            .find(|fixture| fixture.name == "judgment-containment-both-directions")
+            .expect("the fixture is on the roster");
+        let dir = ScratchDir::new("judgment-both-directions-pin");
+        let db = Db::create(&dir.0, fixture.schema.clone()).expect("create the pin store");
+        let base = Delta {
+            deletes: vec![],
+            inserts: fixture.base.clone(),
+        };
+        assert!(
+            matches!(differential::engine_write(&db, &base), Verdict::Committed),
+            "the base state is green"
+        );
+        let delta = Delta {
+            deletes: fixture.deletes.clone(),
+            inserts: fixture.inserts.clone(),
+        };
+        match differential::engine_write(&db, &delta) {
+            Verdict::Aborted(violations) => {
+                let directions: Vec<Direction> = violations
+                    .iter()
+                    .map(|violation| match violation {
+                        Violation::Containment {
+                            statement,
+                            direction,
+                        } => {
+                            assert_eq!(statement.0, 1, "the one containment statement");
+                            *direction
+                        }
+                        other => panic!("only containment citations expected, got {other:?}"),
+                    })
+                    .collect();
+                assert_eq!(
+                    directions.len(),
+                    2,
+                    "both directions cited before the dedup"
+                );
+                assert_ne!(
+                    directions[0], directions[1],
+                    "one citation per direction, not a doubled one"
+                );
+            }
+            Verdict::Committed => panic!("the fixture must reject"),
+        }
+    }
+
+    /// The domain-quantification fence (module doc, "Closed-SOURCE
+    /// containments are outside this lane"): a closed-source
+    /// containment's holds-before premise fails on a store whose
+    /// targets have not landed, so the engine's delta-restricted
+    /// verdict (accept — the commit touches nothing the statement
+    /// reads) and Lean's full-state `Txn.judgeB` (reject — the
+    /// axioms have no handlers) DISAGREE by design: the offline
+    /// sweeper owns the class (`docs/architecture/30-dependencies.md`
+    /// § "Domain quantification, worked"). Demonstrated 2026-07-15:
+    /// rendering this exact fixture and running `lake exe conformance`
+    /// over it reports MISMATCH (recorded accept, judged reject) — a
+    /// guaranteed false trophy, which is why NO roster fixture may
+    /// declare a closed source. This pin holds the Rust half: both
+    /// oracles accept the unrelated commit under the
+    /// violated-in-full-state theory, exactly the delta-restricted
+    /// verdict the spec licenses.
+    #[test]
+    fn domain_quantification_judgments_are_outside_the_lane() {
+        const SEVERITY: RelationId = RelationId(0);
+        const HANDLER: RelationId = RelationId(1);
+        const NOTE: RelationId = RelationId(2);
+        let schema = SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: Some(Box::new([
+                        Row {
+                            handle: "Low".into(),
+                            values: Box::new([]),
+                        },
+                        Row {
+                            handle: "High".into(),
+                            values: Box::new([]),
+                        },
+                    ])),
+                    name: "Severity".into(),
+                    fields: vec![],
+                },
+                u64_relation("Handler", &["severity", "who"]),
+                u64_relation("Note", &["id"]),
+            ],
+            statements: vec![
+                StatementDescriptor::Functionality {
+                    relation: HANDLER,
+                    projection: Box::new([FieldId(0)]),
+                },
+                StatementDescriptor::Containment {
+                    source: side(SEVERITY, &[0]),
+                    target: side(HANDLER, &[0]),
+                },
+            ],
+        };
+        let dir = ScratchDir::new("judgment-domain-quantification-pin");
+        let db = Db::create(&dir.0, schema.clone()).expect("create the pin store");
+        let mut naive = NaiveDb::new(&schema);
+        let delta = Delta {
+            deletes: vec![],
+            inserts: vec![(NOTE, vec![Value::U64(1)])],
+        };
+        assert!(
+            matches!(differential::engine_write(&db, &delta), Verdict::Committed),
+            "the engine's delta-restricted judgment accepts a commit that never \
+             touches the statement — the sweeper's class, not the commit's"
+        );
+        assert!(
+            naive.apply(&delta).is_ok(),
+            "the naive model matches the delta-restricted verdict"
+        );
+    }
 }

@@ -119,7 +119,7 @@ checks.
 The query corpus is Tiny-scale, valid-arm only. Per-build coverage is
 logged by the builder and the comparator (`Report::coverage_line`);
 the checked-in corpus was built at **219/325 expressible** (200 seeded
-+ 19 hand cases), plus the 21 hand judgment cases outside the report
++ 19 hand cases), plus the 24 hand judgment cases outside the report
 (they have no expressibility gate):
 
 * **hostile arm** — not drawn at all: structurally-free IR types
@@ -132,6 +132,15 @@ the checked-in corpus was built at **219/325 expressible** (200 seeded
 * **element-typed param-set membership** (0 this build) — the lowered
   `PointIn`-with-set shape would violate the `WellTyped` premise
   `eval_sound` names.
+* **membership under an additive fold** (0 this build) — a fired
+  lowering under a `Count`/`Sum` head (scalar or measure): the fresh
+  interval variable enters the Lean fold domain (`Conformance.lean`'s
+  `ruleBindings` spans `body.allVars`) that neither the engine
+  (membership is a filter, never a binding) nor the naive model has —
+  `membership_lowering_preserves` licenses set-semantics answers only,
+  so the combination is refused representation rather than left to
+  querygen's accidental non-overlap (today's corpus has zero
+  aggregate-plus-membership cases by generator shape alone).
 * **engine runtime errors** (0 this build) — `Overflow` /
   `MeasureOfRay`: the lane compares answer sets on error-free
   executions only (the model reads a ray's measure as `none`; the
@@ -198,7 +207,20 @@ altitude (the Lean violation sets are per-statement), so a statement
 cited in both directions appears once. Closed-relation writes are
 outside this lane (a typed refusal before any judgment, not a
 verdict); judgment fixtures carry no strings and no masks — the two
-value tags that would need a per-case context.
+value tags that would need a per-case context. Closed-SOURCE
+containments (domain quantification) are also outside the lane, and
+deliberately: the engine's verdict is delta-restricted
+(`Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound`,
+sound only under its holds-before premise) while `Txn.judgeB` reads
+the whole final state — a store whose targets have not landed accepts
+every untouching commit yet judges reject in full state
+(`Bumbledb/Countermodels.lean: incremental_verdict_needs_holds`; the
+offline sweeper owns the class per
+`docs/architecture/30-dependencies.md` § "Domain quantification,
+worked"), so such a fixture would be a guaranteed mismatch on a
+correct engine verdict. No fixture declares a closed source; the Rust
+half is pinned by
+`domain_quantification_judgments_are_outside_the_lane`.
 
 The starter roster covers: both classical forms (scalar key;
 containment — scalar, coverage, and the closed member set), the
@@ -209,7 +231,13 @@ touched-group seam, and the permuted-interval lock — a statement
 written `Claim(span, id) <= Slot(span, id)` against the pointwise key
 DECLARED `(id, span)`: accepted through the set-canonical key
 resolution (`Bumbledb/Schema.lean: Header.intervalSplit`), judged as
-coverage, three-way agreed.
+coverage, three-way agreed. The whole-list comparison surface is
+exercised beyond singletons: a statement phase citing containment AND
+cardinality as the ascending pair (`judgment-statement-mixed-citations`,
+`[1,2]`), one containment cited in both directions and collapsed to one
+id (`judgment-containment-both-directions` — the dedup rule above,
+pinned pre-dedup by a unit test), and a two-key rejection
+(`judgment-multi-key-collisions`, `[0,1]`).
 
 ## Program cases — the recursive third oracle
 

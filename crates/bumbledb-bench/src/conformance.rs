@@ -48,6 +48,19 @@
 //! * **Element-typed param-set membership excluded**: the lowered
 //!   `PointIn`-with-set comparison would violate the Lean shape
 //!   discipline (`WellTyped`) that `eval_sound` names as its premise.
+//! * **Membership under an additive fold excluded** (`Count`/`Sum`,
+//!   scalar or measure): the lowering's fresh interval variable enters
+//!   the LOWERED rule's fold domain on the Lean side
+//!   (`lean/Bumbledb/Conformance.lean`: `ruleBindings` spans
+//!   `body.allVars`), while the engine binds no variable at a
+//!   membership position (`ir/normalize/normalize.rs::lower_atom` — a
+//!   filter, not a binding) and the naive model folds over the declared
+//!   variables only — two interval facts covering one point are two
+//!   Lean bindings and one engine binding.
+//!   `lean/Bumbledb/Query/Membership.lean: membership_lowering_preserves`
+//!   licenses the lowering for set-semantics answers only; nothing
+//!   licenses it under an additive fold, so the combination is fenced
+//!   here rather than left to querygen's accidental non-overlap.
 //! * **Runtime-error executions excluded** (`Overflow`, `MeasureOfRay`):
 //!   the model reads a ray's measure as `none` where the engine raises —
 //!   the recorded Level-0 narrowing; the lane compares answer sets on
@@ -127,6 +140,9 @@ pub struct Report {
     pub excluded_negated_membership: u64,
     /// An element-typed param-set membership binding.
     pub excluded_set_membership: u64,
+    /// A membership lowering under an additive fold head (`Count`/`Sum`,
+    /// scalar or measure) — the fold-domain divergence fence.
+    pub excluded_aggregate_membership: u64,
     /// The engine answered `Overflow` / `MeasureOfRay`.
     pub excluded_engine_error: u64,
     /// Naive wall time over [`NAIVE_BUDGET_MS`].
@@ -141,12 +157,14 @@ impl Report {
     pub fn coverage_line(&self) -> String {
         format!(
             "conformance coverage: {}/{} expressible (excluded: {} unresolved-literal, \
-             {} negated-membership, {} set-membership, {} engine-error, {} slow, {} wide)",
+             {} negated-membership, {} set-membership, {} aggregate-membership, \
+             {} engine-error, {} slow, {} wide)",
             self.written,
             self.attempted,
             self.excluded_unresolved,
             self.excluded_negated_membership,
             self.excluded_set_membership,
+            self.excluded_aggregate_membership,
             self.excluded_engine_error,
             self.excluded_slow,
             self.excluded_wide,
@@ -160,6 +178,7 @@ enum Exclusion {
     UnresolvedLiteral,
     NegatedMembership,
     SetMembership,
+    AggregateMembership,
 }
 
 /// One loaded Tiny world: the engine store, the naive model, and the
@@ -721,6 +740,21 @@ fn membership(term: &Term, anchored: &[bool], params: &[ParamValue]) -> Result<b
     })
 }
 
+/// Whether one find term is an ADDITIVE fold — sensitive to the size
+/// of the fold domain (`Count`) or to per-binding repetition (`Sum`,
+/// scalar or measure). `Min`/`Max`/`CountDistinct`/`ArgMax`/`ArgMin`/
+/// `Pack` read value SETS across the group and are insensitive to the
+/// fresh lowered variable splitting one binding into several.
+fn additive_fold(term: &FindTerm) -> bool {
+    matches!(
+        term,
+        FindTerm::Aggregate {
+            op: AggOp::Count | AggOp::Sum,
+            ..
+        } | FindTerm::AggregateMeasure { op: AggOp::Sum, .. }
+    )
+}
+
 /// One rule after the membership lowering: rewritten positive atoms,
 /// untouched negated atoms (membership there is the recorded
 /// exclusion), and the original conditions plus the lowered `PointIn`
@@ -768,6 +802,15 @@ fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> Result<LoweredRule<'
                 return Err(Exclusion::NegatedMembership);
             }
         }
+    }
+    // The fold-domain divergence fence (module doc, "Membership under
+    // an additive fold excluded"): a fired lowering under an additive
+    // fold head puts the fresh variable into the Lean fold domain that
+    // neither the engine nor the naive model has —
+    // `membership_lowering_preserves` licenses set-semantics answers
+    // only.
+    if fresh > var_count && rule.finds.iter().any(additive_fold) {
+        return Err(Exclusion::AggregateMembership);
     }
     Ok(LoweredRule {
         finds: &rule.finds,
@@ -1134,6 +1177,10 @@ fn one_case(
         }
         Err(Exclusion::SetMembership) => {
             report.excluded_set_membership += 1;
+            None
+        }
+        Err(Exclusion::AggregateMembership) => {
+            report.excluded_aggregate_membership += 1;
             None
         }
     }
@@ -1918,6 +1965,114 @@ mod tests {
 
     use super::*;
 
+    /// The fold-domain divergence fence (module doc, "Membership under
+    /// an additive fold excluded"): a membership binding lowered under
+    /// a `Count`/`Sum` head is the shape where the Lean glue's fold
+    /// domain (over `body.allVars`, fresh variable included) and the
+    /// engine/naive fold domain (declared variables only) part ways —
+    /// two overlapping interval facts covering one point are two Lean
+    /// bindings and one engine binding. The fence must refuse exactly
+    /// the additive folds and keep the licensed shapes expressible.
+    #[test]
+    fn membership_under_an_additive_fold_is_fenced() {
+        let membership_body = || {
+            vec![Atom {
+                source: bumbledb::AtomSource::Edb(target::ids::MANDATE),
+                bindings: vec![
+                    (target::ids::mandate::ACCOUNT, Term::Var(VarId(0))),
+                    (target::ids::mandate::ACTIVE, Term::Literal(Value::I64(5))),
+                ],
+            }]
+        };
+        let rule = |finds: Vec<FindTerm>| Rule {
+            finds,
+            atoms: membership_body(),
+            negated: vec![],
+            conditions: vec![],
+        };
+
+        // The additive folds are fenced: Count (fold-domain size), Sum
+        // (per-binding repetition), and the measure Sum.
+        for finds in [
+            vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op: AggOp::Count,
+                    over: None,
+                },
+            ],
+            vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op: AggOp::Sum,
+                    over: Some(VarId(0)),
+                },
+            ],
+            vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::AggregateMeasure {
+                    op: AggOp::Sum,
+                    over: VarId(0),
+                },
+            ],
+        ] {
+            assert!(
+                matches!(
+                    lower_rule(&rule(finds), &[]),
+                    Err(Exclusion::AggregateMembership)
+                ),
+                "an additive fold over a fired membership lowering must be fenced"
+            );
+        }
+
+        // The licensed shapes stay expressible: the set-semantics
+        // projection (membership_lowering_preserves' own regime) …
+        let projection = rule(vec![FindTerm::Var(VarId(0))]);
+        let lowered =
+            lower_rule(&projection, &[]).expect("the set-semantics projection is licensed");
+        assert_eq!(
+            lowered.conditions.len(),
+            1,
+            "the lowering fired: one PointIn condition"
+        );
+        // … a set-reading fold (insensitive to the binding split) …
+        assert!(
+            lower_rule(
+                &rule(vec![FindTerm::Aggregate {
+                    op: AggOp::Max,
+                    over: Some(VarId(0)),
+                }]),
+                &[]
+            )
+            .is_ok(),
+            "Max reads the value set — insensitive, not fenced"
+        );
+        // … and an additive fold whose rule has NO fired lowering
+        // (the interval field bound to an interval-typed variable).
+        let no_membership = Rule {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op: AggOp::Count,
+                    over: None,
+                },
+            ],
+            atoms: vec![Atom {
+                source: bumbledb::AtomSource::Edb(target::ids::MANDATE),
+                bindings: vec![
+                    (target::ids::mandate::ACCOUNT, Term::Var(VarId(0))),
+                    (target::ids::mandate::ACTIVE, Term::Var(VarId(1))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        };
+        assert!(
+            lower_rule(&no_membership, &[]).is_ok(),
+            "Count without a fired lowering stays expressible"
+        );
+    }
+
     /// Regenerates `lean/conformance/cases/` in place. Ignored: run it
     /// deliberately (`cargo test -p bumbledb-bench regenerate_the_conformance_corpus
     /// -- --ignored --nocapture`) when the generator, the corpus seeds,
@@ -1942,6 +2097,19 @@ mod tests {
     fn regenerate_the_recursive_conformance_corpus() {
         let report = program::write_program_corpus(&corpus_dir());
         eprintln!("{}", report.coverage_line());
+    }
+
+    /// Regenerates the JUDGMENT arm's `judgment-*.json` cases only —
+    /// the fixtures are deterministic (hand-authored, no wall-clock
+    /// budgets), so this is safe on any machine; the query and program
+    /// cases keep their bytes.
+    #[test]
+    #[ignore = "regenerates the checked-in judgment cases; run deliberately"]
+    fn regenerate_the_judgment_conformance_corpus() {
+        let dir = corpus_dir();
+        for (name, document) in judgment::generate_judgment_corpus() {
+            std::fs::write(dir.join(&name), document).expect("write a judgment case");
+        }
     }
 
     /// The engine+naive half of the comparator, no Lean toolchain
