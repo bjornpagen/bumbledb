@@ -114,8 +114,8 @@ pub fn to_json(report: &RunReport) -> String {
     json::push_str_lit(&mut out, &report.provenance.host);
     let _ = write!(
         out,
-        "}},\"config\":{{\"scale\":\"{}\",\"seed\":{},\"samples\":{}}}",
-        report.config.scale, report.config.seed, report.config.samples
+        "}},\"config\":{{\"scale\":\"{}\",\"seed\":{},\"samples\":{},\"store\":\"{}\"}}",
+        report.config.scale, report.config.seed, report.config.samples, report.config.store
     );
     out.push_str(",\"corpus_digest\":");
     json::push_str_lit(&mut out, &report.corpus_digest);

@@ -662,11 +662,7 @@ pub fn all() -> &'static [CalFamily] {
             golden_sql: SLOT_SCAN,
             hand_param_slots: None,
             param_policy: "3 ~6%-of-grid windows spread over the slot grid + 1 pre-epoch miss (fixed-width lane).",
-            indexes: &[(
-                "idx_slot_span",
-                "Slot",
-                &["span_start", "span_end"],
-            )],
+            indexes: &[("idx_slot_span", "Slot", &["span_start", "span_end"])],
         },
         CalFamily {
             name: "slot_booking_overlap",

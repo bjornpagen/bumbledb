@@ -540,9 +540,9 @@ pub fn relation_rows_sized(
                 }),
         ),
         ids::WORK_HOURS => Box::new((0..sizes.persons).flat_map(move |p| work_rows(seed, p))),
-        ids::SLOT => Box::new(
-            (0..sizes.rooms * sizes.slots_per_room).map(move |i| slot_row(&sizes, i)),
-        ),
+        ids::SLOT => {
+            Box::new((0..sizes.rooms * sizes.slots_per_room).map(move |i| slot_row(&sizes, i)))
+        }
         _ => unreachable!("ten calendar relations"),
     }
 }

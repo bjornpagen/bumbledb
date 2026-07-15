@@ -151,7 +151,10 @@ pub fn edge_row(sizes: &ClosSizes, i: u64) -> Vec<Value> {
     } else {
         let t = i - sizes.chain + 1;
         let base = sizes.tree_base();
-        vec![Value::U64(base + (t - 1) / sizes.fanout), Value::U64(base + t)]
+        vec![
+            Value::U64(base + (t - 1) / sizes.fanout),
+            Value::U64(base + t),
+        ]
     }
 }
 
@@ -309,9 +312,10 @@ pub fn ddl() -> Vec<String> {
 pub fn load_stores(
     dir: &Path,
     cfg: GenConfig,
+    mode: crate::storemode::StoreMode,
 ) -> Result<(Db<Reachability>, rusqlite::Connection), String> {
     let sizes = ClosSizes::of(cfg.scale);
-    let db = Db::create(&dir.join("db"), Reachability).map_err(|e| format!("create: {e:?}"))?;
+    let db = mode.create(&dir.join("db"), Reachability)?;
     for rel in [ids::NODE, ids::EDGE] {
         db.bulk_load(rel, relation_rows(sizes, rel))
             .map_err(|e| format!("load: {e:?}"))?;
@@ -320,13 +324,15 @@ pub fn load_stores(
         .map_err(|e| format!("oracle: {e}"))?;
     crate::corpus::configure_sqlite(&conn).map_err(|e| format!("configure: {e}"))?;
     for statement in ddl() {
-        conn.execute(&statement, []).map_err(|e| format!("ddl: {e}"))?;
+        conn.execute(&statement, [])
+            .map_err(|e| format!("ddl: {e}"))?;
     }
     for rel in [ids::NODE, ids::EDGE] {
         crate::corpus::insert_rows(&conn, schema().relation(rel), relation_rows(sizes, rel))
             .map_err(|e| format!("insert: {e}"))?;
     }
-    conn.execute_batch("ANALYZE").map_err(|e| format!("analyze: {e}"))?;
+    conn.execute_batch("ANALYZE")
+        .map_err(|e| format!("analyze: {e}"))?;
     Ok((db, conn))
 }
 
@@ -398,6 +404,7 @@ pub fn bench_families(
     proto: Protocol,
     alloc: bool,
     proxy_per_rep: bool,
+    mode: crate::storemode::StoreMode,
 ) -> Result<Vec<report::ReadFamilyReport>, String> {
     if !all().iter().any(|family| selected(family.name)) {
         return Ok(Vec::new());
@@ -410,7 +417,7 @@ pub fn bench_families(
     let dir = scratch.join("closure");
     std::fs::create_dir_all(&dir).map_err(|e| format!("closure scratch: {e}"))?;
     eprintln!("bench: loading the closure corpus");
-    let (db, conn) = load_stores(&dir, cfg)?;
+    let (db, conn) = load_stores(&dir, cfg, mode)?;
 
     let mut out = Vec::new();
     for family in all() {

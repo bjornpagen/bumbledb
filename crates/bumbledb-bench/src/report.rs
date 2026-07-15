@@ -26,6 +26,9 @@ pub struct RunConfig {
     pub scale: &'static str,
     pub seed: u64,
     pub samples: u32,
+    /// Which constructor built the timed stores: `durable` or
+    /// `ephemeral` (`bench --ephemeral`).
+    pub store: &'static str,
 }
 
 /// Family gate verdicts. `Win` ⇔ ours p50 strictly < theirs p50 (a tie

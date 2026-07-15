@@ -28,6 +28,7 @@ pub mod scenarios;
 pub mod schema;
 pub mod sqlite_run;
 pub mod sqlmap;
+pub mod storemode;
 #[cfg(test)]
 mod stress;
 pub mod trace_out;

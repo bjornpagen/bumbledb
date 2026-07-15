@@ -102,7 +102,7 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
 #[test]
 fn the_recursive_cte_mirror_is_row_identical() {
     let dir = scratch("mirror");
-    let (db, conn) = load_stores(&dir, CFG).expect("stores");
+    let (db, conn) = load_stores(&dir, CFG, crate::storemode::StoreMode::Durable).expect("stores");
     for family in all() {
         let draws = (family.params)(&CFG);
         super::verify_family(&db, &conn, family, &draws).expect("verify");
@@ -118,7 +118,7 @@ fn the_recursive_cte_mirror_is_row_identical() {
 fn closure_cardinalities_match_the_shapes() {
     let dir = scratch("counts");
     let sizes = ClosSizes::of(CFG.scale);
-    let (db, _conn) = load_stores(&dir, CFG).expect("stores");
+    let (db, _conn) = load_stores(&dir, CFG, crate::storemode::StoreMode::Durable).expect("stores");
     let program = closure_program();
     let mut prepared = db.prepare_program(&program).expect("prepare_program");
     let mut buffer = Answers::new();

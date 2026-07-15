@@ -24,6 +24,7 @@ fn fixture() -> RunReport {
             scale: "S",
             seed: 1,
             samples: 256,
+            store: "durable",
         },
         corpus_digest: "cafe".to_owned(),
         verify_stamp: "beef".to_owned(),
@@ -79,7 +80,7 @@ fn the_markdown_is_golden() {
 - engine rev: unknown
 - timestamp: 2026-01-01T00:00:00Z
 - host: test-host
-- config: scale S, seed 1, 256 samples
+- config: scale S, seed 1, 256 samples, durable stores
 - corpus digest: `cafe`
 - verify stamp: `beef`
 

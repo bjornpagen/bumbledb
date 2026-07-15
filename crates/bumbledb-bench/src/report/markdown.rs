@@ -20,8 +20,8 @@ fn markdown_header(out: &mut String, report: &RunReport) {
     let _ = writeln!(out, "- host: {}", p.host);
     let _ = writeln!(
         out,
-        "- config: scale {}, seed {}, {} samples",
-        report.config.scale, report.config.seed, report.config.samples
+        "- config: scale {}, seed {}, {} samples, {} stores",
+        report.config.scale, report.config.seed, report.config.samples, report.config.store
     );
     let _ = writeln!(out, "- corpus digest: `{}`", report.corpus_digest);
     let _ = writeln!(out, "- verify stamp: `{}`\n", report.verify_stamp);

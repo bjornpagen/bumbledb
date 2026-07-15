@@ -34,9 +34,16 @@ fn the_twin_theories_validate_and_differ_only_in_windows() {
         .expect("the baseline twin validates");
     assert_eq!(windowed.windows().len(), 2, "the fan-cap and the exclusion");
     assert_eq!(unwindowed.windows().len(), 0, "the control carries none");
-    assert_eq!(windowed.containments().len(), unwindowed.containments().len());
+    assert_eq!(
+        windowed.containments().len(),
+        unwindowed.containments().len()
+    );
     let exclusion = &windowed.windows()[1];
-    assert_eq!((exclusion.lo, exclusion.hi), (0, Some(0)), "the {{0}} window");
+    assert_eq!(
+        (exclusion.lo, exclusion.hi),
+        (0, Some(0)),
+        "the {{0}} window"
+    );
 }
 
 /// Naive parity — the semantic oracle for the window judgment: the

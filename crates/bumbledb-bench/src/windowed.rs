@@ -131,9 +131,9 @@ pub fn parent_kind(i: u64) -> u64 {
 #[must_use]
 pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec<Value>>> {
     match rel {
-        ids::PARENT => Box::new(
-            (0..mass.parents).map(|i| vec![Value::U64(i), Value::U64(parent_kind(i))]),
-        ),
+        ids::PARENT => {
+            Box::new((0..mass.parents).map(|i| vec![Value::U64(i), Value::U64(parent_kind(i))]))
+        }
         ids::CHILD => Box::new((0..mass.parents * mass.children_per_parent).map(move |i| {
             // Seeded children carry flag 0: the exclusion's source
             // selection matches nothing at load, so the seed commits
@@ -253,6 +253,7 @@ pub fn write_families(
     _cfg: GenConfig,
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
+    mode: crate::storemode::StoreMode,
 ) -> Result<Vec<crate::report::WriteFamilyReport>, String> {
     let names = [
         "commit_window_admission",
@@ -266,36 +267,33 @@ pub fn write_families(
     // is disk-backed; these rows are fsync-bound like every commit row.
     std::fs::create_dir_all(scratch).map_err(|e| format!("windowed scratch: {e}"))?;
     eprintln!("bench: loading the windowed twin worlds");
-    let windowed = Db::create(&scratch.join("windowed"), world::WindowedWorld)
-        .map_err(|e| format!("create windowed: {e:?}"))?;
+    let windowed = mode.create(&scratch.join("windowed"), world::WindowedWorld)?;
     load(&windowed, Mass::BENCH)?;
-    let unwindowed = Db::create(&scratch.join("baseline"), baseline::UnwindowedWorld)
-        .map_err(|e| format!("create baseline: {e:?}"))?;
+    let unwindowed = mode.create(&scratch.join("baseline"), baseline::UnwindowedWorld)?;
     load(&unwindowed, Mass::BENCH)?;
 
     let mut out = Vec::new();
-    let mut push = |name: &str,
-                    run: &mut dyn FnMut() -> Result<Measurement, String>|
-     -> Result<(), String> {
-        if !selected(name) {
-            return Ok(());
-        }
-        eprintln!("bench: {name}");
-        let (ours, ghz) = crate::clockproxy::stamped(run)?;
-        out.push(crate::report::WriteFamilyReport {
-            name: name.to_owned(),
-            ours: ours.stats,
-            theirs: None,
-            facts_per_sec: None,
-            ghz: Some(crate::report::GhzReport {
-                pre: ghz.pre,
-                post: ghz.post,
-                retried: ghz.retried,
-                contaminated: ghz.contaminated(),
-            }),
-        });
-        Ok(())
-    };
+    let mut push =
+        |name: &str, run: &mut dyn FnMut() -> Result<Measurement, String>| -> Result<(), String> {
+            if !selected(name) {
+                return Ok(());
+            }
+            eprintln!("bench: {name}");
+            let (ours, ghz) = crate::clockproxy::stamped(run)?;
+            out.push(crate::report::WriteFamilyReport {
+                name: name.to_owned(),
+                ours: ours.stats,
+                theirs: None,
+                facts_per_sec: None,
+                ghz: Some(crate::report::GhzReport {
+                    pre: ghz.pre,
+                    post: ghz.post,
+                    retried: ghz.retried,
+                    contaminated: ghz.contaminated(),
+                }),
+            });
+            Ok(())
+        };
     // Baseline first: the control's clock shadow must not carry the
     // windowed rows' fsyncs (symmetry — every row is fsync-bound and
     // equally shadowed by its predecessor).

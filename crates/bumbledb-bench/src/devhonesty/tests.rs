@@ -116,6 +116,7 @@ mod on_a_live_ram_disk {
             },
             &disk.mount.join("scratch"),
             &|name| name == "commit_single",
+            crate::storemode::StoreMode::Durable,
         )
         .expect_err("a timed family on a ram disk must refuse");
         assert!(
@@ -138,6 +139,7 @@ mod on_a_live_ram_disk {
             samples: None,
             trace: false,
             alloc: false,
+            ephemeral: false,
             proxy_per_rep: false,
             out: None,
             i_am_lying: true,
