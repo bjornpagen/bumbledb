@@ -173,3 +173,56 @@ fn randomized_subset_projections_match_the_oracle_under_d2() {
         }
     }
 }
+
+/// The epoch wrap guard (`Executor::advance_cancel_epoch`): the D2
+/// cancellation table is stamped, never cleared per execution, and the
+/// u32 epoch recycles its space once per 2³² executions — a stamp from
+/// the previous cycle must not alias the recycled value, or a live
+/// origin's whole subtree is silently skipped (answers missing that
+/// `lean/Bumbledb/Exec/Plan.lean: valid_plan_sound` requires). The
+/// test walks one full cycle with the middle jumped: the stamp is laid
+/// at epoch 1, the counter runs wrap-free to `u32::MAX` (the stamp
+/// legitimately survives — no later epoch equals 1), and the two
+/// advances that cross the wrap and return to the stamp's value must
+/// find the table cleared.
+#[test]
+fn epoch_wrap_never_aliases_a_stale_cancellation() {
+    // Any plan makes an executor; the bookkeeping under test is
+    // plan-independent.
+    let schema = schema(2);
+    let normalized = normalized(
+        vec![
+            occurrence(0, 0, &[(0, 0), (1, 1)]),
+            occurrence(1, 1, &[(0, 1), (1, 2)]),
+        ],
+        vec![],
+    );
+    let plan = planned(&normalized, &schema, &[0, 1]);
+    let mut executor = Executor::new(&plan);
+
+    // Execution at epoch 1 cancels origin 3.
+    executor.advance_cancel_epoch();
+    assert_eq!(executor.cancel_epoch, 1);
+    executor.cancel_origin(3);
+    assert!(executor.origin_cancelled(3), "stamped in its own epoch");
+
+    // The wrap-free middle of the cycle, jumped: epochs 2..=u32::MAX
+    // never equal the stamp, so the stale entry is inert.
+    executor.cancel_epoch = u32::MAX;
+    assert!(!executor.origin_cancelled(3), "a later epoch never reads it");
+
+    // Crossing the wrap clears the table; returning to the stamp's
+    // recycled value must NOT resurrect the cancellation.
+    executor.advance_cancel_epoch();
+    assert_eq!(executor.cancel_epoch, 0);
+    executor.advance_cancel_epoch();
+    assert_eq!(executor.cancel_epoch, 1, "the stamp's value, recycled");
+    assert!(
+        !executor.origin_cancelled(3),
+        "a stale stamp from the previous epoch cycle must not cancel a live origin"
+    );
+
+    // The recycled epoch still cancels normally.
+    executor.cancel_origin(3);
+    assert!(executor.origin_cancelled(3));
+}
