@@ -6,14 +6,11 @@ use heed::{Database, WithoutTls};
 
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::Schema;
-use crate::schema::fingerprint::{SchemaFingerprint, fingerprint};
 
 use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;
-use super::read_meta::{read_store_kind, read_u32};
-use super::{
-    Environment, FORMAT_VERSION, META_FINGERPRINT, META_FORMAT_VERSION, NEXT_INSTANCE, StoreKind,
-};
+use super::read_meta::{check_fingerprint, read_store_kind, read_u32};
+use super::{Environment, FORMAT_VERSION, META_FORMAT_VERSION, NEXT_INSTANCE, StoreKind};
 
 impl Environment {
     /// Opens an existing DURABLE environment, verifying the storage
@@ -73,17 +70,7 @@ impl Environment {
                 expected: expected_kind,
             });
         }
-        let stored: [u8; 32] = meta
-            .get(&rtxn, META_FINGERPRINT)?
-            .and_then(|b| b.try_into().ok())
-            .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        let expected = fingerprint(schema);
-        if stored != expected.0 {
-            return Err(Error::SchemaMismatch {
-                found: SchemaFingerprint(stored),
-                expected,
-            });
-        }
+        check_fingerprint(&meta, &rtxn, schema)?;
         rtxn.commit()?;
         Ok(Self {
             env,

@@ -2,6 +2,8 @@ use heed::types::Bytes;
 use heed::{AnyTls, Database, RoTxn};
 
 use crate::error::{CorruptionError, Error, Result};
+use crate::schema::Schema;
+use crate::schema::fingerprint::{SchemaFingerprint, fingerprint};
 
 pub(super) fn read_u64(
     meta: &Database<Bytes, Bytes>,
@@ -46,6 +48,32 @@ pub(super) fn read_store_kind(
         .ok()
         .and_then(|[byte]| super::StoreKind::from_meta_byte(byte))
         .ok_or(Error::Corruption(CorruptionError::StoreKindInvalid))
+}
+
+/// The stored schema fingerprint checked against the opening schema —
+/// one definition of the decode and the mismatch (readers:
+/// `verify_and_open`, and the ephemeral constructor's non-mutating
+/// probe, which must raise the refusal BEFORE the `MDB_WRITEMAP`
+/// reopen's ftruncate). A missing or mis-sized key is
+/// [`CorruptionError::MetaMissing`]; a present-but-different image is
+/// the typed [`Error::SchemaMismatch`] naming both fingerprints.
+pub(super) fn check_fingerprint(
+    meta: &Database<Bytes, Bytes>,
+    rtxn: &RoTxn<'_, AnyTls>,
+    schema: &Schema,
+) -> Result<()> {
+    let stored: [u8; 32] = meta
+        .get(rtxn, super::META_FINGERPRINT)?
+        .and_then(|b| b.try_into().ok())
+        .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
+    let expected = fingerprint(schema);
+    if stored != expected.0 {
+        return Err(Error::SchemaMismatch {
+            found: SchemaFingerprint(stored),
+            expected,
+        });
+    }
+    Ok(())
 }
 
 /// The dictionary next-id counter, sentinel-checked once for every

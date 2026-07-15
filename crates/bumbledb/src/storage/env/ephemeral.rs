@@ -2,12 +2,12 @@ use std::path::Path;
 
 use heed::types::Bytes;
 
-use crate::error::{Error, Result};
+use crate::error::{CorruptionError, Error, Result};
 use crate::schema::Schema;
 
 use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;
-use super::read_meta::{read_store_kind, read_u32};
+use super::read_meta::{check_fingerprint, read_store_kind, read_u32};
 use super::{Environment, FORMAT_VERSION, META_FORMAT_VERSION, StoreKind};
 
 impl Environment {
@@ -27,10 +27,12 @@ impl Environment {
     /// to the full map size at open, so an existing data file is probed
     /// first through a plain durable-flagged open (which leaves the
     /// file's bytes untouched) — the ephemeral flags are applied only
-    /// after the probe verifies the store's kind. A refusal
-    /// (`StoreKindMismatch` on a durable store, `AlreadyInitialized` on
-    /// a foreign LMDB environment, `FormatMismatch`/`Corruption` on a
-    /// stale or forged store) leaves `data.mdb` byte-identical.
+    /// after the probe runs EVERY check `verify_and_open` would. A
+    /// refusal (`StoreKindMismatch` on a durable store,
+    /// `AlreadyInitialized` on a foreign LMDB environment,
+    /// `FormatMismatch`/`Corruption` on a stale or forged store,
+    /// `SchemaMismatch` on a skewed fingerprint) leaves `data.mdb`
+    /// byte-identical.
     ///
     /// # Errors
     ///
@@ -50,7 +52,7 @@ impl Environment {
         // open. The advisory lock (held above) keeps the probe→reopen
         // window race-free against other bumbledb handles.
         let has_meta = if path.join("data.mdb").try_exists()? {
-            Self::probe_ephemeral_kind(path)?
+            Self::probe_ephemeral_kind(path, schema)?
         } else {
             false
         };
@@ -62,31 +64,36 @@ impl Environment {
         }
     }
 
-    /// The non-mutating kind probe over an EXISTING data file: a plain
+    /// The non-mutating probe over an EXISTING data file: a plain
     /// durable-flagged open (no `WRITEMAP`, so no ftruncate — the
     /// data file's byte length and contents stay identical; the
     /// byte-identity is pinned by `ephemeral_refusal_on_a_durable_store_
-    /// leaves_the_data_file_byte_identical` and its foreign-env twin),
-    /// one read transaction, and the version/kind checks in the same
-    /// order as [`Environment::verify_and_open`]. Returns `Ok(true)` on
-    /// a verified ephemeral store (the caller reopens with the flags
-    /// and re-verifies fully, fingerprint included), `Ok(false)` on a
-    /// half-created store (empty root, no `_meta` — the crash window
-    /// between directory creation and the meta commit), and every
-    /// refusal typed:
+    /// leaves_the_data_file_byte_identical` and its foreign-env,
+    /// fingerprint-mismatch, and fingerprint-missing twins), one read
+    /// transaction, and EVERY check [`Environment::verify_and_open`]
+    /// runs — version, kind, database presence, fingerprint — so no
+    /// refusal is left to fire after the mutating reopen. Returns
+    /// `Ok(true)` on a verified ephemeral store (the caller reopens
+    /// with the flags and re-verifies through the shared body),
+    /// `Ok(false)` on a half-created store (empty root, no `_meta` —
+    /// the crash window between directory creation and the meta
+    /// commit), and every refusal typed:
     ///
     /// - `AlreadyInitialized` — no `_meta` but a non-empty root: a
     ///   foreign LMDB environment (never ftruncate someone else's env);
     /// - `FormatMismatch` — a pre-v5 store (version before kind, as
     ///   everywhere);
     /// - `Corruption(MetaMissing)`/`Corruption(StoreKindInvalid)` — a
-    ///   v5 store whose kind marker is absent / undecodable;
-    /// - `StoreKindMismatch` — a durable store.
+    ///   v5 store whose kind marker is absent / undecodable, or whose
+    ///   `_data`/`_dict`/fingerprint a torn or forged store lacks;
+    /// - `StoreKindMismatch` — a durable store;
+    /// - `SchemaMismatch` — an ephemeral store fingerprinted by a
+    ///   different schema.
     ///
     /// The probe environment is fully dropped before this returns
     /// (heed closes the LMDB env when the last handle drops), so the
     /// caller's flagged reopen of the same path is legal.
-    fn probe_ephemeral_kind(path: &Path) -> Result<bool> {
+    fn probe_ephemeral_kind(path: &Path, schema: &Schema) -> Result<bool> {
         let env = open_env(path, StoreKind::Durable)?;
         let rtxn = env.read_txn()?;
         let Some(meta) = env.open_database::<Bytes, Bytes>(&rtxn, Some("_meta"))? else {
@@ -111,6 +118,20 @@ impl Environment {
                 expected: StoreKind::Ephemeral,
             });
         }
+        // The refusals `verify_and_open` would raise past the kind
+        // check, raised here instead — after the reopen they would
+        // land on an already-ftruncated file: the three databases'
+        // presence, then the fingerprint.
+        if env
+            .open_database::<Bytes, Bytes>(&rtxn, Some("_data"))?
+            .is_none()
+            || env
+                .open_database::<Bytes, Bytes>(&rtxn, Some("_dict"))?
+                .is_none()
+        {
+            return Err(Error::Corruption(CorruptionError::MetaMissing));
+        }
+        check_fingerprint(&meta, &rtxn, schema)?;
         Ok(true)
     }
 }
