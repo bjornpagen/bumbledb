@@ -40,7 +40,7 @@ fn schema(n: usize, arity: usize) -> Schema {
 fn occurrence(occ: u16, relation: u32, vars: Vec<(u16, u16)>) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
-        relation: RelationId(relation),
+        source: crate::ir::AtomSource::Edb(RelationId(relation)),
         role: Role::Positive,
         vars: vars
             .into_iter()
@@ -113,7 +113,7 @@ fn order_cost(
             .fold(0u128, |acc, (_, v)| acc | 1 << var_index[v])
     };
     let key_sets = |i: usize| -> Vec<u128> {
-        let relation = schema.relation(occ(i).relation);
+        let relation = schema.relation(occ(i).relation());
         relation
             .keys()
             .iter()

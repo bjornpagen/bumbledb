@@ -45,6 +45,14 @@ pub struct KeyId(pub(crate) u16);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ContainmentId(pub(crate) u16);
 
+/// Witness index into [`Schema::windows`] — minted only by validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WindowId(pub(crate) u16);
+
+/// Witness index into [`Schema::orders`] — minted only by validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct OrderId(pub(crate) u16);
+
 /// The element domain of an Interval: closed to the two orderable scalars.
 /// A flat enum, deliberately — no `Interval(Box<ValueType>)` recursion, so
 /// illegal elements are unrepresentable rather than rejected.
@@ -178,6 +186,57 @@ pub(crate) fn value_matches(value: &Value, expected: &ValueType) -> Result<(), V
     }
 }
 
+/// One σ binding's literal set — the disjunctive selection fragment
+/// (`lean/Bumbledb/Schema.lean: Selection`): the selected field's value is
+/// a MEMBER of the spelled set, bindings read conjunctively. The singleton
+/// arm is today's equality by representation
+/// (`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`) and
+/// stays zero-cost — no per-literal indirection on the one-literal path.
+/// The `Many` arm's canonical form is sorted and duplicate-free with at
+/// least two literals; validation canonicalizes the order and rejects the
+/// degenerate spellings (`docs/architecture/30-dependencies.md`
+/// § validation roster).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LiteralSet {
+    /// One literal: the equality binding — the whole accepted σ fragment
+    /// before the disjunctive extension, unchanged in meaning.
+    One(Value),
+    /// Two or more literals, read disjunctively. The sets are first-class,
+    /// not per-literal sugar: a window over a disjunctive selection is not
+    /// any conjunction of per-literal windows
+    /// (`lean/Bumbledb/Countermodels.lean:
+    /// disjunctive_window_not_literal_conjunction`).
+    Many(Box<[Value]>),
+}
+
+impl LiteralSet {
+    /// The literals, one or more — the `One` arm borrows in place
+    /// (`std::slice::from_ref`), so the singleton path allocates and
+    /// indirects nothing.
+    #[must_use]
+    pub fn literals(&self) -> &[Value] {
+        match self {
+            Self::One(literal) => std::slice::from_ref(literal),
+            Self::Many(literals) => literals,
+        }
+    }
+
+    /// The singleton reading, when this binding is today's equality.
+    #[must_use]
+    pub fn as_equality(&self) -> Option<&Value> {
+        match self {
+            Self::One(literal) => Some(literal),
+            Self::Many(_) => None,
+        }
+    }
+}
+
+impl From<Value> for LiteralSet {
+    fn from(literal: Value) -> Self {
+        Self::One(literal)
+    }
+}
+
 /// One side of a containment: the single-atom query `R(X | φ)`
 /// (`docs/architecture/30-dependencies.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,11 +244,40 @@ pub struct Side {
     pub relation: RelationId,
     /// π — ordered, the statement's written order.
     pub projection: Box<[FieldId]>,
-    /// σ — a set of (field, literal) equality bindings; empty = unselected.
-    /// Literals are the one shared [`Value`] sum
+    /// σ — a set of (field, literal-set) bindings read conjunctively,
+    /// each binding a disjunction over its spelled set; empty =
+    /// unselected. Literals are the one shared [`Value`] sum
     /// (`docs/architecture/30-dependencies.md` — any type's literal binds
     /// in σ; dependencies and queries share one representation).
-    pub selection: Box<[(FieldId, Value)]>,
+    pub selection: Box<[(FieldId, LiteralSet)]>,
+}
+
+/// One key-backed hop of an order mark's `by` chain: `-> K(read)` —
+/// resolve the running value against `key` (a declared key of
+/// `relation`), read the `read` payload
+/// (`lean/Bumbledb/Schema.lean: RankHop`). The key demand is what makes
+/// the read deterministic
+/// (`lean/Bumbledb/Subsumption.lean: chain_eval_deterministic`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankHop {
+    pub relation: RelationId,
+    /// The key field the running value probes — must resolve a declared
+    /// single-field key of `relation` (the acceptance gate's demand).
+    pub key: FieldId,
+    /// The payload field the hop reads.
+    pub read: FieldId,
+}
+
+/// The `by` chain of a ranked order mark
+/// (`lean/Bumbledb/Schema.lean: RankChain`): the starting field of the
+/// ordered relation, then the key-backed hops, the final `read` being the
+/// rank payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankChain {
+    /// The field of the ordered relation the chain starts from.
+    pub link: FieldId,
+    /// The key-backed hops, in chain order.
+    pub hops: Box<[RankHop]>,
 }
 
 /// One dependency statement: a judgment about queries
@@ -207,6 +295,35 @@ pub enum StatementDescriptor {
     },
     /// `A(X | φ) <= B(Y | ψ)`: πX(σφ(A)) ⊆ πY(σψ(B)) as sets of tuples.
     Containment { source: Side, target: Side },
+    /// `A(X | φ) in lo..hi per B(Y | ψ)`: the cardinality window — per
+    /// selected target fact, the count of selected source facts sharing
+    /// its projected tuple lies in the window
+    /// (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`;
+    /// `lean/Bumbledb/Schema.lean: Statement.cardinality`). `hi = None`
+    /// is the `*` spelling — the only spelling of "no upper bound".
+    Cardinality {
+        source: Side,
+        /// The inclusive lower count bound.
+        lo: u64,
+        /// The inclusive upper count bound; `None` is `*`.
+        hi: Option<u64>,
+        target: Side,
+    },
+    /// `order R(pos) per R(grp) [by link -> K(read) ...]`: the order
+    /// mark — per parent group, positions are exactly `1..k` (1-based,
+    /// duplicate-free, contiguous), monotone with the `by` ranks when a
+    /// chain is spelled (`lean/Bumbledb/Order.lean: OrderMark` /
+    /// `RankedOrderMark`; `lean/Bumbledb/Schema.lean: Statement.order`).
+    Order {
+        relation: RelationId,
+        /// The ordinal column — u64 by the acceptance gate.
+        position: FieldId,
+        /// The grouping projection: ordered, non-empty, duplicate-free,
+        /// scalar.
+        grouping: Box<[FieldId]>,
+        /// The optional `by` chain of key-backed hops.
+        ranking: Option<RankChain>,
+    },
 }
 
 /// The extension-row cap: a vocabulary larger than 256 is policy data
@@ -438,20 +555,37 @@ impl MemberSet {
     }
 }
 
-/// One σ-literal check compiled at validate (the staging law applied to
+/// One σ-binding check compiled at validate (the staging law applied to
 /// the checker, `docs/architecture/30-dependencies.md` § enforcement):
 /// everything whose canonical bytes are a pure function of the value seals
 /// here, once; only interned text — whose word is per-database dictionary
-/// state — remains commit-resolved.
+/// state — remains commit-resolved. The singleton arms are the classic
+/// one-compare paths, byte-identical to the pre-set engine; the `Set`
+/// arms carry the disjunctive binding's alternatives (canonical order,
+/// deduplicated), and satisfaction is membership among them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CompiledCheck {
     /// The literal's canonical encoding, sealed — one byte compare at
     /// judgment, zero encoding work per commit.
     Encoded { field: FieldId, bytes: Box<[u8]> },
+    /// A disjunctive binding of encodable literals: the sealed canonical
+    /// encodings, satisfaction = any-of.
+    EncodedSet {
+        field: FieldId,
+        alternatives: Box<[Box<[u8]>]>,
+    },
     /// A `str` literal: resolves through the delta's pending map then the
     /// committed dictionary at commit; a double miss proves no fact can
     /// satisfy the selection.
     Interned { field: FieldId, text: Box<str> },
+    /// A disjunctive binding of `str` literals: each resolves at commit;
+    /// a never-interned literal drops out of the disjunction (that arm is
+    /// provably unsatisfiable), and all missing proves the binding — and
+    /// so the side — unsatisfiable.
+    InternedSet {
+        field: FieldId,
+        texts: Box<[Box<str>]>,
+    },
 }
 
 /// Both sides' compiled σ checks of one containment statement.
@@ -500,12 +634,85 @@ pub struct ContainmentStatement {
     pub mirror: Option<StatementId>,
 }
 
+/// One sealed cardinality window: `A(X | φ) in lo..hi per B(Y | ψ)`.
+/// Accepted at declaration with its sealed target-key plan handle
+/// (the same probe-ability rule containments resolve —
+/// `lean/Bumbledb/Oracle.lean: cardinality_plan_decides` is the promised
+/// plan); commit-time judging is the enforcement stage's work.
+#[derive(Debug)]
+pub struct CardinalityStatement {
+    /// Materialized-order identity. It is not an arena index.
+    pub id: StatementId,
+    pub source: Side,
+    /// The inclusive lower count bound.
+    pub lo: u64,
+    /// The inclusive upper count bound; `None` is `*`.
+    pub hi: Option<u64>,
+    pub target: Side,
+    /// The target-key plan handle (`ScalarProbe` or `Closed`; windows
+    /// refuse interval positions, so `IntervalCoverage` is unreachable).
+    /// Consumed by the commit judge's touched-parent probe and the
+    /// sweeper's global re-verification
+    /// (`storage/commit/judgment.rs::check_windows`).
+    pub(crate) enforcement: Enforcement,
+    /// Both sides' σ bindings, compiled once at validate — resolved per
+    /// commit into [`crate::storage::commit::judgment::Selections`]
+    /// exactly as containments' are.
+    pub(crate) checks: CompiledSides,
+}
+
+/// One sealed key-backed hop: the declared-key witness rides along, so
+/// the hop's unit probe price is licensed by construction
+/// (`lean/Bumbledb/Oracle.lean: chain_cost_hops` — one consultation per
+/// hop, honest because the probed bucket is keyed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedRankHop {
+    pub relation: RelationId,
+    pub key: FieldId,
+    pub read: FieldId,
+    /// The declared key of `relation` whose field set is `{key}` — minted
+    /// by validation, the hop's sealed plan handle.
+    pub(crate) key_statement: KeyId,
+}
+
+/// One sealed `by` chain: link field plus key-backed hops in chain order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedRankChain {
+    pub link: FieldId,
+    pub hops: Box<[SealedRankHop]>,
+}
+
+/// One sealed order mark: `order R(pos) per R(grp) [by …]`. Accepted at
+/// declaration (`lean/Bumbledb/Oracle.lean: order_plan_decides` /
+/// `ranked_order_plan_decides` are the promised plans); commit-time
+/// judging is the enforcement stage's work.
+#[derive(Debug)]
+pub struct OrderStatement {
+    /// Materialized-order identity. It is not an arena index.
+    pub id: StatementId,
+    pub relation: RelationId,
+    /// The ordinal column — u64 by the acceptance gate.
+    pub position: FieldId,
+    /// The grouping projection: ordered, non-empty, duplicate-free,
+    /// scalar.
+    pub grouping: Box<[FieldId]>,
+    /// The mark's `R`-edge projection: grouping fields then the position
+    /// field — sealed once so the plan derivation slices one projection
+    /// (`docs/architecture/50-storage.md` § key layout: the group prefix
+    /// is the walk's key, the position tail is the walk's order).
+    pub(crate) edge_projection: Box<[FieldId]>,
+    /// The sealed `by` chain, each hop carrying its declared-key witness.
+    pub ranking: Option<SealedRankChain>,
+}
+
 /// The global materialized-order spine: a [`StatementId`] selects one typed
 /// arena and one slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatementRef {
     Key(KeyId),
     Containment(ContainmentId),
+    Cardinality(WindowId),
+    Order(OrderId),
 }
 
 /// A borrowed sealed statement for display and other order-preserving walks.
@@ -514,6 +721,8 @@ pub enum StatementRef {
 pub enum StatementView<'schema> {
     Key(KeyId, &'schema KeyStatement),
     Containment(ContainmentId, &'schema ContainmentStatement),
+    Cardinality(WindowId, &'schema CardinalityStatement),
+    Order(OrderId, &'schema OrderStatement),
 }
 
 impl StatementView<'_> {
@@ -523,6 +732,8 @@ impl StatementView<'_> {
         match self {
             Self::Key(_, statement) => statement.id,
             Self::Containment(_, statement) => statement.id,
+            Self::Cardinality(_, statement) => statement.id,
+            Self::Order(_, statement) => statement.id,
         }
     }
 }
@@ -555,6 +766,16 @@ pub struct Relation {
     keys: Box<[KeyId]>,
     /// `Containment` statements whose source is this relation.
     outgoing: Box<[ContainmentId]>,
+    /// `Cardinality` statements whose SOURCE (counted child) is this
+    /// relation — the plan derivation walks it per fact op, exactly as
+    /// `outgoing`.
+    window_sources: Box<[WindowId]>,
+    /// `Cardinality` statements whose TARGET (parent) is this relation —
+    /// a delta parent touches its own key tuple
+    /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`).
+    window_targets: Box<[WindowId]>,
+    /// `Order` statements on this relation.
+    order_marks: Box<[OrderId]>,
 }
 
 /// The sealed schema witness. Unconstructible except through
@@ -565,6 +786,8 @@ pub struct Schema {
     /// Homogeneous typed arenas. Only validation mints their witness ids.
     keys: Box<[KeyStatement]>,
     containments: Box<[ContainmentStatement]>,
+    windows: Box<[CardinalityStatement]>,
+    orders: Box<[OrderStatement]>,
     /// The materialized statement list; [`StatementId`] indexes this spine.
     order: Box<[StatementRef]>,
     /// `target_key -> dependents`, indexed by [`KeyId`].
@@ -651,6 +874,44 @@ impl Schema {
         &self.containments
     }
 
+    /// All sealed cardinality windows, in typed-arena order.
+    #[must_use]
+    pub fn windows(&self) -> &[CardinalityStatement] {
+        &self.windows
+    }
+
+    /// All sealed order marks, in typed-arena order.
+    #[must_use]
+    pub fn orders(&self) -> &[OrderStatement] {
+        &self.orders
+    }
+
+    /// A cardinality window selected by its validation-minted witness.
+    #[must_use]
+    pub fn window(&self, id: WindowId) -> &CardinalityStatement {
+        &self.windows[usize::from(id.0)]
+    }
+
+    /// The bounds-checked sibling of [`Schema::window`] for ids arriving
+    /// as dynamic data.
+    #[must_use]
+    pub fn window_checked(&self, id: WindowId) -> Option<&CardinalityStatement> {
+        self.windows.get(usize::from(id.0))
+    }
+
+    /// An order mark selected by its validation-minted witness.
+    #[must_use]
+    pub fn order(&self, id: OrderId) -> &OrderStatement {
+        &self.orders[usize::from(id.0)]
+    }
+
+    /// The bounds-checked sibling of [`Schema::order`] for ids arriving
+    /// as dynamic data.
+    #[must_use]
+    pub fn order_checked(&self, id: OrderId) -> Option<&OrderStatement> {
+        self.orders.get(usize::from(id.0))
+    }
+
     /// Non-fatal diagnostics recorded while sealing this schema.
     #[must_use]
     pub fn warnings(&self) -> &[SchemaWarning] {
@@ -686,12 +947,7 @@ impl Schema {
     /// Resolve a materialized-order identity through the typed arena spine.
     #[must_use]
     pub fn statement(&self, id: StatementId) -> StatementView<'_> {
-        match self.order[usize::from(id.0)] {
-            StatementRef::Key(key) => StatementView::Key(key, self.key(key)),
-            StatementRef::Containment(containment) => {
-                StatementView::Containment(containment, self.containment(containment))
-            }
-        }
+        self.view(self.order[usize::from(id.0)])
     }
 
     /// The bounds-checked sibling of [`Schema::statement`].
@@ -700,12 +956,21 @@ impl Schema {
         self.order
             .get(usize::from(id.0))
             .copied()
-            .map(|statement| match statement {
-                StatementRef::Key(key) => StatementView::Key(key, self.key(key)),
-                StatementRef::Containment(containment) => {
-                    StatementView::Containment(containment, self.containment(containment))
-                }
-            })
+            .map(|statement| self.view(statement))
+    }
+
+    /// The borrowed arm a spine slot selects.
+    fn view(&self, statement: StatementRef) -> StatementView<'_> {
+        match statement {
+            StatementRef::Key(key) => StatementView::Key(key, self.key(key)),
+            StatementRef::Containment(containment) => {
+                StatementView::Containment(containment, self.containment(containment))
+            }
+            StatementRef::Cardinality(window) => {
+                StatementView::Cardinality(window, self.window(window))
+            }
+            StatementRef::Order(order) => StatementView::Order(order, self.order(order)),
+        }
     }
 
     /// The `Containment` statements whose resolved target key is `id` —

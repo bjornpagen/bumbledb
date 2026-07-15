@@ -314,6 +314,7 @@ fn engine_write(db: &Db<target::Target>, delta: &Delta) -> WriteVerdict {
             | Error::EmptyAllenMaskParam { .. }
             | Error::FullAllenMaskParam { .. }
             | Error::MeasureOfRay { .. }
+            | Error::FixpointBudgetExceeded { .. }
             | Error::Overflow(_)
             | Error::ResultBytesOverflow
             | Error::Corruption(_)),
@@ -354,6 +355,11 @@ fn query_refusal(err: Error) -> Answers {
     match err {
         Error::Overflow(_) => Answers::Overflow,
         Error::MeasureOfRay { .. } => Answers::MeasureOfRay,
+        // The budget trip is a typed execution error on `MeasureOfRay`'s
+        // model — typed identity, never a harness crash (the naive
+        // fixpoint is unbudgeted, so a trip surfaces as a readable
+        // parity divergence).
+        Error::FixpointBudgetExceeded { .. } => Answers::FixpointBudget,
         other @ (Error::Schema(_)
         | Error::FormatMismatch { .. }
         | Error::SchemaMismatch { .. }
@@ -640,6 +646,7 @@ fn schema_rejection(err: Error) -> (&'static str, SchemaError) {
         | Error::EmptyAllenMaskParam { .. }
         | Error::FullAllenMaskParam { .. }
         | Error::MeasureOfRay { .. }
+        | Error::FixpointBudgetExceeded { .. }
         | Error::Overflow(_)
         | Error::ResultBytesOverflow
         | Error::Corruption(_)) => {
@@ -669,6 +676,15 @@ fn schema_variant(rejection: &SchemaError) -> &'static str {
         SchemaError::EmptyProjection { .. } => "EmptyProjection",
         SchemaError::DuplicateProjectionField { .. } => "DuplicateProjectionField",
         SchemaError::DuplicateSelectionField { .. } => "DuplicateSelectionField",
+        SchemaError::DegenerateSelectionSet { .. } => "DegenerateSelectionSet",
+        SchemaError::DuplicateSelectionLiteral { .. } => "DuplicateSelectionLiteral",
+        SchemaError::CardinalityIntervalPosition { .. } => "CardinalityIntervalPosition",
+        SchemaError::OrderPositionNotU64 { .. } => "OrderPositionNotU64",
+        SchemaError::OrderGroupingInterval { .. } => "OrderGroupingInterval",
+        SchemaError::RankedOrderClosedSubject { .. } => "RankedOrderClosedSubject",
+        SchemaError::RankHopUnkeyed { .. } => "RankHopUnkeyed",
+        SchemaError::RankChainTypeMismatch { .. } => "RankChainTypeMismatch",
+        SchemaError::OrderRankNotU64 { .. } => "OrderRankNotU64",
         SchemaError::FunctionalityMultipleIntervals { .. } => "FunctionalityMultipleIntervals",
         SchemaError::FunctionalityIntervalNotLast { .. } => "FunctionalityIntervalNotLast",
         SchemaError::DuplicateFunctionality { .. } => "DuplicateFunctionality",

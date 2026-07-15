@@ -108,7 +108,7 @@ pub(super) fn fold_query(rank: u64) -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
             Atom {
-                relation: READING,
+                source: crate::ir::AtomSource::Edb(READING),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
@@ -116,7 +116,7 @@ pub(super) fn fold_query(rank: u64) -> Query {
                 ],
             },
             Atom {
-                relation: KIND,
+                source: crate::ir::AtomSource::Edb(KIND),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(1))),
                     (FieldId(1), Term::Literal(Value::U64(rank))),

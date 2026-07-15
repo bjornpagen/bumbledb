@@ -42,7 +42,8 @@ creates LATTICE-CLOSED values — a coalesced segment's endpoints are
 SELECTED from stored endpoints, never invented
 (`pack_lattice_closed`) — and `Min`/`Max`/`ArgMax`/`ArgMin` select
 outright. The lattice-closedness is the chain-window fence's premise
-(recursion-design §8) and the fence for every future interval
+(`20-query-ir.md` § engine recursion, the chain-window fence) and the
+fence for every future interval
 operator: only endpoint-selecting operations are ever candidates;
 endpoint-inventing ones (shift, widen, bound arithmetic) are refused
 categorically.
@@ -886,7 +887,8 @@ theorem coalesce_lattice_closed :
 /-- **The lattice-closedness theorem — the creation-quarantine note,
 made checkable.** Every packed segment's endpoints are SELECTED from
 the stored claims' endpoints; `pack` never invents a bound. This is
-the chain-window fence's premise (recursion-design §8) and the fence
+the chain-window fence's premise (`20-query-ir.md` § engine
+recursion, the chain-window fence) and the fence
 for every future interval operator: only endpoint-selecting
 operations are ever candidates. Bridge: the sweep emits `(run_start,
 frontier)` with both words copied from input segments, never computed

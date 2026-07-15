@@ -44,8 +44,8 @@ laws).
 |---|---|
 | `00-product.md` | Thesis, workload census, hardware, durability, deleted vocabulary, success criteria |
 | `10-data-model.md` | Reading guide over `lean/Bumbledb/Values.lean`+`Schema.lean`: the six structural types, interval/ray intuition, identity, schema, modeling discipline — decisions whole, semantics by citation |
-| `20-query-ir.md` | Reading guide over `lean/Bumbledb/Query/`: the pure-data IR shape and notation grammar, validation roster, recursion refusal — decisions whole, semantics by citation |
-| `30-dependencies.md` | Reading guide over `lean/Bumbledb/Dependencies.lean`+`Txn.lean`: the two judgments by citation, statement grammar, the acceptance gate, enforcement mechanism, the decidability firewall |
+| `20-query-ir.md` | Reading guide over `lean/Bumbledb/Query/`: the pure-data IR shape and notation grammar, validation roster, the recursion cut and its fence — decisions whole, semantics by citation |
+| `30-dependencies.md` | Reading guide over `lean/Bumbledb/Dependencies.lean`+`Cardinality.lean`+`Order.lean`+`Txn.lean`: the four statement forms by citation, statement grammar, the acceptance gate, enforcement mechanism, the decidability firewall |
 | `40-execution.md` | Mechanism only: access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation — every semantic sentence cites its `lean/Bumbledb/Exec/` theorem |
 | `50-storage.md` | Mechanism only: LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images — encoding laws by citation |
 | `60-validation.md` | The three oracles (SQLite + naive model + the Lean denotation, `lean/conformance/`), ledger benchmark protocol, test families |
@@ -58,16 +58,15 @@ laws).
 - **Every measured claim is unearned**: the oracle stamp, the benchmark ALL-WIN, and
   every pinned denominator are void until derived and run on this engine. *Trigger:
   the implementation reaching the bench milestone.*
-- **Recursion** (explicit semi-naive fixpoint): refused with a recorded trigger
-  (`20-query-ir.md` § engine recursion — refused); the closure idiom covers the
-  censused depth-bounded hierarchies (`../cookbook.md` recipes 24–25), and the full
-  design is a paper proof with a seam ledger (`../reference/recursion-design.md`).
-  *Trigger: the refusal's three clauses — unbounded/large depth; closure composed
-  into one plan; the chain-window class.* Four rulings survive the trigger firing
-  (the trigger opens stratified fixpoints over query-sized programs, nothing else):
-  satisfaction-not-implication and statements-over-stored-relations
-  (`30-dependencies.md`), the creation quarantine and queries-stay-query-shaped
-  (`20-query-ir.md`).
+- **The chain-window class** (interval intersection along paths — "the
+  window over which an entire path holds"): outside the landed recursion
+  surface by the safety theorem's premise, because the intersected window
+  is a *created* head value (`20-query-ir.md` § engine recursion, the
+  chain-window fence — the lattice-closure termination sketch is recorded
+  there, beside what keeps it open). The closure idiom carries the window
+  in the host's frontier meanwhile (`../cookbook.md` recipe 24). *Trigger:
+  a real workload dominated by interval-intersection-along-paths — it
+  re-opens theory before engineering.*
 - **Ordering/limit conveniences and top-k pushdown**: presentation-layer; results are
   sets, the host sorts. *Trigger: owner pain, or a measured materialize-then-sort
   latency-budget violation.*
@@ -117,7 +116,8 @@ laws).
 Each recorded with its rationale in the owning doc; listed here so nothing is
 re-litigated by accident:
 
-- **Invariants are two judgments about queries** (functionality, containment);
+- **Invariants are statements about queries** (functionality, containment, the
+  cardinality window, the order mark);
   *unique / referential / primary key / check / exclusion / cascade / restrict /
   trigger / deferrable* are deleted vocabulary (`30-dependencies.md`, `00-product.md`).
 - **No sugar** — the schema surface is raw statements (`->`, `<=`, `==`); no
@@ -146,7 +146,7 @@ re-litigated by accident:
   the read-side syntax (`20-query-ir.md`, `70-api.md`).
 - **WriteTx point reads** (`contains`/`get` against the delta-overlaid final-state
   view); full queries in write transactions are forbidden (`70-api.md`).
-- **Plan introspection output** is the versioned `introspection v2` contract:
+- **Plan introspection output** is the versioned `introspection v3` contract:
   deterministic content and ordering within a version, with rendered and structured
   surfaces incremented together (`40-execution.md`, `70-api.md`).
 - **The naive model is required infrastructure** — the second oracle, judging

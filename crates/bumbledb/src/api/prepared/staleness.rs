@@ -92,8 +92,7 @@ impl<S> PreparedQuery<'_, S> {
         self.check_snapshot(snap.txn())?;
         let per_occurrence = self
             .program
-            .rules()
-            .iter()
+            .all_rules()
             .flat_map(super::PreparedRule::pinned)
             .map(|pin| {
                 let live = read::row_count(snap.txn(), pin.relation)?;

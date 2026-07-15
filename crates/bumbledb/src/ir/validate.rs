@@ -84,27 +84,32 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::error::ValidationError;
 use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
-use crate::ir::{CmpOp, FindTerm, MaskTerm, ParamId, Value, VarId};
-use crate::schema::{IntervalElement, ValueType};
+use crate::ir::{CmpOp, FindTerm, MaskTerm, ParamId, PredId, Value, VarId};
+use crate::schema::{FieldId, IntervalElement, ValueType};
 
 mod context;
 mod finds;
+mod strata;
 #[expect(
     clippy::module_inception,
     reason = "the nested module owns the operation named by its parent"
 )]
 mod validate;
 
-pub use validate::validate;
+pub use validate::{validate, validate_program};
 
 /// The predicate a query defines — anonymous (names live in the host,
 /// exactly like relations pre-`as`), its typed output signature derived
 /// ONCE at validation and sealed. The single authority for sink
 /// construction, result-buffer typing, finalize's all-words decision,
-/// and introspection's header. Referenced by NOTHING — the named-view refusal
-/// stands; a reference to a predicate is the recursion trigger firing.
+/// and introspection's header. Referenced only by [`PredId`], from
+/// inside the same [`crate::ir::Program`] — the named-view refusal
+/// stands (no stored, named, or cross-program reference exists), and
+/// the one reference form is the recursion cut's `Idb` atom, typed
+/// against these sealed columns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Predicate {
     /// The signature: one column per head position, in head order.
@@ -275,6 +280,128 @@ pub(crate) enum SealedConst {
 pub(crate) enum DurationOperand {
     Var(VarId),
     Const(SealedConst),
+}
+
+/// The `Idb` typing surface handed to the per-rule roster: per-predicate
+/// head arities (always known — `PredicateDef.head`), and the sealed
+/// signatures the program-level sealing loop has derived so far. An
+/// `Idb` anchor resolves against the target's sealed column exactly as
+/// an `Edb` anchor resolves against its stored field
+/// ([`Context::check_atoms`]). The query path passes [`IdbSignatures::EMPTY`]:
+/// a plain query's rules carry no `Idb` occurrence (an `Idb`-carrying
+/// query routes through [`validate_program`] as the degenerate
+/// embedding).
+pub(super) struct IdbSignatures<'a> {
+    /// Per-predicate arity — the address space `FieldId`s are checked
+    /// against.
+    arities: &'a [usize],
+    /// Per-predicate sealed signature; `None` while the sealing loop is
+    /// still deriving the target. [`validate::validate_program`] invokes
+    /// the rule roster only on rules whose targets are all sealed, so a
+    /// `None` read is a typed refusal, never a panic — validation stays
+    /// total on hostile programs.
+    sealed: &'a [Option<Predicate>],
+}
+
+impl IdbSignatures<'_> {
+    /// The query path's empty surface: no predicates are addressable.
+    pub(super) const EMPTY: IdbSignatures<'static> = IdbSignatures {
+        arities: &[],
+        sealed: &[],
+    };
+
+    /// The binding-independent source screen: the target names a real
+    /// predicate of the address space (a zero-binding `Idb` gate never
+    /// reaches [`IdbSignatures::column`], so the screen runs per atom).
+    fn screen(&self, atom: usize, pred: PredId) -> Result<(), ValidationError> {
+        if usize::from(pred.0) >= self.arities.len() {
+            return Err(ValidationError::UnknownPredicate { atom, pred });
+        }
+        Ok(())
+    }
+
+    /// The sealed type of one `Idb` binding position — the roster's
+    /// unknown-`PredId` and arity items, totally typed.
+    fn column(
+        &self,
+        atom: usize,
+        pred: PredId,
+        field: FieldId,
+    ) -> Result<&ValueType, ValidationError> {
+        let index = usize::from(pred.0);
+        let Some(arity) = self.arities.get(index) else {
+            return Err(ValidationError::UnknownPredicate { atom, pred });
+        };
+        if usize::from(field.0) >= *arity {
+            return Err(ValidationError::PredicateColumnOutOfRange { atom, field });
+        }
+        match self.sealed.get(index).and_then(Option::as_ref) {
+            Some(predicate) => predicate
+                .columns
+                .get(usize::from(field.0))
+                .map(|column| &column.ty)
+                .ok_or(ValidationError::PredicateColumnOutOfRange { atom, field }),
+            None => Err(ValidationError::UnresolvedPredicateSignature { pred }),
+        }
+    }
+}
+
+/// The sealed program witness: one per-predicate [`ValidatedQuery`]
+/// (the same one signature derivation, quantified over predicates —
+/// 20-query-ir.md § engine recursion) plus the program's answer predicate and the
+/// stratification witness the strata judge computed (`lean/Bumbledb/
+/// Query/Syntax.lean: Program.StratifiedBy` — the SCC condensation's
+/// topological index per predicate). Unconstructible outside this
+/// module, like [`ValidatedQuery`].
+///
+/// Params are **program-global**: one binding surface across every
+/// predicate, unified exactly as rules unify within one query; each
+/// per-predicate witness carries the program-wide tables.
+#[derive(Debug)]
+pub struct ValidatedProgram {
+    /// One sealed witness per predicate, in `PredId` order.
+    predicates: Vec<ValidatedQuery>,
+    /// The program's answer predicate.
+    output: PredId,
+    /// The stratification witness: `strata[p]` is predicate `p`'s
+    /// stratum (positive edges non-increasing, negated edges strictly
+    /// decreasing — the judged form).
+    strata: Box<[u16]>,
+}
+
+impl ValidatedProgram {
+    /// The program's answer predicate.
+    #[must_use]
+    pub fn output(&self) -> PredId {
+        self.output
+    }
+
+    /// One predicate's sealed witness.
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: a `PredId` at or beyond the
+    /// validated predicate count.
+    #[must_use]
+    pub fn witness(&self, pred: PredId) -> &ValidatedQuery {
+        &self.predicates[usize::from(pred.0)]
+    }
+
+    /// The answer predicate's sealed witness — what the degenerate
+    /// (no-`Idb`) program prepares as (`prepare_program`'s embedding
+    /// branch), and the fixpoint program's result-typing authority.
+    #[must_use]
+    pub fn output_witness(&self) -> &ValidatedQuery {
+        self.witness(self.output)
+    }
+
+    /// The stratification witness, per predicate — the SCC
+    /// condensation's topological index (test observability; the
+    /// driver consumes it in R6).
+    #[must_use]
+    pub fn strata(&self) -> &[u16] {
+        &self.strata
+    }
 }
 
 /// The sealed witness: the query plus the derived tables downstream layers

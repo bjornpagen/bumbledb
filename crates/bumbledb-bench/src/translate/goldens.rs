@@ -148,3 +148,27 @@ pub const MANDATE_OVERLAP: &str = "SELECT DISTINCT t0.\"account\", t1.\"account\
 /// empty `d` joins nothing (the NULL extreme matches no row), so the
 /// empty input yields the empty set with no HAVING patch.
 pub const ARG_MAX_GLOBAL: &str = "WITH d AS (SELECT DISTINCT t0.\"id\" AS v0, t0.\"at\" AS v1 FROM \"Posting\" AS t0) SELECT DISTINCT d.v0 FROM d JOIN (SELECT MAX(v1) AS mk FROM d) m ON d.v1 = m.mk";
+
+/// closure — the linear transitive closure over `OrgParent` read as
+/// edges: `p0(x, a) | OrgParent(child = x, parent = a); p0(x, a) |
+/// OrgParent(child = x, parent = y), p0(c0 = y, c1 = a)` — the program
+/// template (`translate::program`): one recursive CTE, base arm first
+/// (the initial-select law), the recursive table referenced once (the
+/// linearity gate), per-arm plain SELECT because `UNION` is the set and
+/// the queue enqueues new rows only, the final DISTINCT covering the
+/// single-arm bag.
+pub const CLOSURE: &str = "WITH RECURSIVE p0(c0, c1) AS (SELECT t0.\"child\" AS c0, t0.\"parent\" AS c1 FROM \"OrgParent\" AS t0 UNION SELECT t0.\"child\" AS c0, t1.\"c1\" AS c1 FROM \"OrgParent\" AS t0, \"p0\" AS t1 WHERE t0.\"parent\" = t1.\"c0\") SELECT DISTINCT c0, c1 FROM p0";
+
+/// `closure_roots` — negation OF a lower stratum: `p1(x) | Org(id = x),
+/// ¬p0(c0 = x)` over the closure `p0` — the stratified two-CTE form:
+/// reads emit first, and the `NOT EXISTS` subquery references the
+/// FINISHED closure CTE, never a recursive table (stratification
+/// refused the in-cycle shape long before translation).
+pub const CLOSURE_ROOTS: &str = "WITH RECURSIVE p0(c0, c1) AS (SELECT t0.\"child\" AS c0, t0.\"parent\" AS c1 FROM \"OrgParent\" AS t0 UNION SELECT t0.\"child\" AS c0, t1.\"c1\" AS c1 FROM \"OrgParent\" AS t0, \"p0\" AS t1 WHERE t0.\"parent\" = t1.\"c0\"), p1(c0) AS (SELECT t0.\"id\" AS c0 FROM \"Org\" AS t0 WHERE NOT EXISTS (SELECT 1 FROM \"p0\" AS n0 WHERE n0.\"c0\" = t0.\"id\")) SELECT DISTINCT c0 FROM p1";
+
+/// `closure_from_param` — the parameterized reachable set:
+/// `p0(a) | OrgParent(child = ?0, parent = a); p0(a) |
+/// OrgParent(child = x, parent = a), p0(c0 = x)` — one positional
+/// placeholder shared across the program's arms (the query-global
+/// param space, programs included).
+pub const CLOSURE_FROM_PARAM: &str = "WITH RECURSIVE p0(c0) AS (SELECT t0.\"parent\" AS c0 FROM \"OrgParent\" AS t0 WHERE t0.\"child\" = ?1 UNION SELECT t0.\"parent\" AS c0 FROM \"OrgParent\" AS t0, \"p0\" AS t1 WHERE t0.\"child\" = t1.\"c0\") SELECT DISTINCT c0 FROM p0";

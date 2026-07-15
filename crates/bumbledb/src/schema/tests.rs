@@ -63,7 +63,10 @@ pub(crate) fn side_where(
     Side {
         relation,
         projection: projection.into(),
-        selection: selection.into_boxed_slice(),
+        selection: selection
+            .into_iter()
+            .map(|(field, literal)| (field, LiteralSet::One(literal)))
+            .collect(),
     }
 }
 
@@ -78,6 +81,49 @@ pub(crate) fn fd(relation: RelationId, projection: &[FieldId]) -> StatementDescr
 /// `source <= target`.
 pub(crate) fn containment(source: Side, target: Side) -> StatementDescriptor {
     StatementDescriptor::Containment { source, target }
+}
+
+/// A side whose σ carries whole literal sets — the disjunctive form.
+pub(crate) fn side_where_sets(
+    relation: RelationId,
+    projection: &[FieldId],
+    selection: Vec<(FieldId, LiteralSet)>,
+) -> Side {
+    Side {
+        relation,
+        projection: projection.into(),
+        selection: selection.into_boxed_slice(),
+    }
+}
+
+/// `source in lo..hi per target`.
+pub(crate) fn cardinality(
+    source: Side,
+    lo: u64,
+    hi: Option<u64>,
+    target: Side,
+) -> StatementDescriptor {
+    StatementDescriptor::Cardinality {
+        source,
+        lo,
+        hi,
+        target,
+    }
+}
+
+/// `order relation(position) per relation(grouping) [by ranking]`.
+pub(crate) fn order_mark(
+    relation: RelationId,
+    position: FieldId,
+    grouping: &[FieldId],
+    ranking: Option<RankChain>,
+) -> StatementDescriptor {
+    StatementDescriptor::Order {
+        relation,
+        position,
+        grouping: grouping.into(),
+        ranking,
+    }
 }
 
 /// Holder(id fresh, name string) + Account(id fresh, holder u64, status u64),

@@ -1,4 +1,4 @@
-# The conformance corpus (PRD 13) — the interchange format
+# The conformance corpus (PRD 13; judgment + recursive arms) — the interchange format
 
 One JSON document per case, designed for hand-reading: a case file is
 the debugging surface when the three oracles disagree. The Rust
@@ -10,6 +10,12 @@ run through `evalList`, proved equal to the set denotation by
 `eval_sound` (`Bumbledb/Query/Denotation.lean`); aggregate heads run
 the recorded glue over PRD 05's proved computable folds
 (`Bumbledb/Conformance.lean`, module doc).
+
+Three case kinds share the directory, dispatched by FILE NAME:
+`judgment-*.json` is a **judgment case** (the write-side arm, below);
+`program-*.json` is a **program case** (the recursive arm, below);
+everything else is a **query case**. A judgment case also carries
+`"kind":"judgment"` for self-description.
 
 ## Values (the tagged form)
 
@@ -108,10 +114,11 @@ checks.
 
 ## Scope fences (recorded exclusions — counted, never silent)
 
-The corpus is Tiny-scale, valid-arm only. Per-build coverage is logged
-by the builder and the comparator (`Report::coverage_line`); the
-checked-in corpus was built at **217/323 expressible** (200 seeded +
-17 hand cases):
+The query corpus is Tiny-scale, valid-arm only. Per-build coverage is
+logged by the builder and the comparator (`Report::coverage_line`);
+the checked-in corpus was built at **218/324 expressible** (200 seeded
++ 18 hand cases), plus the 19 hand judgment cases outside the report
+(they have no expressibility gate):
 
 * **hostile arm** — not drawn at all: structurally-free IR types
   nothing and belongs to the validation-totality fuzz lane.
@@ -131,11 +138,142 @@ checked-in corpus was built at **217/323 expressible** (200 seeded +
   answers over 512 rows: per-push CI budget; shrink the case, never
   the model.
 
+## Judgment cases — the write-side third oracle
+
+A judgment case compares COMMIT VERDICTS instead of answer sets: the
+Lean side decodes `(theory, instance, delta)`, applies the delta by
+row-set arithmetic (deletes removed, inserts added, no-ops cancelling
+— `NaiveDb::staged`'s arithmetic), and runs the PROVED executable
+judge `Txn.judgeB` (`Bumbledb/Decide.lean`), which agrees with the
+model's `Txn.judge` verdict and violation sets phase for phase
+(`Txn.judgeB_agrees_of_declared`). The Rust serializer
+(`crates/bumbledb-bench/src/conformance/judgment.rs`) writes each
+document only after the ENGINE and the NAIVE MODEL agreed on the
+verdict, so the corpus run is the full three-way comparison. Every
+fixture is hand-authored (judgment cases are theorem-shaped, not
+distribution-shaped); replay rebuilds each by its provenance name.
+
+The document shape (values, facts, and the `relations` block exactly
+as in query cases; a closed relation's sealed field list opens with
+the synthetic id, and its ground-axiom facts carry the row id at
+position 0):
+
+```jsonc
+{
+"case":"judgment-window-floor-childless",
+"kind":"judgment",
+"provenance":{"hand":"judgment-window-floor-childless"},
+"theory":{
+  "relations":[…],                          // as in query cases
+  "ground_axioms":[…],                      // as in query cases
+  "statements":[                            // the MATERIALIZED list —
+                                            // indices ARE the engine's
+                                            // statement ids
+    {"functionality":{"relation":0,"projection":[0]}},
+    {"containment":{"source":SIDE,"target":SIDE}},
+    {"cardinality":{"source":SIDE,
+                    "window":{"lo":1,"hi":2},   // "hi" absent = *
+                    "target":SIDE}},
+    {"order":{"relation":3,"position":1,"grouping":[0],
+              "ranking":{"link":2,"hops":[     // absent = plain mark
+                {"relation":4,"key":0,"read":1}]}}}]},
+                                            // SIDE = {"relation","projection",
+                                            //   "selection":[[field,[lit…]]…]}
+                                            // — a literal SET reads
+                                            // disjunctively
+"instance":[…],                             // the committed pre-state
+                                            // (green by construction)
+"delta":{"deletes":[…],"inserts":[…]},      // {relation, facts} blocks
+"verdict":"accept"                          // or:
+// "verdict":{"reject":{"phase":"key","violations":[0]}}
+// "verdict":{"reject":{"phase":"statement","violations":[2,3]}}
+}
+```
+
+The verdict compares WHOLE, per phase: a key (functionality) violation
+preempts the statement phase on all three oracles
+(`Bumbledb/Txn.lean: judge_key_preempts`); `violations` is the
+rejecting phase's complete set as ascending statement indices. The
+containment `Direction` is a Rust-side refinement below the Lean
+altitude (the Lean violation sets are per-statement), so a statement
+cited in both directions appears once. Closed-relation writes are
+outside this lane (a typed refusal before any judgment, not a
+verdict); judgment fixtures carry no strings and no masks — the two
+value tags that would need a per-case context.
+
+The starter roster covers: both classical forms (scalar key;
+containment — scalar, coverage, and the closed member set), both
+extension forms (windows at floor/ceiling/`n..n`/`0..*`/empty-parent;
+order marks plain and ranked), the two-phase preemption mix,
+set-selections deciding a verdict, the delete-then-reinsert
+touched-group seam, and the permuted-interval lock — a statement
+written `Claim(span, id) <= Slot(span, id)` against the pointwise key
+DECLARED `(id, span)`: accepted through the set-canonical key
+resolution (`Bumbledb/Schema.lean: Header.intervalSplit`), judged as
+coverage, three-way agreed.
+
+## Program cases — the recursive third oracle
+
+A program case carries the program cut instead of a query
+(`Bumbledb/Query/Syntax.lean`: `Program`/`PredicateDef`/`PRule` —
+rule heads are plain variable-id lists, so the recursive corpus is
+projection-shaped by format; folds are the naive lane's, exactly as
+`Pack` is on the query side). The Lean side decodes it, reads the
+RECORDED stratification witness (the Rust side computes one witness —
+the naive model's relaxation, mirroring the strata judge's
+condensation; the denotation is witness-independent, the recorded
+narrowing in `Bumbledb/Exec/Fixpoint.lean`), and runs the PROVED
+fueled fixpoint `evalProgram` (`program_eval_sound` is its agreement
+with the stratified denotation) against the recorded answers.
+
+The Rust builder (`crates/bumbledb-bench/src/conformance/program.rs`)
+writes each document only after the NAIVE stratified fixpoint answered
+and — where the `WITH RECURSIVE` gate admits
+(`translate::sqlite_program_expressible`) — `SQLite` agreed; mutual
+and non-linear cases are naive-attested and still written (Lean judges
+them too — exactly the coverage `SQLite` cannot give). The corpus
+programs read the org tree only (closure sizes bounded by
+construction), so every case stays hand-readable and the Lean run
+stays a per-push lane.
+
+```jsonc
+{
+"case":"program-hand-closure",
+"provenance":{"hand":"program-hand-closure","world_seed":12603137},
+                                            // or {world_seed, case_seed,
+                                            //     variant} replayed through
+                                            //     Rng::new(case_seed)
+"strings":[…],                              // as in query cases
+"theory":{…},                               // as in query cases
+"instance":[…],                             // as in query cases
+"program":{
+  "predicates":[                            // PredId = index
+    {"arity":2,"rules":[
+      {"finds":[0,1],                       // PRule.finds: variable IDS
+       "atoms":[                            // the source arm spelled:
+         {"edb":7,"bindings":[[0,{"var":0}],[1,{"var":1}]]}],
+       "negated":[],"conditions":[]},
+      {"finds":[0,2],
+       "atoms":[
+         {"edb":7,"bindings":[[0,{"var":0}],[1,{"var":1}]]},
+         {"idb":0,"bindings":[[0,{"var":1}],[1,{"var":2}]]}],
+       "negated":[],"conditions":[]}]}],
+  "output":0,
+  "strata":[0]},                            // the recorded witness
+"params":[],
+"answers":[…]                               // the AGREED answers,
+                                            // canonically sorted
+}
+```
+
 ## Regeneration and the three-way comparator
 
 * Regenerate: `cargo test -p bumbledb-bench
   regenerate_the_conformance_corpus -- --ignored --nocapture`
   (deterministic: identical bytes from identical seeds, forever).
+  The recursive arm regenerates independently
+  (`regenerate_the_recursive_conformance_corpus` — `program-*.json`
+  only, leaving the query lane's measured budgets untouched).
 * Compare (engine · naive · file bytes): `cargo test -p bumbledb-bench
   the_corpus_replays_byte_identical` — runs in the plain workspace
   suite.

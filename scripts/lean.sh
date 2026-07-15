@@ -58,10 +58,30 @@ scripts/spec-census.sh
 # the exe is a default target) evaluates every checked-in case and
 # compares against the recorded engine answers. Measured 2026-07-14 on
 # the pinned M2 Max: ~1.0 s for the 217-case corpus — comfortably
-# per-push; the full three-way comparator (engine + naive + Lean) is
-# the CI lean job's cargo step.
+# per-push.
 cd lean
 lake exe conformance conformance/cases
 cd ..
 
-echo "lean.sh: OK — build green, placeholder battery clean, census resolved, conformance corpus green"
+# Battery 5: the full three-way comparator (engine + naive + Lean) —
+# the `#[ignore]`d cargo test that replays the corpus through the real
+# engine and the naive model, byte-holds the files, and re-runs the
+# Lean denotation over the same cases. It lives here, not in check.sh:
+# the Lean-dependent lane owns the Lean-dependent test, so check.sh
+# stays toolchain-independent and the third oracle still gates every
+# lean.sh run (~14 s measured on the pinned M2 Max).
+three_way_log=$(cargo test -p bumbledb-bench --lib \
+  -- --ignored --exact conformance::tests::three_way_conformance_over_the_checked_in_corpus 2>&1) || {
+  printf '%s\n' "$three_way_log" >&2
+  echo "lean.sh: FAIL — the three-way comparator reddened (battery 5)" >&2
+  exit 1
+}
+printf '%s\n' "$three_way_log"
+# `--exact` with a stale name runs zero tests and still exits 0 — refuse
+# the vacuous pass so a rename can never silently drop the third oracle.
+if ! printf '%s\n' "$three_way_log" | grep -q 'test result: ok. 1 passed'; then
+  echo "lean.sh: FAIL — the three-way comparator did not run (battery 5: 1 passed expected)" >&2
+  exit 1
+fi
+
+echo "lean.sh: OK — build green, placeholder battery clean, census resolved, conformance corpus green, three-way comparator green"

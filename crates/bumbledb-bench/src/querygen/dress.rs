@@ -183,7 +183,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
             .map(|(index, _)| index)
             .collect();
         let atom = dressable[usize::try_from(rng.range(dressable.len() as u64)).expect("small")];
-        match b.atoms[atom].relation {
+        match b.atoms[atom].relation() {
             ids::POSTING => dress_posting(b, rng, atom, domains),
             ids::ACCOUNT => {
                 if rng.chance(1, 2) {

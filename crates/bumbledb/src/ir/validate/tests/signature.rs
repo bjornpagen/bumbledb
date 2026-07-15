@@ -337,7 +337,7 @@ fn query_of(case: &Case) -> Query {
     Query::single(Rule {
         finds: case.finds.clone(),
         atoms: vec![Atom {
-            relation: crate::schema::RelationId(0),
+            source: crate::ir::AtomSource::Edb(crate::schema::RelationId(0)),
             bindings: case
                 .bindings
                 .iter()

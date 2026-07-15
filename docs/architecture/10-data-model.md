@@ -506,17 +506,22 @@ type description — including the element type for intervals — and generation
 flag; the enum's retired type tag is never reissued), then the closedness tag (ordinary = 0;
 closed = 1 followed by the ground axioms in declaration order — handle, then the
 fact's canonical bytes); then the **dependency statements in
-materialized order** — for each: the judgment form (functionality or containment,
-with direction count) and both sides' (relation id, projection field-id list in
-statement order, selection list as (field id, literal value) pairs in statement
-order). Materialized order = the fresh auto-keys first (one per fresh field, in
+materialized order** — for each: the statement-form tag (functionality = 0,
+containment = 1, cardinality window = 2, order mark = 3) and its body — sides as
+(relation id, projection field-id list in statement order, selection list as
+(field id, literal count, literal values in canonical set order) bindings in
+statement order); a window adds its lower bound and the upper bound's presence
+tag between its sides; an order mark hashes relation, position field, the
+grouping list, and the ranking presence tag plus link and hop (relation, key,
+read) triples. Materialized order = the fresh auto-keys first (one per fresh field, in
 relation-then-field declaration order), then the closed auto-keys (one per closed
 relation, in declaration order), then the declared statements in declaration
 order — a deterministic function of the declaration, so statement ids remain pinned
 by the fingerprint without being hashed separately. Relation and field ids are plain
 declaration order; statement ids are materialized order, schema-global.
-`StatementId` remains that fingerprint identity after validation. `KeyId` and
-`ContainmentId` are different, validation-minted witnesses into the sealed schema's
+`StatementId` remains that fingerprint identity after validation. `KeyId`,
+`ContainmentId`, `WindowId`, and `OrderId` are different, validation-minted
+witnesses into the sealed schema's
 homogeneous arenas; they are derived from the accepted declaration, never enter the
 canonical bytes, and are never substituted for `StatementId` in storage or errors.
 Stated consequence, accepted: **adding a ground axiom to a closed relation changes

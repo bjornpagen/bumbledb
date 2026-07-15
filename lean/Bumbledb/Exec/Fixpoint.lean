@@ -13,12 +13,12 @@ induction on the stratum index, over `Query/Syntax.lean`'s program
 cut), and **Level 1** is the fueled round loop (`evalProgram` — round
 = evaluate every rule against the current predicate tables, union,
 stop on no change) proved sound AND complete against Level 0
-(`program_eval_sound`). The blueprint is
-`docs/reference/recursion-design.md`; §1 (the IR cut), §2
-(stratification and the safety theorem), §3 (the delta rewrite's
-operator-level face), and §5 (the driver's round loop) land here; §4
-and the rest of §5 (delta images, watermarks, budgets, plan variants)
-are mechanism and stay in the docs, whole — the mechanism fence.
+(`program_eval_sound`). The IR cut, stratification with the safety
+theorem, the delta rewrite's operator-level face, and the driver's
+round loop land here; delta images, watermarks, budgets, and plan
+variants are mechanism and stay in the docs, whole — the mechanism
+fence (`docs/architecture/20-query-ir.md` § engine recursion;
+`docs/architecture/40-execution.md` § the fixpoint driver).
 
 ## The shape of the semantics
 
@@ -43,10 +43,12 @@ are mechanism and stay in the docs, whole — the mechanism fence.
 * **The stratified denotation is witness-relative** (`programDen`
   takes the `strat` witness). Narrowing recorded: independence of the
   denotation from the choice of stratification witness is the
-  classical fact NOT restated here — the design's validation computes
-  ONE witness (SCC condensation, mechanism — queued with the engine
-  discharge), and the prepared recursive arm (`evalProgram`, no
-  consumer yet) evaluates under the witness it is handed.
+  classical fact NOT restated here — validation computes ONE witness
+  (iterative-Tarjan SCC condensation, discharged R2:
+  `ir/validate/strata.rs::stratify`; the condensation's topological
+  index is the judged `StratifiedBy` form), and `evalProgram`
+  evaluates under the witness it is handed (the conformance driver
+  hands it the recorded Rust-side witness, R3).
 * **The unknown-PredId gap and its screen** (the loud record is
   `Query/Syntax.lean`'s module doc): an out-of-range `idb` read
   denotes the empty fact set here — `sourceDen`'s phantom default —
@@ -57,9 +59,9 @@ are mechanism and stay in the docs, whole — the mechanism fence.
   denotation read the same phantom-empty set — which is why they do
   not carry `Program.WellFormed` as a premise; the screen exists
   (`Program.WellFormed`, spent by `wellFormed_reads_real`) for
-  acceptance readings, and the engine-side refusal is validation's
-  roster item (`docs/reference/recursion-design.md` §1), queued with
-  the engine discharge.
+  acceptance readings, and the engine-side refusal is DISCHARGED
+  (R1: `ValidationError::UnknownPredicate`,
+  `ir/validate/strata.rs` — the Bridge row).
 
 ## The safety theorem, made formal (§2)
 
@@ -85,12 +87,13 @@ delta-variant plans (those are §3's mechanism, docs-side). Monotone
 `T` is what makes the shared chain reach the least fixpoint
 (`fueledLoop_fixpoint` is the executable form of that fact).
 
-## The chain-window fence and the gravestones (§8; law text)
+## The chain-window fence and the gravestones (law text)
 
 * **Value creation in a recursive head exits the safety theorem AT
   ITS PREMISE** — `w = w₁ ∩ w₂` in a head is not a bound variable,
-  and the design's §8 fences the whole chain-window class outside
-  this model. Lattice-closed, endpoint-SELECTING operations are the
+  and the chain-window fence
+  (`docs/architecture/20-query-ir.md` § the chain-window fence, the
+  standing OPEN item) keeps the whole class outside this model. Lattice-closed, endpoint-SELECTING operations are the
   only future candidates; endpoint-inventing ones (shift, widen,
   arithmetic on bounds) are refused categorically.
 * **The creation-quarantine gravestones hold in the program cut
@@ -447,7 +450,8 @@ induction on the stratum index -/
 
 /-- The finished tables below stratum `s`: stratum `j < s` holds the
 least fixpoint of its operator with everything below `j` already
-finished — the strong induction the design's §2 sketches. -/
+finished — the strong induction behind the stratified denotation
+(`docs/architecture/20-query-ir.md` § engine recursion). -/
 def finished (C : Classify) (p : Program) (strat : PredId → Nat)
     (I : Instance) (ρ : ParamEnv) : Nat → PredSets
   | 0 => fun _ _ => False
@@ -540,9 +544,10 @@ theorem pderives_toPRule {C : Classify} {r : Rule} {I : Instance}
       exact hneg a ha ⟨f, hf, hm⟩
 
 /-- **The degenerate embedding**: a one-predicate program with no
-`idb` atom denotes exactly today's `queryAnswers` — the design's §1
-claim ("the degenerate form is today's `Query`"; `Query::single` is
-the Rust precedent), as a theorem. The all-`edb` stratum operator is
+`idb` atom denotes exactly today's `queryAnswers` — the cut's claim
+(`docs/architecture/20-query-ir.md` § engine recursion: "the
+degenerate form is today's `Query`"; `Query::single` is the Rust
+precedent), as a theorem. The all-`edb` stratum operator is
 constant in its recursive argument, so its least fixpoint is one
 application (`lfpP_const`), and embedded rules derive as their
 originals (`pderives_toPRule`). -/
@@ -1116,7 +1121,9 @@ end FueledLoop
 /-! ## The candidate space — the safety theorem's finite product -/
 
 /-- Every tuple of a given length over a domain — the finite product
-of active-domain words the design's §2 names. -/
+of active-domain words the safety argument names
+(`docs/architecture/20-query-ir.md` § engine recursion: heads project
+bound variables, so candidates live on the finite active domain). -/
 def allTuples (dom : List Value) : Nat → List AnswerTuple
   | 0 => [[]]
   | n + 1 => dom.flatMap fun v => (allTuples dom n).map (v :: ·)
@@ -1472,11 +1479,14 @@ def evalProgramAt (C : Classify) (W : ListInstance) (ρ : ParamEnv)
     List AnswerTuple :=
   tabAt (strataEval C W ρ p strat (strat P + 1)) P
 
-/-- **The executable evaluator** — the PREPARED recursive arm: the
-output predicate's table after its own stratum closes. No consumer
-runs it yet — the conformance driver (`Main.lean`) evaluates query
-cases only today; the conformance consumer for this arm lands with
-the Rust-swoop corpus, alongside the engine discharge. -/
+/-- **The executable evaluator** — the recursive arm's oracle, WIRED
+(R3): the output predicate's table after its own stratum closes. The
+conformance driver (`Main.lean`, `program-*.json` cases) runs it over
+the checked-in recursive corpus against the naive-and-SQLite agreed
+answers — the third oracle judged recursion before any engine driver
+existed (the shipping law), and the engine discharge landed R6:
+`api/prepared/fixpoint.rs::run_fixpoint` computes these answers
+(the Bridge rows). -/
 def evalProgram (C : Classify) (W : ListInstance) (ρ : ParamEnv)
     (p : Program) (strat : PredId → Nat) : List AnswerTuple :=
   evalProgramAt C W ρ p strat p.output

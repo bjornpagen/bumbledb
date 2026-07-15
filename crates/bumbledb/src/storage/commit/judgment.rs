@@ -38,19 +38,20 @@ use std::ops::Bound;
 
 use heed::{AnyTls, RoTxn};
 
-use super::plan::CommitPlan;
+use super::plan::{CommitPlan, OrderScope};
 use super::{decode_row_id, fact_by_row};
 use crate::encoding::{FactLayout, encode_u64, field_bytes};
-use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
+use crate::error::{CorruptionError, Direction, Error, OrderDefect, Result, Violation, Violations};
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
-    CompiledCheck, ContainmentId, DisjointDeterminantProof, Enforcement, FieldId, KeyId,
-    RelationId, Schema, StatementId, StatementView,
+    AxiomIndex, CardinalityStatement, CompiledCheck, ContainmentId, DisjointDeterminantProof,
+    Enforcement, FieldId, KeyId, OrderStatement, RelationId, Schema, SealedRankChain, StatementId,
+    StatementView, WindowId,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
-use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use crate::storage::keys::{self, DeterminantImage, KeyBuf, MAX_KEY};
 
 /// The one state dependency judgment may inspect. Phases 1–2 have
 /// already applied the plan to this LMDB write transaction, whose
@@ -72,23 +73,51 @@ impl<'state, 'env, 'delta> FinalStateView<'state, 'env, 'delta> {
     }
 }
 
-/// Judges both containment directions against one named final state and
-/// seals the complete violation set.
+/// Judges the whole statement phase against one named final state —
+/// containments (both directions), cardinality windows (per touched
+/// parent), and order marks (per touched group) — and seals the complete
+/// violation set of the phase
+/// (`lean/Bumbledb/Txn.lean: rejection_is_complete`, the statement arm).
 pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Option<Violations>> {
     let mut violations = Vec::new();
     check_source(view, &mut violations)?;
     check_target(view, &mut violations)?;
+    check_windows(view, &mut violations)?;
+    check_orders(view, &mut violations)?;
     Ok(Violations::seal(violations))
+}
+
+/// One binding's pre-encoded comparison: the singleton compare (today's
+/// equality, one slice compare) or the disjunctive set's alternatives
+/// (membership among the sealed encodings —
+/// `lean/Bumbledb/Schema.lean: Selection.satisfies`, the field's value a
+/// MEMBER of the spelled set).
+pub(crate) enum FieldCheck {
+    /// One literal: a single byte compare.
+    One(Box<[u8]>),
+    /// A literal set: any-of over the alternatives (canonical order;
+    /// never-interned `str` alternatives already dropped).
+    AnyOf(Box<[Box<[u8]>]>),
+}
+
+impl FieldCheck {
+    /// Whether the field's slice satisfies this binding.
+    fn matches(&self, actual: &[u8]) -> bool {
+        match self {
+            Self::One(literal) => actual == &literal[..],
+            Self::AnyOf(alternatives) => alternatives.iter().any(|bytes| actual == &bytes[..]),
+        }
+    }
 }
 
 /// One side's selection σ, its literals pre-encoded for byte comparison.
 pub(crate) enum SelectionCheck {
     /// σ is empty: every fact satisfies.
     Empty,
-    /// Byte-compare each selected field's slice against its literal's
-    /// canonical encoding.
-    Compare(Box<[(FieldId, Box<[u8]>)]>),
-    /// A String literal was never interned: no stored fact can carry its
+    /// Per selected field, the binding's pre-encoded comparison.
+    Compare(Box<[(FieldId, FieldCheck)]>),
+    /// A binding is unsatisfiable (a String literal — or every literal of
+    /// a set binding — was never interned): no stored fact can carry its
     /// id, so no fact satisfies σ.
     Never,
 }
@@ -105,12 +134,14 @@ pub(crate) struct SideChecks {
 /// (committed dictionary only).
 type InternResolver<'a> = dyn FnMut(&[u8]) -> Result<Option<u64>> + 'a;
 
-/// Pre-encoded selections for every `Containment` statement, built once
-/// per commit — the commit-local scratch that keeps literal encoding out
-/// of the per-fact loops.
+/// Pre-encoded selections for every `Containment` and `Cardinality`
+/// statement, built once per commit — the commit-local scratch that keeps
+/// literal encoding out of the per-fact loops. (Order marks carry no σ.)
 pub(crate) struct Selections {
     /// Dense by [`ContainmentId`]; every slot is a containment by type.
     checks: Box<[SideChecks]>,
+    /// Dense by [`WindowId`]; every slot is a cardinality window by type.
+    windows: Box<[SideChecks]>,
 }
 
 impl Selections {
@@ -145,18 +176,35 @@ impl Selections {
                 })
             })
             .collect::<Result<Box<[_]>>>()?;
-        Ok(Self { checks })
+        let windows = schema
+            .windows()
+            .iter()
+            .map(|statement| {
+                Ok(SideChecks {
+                    source: resolve_checks(&statement.checks.source, resolve)?,
+                    target: resolve_checks(&statement.checks.target, resolve)?,
+                })
+            })
+            .collect::<Result<Box<[_]>>>()?;
+        Ok(Self { checks, windows })
     }
 
     /// The checks of a validation-minted containment witness.
     pub(crate) fn containment(&self, id: ContainmentId) -> &SideChecks {
         &self.checks[usize::from(id.0)]
     }
+
+    /// The checks of a validation-minted window witness.
+    pub(crate) fn window(&self, id: WindowId) -> &SideChecks {
+        &self.windows[usize::from(id.0)]
+    }
 }
 
 /// One side's sealed checks into the commit-local form: `Encoded` bytes
 /// copy verbatim (encoded once, at validate — never here); `Interned`
-/// text resolves through the boundary's dictionary view.
+/// text resolves through the boundary's dictionary view. A set binding's
+/// never-interned `str` alternatives drop out of the disjunction (each is
+/// individually unsatisfiable); a binding with nothing left is `Never`.
 fn resolve_checks(
     compiled: &[CompiledCheck],
     resolve: &mut InternResolver<'_>,
@@ -166,27 +214,44 @@ fn resolve_checks(
     }
     let mut fields = Vec::with_capacity(compiled.len());
     for check in compiled {
-        let (field, encoded): (FieldId, Box<[u8]>) = match check {
-            CompiledCheck::Encoded { field, bytes } => (*field, bytes.clone()),
+        let (field, encoded): (FieldId, FieldCheck) = match check {
+            CompiledCheck::Encoded { field, bytes } => (*field, FieldCheck::One(bytes.clone())),
+            CompiledCheck::EncodedSet {
+                field,
+                alternatives,
+            } => (*field, FieldCheck::AnyOf(alternatives.clone())),
             CompiledCheck::Interned { field, text } => match resolve(text.as_bytes())? {
-                Some(id) => (*field, Box::new(encode_u64(id))),
+                Some(id) => (*field, FieldCheck::One(Box::new(encode_u64(id)))),
                 None => return Ok(SelectionCheck::Never),
             },
+            CompiledCheck::InternedSet { field, texts } => {
+                let mut alternatives = Vec::with_capacity(texts.len());
+                for text in texts {
+                    if let Some(id) = resolve(text.as_bytes())? {
+                        alternatives.push(Box::new(encode_u64(id)) as Box<[u8]>);
+                    }
+                }
+                if alternatives.is_empty() {
+                    return Ok(SelectionCheck::Never);
+                }
+                (*field, FieldCheck::AnyOf(alternatives.into()))
+            }
         };
         fields.push((field, encoded));
     }
     Ok(SelectionCheck::Compare(fields.into()))
 }
 
-/// Whether a fact satisfies a pre-encoded selection: one byte compare per
-/// selected field, slices out of `fact_bytes` (interval fields compare
+/// Whether a fact satisfies a pre-encoded selection: per selected field,
+/// one byte compare (singleton) or membership among the sealed
+/// alternatives (set), slices out of `fact_bytes` (interval fields compare
 /// their whole 16 bytes — `field_bytes` widths come from the layout).
 pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes: &[u8]) -> bool {
     match check {
         SelectionCheck::Empty => true,
         SelectionCheck::Never => false,
         SelectionCheck::Compare(fields) => fields.iter().all(|(field, literal)| {
-            field_bytes(fact_bytes, layout, usize::from(field.0)) == &literal[..]
+            literal.matches(field_bytes(fact_bytes, layout, usize::from(field.0)))
         }),
     }
 }
@@ -503,6 +568,116 @@ pub(super) fn check_target(
     Ok(())
 }
 
+/// The cardinality-window judgment (`docs/architecture/30-dependencies.md`
+/// § enforcement): every TOUCHED parent key tuple — every tuple any delta
+/// child fact projects to, plus the delta's ψ-selected parents themselves
+/// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`) — resolves
+/// its ψ-selected holder in the final state and counts its child group
+/// against the window (`lean/Bumbledb/Oracle.lean:
+/// cardinality_plan_decides` — the walk's length verdict IS the
+/// delta-restricted check). A floor or ceiling miss records into the
+/// collector, scan-complete like the containment sides. The
+/// floored-window/containment sharing
+/// (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) shares
+/// the `R` machinery — a window edge is written exactly as a containment
+/// edge is — but never skips a check: a declared window is judged whether
+/// or not a containment subsumes its floor.
+pub(super) fn check_windows(
+    view: &FinalStateView<'_, '_, '_>,
+    violations: &mut Vec<Violation>,
+) -> Result<()> {
+    let FinalStateView { txn, schema, plan } = view;
+    let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
+    let mut span = obs::span(obs::names::JUDGMENT_WINDOWS, obs::Category::Commit);
+    let mut judged = 0u64;
+    for check in &plan.window_checks {
+        judged += 1;
+        let statement = schema.window(check.window);
+        let checks = plan.selections.window(check.window);
+        collect(
+            checker.check_window(statement, checks, check.parent.as_bytes()),
+            violations,
+        )?;
+    }
+    span.set_args(judged, 0);
+    span.end();
+    Ok(())
+}
+
+/// The order-mark judgment (`docs/architecture/30-dependencies.md`
+/// § enforcement): every TOUCHED group — every grouping tuple any delta
+/// fact of the relation projects to; a dirty `by`-hop relation escalates
+/// to EVERY group (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+/// rankedTouched`) — is walked once in position order
+/// (`lean/Bumbledb/Oracle.lean: order_plan_decides`): uniqueness,
+/// 1-basedness, and downward closure fall out of one `positions are
+/// exactly 1..k` sweep of the group's `R` keys, and the ranked form adds
+/// the key-backed hop chase per member
+/// (`lean/Bumbledb/Oracle.lean: ranked_order_plan_decides`).
+pub(super) fn check_orders(
+    view: &FinalStateView<'_, '_, '_>,
+    violations: &mut Vec<Violation>,
+) -> Result<()> {
+    let FinalStateView { txn, schema, plan } = view;
+    let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
+    let mut span = obs::span(obs::names::JUDGMENT_ORDERS, obs::Category::Commit);
+    let mut walked = 0u64;
+    for check in &plan.order_checks {
+        let statement = schema.order(check.order);
+        match &check.scope {
+            OrderScope::Groups(groups) => {
+                for group in groups {
+                    walked += 1;
+                    if checker.check_order_walk(statement, Some(group.as_bytes()), violations)? {
+                        // The statement is convicted; further groups can
+                        // add no citation (the seal dedups per statement).
+                        break;
+                    }
+                }
+            }
+            OrderScope::AllGroups => {
+                walked += 1;
+                checker.check_order_walk(statement, None, violations)?;
+            }
+        }
+    }
+    span.set_args(walked, 0);
+    span.end();
+    Ok(())
+}
+
+/// Lays one child fact's parent-tuple bytes down in the window's
+/// target-key determinant order — the `R` key-bytes segment of a window
+/// edge, the child-group walk's prefix, and the source half of the
+/// touched-parent set (`docs/architecture/50-storage.md` § key layout).
+pub(crate) fn window_child_image<'a>(
+    statement: &CardinalityStatement,
+    layout: &FactLayout,
+    fact: &[u8],
+    out: &'a mut DeterminantImage,
+) -> &'a DeterminantImage {
+    match &statement.enforcement {
+        Enforcement::ScalarProbe {
+            key_permutation, ..
+        } => keys::permuted_determinant_image(
+            layout,
+            &statement.source.projection,
+            key_permutation,
+            fact,
+            out,
+        ),
+        // A closed target's one probe-able identity is the synthetic id:
+        // the projection is a single field, so statement order IS
+        // determinant order.
+        Enforcement::Closed { .. } => {
+            keys::determinant_image(layout, &statement.source.projection, fact, out)
+        }
+        Enforcement::IntervalCoverage { .. } => {
+            unreachable!("windows refuse interval positions at the gate")
+        }
+    }
+}
+
 /// The fact that re-established a key determinant in phase 2, reached through
 /// the determinant's own `U` entry — the ψ-qualification subject. Both gets
 /// hit state this commit just wrote (write txns read their own writes),
@@ -756,6 +931,282 @@ impl<'a> Checker<'a> {
                 probe,
             },
         )
+    }
+
+    /// One touched parent's window judgment: resolve the ψ-selected holder
+    /// of the parent tuple in this checker's state (one keyed `U` probe —
+    /// `lean/Bumbledb/Oracle.lean: accepted_target_key_prices_the_probe`
+    /// is the unit price's license — or the compiled member set for a
+    /// closed parent), then count its child group and compare against the
+    /// window. No holder, nothing to judge — windows never manufacture
+    /// parents (`lean/Bumbledb/Cardinality.lean:
+    /// cardinality_of_empty_parent`).
+    ///
+    /// Shared verbatim by the commit path (over the write transaction's
+    /// own-writes view) and `Db::verify_store` (over a read snapshot) —
+    /// one definition, never a sweeper copy.
+    pub(crate) fn check_window(
+        &mut self,
+        statement: &CardinalityStatement,
+        checks: &SideChecks,
+        parent_key: &[u8],
+    ) -> Result<()> {
+        let parent_fact: &[u8] = match &statement.enforcement {
+            Enforcement::ScalarProbe { target_key, .. } => {
+                let key_statement = self.schema.key(*target_key);
+                let u_len = keys::determinant_key(
+                    &mut self.key,
+                    statement.target.relation,
+                    key_statement.id,
+                    parent_key,
+                );
+                let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
+                    return Ok(());
+                };
+                let row_id = decode_row_id(value)?;
+                let fact = fact_by_row(self.data, self.txn, statement.target.relation, row_id)?;
+                let layout = self.schema.relation(statement.target.relation).layout();
+                if !satisfies(&checks.target, layout, fact) {
+                    return Ok(());
+                }
+                fact
+            }
+            // A closed parent: the member set IS the ψ-selected roster,
+            // and the parent tuple is the axiom's 8-byte id encoding.
+            Enforcement::Closed { members } => {
+                let Ok(word) = <[u8; 8]>::try_from(parent_key) else {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "window parent key width",
+                    )));
+                };
+                let id = u64::from_be_bytes(word);
+                if !AxiomIndex::try_from(id).is_ok_and(|index| members.contains(index)) {
+                    return Ok(());
+                }
+                let rows = self
+                    .schema
+                    .relation(statement.target.relation)
+                    .extension()
+                    .expect("the Closed enforcement arm resolves only against a closed target");
+                let index = usize::try_from(id).expect("a contained axiom index fits usize");
+                &rows[index].fact
+            }
+            Enforcement::IntervalCoverage { .. } => {
+                unreachable!("windows refuse interval positions at the gate")
+            }
+        };
+        let count = self.count_children(statement, &checks.source, parent_key)?;
+        if count < statement.lo || statement.hi.is_some_and(|hi| count > hi) {
+            return Err(Error::CommitRejected {
+                violations: Violations::one(Violation::Cardinality {
+                    statement: statement.id,
+                    fact: parent_fact.into(),
+                    count,
+                }),
+            });
+        }
+        Ok(())
+    }
+
+    /// One parent's child-group count: the ordered walk of the window
+    /// statement's `R` bucket at the parent tuple — one entry seek plus
+    /// one read per walked edge (`lean/Bumbledb/Oracle.lean:
+    /// window_plan_consultations`), stopped as soon as the verdict is
+    /// decided (a shorter read only reads less — the clipping license).
+    /// A CLOSED source stored no edges: the φ-selected axioms sharing the
+    /// tuple are counted by an honest ≤256-row extension scan (domain
+    /// quantification, `docs/architecture/30-dependencies.md`).
+    fn count_children(
+        &mut self,
+        statement: &CardinalityStatement,
+        phi: &SelectionCheck,
+        parent_key: &[u8],
+    ) -> Result<u64> {
+        let source = self.schema.relation(statement.source.relation);
+        if let Some(rows) = source.extension() {
+            let layout = source.layout();
+            let mut derived = DeterminantImage::scratch_with_capacity(parent_key.len());
+            let mut count = 0u64;
+            for row in rows {
+                if !satisfies(phi, layout, &row.fact) {
+                    continue;
+                }
+                window_child_image(statement, layout, &row.fact, &mut derived);
+                if derived.as_bytes() == parent_key {
+                    count += 1;
+                }
+            }
+            return Ok(count);
+        }
+        // The walk decides at `max(lo, hi + 1)` entries: past the ceiling
+        // the count convicts whatever follows, and at the floor with no
+        // ceiling nothing further can change the verdict.
+        let decided_at = match statement.hi {
+            Some(hi) => statement.lo.max(hi.saturating_add(1)),
+            None => statement.lo,
+        };
+        let p_len = keys::reverse_prefix(&mut self.key, statement.id, parent_key);
+        let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
+            (Bound::Included(&self.key[..p_len]), Bound::Unbounded);
+        let mut count = 0u64;
+        for entry in self.data.range(self.txn, &bounds)? {
+            let (k, _) = entry?;
+            if !k.starts_with(&self.key[..p_len]) {
+                break;
+            }
+            count += 1;
+            if count >= decided_at {
+                break;
+            }
+        }
+        Ok(count)
+    }
+
+    /// One ordered walk of an order statement's `R` keys — one group
+    /// (`group = Some`) or every group in sequence (`group = None`, the
+    /// ranked escalation's whole-namespace walk). Positions must read
+    /// exactly `1..k` per group — uniqueness, 1-basedness, and downward
+    /// closure in one sweep (`lean/Bumbledb/Order.lean: OrdinalGroup`) —
+    /// and under a sealed `by` chain the ranks read via the key-backed
+    /// hop probes must be non-decreasing in position order
+    /// (`lean/Bumbledb/Order.lean: ranked_tiebreak_lex` — rank decides
+    /// first, the residual order is the position order itself). Returns
+    /// whether the statement was convicted; the walk stops there — one
+    /// citation per statement is the sealed set's identity anyway.
+    pub(crate) fn check_order_walk(
+        &mut self,
+        statement: &OrderStatement,
+        group: Option<&[u8]>,
+        violations: &mut Vec<Violation>,
+    ) -> Result<bool> {
+        let relation = self.schema.relation(statement.relation);
+        let group_width: usize = statement
+            .grouping
+            .iter()
+            .map(|field| relation.field(*field).value_type.type_desc().width())
+            .sum();
+        // Own prefix scratch: the ranked chase below reuses `self.key`.
+        let mut prefix: KeyBuf = [0; MAX_KEY];
+        let p_len = keys::reverse_prefix(&mut prefix, statement.id, group.unwrap_or(&[]));
+        let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
+            (Bound::Included(&prefix[..p_len]), Bound::Unbounded);
+        let mut current_group: Vec<u8> = Vec::new();
+        let mut in_group = false;
+        let mut expected: u64 = 1;
+        let mut prev_pos: Option<[u8; 8]> = None;
+        let mut prev_rank: Option<[u8; 8]> = None;
+        for entry in self.data.range(self.txn, &bounds)? {
+            let (k, _) = entry?;
+            if !k.starts_with(&prefix[..p_len]) {
+                break;
+            }
+            let Some((_, key_bytes, src_rel, src_row)) = keys::parse_reverse_key(k) else {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "R key shape",
+                )));
+            };
+            if key_bytes.len() != group_width + 8 {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "R key width",
+                )));
+            }
+            if src_rel != statement.relation {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "R key source relation",
+                )));
+            }
+            let (group_bytes, pos_bytes) = key_bytes.split_at(group_width);
+            let pos: [u8; 8] = pos_bytes
+                .try_into()
+                .expect("the split leaves exactly the 8-byte position tail");
+            if !in_group || group_bytes != current_group.as_slice() {
+                in_group = true;
+                current_group.clear();
+                current_group.extend_from_slice(group_bytes);
+                expected = 1;
+                prev_pos = None;
+                prev_rank = None;
+            }
+            if pos != encode_u64(expected) {
+                let fact = fact_by_row(self.data, self.txn, src_rel, src_row)?;
+                let defect = if prev_pos == Some(pos) {
+                    OrderDefect::DuplicatePosition
+                } else {
+                    OrderDefect::PositionGap
+                };
+                violations.push(Violation::Order {
+                    statement: statement.id,
+                    defect,
+                    fact: fact.into(),
+                });
+                return Ok(true);
+            }
+            if let Some(chain) = &statement.ranking {
+                let fact = fact_by_row(self.data, self.txn, src_rel, src_row)?;
+                if let Some(rank) = self.chain_rank(chain, statement.relation, fact)? {
+                    // Canonical u64 encodings are order embeddings, so
+                    // byte compare IS rank compare.
+                    if prev_rank.is_some_and(|prev| rank < prev) {
+                        violations.push(Violation::Order {
+                            statement: statement.id,
+                            defect: OrderDefect::RankOrder,
+                            fact: fact.into(),
+                        });
+                        return Ok(true);
+                    }
+                    prev_rank = Some(rank);
+                }
+            }
+            prev_pos = Some(pos);
+            expected += 1;
+        }
+        Ok(false)
+    }
+
+    /// One fact's rank under a sealed `by` chain: chase the key-backed
+    /// hops — per hop one keyed `U` probe (a closed hop relation scans
+    /// its ≤256 sealed axioms instead), one `F` get, one payload slice
+    /// (`lean/Bumbledb/Oracle.lean: chain_cost_hops` — one consultation
+    /// per hop, honest by `point_probe_honest`). A hop miss means the
+    /// fact HAS no rank — the relational reading
+    /// (`lean/Bumbledb/Order.lean: RankChain.rankOf`): rankless facts
+    /// impose no monotonicity, so `None`, never an error. The rank stays
+    /// in its canonical 8-byte encoding — an order embedding, compared as
+    /// bytes.
+    fn chain_rank(
+        &mut self,
+        chain: &SealedRankChain,
+        relation: RelationId,
+        fact: &[u8],
+    ) -> Result<Option<[u8; 8]>> {
+        let layout = self.schema.relation(relation).layout();
+        let mut running: &[u8] = field_bytes(fact, layout, usize::from(chain.link.0));
+        for hop in &chain.hops {
+            let hop_relation = self.schema.relation(hop.relation);
+            let hop_layout = hop_relation.layout();
+            let hop_fact: &[u8] = if let Some(rows) = hop_relation.extension() {
+                match rows.iter().find(|row| {
+                    field_bytes(&row.fact, hop_layout, usize::from(hop.key.0)) == running
+                }) {
+                    Some(row) => &row.fact,
+                    None => return Ok(None),
+                }
+            } else {
+                let key_statement = self.schema.key(hop.key_statement);
+                let u_len =
+                    keys::determinant_key(&mut self.key, hop.relation, key_statement.id, running);
+                let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
+                    return Ok(None);
+                };
+                let row_id = decode_row_id(value)?;
+                fact_by_row(self.data, self.txn, hop.relation, row_id)?
+            };
+            running = field_bytes(hop_fact, hop_layout, usize::from(hop.read.0));
+        }
+        let rank: [u8; 8] = running.try_into().map_err(|_| {
+            Error::Corruption(CorruptionError::MalformedValue("rank payload width"))
+        })?;
+        Ok(Some(rank))
     }
 
     /// The per-segment target-selection check: with an empty σ the determinant

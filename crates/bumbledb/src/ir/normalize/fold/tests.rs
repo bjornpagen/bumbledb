@@ -199,7 +199,7 @@ fn range_query(conditions: Vec<Comparison>) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: R,
+            source: crate::ir::AtomSource::Edb(R),
             bindings: vec![(R_A, Term::Var(VarId(0)))],
         }],
         negated: vec![],
@@ -325,7 +325,7 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: RelationId(1),
+            source: crate::ir::AtomSource::Edb(RelationId(1)),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(1))),
                 (FieldId(1), Term::Var(VarId(0))),
@@ -398,7 +398,7 @@ fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
     ];
     let mut occurrences = vec![Occurrence {
         occ_id: OccId(0),
-        relation: R,
+        source: crate::ir::AtomSource::Edb(R),
         role: Role::Negated,
         vars: vec![],
         filters: filters.clone(),
@@ -430,7 +430,7 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
     let schema = schema();
     let occurrence = |filters| Occurrence {
         occ_id: OccId(0),
-        relation: R,
+        source: crate::ir::AtomSource::Edb(R),
         role: Role::Positive,
         vars: vec![],
         filters,

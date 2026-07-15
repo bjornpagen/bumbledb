@@ -145,7 +145,10 @@ the artifact's stratification lemma was structurally subsumed at port
 time (the then-modeled syntax had no head-referencing atoms). The
 stratified fixpoint model has since landed — 2026-07-14, owner
 decision — in `Exec/Fixpoint.lean` over `Query/Syntax.lean`'s program
-cut, the prepared home entered; the ENGINE still refuses recursion
-today, and its discharge campaign is queued (`Bridge.lean` carries no
-rows for the fixpoint model — deliberate: obligations ledger only what
-exists).
+cut, the prepared home entered. The engine discharge campaign followed
+on 2026-07-15 and is complete — the cut, the strata judge, the oracles,
+the delta-variant plans, the transient images, the per-stratum driver,
+the counted round surface, and the named-head notation
+(`docs/architecture/20-query-ir.md` § engine recursion;
+`40-execution.md` § the fixpoint driver) — and `Bridge.lean` carries
+the fixpoint model's rows, landed with the mechanisms they ledger.

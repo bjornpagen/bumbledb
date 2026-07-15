@@ -20,11 +20,11 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
     assert_ne!(a, other, "seeds diverge");
     // The golden: changing the generator — or the storage format, now a
     // live ingredient — re-baselines every corpus. Re-baselined by the
-    // enum funeral (vocabulary ordinals became plain u64 row ids, so
-    // every enum-carrying row's bytes changed).
+    // dependency-vocabulary extension (schema encoding v3, storage
+    // format 3: the fingerprint ingredient moved).
     assert_eq!(
         digest_hex(&a),
-        "2ef4b3c64a82712c69d6f2782b2b091ee81e717402600a8c85e9a69e20ad4cd4",
+        "727ad3aa54150fbf8cc8db734c413fcc4f99bcdd554d6cb43dec73740297cb35",
         "generator output changed — re-baseline deliberately"
     );
 }

@@ -119,7 +119,7 @@ pub use api::stats::{
     CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
     INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats,
 };
-pub use error::{Direction, Error, OverflowKind, Result, Violation, Violations};
+pub use error::{Direction, Error, OrderDefect, OverflowKind, Result, Violation, Violations};
 pub use interval::Interval;
 /// The statically-empty fold's off switch (`ir/normalize/fold.rs`):
 /// reachable only under the `fold-off` fuzz-oracle feature. History,
@@ -155,8 +155,9 @@ pub use storage::env::GenerationId;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm, MAX_CONDITION_DEPTH,
-    MAX_RULES, MaskTerm, ParamId, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm,
+    MAX_CONDITION_DEPTH, MAX_PREDICATES, MAX_RULES, MaskTerm, ParamId, PredId, PredicateDef,
+    Program, Query, Rule, Term, Value, VarId,
 };
 pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
 pub use verify_store::{StoreFinding, StoreReport};

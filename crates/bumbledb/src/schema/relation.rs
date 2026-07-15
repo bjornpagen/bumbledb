@@ -1,6 +1,9 @@
 //! Field, layout, and statement-index accessors on a validated relation.
 
-use super::{ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, Relation, SealedRow};
+use super::{
+    ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, OrderId, Relation, SealedRow,
+    WindowId,
+};
 
 impl Relation {
     #[must_use]
@@ -51,5 +54,24 @@ impl Relation {
     #[must_use]
     pub fn outgoing(&self) -> &[ContainmentId] {
         &self.outgoing
+    }
+
+    /// `Cardinality` statements whose source (counted child) is this
+    /// relation.
+    #[must_use]
+    pub fn window_sources(&self) -> &[WindowId] {
+        &self.window_sources
+    }
+
+    /// `Cardinality` statements whose target (parent) is this relation.
+    #[must_use]
+    pub fn window_targets(&self) -> &[WindowId] {
+        &self.window_targets
+    }
+
+    /// `Order` statements on this relation.
+    #[must_use]
+    pub fn order_marks(&self) -> &[OrderId] {
+        &self.order_marks
     }
 }

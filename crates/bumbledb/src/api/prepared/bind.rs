@@ -19,9 +19,18 @@ impl<S> PreparedQuery<'_, S> {
     /// no-knobs surface (`docs/architecture/00-product.md`).
     #[doc(hidden)]
     pub fn set_batch_size(&mut self, batch: usize) {
-        for rule in self.program.rules_mut() {
-            if let PreparedRule::FreeJoin(rule) = rule {
-                rule.executor = Executor::with_batch_size(&rule.plan, batch);
+        for rule in self.program.all_rules_mut() {
+            match rule {
+                PreparedRule::FreeJoin(rule) => {
+                    rule.executor = Executor::with_batch_size(&rule.plan, batch);
+                }
+                PreparedRule::Recursive(rule) => {
+                    for variant in &mut rule.variants {
+                        variant.rule.executor =
+                            Executor::with_batch_size(&variant.rule.plan, batch);
+                    }
+                }
+                PreparedRule::KeyProbe(_) => {}
             }
         }
     }

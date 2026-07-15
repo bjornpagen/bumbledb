@@ -12,11 +12,11 @@ pub(super) fn five_way() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::CAST_INFO,
+                source: bumbledb::AtomSource::Edb(ids::CAST_INFO),
                 bindings: vec![(FieldId(0), var(2)), (FieldId(1), var(3))],
             },
             Atom {
-                relation: ids::PERSON,
+                source: bumbledb::AtomSource::Edb(ids::PERSON),
                 bindings: vec![
                     (FieldId(0), var(3)),
                     (FieldId(1), var(0)),
@@ -24,11 +24,11 @@ pub(super) fn five_way() -> Query {
                 ],
             },
             Atom {
-                relation: ids::MOVIE_COMPANY,
+                source: bumbledb::AtomSource::Edb(ids::MOVIE_COMPANY),
                 bindings: vec![(FieldId(0), var(2)), (FieldId(1), var(4))],
             },
             Atom {
-                relation: ids::COMPANY,
+                source: bumbledb::AtomSource::Edb(ids::COMPANY),
                 bindings: vec![
                     (FieldId(0), var(4)),
                     (FieldId(1), var(1)),
@@ -36,7 +36,7 @@ pub(super) fn five_way() -> Query {
                 ],
             },
             Atom {
-                relation: ids::MOVIE,
+                source: bumbledb::AtomSource::Edb(ids::MOVIE),
                 bindings: vec![(FieldId(0), var(2)), (FieldId(2), var(5))],
             },
         ],

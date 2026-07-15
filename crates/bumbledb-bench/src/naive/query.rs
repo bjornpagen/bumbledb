@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
-    AggOp, Atom, Basic, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Query, Rule, Term,
-    Value, VarId,
+    AggOp, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, FindTerm, HeadTerm, MaskTerm,
+    Program, Query, Rule, Term, Value, VarId,
 };
 
 use super::tuple::{cmp_value, endpoints, point, point_in};
@@ -169,16 +169,48 @@ enum SubstitutedTree {
     Or(Vec<SubstitutedTree>),
 }
 
+/// The predicate reading of one program evaluation — the fixpoint's
+/// working sets beside their column typing. A predicate's facts ARE its
+/// answer tuples, read positionally: `FieldId(i)` is head position `i`
+/// (`lean/Bumbledb/Exec/Fixpoint.lean: tupleFact` — the positional
+/// addressing the program cut promised). A plain query reads no
+/// predicates: the empty world.
+pub(super) struct PredWorld<'a> {
+    /// Per predicate, the accumulated answer-tuple set.
+    sets: &'a [BTreeSet<Tuple>],
+    /// Per predicate, per head position: interval-typed? — the
+    /// membership typing rule read through predicate columns.
+    interval: &'a [Vec<bool>],
+}
+
+impl PredWorld<'static> {
+    /// The query world: no predicates exist.
+    const EMPTY: PredWorld<'static> = PredWorld {
+        sets: &[],
+        interval: &[],
+    };
+}
+
+/// A resolved atom source: an index into the stored relations or into
+/// the predicate sets — the model's plain-data twin of the Lean even/odd
+/// source coding (a device there, an enum here).
+enum Src {
+    Edb(usize),
+    Idb(usize),
+}
+
 /// One atom over substituted terms, each binding pre-tagged with whether
-/// its field is interval-typed (the membership rule's trigger).
+/// its column is interval-typed (the membership rule's trigger).
 struct FlatAtom {
-    relation: usize,
+    src: Src,
     bindings: Vec<(usize, bool, Substituted)>,
 }
 
 /// Everything enumeration reads.
 struct Env<'a> {
     relations: &'a [BTreeSet<Tuple>],
+    /// The predicate sets an `Idb` occurrence reads (empty for queries).
+    predicates: &'a [BTreeSet<Tuple>],
     atoms: Vec<FlatAtom>,
     negated: Vec<FlatAtom>,
     /// The rule's predicate trees, conjoined — evaluated directly.
@@ -193,6 +225,17 @@ struct Env<'a> {
     /// rule's answer is [`QueryError::MeasureOfRay`], checked after
     /// enumeration (the model's twin of the engine's poison flag).
     ray: std::cell::Cell<bool>,
+}
+
+impl Env<'_> {
+    /// The fact set one source reads: a stored relation, or a
+    /// predicate's accumulated answers.
+    fn facts(&self, src: &Src) -> &BTreeSet<Tuple> {
+        match src {
+            Src::Edb(relation) => &self.relations[*relation],
+            Src::Idb(pred) => &self.predicates[*pred],
+        }
+    }
 }
 
 impl NaiveDb {
@@ -222,40 +265,192 @@ impl NaiveDb {
         query: &Query,
         params: &[ParamValue],
     ) -> Result<BTreeSet<Tuple>, QueryError> {
-        if let [rule] = query.rules.as_slice() {
-            let bindings = self.rule_bindings(rule, params)?;
+        self.rows_for(&query.head, &query.rules, params, &PredWorld::EMPTY)
+    }
+
+    /// Evaluates a validated program with positional parameters, from
+    /// the definition — **the naive stratified fixpoint** (the shipping
+    /// law's naive oracle; the Lean truth is
+    /// `lean/Bumbledb/Exec/Fixpoint.lean: evalProgram` under
+    /// `program_eval_sound`, and the stratified denotation it lists is
+    /// `programDen`). Per stratum in condensation order, loop: evaluate
+    /// EVERY rule of every stratum predicate against the current
+    /// predicate sets with the same nested-loop evaluator queries use,
+    /// union the answers in, stop on no change. Naive, never semi-naive,
+    /// deliberately — no deltas, no frontier, no watermark: the model's
+    /// correctness is definitional and its independence is the recorded
+    /// trust root (the independence law).
+    ///
+    /// # Errors
+    ///
+    /// [`QueryError::Overflow`] / [`QueryError::MeasureOfRay`] exactly as
+    /// [`NaiveDb::query`] raises them — reachable only from
+    /// non-recursive predicates (the strata roster keeps measures and
+    /// folds out of recursive heads), so the verdict never depends on
+    /// iteration order.
+    ///
+    /// # Panics
+    ///
+    /// On malformed input — the model evaluates programs the engine's
+    /// validation roster has accepted (stratified, safe, aligned).
+    pub fn program(
+        &self,
+        program: &Program,
+        params: &[ParamValue],
+    ) -> Result<BTreeSet<Tuple>, QueryError> {
+        let strata = model_strata(program);
+        let interval = self.predicate_intervals(program);
+        let mut sets: Vec<BTreeSet<Tuple>> = vec![BTreeSet::new(); program.predicates.len()];
+        let top = strata.iter().copied().max().unwrap_or(0);
+        for stratum in 0..=top {
+            let members: Vec<usize> = (0..program.predicates.len())
+                .filter(|index| strata[*index] == stratum)
+                .collect();
+            loop {
+                // One round: every stratum rule against the CURRENT
+                // sets (the Lean `stratumStep`), then one union — the
+                // rounds are simultaneous, re-derivation is absorbed by
+                // set semantics, never re-counted.
+                let mut derived: Vec<(usize, BTreeSet<Tuple>)> = Vec::new();
+                for index in &members {
+                    let def = &program.predicates[*index];
+                    let preds = PredWorld {
+                        sets: &sets,
+                        interval: &interval,
+                    };
+                    derived.push((
+                        *index,
+                        self.rows_for(&def.head, &def.rules, params, &preds)?,
+                    ));
+                }
+                let mut changed = false;
+                for (index, rows) in derived {
+                    for row in rows {
+                        changed |= sets[index].insert(row);
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+        Ok(std::mem::take(&mut sets[usize::from(program.output.0)]))
+    }
+
+    /// One predicate's denotation against a predicate world — the
+    /// query dispatch (single rule / union fold / union of
+    /// projections), source-generalized. [`NaiveDb::query`] is the
+    /// empty-world reading; the fixpoint calls it per round.
+    fn rows_for(
+        &self,
+        head: &[HeadTerm],
+        rules: &[Rule],
+        params: &[ParamValue],
+        preds: &PredWorld<'_>,
+    ) -> Result<BTreeSet<Tuple>, QueryError> {
+        if let [rule] = rules {
+            let bindings = self.rule_bindings(rule, params, preds)?;
             return project(&rule.finds, &bindings);
         }
-        let aggregated = query
-            .head
+        let aggregated = head
             .iter()
-            .any(|term| matches!(term, bumbledb::HeadTerm::Aggregate(_)));
+            .any(|term| matches!(term, HeadTerm::Aggregate(_)));
         if aggregated {
-            return self.union_fold(query, params);
+            return self.union_fold(rules, params, preds);
         }
         // Projection head: the union of the per-rule projected sets —
         // one union, set semantics.
         let mut rows = BTreeSet::new();
-        for rule in &query.rules {
-            let bindings = self.rule_bindings(rule, params)?;
+        for rule in rules {
+            let bindings = self.rule_bindings(rule, params, preds)?;
             rows.extend(project(&rule.finds, &bindings)?);
         }
         Ok(rows)
     }
 
+    /// Per predicate, per head position: interval-typed? — the
+    /// membership typing rule read through predicate columns (an `Idb`
+    /// occurrence on an interval-typed column participates in point
+    /// membership exactly as an interval field does). Re-derived from
+    /// the rules to a monotone fixpoint: a projected variable is
+    /// interval-typed when no positive occurrence anchors it on a
+    /// scalar column, `Pack` and Arg-carried interval variables type
+    /// their positions, every other head shape is scalar. Rules align
+    /// per predicate (validation), so the first rule speaks for all.
+    fn predicate_intervals(&self, program: &Program) -> Vec<Vec<bool>> {
+        let mut interval: Vec<Vec<bool>> = program
+            .predicates
+            .iter()
+            .map(|def| vec![false; def.head.len()])
+            .collect();
+        loop {
+            let mut changed = false;
+            for (index, def) in program.predicates.iter().enumerate() {
+                let Some(rule) = def.rules.first() else {
+                    continue;
+                };
+                let col_is_interval = |atom: &Atom, field: bumbledb::FieldId| match atom.source {
+                    AtomSource::Edb(_) => self.atom_field_is_interval(atom, field),
+                    AtomSource::Idb(pred) => interval[usize::from(pred.0)]
+                        .get(usize::from(field.0))
+                        .copied()
+                        .unwrap_or(false),
+                };
+                let var_is_interval = |var: VarId| {
+                    !rule.atoms.iter().any(|atom| {
+                        atom.bindings.iter().any(|(field, term)| {
+                            matches!(term, Term::Var(v) if *v == var)
+                                && !col_is_interval(atom, *field)
+                        })
+                    })
+                };
+                let flags: Vec<bool> = rule
+                    .finds
+                    .iter()
+                    .map(|find| match find {
+                        // A projected variable and an Arg-carried one
+                        // type their positions identically: the value
+                        // is the variable's.
+                        FindTerm::Var(var)
+                        | FindTerm::Aggregate {
+                            op: AggOp::ArgMax { .. } | AggOp::ArgMin { .. },
+                            over: Some(var),
+                        } => var_is_interval(*var),
+                        FindTerm::Aggregate {
+                            op: AggOp::Pack, ..
+                        } => true,
+                        FindTerm::Measure(_)
+                        | FindTerm::Aggregate { .. }
+                        | FindTerm::AggregateMeasure { .. } => false,
+                    })
+                    .collect();
+                if flags != interval[index] {
+                    interval[index] = flags;
+                    changed = true;
+                }
+            }
+            if !changed {
+                return interval;
+            }
+        }
+    }
+
     /// One rule's distinct full binding set — the conjunctive semantics
-    /// over the rule's own variable scope.
+    /// over the rule's own variable scope, occurrences read through the
+    /// source world (stored relations, plus the predicate sets when a
+    /// fixpoint is running).
     fn rule_bindings(
         &self,
         rule: &Rule,
         params: &[ParamValue],
+        preds: &PredWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let var_count = count_vars(rule);
         let mut scalar_anchored = vec![false; var_count];
         for atom in &rule.atoms {
             for (field, term) in &atom.bindings {
                 if let Term::Var(var) = term
-                    && !self.atom_field_is_interval(atom, *field)
+                    && !self.source_field_is_interval(atom, *field, preds)
                 {
                     scalar_anchored[usize::from(var.0)] = true;
                 }
@@ -263,15 +458,16 @@ impl NaiveDb {
         }
         let env = Env {
             relations: &self.relations,
+            predicates: preds.sets,
             atoms: rule
                 .atoms
                 .iter()
-                .map(|atom| self.flatten(atom, params))
+                .map(|atom| self.flatten(atom, params, preds))
                 .collect(),
             negated: rule
                 .negated
                 .iter()
-                .map(|atom| self.flatten(atom, params))
+                .map(|atom| self.flatten(atom, params, preds))
                 .collect(),
             conditions: rule
                 .conditions
@@ -302,10 +498,11 @@ impl NaiveDb {
     /// `20-query-ir.md` § aggregation).
     fn union_fold(
         &self,
-        query: &Query,
+        rules: &[Rule],
         params: &[ParamValue],
+        preds: &PredWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
-        let head = &query.rules[0].finds;
+        let head = &rules[0].finds;
         assert!(
             !head.iter().any(|term| matches!(
                 term,
@@ -317,8 +514,8 @@ impl NaiveDb {
             "validation refuses Arg-restriction across rules"
         );
         let mut domain: BTreeSet<Tuple> = BTreeSet::new();
-        for rule in &query.rules {
-            for binding in &self.rule_bindings(rule, params)? {
+        for rule in rules {
+            for binding in &self.rule_bindings(rule, params, preds)? {
                 let row: Result<Vec<Value>, QueryError> = rule
                     .finds
                     .iter()
@@ -399,16 +596,19 @@ impl NaiveDb {
         Ok(rows)
     }
 
-    fn flatten(&self, atom: &Atom, params: &[ParamValue]) -> FlatAtom {
+    fn flatten(&self, atom: &Atom, params: &[ParamValue], preds: &PredWorld<'_>) -> FlatAtom {
         FlatAtom {
-            relation: atom.relation.0 as usize,
+            src: match atom.source {
+                AtomSource::Edb(relation) => Src::Edb(relation.0 as usize),
+                AtomSource::Idb(pred) => Src::Idb(usize::from(pred.0)),
+            },
             bindings: atom
                 .bindings
                 .iter()
                 .map(|(field, term)| {
                     (
                         usize::from(field.0),
-                        self.atom_field_is_interval(atom, *field),
+                        self.source_field_is_interval(atom, *field, preds),
                         substitute(term, params),
                     )
                 })
@@ -418,10 +618,88 @@ impl NaiveDb {
 
     fn atom_field_is_interval(&self, atom: &Atom, field: bumbledb::FieldId) -> bool {
         matches!(
-            self.field_type(atom.relation.0 as usize, usize::from(field.0)),
+            self.field_type(atom.relation().0 as usize, usize::from(field.0)),
             ValueType::Interval { .. }
         )
     }
+
+    /// The membership trigger per source: a stored field's declared
+    /// type, or a predicate column's derived one.
+    fn source_field_is_interval(
+        &self,
+        atom: &Atom,
+        field: bumbledb::FieldId,
+        preds: &PredWorld<'_>,
+    ) -> bool {
+        match atom.source {
+            AtomSource::Edb(_) => self.atom_field_is_interval(atom, field),
+            AtomSource::Idb(pred) => preds.interval[usize::from(pred.0)]
+                .get(usize::from(field.0))
+                .copied()
+                .unwrap_or(false),
+        }
+    }
+}
+
+/// The model's stratification witness, by relaxation from the
+/// definition (`lean/Bumbledb/Query/Syntax.lean: Program.StratifiedBy`):
+/// sweep until every positive edge is non-increasing and every negated
+/// edge strictly decreasing — plus, mirroring the engine's SCC
+/// condensation (a fold rule's reads always sit in a strictly lower
+/// component, `AggregationThroughCycle`), a fold rule's `Idb` reads sit
+/// strictly below, so a fold never folds a still-growing set. The
+/// denotation is witness-independent (the recorded classical narrowing,
+/// `lean/Bumbledb/Exec/Fixpoint.lean` module doc), so any witness the
+/// definition accepts serves. Deliberately NOT Tarjan: the model
+/// re-derives from the definition, never shares the judge's algorithm.
+///
+/// # Panics
+///
+/// When no witness exists — the model evaluates programs the strata
+/// judge has accepted.
+///
+/// `pub(crate)` for one reader beside the fixpoint: the conformance
+/// serializer records this witness in each program case, and the Lean
+/// evaluator (`evalProgram`) evaluates under the witness it is handed
+/// (the denotation is witness-independent — the recorded narrowing).
+pub(crate) fn model_strata(program: &Program) -> Vec<usize> {
+    let count = program.predicates.len();
+    let mut strata = vec![0usize; count];
+    // A stratified program's strata are bounded by the predicate count,
+    // and each changing sweep raises at least one stratum — so a
+    // legitimate relaxation settles within count² sweeps.
+    for _ in 0..=count * count {
+        let mut changed = false;
+        for (index, def) in program.predicates.iter().enumerate() {
+            for rule in &def.rules {
+                let fold = rule.finds.iter().any(|find| {
+                    matches!(
+                        find,
+                        FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
+                    )
+                });
+                let occurrences = rule
+                    .atoms
+                    .iter()
+                    .map(|atom| (atom, fold))
+                    .chain(rule.negated.iter().map(|atom| (atom, true)));
+                for (atom, strict) in occurrences {
+                    let AtomSource::Idb(pred) = atom.source else {
+                        continue;
+                    };
+                    let floor = strata[usize::from(pred.0)] + usize::from(strict);
+                    if strata[index] < floor {
+                        strata[index] = floor;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            return strata;
+        }
+    }
+    panic!("validated: programs are stratified (the strata judge accepted this program)")
 }
 
 fn count_vars(rule: &Rule) -> usize {
@@ -553,7 +831,7 @@ fn enumerate(
         return;
     }
     let atom = &env.atoms[index];
-    for fact in &env.relations[atom.relation] {
+    for fact in env.facts(&atom.src) {
         let pending_before = pending.len();
         let mut bound_here = Vec::new();
         let mut admitted = true;
@@ -654,7 +932,8 @@ fn leaf_admits(
         }
     }
     for atom in &env.negated {
-        let matched = env.relations[atom.relation]
+        let matched = env
+            .facts(&atom.src)
             .iter()
             .any(|fact| negated_matches(env, atom, fact, assignment));
         if matched {

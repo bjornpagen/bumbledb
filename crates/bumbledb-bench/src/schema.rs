@@ -197,14 +197,14 @@ mod tests {
     /// The golden fingerprint: changing the schema re-baselines every
     /// corpus digest and report — this test makes that a deliberate act,
     /// never an accident. Update the constant ONLY alongside a conscious
-    /// schema change. Last moved by the enum funeral: the vocabularies
-    /// became the closed relations `Currency`/`Source`/`Tag` and their
-    /// containments.
+    /// schema change. Last moved by the dependency-vocabulary extension:
+    /// the canonical schema encoding is `v3` (literal-set selections and
+    /// the two new statement forms enter the stream).
     #[test]
     fn the_fingerprint_is_pinned() {
         assert_eq!(
             fingerprint_hex(),
-            "63e3b48035488c5e9ed82ea3458f99db28edecdb2ed203b1344a555709a9bcd6",
+            "8fe8ca29ce8bce48286e1d3652d8f28e15d557f7b4eadcec2c468de7e0a9e9fb",
             "the ledger schema changed — re-baseline corpora and reports deliberately"
         );
     }

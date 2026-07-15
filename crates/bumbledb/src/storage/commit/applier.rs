@@ -58,6 +58,14 @@ impl Applier<'_> {
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
         }
+        // Window and order edges delete byte-symmetrically with their
+        // puts, exactly as containment edges do (and share the same
+        // blind-delete asymmetry the sweeper compensates for).
+        for edge in op.window_edges.iter().chain(&op.order_edges) {
+            let r_len =
+                keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
+            self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
+        }
         Ok(())
     }
 
@@ -141,6 +149,17 @@ impl Applier<'_> {
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
             crashpoint!("mid-write-r");
+        }
+        // Window edges (per φ-satisfying child) and order edges (per fact
+        // of a marked relation): the same `R` machinery, statement-scoped
+        // — the child-group and ordered-group walks' index
+        // (`docs/architecture/50-storage.md` § key layout). Covered by
+        // the `mid-write-r` crashpoint above: an R put boundary is one
+        // named point, whichever statement kind wrote the edge.
+        for edge in op.window_edges.iter().chain(&op.order_edges) {
+            let r_len =
+                keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
+            self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
         }
         Ok(())
     }

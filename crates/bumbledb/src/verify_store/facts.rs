@@ -16,6 +16,10 @@ use crate::storage::keys::{self, DeterminantImage, KeyBuf, MAX_KEY};
 
 use super::{StoreFinding, Sweep, namespace};
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear per-fact coherence walk is clearer kept together"
+)] // one namespace cursor, every per-fact check beside it
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
     let schema = s.schema;
@@ -132,8 +136,108 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             &mut scratch,
             &mut determinant,
         )?;
+        check_marks(
+            s,
+            &mut checker,
+            rel,
+            row_id,
+            fact,
+            &mut scratch,
+            &mut determinant,
+        )?;
     }
     check_extension_sources(s, &mut checker)
+}
+
+/// F→R for the extension forms, plus the global window judgment. Per
+/// window whose source is this relation and whose φ the fact satisfies,
+/// the window edge must exist; per order mark on this relation, the mark
+/// edge must exist (grouping bytes ‖ position tail). Per window whose
+/// TARGET is this relation and whose ψ the fact satisfies, the child
+/// group is counted through the commit path's own walk
+/// ([`judgment::Checker::check_window`]) — a count outside the window is
+/// [`StoreFinding::WindowViolation`]. (Order groups are walked whole in
+/// the marks pass — a per-fact ride would re-walk each group once per
+/// member.)
+fn check_marks(
+    s: &mut Sweep<'_, '_>,
+    checker: &mut judgment::Checker<'_>,
+    rel: RelationId,
+    row_id: u64,
+    fact: &[u8],
+    scratch: &mut KeyBuf,
+    determinant: &mut DeterminantImage,
+) -> Result<()> {
+    let txn = s.txn;
+    let schema = s.schema;
+    let relation = schema.relation(rel);
+    let layout = relation.layout();
+    for &window_id in relation.window_sources() {
+        let statement = schema.window(window_id);
+        if !judgment::satisfies(&s.selections.window(window_id).source, layout, fact) {
+            continue;
+        }
+        judgment::window_child_image(statement, layout, fact, determinant);
+        let r_len = keys::reverse_key(scratch, statement.id, determinant.as_bytes(), rel, row_id);
+        if s.data.get(txn.raw(), &scratch[..r_len])?.is_none() {
+            s.push(StoreFinding::FactWithoutReverseEdge {
+                statement: statement.id,
+                relation: rel,
+                row_id,
+                reverse_key: scratch[..r_len].into(),
+            });
+        }
+    }
+    for &order_id in relation.order_marks() {
+        let statement = schema.order(order_id);
+        keys::determinant_image(layout, &statement.edge_projection, fact, determinant);
+        let r_len = keys::reverse_key(scratch, statement.id, determinant.as_bytes(), rel, row_id);
+        if s.data.get(txn.raw(), &scratch[..r_len])?.is_none() {
+            s.push(StoreFinding::FactWithoutReverseEdge {
+                statement: statement.id,
+                relation: rel,
+                row_id,
+                reverse_key: scratch[..r_len].into(),
+            });
+        }
+    }
+    for &window_id in relation.window_targets() {
+        let statement = schema.window(window_id);
+        let Enforcement::ScalarProbe { target_key, .. } = &statement.enforcement else {
+            continue; // closed parents re-check in the marks pass
+        };
+        {
+            let checks = s.selections.window(window_id);
+            if !judgment::satisfies(&checks.target, layout, fact) {
+                continue;
+            }
+        }
+        let key_statement = schema.key(*target_key);
+        keys::determinant_image(layout, &key_statement.projection, fact, determinant);
+        let checks = s.selections.window(window_id);
+        match checker.check_window(statement, checks, determinant.as_bytes()) {
+            Err(Error::CommitRejected { violations }) => {
+                for violation in violations {
+                    let Violation::Cardinality {
+                        statement,
+                        fact,
+                        count,
+                    } = violation
+                    else {
+                        unreachable!("the window check cites cardinality statements only");
+                    };
+                    s.push(StoreFinding::WindowViolation {
+                        statement,
+                        fact,
+                        count,
+                    });
+                }
+            }
+            Ok(()) | Err(Error::Corruption(_)) => {}
+            Err(other) => return Err(other),
+        }
+    }
+    Ok(())
 }
 
 /// F→R plus the global containment judgment, per outgoing containment

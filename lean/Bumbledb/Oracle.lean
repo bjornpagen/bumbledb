@@ -185,17 +185,23 @@ fact-level fidelity to its delta-restricted check.
   demand spent. On an unkeyed group the abstract count would
   understate, which is exactly why the gate refuses unkeyed targets.
 
-## Undischarged (spec-ahead): the window and order-mark plans
+## The window and order-mark plans: acceptance and checker discharged
 
-The engine's accepted statement forms today are functionality and
-containment, full stop (`crate::schema::StatementDescriptor`). The
-window and order-mark plan theorems land NOW because they gate the
-queued Rust checker's design — the plans here ARE that checker's
-consultation discipline — and their engine discharge is the
-2026-07-14 vocabulary campaign's queued work. No `Bridge.lean` row
-cites them: deliberate, not an omission. The FD, containment, and
+The engine ACCEPTS the window and order-mark forms at declaration
+(2026-07-14: `StatementDescriptor::Cardinality` / `::Order`; the gate
+arms `validate_cardinality` / `validate_order` in
+`schema/validate.rs` resolve exactly the keys these plans price —
+the window's target key, the ranked form's per-hop keys — so "the
+plan is sealable" is what acceptance checks, and the `Bridge.lean`
+acceptance rows cite the plan theorems). The Rust CHECKER runs the
+plans as stated: `windowPlan`'s per-touched-parent child-group walk
+is `storage/commit/judgment.rs::Checker::check_window`, `orderPlan`'s
+per-touched-group position-ordered walk is `::check_order_walk`, and
+the ranked chase's one-probe-per-hop transcript is `::chain_rank` —
+the enforcement discharge rows cite the delta-restriction theorems
+these plans decide. The FD, containment, and
 coverage plans price mechanisms the ledger already carries
-(`Applier`, `judgment.rs`, the sweep); this module adds no rows.
+(`Applier`, `judgment.rs`, the sweep); those arms add no rows.
 -/
 
 namespace Bumbledb

@@ -21,8 +21,9 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
-    MAX_CONDITION_DEPTH, MAX_RULES, MaskTerm, ParamId, Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
+    MAX_CONDITION_DEPTH, MAX_RULES, MaskTerm, ParamId, PredId, PredicateDef, Program, Query,
+    RelationId, Rule, Term, Value, VarId,
 };
 
 mod common;
@@ -162,8 +163,26 @@ fn atom(rng: &mut Rng) -> Atom {
         .map(|_| (field_id(rng), term(rng)))
         .collect();
     Atom {
-        relation: relation_id(rng),
+        source: atom_source(rng),
         bindings,
+    }
+}
+
+/// Mostly stored relations; sometimes a predicate source — in range,
+/// just past, or absurd — so the sweep drives the program roster (the
+/// well-formedness screen, the strata judge, the signature fixpoint)
+/// and the fixpoint prepare pipeline with hostile `Idb` shapes too.
+fn atom_source(rng: &mut Rng) -> AtomSource {
+    if rng.chance(4) {
+        let pred = match rng.below(4) {
+            0 => 0,
+            1 => 1,
+            2 => 4,
+            _ => u16::MAX,
+        };
+        AtomSource::Idb(PredId(pred))
+    } else {
+        AtomSource::Edb(relation_id(rng))
     }
 }
 
@@ -264,6 +283,23 @@ fn random_query(rng: &mut Rng) -> Query {
     Query { head, rules }
 }
 
+fn random_program(rng: &mut Rng) -> Program {
+    let predicates = (0..rng.below(4))
+        .map(|_| {
+            let rules: Vec<Rule> = (0..rng.below(3)).map(|_| random_rule(rng)).collect();
+            let head = match rules.first() {
+                Some(rule) if rng.chance(2) => rule.head(),
+                _ => (0..rng.below(4))
+                    .map(|_| find_term(rng).head_term())
+                    .collect(),
+            };
+            PredicateDef { head, rules }
+        })
+        .collect();
+    let output = PredId(u16::try_from(rng.below(5)).expect("small"));
+    Program { predicates, output }
+}
+
 // --- the mutation lane -------------------------------------------------
 
 /// Busy's declaration-order ids, through the macro's emitted constants —
@@ -276,13 +312,13 @@ const OOO: RelationId = Gauntlet::OOO;
 /// selection and membership).
 fn plausible_query(rng: &mut Rng) -> Query {
     let busy_atom = |bindings: Vec<(FieldId, Term)>| Atom {
-        relation: BUSY,
+        source: bumbledb::AtomSource::Edb(BUSY),
         bindings,
     };
     let projection = |relation: RelationId, person: FieldId, during: FieldId| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation,
+            source: bumbledb::AtomSource::Edb(relation),
             bindings: vec![(person, Term::Var(VarId(0))), (during, Term::Var(VarId(1)))],
         }],
         negated: vec![],
@@ -365,7 +401,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
                 (Gauntlet::BUSY_KIND, Term::Literal(Value::U64(rng.below(3)))),
             ])],
             negated: vec![Atom {
-                relation: OOO,
+                source: bumbledb::AtomSource::Edb(OOO),
                 bindings: vec![(Gauntlet::OOO_PERSON, Term::Var(VarId(0)))],
             }],
             conditions: vec![ConditionTree::Leaf(Comparison {
@@ -388,7 +424,8 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         // Unknown relation id.
         0 => {
             if let Some(atom) = query.rules.first_mut().and_then(|r| r.atoms.first_mut()) {
-                atom.relation = RelationId(if rng.chance(2) { 3 } else { u32::MAX });
+                atom.source =
+                    bumbledb::AtomSource::Edb(RelationId(if rng.chance(2) { 3 } else { u32::MAX }));
             }
         }
         // Unknown field id.
@@ -511,7 +548,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
         13 => {
             if let Some(rule) = query.rules.first_mut() {
                 let gate = Atom {
-                    relation: OOO,
+                    source: bumbledb::AtomSource::Edb(OOO),
                     bindings: vec![],
                 };
                 for _ in 0..21 {
@@ -530,7 +567,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
             if let Some(rule) = query.rules.first_mut() {
                 for atom_idx in 0..15u16 {
                     rule.atoms.push(Atom {
-                        relation: BUSY,
+                        source: bumbledb::AtomSource::Edb(BUSY),
                         bindings: (0..9u16)
                             .map(|field| {
                                 (FieldId(field), Term::Var(VarId(100 + atom_idx * 9 + field)))
@@ -602,6 +639,77 @@ fn adversarial_ir_never_panics() {
     assert_eq!(ok + rejected, SWEEP);
 }
 
+/// The program half of the sweep (validation totality on hostile
+/// `Program` data — the trust-boundary law extended to the R1 cut):
+/// random programs over hostile predicate/relation ids in one lane, and
+/// plausible queries embedded as programs with injected `Idb` reads in
+/// the other, driven through `Db::prepare_program`. Every outcome must
+/// be `Ok` or a typed error — an accepted `Idb`-carrying program now
+/// runs the whole per-predicate prepare pipeline (delta variants
+/// included), so the sweep covers the planner side of recursion too.
+#[test]
+fn adversarial_program_never_panics() {
+    let dir = common::TempDir::new("adversarial-program");
+    let db = Db::create(dir.path(), Gauntlet).expect("create");
+
+    let mut ok = 0u64;
+    let mut rejected = 0u64;
+    for seed in 0..SWEEP / 2 {
+        let mut rng = Rng::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let program = if seed % 2 == 0 {
+            random_program(&mut rng)
+        } else {
+            let mut query = plausible_query(&mut rng);
+            for _ in 0..rng.below(3) {
+                mutate(&mut rng, &mut query);
+            }
+            let mut program = Program::from(query);
+            if rng.chance(2) {
+                // Inject a predicate read — self-recursion or a phantom
+                // target — into a random rule position.
+                let target = PredId(u16::try_from(rng.below(3)).expect("small"));
+                let read = Atom {
+                    source: AtomSource::Idb(target),
+                    bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                };
+                let rules = &mut program.predicates[0].rules;
+                let slot =
+                    usize::try_from(rng.below(u64::try_from(rules.len()).expect("small").max(1)))
+                        .expect("small");
+                if let Some(rule) = rules.get_mut(slot) {
+                    if rng.chance(2) {
+                        rule.negated.push(read);
+                    } else {
+                        rule.atoms.push(read);
+                    }
+                }
+            }
+            program
+        };
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            db.prepare_program(&program).map(|_| ())
+        }));
+        #[expect(
+            clippy::match_wild_err_arm,
+            reason = "the test intentionally rejects every non-target error uniformly"
+        )]
+        match outcome {
+            Ok(Ok(())) => ok += 1,
+            Ok(Err(_)) => rejected += 1,
+            Err(_) => panic!(
+                "prepare_program panicked on IR data (seed {seed}) — the trust-boundary                  law is violated by:
+{program:#?}"
+            ),
+        }
+    }
+    assert!(ok > 0, "no generated program validated — vacuous sweep");
+    assert!(
+        rejected > 0,
+        "no generated program was rejected — vacuous sweep"
+    );
+    assert_eq!(ok + rejected, SWEEP / 2);
+}
+
 /// Hostile nesting alone, far past the sweep's per-query depth: a deep
 /// alternating And/Or chain is the typed `ConditionNestingTooDeep` —
 /// judged iteratively, so neither validation nor distribution ever
@@ -633,7 +741,7 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
         Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
-                relation: OOO,
+                source: bumbledb::AtomSource::Edb(OOO),
                 bindings: vec![(Gauntlet::OOO_PERSON, Term::Var(VarId(0)))],
             }],
             negated: vec![],

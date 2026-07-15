@@ -378,6 +378,82 @@ and stays a non-goal.
   (`lean/Bumbledb/Exec/Sweep.lean: pack_is_the_sweep` over the union regime's
   head-projection key).
 
+## The fixpoint driver
+
+A recursive program executes as strata of rule loops: the driver
+(`api/prepared/fixpoint.rs`) runs the SCC condensation's strata in order, and
+within a stratum it is semi-naive evaluation over the existing run-rule
+machinery — round 0 runs the stratum's non-recursive rules through the rule
+loop verbatim, round r ≥ 1 runs each recursive rule's **delta variants** with
+the delta occurrence bound to round r−1's frontier, and an empty Δ ends the
+stratum. The driver computes exactly the model's answers
+(`lean/Bumbledb/Exec/Fixpoint.lean: evalProgram`, sound and complete against
+the stratified denotation by `program_eval_sound`); termination is the
+validation roster's theorem (`program_den_finite` — the fuel bound is a lemma,
+`missingCount_le`), the round loop's stop-on-no-change is `fueledLoop`'s, and
+strata above the output's are never evaluated (`evalProgramAt` reads the
+output's table after its own stratum closes). A no-`Idb` program never reaches
+the driver: it prepares as its output predicate's query, byte for byte
+(`degenerate_embedding`).
+
+- **The delta rewrite is k plans, not bookkeeping** (`DeltaVariant`,
+  `api/prepared.rs`): per recursive rule, variant *i* marks recursive atom *i*
+  the delta occurrence and every other same-stratum atom the accumulated
+  predicate, each variant prepared once through the ordinary per-rule pipeline
+  (pin-at-prepare; no round re-plans). There is **no new/old split**:
+  cross-variant and cross-round re-derivation is absorbed by the predicate's
+  spanning seen-set — the same argument that makes D2's late cancellation
+  harmless, and the operator-level face is
+  `lean/Bumbledb/Exec/Fixpoint.lean: semi_naive_agrees` (iterating on
+  `T(acc) \ acc` walks the naive chain round for round). Variants are minted by
+  one prepare-time parse and consumed totally by the driver —
+  `ResolvableFilter`'s discipline. Delta and accumulated occurrences pin no
+  statistics and cost on the selectivity ladder's floors
+  (`DELTA_PLANNING_CARDINALITY` / `ACCUMULATED_PLANNING_CARDINALITY`,
+  `plan/selectivity.rs` — the param-plan precedent: prepare-unknowable
+  cardinalities plan on documented constants).
+- **The frontier IS the sink's seen-set with a per-round watermark**: `WordMap`
+  preserves insertion order with dense O(len) iteration, so round r's frontier
+  is exactly the dense suffix `[watermark, len)` — one `usize` read per round
+  and a cold suffix walk (`WordMap::iter_since`,
+  `ProjectionSink::answers_since`); no flag, no branch, no state on the emit
+  path, and a non-recursive program cannot observe the hook. Dedup keys stay
+  head-shaped (the rule loop's representation law), which is precisely what
+  makes the frontier readable at all. Interior predicates own
+  projection-shaped seen-sets of bound variables (the validation roster
+  refuses folds in interior heads — `AggregateInteriorPredicate` — and
+  measures in interior heads, recursive or not — `MeasureInteriorPredicate`,
+  with `MeasureInRecursiveHead` catching the recursive form first: the
+  executable-class item, folds and measures legal only at the output head);
+  the output predicate keeps the ordinary head-owned sink. **Union stays the sink and
+  only the sink**: no merge node, no frontier queue, no worklist structure
+  exists. D2's suffix skip stays per-rule and within-round.
+- **Transient images live outside the soundness machinery**
+  (`image::TransientImage`, `image/build.rs`): a round's delta and accumulated
+  images are columnar transposes of the seen-set's word rows — the
+  `synthesize_closed` precedent with a cheaper source, no fact-bytes decode.
+  A transient image is valid for one round of one execution, a lifetime the
+  generation vocabulary cannot express, so it is **never** in the `ImageCache`
+  generation map, never parked in the view memo (`Idb` occurrences bypass
+  `memo.bind` and take a per-round `Colt::reset`, survivor buffers recycled
+  through the existing `spare_buffers` ping-pong), and never pinned by
+  `PreparedQuery::staleness` — every generation-keyed mechanism never learns
+  recursion exists. The pools are prepared-query property: ping-pong slot
+  pairs refilled in place through `Arc::get_mut`, sized at their high-water
+  (the allocation contract below).
+- **The budget is the one new trust boundary**: termination is a theorem, but
+  the fixpoint's *size* is data-shaped — a foreign query may legally demand a
+  quadratic closure. The driver carries a per-stratum iteration/tuple budget
+  with documented defaults (`DEFAULT_FIXPOINT_ROUNDS`,
+  `DEFAULT_FIXPOINT_TUPLES`) and the typed execution error
+  `Error::FixpointBudgetExceeded { stratum, rounds, tuples }` — on
+  `MeasureOfRay`'s model: aborts the query, the snapshot stays usable, the
+  payload is ids and counts, never strings. Policy stays host-owned
+  (`PreparedQuery::set_fixpoint_budget` — the staleness doctrine verbatim: the
+  engine ships the typed condition, never a threshold loop); the default
+  exists so the boundary is never unguarded. See the resource-limits amendment
+  below.
+
 ## Planner
 
 **Grounding: elimination and evaluation.** This is not dependency-theory
@@ -410,7 +486,11 @@ when the B occurrence contributes nothing else. The licensing conditions and
 the answer-preservation proof are
 `lean/Bumbledb/Exec/Rewrites.lean: ElimStep` and `elimination_sound` —
 `plan/ground.rs::removable` checks them condition for condition, and every
-literal carriage is (field, encoded literal) set containment, never inference.
+literal carriage is (field, encoded literal) set containment, never inference —
+a statement carrying a disjunctive literal-set binding answers "unknown" and
+the join simply stays (no single-literal filter list can certify a set
+binding; the sanctioned conservative fallback, `30-dependencies.md` § the
+decidability firewall).
 The one condition that is a recorded v0 refusal rather than a theorem
 premise: **scalar positions only** — an interval-typed pair refuses (pointwise
 coverage proves covering facts exist, not a joinable equal fact). OPEN
@@ -717,10 +797,14 @@ absorb-node origin minting, node-to-node pending buffers —
 convergence is what the pools actually guarantee, and it is a claim the gate
 can falsify. Retained scratch is O(touched data + output) per prepared query
 and is documented as such (an app holding N prepared queries retains N scratch
-sets); pools reach a fixpoint per **(data generation, parameter envelope)** —
-once every parameter shape the app binds has been seen at its hottest
-intermediates, every subsequent execution is allocation-free until the data
-generation changes.
+sets); pools reach a fixpoint per **(data generation, parameter envelope,
+iteration shape)** — the third axis is the fixpoint driver's (delta buffers
+and per-round transient images are retained-capacity pools like every other
+scratch, and the driver's execution-invariant round-to-slot assignment is what
+lets one run at a new envelope grow every slot it will ever need) — once every
+parameter shape the app binds has been seen at its hottest intermediates,
+every subsequent execution is allocation-free until the data generation
+changes.
 
 **CI gate protocol (the definition of "steady state"):** single-threaded harness,
 two measured windows. **Steady state:** the prepared query executes N warmup runs
@@ -748,9 +832,23 @@ execution does not even touch the shared image-cache mutex).
 Intra-query parallelism is a non-goal with a recorded reversal trigger
 (`00-product.md`).
 
-**Resource limits: none in v0, stated.** Dedup sets, group maps, and result buffers
-grow with output; a pathological query can exceed the envelope and the OS is the
-backstop. The scale axiom makes engine-imposed caps ceremony; revisit only on real pain.
+**Resource limits: none in v0, stated — with one deliberate and narrow
+amendment.** Dedup sets, group maps, and result buffers grow with output; a
+pathological query can exceed the envelope and the OS is the backstop. The
+scale axiom makes engine-imposed caps ceremony; revisit only on real pain.
+**The fixpoint budget amends this stance for fixpoints only** (decided with
+the fixpoint driver — § the fixpoint driver above owns the mechanism; this
+section owns the stance): the OS-backstop argument
+priced one join's envelope, not an unbounded round count crossing the trust
+boundary — termination is a theorem of the validation roster
+(`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite`), but the fixpoint's
+*size* is data-shaped, and a foreign query may legally demand a quadratic
+closure. The driver therefore carries an iteration/tuple budget with a
+documented default and the typed execution error
+`Error::FixpointBudgetExceeded` (§ the fixpoint driver). Policy stays
+host-owned — the staleness doctrine verbatim: the engine ships the typed
+condition, never a threshold loop; the default exists so the boundary is never
+unguarded. Non-recursive execution keeps the unamended stance.
 
 ## Deviation D1 — data source
 
@@ -787,10 +885,20 @@ seen-set absorbs nothing by proof), — multi-rule programs — the
 rule-disjointness line naming its witness (`disjoint_rules: proven (R.f)`,
 or `unproven`), and the subsumption record: rules deleted at prepare, each
 with its subsuming rule's index (`subsumed: rule 0 by rule 1`, lowered-rule
-indices — the per-rule sections are the survivors). The obs registry mirrors it: one `RULE` span
+indices — the per-rule sections are the survivors). A recursive program's
+counted surface is the driver's round structure, not per-unit node stats
+(one counter spans many differently shaped plan units): plan units labeled
+(predicate, rule, delta variant), then per recursive stratum, per round —
+round 0 the stratum's non-recursive rules — each predicate's delta rows and
+the round's emitted/absorbed accounting, reported through the same
+`Counters` seam's fixpoint hooks (`api/prepared/fixpoint.rs`;
+`ExecutionStats::strata`). The obs registry mirrors it: one `RULE` span
 per rule under the execute span (`rule_N` — the index rides in the name,
-`MAX_RULES`-bounded), args (emitted, absorbed), populated on counted paths.
-The output contract is `introspection v2`: byte-identical within the version for
+`MAX_RULES`-bounded), args (emitted, absorbed), populated on counted paths;
+the driver adds one `stratum_N` span per recursive stratum
+(`MAX_PREDICATES`-bounded, args (rounds, tuples)) with one `fixpoint_round`
+span per round under it, args (emitted, absorbed).
+The output contract is `introspection v3`: byte-identical within the version for
 identical schema fingerprint, canonical query, parameter types, and features, with
 the fixed ordering specified in `70-api.md`. Any content or ordering change bumps
 the rendered and structured version together. Release builds contain no other instrumentation: no per-tuple labels, no

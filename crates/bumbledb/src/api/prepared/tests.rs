@@ -110,7 +110,7 @@ fn by_account_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(1), Term::Param(crate::ir::ParamId(0))),
                 (FieldId(2), Term::Var(VarId(0))),
@@ -149,7 +149,7 @@ fn by_memo_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(2), Term::Param(crate::ir::ParamId(0))),
                 (FieldId(3), Term::Var(VarId(0))),

@@ -8,8 +8,11 @@ import Bumbledb.Query.Aggregates
 import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
+import Bumbledb.Exec.Fixpoint
 import Bumbledb.Txn
 import Bumbledb.Txn.Fresh
+import Bumbledb.Decide
+import Bumbledb.Oracle
 import Bumbledb.Countermodels
 
 /-!
@@ -137,7 +140,7 @@ def ledger : List Obligation := [
   .row @den_closed_constant `Bumbledb.den_closed_constant
     "Ground axioms are constants of the theory: a closed relation denotes the same sealed fact set at every instance, so closed-to-closed statements are decided at validate outright."
     "schema/validate.rs::validate_containment (crates/bumbledb/src/schema/validate.rs); crate::Error::ClosedStatementRefuted (crates/bumbledb/src/error.rs)"
-    "a_closed_relation_seals_pre_encoded_ground_axioms (crates/bumbledb/src/schema/tests/valid.rs); a_satisfied_closed_to_closed_containment_validates (crates/bumbledb/src/schema/tests/valid.rs)",
+    "a_closed_relation_seals_pre_encoded_ground_axioms (crates/bumbledb/src/schema/tests/valid.rs); a_satisfied_closed_to_closed_containment_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_a_closed_to_closed_containment_whose_value_exceeds_the_index_range (crates/bumbledb/src/schema/tests/reject.rs)",
 
   .row @contains_iff_view_subset `Bumbledb.contains_iff_view_subset
     "The containment judgment is exactly subset inclusion of selected projected views — the checker's per-fact probe and the denotation are one statement."
@@ -158,6 +161,48 @@ def ledger : List Obligation := [
     "Accepted key-backed equality is a one-to-one correspondence between the selected subsets, on whole projected products, both directions keyed."
     "schema/validate.rs::resolve_target_key (crates/bumbledb/src/schema/validate.rs)"
     "three_field_reordered_key_equality_validates_and_enforces_both_directions (crates/bumbledb/tests/schema_macro.rs); equality_rejects_a_singleton_reverse_projection_without_a_left_key (crates/bumbledb/src/schema/tests/reject.rs)",
+
+  .row @Selection.singleton_satisfies_iff
+    `Bumbledb.Selection.singleton_satisfies_iff
+    "A singleton literal set is exactly the equality binding, so the disjunctive set form the engine accepts re-reads every previously accepted selection unchanged — the sets seal canonical and satisfaction is membership among them."
+    "LiteralSet (crates/bumbledb/src/schema.rs); schema/validate.rs::validate_side_shape (crates/bumbledb/src/schema/validate.rs); judgment.rs::FieldCheck (crates/bumbledb/src/storage/commit/judgment.rs)"
+    "a_literal_set_selection_seals_sorted (crates/bumbledb/src/schema/tests/valid.rs); a_literal_set_sigma_seals_and_judges_membership (crates/bumbledb/src/storage/commit/tests/sealed_checks.rs); rejects_a_singleton_spelled_as_a_set (crates/bumbledb/src/schema/tests/reject.rs)",
+
+  .row @Oracle.cardinality_plan_decides
+    `Bumbledb.Oracle.cardinality_plan_decides
+    "The cardinality window has a sealed enforcement plan — per touched parent one keyed point probe and one child-group walk — so the gate accepts the form at declaration once the target projection resolves a declared key and no projection position is interval-typed."
+    "schema/validate.rs::validate_cardinality (crates/bumbledb/src/schema/validate.rs); CardinalityStatement (crates/bumbledb/src/schema.rs)"
+    "a_cardinality_window_over_a_declared_key_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_a_window_with_an_interval_position (crates/bumbledb/src/schema/tests/reject.rs); rejects_a_window_whose_target_is_no_key (crates/bumbledb/src/schema/tests/reject.rs)",
+
+  .row @Oracle.order_plan_decides
+    `Bumbledb.Oracle.order_plan_decides
+    "The plain order mark has a sealed enforcement plan — one prefix walk per touched group — so the gate accepts the form at declaration once the position column is u64 and the grouping is a non-empty scalar projection."
+    "schema/validate.rs::validate_order (crates/bumbledb/src/schema/validate.rs); OrderStatement (crates/bumbledb/src/schema.rs)"
+    "a_plain_order_mark_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_an_order_position_that_is_not_u64 (crates/bumbledb/src/schema/tests/reject.rs); rejects_an_interval_grouping_field (crates/bumbledb/src/schema/tests/reject.rs)",
+
+  .row @Oracle.ranked_order_plan_decides
+    `Bumbledb.Oracle.ranked_order_plan_decides
+    "The ranked order mark's plan seals per hop — every by-chain hop resolves a declared single-field key of its relation, which is what makes the rank read deterministic and each chase probe a unit consultation — so acceptance admits the ranked form exactly when every hop's key witness seals."
+    "schema/validate.rs::validate_rank_chain (crates/bumbledb/src/schema/validate.rs); SealedRankHop (crates/bumbledb/src/schema.rs)"
+    "a_ranked_order_mark_with_a_keyed_hop_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_an_unkeyed_rank_hop (crates/bumbledb/src/schema/tests/reject.rs); rejects_a_non_u64_rank_payload (crates/bumbledb/src/schema/tests/reject.rs)",
+
+  .row @Txn.cardinality_delta_restriction
+    `Bumbledb.Txn.cardinality_delta_restriction
+    "Over a clean pre-state the window holds of the final state iff the touched-parents check passes — every parent key any delta child projects to, plus the delta's ψ-selected parents, each judged by one keyed parent probe and one child-group walk against the final state."
+    "judgment.rs::check_windows (crates/bumbledb/src/storage/commit/judgment.rs); Checker::check_window (crates/bumbledb/src/storage/commit/judgment.rs); plan.rs::mark_ops (crates/bumbledb/src/storage/commit/plan.rs)"
+    "window_floor_convicts_a_childless_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); window_removal_recounts_the_touched_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); window_and_order_verdicts_agree_with_the_model (crates/bumbledb-bench/src/differential/tests/marks.rs)",
+
+  .row @Txn.order_delta_restriction
+    `Bumbledb.Txn.order_delta_restriction
+    "Over a clean pre-state the order mark holds of the final state iff every touched group — every grouping tuple any delta fact projects to, removes included — passes one position-ordered walk: uniqueness, 1-basedness, and downward closure are one positions-are-exactly-1..k sweep."
+    "judgment.rs::check_orders (crates/bumbledb/src/storage/commit/judgment.rs); Checker::check_order_walk (crates/bumbledb/src/storage/commit/judgment.rs)"
+    "order_gap_convicts (crates/bumbledb/src/storage/commit/tests/marks.rs); order_removal_breaking_closure_convicts (crates/bumbledb/src/storage/commit/tests/marks.rs); a_missing_order_edge_is_found_and_the_group_rewalked (crates/bumbledb/src/verify_store/tests.rs)",
+
+  .row @Txn.ranked_order_delta_restriction
+    `Bumbledb.Txn.ranked_order_delta_restriction
+    "The ranked form's rank reads chase the sealed key-backed hops per walked member, and a delta touching any hop relation escalates the touched set to every group — a hop write can reorder ranks in a group the relation's own delta never touched. The engine's surface is WRITABLE subjects only: a ranked mark on a CLOSED subject is gate-refused (the typed RankedOrderClosedSubject — closed rows ride no delta, so the escalated walk would read an empty namespace and the clause would be judged nowhere, the sound narrowing recorded in Order.lean § narrowings)."
+    "Checker::chain_rank (crates/bumbledb/src/storage/commit/judgment.rs); plan.rs::order_checks (crates/bumbledb/src/storage/commit/plan.rs); schema/validate.rs::validate_order (crates/bumbledb/src/schema/validate.rs)"
+    "ranked_inversion_convicts (crates/bumbledb/src/storage/commit/tests/marks.rs); ranked_dirty_hop_relation_touches_every_group (crates/bumbledb/src/storage/commit/tests/marks.rs); ranked_rankless_members_impose_nothing (crates/bumbledb/src/storage/commit/tests/marks.rs); rejects_a_ranked_order_mark_on_a_closed_subject (crates/bumbledb/src/schema/tests/reject.rs); create_refuses_a_ranked_order_mark_on_a_closed_subject (crates/bumbledb/tests/edge.rs)",
 
   .row @functionality_unique_witness `Bumbledb.functionality_unique_witness
     "Under a functionality statement there is at most one fact per determinant tuple — a key proves uniqueness, never existence."
@@ -479,14 +524,75 @@ def ledger : List Obligation := [
     `Bumbledb.Txn.Fresh.materialized_key_ordinary
     "The auto-materialized key statement rides the ordinary final-state judgment — ids are writable-by-default, so the statement, never the generator, owns uniqueness."
     "SchemaDescriptor::materialized_statements (crates/bumbledb/src/schema.rs)"
-    "statement_ids_are_auto_fds_first_then_declared_order (crates/bumbledb/src/schema/tests/valid.rs); scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs)"
+    "statement_ids_are_auto_fds_first_then_declared_order (crates/bumbledb/src/schema/tests/valid.rs); scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs)",
+
+  /- ## The recursion cut (Exec/Fixpoint.lean; R1+R2 of the seam
+  ledger — the IR cut and the stratification fence) -/
+
+  .row @Query.degenerate_embedding `Bumbledb.Query.degenerate_embedding
+    "The degenerate embedding: a one-predicate program with no idb atom denotes exactly the query it embeds, so the query IS the program's degenerate carrier and a no-idb program may execute as its output predicate's query."
+    "crate::ir::Program (crates/bumbledb/src/ir.rs); prepare_program (crates/bumbledb/src/api/prepared/build.rs)"
+    "a_degenerate_program_executes_as_its_query (crates/bumbledb/tests/api.rs); a_degenerate_program_validates_as_its_query (crates/bumbledb/src/ir/validate/tests/program.rs)",
+
+  .row @Query.wellFormed_reads_real `Bumbledb.Query.wellFormed_reads_real
+    "The well-formedness screen: every idb source an accepted program reads names a real predicate — without the screen a negated phantom read is vacuously satisfied and no stratum witness refuses the shape."
+    "strata.rs::stratify (crates/bumbledb/src/ir/validate/strata.rs); ValidationError::UnknownPredicate (crates/bumbledb/src/error.rs)"
+    "rejects_a_negated_phantom_read (crates/bumbledb/src/ir/validate/tests/program.rs); rejects_an_idb_atom_naming_no_predicate (crates/bumbledb/src/ir/validate/tests/program.rs); adversarial_program_never_panics (crates/bumbledb/tests/adversarial_ir.rs)",
+
+  .row @Query.stratumOp_mono `Bumbledb.Query.stratumOp_mono
+    "The stratification premise, spent: negated targets sit strictly below their reader under the witness, so the per-stratum operator is monotone — the judge computes one witness by SCC condensation and refuses negation through a cycle."
+    "strata.rs::stratify (crates/bumbledb/src/ir/validate/strata.rs); ValidationError::NegationThroughCycle (crates/bumbledb/src/error.rs)"
+    "rejects_negation_through_a_cycle (crates/bumbledb/src/ir/validate/tests/program.rs); negation_of_a_lower_stratum_passes_the_strata_judge (crates/bumbledb/src/ir/validate/tests/program.rs); condensation_orders_components_reverse_topologically (crates/bumbledb/src/ir/validate/strata.rs)",
+
+  .row @Query.program_den_finite `Bumbledb.Query.program_den_finite
+    "The safety theorem's premise, enforced: recursive heads project bound variables only — no measure, no fold through a cycle — so every predicate's fixpoint is a finite subset of the active domain and termination is a theorem of the roster, never a runtime hope."
+    "strata.rs::stratify (crates/bumbledb/src/ir/validate/strata.rs); ValidationError::MeasureInRecursiveHead (crates/bumbledb/src/error.rs); ValidationError::AggregationThroughCycle (crates/bumbledb/src/error.rs)"
+    "rejects_a_measure_in_a_recursive_head (crates/bumbledb/src/ir/validate/tests/program.rs); rejects_aggregation_through_a_cycle (crates/bumbledb/src/ir/validate/tests/program.rs); a_measure_head_over_a_lower_stratum_is_legal (crates/bumbledb/src/ir/validate/tests/program.rs)",
+
+  /- ## The recursive oracles (Exec/Fixpoint.lean; R3 of the seam
+  ledger — the oracles land before the evaluator) -/
+
+  .row @Query.semi_naive_agrees.{0} `Bumbledb.Query.semi_naive_agrees
+    "Semi-naive and naive iteration walk one chain round for round, so the model fixpoint may stay NAIVE — no deltas, no frontier — and still reach every fixpoint the engine's delta rewrite will; the independence law's recursive face."
+    "NaiveDb::program (crates/bumbledb-bench/src/naive/query.rs); model_strata (crates/bumbledb-bench/src/naive/query.rs)"
+    "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); cyclic_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); a_mutual_pair_iterates_jointly (crates/bumbledb-bench/src/naive/tests/fixpoint.rs)",
+
+  .row @Query.program_eval_sound `Bumbledb.Query.program_eval_sound
+    "The fueled round loop lists exactly the stratified denotation under the acceptance premises — the recursive conformance arm's license: evalProgram (the driver's checkProgramCase in Main.lean) judges the checked-in program cases the naive fixpoint and the SQLite recursive lane agreed on, the third oracle wired before the engine driver landed and standing beside it since."
+    "generate_program_corpus (crates/bumbledb-bench/src/conformance/program.rs); translate_program (crates/bumbledb-bench/src/translate/program.rs)"
+    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); the_recursive_arm_covers_its_contract_and_agrees_across_oracles (crates/bumbledb-bench/src/querygen/tests.rs)",
+
+  /- ## The fixpoint driver (Exec/Fixpoint.lean; R4–R6 of the seam
+  ledger — the delta rewrite, the transient images, the driver) -/
+
+  .row @Query.program_eval_sound `Bumbledb.Query.program_eval_sound
+    "The engine discharge: the per-stratum driver computes evalProgram's answers — strata in condensation order through the output's own (evalProgramAt's reading), round 0 the rule loop verbatim, rounds >= 1 the delta variants against the watermark frontier, empty delta the stop — held to the model by the three-way closure goldens and the generated-program differential."
+    "run_fixpoint (crates/bumbledb/src/api/prepared/fixpoint.rs); prepare_program (crates/bumbledb/src/api/prepared/build.rs); Error::FixpointBudgetExceeded (crates/bumbledb/src/error.rs)"
+    "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); the_recursive_arm_covers_its_contract_and_agrees_across_oracles (crates/bumbledb-bench/src/querygen/tests.rs); prepare_program_executes_recursion_under_the_driver (crates/bumbledb/tests/api.rs); a_tight_fixpoint_budget_trips_with_the_typed_error (crates/bumbledb/tests/api.rs)",
+
+  .row @Query.semi_naive_agrees.{0} `Bumbledb.Query.semi_naive_agrees
+    "The delta rewrite's engine face: per recursive rule, k delta-variant plans (variant i binds atom i to the previous round's frontier, the rest to the accumulated set) walk the naive chain round for round — no new/old split, because cross-variant and cross-round re-derivation is absorbed by the predicate's spanning seen-set, whose dense insertion-order suffix IS the frontier."
+    "DeltaVariant (crates/bumbledb/src/api/prepared.rs); WordMap::iter_since (crates/bumbledb/src/exec/wordmap/clear.rs); ProjectionSink::answers_since (crates/bumbledb/src/exec/sink/projection/new.rs); TransientImage::refill (crates/bumbledb/src/image/build.rs)"
+    "recursive_answers_agree_scalar_and_vectorized (crates/bumbledb/tests/api.rs); cyclic_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); zero_warm_allocation_gate (crates/bumbledb/tests/alloc_gate.rs)",
+
+  /- ## The judgment conformance lane (Decide.lean) -/
+
+  .row @holdsB_iff_holds `Bumbledb.holdsB_iff_holds
+    "On row-listed finite instances the whole-theory judgment is decided by the executable checker, statement by statement, under the closed-roster merge and the hop-key premise — the write-side third oracle's license."
+    "render_fixture (crates/bumbledb-bench/src/conformance/judgment.rs); SchemaDescriptor::materialized_statements (crates/bumbledb/src/schema.rs)"
+    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs)",
+
+  .row @Txn.judgeB_agrees_of_declared `Bumbledb.Txn.judgeB_agrees_of_declared
+    "The executable two-phase judge renders the model judge's verdict on EVERY row instance — accept together, or reject in the same phase with the same per-phase violation sets — with the hop-key rule spent in its acceptance form, a fact of the theory alone."
+    "judge (crates/bumbledb/src/storage/commit/judgment.rs); validate_order (crates/bumbledb/src/schema/validate.rs); generate_judgment_corpus (crates/bumbledb-bench/src/conformance/judgment.rs)"
+    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); the_corpus_replays_byte_identical_from_its_provenance (crates/bumbledb-bench/src/conformance.rs)"
 
 ]
 
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 75 := rfl
+theorem ledger_count : ledger.length = 92 := rfl
 
 end Bridge
 end Bumbledb

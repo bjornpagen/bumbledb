@@ -29,6 +29,7 @@ use crate::plan::fj::ValidatedPlan;
 mod counters;
 mod counting_counters;
 mod display;
+mod fixpoint_counters;
 mod into_stats;
 #[cfg(test)]
 mod tests;
@@ -60,6 +61,22 @@ pub struct CountingCounters {
     emits: u64,
 }
 
+/// Driver-level counters for a fixpoint execution
+/// (docs/architecture/40-execution.md § the fixpoint driver): the
+/// per-stratum, per-round delta sizes and union accounting the driver
+/// reports through the `Counters` seam's fixpoint hooks. Node-level
+/// methods are deliberate no-ops — the driver runs many differently
+/// shaped plan units under one counter, so the counted surface here is
+/// the round structure, not per-node cardinalities.
+#[derive(Debug, Default)]
+pub struct FixpointCounters {
+    emits: u64,
+    /// Deltas reported since the last round closed (`fixpoint_round`
+    /// bundles them into that round's record).
+    pending_deltas: Vec<crate::api::stats::DeltaRows>,
+    strata: Vec<crate::api::stats::StratumStats>,
+}
+
 /// The introspection report: per-rule plan renderings plus the counted
 /// execution — per-rule node stats under the head-level union
 /// accounting (docs/architecture/40-execution.md § the rule loop).
@@ -69,8 +86,15 @@ pub struct IntrospectionReport<'p> {
     /// Query and predicate header for the public artifact. Low-level
     /// executor tests omit it while retaining the same versioned body.
     pub header: Option<IntrospectionHeader>,
-    /// Per rule, aligned with `stats.rules`.
+    /// Per plan unit, aligned with `stats.rules` for query-shaped
+    /// programs. A fixpoint program's units (every predicate's rules, a
+    /// recursive rule as its delta variants) carry labels below and no
+    /// per-unit counted stats — the counted surface is `stats.strata`.
     pub rules: Vec<RulePlan<'p>>,
+    /// Fixpoint unit labels, parallel to `rules`
+    /// (`predicate p0 rule 1 delta variant 0`); empty for query-shaped
+    /// programs, whose label is the rule index.
+    pub unit_labels: Vec<String>,
     pub stats: crate::api::stats::ExecutionStats,
 }
 

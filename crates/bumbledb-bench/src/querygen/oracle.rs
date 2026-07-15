@@ -96,17 +96,17 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
         for atom in &rule.atoms {
             for (field, term) in &atom.bindings {
                 if let Term::Var(var) = term
-                    && !is_interval(atom.relation, *field)
+                    && !is_interval(atom.relation(), *field)
                 {
-                    var_anchor.entry(*var).or_insert((atom.relation, *field));
+                    var_anchor.entry(*var).or_insert((atom.relation(), *field));
                 }
             }
         }
         for atom in rule.atoms.iter().chain(&rule.negated) {
             for (field, term) in &atom.bindings {
                 match term {
-                    Term::Param(p) => place(&mut anchors, *p, atom.relation, *field, false),
-                    Term::ParamSet(p) => place(&mut anchors, *p, atom.relation, *field, true),
+                    Term::Param(p) => place(&mut anchors, *p, atom.relation(), *field, false),
+                    Term::ParamSet(p) => place(&mut anchors, *p, atom.relation(), *field, true),
                     _ => {}
                 }
             }

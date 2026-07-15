@@ -81,7 +81,7 @@ fn by_kind_rule(kind: u64, conditions: Vec<Comparison>) -> Rule {
     Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: EVENT,
+            source: crate::ir::AtomSource::Edb(EVENT),
             bindings: vec![
                 (FieldId(1), Term::Literal(Value::U64(kind))),
                 (FieldId(3), Term::Var(VarId(0))),

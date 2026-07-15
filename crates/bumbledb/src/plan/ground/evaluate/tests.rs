@@ -131,7 +131,7 @@ fn theory() -> Schema {
 
 fn atom(relation: u32, bindings: &[(u16, Term)]) -> Atom {
     Atom {
-        relation: RelationId(relation),
+        source: crate::ir::AtomSource::Edb(RelationId(relation)),
         bindings: bindings
             .iter()
             .map(|(f, t)| (FieldId(*f), t.clone()))

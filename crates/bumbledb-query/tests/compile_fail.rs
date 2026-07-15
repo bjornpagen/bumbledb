@@ -156,7 +156,9 @@ fn compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's five cases: typo'd relation, typo'd
-    // field, ambiguous punning, ?param in a head, `:-` anywhere.
-    assert_eq!(seen, 5, "the compile-fail roster has five fixtures");
+    // The suite's eight cases: typo'd relation, typo'd field, ambiguous
+    // punning, ?param in a head, `:-` anywhere, a program without bare
+    // output rules, a punned predicate position, an UpperCamel
+    // predicate name.
+    assert_eq!(seen, 8, "the compile-fail roster has eight fixtures");
 }

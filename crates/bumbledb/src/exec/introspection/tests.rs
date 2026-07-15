@@ -101,7 +101,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                 .collect();
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.relation.0).expect("small")],
+                    &images[usize::try_from(occurrence.relation().0).expect("small")],
                     &[],
                     &[],
                     Vec::new(),
@@ -117,7 +117,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
 fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
-        relation: RelationId(relation),
+        source: crate::ir::AtomSource::Edb(RelationId(relation)),
         role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
@@ -206,6 +206,7 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
     let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
     let report = IntrospectionReport {
         header: None,
+        unit_labels: Vec::new(),
         rules: vec![RulePlan::FreeJoin(&plan)],
         stats: ExecutionStats {
             introspection_version: crate::api::stats::INTROSPECTION_VERSION,
@@ -214,6 +215,7 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
             disjoint_rules: None,
             subsumed: Vec::new(),
             dead: Vec::new(),
+            strata: Vec::new(),
         },
     };
     let text = format!("{report}");
@@ -283,6 +285,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
     let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
     let report = IntrospectionReport {
         header: None,
+        unit_labels: Vec::new(),
         rules: vec![RulePlan::FreeJoin(&plan)],
         stats: ExecutionStats {
             introspection_version: crate::api::stats::INTROSPECTION_VERSION,
@@ -291,6 +294,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
             disjoint_rules: None,
             subsumed: Vec::new(),
             dead: Vec::new(),
+            strata: Vec::new(),
         },
     };
     assert!(format!("{report}").contains("exact=1"));
@@ -301,7 +305,7 @@ fn key_probe_queries_report_their_classification() {
     let schema = schema(1);
     let normalized = normalized(vec![Occurrence {
         occ_id: OccId(0),
-        relation: RelationId(0),
+        source: crate::ir::AtomSource::Edb(RelationId(0)),
         role: Role::Positive,
         vars: vec![(FieldId(1), VarId(0))],
         filters: vec![FilterPredicate::Compare {
@@ -313,6 +317,7 @@ fn key_probe_queries_report_their_classification() {
     let key_probe = classify(&normalized, &schema).expect("key probe");
     let report = IntrospectionReport {
         header: None,
+        unit_labels: Vec::new(),
         rules: vec![RulePlan::KeyProbe(&key_probe)],
         stats: ExecutionStats {
             introspection_version: crate::api::stats::INTROSPECTION_VERSION,
@@ -330,6 +335,7 @@ fn key_probe_queries_report_their_classification() {
             disjoint_rules: None,
             subsumed: Vec::new(),
             dead: Vec::new(),
+            strata: Vec::new(),
         },
     };
     let text = format!("{report}");
@@ -445,6 +451,7 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
     assert_eq!(rule.nodes[0].anti_probe_rejected, 3);
     let report = IntrospectionReport {
         header: None,
+        unit_labels: Vec::new(),
         rules: vec![RulePlan::FreeJoin(&plan)],
         stats: ExecutionStats {
             introspection_version: crate::api::stats::INTROSPECTION_VERSION,
@@ -453,6 +460,7 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
             disjoint_rules: None,
             subsumed: Vec::new(),
             dead: Vec::new(),
+            strata: Vec::new(),
         },
     };
     let text = format!("{report}");

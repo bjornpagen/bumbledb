@@ -44,15 +44,14 @@ critical section (write.rs:136-140) is `writeWitnessed`'s one `if`.
   `crate::error::Violations`: one rejected commit's complete violation
   set OF THE FAILING PHASE — the violated key statements when any key
   fails (`storage/commit/apply.rs::apply` seals them before the
-  judgment phase runs — this preemption is the engine's, discharged
-  today), else the statement phase's violated statements. The engine's
-  statement phase today judges CONTAINMENTS only
-  (`storage/commit/judgment.rs::judge`), scan-complete on both its
-  sides; the model's statement phase also carries cardinality windows
-  and order marks — Undischarged (spec-ahead): their membership in the
-  statement phase is the 2026-07-14 vocabulary campaign's admission,
-  its Rust discharge decided and queued, which is why no `Bridge.lean`
-  row bridges those two forms — deliberate, not an omission.
+  judgment phase runs), else the statement phase's violated
+  statements. The engine's statement phase judges all three non-key
+  forms (`storage/commit/judgment.rs::judge`: the containment sides,
+  the window checks, the order walks — each scan-complete), so one
+  sealed rejection can mix containment, cardinality, and order
+  citations in materialized statement order — the 2026-07-14
+  vocabulary campaign's enforcement stage, discharged (the
+  delta-restriction ledger rows, `Bridge.lean`).
 * `writeFrom` / `writeWitnessed` — `api/db/write.rs`'s `Db::write_from`
   / `Db::write` sharing one body; the witness is the `Snapshot` the
   host read its premises on, consumed for its generation alone.

@@ -434,11 +434,17 @@ impl Context {
     /// Walks positive and negated atoms under one set of per-atom rules —
     /// negation is a position, not a kind of atom, so the occurrence
     /// numbering (positives first, then negated) is the only difference a
-    /// diagnostic shows. Ends with the negation safety rule: a negated
-    /// atom binds nothing, so its variables must come from positive atoms.
+    /// diagnostic shows. An `Edb` binding anchors at the stored field's
+    /// type; an `Idb` binding anchors at the target predicate's sealed
+    /// column — the SAME bivalent membership rule reads through both (an
+    /// interval-typed predicate column participates in point membership
+    /// exactly as an interval field does; 20-query-ir.md § engine recursion). Ends
+    /// with the negation safety rule: a negated atom binds nothing, so
+    /// its variables must come from positive atoms.
     pub(super) fn check_atoms(
         &mut self,
         schema: &Schema,
+        idb: &super::IdbSignatures<'_>,
         rule: &LoweredRule,
     ) -> Result<(), ValidationError> {
         let occurrences = rule
@@ -447,27 +453,46 @@ impl Context {
             .map(|atom| (atom, false))
             .chain(rule.negated.iter().map(|atom| (atom, true)));
         for (occ_idx, (atom, negated)) in occurrences.enumerate() {
-            if usize::try_from(atom.relation.0).expect("64-bit usize") >= schema.relations().len() {
-                return Err(ValidationError::UnknownRelation {
-                    atom: occ_idx,
-                    relation: atom.relation,
-                });
-            }
-            let relation = schema.relation(atom.relation);
-            for (binding_idx, (field, term)) in atom.bindings.iter().enumerate() {
-                if usize::from(field.0) >= relation.fields().len() {
-                    return Err(ValidationError::UnknownField {
-                        atom: occ_idx,
-                        field: *field,
-                    });
+            match atom.source {
+                crate::ir::AtomSource::Edb(relation_id) => {
+                    if usize::try_from(relation_id.0).expect("64-bit usize")
+                        >= schema.relations().len()
+                    {
+                        return Err(ValidationError::UnknownRelation {
+                            atom: occ_idx,
+                            relation: relation_id,
+                        });
+                    }
                 }
+                // The source screen, binding-independent: a zero-binding
+                // `Idb` gate must refuse against the address space too
+                // (the per-binding `column` reads below never run for
+                // it). On the QUERY path the space is empty
+                // ([`super::IdbSignatures::EMPTY`]) — a bare query has
+                // no predicate address space, and recursion's surface
+                // is the program boundary.
+                crate::ir::AtomSource::Idb(pred) => idb.screen(occ_idx, pred)?,
+            }
+            for (binding_idx, (field, term)) in atom.bindings.iter().enumerate() {
                 if atom.bindings[..binding_idx].iter().any(|(f, _)| f == field) {
                     return Err(ValidationError::DuplicateFieldBinding {
                         atom: occ_idx,
                         field: *field,
                     });
                 }
-                let field_type = &relation.field(*field).value_type;
+                let field_type = match atom.source {
+                    crate::ir::AtomSource::Edb(relation_id) => {
+                        let relation = schema.relation(relation_id);
+                        if usize::from(field.0) >= relation.fields().len() {
+                            return Err(ValidationError::UnknownField {
+                                atom: occ_idx,
+                                field: *field,
+                            });
+                        }
+                        &relation.field(*field).value_type
+                    }
+                    crate::ir::AtomSource::Idb(pred) => idb.column(occ_idx, pred, *field)?,
+                };
                 if let ValueType::Interval { element } = field_type {
                     self.check_interval_binding(occ_idx, negated, *field, *element, term)?;
                 } else {

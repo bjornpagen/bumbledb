@@ -26,6 +26,7 @@ mod build;
 mod either_sink;
 mod execute;
 mod finalize;
+pub(crate) mod fixpoint;
 mod introspect;
 mod resolve_memo;
 mod run_join;
@@ -35,7 +36,7 @@ mod view_memo;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::build::prepare;
+pub(crate) use self::build::{prepare, prepare_program};
 use self::staleness::OccurrencePin;
 pub use self::staleness::{OccurrenceDrift, Staleness};
 
@@ -261,6 +262,13 @@ enum Program {
     /// surface; execution touches no sink, image, view, or plan.
     Empty,
     Rules(Vec<PreparedRule>),
+    /// A genuinely recursive program (at least one `Idb` atom): the
+    /// per-stratum fixpoint driver's artifact
+    /// (`api/prepared/fixpoint.rs`; 40-execution.md § the fixpoint driver). A no-`Idb`
+    /// program never builds this — the degenerate embedding prepares
+    /// its output predicate as the query it is, byte for byte
+    /// (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`).
+    Fixpoint(Box<fixpoint::FixpointProgram>),
 }
 
 /// One rule's prepared artifact. Its kind carries exactly the scratch that
@@ -272,6 +280,37 @@ enum Program {
 enum PreparedRule {
     FreeJoin(FreeJoinRule),
     KeyProbe(KeyProbeRule),
+    /// A recursive rule (≥ 1 same-stratum `Idb` atom): its k
+    /// delta-variant plans, minted by one prepare-time parse and
+    /// consumed totally by the fixpoint driver — `ResolvableFilter`'s
+    /// parse-don't-classify discipline (40-execution.md § the fixpoint driver). Runs only
+    /// under [`Program::Fixpoint`], in rounds ≥ 1 of its stratum.
+    Recursive(RecursiveRule),
+}
+
+/// A recursive rule's typed variant sum (40-execution.md § the fixpoint driver): variant
+/// *i* marks recursive atom *i* the delta occurrence — bound per round
+/// to the previous round's frontier — and every other same-stratum atom
+/// the accumulated predicate. No new/old split exists: cross-variant
+/// and cross-round re-derivation is absorbed by the predicate's
+/// spanning seen-set, the same argument that makes D2's late
+/// cancellation harmless (set semantics: over-derivation skews cost,
+/// never results — `lean/Bumbledb/Exec/Fixpoint.lean:
+/// semi_naive_agrees` is the operator-level face).
+struct RecursiveRule {
+    variants: Box<[DeltaVariant]>,
+}
+
+/// One delta variant: the marked occurrence and its own fully prepared
+/// rule artifact — plan, executor, memo, resolved-filter scratch — from
+/// the ordinary per-rule pipeline, the delta and accumulated
+/// occurrences costed on the selectivity ladder's floors (the
+/// param-plan precedent; `plan/selectivity.rs`). Pinned at prepare: no
+/// round ever re-plans.
+struct DeltaVariant {
+    /// The delta occurrence — bound to Δᵣ₋₁'s transient image.
+    delta: crate::ir::normalize::OccId,
+    rule: FreeJoinRule,
 }
 
 struct FreeJoinRule {
@@ -318,15 +357,35 @@ struct KeyProbeRule {
 impl Program {
     fn rules(&self) -> &[PreparedRule] {
         match self {
-            Self::Empty => &[],
+            Self::Empty | Self::Fixpoint(_) => &[],
             Self::Rules(rules) => rules,
         }
     }
 
-    fn rules_mut(&mut self) -> &mut [PreparedRule] {
+    /// Every prepared rule the program carries, across representations —
+    /// a fixpoint program's rules in predicate order. Cold surfaces only
+    /// (staleness, introspection headers, the batch-size test affordance).
+    fn all_rules(&self) -> Box<dyn Iterator<Item = &PreparedRule> + '_> {
         match self {
-            Self::Empty => &mut [],
-            Self::Rules(rules) => rules,
+            Self::Empty => Box::new(std::iter::empty()),
+            Self::Rules(rules) => Box::new(rules.iter()),
+            Self::Fixpoint(program) => {
+                Box::new(program.predicates.iter().flat_map(|pred| pred.rules.iter()))
+            }
+        }
+    }
+
+    /// [`Program::all_rules`], mutably (the batch-size test affordance).
+    fn all_rules_mut(&mut self) -> Box<dyn Iterator<Item = &mut PreparedRule> + '_> {
+        match self {
+            Self::Empty => Box::new(std::iter::empty()),
+            Self::Rules(rules) => Box::new(rules.iter_mut()),
+            Self::Fixpoint(program) => Box::new(
+                program
+                    .predicates
+                    .iter_mut()
+                    .flat_map(|pred| pred.rules.iter_mut()),
+            ),
         }
     }
 }
@@ -336,6 +395,8 @@ impl PreparedRule {
         match self {
             Self::FreeJoin(rule) => &rule.finds,
             Self::KeyProbe(rule) => &rule.finds,
+            // Variants project one head: any variant speaks for the rule.
+            Self::Recursive(rule) => &rule.variants[0].rule.finds,
         }
     }
 
@@ -343,6 +404,9 @@ impl PreparedRule {
         match self {
             Self::FreeJoin(rule) => rule.plan.slot_count(),
             Self::KeyProbe(rule) => rule.plan.slot_count(),
+            // One rule, one variable scope: every variant shares the
+            // rule's slot layout (plans reorder nodes, never slots).
+            Self::Recursive(rule) => rule.variants[0].rule.plan.slot_count(),
         }
     }
 
@@ -350,6 +414,9 @@ impl PreparedRule {
         match self {
             Self::FreeJoin(rule) => rule.plan.distinct_witness(),
             Self::KeyProbe(rule) => rule.distinct_witness,
+            // A recursive rule reads its own predicate's transient set —
+            // no key coverage exists (`plan/fj/provably_distinct.rs`).
+            Self::Recursive(_) => None,
         }
     }
 
@@ -357,6 +424,9 @@ impl PreparedRule {
         match self {
             Self::FreeJoin(rule) => &rule.pinned,
             Self::KeyProbe(_) => &[],
+            // Variants pin the same stored statistics (the same reads,
+            // per variant): variant 0 speaks for the rule.
+            Self::Recursive(rule) => &rule.variants[0].rule.pinned,
         }
     }
 }

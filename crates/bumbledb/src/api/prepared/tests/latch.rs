@@ -12,7 +12,7 @@ fn literal_query(memo: &str) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (
                     FieldId(2),

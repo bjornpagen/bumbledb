@@ -19,7 +19,7 @@ fn point_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ID, param(0)),
                 (ids::posting::AMOUNT, var(0)),
@@ -48,18 +48,18 @@ fn containment_walk_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ACCOUNT, param(0)),
                     (ids::posting::AMOUNT, var(1)),
                 ],
             },
             Atom {
-                relation: ids::ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
                 bindings: vec![(ids::account::ID, param(0)), (ids::account::HOLDER, var(2))],
             },
             Atom {
-                relation: ids::HOLDER,
+                source: bumbledb::AtomSource::Edb(ids::HOLDER),
                 bindings: vec![(ids::holder::ID, var(2)), (ids::holder::NAME, var(0))],
             },
         ],
@@ -98,7 +98,7 @@ fn chain_query() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ENTRY, var(3)),
                     (ids::posting::ACCOUNT, var(4)),
@@ -107,14 +107,14 @@ fn chain_query() -> Query {
                 ],
             },
             Atom {
-                relation: ids::JOURNAL_ENTRY,
+                source: bumbledb::AtomSource::Edb(ids::JOURNAL_ENTRY),
                 bindings: vec![
                     (ids::journal_entry::ID, var(3)),
                     (ids::journal_entry::SOURCE, var(0)),
                 ],
             },
             Atom {
-                relation: ids::ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
                 bindings: vec![
                     (ids::account::ID, var(4)),
                     (ids::account::CURRENCY, Term::Literal(Value::U64(0))),
@@ -145,7 +145,7 @@ fn range_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ID, var(0)),
                 (ids::posting::AMOUNT, var(1)),
@@ -198,7 +198,7 @@ pub(super) fn balance_query() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ID, var(2)),
                     (ids::posting::ACCOUNT, var(0)),
@@ -206,7 +206,7 @@ pub(super) fn balance_query() -> Query {
                 ],
             },
             Atom {
-                relation: ids::ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
                 bindings: vec![(ids::account::ID, var(0)), (ids::account::HOLDER, param(0))],
             },
         ],
@@ -249,7 +249,7 @@ fn stats_query() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ACCOUNT, var(3)),
                     (ids::posting::AMOUNT, var(1)),
@@ -257,7 +257,7 @@ fn stats_query() -> Query {
                 ],
             },
             Atom {
-                relation: ids::ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
                 bindings: vec![(ids::account::ID, var(3)), (ids::account::CURRENCY, var(0))],
             },
         ],
@@ -278,7 +278,7 @@ fn string_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ID, var(0)),
                     (ids::posting::AMOUNT, var(1)),
@@ -286,7 +286,7 @@ fn string_query() -> Query {
                 ],
             },
             Atom {
-                relation: ids::INSTRUMENT,
+                source: bumbledb::AtomSource::Edb(ids::INSTRUMENT),
                 bindings: vec![
                     (ids::instrument::ID, var(2)),
                     (ids::instrument::SYMBOL, param(0)),
@@ -326,11 +326,11 @@ fn skew_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AMOUNT, var(1))],
             },
             Atom {
-                relation: ids::POSTING_TAG,
+                source: bumbledb::AtomSource::Edb(ids::POSTING_TAG),
                 bindings: vec![
                     (ids::posting_tag::POSTING, var(0)),
                     (ids::posting_tag::TAG, param(0)),
@@ -362,14 +362,14 @@ fn spread_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ENTRY, var(2)),
                     (ids::posting::AMOUNT, var(0)),
                 ],
             },
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ENTRY, var(2)),
                     (ids::posting::AMOUNT, var(1)),
@@ -403,21 +403,21 @@ fn triangle_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ACCOUNT, var(0)),
                     (ids::posting::INSTRUMENT, var(1)),
                 ],
             },
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ENTRY, var(2)),
                     (ids::posting::INSTRUMENT, var(1)),
                 ],
             },
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ENTRY, var(2)),
                     (ids::posting::ACCOUNT, var(0)),
@@ -472,7 +472,7 @@ fn entries_for_account_set_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ENTRY, var(0)),
                 (ids::posting::ACCOUNT, Term::ParamSet(ParamId(0))),
@@ -512,7 +512,7 @@ fn postings_without_tag_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ID, var(0)),
                 (ids::posting::ACCOUNT, param(0)),
@@ -520,7 +520,7 @@ fn postings_without_tag_query() -> Query {
             ],
         }],
         negated: vec![Atom {
-            relation: ids::POSTING_TAG,
+            source: bumbledb::AtomSource::Edb(ids::POSTING_TAG),
             bindings: vec![(ids::posting_tag::POSTING, var(0))],
         }],
         conditions: vec![],
@@ -553,7 +553,7 @@ fn latest_posting_per_account_query() -> Query {
             },
         ],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ID, var(1)),
                 (ids::posting::ACCOUNT, var(0)),
@@ -582,14 +582,14 @@ fn mandate_at_instant_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ACCOUNT, param(0)),
                     (ids::posting::AT, param(1)),
                 ],
             },
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![
                     (ids::mandate::ACCOUNT, param(0)),
                     (ids::mandate::ORG, var(0)),
@@ -637,7 +637,7 @@ fn mandate_overlap_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![
                     (ids::mandate::ACCOUNT, var(0)),
                     (ids::mandate::ORG, param(0)),
@@ -645,7 +645,7 @@ fn mandate_overlap_query() -> Query {
                 ],
             },
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![
                     (ids::mandate::ACCOUNT, var(1)),
                     (ids::mandate::ORG, param(0)),

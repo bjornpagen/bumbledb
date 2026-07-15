@@ -61,7 +61,7 @@ fn pack_query(relation: RelationId) -> Query {
             },
         ],
         atoms: vec![Atom {
-            relation,
+            source: bumbledb::AtomSource::Edb(relation),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(2), Term::Var(VarId(1))),
@@ -285,7 +285,7 @@ fn multi_rule_pack_folds_the_union_differentially() {
             },
         ],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: bumbledb::AtomSource::Edb(BUSY),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(2))),
                 (FieldId(1), Term::Var(VarId(0))),

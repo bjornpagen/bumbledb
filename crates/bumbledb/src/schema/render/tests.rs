@@ -321,3 +321,124 @@ fn unresolvable_names_fall_back_to_id_placeholders() {
         "relation#9(field#3) -> relation#9"
     );
 }
+
+/// The extension forms render back in the exact grammar: the window with
+/// both bound spellings, the set selection in braces (canonical order),
+/// and the order mark with and without its `by` chain.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one golden walk over every extension form, clearer kept together"
+)]
+fn extension_forms_render_in_the_grammar() {
+    use crate::schema::tests::{cardinality, order_mark, side_where_sets};
+    use crate::schema::{LiteralSet, OrderId, RankChain, RankHop, StatementView, WindowId};
+
+    let decl = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Parent".into(),
+                fields: vec![field("id", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Task".into(),
+                fields: vec![
+                    field("parent", ValueType::U64),
+                    field("pos", ValueType::U64),
+                    field("prio", ValueType::U64),
+                    field("state", ValueType::U64),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Priority".into(),
+                fields: vec![field("id", ValueType::U64), field("weight", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            fd(RelationId(0), &[FieldId(0)]),
+            fd(RelationId(2), &[FieldId(0)]),
+            cardinality(
+                side_where_sets(
+                    RelationId(1),
+                    &[FieldId(0)],
+                    vec![(
+                        FieldId(3),
+                        LiteralSet::Many(Box::new([Value::U64(2), Value::U64(1)])),
+                    )],
+                ),
+                1,
+                Some(3),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+            cardinality(
+                side(RelationId(1), &[FieldId(0)]),
+                1,
+                None,
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+            order_mark(RelationId(1), FieldId(1), &[FieldId(0)], None),
+            order_mark(
+                RelationId(1),
+                FieldId(1),
+                &[FieldId(0), FieldId(3)],
+                Some(RankChain {
+                    link: FieldId(2),
+                    hops: Box::new([RankHop {
+                        relation: RelationId(2),
+                        key: FieldId(0),
+                        read: FieldId(1),
+                    }]),
+                }),
+            ),
+        ],
+    };
+
+    // Declared-side rendering (the diagnostic path).
+    assert_eq!(
+        render_declared(&decl, StatementId(2)),
+        "Task(parent | state == {2, 1}) in 1..3 per Parent(id)"
+    );
+    assert_eq!(
+        render_declared(&decl, StatementId(3)),
+        "Task(parent) in 1..* per Parent(id)"
+    );
+    assert_eq!(
+        render_declared(&decl, StatementId(4)),
+        "order Task(pos) per Task(parent)"
+    );
+    assert_eq!(
+        render_declared(&decl, StatementId(5)),
+        "order Task(pos) per Task(parent, state) by prio -> Priority(weight)"
+    );
+
+    // Sealed-side rendering — the set now canonical (sorted).
+    let schema = decl.validate().expect("the extension forms validate");
+    assert_eq!(
+        render(&schema, StatementId(2)),
+        "Task(parent | state == {1, 2}) in 1..3 per Parent(id)"
+    );
+    assert_eq!(
+        render(&schema, StatementId(3)),
+        "Task(parent) in 1..* per Parent(id)"
+    );
+    assert_eq!(
+        render(&schema, StatementId(4)),
+        "order Task(pos) per Task(parent)"
+    );
+    assert_eq!(
+        render(&schema, StatementId(5)),
+        "order Task(pos) per Task(parent, state) by prio -> Priority(weight)"
+    );
+    // The spine agrees with the arenas.
+    assert!(matches!(
+        schema.statement(StatementId(2)),
+        StatementView::Cardinality(WindowId(0), _)
+    ));
+    assert!(matches!(
+        schema.statement(StatementId(5)),
+        StatementView::Order(OrderId(1), _)
+    ));
+}

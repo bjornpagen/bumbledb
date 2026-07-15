@@ -6,7 +6,8 @@ Bumbledb is an embedded, typed, schemaful, **set-semantic** relational database 
 LMDB, built by and for one user (Bjorn Pagen) and his applications. It is Postgres's
 relational elegance with the parts its owner hates removed: no SQL, no bag semantics,
 no nulls, no layer cake — and a constraint system Postgres cannot follow:
-**invariants are two judgments about queries** (functionality and containment,
+**invariants are judgments about queries** (functionality and containment, plus
+the cardinality-window and order-mark extension forms,
 `30-dependencies.md`), judged once per commit against the transaction's final state,
 which makes totality of sum types, conditional reference targets, and pointwise
 temporal keys *statable* — and makes the SQL constraint zoo (unique, referential,
@@ -242,8 +243,12 @@ Multiple writers. Multi-process access. Data beyond RAM. Intra-query parallelism
 Encryption/access control. Compatibility with any prior on-disk format. A deductive
 database / logic-programming runtime: queries are query-sized programs against a
 theory-governed store, never the unit of an application — Turing-completeness lives
-in the host, and the closure idiom is the covenant, not a workaround
-(`20-query-ir.md` § engine recursion, the ruling that survives the trigger).
+in the host. Engine recursion exists under exactly this ruling: stratified
+fixpoints over query-sized programs, capped (`MAX_PREDICATES`) and
+budgeted, never a rule-program runtime (`20-query-ir.md` § engine
+recursion, the ruling that survived the campaign whole); the closure idiom
+remains the covenant for what the caps and the chain-window fence keep
+outside, not a workaround.
 
 **Anticipated, not built:** JS/N-API bindings are punted with zero deliverable and
 a recorded quarantine shape — a downstream crate on the bench-crate precedent (it

@@ -182,7 +182,7 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
 
 fn blob_atom(bindings: Vec<(u16, Term)>) -> Atom {
     Atom {
-        relation: BLOB,
+        source: bumbledb::AtomSource::Edb(BLOB),
         bindings: bindings
             .into_iter()
             .map(|(field, term)| (FieldId(field), term))
@@ -272,7 +272,7 @@ fn queries() -> Vec<Op> {
             vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             vec![
                 Atom {
-                    relation: REF,
+                    source: bumbledb::AtomSource::Edb(REF),
                     bindings: vec![(FieldId(0), var(0))],
                 },
                 blob_atom(vec![(0, var(0)), (7, var(1))]),

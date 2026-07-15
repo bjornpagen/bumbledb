@@ -63,6 +63,24 @@ pub(crate) const FIELDS_EQ_KEEP_DEN: u64 = 64;
 /// above a scalar equality.
 pub(crate) const PARAM_SET_PLANNING_CARDINALITY: u64 = 16;
 
+/// The delta occurrence's planning cardinality (40-execution.md § the fixpoint driver):
+/// a delta-variant plan's marked occurrence binds to one round's
+/// frontier, which the semi-naive rewrite exists to keep small — the
+/// floor prices it as the most selective thing in the rule, so the DP
+/// orders delta-first. Prepare-unknowable like param survivorship (the
+/// param-plan precedent); pinned at prepare, never re-planned.
+pub(crate) const DELTA_PLANNING_CARDINALITY: u64 = 1;
+
+/// The accumulated/finished predicate occurrence's planning cardinality
+/// (40-execution.md § the fixpoint driver): a same-stratum non-delta occurrence binds to
+/// the predicate's whole accumulated set, and a lower-stratum
+/// occurrence to its finished set — larger than a frontier, still
+/// prepare-unknowable. A floor-style constant like
+/// [`PARAM_SET_PLANNING_CARDINALITY`]: big enough to price the
+/// accumulated read above the delta, small enough that a recursive rule
+/// still plans join-order around its stored atoms' real statistics.
+pub(crate) const ACCUMULATED_PLANNING_CARDINALITY: u64 = 16;
+
 /// One occurrence's planner statistics: the cardinality estimate —
 /// `rows` divided by each Eq selection's distinct count (times the
 /// set-cardinality assumption for set-bound positions) and each
@@ -81,17 +99,31 @@ pub(crate) fn occurrence_stats(
     occurrence: &Occurrence,
     rows: u64,
 ) -> crate::error::Result<OccStats> {
-    let image = cache.peek(txn, occurrence.relation)?;
+    // THE GUARD (20-query-ir.md § engine recursion's consumer guards): an `Idb`
+    // occurrence's cardinality is prepare-unknowable — exactly like
+    // param-bound filter survivorship — so it pins no row counts and
+    // costs on the ladder's floors. The caller supplies the floor
+    // through `rows` ([`DELTA_PLANNING_CARDINALITY`] for a variant's
+    // delta occurrence, [`ACCUMULATED_PLANNING_CARDINALITY`] otherwise
+    // — `api/prepared/build.rs`); each bound variable's distinct count
+    // is the floor itself (a table of N rows has at most N distinct
+    // words per column).
+    let Some(relation) = occurrence.source.edb() else {
+        let floor = rows.max(1);
+        return Ok(OccStats {
+            occ_id: occurrence.occ_id,
+            rows: floor,
+            var_distincts: occurrence
+                .vars
+                .iter()
+                .map(|(_, var)| (*var, floor))
+                .collect(),
+        });
+    };
+    let image = cache.peek(txn, relation)?;
     let mut var_distincts = Vec::with_capacity(occurrence.vars.len());
     for (field, var) in &occurrence.vars {
-        let distinct = distinct_of(
-            txn,
-            schema,
-            occurrence.relation,
-            *field,
-            image.as_deref(),
-            rows,
-        )?;
+        let distinct = distinct_of(txn, schema, relation, *field, image.as_deref(), rows)?;
         var_distincts.push((*var, distinct));
     }
     let estimate = occurrence_estimate(txn, schema, occurrence, image.as_deref(), rows)?;
@@ -127,7 +159,7 @@ fn occurrence_estimate(
         let distinct = distinct_of(
             txn,
             schema,
-            occurrence.relation,
+            occurrence.relation(),
             selection.field,
             image,
             rows,
@@ -392,7 +424,7 @@ mod tests {
     fn eq_on(field: u16, occ_relation: RelationId) -> Occurrence {
         Occurrence {
             occ_id: OccId(0),
-            relation: occ_relation,
+            source: crate::ir::AtomSource::Edb(occ_relation),
             role: Role::Positive,
             vars: vec![],
             filters: vec![FilterPredicate::Compare {
@@ -785,21 +817,21 @@ mod tests {
             finds,
             atoms: vec![
                 Atom {
-                    relation: CYCLE_A,
+                    source: crate::ir::AtomSource::Edb(CYCLE_A),
                     bindings: vec![
                         (FieldId(0), Term::Var(VarId(0))),
                         (FieldId(1), Term::Var(VarId(1))),
                     ],
                 },
                 Atom {
-                    relation: CYCLE_B,
+                    source: crate::ir::AtomSource::Edb(CYCLE_B),
                     bindings: vec![
                         (FieldId(0), Term::Var(VarId(1))),
                         (FieldId(1), Term::Var(VarId(2))),
                     ],
                 },
                 Atom {
-                    relation: CYCLE_C,
+                    source: crate::ir::AtomSource::Edb(CYCLE_C),
                     bindings: vec![
                         (FieldId(0), Term::Var(VarId(2))),
                         (FieldId(1), Term::Var(VarId(0))),

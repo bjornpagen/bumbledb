@@ -12,7 +12,9 @@ use crate::schema::{FieldId, Schema, ValueType};
 
 /// Lowers the witness into paper form, rule by rule: one
 /// [`NormalizedQuery`] per rule, in rule order — the normalized artifact
-/// is a list because the query is a program.
+/// is a list because the query is a program. The query path: no `Idb`
+/// occurrence exists in a sealed [`ValidatedQuery`] (the query boundary
+/// has no predicate address space), so the signature surface is empty.
 ///
 /// # Panics
 ///
@@ -20,23 +22,54 @@ use crate::schema::{FieldId, Schema, ValueType};
 /// (e.g. a comparison variable bound by no atom).
 #[must_use]
 pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> Vec<NormalizedQuery> {
+    normalize_predicate(schema, query, &[])
+}
+
+/// [`normalize`] with the program's `Idb` typing surface: `signatures`
+/// holds every predicate's sealed signature in `PredId` order, and an
+/// `Idb` binding's field type reads the target's column — `FieldId(i)`
+/// is head position `i` (`docs/architecture/20-query-ir.md` § engine recursion; the
+/// positional reading `lean/Bumbledb/Exec/Fixpoint.lean: tupleFact`
+/// promises). Everything else is the conjunctive lowering, verbatim.
+///
+/// # Panics
+///
+/// As [`normalize`].
+#[must_use]
+pub fn normalize_predicate(
+    schema: &Schema,
+    query: &ValidatedQuery,
+    signatures: &[&crate::ir::validate::Predicate],
+) -> Vec<NormalizedQuery> {
     query
         .rules()
-        .map(|rule| normalize_rule(schema, &rule))
+        .map(|rule| normalize_rule(schema, signatures, &rule))
         .collect()
 }
 
 /// Lowers one rule — exactly the conjunctive query's lowering, over the
 /// rule's own variable scope.
-fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
+fn normalize_rule(
+    schema: &Schema,
+    signatures: &[&crate::ir::validate::Predicate],
+    rule: &RuleWitness<'_>,
+) -> NormalizedQuery {
     let positive = rule.rule().atoms.len();
     let mut occurrences: Vec<Occurrence> = Vec::with_capacity(positive + rule.rule().negated.len());
     for (idx, atom) in rule.rule().atoms.iter().enumerate() {
-        occurrences.push(lower_atom(schema, rule, idx, Role::Positive, atom));
+        occurrences.push(lower_atom(
+            schema,
+            signatures,
+            rule,
+            idx,
+            Role::Positive,
+            atom,
+        ));
     }
     for (idx, atom) in rule.rule().negated.iter().enumerate() {
         occurrences.push(lower_atom(
             schema,
+            signatures,
             rule,
             positive + idx,
             Role::Negated,
@@ -119,15 +152,34 @@ fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
 /// the role differs) into an occurrence: variable positions plus the
 /// filters lowered out of its constant, repeated-variable, and membership
 /// bindings.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the two-pass binding walk, one arm per term kind
 fn lower_atom(
     schema: &Schema,
+    signatures: &[&crate::ir::validate::Predicate],
     witness: &RuleWitness<'_>,
     idx: usize,
     role: Role,
     atom: &Atom,
 ) -> Occurrence {
     let occ_id = OccId(u16::try_from(idx).expect("validated: occurrence count fits u16"));
-    let relation = schema.relation(atom.relation);
+    // Field types come from the stored relation, or — for an `Idb` atom
+    // — from the target's sealed signature columns (`FieldId(i)` is head
+    // position `i`, typed by `Predicate.columns[i].ty`; the literal
+    // encodings are value-driven, so a predicate column lowers exactly
+    // as a stored field of its type does).
+    let field_type = |field: FieldId| -> &ValueType {
+        match atom.source {
+            crate::ir::AtomSource::Edb(relation_id) => {
+                &schema.relation(relation_id).field(field).value_type
+            }
+            crate::ir::AtomSource::Idb(pred) => {
+                &signatures[usize::from(pred.0)].columns[usize::from(field.0)].ty
+            }
+        }
+    };
 
     // Pass 1 — variable positions: the first *domain* binding of each
     // variable (a scalar field, or an interval field read by value).
@@ -138,8 +190,7 @@ fn lower_atom(
     let mut vars: Vec<(FieldId, VarId)> = Vec::new();
     for (field, term) in &atom.bindings {
         if let Term::Var(var) = term {
-            let field_type = &relation.field(*field).value_type;
-            if is_membership(field_type, witness.var_type(*var)) {
+            if is_membership(field_type(*field), witness.var_type(*var)) {
                 continue;
             }
             if !vars.iter().any(|(_, v)| v == var) {
@@ -151,7 +202,7 @@ fn lower_atom(
     // Pass 2 — filters, in binding order.
     let mut filters = Vec::new();
     for (field, term) in &atom.bindings {
-        let field_type = &relation.field(*field).value_type;
+        let field_type = field_type(*field);
         match term {
             Term::Var(var) => {
                 if is_membership(field_type, witness.var_type(*var)) {
@@ -243,7 +294,7 @@ fn lower_atom(
 
     Occurrence {
         occ_id,
-        relation: atom.relation,
+        source: atom.source,
         role,
         vars,
         filters,

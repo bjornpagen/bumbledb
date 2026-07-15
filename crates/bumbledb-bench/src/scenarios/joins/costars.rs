@@ -9,11 +9,11 @@ pub(super) fn costars() -> Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::CAST_INFO,
+                source: bumbledb::AtomSource::Edb(ids::CAST_INFO),
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), param(0))],
             },
             Atom {
-                relation: ids::CAST_INFO,
+                source: bumbledb::AtomSource::Edb(ids::CAST_INFO),
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(0))],
             },
         ],

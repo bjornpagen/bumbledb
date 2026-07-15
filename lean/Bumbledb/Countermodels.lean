@@ -1406,7 +1406,8 @@ Two countermodels fence the stratified fixpoint's two premises:
   (`succ_prefixed_infinite` — no list enumerates it). Termination's
   premise (heads project BOUND variables, so candidates live on the
   finite active domain — `Exec/Fixpoint.lean: program_den_finite`)
-  is load-bearing, exactly the design's §8 chain-window fence. -/
+  is load-bearing, exactly the chain-window fence
+  (`docs/architecture/20-query-ir.md` § the chain-window fence). -/
 
 /-- The odd loop's one atom: the program's own predicate, negated,
 zero bindings (the nonemptiness gate). -/

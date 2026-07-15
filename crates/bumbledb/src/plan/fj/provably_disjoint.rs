@@ -56,9 +56,12 @@ pub fn provably_disjoint_rules(
         .iter()
         .filter(|occurrence| occurrence.role.participates())
         .flat_map(|occurrence| {
-            pinned_fields(occurrence).map(|(field, _)| DisjointWitness {
-                relation: occurrence.relation,
-                field,
+            // Candidate pins name stored relations only: an `Idb`
+            // occurrence's extension is execution-local, so its pinned
+            // literals prove nothing about cross-rule head collisions.
+            let stored = occurrence.source.edb();
+            pinned_fields(occurrence).filter_map(move |(field, _)| {
+                stored.map(|relation| DisjointWitness { relation, field })
             })
         })
         .collect();
@@ -99,7 +102,8 @@ fn pins_of(
         .occurrences
         .iter()
         .filter(move |occurrence| {
-            occurrence.role.participates() && occurrence.relation == witness.relation
+            occurrence.role.participates()
+                && occurrence.source == crate::ir::AtomSource::Edb(witness.relation)
         })
         .filter_map(move |occurrence| {
             pinned_fields(occurrence)

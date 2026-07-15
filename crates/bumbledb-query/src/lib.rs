@@ -9,7 +9,13 @@
 //!
 //! ```text
 //! query   := rule+                       // two or more rules denote set union
-//! rule    := '(' head ')' '|' body ';'
+//! rule    := [pred] '(' head ')' '|' body ';'
+//!                                        // a named head declares a predicate; bare
+//!                                        //   rules ARE the output predicate — an
+//!                                        //   all-bare query is today's one-predicate
+//!                                        //   program, lowered to ir::Query verbatim
+//!                                        //   (text-level backward compatibility);
+//!                                        //   any named head lowers to ir::Program
 //! head    := headterm (',' headterm)*
 //! headterm:= var | [name ':'] agg        // named positions become result columns
 //! agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
@@ -22,12 +28,21 @@
 //!          | Allen '(' term ',' mask ',' term ')'
 //!          | term cmp term               // ==  !=  <  <=  >  >=
 //! atom    := Relation '(' binding (',' binding)* ')'
+//!          | pred '(' binding (',' binding)* ')'
+//!                                        // a body atom may name a predicate where it
+//!                                        //   names a relation; its "fields" are head
+//!                                        //   POSITIONS (`0: v`) — positional, never
+//!                                        //   nominal, and never punned
 //! binding := field                       // punning: binds a var named after the field
 //!          | field ':' var               // explicit variable — the join spelling
 //!          | field '==' value            // selection, schema-grammar-verbatim
 //!          | field 'in' ?param           // set membership: field value ∈ the bound set
 //! mask    := MASK ('|' MASK)* | ?param   // masks are sets of basics; '|' is set union
 //! term    := var | ?param | literal
+//! pred    := lowercase ident             // macro-LOCAL: resolved at expansion, never
+//!                                        //   in the IR or the fingerprint; relations
+//!                                        //   are UpperCamel, so a predicate spelled
+//!                                        //   like a relation is unwritable
 //! ```
 //!
 //! Surface `Duration(iv)` lowers to IR `Measure(iv)`: it denotes the
@@ -283,6 +298,10 @@ enum HeadTerm {
 }
 
 struct ParsedRule {
+    /// The rule's predicate name (`path(x, z) | …`) — macro-local, the
+    /// text layer's sidecar; `None` for a bare rule (the output
+    /// predicate's spelling).
+    name: Option<Name>,
     head: Vec<HeadTerm>,
     items: Vec<Item>,
 }
@@ -649,11 +668,34 @@ fn parse_sel_value(tokens: &mut Tokens) -> Parse<SelValue> {
     Ok(SelValue::Lit(parse_lit(tokens)?))
 }
 
+/// One binding's field label: a field name, or — in a predicate atom —
+/// a bare head position (`0: v`; `FieldId(i)` is positional, never
+/// nominal). Which one is legal is the atom's source's business,
+/// decided at emission (the predicate table exists only after every
+/// rule has parsed — mutual recursion reads forward).
+fn expect_field_label(tokens: &mut Tokens) -> Parse<Name> {
+    match tokens.peek() {
+        Some(TokenTree::Literal(lit)) => {
+            let text = lit.to_string();
+            let span = lit.span();
+            if text.parse::<u16>().is_err() {
+                return fail(
+                    span,
+                    format!("query!: expected a field name or head position, found `{text}`"),
+                );
+            }
+            tokens.next();
+            Ok(Name { text, span })
+        }
+        _ => expect_ident(tokens, "a field name"),
+    }
+}
+
 /// Parses one atom's bindings out of its paren group.
 fn parse_bindings(mut tokens: Tokens) -> Parse<Vec<Binding>> {
     let mut bindings = Vec::new();
     while tokens.peek().is_some() {
-        let field = expect_ident(&mut tokens, "a field name")?;
+        let field = expect_field_label(&mut tokens)?;
         if peek_punct(&mut tokens, ':') {
             expect_colon(&mut tokens, "the binding's `:`")?;
             let var = expect_ident(&mut tokens, "a variable")?;
@@ -876,8 +918,44 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
     finish_term_item(tokens, lhs)
 }
 
-/// Parses one rule: `(head) | body ;`.
+/// Parses one rule: `[pred] (head) | body ;` — a leading lowercase
+/// ident names the rule's predicate (macro-local; bare rules are the
+/// output predicate).
 fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
+    let name = match tokens.peek() {
+        Some(TokenTree::Ident(_)) => {
+            let name = expect_ident(tokens, "a rule")?;
+            if peek_punct(tokens, ':') {
+                // `pred :- …` must not parse — the refusal fires before
+                // the head-group error would.
+                let span = peek_span(tokens);
+                tokens.next();
+                if peek_punct(tokens, '-') {
+                    return datalog_refusal(span);
+                }
+                return fail(span, "query!: expected the named rule's head `(…)`");
+            }
+            if !name
+                .text
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase())
+            {
+                return fail(
+                    name.span,
+                    format!(
+                        "query!: predicate names begin lowercase (`{}`) — UpperCamel \
+                         names are relations, so a predicate spelled like a relation \
+                         is unwritable (docs/architecture/20-query-ir.md § the query \
+                         notation)",
+                        name.text
+                    ),
+                );
+            }
+            Some(name)
+        }
+        _ => None,
+    };
     let (head_group, head_span) = take_paren_group(tokens, "a rule head `(…)`")?;
     let head = parse_head(head_group)?;
     if head.is_empty() {
@@ -919,7 +997,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
             tokens.next();
         }
     }
-    Ok(ParsedRule { head, items })
+    Ok(ParsedRule { name, head, items })
 }
 
 // ---------------------------------------------------------------------
@@ -1067,6 +1145,11 @@ impl Scope {
 struct Emitter<'a> {
     theory: &'a str,
     params: Params,
+    /// The macro-local predicate table: named head → `PredId` (group
+    /// order, first appearance). Names never survive expansion — the
+    /// emitted IR carries bare `PredId`s, so no name enters the
+    /// fingerprint. Empty for an all-bare query.
+    predicates: Vec<(String, u16)>,
 }
 
 impl Emitter<'_> {
@@ -1150,9 +1233,74 @@ impl Emitter<'_> {
         })
     }
 
-    /// One atom as an `Atom` expression — the relation and every field
-    /// through the theory's id constants.
+    /// A predicate atom as an `Atom` expression: an `Idb` source whose
+    /// bindings address head positions (`FieldId(i)` is the target's
+    /// column `i` — positional, never nominal, never punned).
+    fn idb_atom(&mut self, scope: &mut Scope, atom: &Atom, pred: u16) -> Parse<String> {
+        let mut bindings = String::new();
+        for binding in &atom.bindings {
+            let (field, term) = match binding {
+                Binding::Pun(field) => {
+                    return fail(
+                        field.span,
+                        "query!: a predicate position binds explicitly (`0: v`) — \
+                         punning names a field, and predicate columns are positions",
+                    );
+                }
+                Binding::Var { field, var } => (field, Self::var(scope.intern(var)?)),
+                Binding::Value {
+                    field: _,
+                    value:
+                        SelValue::Handle {
+                            qualifier: None,
+                            handle,
+                        },
+                } => {
+                    return fail(
+                        handle.span,
+                        "query!: a bare handle resolves through the field-named host \
+                         enum, and a predicate position has no field name — qualify \
+                         it (`Kind::Focus`)",
+                    );
+                }
+                Binding::Value { field, value } => (field, self.sel_value(field, value)?),
+                Binding::SetParam { field, param } => {
+                    let id = self.params.resolve(param)?;
+                    (
+                        field,
+                        format!("::bumbledb::Term::ParamSet(::bumbledb::ParamId({id}))"),
+                    )
+                }
+            };
+            let Ok(position) = field.text.parse::<u16>() else {
+                return fail(
+                    field.span,
+                    format!(
+                        "query!: `{}` — a predicate atom's bindings address head \
+                         positions (`0: v`), never names",
+                        field.text
+                    ),
+                );
+            };
+            let _ = write!(bindings, "(::bumbledb::FieldId({position}), {term}),");
+        }
+        Ok(format!(
+            "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Idb(::bumbledb::PredId({pred})), bindings: ::std::vec![{bindings}] }}"
+        ))
+    }
+
+    /// One atom as an `Atom` expression — a predicate of this program by
+    /// macro-local name, else the relation and every field through the
+    /// theory's id constants.
     fn atom(&mut self, scope: &mut Scope, atom: &Atom) -> Parse<String> {
+        if let Some(pred) = self
+            .predicates
+            .iter()
+            .find(|(name, _)| *name == atom.relation.text)
+            .map(|(_, pred)| *pred)
+        {
+            return self.idb_atom(scope, atom, pred);
+        }
         let relation = format!("{}::{}", self.theory, screaming_snake(&atom.relation.text));
         let theory = self.theory.to_owned();
         let field_const = move |field: &Name| {
@@ -1164,6 +1312,25 @@ impl Emitter<'_> {
         };
         let mut bindings = String::new();
         for binding in &atom.bindings {
+            if let Binding::Pun(field)
+            | Binding::Var { field, .. }
+            | Binding::Value { field, .. }
+            | Binding::SetParam { field, .. } = binding
+                && field
+                    .text
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_digit())
+            {
+                return fail(
+                    field.span,
+                    format!(
+                        "query!: `{}` — numeric labels address a predicate atom's \
+                         head positions; a relation's fields are named",
+                        field.text
+                    ),
+                );
+            }
             let (field, term) = match binding {
                 Binding::Pun(field) => (field, Self::var(scope.pun(field)?)),
                 Binding::Var { field, var } => (field, Self::var(scope.intern(var)?)),
@@ -1179,7 +1346,7 @@ impl Emitter<'_> {
             let _ = write!(bindings, "({}, {term}),", field_const(field));
         }
         Ok(format!(
-            "::bumbledb::Atom {{ relation: {relation}, bindings: ::std::vec![{bindings}] }}"
+            "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Edb({relation}), bindings: ::std::vec![{bindings}] }}"
         ))
     }
 
@@ -1309,19 +1476,20 @@ impl Emitter<'_> {
     }
 }
 
-fn expand(input: TokenStream) -> Parse<String> {
-    let mut tokens: Tokens = input.into_iter().peekable();
-    // The theory path, spliced verbatim before every `::CONST`.
+/// Parses the leading theory path (`Theory` or `crate::path::Theory`) —
+/// spliced verbatim before every `::CONST` — leaving the brace group as
+/// the next token.
+fn parse_theory(tokens: &mut Tokens) -> Parse<String> {
     let mut theory = String::new();
     loop {
         match tokens.peek() {
             Some(TokenTree::Ident(_)) => {
-                let name = expect_ident(&mut tokens, "the theory")?;
+                let name = expect_ident(tokens, "the theory")?;
                 theory.push_str(&name.text);
             }
             Some(TokenTree::Punct(p)) if p.as_char() == ':' => {
-                expect_colon(&mut tokens, "the theory path's `::`")?;
-                expect_punct(&mut tokens, ':', "the theory path's `::`")?;
+                expect_colon(tokens, "the theory path's `::`")?;
+                expect_punct(tokens, ':', "the theory path's `::`")?;
                 theory.push_str("::");
             }
             Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Brace => break,
@@ -1340,8 +1508,14 @@ fn expand(input: TokenStream) -> Parse<String> {
         }
     }
     if theory.is_empty() || theory.ends_with("::") {
-        return fail(peek_span(&mut tokens), "query!: name the theory first");
+        return fail(peek_span(tokens), "query!: name the theory first");
     }
+    Ok(theory)
+}
+
+fn expand(input: TokenStream) -> Parse<String> {
+    let mut tokens: Tokens = input.into_iter().peekable();
+    let theory = parse_theory(&mut tokens)?;
     let Some(TokenTree::Group(group)) = tokens.next() else {
         unreachable!("peeked the brace group");
     };
@@ -1349,35 +1523,103 @@ fn expand(input: TokenStream) -> Parse<String> {
         return fail(extra.span(), "query!: nothing follows the rule block");
     }
     let mut rule_tokens: Tokens = group.stream().into_iter().peekable();
+    let mut parsed: Vec<ParsedRule> = Vec::new();
+    while rule_tokens.peek().is_some() {
+        parsed.push(parse_rule(&mut rule_tokens)?);
+    }
+    if parsed.is_empty() {
+        return fail(group.span(), "query!: a query needs at least one rule");
+    }
+    // Predicate groups in first-appearance order — the `PredId`
+    // assignment (bare rules are one group: the output predicate).
+    let mut groups: Vec<(Option<String>, Vec<usize>)> = Vec::new();
+    for (index, rule) in parsed.iter().enumerate() {
+        let key = rule.name.as_ref().map(|name| name.text.clone());
+        match groups.iter_mut().find(|(existing, _)| *existing == key) {
+            Some((_, members)) => members.push(index),
+            None => groups.push((key, vec![index])),
+        }
+    }
     let mut emitter = Emitter {
         theory: &theory,
         params: Params::default(),
+        predicates: groups
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (name, _))| {
+                name.clone()
+                    .map(|name| (name, u16::try_from(index).expect("MAX_RULES bounds groups")))
+            })
+            .collect(),
     };
-    let mut rules = String::new();
-    while rule_tokens.peek().is_some() {
-        let rule = parse_rule(&mut rule_tokens)?;
-        let _ = write!(rules, "{},", emitter.rule(&rule)?);
+    // The all-bare query lowers to `ir::Query` exactly as it always has
+    // — text-level backward compatibility is a representation fact, not
+    // a promise.
+    if emitter.predicates.is_empty() {
+        let mut rules = String::new();
+        for rule in &parsed {
+            let _ = write!(rules, "{},", emitter.rule(rule)?);
+        }
+        return Ok(format!(
+            "{{ let rules = ::std::vec![{rules}]; \
+                 let head = ::bumbledb::Rule::head(&rules[0]); \
+                 ::bumbledb::Query {{ head, rules }} }}"
+        ));
     }
-    if rules.is_empty() {
-        return fail(group.span(), "query!: a query needs at least one rule");
+    // Named heads present: the program form. Bare rules ARE the output
+    // predicate; a program of only named rules has no output to answer.
+    let Some(output) = groups.iter().position(|(name, _)| name.is_none()) else {
+        return fail(
+            group.span(),
+            "query!: a program's output rules are written bare — name the \
+             interior predicates, leave the output's rules unnamed \
+             (docs/architecture/20-query-ir.md § the query notation)",
+        );
+    };
+    let mut lets = String::new();
+    let mut defs = String::new();
+    for (index, (_, members)) in groups.iter().enumerate() {
+        let mut rules = String::new();
+        for &member in members {
+            let _ = write!(rules, "{},", emitter.rule(&parsed[member])?);
+        }
+        let _ = write!(
+            lets,
+            "let p{index}_rules = ::std::vec![{rules}]; \
+             let p{index}_head = ::bumbledb::Rule::head(&p{index}_rules[0]); "
+        );
+        let _ = write!(
+            defs,
+            "::bumbledb::PredicateDef {{ head: p{index}_head, rules: p{index}_rules }},"
+        );
     }
     Ok(format!(
-        "{{ let rules = ::std::vec![{rules}]; \
-             let head = ::bumbledb::Rule::head(&rules[0]); \
-             ::bumbledb::Query {{ head, rules }} }}"
+        "{{ {lets}::bumbledb::Program {{ predicates: ::std::vec![{defs}], \
+             output: ::bumbledb::PredId({output}) }} }}"
     ))
 }
 
 /// The query notation, lowered at compile time to the `ir::Query` value
+/// — or, when any rule carries a named head, to the `ir::Program` value
 /// (docs/architecture/20-query-ir.md § the query notation — the grammar
 /// is the module doc's block, normative there). Names check through the
-/// theory's id constants; everything semantic beyond names surfaces as
-/// the validation roster's typed errors at `Db::prepare`.
+/// theory's id constants; predicate names are macro-local and never
+/// survive expansion (the IR carries bare `PredId`s); everything
+/// semantic beyond names surfaces as the validation roster's typed
+/// errors at `Db::prepare` / `Db::prepare_program`.
 ///
 /// ```ignore
 /// let unavailable = bumbledb_query::query!(Calendar {
 ///     (person, during) | Busy(person, during), Allen(during, INTERSECTS, ?window);
 ///     (person, during) | Ooo(person, during),  Allen(during, INTERSECTS, ?window);
+/// });
+/// // The program form: named heads declare predicates, a body atom may
+/// // name one (bindings address head POSITIONS), bare rules are the
+/// // output.
+/// let reachable = bumbledb_query::query!(Ledger {
+///     reach(c, a) | OrgParent(child: c, parent: a);
+///     reach(c, a) | OrgParent(child: c, parent: m), reach(0: m, 1: a);
+///     (c, a) | reach(0: c, 1: a);
 /// });
 /// ```
 ///

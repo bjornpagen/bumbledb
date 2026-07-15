@@ -38,10 +38,18 @@
 //! relational is a dependency statement between the relation blocks
 //! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality),
 //! `A(X | σ) <= B(Y | ψ)` (containment), `==` lowered here to the two
-//! adjacent containments, `A <= B` first. Selection literals are typed
+//! adjacent containments, `A <= B` first;
+//! `A(X | σ) in lo..hi per B(Y | ψ)` (the cardinality window — `*` is the
+//! no-ceiling spelling, `in 1..* per`); and
+//! `order R(pos) per R(grp) [by link -> K(read) ...]` (the order mark —
+//! both atoms name one relation; each `by` hop spells its read field only,
+//! the hop key resolving to the relation's one single-field key at
+//! expansion). Selection literals are typed
 //! against the selected field in the macro (a bare handle resolves through
 //! the selected field's newtype to its closed relation's row id); interval
-//! literals are written `start..end`, half-open.
+//! literals are written `start..end`, half-open; a binding may carry a
+//! literal SET — `field == {A, B}`, read disjunctively (`{L}` is the
+//! equality spelling; `{}` does not parse).
 //!
 //! **Closed relations** declare their extension in the schema — rows are
 //! ground axioms, handle = declaration-order row id
@@ -190,12 +198,35 @@ enum Literal {
     },
 }
 
-/// One side of a dependency statement: `R(fields [ | field == literal, .. ])`.
+/// One σ binding's right side: a single literal (`f == L`, the equality
+/// spelling) or a braced literal set (`f == {A, B}`, the disjunctive
+/// spelling — `docs/architecture/30-dependencies.md`). `{L}` lowers to the
+/// single-literal form (a singleton set IS the equality) and `{}` is an
+/// expansion panic.
+#[derive(Debug, Clone)]
+enum Literals {
+    One(Literal),
+    Many(Vec<Literal>),
+}
+
+/// One side of a dependency statement:
+/// `R(fields [ | field == literal-or-set, .. ])`.
 #[derive(Debug, Clone)]
 struct Side {
     relation: String,
     projection: Vec<String>,
-    selection: Vec<(String, Literal)>,
+    selection: Vec<(String, Literals)>,
+}
+
+/// One hop of an order mark's `by` chain as written: `-> K(read)`. The
+/// hop's key field is not spelled — it resolves to the relation's one
+/// single-field key at emission (a closed relation's synthetic id, a
+/// `fresh` field's auto-key, or a declared one-field FD), and an
+/// ambiguous or missing key is an expansion panic naming the relation.
+#[derive(Debug, Clone)]
+struct Hop {
+    relation: String,
+    read: String,
 }
 
 /// One parsed dependency statement. `==` never reaches here: it is lowered
@@ -209,6 +240,22 @@ enum Statement {
     Containment {
         source: Side,
         target: Side,
+    },
+    /// `A(X | φ) in lo..hi per B(Y | ψ);` — `hi` is `None` for the `*`
+    /// spelling.
+    Cardinality {
+        source: Side,
+        lo: String,
+        hi: Option<String>,
+        target: Side,
+    },
+    /// `order R(pos) per R(grp) [by link -> K(read) ...];` — both atoms
+    /// name the same relation (checked at parse).
+    Order {
+        relation: String,
+        position: String,
+        grouping: Vec<String>,
+        ranking: Option<(String, Vec<Hop>)>,
     },
 }
 
@@ -587,7 +634,35 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
     }
 }
 
-/// Parses `fields [ | field == literal, .. ]` out of one side's parens.
+/// Parses one binding's right side: a braced literal set (`{A, B}`) or a
+/// single literal. `{L}` lowers to the single-literal spelling — the
+/// canonical singleton — and `{}` panics (an empty set selects nothing;
+/// write no binding).
+fn parse_literals(field: &str, tokens: &mut Tokens) -> Literals {
+    if !peek_brace(tokens) {
+        return Literals::One(parse_literal(tokens));
+    }
+    let body = take_group(tokens, Delimiter::Brace, "a literal set");
+    let mut set_tokens = body.into_iter().peekable();
+    let mut literals = Vec::new();
+    while set_tokens.peek().is_some() {
+        literals.push(parse_literal(&mut set_tokens));
+        if peek_punct(&mut set_tokens, ',') {
+            set_tokens.next();
+        }
+    }
+    match literals.len() {
+        0 => panic!(
+            "schema!: the literal set for `{field}` is empty — an empty set selects \
+             nothing; write no binding"
+        ),
+        1 => Literals::One(literals.remove(0)),
+        _ => Literals::Many(literals),
+    }
+}
+
+/// Parses `fields [ | field == literal-or-set, .. ]` out of one side's
+/// parens.
 fn parse_side(relation: String, group: TokenStream) -> Side {
     let mut tokens = group.into_iter().peekable();
     let mut projection = Vec::new();
@@ -604,7 +679,8 @@ fn parse_side(relation: String, group: TokenStream) -> Side {
             let field = expect_ident(&mut tokens, "a selected field name");
             expect_punct(&mut tokens, '=');
             expect_punct(&mut tokens, '=');
-            selection.push((field, parse_literal(&mut tokens)));
+            let literals = parse_literals(&field, &mut tokens);
+            selection.push((field, literals));
             if peek_punct(&mut tokens, ',') {
                 tokens.next();
             }
@@ -674,8 +750,113 @@ fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<S
                 target: left,
             });
         }
-        other => panic!("schema!: expected `->`, `<=`, or `==`, found {other:?}"),
+        // `in lo..hi per B(Y | ψ)`: the cardinality window — `hi` is an
+        // integer or `*` (no upper bound).
+        Some(TokenTree::Ident(ident)) if ident.to_string() == "in" => {
+            let (negative, lo) = parse_int(tokens, "the window's lower bound");
+            assert!(
+                !negative,
+                "schema!: a window bound is a count — non-negative"
+            );
+            expect_punct(tokens, '.');
+            expect_punct(tokens, '.');
+            let hi = if peek_punct(tokens, '*') {
+                tokens.next();
+                None
+            } else {
+                let (negative, hi) = parse_int(tokens, "the window's upper bound or `*`");
+                assert!(
+                    !negative,
+                    "schema!: a window bound is a count — non-negative"
+                );
+                Some(hi)
+            };
+            let per = expect_ident(tokens, "`per` after the window");
+            assert_eq!(
+                per, "per",
+                "schema!: expected `per` after the window bounds, found `{per}`"
+            );
+            let right = parse_statement_side(tokens);
+            statements.push(Statement::Cardinality {
+                source: left,
+                lo,
+                hi,
+                target: right,
+            });
+        }
+        other => panic!("schema!: expected `->`, `<=`, `==`, or `in`, found {other:?}"),
     }
+    expect_punct(tokens, ';');
+}
+
+/// Parses one order mark, the `order` keyword already consumed:
+/// `order R(pos) per R(grp) [by link -> K(read) ...];`. Both atoms name
+/// one relation — the order mark is a statement about ONE relation's
+/// ordinal geometry — and each `->` hop spells its read field only (the
+/// hop key resolves at emission).
+fn parse_order_statement(tokens: &mut Tokens, statements: &mut Vec<Statement>) {
+    let relation = expect_ident(tokens, "the ordered relation's name");
+    let group = take_group(tokens, Delimiter::Parenthesis, "the position field");
+    let mut position_tokens = group.into_iter().peekable();
+    let position = expect_ident(&mut position_tokens, "the position field's name");
+    assert!(
+        position_tokens.peek().is_none(),
+        "schema!: `order {relation}(..)` takes exactly one position field"
+    );
+    let per = expect_ident(tokens, "`per` after the position atom");
+    assert_eq!(
+        per, "per",
+        "schema!: expected `per` after the position atom, found `{per}`"
+    );
+    let grouping_relation = expect_ident(tokens, "the grouping atom's relation name");
+    assert_eq!(
+        grouping_relation, relation,
+        "schema!: an order mark names one relation — `order {relation}(..) per \
+         {relation}(..)`, found `{grouping_relation}`"
+    );
+    let group = take_group(tokens, Delimiter::Parenthesis, "the grouping field list");
+    let mut grouping_tokens = group.into_iter().peekable();
+    let mut grouping = Vec::new();
+    while grouping_tokens.peek().is_some() {
+        grouping.push(expect_ident(&mut grouping_tokens, "a grouping field name"));
+        if peek_punct(&mut grouping_tokens, ',') {
+            grouping_tokens.next();
+        }
+    }
+    let ranking = if peek_ident(tokens).as_deref() == Some("by") {
+        tokens.next();
+        let link = expect_ident(tokens, "the `by` chain's link field");
+        let mut hops = Vec::new();
+        while peek_punct(tokens, '-') {
+            tokens.next();
+            expect_punct(tokens, '>');
+            let hop_relation = expect_ident(tokens, "a hop's relation name");
+            let group = take_group(tokens, Delimiter::Parenthesis, "a hop's read field");
+            let mut hop_tokens = group.into_iter().peekable();
+            let read = expect_ident(&mut hop_tokens, "the hop's read field name");
+            assert!(
+                hop_tokens.peek().is_none(),
+                "schema!: a `by` hop reads exactly one field — `-> {hop_relation}(field)`"
+            );
+            hops.push(Hop {
+                relation: hop_relation,
+                read,
+            });
+        }
+        assert!(
+            !hops.is_empty(),
+            "schema!: a `by` chain needs at least one `-> K(read)` hop"
+        );
+        Some((link, hops))
+    } else {
+        None
+    };
+    statements.push(Statement::Order {
+        relation,
+        position,
+        grouping,
+        ranking,
+    });
     expect_punct(tokens, ';');
 }
 
@@ -710,6 +891,8 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
             let name = expect_ident(&mut tokens, "a relation name");
             let body = take_group(&mut tokens, Delimiter::Brace, "a relation body");
             schema.relations.push(parse_relation(name, body));
+        } else if ident == "order" {
+            parse_order_statement(&mut tokens, &mut schema.statements);
         } else {
             parse_statement(ident, &mut tokens, &mut schema.statements);
         }
@@ -931,17 +1114,44 @@ fn field_id_list(declaration: &Relation, fields: &[String]) -> String {
         .join(", ")
 }
 
+/// Renders one binding's literal set as a `LiteralSet` expression — the
+/// singleton spelling stays the `One` arm by construction.
+fn literals_expr(
+    closed: &BTreeMap<&str, &Relation>,
+    declaration: &Relation,
+    field: &str,
+    literals: &Literals,
+) -> String {
+    match literals {
+        Literals::One(literal) => format!(
+            "::bumbledb::schema::LiteralSet::One({})",
+            value_expr(closed, declaration, field, literal)
+        ),
+        Literals::Many(values) => {
+            let mut rendered = String::new();
+            for literal in values {
+                let _ = write!(
+                    rendered,
+                    "{},",
+                    value_expr(closed, declaration, field, literal)
+                );
+            }
+            format!("::bumbledb::schema::LiteralSet::Many(::std::boxed::Box::new([{rendered}]))")
+        }
+    }
+}
+
 /// Renders one side as a `Side` expression, ids pre-resolved.
 fn side_expr(relations: &[Relation], closed: &BTreeMap<&str, &Relation>, side: &Side) -> String {
     let relation = relation_index(relations, &side.relation);
     let declaration = &relations[relation];
     let mut selection = String::new();
-    for (field, literal) in &side.selection {
+    for (field, literals) in &side.selection {
         let _ = write!(
             selection,
             "(::bumbledb::schema::FieldId({}), {}),",
             field_index(declaration, field),
-            value_expr(closed, declaration, field, literal)
+            literals_expr(closed, declaration, field, literals)
         );
     }
     format!(
@@ -950,6 +1160,148 @@ fn side_expr(relations: &[Relation], closed: &BTreeMap<&str, &Relation>, side: &
              projection: ::std::boxed::Box::new([{}]), \
              selection: ::std::boxed::Box::new([{selection}]) }}",
         field_id_list(declaration, &side.projection),
+    )
+}
+
+/// Resolves a `by` hop's key field — the single-field key of the hop's
+/// relation this invocation declares: a closed relation's synthetic `id`
+/// (the one probe-able identity), or the unique candidate among `fresh`
+/// auto-keys and declared one-field FDs. Zero or several candidates panic
+/// naming the relation — the notation spells only the read field, so an
+/// ambiguous key cannot be disambiguated in-grammar.
+fn hop_key_field(schema: &SchemaAst, relation: &Relation) -> String {
+    if relation.closed.is_some() {
+        return "id".to_owned();
+    }
+    let mut candidates: Vec<&str> = relation
+        .fields
+        .iter()
+        .filter(|field| field.fresh)
+        .map(|field| field.name.as_str())
+        .collect();
+    for statement in &schema.statements {
+        if let Statement::Functionality {
+            relation: r,
+            projection,
+        } = statement
+            && *r == relation.name
+            && let [field] = projection.as_slice()
+            && !candidates.contains(&field.as_str())
+        {
+            candidates.push(field);
+        }
+    }
+    match candidates.as_slice() {
+        [field] => (*field).to_owned(),
+        [] => panic!(
+            "schema!: a `by` hop probes relation `{}`, which declares no single-field \
+             key — declare `{}(field) -> {};` for the field the hop resolves against",
+            relation.name, relation.name, relation.name
+        ),
+        _ => panic!(
+            "schema!: a `by` hop probes relation `{}`, which declares several \
+             single-field keys ({}) — the hop key is inferred and must be unique",
+            relation.name,
+            candidates.join(", ")
+        ),
+    }
+}
+
+/// Renders one parsed statement as its `StatementDescriptor` expression,
+/// ids resolved from declaration order.
+fn statement_expr(
+    schema: &SchemaAst,
+    closed: &BTreeMap<&str, &Relation>,
+    statement: &Statement,
+) -> String {
+    match statement {
+        Statement::Functionality {
+            relation,
+            projection,
+        } => {
+            let index = relation_index(&schema.relations, relation);
+            format!(
+                "::bumbledb::schema::StatementDescriptor::Functionality {{ \
+                     relation: ::bumbledb::schema::RelationId({index}), \
+                     projection: ::std::boxed::Box::new([{}]) }},",
+                field_id_list(&schema.relations[index], projection),
+            )
+        }
+        Statement::Containment { source, target } => format!(
+            "::bumbledb::schema::StatementDescriptor::Containment {{ source: {}, target: {} }},",
+            side_expr(&schema.relations, closed, source),
+            side_expr(&schema.relations, closed, target),
+        ),
+        Statement::Cardinality {
+            source,
+            lo,
+            hi,
+            target,
+        } => {
+            let hi = match hi {
+                None => "::std::option::Option::None".to_owned(),
+                Some(hi) => format!("::std::option::Option::Some({hi})"),
+            };
+            format!(
+                "::bumbledb::schema::StatementDescriptor::Cardinality {{ \
+                     source: {}, lo: {lo}, hi: {hi}, target: {} }},",
+                side_expr(&schema.relations, closed, source),
+                side_expr(&schema.relations, closed, target),
+            )
+        }
+        Statement::Order {
+            relation,
+            position,
+            grouping,
+            ranking,
+        } => order_statement_expr(schema, relation, position, grouping, ranking.as_ref()),
+    }
+}
+
+/// Renders one order mark, hop keys resolved through [`hop_key_field`].
+fn order_statement_expr(
+    schema: &SchemaAst,
+    relation: &str,
+    position: &str,
+    grouping: &[String],
+    ranking: Option<&(String, Vec<Hop>)>,
+) -> String {
+    let index = relation_index(&schema.relations, relation);
+    let declaration = &schema.relations[index];
+    let ranking_expr = match ranking {
+        None => "::std::option::Option::None".to_owned(),
+        Some((link, hops)) => {
+            let mut rendered = String::new();
+            for hop in hops {
+                let hop_index = relation_index(&schema.relations, &hop.relation);
+                let hop_declaration = &schema.relations[hop_index];
+                let key = hop_key_field(schema, hop_declaration);
+                let _ = write!(
+                    rendered,
+                    "::bumbledb::schema::RankHop {{ \
+                         relation: ::bumbledb::schema::RelationId({hop_index}), \
+                         key: ::bumbledb::schema::FieldId({}), \
+                         read: ::bumbledb::schema::FieldId({}) }},",
+                    field_index(hop_declaration, &key),
+                    field_index(hop_declaration, &hop.read),
+                );
+            }
+            format!(
+                "::std::option::Option::Some(::bumbledb::schema::RankChain {{ \
+                     link: ::bumbledb::schema::FieldId({}), \
+                     hops: ::std::boxed::Box::new([{rendered}]) }})",
+                field_index(declaration, link),
+            )
+        }
+    };
+    format!(
+        "::bumbledb::schema::StatementDescriptor::Order {{ \
+             relation: ::bumbledb::schema::RelationId({index}), \
+             position: ::bumbledb::schema::FieldId({}), \
+             grouping: ::std::boxed::Box::new([{}]), \
+             ranking: {ranking_expr} }},",
+        field_index(declaration, position),
+        field_id_list(declaration, grouping),
     )
 }
 
@@ -1007,29 +1359,7 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst, closed: &BTreeMap<&str,
     }
     let mut statements = String::new();
     for statement in &schema.statements {
-        match statement {
-            Statement::Functionality {
-                relation,
-                projection,
-            } => {
-                let index = relation_index(&schema.relations, relation);
-                let _ = write!(
-                    statements,
-                    "::bumbledb::schema::StatementDescriptor::Functionality {{ \
-                         relation: ::bumbledb::schema::RelationId({index}), \
-                         projection: ::std::boxed::Box::new([{}]) }},",
-                    field_id_list(&schema.relations[index], projection),
-                );
-            }
-            Statement::Containment { source, target } => {
-                let _ = write!(
-                    statements,
-                    "::bumbledb::schema::StatementDescriptor::Containment {{ source: {}, target: {} }},",
-                    side_expr(&schema.relations, closed, source),
-                    side_expr(&schema.relations, closed, target),
-                );
-            }
-        }
+        let _ = write!(statements, "{}", statement_expr(schema, closed, statement));
     }
     let name = &schema.name;
     let _ = write!(

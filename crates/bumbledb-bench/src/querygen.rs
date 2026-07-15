@@ -15,6 +15,16 @@
 //! (relation/field ids, domains, vocabulary, the deterministic corpus
 //! value functions) comes from that one module — a schema change lands
 //! there without touching the grammar.
+//!
+//! The **recursive-shape arm** ([`random_program`],
+//! `shapes_recursive.rs`) is its own entry beside [`random_query`], not
+//! a [`Shape`] row: it emits `Program`s that prepare through
+//! `db.prepare_program` and execute under the fixpoint driver, so its
+//! differential runs engine-vs-naive on every program and
+//! naive-vs-`SQLite` where expressible (plus the Lean conformance arm)
+//! — the shipping law's estate
+//! (`docs/architecture/60-validation.md` § the two oracles), all
+//! oracles live.
 
 use bumbledb::{
     AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, MaskTerm, RelationId, VarId,
@@ -33,6 +43,7 @@ mod shapes;
 mod shapes_closed;
 mod shapes_ground;
 mod shapes_interval;
+mod shapes_recursive;
 mod shapes_rules;
 mod shapes_sink;
 pub mod target;
@@ -44,6 +55,9 @@ pub use construct::random_query;
 pub use contradict::contradiction_query;
 pub use coverage::{cmp_cell_legal, coverage};
 pub use oracle::{ParamDraw, params_for};
+pub use shapes_recursive::{
+    RecursiveCoverage, RecursiveVariant, random_program, recursive_coverage,
+};
 
 /// The shape grammar's weights (drawn by range over the sum). The five
 /// original join shapes keep their proportions; the redesign's surface

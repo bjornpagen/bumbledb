@@ -86,7 +86,11 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
         })
     };
 
-    let relation = schema.relation(occurrence.relation);
+    // An `Idb` occurrence never key-probes: a predicate has no `U`
+    // determinants and no `M` entries — its storage is the fixpoint
+    // driver's transient image — so an `Idb`-reading rule always keeps
+    // the Free Join path.
+    let relation = schema.relation(occurrence.source.edb()?);
     // A closed relation has no `U` determinants and no `M` entries — its
     // storage is the theory (`docs/architecture/50-storage.md` § virtual
     // relations) — so even a fully key-bound single atom classifies as
@@ -121,7 +125,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
         .collect();
 
     Some(KeyProbePlan {
-        relation: occurrence.relation,
+        relation: occurrence.relation(),
         statement,
         key,
         remaining_filters: unconsumed_filters(&occurrence.filters, key_fields),

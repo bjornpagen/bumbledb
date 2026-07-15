@@ -9,7 +9,7 @@
 mod convert;
 mod display;
 
-use crate::ir::{ParamId, VarId};
+use crate::ir::{ParamId, PredId, VarId};
 use crate::schema::fingerprint::SchemaFingerprint;
 use crate::schema::{FieldId, KeyId, RelationId, StatementId, ValueType};
 
@@ -214,6 +214,94 @@ pub enum SchemaError {
     /// Roster "duplicate-carrying projections", the selection sibling: a
     /// field bound twice in one selection σ (a set of bindings).
     DuplicateSelectionField {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "a degenerate literal set": a `Many` binding with fewer than
+    /// two literals — the empty set selects nothing (write no statement)
+    /// and the one-literal set is the `One` spelling, kept the only
+    /// singleton by representation
+    /// (`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff` —
+    /// a singleton set is exactly today's equality).
+    DegenerateSelectionSet {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+        len: usize,
+    },
+    /// Roster "a duplicate literal within one binding's set": the set is
+    /// canonical — sorted, duplicate-free — so a repeated literal is
+    /// rejected, not silently collapsed (write it once).
+    DuplicateSelectionLiteral {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "an interval position in a window projection" — refused v0:
+    /// a window counts FACTS per parent, and an interval position would
+    /// make the count ambiguous between facts and points
+    /// (`lean/Bumbledb/Cardinality.lean` § v0 refusals; *trigger* for
+    /// lifting: a sighted counting-over-denotation workload — counting
+    /// points, not rows).
+    CardinalityIntervalPosition {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "an order mark's position column is not u64": the ordinal
+    /// reading is of u64 numerals
+    /// (`lean/Bumbledb/Order.lean: Value.ordinal`), and any other type
+    /// never satisfies the 1-based discipline — refused at declaration,
+    /// never a vacuously-failing statement.
+    OrderPositionNotU64 {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "an interval-typed grouping field on an order mark": the
+    /// walked group is keyed by scalar bytes; an interval grouping would
+    /// conflate the group with its point-family.
+    OrderGroupingInterval {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "a ranked order mark on a closed subject" — refused v0: a
+    /// closed relation's rows never enter a delta, so its mark writes no
+    /// order `R` edges and no commit walk or store sweep would ever judge
+    /// the ranked clause — yet the ranks are read through `by` hop
+    /// relations whose instances mutate after declaration, so the clause
+    /// is NOT decided by the sealed extension either. The engine narrows
+    /// the model's admission (`lean/Bumbledb/Admission.lean: orderForm`
+    /// admits the shape) in the sound direction: refusal at the gate. The
+    /// plain form on a closed subject stays — its whole discipline is the
+    /// 1..k walk over the sealed axioms, decided at validate outright.
+    RankedOrderClosedSubject {
+        statement: StatementId,
+        relation: RelationId,
+    },
+    /// Roster "a `by` hop whose key field is no declared key of its
+    /// relation": the key demand is what makes the rank read
+    /// deterministic (`lean/Bumbledb/Subsumption.lean:
+    /// chain_eval_deterministic`) and the per-hop unit probe honest
+    /// (`lean/Bumbledb/Oracle.lean: chain_cost_hops`).
+    RankHopUnkeyed {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "a `by` chain whose running value's type disagrees with a
+    /// hop's key field" — the positional structural-type rule along the
+    /// chain. Carries the 0-based hop index.
+    RankChainTypeMismatch {
+        statement: StatementId,
+        hop: usize,
+    },
+    /// Roster "a `by` chain whose final payload is not u64": the rank is
+    /// the final read's ordinal
+    /// (`lean/Bumbledb/Order.lean: RankChain.rankOf`).
+    OrderRankNotU64 {
         statement: StatementId,
         relation: RelationId,
         field: FieldId,
@@ -690,6 +778,112 @@ pub enum ValidationError {
     TooManyVariables {
         count: usize,
     },
+
+    // --- The program roster (20-query-ir.md § engine recursion; the strata judge
+    // and the well-formedness screen, `ir/validate/strata.rs`) ---
+    /// The predicate-count cap ([`crate::ir::MAX_PREDICATES`]) — the
+    /// program sibling of [`ValidationError::TooManyRules`].
+    TooManyPredicates {
+        count: usize,
+    },
+    /// The program's `output` names no predicate — the answer position
+    /// of the well-formedness screen.
+    UnknownOutputPredicate {
+        pred: PredId,
+    },
+    /// An `Idb` atom names a predicate outside the program — the
+    /// well-formedness screen (`lean/Bumbledb/Query/Syntax.lean:
+    /// Program.WellFormed`, spent by `lean/Bumbledb/Exec/Fixpoint.lean:
+    /// wellFormed_reads_real`): without it a phantom `idb` read denotes
+    /// the empty fact set, and a NEGATED phantom read would be
+    /// vacuously satisfied — the stratification witness never refuses
+    /// the shape, so the screen must. `atom` is the occurrence index
+    /// (positives first, then negated) inside the failing rule.
+    UnknownPredicate {
+        atom: usize,
+        pred: PredId,
+    },
+    /// An `Idb` binding's `FieldId` sits at or beyond the target
+    /// predicate's arity — head positions are the whole address space
+    /// (the arity roster item beside the screen; `FieldId(i)` is column
+    /// `i`, positional, never nominal).
+    PredicateColumnOutOfRange {
+        atom: usize,
+        field: FieldId,
+    },
+    /// A negated atom whose target shares the atom's own SCC — negation
+    /// through a cycle. Negation *of* lower strata is legal: a lower
+    /// stratum is a finished set before this stratum's operator runs,
+    /// which is exactly what keeps the operator monotone
+    /// (`lean/Bumbledb/Exec/Fixpoint.lean: stratumOp_mono` spends the
+    /// strictly-lower premise; `lean/Bumbledb/Countermodels.lean:
+    /// odd_not_monotone` is the wall without it).
+    NegationThroughCycle {
+        pred: PredId,
+        via: PredId,
+    },
+    /// A fold in a head whose rule body reads the head's own SCC —
+    /// aggregation through a cycle. Aggregation *of* lower strata is
+    /// legal for the same reason negation is: an `Idb` atom under a
+    /// fold reads a finished set.
+    AggregationThroughCycle {
+        pred: PredId,
+        via: PredId,
+    },
+    /// A `Measure` find in a recursive predicate's head. Two
+    /// derivations (20-query-ir.md § engine recursion): the safety theorem requires
+    /// recursive heads to project **bound** variables — the measure is
+    /// a computation, not a binding — and the error-timing ruling: the
+    /// round at which a ray reaches a recursive head would depend on
+    /// iteration order, so the same store would error after differing
+    /// partial work. The measure over a *lower* stratum from a
+    /// non-recursive head stays legal.
+    MeasureInRecursiveHead {
+        pred: PredId,
+    },
+    /// A predicate whose signature never seals: every one of its rules
+    /// reads a same-SCC predicate whose own signature is still
+    /// underived, so some column's type is anchored only through the
+    /// cycle (e.g. `p(x) | p(x)` — no stored column ever names `x`'s
+    /// type). The signature fixpoint's honest bottom.
+    UnresolvedPredicateSignature {
+        pred: PredId,
+    },
+    /// A fold- or fold-measure-headed predicate below the program's
+    /// output. The executable program class is the Lean cut's
+    /// (`lean/Bumbledb/Query/Syntax.lean: PRule` — `finds : List VarId`,
+    /// so a program-level fold head is unrepresentable in the model;
+    /// `lean/Bumbledb/Exec/Fixpoint.lean: evalProgram` computes
+    /// projection heads only): an interior predicate's answers are a
+    /// transient word-row table read by `Idb` occurrences, and a fold's
+    /// answers only materialize at finalize — the OUTPUT predicate,
+    /// where the ordinary head-owned sink and finalize already live.
+    /// Aggregation *of* lower strata therefore stays legal exactly as
+    /// 20-query-ir.md § engine recursion records it (a fold rule reading finished
+    /// `Idb` sets), while a fold predicate *feeding* another predicate
+    /// is refused with this typed error. A projected `Measure` head is
+    /// NOT a fold — it is a value column (u64 per row) — but it is
+    /// likewise interior-refused, with its own typed error
+    /// ([`Self::MeasureInteriorPredicate`]).
+    AggregateInteriorPredicate {
+        pred: PredId,
+    },
+    /// A `Measure` find in an interior (non-output) predicate's head,
+    /// recursive or not. The executable program class is the Lean cut's
+    /// (`lean/Bumbledb/Query/Syntax.lean: PRule` — `finds : List VarId`,
+    /// so an interior measure head is unrepresentable in the model;
+    /// `lean/Bumbledb/Exec/Fixpoint.lean: evalProgram` computes
+    /// projection heads only): the engine narrows to the model rather
+    /// than executing a class with zero oracle coverage. The measure at
+    /// the OUTPUT predicate's head stays legal — it evaluates on the
+    /// query surface exactly as a degenerate program does, where the
+    /// `MeasureOfRay` timing ruling already lives. The recursive form is
+    /// caught first by the strata roster
+    /// ([`Self::MeasureInRecursiveHead`]); this error names the
+    /// non-recursive interior remainder.
+    MeasureInteriorPredicate {
+        pred: PredId,
+    },
 }
 
 /// Which side of a containment statement the commit-time judgment found
@@ -705,6 +899,23 @@ pub enum Direction {
     /// A deleted target key tuple is still required by a surviving
     /// source fact (the reverse-edge scan).
     TargetRequired,
+}
+
+/// Which discipline of an order mark a walked group broke — typed, an id
+/// never a string (`docs/architecture/30-dependencies.md` § the extension
+/// forms: the gap and the duplicate are the two ways a hand-numbered
+/// column lies; the ranked form adds rank monotonicity).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderDefect {
+    /// Two distinct facts of one group carry one position
+    /// (`lean/Bumbledb/Order.lean: OrdinalGroup.unique`).
+    DuplicatePosition,
+    /// Positions are not exactly `1..k`: a gap, or a group not starting
+    /// at 1 (`lean/Bumbledb/Order.lean: OrdinalGroup.based` / `.closed`).
+    PositionGap,
+    /// The ranked form's monotonicity: a strictly smaller rank sits
+    /// strictly later (`lean/Bumbledb/Order.lean: RankedOrderMark.mono`).
+    RankOrder,
 }
 
 /// One violated statement of a rejected commit — the element of
@@ -738,6 +949,32 @@ pub enum Violation {
         /// deleted target key (`TargetRequired`).
         fact: Box<[u8]>,
     },
+    /// A `Cardinality` statement violated by the final state: a selected
+    /// parent fact whose child-group count falls outside the window —
+    /// below the floor or above the ceiling
+    /// (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`).
+    Cardinality {
+        statement: StatementId,
+        /// The convicting parent fact: the ψ-selected holder of the
+        /// touched key tuple whose group count is out of window.
+        fact: Box<[u8]>,
+        /// The observed child-group count (the walk stops as soon as the
+        /// verdict is decided, so a ceiling conviction reports the first
+        /// count past the ceiling).
+        count: u64,
+    },
+    /// An `Order` statement violated by the final state: a touched group
+    /// whose positions break the ordinal discipline, or — for the ranked
+    /// form — whose ranks break monotonicity
+    /// (`lean/Bumbledb/Order.lean: OrderMark` / `RankedOrderMark`).
+    Order {
+        statement: StatementId,
+        defect: OrderDefect,
+        /// The convicting fact: the group member at the broken position
+        /// (duplicate or gap), or the member whose rank sits out of
+        /// order.
+        fact: Box<[u8]>,
+    },
 }
 
 impl Violation {
@@ -745,20 +982,24 @@ impl Violation {
     #[must_use]
     pub fn statement(&self) -> StatementId {
         match self {
-            Self::Functionality { statement, .. } | Self::Containment { statement, .. } => {
-                *statement
-            }
+            Self::Functionality { statement, .. }
+            | Self::Containment { statement, .. }
+            | Self::Cardinality { statement, .. }
+            | Self::Order { statement, .. } => *statement,
         }
     }
 
     /// The citation identity — [`Violations`]' sort and dedup key:
     /// statement id (materialized order), then direction (source before
-    /// target; a key statement has none). Witness facts are deliberately
-    /// outside the identity: a statement is cited once per direction,
-    /// whatever the count of facts convicting it.
+    /// target; key, window, and order statements have none). Witness
+    /// facts, counts, and defect kinds are deliberately outside the
+    /// identity: a statement is cited once per direction, whatever the
+    /// count of facts convicting it.
     fn citation(&self) -> (StatementId, Option<Direction>) {
         match self {
-            Self::Functionality { statement, .. } => (*statement, None),
+            Self::Functionality { statement, .. }
+            | Self::Cardinality { statement, .. }
+            | Self::Order { statement, .. } => (*statement, None),
             Self::Containment {
                 statement,
                 direction,
@@ -1055,6 +1296,33 @@ pub enum Error {
         /// The offending interval's encoded end word (`u64::MAX` — the
         /// ray's ∞ in both element encodings).
         end: u64,
+    },
+    /// A stratum's fixpoint crossed the driver's iteration/tuple budget
+    /// — the one new trust boundary the recursion campaign added
+    /// (`docs/architecture/40-execution.md` § the fixpoint driver).
+    /// Termination is a
+    /// theorem of the validation roster
+    /// (`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite`), but
+    /// the fixpoint's *size* is data-shaped: a foreign query may
+    /// legally demand a quadratic closure, and an unbounded round count
+    /// crossing the trust boundary is what the recorded v0 OS-backstop
+    /// argument never priced. On `MeasureOfRay`'s model: aborts the
+    /// query, the snapshot stays usable, the payload is ids and counts
+    /// — never strings. Policy stays host-owned
+    /// ([`crate::PreparedQuery::set_fixpoint_budget`] — the staleness
+    /// doctrine verbatim: the engine ships the typed condition, never a
+    /// threshold loop); the documented default
+    /// ([`crate::api::prepared::fixpoint::DEFAULT_FIXPOINT_ROUNDS`] /
+    /// [`crate::api::prepared::fixpoint::DEFAULT_FIXPOINT_TUPLES`])
+    /// exists so the boundary is never unguarded.
+    FixpointBudgetExceeded {
+        /// The stratum whose fixpoint crossed the budget (the SCC
+        /// condensation index, `ir/validate/strata.rs`).
+        stratum: u16,
+        /// Rounds the stratum had run when the budget tripped.
+        rounds: u32,
+        /// Distinct tuples the stratum's predicates had derived.
+        tuples: u64,
     },
     /// A computed value crossed its representation — valid input whose
     /// result cannot be represented, so a typed error, never a panic.

@@ -231,6 +231,11 @@ fn runtime_refusal(err: Error) -> Answers {
     match err {
         Error::Overflow(_) => Answers::Overflow,
         Error::MeasureOfRay { .. } => Answers::MeasureOfRay,
+        // The budget trip is a typed execution error on `MeasureOfRay`'s
+        // model — typed identity, never a harness crash (the naive
+        // fixpoint is unbudgeted, so a trip surfaces as a readable
+        // parity divergence).
+        Error::FixpointBudgetExceeded { .. } => Answers::FixpointBudget,
         other @ (Error::Schema(_)
         | Error::FormatMismatch { .. }
         | Error::SchemaMismatch { .. }

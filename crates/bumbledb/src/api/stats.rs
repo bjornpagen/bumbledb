@@ -6,7 +6,7 @@
 //! instrumentation; allocation-sanctioned exactly like `introspect`).
 
 /// The version shared by rendered and structured plan introspection.
-pub const INTROSPECTION_VERSION: u16 = 2;
+pub const INTROSPECTION_VERSION: u16 = 3;
 
 /// One execution's counted statistics: per-rule node stats under the
 /// head-level union accounting (docs/architecture/40-execution.md § the
@@ -41,6 +41,48 @@ pub struct ExecutionStats {
     /// lowered-rule indices, exactly as `subsumed`; a program of only
     /// dead rules represented by an empty prepared program.
     pub dead: Vec<DeadRule>,
+    /// The fixpoint driver's counted rounds
+    /// (docs/architecture/40-execution.md § the fixpoint driver): one
+    /// entry per recursive stratum, in condensation order. Empty for
+    /// query-shaped programs (no round loop exists), and populated on
+    /// counted paths only — the release executor's `NoopCounters`
+    /// records nothing.
+    pub strata: Vec<StratumStats>,
+}
+
+/// One recursive stratum's counted round loop (`api/prepared/fixpoint.rs`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StratumStats {
+    /// The stratum's condensation index.
+    pub stratum: u16,
+    /// The rounds that ran, in order: round 0 is the stratum's
+    /// non-recursive rules (no delta images exist yet), rounds ≥ 1 the
+    /// delta-variant runs. The last entry is the converging round —
+    /// every emission absorbed, or nothing emitted.
+    pub rounds: Vec<RoundStats>,
+}
+
+/// One fixpoint round's counted execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoundStats {
+    /// Per stratum predicate with a plan unit this round, in `PredId`
+    /// order: the frontier rows its delta image carried into the
+    /// round's variants. Empty at round 0.
+    pub deltas: Vec<DeltaRows>,
+    /// Bindings the round's runs emitted to the predicates' sinks.
+    pub emitted: u64,
+    /// Of those, the re-derivations the spanning seen-sets absorbed
+    /// (`emitted - absorbed` were new — next round's frontier).
+    pub absorbed: u64,
+}
+
+/// One predicate's per-round delta size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeltaRows {
+    /// The predicate's `PredId` index.
+    pub predicate: u16,
+    /// The frontier rows entering this round's delta image.
+    pub rows: u64,
 }
 
 /// One statically-empty rule (`ir/normalize/fold.rs`): its constant

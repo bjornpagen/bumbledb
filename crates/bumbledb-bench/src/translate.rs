@@ -41,6 +41,10 @@
 //!   FROM t)`; negated, `NOT EXISTS` (the relation must be empty).
 //! - Never-interned strings/bytes need no special case: SQL compares
 //!   values, which is exactly the sentinel semantics.
+//! - **Programs = `WITH RECURSIVE`** ([`program`], the recursive lane):
+//!   one CTE per predicate, linear self-recursion under `UNION`; the
+//!   non-linear/mutual/fold classes join the enumerated
+//!   [`Inexpressible`] set — counted, reported, never silent.
 
 use std::collections::BTreeMap;
 
@@ -48,11 +52,13 @@ use bumbledb::schema::StatementDescriptor;
 use bumbledb::{ParamId, Query, Schema, Value, VarId};
 
 mod builder;
+mod program;
 mod query;
 #[cfg(test)]
 mod tests;
 mod types;
 
+pub use program::{sqlite_program_expressible, translate_program};
 pub use query::translate;
 
 /// The SQL translation is conjunctive-only: it consumes the flat leaf
@@ -149,6 +155,35 @@ pub enum Inexpressible {
     /// emulation, not the engine. Naive-only by decision; the verify
     /// harness consumes this enumeration to route and report it.
     PackAggregate,
+    /// A cardinality-window verdict: SQL has no per-parent count-window
+    /// judgment with a pinned statement id — the same class as the other
+    /// two judgment kinds.
+    CardinalityJudgment,
+    /// An order-mark verdict: contiguity and rank monotonicity per group
+    /// are not SQL constraints.
+    OrderJudgment,
+    /// A program rule reading its own predicate through two or more
+    /// atoms — the non-linear form. `SQLite`'s recursive CTE admits
+    /// exactly one reference to the recursive table per arm, and an
+    /// emulation would test the emulation, not the translation. Naive+
+    /// Lean territory by decision
+    /// (`docs/architecture/60-validation.md` § the two oracles).
+    NonLinearRecursion,
+    /// Two predicates reading each other — mutual recursion. `SQLite`'s
+    /// `WITH RECURSIVE` has no mutually recursive CTE form.
+    MutualRecursion,
+    /// A fold anywhere in a program — aggregation over recursive
+    /// strata. The program lane routes every program fold naive-side
+    /// whole (the degenerate no-`Idb` aggregate program is the plain
+    /// query lane's, so nothing translatable is lost).
+    RecursiveFold,
+    /// A rule negating its own predicate — the shape the engine's
+    /// stratification fence refuses (`NegationThroughCycle`). The gate
+    /// mirrors the fence so a raw `Program` handed straight to the
+    /// translator lands here as a typed routing, never as a recursive
+    /// CTE whose arm names its own table inside `NOT EXISTS` (which
+    /// `SQLite` rejects at prepare — a harness panic, not a verdict).
+    SelfNegation,
 }
 
 /// The `SQLite` lane's expressibility gate. Every other query construct
@@ -180,6 +215,10 @@ pub fn sqlite_expressible(case: &LaneCase<'_>) -> Result<(), Inexpressible> {
         LaneCase::Judgment(StatementDescriptor::Containment { .. }) => {
             Err(Inexpressible::ContainmentJudgment)
         }
+        LaneCase::Judgment(StatementDescriptor::Cardinality { .. }) => {
+            Err(Inexpressible::CardinalityJudgment)
+        }
+        LaneCase::Judgment(StatementDescriptor::Order { .. }) => Err(Inexpressible::OrderJudgment),
     }
 }
 

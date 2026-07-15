@@ -92,7 +92,7 @@ fn plausible(rng: &mut Rng) -> Query {
             .map(|i| FindTerm::Var(VarId(u16::try_from(i).expect("var id fits u16"))))
             .collect(),
         atoms: vec![Atom {
-            relation: rel,
+            source: bumbledb::AtomSource::Edb(rel),
             bindings,
         }],
         negated: vec![],
@@ -171,7 +171,7 @@ fn random_agg(rng: &mut Rng) -> AggOp {
 
 fn random_atom(rng: &mut Rng) -> Atom {
     Atom {
-        relation: relation(rng),
+        source: bumbledb::AtomSource::Edb(relation(rng)),
         bindings: (0..rng.range(4))
             .map(|_| (field(rng), random_term(rng)))
             .collect(),

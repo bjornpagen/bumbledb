@@ -56,13 +56,19 @@ pub enum ConditionalVerdict {
 }
 
 /// One query's outcome, on either side: the answer set, or one of the
-/// two defined runtime errors (aggregate overflow, and the measure of a
-/// ray — the engine's one runtime type error).
+/// defined typed runtime errors (aggregate overflow; the measure of a
+/// ray — the engine's one runtime type error; and the fixpoint budget
+/// trip — engine-only by design: the naive fixpoint is deliberately
+/// unbudgeted, so a trip surfaces as a readable divergence, never a
+/// harness crash).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answers {
     Ok(BTreeSet<Tuple>),
     Overflow,
     MeasureOfRay,
+    /// [`bumbledb::Error::FixpointBudgetExceeded`] — a typed execution
+    /// error (`MeasureOfRay`'s model), carried as identity.
+    FixpointBudget,
 }
 
 /// The first disagreement: which op, and what each side said.
@@ -165,13 +171,21 @@ pub fn cited(violations: &bumbledb::Violations) -> Vec<Violation> {
                 statement: *statement,
                 direction: *direction,
             },
+            bumbledb::Violation::Cardinality { statement, .. } => Violation::Cardinality {
+                statement: *statement,
+            },
+            bumbledb::Violation::Order { statement, .. } => Violation::Order {
+                statement: *statement,
+            },
         })
         .collect()
 }
 
 /// One delta through the engine's write path: deletes then inserts (the
 /// same order [`NaiveDb::apply`] uses, so no-op cancellation agrees).
-fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
+/// Shared with the judgment conformance serializer
+/// (`conformance::judgment`), which records the agreed verdict.
+pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
     let outcome = db.write(|tx| {
         for (rel, fact) in &delta.deletes {
             tx.delete_dyn(*rel, fact)?;
@@ -266,8 +280,41 @@ pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) 
         ),
         Err(Error::Overflow { .. }) => Answers::Overflow,
         Err(Error::MeasureOfRay { .. }) => Answers::MeasureOfRay,
+        Err(Error::FixpointBudgetExceeded { .. }) => Answers::FixpointBudget,
         Err(other) => panic!("engine refused a differential query: {other:?}"),
     }
+}
+
+/// One program through the engine's fixpoint driver, as the model's
+/// tuple set (test-side: the recursive differential and the closure
+/// goldens are test suites) — the recursive differential's engine leg
+/// (the shipping law closed: the engine joins naive and `SQLite` on
+/// every generated program and every closure golden). Panics on any engine
+/// refusal: a generated recursive program validates and executes by
+/// construction, and the differential's job is answer equality.
+#[cfg(test)]
+pub(crate) fn engine_program<S>(
+    db: &Db<S>,
+    program: &bumbledb::Program,
+    params: &[ParamValue],
+) -> BTreeSet<Tuple> {
+    let mut prepared = db
+        .prepare_program(program)
+        .expect("differential programs validate");
+    let args = crate::families::param_args(params);
+    let buffer = db
+        .read(|snap| snap.execute_collect_args(&mut prepared, &args))
+        .expect("differential programs execute under the driver");
+    buffer
+        .answers()
+        .map(|answer| {
+            Tuple(
+                (0..buffer.arity())
+                    .map(|column| owned_value(answer.get(column)))
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 fn owned_value(value: AnswerValue<'_>) -> Value {

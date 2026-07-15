@@ -91,6 +91,16 @@ impl ProjectionSink {
         self.seen.iter().map(|(key, ())| key)
     }
 
+    /// The dense insertion-order suffix `[watermark, len)` — the fixpoint
+    /// driver's frontier read (`docs/architecture/40-execution.md` § the
+    /// fixpoint driver): the frontier IS this seen-set with a per-round
+    /// watermark, one `usize` and a dense-suffix walk
+    /// ([`WordMap::iter_since`]); no flag, no branch, no state on the
+    /// emit path. Cold — read once per round, never per tuple.
+    pub fn answers_since(&self, watermark: usize) -> impl Iterator<Item = &[u64]> {
+        self.seen.iter_since(watermark).map(|(key, ())| key)
+    }
+
     /// Distinct rows held (finalize's reservation).
     #[must_use]
     pub fn len(&self) -> usize {

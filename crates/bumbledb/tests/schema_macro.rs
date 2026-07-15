@@ -10,8 +10,9 @@
 
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Row,
-    SchemaDescriptor, Side, StatementDescriptor, StatementId, StatementView, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
+    RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, StatementId, StatementView,
+    ValueType,
 };
 use bumbledb::{Db, Fact, Interval, Value};
 
@@ -70,7 +71,7 @@ fn savings_accounts() -> Side {
     Side {
         relation: RelationId(2),
         projection: Box::new([FieldId(0)]),
-        selection: Box::new([(FieldId(2), Value::U64(1))]),
+        selection: Box::new([(FieldId(2), LiteralSet::One(Value::U64(1)))]),
     }
 }
 
@@ -191,6 +192,9 @@ fn statements_land_in_source_order_with_equality_lowered() {
                 source: statement.source.clone(),
                 target: statement.target.clone(),
             },
+            StatementView::Cardinality(..) | StatementView::Order(..) => {
+                unreachable!("this fixture declares keys and containments only")
+            }
         })
         .collect();
     // Materialized order: the two fresh auto-FDs first (Holder.id,
@@ -279,7 +283,9 @@ fn the_equality_pair_seals_mirror_links() {
     let schema = declared();
     let mirrors: Vec<Option<StatementId>> = (0..8)
         .map(|id| match schema.statement(StatementId(id)) {
-            StatementView::Key(_, _) => None,
+            StatementView::Key(_, _)
+            | StatementView::Cardinality(..)
+            | StatementView::Order(..) => None,
             StatementView::Containment(_, statement) => statement.mirror,
         })
         .collect();
@@ -501,14 +507,26 @@ mod selection_literals {
             [
                 (
                     FieldId(1),
-                    Value::IntervalI64(
+                    bumbledb::schema::LiteralSet::One(Value::IntervalI64(
                         bumbledb::Interval::<i64>::new(-10, 10).expect("nonempty interval")
-                    )
+                    ))
                 ),
-                (FieldId(2), Value::I64(-3)),
-                (FieldId(3), Value::Bool(true)),
-                (FieldId(4), Value::String(Box::from(&b"north"[..]))),
-                (FieldId(5), Value::FixedBytes(Box::from(&b"\x01"[..]))),
+                (
+                    FieldId(2),
+                    bumbledb::schema::LiteralSet::One(Value::I64(-3))
+                ),
+                (
+                    FieldId(3),
+                    bumbledb::schema::LiteralSet::One(Value::Bool(true))
+                ),
+                (
+                    FieldId(4),
+                    bumbledb::schema::LiteralSet::One(Value::String(Box::from(&b"north"[..])))
+                ),
+                (
+                    FieldId(5),
+                    bumbledb::schema::LiteralSet::One(Value::FixedBytes(Box::from(&b"\x01"[..])))
+                ),
             ]
         );
     }
@@ -739,7 +757,10 @@ mod closed_relations {
         assert_eq!(source.projection[..], [Review::SUBMISSION_KIND]);
         assert_eq!(
             source.selection[..],
-            [(Review::SUBMISSION_STATUS, Value::U64(1))]
+            [(
+                Review::SUBMISSION_STATUS,
+                bumbledb::schema::LiteralSet::One(Value::U64(1))
+            )]
         );
         // `Kind(id | mastered == true)` — the synthetic id at FieldId(0),
         // the declared column shifted to FieldId(1).
@@ -747,7 +768,10 @@ mod closed_relations {
         assert_eq!(target.projection[..], [FieldId(0)]);
         assert_eq!(
             target.selection[..],
-            [(Review::KIND_MASTERED, Value::Bool(true))]
+            [(
+                Review::KIND_MASTERED,
+                bumbledb::schema::LiteralSet::One(Value::Bool(true))
+            )]
         );
     }
 
@@ -1123,5 +1147,112 @@ mod redundant_superkey_warning {
                 }
             ]
         ));
+    }
+}
+
+mod extension_forms {
+    //! The dependency-vocabulary extension's grammar: literal-set
+    //! selections, the cardinality window (`in lo..hi per`, `*` the
+    //! no-ceiling spelling), and the order mark with its `by` chain
+    //! (`docs/architecture/30-dependencies.md`).
+
+    use bumbledb::schema::{LiteralSet, StatementDescriptor, StatementView};
+    use bumbledb::{StatementId, Theory as _, Value};
+
+    bumbledb::schema! {
+        pub Tracker;
+
+        closed relation Priority as PriorityId {
+            weight: u64,
+        } = {
+            Low  { weight: 10 },
+            High { weight: 20 },
+        };
+
+        relation Parent { id: u64 as ParentId, fresh }
+        relation Task {
+            parent: u64 as ParentId,
+            pos:    u64,
+            prio:   u64 as PriorityId,
+            state:  u64,
+        }
+
+        Task(parent | state == {1, 2}) in 1..3 per Parent(id);
+        Task(parent) in 1..* per Parent(id);
+        order Task(pos) per Task(parent);
+        order Task(pos) per Task(parent) by prio -> Priority(weight);
+    }
+
+    /// The macro lowers every extension form: the set selection lands as
+    /// `LiteralSet::Many`, the window bounds land verbatim (`*` = None),
+    /// and the `by` hop resolves the closed relation's synthetic id as
+    /// its key.
+    #[test]
+    fn the_extension_forms_lower_and_validate() {
+        let schema = Tracker
+            .descriptor()
+            .validate()
+            .expect("the declared schema is valid");
+        // Materialized order: Parent.id's fresh auto-key, Priority's
+        // closed auto-key, then the four declared statements.
+        assert!(matches!(
+            schema.statement(StatementId(2)),
+            StatementView::Cardinality(_, _)
+        ));
+        let window = &schema.windows()[0];
+        assert_eq!((window.lo, window.hi), (1, Some(3)));
+        assert_eq!(
+            window.source.selection[..],
+            [(
+                Tracker::TASK_STATE,
+                LiteralSet::Many(Box::new([Value::U64(1), Value::U64(2)]))
+            )]
+        );
+        let star = &schema.windows()[1];
+        assert_eq!((star.lo, star.hi), (1, None));
+
+        assert!(matches!(
+            schema.statement(StatementId(4)),
+            StatementView::Order(_, _)
+        ));
+        let plain = &schema.orders()[0];
+        assert_eq!(plain.position, Tracker::TASK_POS);
+        assert_eq!(plain.grouping[..], [Tracker::TASK_PARENT]);
+        assert!(plain.ranking.is_none());
+
+        let ranked = &schema.orders()[1];
+        let chain = ranked.ranking.as_ref().expect("the chain sealed");
+        assert_eq!(chain.link, Tracker::TASK_PRIO);
+        assert_eq!(chain.hops[0].relation, Tracker::PRIORITY);
+        // The inferred hop key: the closed relation's synthetic id.
+        assert_eq!(chain.hops[0].key, Tracker::PRIORITY_ID);
+        assert_eq!(chain.hops[0].read, Tracker::PRIORITY_WEIGHT);
+    }
+
+    /// A singleton braced set is the equality spelling — `{1}` lowers to
+    /// `LiteralSet::One`, so the descriptor is canonical by construction.
+    #[test]
+    fn a_braced_singleton_lowers_to_the_equality() {
+        let descriptor = Tracker.descriptor();
+        let Some(StatementDescriptor::Cardinality { source, .. }) = descriptor.statements.first()
+        else {
+            panic!("the first declared statement is the window");
+        };
+        assert!(matches!(source.selection[0].1, LiteralSet::Many(_)));
+        // The sibling singleton spelling, from a fresh invocation:
+        bumbledb::schema! {
+            pub Solo;
+
+            relation Parent { id: u64 as SoloParentId, fresh }
+            relation Task { parent: u64 as SoloParentId, state: u64 }
+
+            Task(parent | state == {7}) <= Parent(id);
+        }
+        let descriptor = Solo.descriptor();
+        let Some(StatementDescriptor::Containment { source, .. }) = descriptor.statements.first()
+        else {
+            panic!("the declared statement is a containment");
+        };
+        assert_eq!(source.selection[0].1, LiteralSet::One(Value::U64(7)));
     }
 }

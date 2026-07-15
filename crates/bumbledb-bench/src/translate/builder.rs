@@ -118,6 +118,33 @@ fn set_side(comparison: &Comparison) -> Option<(ParamId, &Term)> {
 }
 
 impl Builder<'_> {
+    /// The FROM-clause name of one atom's source: the schema relation,
+    /// or — for a program atom — its predicate's CTE (`p{id}`; the
+    /// program template, [`super::program`]).
+    fn source_table(&self, atom: &Atom) -> String {
+        match atom.source {
+            bumbledb::AtomSource::Edb(relation) => self.schema.relation(relation).name().to_owned(),
+            bumbledb::AtomSource::Idb(pred) => format!("p{}", pred.0),
+        }
+    }
+
+    /// One bound field's (column name, interval-typed?): the declared
+    /// schema field, or a predicate CTE's positional column (`c{i}` —
+    /// scalar by the program lane's shape gate: interval-typed predicate
+    /// columns are refused before any rule renders).
+    fn source_column(&self, atom: &Atom, field: bumbledb::FieldId) -> (String, bool) {
+        match atom.source {
+            bumbledb::AtomSource::Edb(relation) => {
+                let descriptor = &self.schema.relation(relation).fields()[usize::from(field.0)];
+                (
+                    descriptor.name.to_string(),
+                    matches!(descriptor.value_type, ValueType::Interval { .. }),
+                )
+            }
+            bumbledb::AtomSource::Idb(_) => (format!("c{}", field.0), false),
+        }
+    }
+
     fn param_ref(&mut self, slot: ParamSlot) -> String {
         let next = self.params.len();
         let index = *self.param_index.entry(slot).or_insert_with(|| {
@@ -237,22 +264,21 @@ impl Builder<'_> {
     }
 
     pub(super) fn render_atom(&mut self, atom: &Atom) -> Result<(), String> {
-        let relation = self.schema.relation(atom.relation);
+        let table = self.source_table(atom);
         if atom.bindings.is_empty() {
             // The nonemptiness gate.
             self.conditions
-                .push(format!("EXISTS (SELECT 1 FROM \"{}\")", relation.name()));
+                .push(format!("EXISTS (SELECT 1 FROM \"{table}\")"));
             return Ok(());
         }
         let alias = format!("t{}", self.from.len());
-        self.from
-            .push(format!("\"{}\" AS {alias}", relation.name()));
+        self.from.push(format!("\"{table}\" AS {alias}"));
         let mut out = Vec::new();
         for (field, term) in &atom.bindings {
-            let descriptor = &relation.fields()[usize::from(field.0)];
-            if matches!(descriptor.value_type, ValueType::Interval { .. }) {
-                let start = format!("{alias}.\"{}_start\"", descriptor.name);
-                let end = format!("{alias}.\"{}_end\"", descriptor.name);
+            let (name, interval_field) = self.source_column(atom, *field);
+            if interval_field {
+                let start = format!("{alias}.\"{name}_start\"");
+                let end = format!("{alias}.\"{name}_end\"");
                 match term {
                     Term::Var(var) if self.types.var_is_interval(*var) => {
                         match self.columns.get(var) {
@@ -282,7 +308,7 @@ impl Builder<'_> {
                     _ => self.interval_constant(&start, &end, term, &mut out)?,
                 }
             } else {
-                let column = format!("{alias}.\"{}\"", descriptor.name);
+                let column = format!("{alias}.\"{name}\"");
                 match term {
                     Term::Var(var) => match self.columns.get(var) {
                         Some(VarCols::Scalar(first)) => {
@@ -330,22 +356,20 @@ impl Builder<'_> {
     /// to its positive column; the `n{index}` alias space is disjoint
     /// from `t0..`, so self-negation is aliased fresh by construction.
     pub(super) fn negated_atom(&mut self, index: usize, atom: &Atom) -> Result<(), String> {
-        let relation = self.schema.relation(atom.relation);
+        let table = self.source_table(atom);
         if atom.bindings.is_empty() {
             // The negated nonemptiness gate: the relation must be empty.
-            self.conditions.push(format!(
-                "NOT EXISTS (SELECT 1 FROM \"{}\")",
-                relation.name()
-            ));
+            self.conditions
+                .push(format!("NOT EXISTS (SELECT 1 FROM \"{table}\")"));
             return Ok(());
         }
         let alias = format!("n{index}");
         let mut conjuncts = Vec::new();
         for (field, term) in &atom.bindings {
-            let descriptor = &relation.fields()[usize::from(field.0)];
-            if matches!(descriptor.value_type, ValueType::Interval { .. }) {
-                let start = format!("{alias}.\"{}_start\"", descriptor.name);
-                let end = format!("{alias}.\"{}_end\"", descriptor.name);
+            let (name, interval_field) = self.source_column(atom, *field);
+            if interval_field {
+                let start = format!("{alias}.\"{name}_start\"");
+                let end = format!("{alias}.\"{name}_end\"");
                 match term {
                     Term::Var(var) => match self.columns.get(var) {
                         Some(VarCols::Interval {
@@ -366,7 +390,7 @@ impl Builder<'_> {
                     _ => self.interval_constant(&start, &end, term, &mut conjuncts)?,
                 }
             } else {
-                let column = format!("{alias}.\"{}\"", descriptor.name);
+                let column = format!("{alias}.\"{name}\"");
                 match term {
                     Term::Var(var) => match self.columns.get(var) {
                         Some(VarCols::Scalar(outer)) => {
@@ -387,8 +411,7 @@ impl Builder<'_> {
             }
         }
         self.conditions.push(format!(
-            "NOT EXISTS (SELECT 1 FROM \"{}\" AS {alias} WHERE {})",
-            relation.name(),
+            "NOT EXISTS (SELECT 1 FROM \"{table}\" AS {alias} WHERE {})",
             conjuncts.join(" AND ")
         ));
         Ok(())

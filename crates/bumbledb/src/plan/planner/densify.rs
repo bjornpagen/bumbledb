@@ -49,19 +49,25 @@ pub(super) fn densify(
             // scalar prefix then fails full-set coverage in `estimate`:
             // two facts may share the prefix with disjoint intervals,
             // so prefix agreement certifies no fanout bound.
-            let relation = schema.relation(occurrence.relation);
-            let key_var_sets = relation
-                .keys()
-                .iter()
-                .filter_map(|id| {
-                    let mut set = 0u128;
-                    for field in &schema.key(*id).projection {
-                        let (_, var) = occurrence.vars.iter().find(|(f, _)| f == field)?;
-                        set |= 1 << var_index[var];
-                    }
-                    Some(set)
-                })
-                .collect();
+            // An `Idb` occurrence has no keyed store — no fanout bound
+            // flows from key coverage; its rows already sit on the
+            // ladder's delta/accumulated floors (`plan/selectivity.rs`).
+            let key_var_sets = match occurrence.source.edb() {
+                None => Vec::new(),
+                Some(stored) => schema
+                    .relation(stored)
+                    .keys()
+                    .iter()
+                    .filter_map(|id| {
+                        let mut set = 0u128;
+                        for field in &schema.key(*id).projection {
+                            let (_, var) = occurrence.vars.iter().find(|(f, _)| f == field)?;
+                            set |= 1 << var_index[var];
+                        }
+                        Some(set)
+                    })
+                    .collect(),
+            };
             OccInfo {
                 rows,
                 vars,

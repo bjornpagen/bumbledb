@@ -2,7 +2,11 @@
 //! (docs/architecture/60-validation.md § the two oracles).
 //!
 //! An obviously-correct in-memory implementation of the data model, both
-//! judgments, and the full query semantics — nested loops and `BTreeSet`s,
+//! judgments, and the full query semantics — programs included: the
+//! naive stratified fixpoint ([`NaiveDb::program`], the shipping
+//! law's naive oracle —
+//! `docs/architecture/60-validation.md` § the two oracles) — nested
+//! loops and `BTreeSet`s,
 //! zero cleverness. It shares the engine's *types* (`bumbledb::ir`,
 //! `bumbledb::schema`) and none of its *algorithms*: a shared bug would be
 //! an invisible bug, so everything here is re-derived from the semantics
@@ -26,7 +30,7 @@ pub use tuple::Tuple;
 
 use std::collections::BTreeSet;
 
-use bumbledb::schema::{SchemaDescriptor, Side, StatementDescriptor, ValueType};
+use bumbledb::schema::{RankChain, SchemaDescriptor, Side, StatementDescriptor, ValueType};
 use bumbledb::{Direction, RelationId, StatementId, Value};
 
 use tuple::{endpoints, overlaps};
@@ -78,14 +82,14 @@ pub struct Delta {
 /// the refusal is typed identically on both oracles (verdict parity
 /// including the typed identity, the direction-divergence lesson
 /// applied at birth). A rejection is the COMPLETE `Vec<Violation>` —
-/// every violated statement, once, in `Ord` order (statement id
+/// every violated statement, once, in citation order (statement id
 /// ascending, source before target within one statement) — the same
 /// total object as the engine's sealed `Violations`.
 ///
-/// `Ord` is derived: rejections never mix variants (key violations
-/// preempt containment ones; a closed-relation refusal happens before
-/// any judgment), so within one rejection the derived order IS
-/// materialized statement order.
+/// The statement phase can mix containment, cardinality, and order
+/// citations in one rejection, so [`sealed`] sorts by the explicit
+/// citation key ([`Violation::citation`]) — the engine's own sort key —
+/// never the derived variant order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Violation {
     Functionality {
@@ -95,11 +99,50 @@ pub enum Violation {
         statement: StatementId,
         direction: Direction,
     },
+    /// A cardinality window failed: some ψ-selected parent's child-group
+    /// count falls outside the window
+    /// (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`).
+    Cardinality {
+        statement: StatementId,
+    },
+    /// An order mark failed: some group's positions are not exactly
+    /// `1..k`, or — ranked — a smaller rank sits later
+    /// (`lean/Bumbledb/Order.lean: OrderMark` / `RankedOrderMark`).
+    Order {
+        statement: StatementId,
+    },
     /// A delete or insert named a closed relation — refused before the
     /// delta, exactly the engine's `Error::ClosedRelationWrite`.
     ClosedRelationWrite {
         relation: RelationId,
     },
+}
+
+impl Violation {
+    /// The engine's citation key (`bumbledb::Violation`'s sort and dedup
+    /// key, mirrored): statement id, then direction rank — none (0)
+    /// before source (1) before target (2). `ClosedRelationWrite` is
+    /// refused before any judgment and never sorts beside statement
+    /// citations; its key only has to be total.
+    fn citation(self) -> (u16, u8, u32) {
+        match self {
+            Self::Functionality { statement }
+            | Self::Cardinality { statement }
+            | Self::Order { statement } => (statement.0, 0, 0),
+            Self::Containment {
+                statement,
+                direction,
+            } => (
+                statement.0,
+                match direction {
+                    Direction::SourceUnsatisfied => 1,
+                    Direction::TargetRequired => 2,
+                },
+                0,
+            ),
+            Self::ClosedRelationWrite { relation } => (u16::MAX, u8::MAX, relation.0),
+        }
+    }
 }
 
 /// A conditional write's abort cause ([`NaiveDb::apply_from`]): the
@@ -377,7 +420,161 @@ impl NaiveDb {
                 }
             }
         }
+        // The extension forms join the statement phase whole
+        // (`lean/Bumbledb/Txn.lean` — the statement-phase violation set
+        // carries containment, cardinality, and order citations): the
+        // model judges every parent and every group of the FINAL state —
+        // the full judgment the engine's delta-restricted checks are
+        // provably equal to over a clean pre-state
+        // (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+        // delta_restricted_commit_sound`).
+        for (sid, statement) in self.statements.iter().enumerate() {
+            match statement {
+                StatementDescriptor::Cardinality {
+                    source,
+                    lo,
+                    hi,
+                    target,
+                } => {
+                    if self.window_violated(state, source, *lo, *hi, target) {
+                        found.push(Violation::Cardinality {
+                            statement: statement_id(sid),
+                        });
+                    }
+                }
+                StatementDescriptor::Order {
+                    relation,
+                    position,
+                    grouping,
+                    ranking,
+                } => {
+                    if self.order_violated(state, *relation, *position, grouping, ranking.as_ref())
+                    {
+                        found.push(Violation::Order {
+                            statement: statement_id(sid),
+                        });
+                    }
+                }
+                StatementDescriptor::Functionality { .. }
+                | StatementDescriptor::Containment { .. } => {}
+            }
+        }
         sealed(found)
+    }
+
+    /// Does some ψ-selected parent's child-group count fall outside the
+    /// window? Per parent, the children are the φ-selected source facts
+    /// whose projected tuple equals the parent's — O(parents × children)
+    /// value comparison is the point
+    /// (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`).
+    fn window_violated(
+        &self,
+        state: &[BTreeSet<Tuple>],
+        source: &Side,
+        lo: u64,
+        hi: Option<u64>,
+        target: &Side,
+    ) -> bool {
+        self.target_facts(state, target).any(|parent| {
+            if !satisfies_selection(parent, &target.selection) {
+                return false;
+            }
+            let count = self
+                .target_facts(state, source)
+                .filter(|child| {
+                    satisfies_selection(child, &source.selection)
+                        && source
+                            .projection
+                            .iter()
+                            .zip(target.projection.iter())
+                            .all(|(s, t)| child.0[s.0 as usize] == parent.0[t.0 as usize])
+                })
+                .count();
+            let count = u64::try_from(count).expect("fact count fits u64");
+            count < lo || hi.is_some_and(|hi| count > hi)
+        })
+    }
+
+    /// Does some group break the ordinal discipline — positions not
+    /// exactly `1..k` — or, ranked, the rank monotonicity
+    /// (`lean/Bumbledb/Order.lean: OrderMark` / `RankedOrderMark`)?
+    fn order_violated(
+        &self,
+        state: &[BTreeSet<Tuple>],
+        relation: RelationId,
+        position: bumbledb::FieldId,
+        grouping: &[bumbledb::FieldId],
+        ranking: Option<&RankChain>,
+    ) -> bool {
+        let mut groups: std::collections::BTreeMap<Tuple, Vec<&Tuple>> =
+            std::collections::BTreeMap::new();
+        for fact in &state[relation.0 as usize] {
+            let key = Tuple(
+                grouping
+                    .iter()
+                    .map(|field| fact.0[field.0 as usize].clone())
+                    .collect(),
+            );
+            groups.entry(key).or_default().push(fact);
+        }
+        for members in groups.values() {
+            // (position ordinal, rank) per member, position-sorted — the
+            // ordinal reading is total (`lean/Bumbledb/Order.lean:
+            // Value.ordinal`: a u64 reads its numeral, junk reads 0).
+            let mut ordered: Vec<(u64, Option<u64>)> = members
+                .iter()
+                .map(|fact| {
+                    let ordinal = match &fact.0[position.0 as usize] {
+                        Value::U64(v) => *v,
+                        _ => 0,
+                    };
+                    let rank = ranking.and_then(|chain| self.rank_of(state, chain, fact));
+                    (ordinal, rank)
+                })
+                .collect();
+            ordered.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+            let contiguous = ordered.iter().enumerate().all(|(index, (ordinal, _))| {
+                *ordinal == u64::try_from(index).expect("fact count fits u64") + 1
+            });
+            if !contiguous {
+                return true;
+            }
+            // Rank monotonicity in position order, among rank-carrying
+            // members (a hop miss means no rank, imposing nothing —
+            // `lean/Bumbledb/Order.lean: RankChain.rankOf` is
+            // relational).
+            let mut prev: Option<u64> = None;
+            for (_, rank) in ordered {
+                let Some(rank) = rank else { continue };
+                if prev.is_some_and(|prev| rank < prev) {
+                    return true;
+                }
+                prev = Some(rank);
+            }
+        }
+        false
+    }
+
+    /// One fact's rank under a `by` chain, relationally: per hop, find
+    /// the (key-backed, hence unique) fact of the hop relation carrying
+    /// the running value at the key field, read the payload; the final
+    /// value's ordinal is the rank. `None` when a hop misses — the fact
+    /// has no rank (`lean/Bumbledb/Order.lean: RankChain.rankOf`).
+    fn rank_of(&self, state: &[BTreeSet<Tuple>], chain: &RankChain, fact: &Tuple) -> Option<u64> {
+        let mut running: Value = fact.0[chain.link.0 as usize].clone();
+        for hop in &chain.hops {
+            let candidate = match &self.extensions[hop.relation.0 as usize] {
+                Some(rows) => rows.iter().find(|row| row.0[hop.key.0 as usize] == running),
+                None => state[hop.relation.0 as usize]
+                    .iter()
+                    .find(|row| row.0[hop.key.0 as usize] == running),
+            }?;
+            running = candidate.0[hop.read.0 as usize].clone();
+        }
+        match running {
+            Value::U64(v) => Some(v),
+            _ => Some(0),
+        }
     }
 
     /// Does inserting `fact` leave two distinct facts agreeing on the
@@ -519,24 +716,33 @@ impl NaiveDb {
     }
 }
 
-/// Does the fact satisfy a side's σ — plain value equality per selected
-/// field? σ literals *are* decoded values (the one shared [`Value`] sum),
-/// so the comparison is structural, no conversion anywhere.
-fn satisfies_selection(fact: &Tuple, selection: &[(bumbledb::FieldId, Value)]) -> bool {
-    selection
-        .iter()
-        .all(|(field, literal)| fact.0[field.0 as usize] == *literal)
+/// Does the fact satisfy a side's σ — per selected field, membership in
+/// the binding's literal set (a singleton set is plain equality —
+/// `lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`)? σ
+/// literals *are* decoded values (the one shared [`Value`] sum), so the
+/// comparison is structural, no conversion anywhere.
+fn satisfies_selection(
+    fact: &Tuple,
+    selection: &[(bumbledb::FieldId, bumbledb::schema::LiteralSet)],
+) -> bool {
+    selection.iter().all(|(field, literals)| {
+        literals
+            .literals()
+            .iter()
+            .any(|literal| fact.0[field.0 as usize] == *literal)
+    })
 }
 
 fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
 }
 
-/// Seals a raw citation list: sorted (materialized statement order,
-/// source before target within one statement — the derived `Ord`) and
+/// Seals a raw citation list: sorted by the explicit citation key
+/// (materialized statement order, source before target within one
+/// statement — [`Violation::citation`], the engine's own sort key) and
 /// deduplicated. The model twin of the engine's `Violations::seal`.
 fn sealed(mut found: Vec<Violation>) -> Vec<Violation> {
-    found.sort_unstable();
+    found.sort_unstable_by_key(|violation| violation.citation());
     found.dedup();
     found
 }

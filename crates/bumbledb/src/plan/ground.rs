@@ -83,7 +83,7 @@ use std::collections::BTreeSet;
 
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, lower_literal};
-use crate::ir::{AggOp, CmpOp, FindTerm, VarId};
+use crate::ir::{AggOp, AtomSource, CmpOp, FindTerm, VarId};
 use crate::schema::{Enforcement, FieldId, Schema, Side, StatementId};
 
 pub(crate) mod evaluate;
@@ -170,12 +170,22 @@ fn removable(
         }
         let source = &statement.source;
         let target = &statement.target;
+        // THE GUARD (20-query-ir.md § engine recursion's consumer guards): statements
+        // quantify over stored relations permanently
+        // (`docs/architecture/30-dependencies.md`, the stored-relations
+        // decision — undecidable predicate containment is the
+        // rationale), so an `Idb` occurrence never pairs with a
+        // containment side: the comparison against the statement's
+        // `Edb` source discharges a law, not a convenience.
         for (b_idx, b) in normalized.occurrences.iter().enumerate() {
-            if !b.role.participates() || b.relation != target.relation {
+            if !b.role.participates() || b.source != AtomSource::Edb(target.relation) {
                 continue;
             }
             for (a_idx, a) in normalized.occurrences.iter().enumerate() {
-                if a_idx == b_idx || a.role == Role::Negated || a.relation != source.relation {
+                if a_idx == b_idx
+                    || a.role == Role::Negated
+                    || a.source != AtomSource::Edb(source.relation)
+                {
                     continue;
                 }
                 // Acyclic support: a source resting (transitively) on
@@ -248,7 +258,15 @@ fn target_otherwise_unused(
 ) -> bool {
     let b = &normalized.occurrences[b_idx];
     let a = &normalized.occurrences[a_idx];
-    let psi = encoded_selection(target);
+    // A disjunctive (literal-set) binding on either side disqualifies the
+    // statement here, conservatively: the query's lowered filters are
+    // single-literal equalities, so no filter list can certify a set
+    // binding — the sanctioned "unknown" answer with the
+    // semantics-preserving fallback (the join simply stays;
+    // `docs/architecture/30-dependencies.md`, the decidability firewall).
+    let (Some(psi), Some(phi)) = (encoded_selection(target), encoded_selection(source)) else {
+        return false;
+    };
     let selections_within_psi = b.filters.iter().all(|filter| match filter {
         FilterPredicate::Compare {
             field,
@@ -257,7 +275,6 @@ fn target_otherwise_unused(
         } => psi.iter().any(|(f, v)| f == field && v == value),
         _ => false,
     });
-    let phi = encoded_selection(source);
     let source_carries_phi = phi.iter().all(|(field, value)| {
         a.filters.iter().any(|filter| {
             matches!(
@@ -476,7 +493,7 @@ fn atoms_match(keeper: &NormalizedQuery, candidate: &NormalizedQuery) -> bool {
         &participating(keeper),
         &participating(candidate),
         |atom, other| {
-            atom.relation == other.relation
+            atom.source == other.source
                 && atom.vars == other.vars
                 && subset(&atom.filters, &other.filters)
         },
@@ -492,9 +509,7 @@ fn negated_within(keeper: &NormalizedQuery, candidate: &NormalizedQuery) -> bool
         &negated(keeper),
         &negated(candidate),
         |atom, other| {
-            atom.relation == other.relation
-                && atom.vars == other.vars
-                && atom.filters == other.filters
+            atom.source == other.source && atom.vars == other.vars && atom.filters == other.filters
         },
         false,
     )
@@ -559,11 +574,17 @@ fn chain_reaches(support: &[Option<usize>], mut from: usize, target: usize) -> b
 }
 
 /// A side's selection as the (field, encoded literal) set the query's
-/// lowered filters are compared against.
-fn encoded_selection(side: &Side) -> Vec<(FieldId, Const)> {
+/// lowered filters are compared against — `None` when any binding is a
+/// disjunctive literal set (no single-literal filter list can certify
+/// it; the caller answers "unknown" and keeps the join).
+fn encoded_selection(side: &Side) -> Option<Vec<(FieldId, Const)>> {
     side.selection
         .iter()
-        .map(|(field, value)| (*field, lower_literal(value)))
+        .map(|(field, literals)| {
+            literals
+                .as_equality()
+                .map(|value| (*field, lower_literal(value)))
+        })
         .collect()
 }
 

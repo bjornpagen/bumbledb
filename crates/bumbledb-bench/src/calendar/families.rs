@@ -89,7 +89,7 @@ fn busy_scan_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::CLAIM,
+            source: bumbledb::AtomSource::Edb(ids::CLAIM),
             bindings: vec![
                 (ids::claim::PERSON, var(0)),
                 (ids::claim::ARM, Term::Literal(Value::U64(ARM_BUSY))),
@@ -135,11 +135,11 @@ fn meets_chain_query() -> Query {
         finds: vec![FindTerm::Var(VarId(1)), FindTerm::Var(VarId(2))],
         atoms: vec![
             Atom {
-                relation: ids::CLAIM,
+                source: bumbledb::AtomSource::Edb(ids::CLAIM),
                 bindings: vec![(ids::claim::PERSON, param(0)), (ids::claim::SPAN, var(1))],
             },
             Atom {
-                relation: ids::CLAIM,
+                source: bumbledb::AtomSource::Edb(ids::CLAIM),
                 bindings: vec![(ids::claim::PERSON, param(0)), (ids::claim::SPAN, var(2))],
             },
         ],
@@ -178,7 +178,7 @@ fn rsvp_union_query() -> Query {
     let arm = |ordinal: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::ATTENDANCE,
+            source: bumbledb::AtomSource::Edb(ids::ATTENDANCE),
             bindings: vec![
                 (ids::attendance::EVENT, var(0)),
                 (ids::attendance::PERSON, var(1)),
@@ -211,19 +211,19 @@ fn conflict_pairs_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::PERSON,
+                source: bumbledb::AtomSource::Edb(ids::PERSON),
                 bindings: vec![(ids::person::ID, var(0)), (ids::person::ACCOUNT, param(0))],
             },
             Atom {
-                relation: ids::CLAIM,
+                source: bumbledb::AtomSource::Edb(ids::CLAIM),
                 bindings: vec![(ids::claim::PERSON, var(0)), (ids::claim::SPAN, var(2))],
             },
             Atom {
-                relation: ids::PERSON,
+                source: bumbledb::AtomSource::Edb(ids::PERSON),
                 bindings: vec![(ids::person::ID, var(1)), (ids::person::ACCOUNT, param(0))],
             },
             Atom {
-                relation: ids::CLAIM,
+                source: bumbledb::AtomSource::Edb(ids::CLAIM),
                 bindings: vec![(ids::claim::PERSON, var(1)), (ids::claim::SPAN, var(3))],
             },
         ],
@@ -255,16 +255,16 @@ fn conflict_free_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::PERSON,
+                source: bumbledb::AtomSource::Edb(ids::PERSON),
                 bindings: vec![(ids::person::ID, var(0)), (ids::person::ACCOUNT, param(0))],
             },
             Atom {
-                relation: ids::EVENT,
+                source: bumbledb::AtomSource::Edb(ids::EVENT),
                 bindings: vec![(ids::event::CREATED_AT, param(1))],
             },
         ],
         negated: vec![Atom {
-            relation: ids::CLAIM,
+            source: bumbledb::AtomSource::Edb(ids::CLAIM),
             bindings: vec![(ids::claim::PERSON, var(0)), (ids::claim::SPAN, param(1))],
         }],
         conditions: vec![],
@@ -304,11 +304,11 @@ fn free_busy_query() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: ids::PERSON,
+                source: bumbledb::AtomSource::Edb(ids::PERSON),
                 bindings: vec![(ids::person::ID, var(0)), (ids::person::ACCOUNT, param(0))],
             },
             Atom {
-                relation: ids::CLAIM,
+                source: bumbledb::AtomSource::Edb(ids::CLAIM),
                 bindings: vec![(ids::claim::PERSON, var(0)), (ids::claim::SPAN, var(2))],
             },
         ],
@@ -351,7 +351,7 @@ fn claim_hours_query() -> Query {
             },
         ],
         atoms: vec![Atom {
-            relation: ids::CLAIM,
+            source: bumbledb::AtomSource::Edb(ids::CLAIM),
             bindings: vec![
                 (ids::claim::SOURCE, var(1)),
                 (ids::claim::ARM, var(0)),

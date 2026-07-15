@@ -30,6 +30,17 @@ pub use normalize::{LoweredRule, distribute};
 /// width there.
 pub const MAX_RULES: usize = 16;
 
+/// The predicate-count cap: a [`Program`] holds at most this many
+/// predicates, rejected at validation
+/// (`ValidationError::TooManyPredicates`). A product decision, not a
+/// provisional limit (`docs/architecture/20-query-ir.md` § engine
+/// recursion): the cap keeps programs query-shaped so pin-at-prepare,
+/// the selectivity ladder, and the allocation high-water contract stay
+/// meaningful — the engine is never a rule-program runtime. Counted
+/// independently of [`MAX_RULES`] (per predicate) and the per-rule
+/// occurrence cap: breadth here, rule count there, width below.
+pub const MAX_PREDICATES: usize = 16;
+
 /// The condition-tree nesting cap: a [`ConditionTree`] deeper than this
 /// is rejected at validation (`ValidationError::ConditionNestingTooDeep`)
 /// — a **boundary check**, not planner hygiene (the trust-boundary law,
@@ -42,6 +53,71 @@ pub const MAX_RULES: usize = 16;
 /// meaningful tree's depth is bounded by its leaf count, and the DNF
 /// blowup cap ([`MAX_RULES`]) already limits leaves per disjunct.
 pub const MAX_CONDITION_DEPTH: usize = 64;
+
+/// Dense predicate id — the index into a [`Program`]'s predicate list
+/// (`lean/Bumbledb/Query/Syntax.lean: PredId`; `Program.predicates` is
+/// the address space). A **separate identity from
+/// [`crate::schema::RelationId`]**, deliberately: statements quantify
+/// over stored relations permanently (`docs/architecture/
+/// 30-dependencies.md`, the stored-relations decision), no statement
+/// form carries a `PredId` position, and the two never pun.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PredId(pub u16);
+
+/// Where an atom draws its facts: a stored (EDB) relation, or a
+/// predicate of the same program (IDB) — the recursion cut's
+/// one-line sum (`lean/Bumbledb/Query/Syntax.lean: AtomSource`),
+/// landing inhabited because the fixpoint semantics beside it consumes
+/// both arms. An `Idb` atom's bindings address **head positions**
+/// positionally — `FieldId(i)` is the target predicate's column `i`,
+/// typed by its sealed signature column — through the same `FieldId`
+/// reading (`FieldId` is already positional, never nominal).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum AtomSource {
+    Edb(RelationId),
+    Idb(PredId),
+}
+
+impl Atom {
+    /// The stored relation an `Edb` atom reads — the convenience
+    /// accessor for consumers whose atoms are stored-relation-only by
+    /// construction (the bench harness's generators and oracles;
+    /// key-probe classification, which refuses `Idb` rules first).
+    /// Consumers that handle both arms match on [`Atom::source`].
+    ///
+    /// # Panics
+    ///
+    /// On an `Idb` atom — the caller asserted a stored-relation atom.
+    #[must_use]
+    pub fn relation(&self) -> RelationId {
+        match self.source {
+            AtomSource::Edb(relation) => relation,
+            AtomSource::Idb(_) => unreachable!("caller asserted a stored-relation (Edb) atom"),
+        }
+    }
+}
+
+impl AtomSource {
+    /// The stored relation this source reads, if any.
+    #[must_use]
+    pub fn edb(self) -> Option<RelationId> {
+        match self {
+            Self::Edb(relation) => Some(relation),
+            Self::Idb(_) => None,
+        }
+    }
+
+    /// The predicate this source reads, if any — the dependency
+    /// graph's projection (`lean/Bumbledb/Query/Syntax.lean:
+    /// AtomSource.idb?`).
+    #[must_use]
+    pub fn idb(self) -> Option<PredId> {
+        match self {
+            Self::Edb(_) => None,
+            Self::Idb(pred) => Some(pred),
+        }
+    }
+}
 
 /// Dense query-variable id — **rule-scoped**: the same `VarId` in two
 /// rules names two unrelated variables (each rule is its own scope).
@@ -80,12 +156,18 @@ pub enum Term {
     Measure(VarId),
 }
 
-/// One atom: a relation with named-field bindings. Absence of a field *is*
+/// One atom: a source with named-field bindings. Absence of a field *is*
 /// the wildcard. An atom with zero bindings is legal and means a
-/// nonemptiness gate on the relation.
+/// nonemptiness gate on the source.
+///
+/// The source position is [`AtomSource`] — the recursion cut
+/// (`Atom.relation` → `Atom.source`,
+/// `docs/architecture/20-query-ir.md` § engine recursion): an `Edb` atom reads a stored relation exactly as ever; an `Idb`
+/// atom reads a predicate of the same [`Program`], its `FieldId`s
+/// addressing the target's head positions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Atom {
-    pub relation: RelationId,
+    pub source: AtomSource,
     /// Named-field bindings; absence of a field is the wildcard.
     ///
     /// **Membership is a typing rule, not a node**
@@ -378,8 +460,11 @@ impl Rule {
 /// representation (DNF lowering recovers it as rules).
 ///
 /// The single-rule query is the degenerate case and embeds the
-/// conjunctive query unchanged ([`Query::single`]). Rules are one step
-/// short of the fixpoint on purpose — recursion stays an `OPEN` item.
+/// conjunctive query unchanged ([`Query::single`]) — and the query is
+/// itself the degenerate [`Program`]: a one-predicate, no-`Idb` program,
+/// field for field (`lean/Bumbledb/Exec/Fixpoint.lean:
+/// degenerate_embedding`; the `From<Query> for Program` impl is the
+/// embedding).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Query {
     /// The find shape (arity + aggregate ops) every rule aligns against,
@@ -403,6 +488,59 @@ impl Query {
     }
 }
 
+/// One predicate of a [`Program`]: today's [`Query`] verbatim — the head
+/// shape its rules align against, and the rules deriving it
+/// (`lean/Bumbledb/Query/Syntax.lean: PredicateDef`). Pure data, like
+/// everything in this module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PredicateDef {
+    /// The find shape (arity + aggregate ops) every rule of this
+    /// predicate aligns against — exactly [`Query::head`].
+    pub head: Vec<HeadTerm>,
+    /// At least one rule, at most [`MAX_RULES`] — exactly
+    /// [`Query::rules`], with `Idb` atoms now writable in bodies.
+    pub rules: Vec<Rule>,
+}
+
+/// A program: a predicate list (`PredId` = index) and the answer
+/// predicate (`lean/Bumbledb/Query/Syntax.lean: Program`) — a query one
+/// step past the fixpoint refusal: a head is usable as a body atom by
+/// naming its [`PredId`] in an [`AtomSource::Idb`] position. The
+/// degenerate form is today's [`Query`] — one predicate, no `Idb` atom
+/// (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`).
+///
+/// Pure data, no behavior, no builder — the surface ruling holds
+/// unamended; the trust-boundary law extends its roster
+/// (`ir/validate`'s program roster: the well-formedness screen, the
+/// strata judge, and the per-predicate rule roster). At most
+/// [`MAX_PREDICATES`] predicates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Program {
+    /// The predicates; a [`PredId`] is an index into this list.
+    pub predicates: Vec<PredicateDef>,
+    /// The program's answer predicate — the one whose fixpoint the
+    /// program's answers are.
+    pub output: PredId,
+}
+
+impl From<Query> for Program {
+    /// The degenerate embedding (the [`Query::single`] precedent, one
+    /// level up): a query is the one-predicate program with itself as
+    /// the output — field for field, no `Idb` atom introduced
+    /// (`lean/Bumbledb/Query/Syntax.lean: Query.toProgram`;
+    /// `lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding` is the
+    /// denotation-equality theorem).
+    fn from(query: Query) -> Self {
+        Self {
+            predicates: vec![PredicateDef {
+                head: query.head,
+                rules: query.rules,
+            }],
+            output: PredId(0),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,7 +556,7 @@ mod tests {
         let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             atoms: vec![Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Param(ParamId(0))),
                     (FieldId(1), Term::Var(VarId(0))),
@@ -439,7 +577,7 @@ mod tests {
             finds: vec![FindTerm::Var(VarId(1))],
             atoms: vec![
                 Atom {
-                    relation: RelationId(4),
+                    source: crate::ir::AtomSource::Edb(RelationId(4)),
                     bindings: vec![
                         (FieldId(2), Term::Var(VarId(0))),
                         (FieldId(4), Term::Var(VarId(1))),
@@ -447,7 +585,7 @@ mod tests {
                     ],
                 },
                 Atom {
-                    relation: RelationId(1),
+                    source: crate::ir::AtomSource::Edb(RelationId(1)),
                     bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
                 },
             ],
@@ -479,7 +617,7 @@ mod tests {
                 },
             ],
             atoms: vec![Atom {
-                relation: RelationId(4),
+                source: crate::ir::AtomSource::Edb(RelationId(4)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(2), Term::Var(VarId(0))),
@@ -504,11 +642,11 @@ mod tests {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![
                 Atom {
-                    relation: RelationId(0),
+                    source: crate::ir::AtomSource::Edb(RelationId(0)),
                     bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
                 },
                 Atom {
-                    relation: RelationId(7),
+                    source: crate::ir::AtomSource::Edb(RelationId(7)),
                     bindings: vec![], // gate: Cartesian with the rest
                 },
             ],
@@ -526,14 +664,14 @@ mod tests {
         let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(3), Term::ParamSet(ParamId(0))),
                 ],
             }],
             negated: vec![Atom {
-                relation: RelationId(4),
+                source: crate::ir::AtomSource::Edb(RelationId(4)),
                 bindings: vec![(FieldId(2), Term::Var(VarId(0)))],
             }],
             conditions: vec![],

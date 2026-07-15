@@ -25,7 +25,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     let range = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::Var(VarId(1))),
@@ -60,14 +60,14 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: POSTING,
+                source: crate::ir::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(2))),
                     (FieldId(3), Term::Var(VarId(0))),
                 ],
             },
             Atom {
-                relation: POSTING,
+                source: crate::ir::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(2))),
                     (FieldId(3), Term::Var(VarId(1))),
@@ -140,14 +140,14 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
         ],
         atoms: vec![
             Atom {
-                relation: POSTING,
+                source: crate::ir::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(3), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: POSTING,
+                source: crate::ir::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(2), Term::Var(VarId(2))),
@@ -210,7 +210,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(2), Term::Var(VarId(1))),
                 (FieldId(3), Term::Var(VarId(0))),
@@ -234,7 +234,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(2), Term::Var(VarId(1))),
                 (FieldId(3), Term::Var(VarId(0))),

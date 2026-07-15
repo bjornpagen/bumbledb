@@ -389,9 +389,9 @@ bumbledb::schema! {
     Add(rhs) <= Node(id);
     // Functional parent (one parent per child) ⇒ the reachable shape is
     // paths-or-cycles; acyclicity itself is outside the ∀∃ vocabulary —
-    // host discipline, recorded. Recursion stays refused (20-query-ir.md
-    // records the refusal); transitive reach is recipe 24's host-driven
-    // closure, or a precomputed relation the host maintains.
+    // host discipline, recorded (statements never reference predicates,
+    // 30-dependencies.md). Transitive reach is recipe 24's closure, in
+    // either dialect, or a precomputed relation the host maintains.
     Parent(child) -> Parent;
     Parent(child)  <= Node(id);
     Parent(parent) <= Node(id);
@@ -906,17 +906,20 @@ bumbledb::schema! {
 
 ## 24. The closure idiom
 
-Guarantee: host discipline — the finite `seen` loop proves termination for the
-host run; the engine provides no recursive closure or cross-snapshot freshness.
+Guarantee: host discipline for the loop — the finite `seen` set proves
+termination for the host run; the engine-native form beside it executes
+whole under the fixpoint driver, budget-bounded
+(`lean/Bumbledb/Exec/Fixpoint.lean: program_eval_sound`).
 
-Reachability on the current engine: the recursion the IR refuses, run as
-honest control flow in the host. The refusal is recorded with its trigger
-(`20-query-ir.md` § engine recursion — refused); what makes this loop honest
-at census scale is that the censused hierarchies are **depth-bounded**, so
+Reachability, in two dialects. The host-loop idiom remains the
+depth-bounded answer: the censused hierarchies are **depth-bounded**, so
 the loop runs depth-many rounds and each round is one ∈-set query — a
 `ParamSet` probe, microsecond-class — against the engine as it stands. The
 frontier discipline below *is* semi-naive evaluation's Δ, spent where a loop
-is a loop: the host.
+is a loop: the host. The engine-native form (below) is the same closure as
+one stratified program (`20-query-ir.md` § engine recursion): a named head
+declares the predicate, the bare rule is the output, and the driver runs
+the rounds inside one plan (`40-execution.md` § the fixpoint driver).
 
 ```rust
 bumbledb::schema! {
@@ -949,28 +952,57 @@ loop:
 ```
 
 Termination is the host's theorem: `seen` grows strictly or the loop breaks,
-inside a finite node set. The failure modes are the refusal's trigger
-clauses, verbatim: **unbounded or large depth** (the per-round query cost
-stops being noise); **closure composed into a larger plan** (the reachable
-set must join further inside one plan for performance); and
-**interval-intersection-along-paths** (the chain-window class). When one
-fires on a real workload, go through the recorded refusal and its pre-paid
-design (`docs/reference/recursion-design.md`), not around it.
+inside a finite node set. When the idiom's costs bite — **unbounded or
+large depth** (the per-round query cost stops being noise), or **closure
+composed into a larger plan** (the reachable set must join further inside
+one plan) — write the engine-native form instead:
+
+```text
+// The same closure, one stratified program under the fixpoint driver:
+// ?root seeds the predicate, the bare rule is the output.
+let native = query!(Closure {
+    reach(c) | Node(id: c), c == ?root;
+    reach(c) | Parent(child: c, parent: m), reach(0: m);
+    (c) | reach(0: c);
+});
+let mut prepared = db.prepare_program(&native)?;
+```
+
+(the compiled copy runs beside the loop in `cookbook.rs`, both dialects
+asserting the same reachable sets, root for root). What stays host-side is
+the **chain-window class** — interval intersection along paths — which the
+recursion surface fences out (`20-query-ir.md` § engine recursion, the
+chain-window fence): the idiom carries the window in the host's frontier,
+one intersection per hop, and that composition has no engine form.
 
 ## 25. The chart of accounts
 
 Guarantee: host discipline + runtime aggregate semantics — the host computes
 closure, then one checked `Sum` (`lean/Bumbledb/Query/Aggregates.lean:
-checkedSum_sound`); no recursive engine plan is claimed.
+checkedSum_sound`); the engine-native form folds over a *finished* lower
+stratum, the one aggregation shape the strata roster admits
+(`20-query-ir.md` § engine recursion).
 
-The ledger workload's real recursion case, handled by explicit host composition
-over the current query engine: a hierarchical chart of accounts and a subtree
-rollup. Composition, not a new operator — recipe 24's loop accumulates the
-subtree's ∈-set, then **one
-`Sum` query over the accumulated set** folds the postings. The engine
-aggregates, the host composes (aggregates never nest — recipe 18's refusal
-family), and the refusal record (`20-query-ir.md` § engine recursion —
-refused) names this composition as the covered case.
+The ledger workload's real recursion case, in the same two dialects: a
+hierarchical chart of accounts and a subtree rollup. The host composition —
+recipe 24's loop accumulates the subtree's ∈-set, then **one `Sum` query
+over the accumulated set** folds the postings. The engine aggregates, the
+host composes (aggregates never nest — recipe 18's refusal family). The
+engine-native form is one program: aggregation *through* a cycle is refused
+(`AggregationThroughCycle`), but a fold over a recursive predicate from a
+**higher stratum** reads a finished set and is ordinary —
+
+```text
+let native = query!(Accounts {
+    sub(a) | Account(id: a), a == ?root;
+    sub(a) | AccountParent(child: a, parent: p), sub(0: p);
+    (total: Sum(minor)) | Posting(id, account: a, minor), sub(0: a);
+});
+```
+
+— the closure stratum converges first, then the output's fold runs once
+over the finished subtree (the compiled copy in `cookbook.rs` asserts both
+dialects against the hand-computed sums).
 
 ```rust
 bumbledb::schema! {

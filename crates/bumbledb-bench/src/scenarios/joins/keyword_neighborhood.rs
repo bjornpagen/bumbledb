@@ -10,15 +10,15 @@ pub(super) fn keyword_neighborhood() -> Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::CAST_INFO,
+                source: bumbledb::AtomSource::Edb(ids::CAST_INFO),
                 bindings: vec![(FieldId(1), param(0)), (FieldId(0), var(1))],
             },
             Atom {
-                relation: ids::MOVIE_KEYWORD,
+                source: bumbledb::AtomSource::Edb(ids::MOVIE_KEYWORD),
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
             },
             Atom {
-                relation: ids::MOVIE_KEYWORD,
+                source: bumbledb::AtomSource::Edb(ids::MOVIE_KEYWORD),
                 bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(2))],
             },
         ],

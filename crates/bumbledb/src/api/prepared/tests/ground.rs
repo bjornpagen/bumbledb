@@ -118,7 +118,7 @@ fn populate(env: &Environment, schema: &Schema) {
 fn walk_atoms() -> Vec<Atom> {
     vec![
         Atom {
-            relation: RelationId(0),
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::Var(VarId(1))),
@@ -126,7 +126,7 @@ fn walk_atoms() -> Vec<Atom> {
             ],
         },
         Atom {
-            relation: RelationId(1),
+            source: crate::ir::AtomSource::Edb(RelationId(1)),
             bindings: vec![(FieldId(0), Term::Var(VarId(1)))],
         },
     ]
@@ -164,7 +164,7 @@ fn du_schema() -> Schema {
         projection: Box::new([FieldId(field)]),
         selection: selection
             .iter()
-            .map(|(f, v)| (FieldId(*f), v.clone()))
+            .map(|(f, v)| (FieldId(*f), crate::schema::LiteralSet::One(v.clone())))
             .collect(),
     };
     SchemaDescriptor {
@@ -267,14 +267,14 @@ fn the_du_fixture_introspection_pins_the_eliminated_line() {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Literal(Value::U64(0))),
@@ -469,14 +469,14 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(2))),

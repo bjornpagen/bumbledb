@@ -17,15 +17,16 @@
 //! material and check sets; the applier keeps the id plumbing and the
 //! desync probes; the judgment keeps the final-state probes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AxiomIndex, ContainmentId, Enforcement, KeyId, RelationId, Schema, StatementId,
+    AxiomIndex, ContainmentId, Enforcement, KeyId, OrderId, RelationId, Schema, StatementId,
+    WindowId,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::keys::{self, DeterminantImage};
 
-use super::judgment::{SelectionCheck, Selections, satisfies};
+use super::judgment::{SelectionCheck, Selections, satisfies, window_child_image};
 
 /// One commit's derivable bookkeeping, borrowed from the delta's arena.
 pub(crate) struct CommitPlan<'d> {
@@ -41,6 +42,42 @@ pub(crate) struct CommitPlan<'d> {
     /// Phase-3 target-side check set: one entry per key tuple this commit
     /// disestablishes for at least one dependent statement.
     pub(crate) target_checks: Box<[DeterminantCheck]>,
+    /// Phase-3 window check set: the TOUCHED PARENTS
+    /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`) — one
+    /// entry per (window, parent key tuple) this delta may have moved,
+    /// deduplicated, in scan order.
+    pub(crate) window_checks: Box<[WindowCheck]>,
+    /// Phase-3 order check set: the TOUCHED GROUPS per order statement —
+    /// the delta-projected grouping tuples, escalated to every group when
+    /// any `by`-hop relation is dirty
+    /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: rankedTouched`).
+    pub(crate) order_checks: Box<[OrderCheck]>,
+}
+
+/// One touched parent of one window statement — the judgment phase probes
+/// the parent's ψ-selected holder and walks its child group.
+pub(crate) struct WindowCheck {
+    /// The validation-minted window witness.
+    pub(crate) window: WindowId,
+    /// The parent key tuple, in target-key determinant order.
+    pub(crate) parent: DeterminantImage,
+}
+
+/// One order statement's touched-group scope.
+pub(crate) enum OrderScope {
+    /// The delta-projected grouping tuples — the group-local walk.
+    Groups(BTreeSet<DeterminantImage>),
+    /// A `by`-hop relation is dirty: a hop write can reorder ranks in a
+    /// group this relation's own delta never touched, so EVERY group is
+    /// walked (the recorded escalation).
+    AllGroups,
+}
+
+/// One order statement owed a walk this commit.
+pub(crate) struct OrderCheck {
+    /// The validation-minted order witness.
+    pub(crate) order: OrderId,
+    pub(crate) scope: OrderScope,
 }
 
 /// Everything derivable about one fact's application.
@@ -61,6 +98,27 @@ pub(crate) struct FactOp<'d> {
     /// delete op (removing a reference cannot violate an inclusion);
     /// only the insert-side judgment consumes it.
     pub(crate) memberships: Box<[MembershipOp]>,
+    /// One per window statement whose source (child) is this relation and
+    /// whose φ the fact satisfies — the window's `R` edge, written exactly
+    /// as a containment edge (`docs/architecture/50-storage.md` § key
+    /// layout: the child-group walk's reader).
+    pub(crate) window_edges: Box<[MarkEdgeOp]>,
+    /// One per order statement on this relation — the mark's `R` edge:
+    /// grouping bytes then the 8-byte position tail, so one group's
+    /// entries walk in position order.
+    pub(crate) order_edges: Box<[MarkEdgeOp]>,
+}
+
+/// One window or order `R` edge of one fact: the statement-scoped key
+/// material, byte-symmetric between the insert put and the delete removal
+/// (the applier consumes it exactly as a containment [`EdgeOp`]).
+pub(crate) struct MarkEdgeOp {
+    /// Prederived statement identity for the schema-free byte applier.
+    pub(crate) statement: StatementId,
+    /// The edge's key-bytes segment: a window's child projection in
+    /// target-key determinant order, or an order mark's grouping bytes
+    /// with the position tail.
+    pub(crate) key_bytes: DeterminantImage,
 }
 
 /// One key statement's determinant material for one fact.
@@ -139,6 +197,14 @@ pub(crate) fn plan_commit<'d>(
     // inputs of the target-side check set (`deleted − inserted`).
     let mut deleted_determinants: BTreeSet<(KeyId, DeterminantImage)> = BTreeSet::new();
     let mut inserted_determinants: BTreeSet<(KeyId, DeterminantImage)> = BTreeSet::new();
+    // The touched notions of the two extension forms
+    // (`lean/Bumbledb/Txn/DeltaRestriction.lean`): every parent key tuple
+    // any delta child fact projects to plus the delta's ψ-selected
+    // parents (`touchedParents`), and every grouping tuple any delta fact
+    // projects to (`Delta.projected` at the grouping list) — sets by
+    // construction, deduplicated here.
+    let mut touched_parents: BTreeMap<WindowId, BTreeSet<DeterminantImage>> = BTreeMap::new();
+    let mut touched_groups: BTreeMap<OrderId, BTreeSet<DeterminantImage>> = BTreeMap::new();
     let mut scratch = DeterminantImage::scratch();
     let deletes = delta
         .deletes()
@@ -149,6 +215,8 @@ pub(crate) fn plan_commit<'d>(
                 rel,
                 fact,
                 &mut deleted_determinants,
+                &mut touched_parents,
+                &mut touched_groups,
                 &mut scratch,
             )
         })
@@ -162,6 +230,8 @@ pub(crate) fn plan_commit<'d>(
                 rel,
                 fact,
                 &mut inserted_determinants,
+                &mut touched_parents,
+                &mut touched_groups,
                 &mut scratch,
             )
         })
@@ -172,24 +242,83 @@ pub(crate) fn plan_commit<'d>(
         deleted_determinants,
         &inserted_determinants,
     );
+    let window_checks = touched_parents
+        .into_iter()
+        .flat_map(|(window, parents)| {
+            parents
+                .into_iter()
+                .map(move |parent| WindowCheck { window, parent })
+        })
+        .collect();
+    let order_checks = order_checks(delta, schema, touched_groups);
     CommitPlan {
         selections,
         deletes,
         inserts,
         target_checks,
+        window_checks,
+        order_checks,
     }
+}
+
+/// The order-statement scopes: the delta-projected touched groups,
+/// ESCALATED to every group for a ranked statement whose `by`-hop
+/// relations the delta touches — a hop write can reorder ranks in a group
+/// the relation's own delta never touched
+/// (`lean/Bumbledb/Txn/DeltaRestriction.lean: rankedTouched`, the
+/// recorded narrowing).
+fn order_checks(
+    delta: &WriteDelta<'_>,
+    schema: &Schema,
+    mut touched_groups: BTreeMap<OrderId, BTreeSet<DeterminantImage>>,
+) -> Box<[OrderCheck]> {
+    let touched_relations: BTreeSet<RelationId> = delta
+        .deletes()
+        .chain(delta.inserts())
+        .map(|(rel, _)| rel)
+        .collect();
+    let mut checks = Vec::new();
+    for (idx, statement) in schema.orders().iter().enumerate() {
+        let order = OrderId(u16::try_from(idx).expect("statement count fits u16"));
+        let chain_dirty = statement.ranking.as_ref().is_some_and(|chain| {
+            chain
+                .hops
+                .iter()
+                .any(|hop| touched_relations.contains(&hop.relation))
+        });
+        if chain_dirty {
+            checks.push(OrderCheck {
+                order,
+                scope: OrderScope::AllGroups,
+            });
+        } else if let Some(groups) = touched_groups.remove(&order)
+            && !groups.is_empty()
+        {
+            checks.push(OrderCheck {
+                order,
+                scope: OrderScope::Groups(groups),
+            });
+        }
+    }
+    checks.into_boxed_slice()
 }
 
 /// Derives one fact's op: determinant bytes per key statement, reverse-edge key
 /// bytes per satisfied containment. Determinant tuples of dependent-carrying
 /// key statements are recorded into `dependent_determinants` for the check-set
 /// difference.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the one fact-op derivation threads every touched-notion collector"
+)] // one derivation site, every per-form collector beside it
 fn fact_op<'d>(
     schema: &Schema,
     selections: &Selections,
     rel: RelationId,
     fact: &'d [u8],
     dependent_determinants: &mut BTreeSet<(KeyId, DeterminantImage)>,
+    touched_parents: &mut BTreeMap<WindowId, BTreeSet<DeterminantImage>>,
+    touched_groups: &mut BTreeMap<OrderId, BTreeSet<DeterminantImage>>,
     scratch: &mut DeterminantImage,
 ) -> FactOp<'d> {
     // Every F/M/U/R key byte originates from this derivation — the
@@ -265,13 +394,98 @@ fn fact_op<'d>(
             }
         }
     }
+    let (window_edges, order_edges) = mark_ops(
+        schema,
+        selections,
+        relation,
+        fact,
+        touched_parents,
+        touched_groups,
+        scratch,
+    );
     FactOp {
         relation: rel,
         fact,
         determinants,
         edges: edges.into_boxed_slice(),
         memberships: memberships.into_boxed_slice(),
+        window_edges,
+        order_edges,
     }
+}
+
+/// One fact's extension-form derivations: window and order `R` edges,
+/// plus the fact's contributions to the TOUCHED notions
+/// (`lean/Bumbledb/Txn/DeltaRestriction.lean`).
+fn mark_ops(
+    schema: &Schema,
+    selections: &Selections,
+    relation: &crate::schema::Relation,
+    fact: &[u8],
+    touched_parents: &mut BTreeMap<WindowId, BTreeSet<DeterminantImage>>,
+    touched_groups: &mut BTreeMap<OrderId, BTreeSet<DeterminantImage>>,
+    scratch: &mut DeterminantImage,
+) -> (Box<[MarkEdgeOp]>, Box<[MarkEdgeOp]>) {
+    let layout = relation.layout();
+    // Window edges and touched parents (`touchedParents`' two halves).
+    // The source half is φ-BLIND: every delta child touches its parent
+    // tuple, φ-satisfying or not — the model's superset narrowing (a
+    // non-φ fact never changes a child group; wider touched only
+    // re-checks more). The edge itself is φ-gated exactly as a
+    // containment's, so the child-group walk counts σφ members only.
+    let mut window_edges = Vec::new();
+    for &window_id in relation.window_sources() {
+        let statement = schema.window(window_id);
+        window_child_image(statement, layout, fact, scratch);
+        touched_parents
+            .entry(window_id)
+            .or_default()
+            .insert(scratch.clone());
+        if satisfies(&selections.window(window_id).source, layout, fact) {
+            window_edges.push(MarkEdgeOp {
+                statement: statement.id,
+                key_bytes: scratch.clone(),
+            });
+        }
+    }
+    // The target half: a delta parent inside ψ touches its own key tuple
+    // (a group newly constrained or released). Closed parents never reach
+    // a fact op (writes refused), so only the keyed arm exists here.
+    for &window_id in relation.window_targets() {
+        let statement = schema.window(window_id);
+        if let Enforcement::ScalarProbe { target_key, .. } = &statement.enforcement
+            && satisfies(&selections.window(window_id).target, layout, fact)
+        {
+            let key_statement = schema.key(*target_key);
+            keys::determinant_image(layout, &key_statement.projection, fact, scratch);
+            touched_parents
+                .entry(window_id)
+                .or_default()
+                .insert(scratch.clone());
+        }
+    }
+    // Order edges and touched groups: every fact of the relation carries
+    // one edge per mark (no σ exists on the form), and every delta fact —
+    // removes included, a removal can break downward closure — touches
+    // its grouping tuple.
+    let mut order_edges = Vec::new();
+    for &order_id in relation.order_marks() {
+        let statement = schema.order(order_id);
+        keys::determinant_image(layout, &statement.grouping, fact, scratch);
+        touched_groups
+            .entry(order_id)
+            .or_default()
+            .insert(scratch.clone());
+        keys::determinant_image(layout, &statement.edge_projection, fact, scratch);
+        order_edges.push(MarkEdgeOp {
+            statement: statement.id,
+            key_bytes: scratch.clone(),
+        });
+    }
+    (
+        window_edges.into_boxed_slice(),
+        order_edges.into_boxed_slice(),
+    )
 }
 
 /// The target-side check set: every deleted determinant tuple, expanded per

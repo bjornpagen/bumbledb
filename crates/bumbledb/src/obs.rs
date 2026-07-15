@@ -96,6 +96,38 @@ pub mod names {
     // The cap and the table move together, or the rule loop's span
     // lookup would panic on a legal program.
     const _: () = assert!(crate::ir::MAX_RULES == RULE.len());
+    /// One recursive stratum's round loop, under the execute span — the
+    /// `rule_N` convention: the condensation index rides in the name
+    /// (strata count ≤ `crate::ir::MAX_PREDICATES` = 16 bounds it).
+    /// (rounds run, derived tuples at close) — both zero on uncounted
+    /// paths.
+    pub const STRATUM: [&str; 16] = [
+        "stratum_0",
+        "stratum_1",
+        "stratum_2",
+        "stratum_3",
+        "stratum_4",
+        "stratum_5",
+        "stratum_6",
+        "stratum_7",
+        "stratum_8",
+        "stratum_9",
+        "stratum_10",
+        "stratum_11",
+        "stratum_12",
+        "stratum_13",
+        "stratum_14",
+        "stratum_15",
+    ];
+    // The predicate cap and the table move together, or the driver's
+    // span lookup would panic on a legal program.
+    const _: () = assert!(crate::ir::MAX_PREDICATES == STRATUM.len());
+    /// One fixpoint round under its stratum span — round 0 is the
+    /// stratum's non-recursive rules; the round index is the span's
+    /// position under its stratum (rounds are budget-bounded, not
+    /// cap-bounded, so no name table exists). (bindings emitted,
+    /// absorbed by the spanning seen-sets.)
+    pub const FIXPOINT_ROUND: &str = "fixpoint_round";
     /// Parameter binding. (-, -)
     pub const BIND_PARAMS: &str = "bind_params";
     /// Filter-constant resolution. (-, -)
@@ -150,6 +182,10 @@ pub mod names {
     pub const JUDGMENT_SOURCE: &str = "judgment_source";
     /// Phase 3, containment target side. (disestablished determinants scanned, -)
     pub const JUDGMENT_TARGET: &str = "judgment_target";
+    /// Phase 3, cardinality windows. (touched parents judged, -)
+    pub const JUDGMENT_WINDOWS: &str = "judgment_windows";
+    /// Phase 3, order marks. (touched groups walked, -)
+    pub const JUDGMENT_ORDERS: &str = "judgment_orders";
     /// Phase 4. (pending interns flushed, -)
     pub const COUNTERS_FLUSH: &str = "counters_flush";
     /// Phase 5: the LMDB commit alone — the fsync-bound number. (-, -)

@@ -6,6 +6,7 @@ use bumbledb::AggOp;
 use bumbledb::AllenMask;
 use bumbledb::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Rule, Term};
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
+use bumbledb::{FieldId, PredId, PredicateDef, Program};
 
 /// Relation and field ids for the test ledger below — declaration order
 /// is the id order, no magic numbers in query constructions.
@@ -49,6 +50,12 @@ mod ids {
         use super::FieldId;
         pub const POSTING: FieldId = FieldId(0);
         pub const TAG: FieldId = FieldId(1);
+    }
+    pub const ORG: RelationId = RelationId(6);
+
+    pub mod org {
+        use super::FieldId;
+        pub const ID: FieldId = FieldId(0);
     }
     pub mod org_parent {
         use super::FieldId;
@@ -173,7 +180,7 @@ fn point_matches_its_hand_written_golden() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ID, Term::Param(ParamId(0))),
                 (ids::posting::AMOUNT, var(0)),
@@ -199,21 +206,21 @@ fn containment_walk_matches_its_hand_written_golden() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ACCOUNT, Term::Param(ParamId(0))),
                     (ids::posting::AMOUNT, var(1)),
                 ],
             },
             Atom {
-                relation: ids::ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
                 bindings: vec![
                     (ids::account::ID, Term::Param(ParamId(0))),
                     (ids::account::HOLDER, var(2)),
                 ],
             },
             Atom {
-                relation: ids::HOLDER,
+                source: bumbledb::AtomSource::Edb(ids::HOLDER),
                 bindings: vec![(ids::holder::ID, var(2)), (ids::holder::NAME, var(0))],
             },
         ],
@@ -243,7 +250,7 @@ fn balance_matches_its_hand_written_golden() {
         ],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ID, var(2)),
                     (ids::posting::ACCOUNT, var(0)),
@@ -251,7 +258,7 @@ fn balance_matches_its_hand_written_golden() {
                 ],
             },
             Atom {
-                relation: ids::ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
                 bindings: vec![
                     (ids::account::ID, var(0)),
                     (ids::account::HOLDER, Term::Param(ParamId(0))),
@@ -271,11 +278,11 @@ fn negated_atoms_match_their_goldens() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![(ids::posting::ID, var(0))],
         }],
         negated: vec![Atom {
-            relation: ids::POSTING_TAG,
+            source: bumbledb::AtomSource::Edb(ids::POSTING_TAG),
             bindings: vec![
                 (ids::posting_tag::POSTING, var(0)),
                 (ids::posting_tag::TAG, Term::Literal(Value::U64(0))),
@@ -292,14 +299,14 @@ fn negated_atoms_match_their_goldens() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::ORG_PARENT,
+            source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
             bindings: vec![
                 (ids::org_parent::CHILD, var(0)),
                 (ids::org_parent::PARENT, var(1)),
             ],
         }],
         negated: vec![Atom {
-            relation: ids::ORG_PARENT,
+            source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
             bindings: vec![(ids::org_parent::CHILD, var(1))],
         }],
         conditions: vec![],
@@ -311,11 +318,11 @@ fn negated_atoms_match_their_goldens() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![(ids::posting::ID, var(0))],
         }],
         negated: vec![Atom {
-            relation: ids::POSTING_TAG,
+            source: bumbledb::AtomSource::Edb(ids::POSTING_TAG),
             bindings: vec![
                 (ids::posting_tag::POSTING, var(0)),
                 (ids::posting_tag::TAG, Term::Param(ParamId(0))),
@@ -334,7 +341,7 @@ fn param_sets_render_as_literal_in_lists() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ENTRY, var(0)),
                 (ids::posting::ACCOUNT, Term::ParamSet(ParamId(0))),
@@ -366,11 +373,11 @@ fn param_sets_render_as_literal_in_lists() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::ACCOUNT,
+            source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
             bindings: vec![(ids::account::ID, var(0))],
         }],
         negated: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ACCOUNT, var(0)),
                 (ids::posting::ENTRY, Term::ParamSet(ParamId(0))),
@@ -395,7 +402,7 @@ fn set_forms_cover_interval_membership_and_predicate_equality() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::MANDATE,
+            source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![
                 (ids::mandate::ORG, var(0)),
                 (ids::mandate::ACTIVE, Term::ParamSet(ParamId(0))),
@@ -421,7 +428,7 @@ fn set_forms_cover_interval_membership_and_predicate_equality() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ACCOUNT, var(0)),
                 (ids::posting::ENTRY, var(1)),
@@ -447,11 +454,11 @@ fn membership_matches_its_goldens() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![(ids::posting::ACCOUNT, var(1)), (ids::posting::AT, var(2))],
             },
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![
                     (ids::mandate::ACCOUNT, var(1)),
                     (ids::mandate::ORG, var(0)),
@@ -471,14 +478,14 @@ fn membership_matches_its_goldens() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ACCOUNT, Term::Param(ParamId(0))),
                     (ids::posting::AT, Term::Param(ParamId(1))),
                 ],
             },
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![
                     (ids::mandate::ACCOUNT, Term::Param(ParamId(0))),
                     (ids::mandate::ORG, var(0)),
@@ -507,7 +514,7 @@ fn allen_intersects_matches_its_hand_written_golden() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![
                     (ids::mandate::ACCOUNT, var(2)),
                     (ids::mandate::ORG, var(0)),
@@ -515,7 +522,7 @@ fn allen_intersects_matches_its_hand_written_golden() {
                 ],
             },
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![
                     (ids::mandate::ACCOUNT, var(2)),
                     (ids::mandate::ORG, var(1)),
@@ -543,7 +550,7 @@ fn point_in_matches_both_goldens() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::MANDATE,
+            source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![(ids::mandate::ORG, var(0)), (ids::mandate::ACTIVE, var(1))],
         }],
         negated: vec![],
@@ -569,11 +576,11 @@ fn point_in_matches_both_goldens() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![(ids::mandate::ORG, var(0)), (ids::mandate::ACTIVE, var(1))],
             },
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![(ids::posting::AT, var(2))],
             },
         ],
@@ -597,14 +604,14 @@ fn interval_equality_matches_its_goldens() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![
                     (ids::mandate::ACCOUNT, var(0)),
                     (ids::mandate::ACTIVE, var(2)),
                 ],
             },
             Atom {
-                relation: ids::MANDATE,
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
                 bindings: vec![
                     (ids::mandate::ACCOUNT, var(1)),
                     (ids::mandate::ACTIVE, var(3)),
@@ -625,7 +632,7 @@ fn interval_equality_matches_its_goldens() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::MANDATE,
+            source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![
                 (ids::mandate::ORG, var(0)),
                 (
@@ -647,7 +654,7 @@ fn interval_equality_matches_its_goldens() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::MANDATE,
+            source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![
                 (ids::mandate::ORG, var(0)),
                 (ids::mandate::ACTIVE, Term::Param(ParamId(0))),
@@ -678,11 +685,11 @@ fn count_distinct_matches_its_hand_written_golden() {
         ],
         atoms: vec![
             Atom {
-                relation: ids::ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
                 bindings: vec![(ids::account::ID, var(1)), (ids::account::HOLDER, var(0))],
             },
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![
                     (ids::posting::ACCOUNT, var(1)),
                     (ids::posting::INSTRUMENT, var(2)),
@@ -707,7 +714,7 @@ fn count_distinct_over_an_interval_concatenates_the_halves() {
             over: Some(VarId(1)),
         }],
         atoms: vec![Atom {
-            relation: ids::MANDATE,
+            source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![
                 (ids::mandate::ACCOUNT, var(0)),
                 (ids::mandate::ACTIVE, var(1)),
@@ -737,7 +744,7 @@ fn arg_restriction_matches_its_goldens() {
             },
         ],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ID, var(1)),
                 (ids::posting::ACCOUNT, var(0)),
@@ -757,7 +764,7 @@ fn arg_restriction_matches_its_goldens() {
             over: Some(VarId(0)),
         }],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AT, var(1))],
         }],
         negated: vec![],
@@ -773,7 +780,7 @@ fn arg_restriction_matches_its_goldens() {
             over: Some(VarId(0)),
         }],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AT, var(1))],
         }],
         negated: vec![],
@@ -790,7 +797,7 @@ fn an_interval_find_projects_both_halves() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::MANDATE,
+            source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![(ids::mandate::ORG, var(0)), (ids::mandate::ACTIVE, var(1))],
         }],
         negated: vec![],
@@ -811,25 +818,25 @@ fn every_scalar_construct_translates() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::POSTING,
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
                 bindings: vec![(ids::posting::AMOUNT, var(0)), (ids::posting::AT, var(1))],
             },
             Atom {
-                relation: ids::INSTRUMENT,
+                source: bumbledb::AtomSource::Edb(ids::INSTRUMENT),
                 bindings: vec![(
                     ids::instrument::SYMBOL,
                     Term::Literal(Value::String(b"it's a 'quote'".to_vec().into())),
                 )],
             },
             Atom {
-                relation: ids::TRANSFER,
+                source: bumbledb::AtomSource::Edb(ids::TRANSFER),
                 bindings: vec![(
                     ids::transfer::EXTREF,
                     Term::Literal(Value::FixedBytes(vec![0xDE; 32].into())),
                 )],
             },
             Atom {
-                relation: ids::POSTING_TAG,
+                source: bumbledb::AtomSource::Edb(ids::POSTING_TAG),
                 bindings: vec![],
             },
         ],
@@ -873,7 +880,7 @@ fn every_scalar_construct_translates() {
     let repeated = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![(ids::posting::AMOUNT, var(0)), (ids::posting::AT, var(0))],
         }],
         negated: vec![],
@@ -893,7 +900,7 @@ fn global_aggregates_carry_the_having_rule() {
             over: None,
         }],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![(ids::posting::AMOUNT, var(0))],
         }],
         negated: vec![],
@@ -917,7 +924,7 @@ fn global_aggregates_carry_the_having_rule() {
             },
         ],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ACCOUNT, var(0)),
                 (ids::posting::AMOUNT, var(1)),
@@ -940,7 +947,7 @@ fn errors_name_the_untranslatable_construct() {
             over: None,
         }],
         atoms: vec![Atom {
-            relation: ids::POSTING_TAG,
+            source: bumbledb::AtomSource::Edb(ids::POSTING_TAG),
             bindings: vec![],
         }],
         negated: vec![],
@@ -958,7 +965,7 @@ fn a_nul_string_literal_is_a_named_error() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::INSTRUMENT,
+            source: bumbledb::AtomSource::Edb(ids::INSTRUMENT),
             bindings: vec![
                 (ids::instrument::ID, Term::Var(VarId(0))),
                 (
@@ -988,7 +995,7 @@ fn pack_heads_are_inexpressible_and_route_to_the_naive_lane() {
             },
         ],
         atoms: vec![Atom {
-            relation: ids::MANDATE,
+            source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![
                 (ids::mandate::ACCOUNT, var(0)),
                 (ids::mandate::ACTIVE, var(1)),
@@ -1013,11 +1020,11 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![(ids::posting::ID, var(0))],
         }],
         negated: vec![Atom {
-            relation: ids::POSTING_TAG,
+            source: bumbledb::AtomSource::Edb(ids::POSTING_TAG),
             bindings: vec![(ids::posting_tag::POSTING, var(0))],
         }],
         conditions: vec![],
@@ -1063,7 +1070,7 @@ fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
             Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
                 atoms: vec![Atom {
-                    relation: ids::POSTING,
+                    source: bumbledb::AtomSource::Edb(ids::POSTING),
                     bindings: vec![(ids::posting::ACCOUNT, var(0))],
                 }],
                 negated: vec![],
@@ -1072,7 +1079,7 @@ fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
             Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
                 atoms: vec![Atom {
-                    relation: ids::POSTING_TAG,
+                    source: bumbledb::AtomSource::Edb(ids::POSTING_TAG),
                     bindings: vec![(ids::posting_tag::POSTING, var(0))],
                 }],
                 negated: vec![],
@@ -1106,7 +1113,7 @@ fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
             },
         ],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ACCOUNT, var(0)),
                 (ids::posting::AMOUNT, var(1)),
@@ -1147,7 +1154,7 @@ fn a_param_repeated_across_rules_keeps_one_positional_slot() {
     let arm = |field: bumbledb::FieldId| Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (field, Term::Param(ParamId(0))),
                 (ids::posting::AMOUNT, var(0)),
@@ -1173,7 +1180,7 @@ fn a_duration_find_is_end_minus_start_on_the_stored_columns() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::MANDATE,
+            source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![
                 (ids::mandate::ACCOUNT, var(0)),
                 (ids::mandate::ACTIVE, var(1)),
@@ -1188,4 +1195,257 @@ fn a_duration_find_is_end_minus_start_on_the_stored_columns() {
         "SELECT DISTINCT t0.\"account\", (t0.\"active_end\" - t0.\"active_start\") \
          FROM \"Mandate\" AS t0"
     );
+}
+
+/// The linear transitive closure over `OrgParent` — the program
+/// fixtures the recursive tests share (base arm + one-recursive-atom
+/// arm, the exact shape the linearity gate admits).
+fn closure_program() -> Program {
+    Program {
+        predicates: vec![PredicateDef {
+            head: vec![bumbledb::HeadTerm::Var, bumbledb::HeadTerm::Var],
+            rules: vec![
+                Rule {
+                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                    atoms: vec![Atom {
+                        source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
+                        bindings: vec![
+                            (ids::org_parent::CHILD, var(0)),
+                            (ids::org_parent::PARENT, var(1)),
+                        ],
+                    }],
+                    negated: vec![],
+                    conditions: vec![],
+                },
+                Rule {
+                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+                    atoms: vec![
+                        Atom {
+                            source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
+                            bindings: vec![
+                                (ids::org_parent::CHILD, var(0)),
+                                (ids::org_parent::PARENT, var(1)),
+                            ],
+                        },
+                        Atom {
+                            source: bumbledb::AtomSource::Idb(PredId(0)),
+                            bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
+                        },
+                    ],
+                    negated: vec![],
+                    conditions: vec![],
+                },
+            ],
+        }],
+        output: PredId(0),
+    }
+}
+
+#[test]
+fn the_linear_closure_matches_its_hand_written_golden() {
+    let program = closure_program();
+    assert_eq!(sqlite_program_expressible(&program), Ok(()));
+    let t = translate_program(&program, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::CLOSURE);
+    assert!(t.params.is_empty());
+}
+
+#[test]
+fn negation_of_a_lower_stratum_matches_its_hand_written_golden() {
+    // p1(x) :- Org(id = x), ¬p0(c0 = x) — the stratified two-CTE form.
+    let mut program = closure_program();
+    program.predicates.push(PredicateDef {
+        head: vec![bumbledb::HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: bumbledb::AtomSource::Edb(ids::ORG),
+                bindings: vec![(ids::org::ID, var(0))],
+            }],
+            negated: vec![Atom {
+                source: bumbledb::AtomSource::Idb(PredId(0)),
+                bindings: vec![(FieldId(0), var(0))],
+            }],
+            conditions: vec![],
+        }],
+    });
+    program.output = PredId(1);
+    assert_eq!(sqlite_program_expressible(&program), Ok(()));
+    let t = translate_program(&program, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::CLOSURE_ROOTS);
+}
+
+#[test]
+fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
+    // p0(a) :- OrgParent(child = ?0, parent = a).
+    // p0(a) :- OrgParent(child = x, parent = a), p0(c0 = x).
+    let program = Program {
+        predicates: vec![PredicateDef {
+            head: vec![bumbledb::HeadTerm::Var],
+            rules: vec![
+                Rule {
+                    finds: vec![FindTerm::Var(VarId(0))],
+                    atoms: vec![Atom {
+                        source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
+                        bindings: vec![
+                            (ids::org_parent::CHILD, Term::Param(ParamId(0))),
+                            (ids::org_parent::PARENT, var(0)),
+                        ],
+                    }],
+                    negated: vec![],
+                    conditions: vec![],
+                },
+                Rule {
+                    finds: vec![FindTerm::Var(VarId(1))],
+                    atoms: vec![
+                        Atom {
+                            source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
+                            bindings: vec![
+                                (ids::org_parent::CHILD, var(0)),
+                                (ids::org_parent::PARENT, var(1)),
+                            ],
+                        },
+                        Atom {
+                            source: bumbledb::AtomSource::Idb(PredId(0)),
+                            bindings: vec![(FieldId(0), var(0))],
+                        },
+                    ],
+                    negated: vec![],
+                    conditions: vec![],
+                },
+            ],
+        }],
+        output: PredId(0),
+    };
+    assert_eq!(sqlite_program_expressible(&program), Ok(()));
+    let t = translate_program(&program, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::CLOSURE_FROM_PARAM);
+    assert_eq!(
+        t.params,
+        vec![ParamSlot::Whole(ParamId(0))],
+        "one placeholder, shared across the program's arms"
+    );
+}
+
+/// The recursive gate is the enumerated set: non-linear rules, mutual
+/// recursion, and program folds route to the naive lane by name —
+/// counted, reported, never silent.
+#[test]
+fn the_recursive_inexpressible_set_is_enumerated() {
+    // Non-linear: p0(x, z) :- p0(x, y), p0(y, z) beside the base arm —
+    // two references to the recursive table in one rule.
+    let mut non_linear = closure_program();
+    non_linear.predicates[0].rules[1] = Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+        atoms: vec![
+            Atom {
+                source: bumbledb::AtomSource::Idb(PredId(0)),
+                bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
+            },
+            Atom {
+                source: bumbledb::AtomSource::Idb(PredId(0)),
+                bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
+            },
+        ],
+        negated: vec![],
+        conditions: vec![],
+    };
+    assert_eq!(
+        sqlite_program_expressible(&non_linear),
+        Err(Inexpressible::NonLinearRecursion)
+    );
+
+    // Mutual: p0 reads p1 and p1 reads p0 (each with a base arm).
+    let arm = |source: bumbledb::AtomSource| Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source,
+            bindings: vec![(FieldId(0), var(0))],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    };
+    let mutual = Program {
+        predicates: vec![
+            PredicateDef {
+                head: vec![bumbledb::HeadTerm::Var],
+                rules: vec![
+                    arm(bumbledb::AtomSource::Edb(ids::ORG)),
+                    arm(bumbledb::AtomSource::Idb(PredId(1))),
+                ],
+            },
+            PredicateDef {
+                head: vec![bumbledb::HeadTerm::Var],
+                rules: vec![
+                    arm(bumbledb::AtomSource::Edb(ids::ORG)),
+                    arm(bumbledb::AtomSource::Idb(PredId(0))),
+                ],
+            },
+        ],
+        output: PredId(0),
+    };
+    assert_eq!(
+        sqlite_program_expressible(&mutual),
+        Err(Inexpressible::MutualRecursion)
+    );
+
+    // A fold anywhere in a program: Count over the closure from a
+    // higher stratum — naive+Lean territory whole.
+    let mut fold = closure_program();
+    fold.predicates.push(PredicateDef {
+        head: vec![
+            bumbledb::HeadTerm::Var,
+            bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Count),
+        ],
+        rules: vec![Rule {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op: AggOp::Count,
+                    over: None,
+                },
+            ],
+            atoms: vec![Atom {
+                source: bumbledb::AtomSource::Idb(PredId(0)),
+                bindings: vec![(FieldId(0), var(0))],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
+    });
+    fold.output = PredId(1);
+    assert_eq!(
+        sqlite_program_expressible(&fold),
+        Err(Inexpressible::RecursiveFold)
+    );
+}
+
+/// The two documented translator limits past the gate error by name: a
+/// recursive predicate with no base rule, and an interval-typed
+/// predicate column.
+#[test]
+fn program_translator_limits_error_by_name() {
+    let mut baseless = closure_program();
+    baseless.predicates[0].rules.remove(0);
+    let err = translate_program(&baseless, schema(), &[]).unwrap_err();
+    assert!(err.contains("no base rule"), "{err}");
+
+    // An interval column carried through a predicate head.
+    let interval_column = Program {
+        predicates: vec![PredicateDef {
+            head: vec![bumbledb::HeadTerm::Var],
+            rules: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: bumbledb::AtomSource::Edb(ids::MANDATE),
+                    bindings: vec![(ids::mandate::ACTIVE, var(0))],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }],
+        output: PredId(0),
+    };
+    let err = translate_program(&interval_column, schema(), &[]).unwrap_err();
+    assert!(err.contains("interval-typed predicate column"), "{err}");
 }

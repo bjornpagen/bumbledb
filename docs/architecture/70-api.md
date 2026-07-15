@@ -99,8 +99,20 @@ bumbledb::schema! {
   through queries and the dyn surface.
 - **Dependency statements:** `Rel(fields...) -> Rel;` (FD, key form only),
   `A(fields... | field == Literal, ...) <= B(fields...);` (containment),
-  `==` for bidirectional. Projection lists are positional between the two sides;
-  selections follow `|` as comma-separated `field == literal` pairs; literals are
+  `==` for bidirectional,
+  `A(fields... | ...) in lo..hi per B(fields... | ...);` (the cardinality
+  window — `lo`/`hi` non-negative integers, `hi` alternatively `*` for no
+  ceiling), and
+  `order Rel(pos) per Rel(grp, ...) [by link -> K(read) -> ...];` (the order
+  mark — both atoms name one relation; each `by` hop spells its read field
+  only, its key resolving at expansion to the hop relation's one single-field
+  key: a closed relation's synthetic `id`, or the unique candidate among
+  `fresh` auto-keys and declared one-field FDs — zero or several candidates
+  are expansion errors naming the relation).
+  Projection lists are positional between the two sides;
+  selections follow `|` as comma-separated `field == literal` pairs, or
+  `field == {A, B}` for a literal-set binding (read disjunctively; `{L}`
+  lowers to the equality spelling and `{}` does not parse); literals are
   closed-relation handles, integer literals, `true`/`false`, string/byte literals, and
   `start..end` interval literals (half-open). The macro emits descriptors directly —
   relation/field names resolve to declaration-order ids at expansion time, so an
@@ -190,7 +202,12 @@ Both are emission; the grammar is untouched.
 ## Transactions
 
 - `db.read(|snap| ...)` — one LMDB read snapshot; executes *prepared* queries
-  (`db.prepare(&Query)` is the sole entry — pin-at-prepare, `40-execution.md`); sees
+  (`db.prepare(&Query)` and `db.prepare_program(&Program)` are the two entries —
+  pin-at-prepare, `40-execution.md`; a no-`Idb` program prepares as its output
+  predicate's query, byte for byte, and a recursive program executes under the
+  fixpoint driver with the host-settable budget
+  `prepared.set_fixpoint_budget(rounds, tuples)` — `40-execution.md` § the
+  fixpoint driver); sees
   a consistent generation (the snapshot-sourced tx id, `50-storage.md`) — every
   read is a function of that one state and nothing else
   (`lean/Bumbledb/Txn.lean: snapshot_reads_one_state`). A prepared
@@ -444,9 +461,12 @@ proposition the commit checks in one integer compare.
   errors and never alter the fingerprint.
 - **Validation errors** (IR boundary, `20-query-ir.md` roster): typed, enumerated,
   returned at prepare time.
-- **Runtime query errors:** `Overflow` (aggregate range check), `Corruption` (hard
-  error, never a skip — `50-storage.md`). They abort the query; the read transaction
-  remains usable.
+- **Runtime query errors:** `Overflow` (aggregate range check),
+  `FixpointBudgetExceeded { stratum, rounds, tuples }` (a recursive stratum
+  crossed the driver's iteration/tuple budget — ids and counts, the documented
+  default host-amendable via `set_fixpoint_budget`; `40-execution.md` § the
+  fixpoint driver), `Corruption` (hard error, never a skip — `50-storage.md`).
+  They abort the query; the read transaction remains usable.
 - **Write errors:** `CommitRejected` (raised at commit, against the final state,
   carrying the failing phase's COMPLETE violation set in statement order —
   `lean/Bumbledb/Txn.lean: rejection_is_complete`), `GenerationMoved`
@@ -507,12 +527,14 @@ explicit per-thread capture of nanosecond spans and point events over every prep
 execute/commit phase, drained by tooling into Chrome-trace artifacts. Plan
 introspection — EXPLAIN, colloquially — is always available through
 `snap.introspect(..)`. It returns an ANALYZE-semantics rendered artifact beginning
-with `introspection v2`, then the query in rule notation (`20-query-ir.md` § the
+with `introspection v3`, then the query in rule notation (`20-query-ir.md` § the
 renderer; `PreparedQuery::rendered_query` exposes the same query string), predicate,
 plan sections, and diagnostics. `Snapshot::profile` returns the same execution as
-structured `ExecutionStats`, carrying `introspection_version: 2`, each rule's
-`distinct_bindings` proof status, and the same program/node ordering. Version 2
-adds that proof-status line/field to version 1's artifact.
+structured `ExecutionStats`, carrying `introspection_version: 3`, each rule's
+`distinct_bindings` proof status, the same program/node ordering, and — for
+recursive programs — the fixpoint driver's per-stratum round records: labeled plan
+units (predicate, rule, delta variant), each round's per-predicate delta sizes,
+and the union accounting (`40-execution.md` § observability).
 
 Within one version, identical schema fingerprint, canonical query, parameter types,
 and feature set produce byte-identical rendered output. Sections are fixed; rules

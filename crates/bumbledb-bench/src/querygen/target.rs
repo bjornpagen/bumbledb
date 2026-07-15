@@ -388,7 +388,10 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
                 selection: &[(bumbledb::FieldId, Value)]| Side {
         relation,
         projection: Box::new([projection]),
-        selection: selection.iter().cloned().collect(),
+        selection: selection
+            .iter()
+            .map(|(f, v)| (*f, bumbledb::schema::LiteralSet::One(v.clone())))
+            .collect(),
     };
     let containment =
         |source: Side, target: Side| StatementDescriptor::Containment { source, target };
@@ -869,6 +872,9 @@ mod tests {
             }
             StatementView::Key(_, statement) => {
                 panic!("statement {} is a key: {statement:?}", id.0)
+            }
+            StatementView::Cardinality(..) | StatementView::Order(..) => {
+                panic!("statement {} is an extension form", id.0)
             }
         };
         assert_eq!(containment(VOCAB_CURRENCY), (ids::ACCOUNT, ids::CURRENCY));

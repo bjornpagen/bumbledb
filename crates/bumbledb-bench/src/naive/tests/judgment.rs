@@ -23,7 +23,10 @@ fn selected(relation: RelationId, projection: &[u16], field: u16, literal: bool)
     Side {
         relation,
         projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([(FieldId(field), Value::Bool(literal))]),
+        selection: Box::new([(
+            FieldId(field),
+            bumbledb::schema::LiteralSet::One(Value::Bool(literal)),
+        )]),
     }
 }
 
@@ -1167,5 +1170,455 @@ mod citation_set {
             inserts: vec![],
         };
         assert_eq!(db.violations(&clean), vec![]);
+    }
+}
+
+// ---------- the extension forms (windows and order marks) ----------
+
+mod marks {
+    use super::*;
+
+    const HOLDER: RelationId = RelationId(0);
+    const ACCOUNT: RelationId = RelationId(1);
+    const ITEM: RelationId = RelationId(2);
+    const STEP: RelationId = RelationId(3);
+    const KIND_RANK: RelationId = RelationId(4);
+    /// Materialized: the `Holder` key (0), the `KindRank` key (1), the window (2),
+    /// the item order (3), the ranked step order (4).
+    const WINDOW: u16 = 2;
+    const ITEM_ORDER: u16 = 3;
+    const STEP_ORDER: u16 = 4;
+
+    fn window(statement: u16) -> Violation {
+        Violation::Cardinality {
+            statement: StatementId(statement),
+        }
+    }
+
+    fn order(statement: u16) -> Violation {
+        Violation::Order {
+            statement: StatementId(statement),
+        }
+    }
+
+    /// Holder(id, tag; key id); Account(holder, kind, num) with
+    /// `Account(holder | kind == 1) in 1..2 per Holder(id)`;
+    /// Item(doc, pos, note) with `order Item(pos) per Item(doc)`;
+    /// Step(flow, pos, kind) ranked by `kind -> KindRank(rank)` over
+    /// KindRank(kind, rank; key kind).
+    fn schema() -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: None,
+                    name: "Holder".into(),
+                    fields: vec![field("id", ValueType::U64), field("tag", ValueType::U64)],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "Account".into(),
+                    fields: vec![
+                        field("holder", ValueType::U64),
+                        field("kind", ValueType::U64),
+                        field("num", ValueType::U64),
+                    ],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "Item".into(),
+                    fields: vec![
+                        field("doc", ValueType::U64),
+                        field("pos", ValueType::U64),
+                        field("note", ValueType::U64),
+                    ],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "Step".into(),
+                    fields: vec![
+                        field("flow", ValueType::U64),
+                        field("pos", ValueType::U64),
+                        field("kind", ValueType::U64),
+                    ],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "KindRank".into(),
+                    fields: vec![field("kind", ValueType::U64), field("rank", ValueType::U64)],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Functionality {
+                    relation: HOLDER,
+                    projection: Box::new([FieldId(0)]),
+                },
+                StatementDescriptor::Functionality {
+                    relation: KIND_RANK,
+                    projection: Box::new([FieldId(0)]),
+                },
+                StatementDescriptor::Cardinality {
+                    source: Side {
+                        relation: ACCOUNT,
+                        projection: Box::new([FieldId(0)]),
+                        selection: Box::new([(
+                            FieldId(1),
+                            bumbledb::schema::LiteralSet::One(Value::U64(1)),
+                        )]),
+                    },
+                    lo: 1,
+                    hi: Some(2),
+                    target: side(HOLDER, &[0], &[]),
+                },
+                StatementDescriptor::Order {
+                    relation: ITEM,
+                    position: FieldId(1),
+                    grouping: Box::new([FieldId(0)]),
+                    ranking: None,
+                },
+                StatementDescriptor::Order {
+                    relation: STEP,
+                    position: FieldId(1),
+                    grouping: Box::new([FieldId(0)]),
+                    ranking: Some(bumbledb::schema::RankChain {
+                        link: FieldId(2),
+                        hops: Box::new([bumbledb::schema::RankHop {
+                            relation: KIND_RANK,
+                            key: FieldId(0),
+                            read: FieldId(1),
+                        }]),
+                    }),
+                },
+            ],
+        }
+    }
+
+    fn holder(id: u64) -> (RelationId, Vec<Value>) {
+        (HOLDER, vec![Value::U64(id), Value::U64(0)])
+    }
+
+    fn account(holder: u64, kind: u64, num: u64) -> (RelationId, Vec<Value>) {
+        (
+            ACCOUNT,
+            vec![Value::U64(holder), Value::U64(kind), Value::U64(num)],
+        )
+    }
+
+    fn item(doc: u64, pos: u64, note: u64) -> (RelationId, Vec<Value>) {
+        (
+            ITEM,
+            vec![Value::U64(doc), Value::U64(pos), Value::U64(note)],
+        )
+    }
+
+    fn step(flow: u64, pos: u64, kind: u64) -> (RelationId, Vec<Value>) {
+        (
+            STEP,
+            vec![Value::U64(flow), Value::U64(pos), Value::U64(kind)],
+        )
+    }
+
+    fn kind_rank(kind: u64, rank: u64) -> (RelationId, Vec<Value>) {
+        (KIND_RANK, vec![Value::U64(kind), Value::U64(rank)])
+    }
+
+    #[test]
+    fn window_boundaries() {
+        run(
+            &schema(),
+            vec![
+                Case {
+                    name: "a childless parent breaks the floor",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![holder(7)],
+                    verdict: Err(window(WINDOW)),
+                },
+                Case {
+                    name: "one selected child satisfies 1..2",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![holder(7), account(7, 1, 0)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "a third selected child breaks the ceiling",
+                    base: vec![holder(7), account(7, 1, 0), account(7, 1, 1)],
+                    deletes: vec![],
+                    inserts: vec![account(7, 1, 2)],
+                    verdict: Err(window(WINDOW)),
+                },
+                Case {
+                    name: "out-of-sigma children never count",
+                    base: vec![holder(7), account(7, 1, 0), account(7, 1, 1)],
+                    deletes: vec![],
+                    inserts: vec![account(7, 9, 0), account(7, 9, 1)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "removing the last selected child breaks the floor",
+                    base: vec![holder(7), account(7, 1, 0)],
+                    deletes: vec![account(7, 1, 0)],
+                    inserts: vec![],
+                    verdict: Err(window(WINDOW)),
+                },
+                Case {
+                    name: "demolishing the whole group releases it",
+                    base: vec![holder(7), account(7, 1, 0)],
+                    deletes: vec![holder(7), account(7, 1, 0)],
+                    inserts: vec![],
+                    verdict: Ok(()),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn order_discipline() {
+        run(
+            &schema(),
+            vec![
+                Case {
+                    name: "adjacent positions are exactly 1..k",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![item(1, 1, 10), item(1, 2, 11), item(1, 3, 12)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "the gap convicts",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![item(1, 1, 10), item(1, 3, 12)],
+                    verdict: Err(order(ITEM_ORDER)),
+                },
+                Case {
+                    name: "the duplicate convicts",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![item(1, 1, 10), item(1, 1, 11)],
+                    verdict: Err(order(ITEM_ORDER)),
+                },
+                Case {
+                    name: "a lone position 2 is not 1-based",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![item(1, 2, 10)],
+                    verdict: Err(order(ITEM_ORDER)),
+                },
+                Case {
+                    name: "a removal can break downward closure",
+                    base: vec![item(1, 1, 10), item(1, 2, 11)],
+                    deletes: vec![item(1, 1, 10)],
+                    inserts: vec![],
+                    verdict: Err(order(ITEM_ORDER)),
+                },
+            ],
+        );
+    }
+
+    /// The window-boundary schema: Holder(id; key) with
+    /// `Account(holder | kind == 1) in 2..2 per Holder(id)` (exactness)
+    /// and `Account(holder | kind == 9) in 0..* per Holder(id)` (the
+    /// provably vacuous default posture,
+    /// `lean/Bumbledb/Cardinality.lean: zero_star_admits`).
+    /// Materialized: the `Holder` key (0), the `2..2` window (1), the
+    /// `0..*` window (2).
+    fn exact_schema() -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: None,
+                    name: "Holder".into(),
+                    fields: vec![field("id", ValueType::U64), field("tag", ValueType::U64)],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "Account".into(),
+                    fields: vec![
+                        field("holder", ValueType::U64),
+                        field("kind", ValueType::U64),
+                        field("num", ValueType::U64),
+                    ],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Functionality {
+                    relation: HOLDER,
+                    projection: Box::new([FieldId(0)]),
+                },
+                StatementDescriptor::Cardinality {
+                    source: Side {
+                        relation: ACCOUNT,
+                        projection: Box::new([FieldId(0)]),
+                        selection: Box::new([(
+                            FieldId(1),
+                            bumbledb::schema::LiteralSet::One(Value::U64(1)),
+                        )]),
+                    },
+                    lo: 2,
+                    hi: Some(2),
+                    target: side(HOLDER, &[0], &[]),
+                },
+                StatementDescriptor::Cardinality {
+                    source: Side {
+                        relation: ACCOUNT,
+                        projection: Box::new([FieldId(0)]),
+                        selection: Box::new([(
+                            FieldId(1),
+                            bumbledb::schema::LiteralSet::One(Value::U64(9)),
+                        )]),
+                    },
+                    lo: 0,
+                    hi: None,
+                    target: side(HOLDER, &[0], &[]),
+                },
+            ],
+        }
+    }
+
+    /// The `n..n` exactness window, the `0..*` vacuity, the
+    /// empty-parent vacuity, and the delete-then-reinsert seams —
+    /// the targeted subfamilies pinning
+    /// `lean/Bumbledb/Cardinality.lean: CardinalityWindow` at its
+    /// boundaries and the delta-restriction seam
+    /// (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+    /// delta_restricted_commit_sound` — a touched group is re-judged
+    /// even when the delta nets to nothing).
+    #[test]
+    fn window_exactness_vacuity_and_reinsert_seams() {
+        run(
+            &exact_schema(),
+            vec![
+                Case {
+                    name: "exactly n commits at n..n",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "n..n breaks one under (deletion hits the floor)",
+                    base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
+                    deletes: vec![account(1, 1, 1)],
+                    inserts: vec![],
+                    verdict: Err(window(1)),
+                },
+                Case {
+                    name: "n..n breaks one over (insertion hits the ceiling)",
+                    base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
+                    deletes: vec![],
+                    inserts: vec![account(1, 1, 2)],
+                    verdict: Err(window(1)),
+                },
+                Case {
+                    name: "0..* never gates",
+                    base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
+                    deletes: vec![],
+                    inserts: vec![
+                        account(1, 9, 0),
+                        account(1, 9, 1),
+                        account(1, 9, 2),
+                        account(1, 9, 3),
+                    ],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "a window over an absent parent is vacuous",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![account(3, 1, 0)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "a net-nothing delete-reinsert re-judges the touched group and passes",
+                    base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
+                    deletes: vec![account(1, 1, 1)],
+                    inserts: vec![account(1, 1, 1)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "a net-nothing reinsert beside a real deletion still convicts",
+                    base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
+                    deletes: vec![account(1, 1, 0), account(1, 1, 1)],
+                    inserts: vec![account(1, 1, 0)],
+                    verdict: Err(window(1)),
+                },
+            ],
+        );
+    }
+
+    /// The one-transaction renumber and the order-side
+    /// delete-then-reinsert seam (the touched group is re-walked; the
+    /// net-nothing delta commits, the renumber commits whole).
+    #[test]
+    fn order_renumber_and_reinsert_seams() {
+        run(
+            &schema(),
+            vec![
+                Case {
+                    name: "a one-txn renumber commits",
+                    base: vec![item(1, 1, 10), item(1, 2, 11)],
+                    deletes: vec![item(1, 2, 11)],
+                    inserts: vec![item(1, 2, 12), item(1, 3, 11)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "a net-nothing delete-reinsert leaves the ordered group green",
+                    base: vec![item(1, 1, 10), item(1, 2, 11)],
+                    deletes: vec![item(1, 1, 10)],
+                    inserts: vec![item(1, 1, 10)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "a net-nothing reinsert beside a real deletion breaks closure",
+                    base: vec![item(1, 1, 10), item(1, 2, 11)],
+                    deletes: vec![item(1, 1, 10), item(1, 2, 11)],
+                    inserts: vec![item(1, 2, 11)],
+                    verdict: Err(order(ITEM_ORDER)),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn ranked_monotonicity() {
+        run(
+            &schema(),
+            vec![
+                Case {
+                    name: "monotone ranks commit",
+                    base: vec![kind_rank(10, 1), kind_rank(20, 2)],
+                    deletes: vec![],
+                    inserts: vec![step(1, 1, 10), step(1, 2, 20)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "an inversion convicts",
+                    base: vec![kind_rank(10, 1), kind_rank(20, 2)],
+                    deletes: vec![],
+                    inserts: vec![step(1, 1, 20), step(1, 2, 10)],
+                    verdict: Err(order(STEP_ORDER)),
+                },
+                Case {
+                    name: "a rankless member imposes nothing",
+                    base: vec![kind_rank(10, 1), kind_rank(20, 2)],
+                    deletes: vec![],
+                    inserts: vec![step(1, 1, 10), step(1, 2, 30), step(1, 3, 20)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "a hop rewrite convicts an untouched group",
+                    base: vec![
+                        kind_rank(10, 1),
+                        kind_rank(20, 2),
+                        step(1, 1, 10),
+                        step(1, 2, 20),
+                    ],
+                    deletes: vec![kind_rank(10, 1)],
+                    inserts: vec![kind_rank(10, 3)],
+                    verdict: Err(order(STEP_ORDER)),
+                },
+            ],
+        );
     }
 }

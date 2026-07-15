@@ -38,7 +38,15 @@ pub(crate) fn provably_distinct(
         .iter()
         .filter(|occurrence| occurrence.role.participates())
         .all(|occurrence| {
-            let relation = schema.relation(occurrence.relation);
+            // An `Idb` occurrence carries no keys — a predicate is a
+            // transient answer set, not a keyed store — so no rule
+            // reading one can prove distinct bindings through key
+            // coverage (40-execution.md § the fixpoint driver: cross-round re-derivation
+            // is the seen-set's job regardless).
+            let Some(stored) = occurrence.source.edb() else {
+                return false;
+            };
+            let relation = schema.relation(stored);
             let bound_fields: BTreeSet<crate::schema::FieldId> = occurrence
                 .vars
                 .iter()

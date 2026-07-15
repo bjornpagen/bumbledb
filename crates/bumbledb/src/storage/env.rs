@@ -35,9 +35,14 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 /// interned) — version 1 stores carry tagged dictionary entries that
 /// would decode wrong, so they refuse to open (the two-oracle run
 /// caught a v1 store silently mis-decoding; a format change without a
-/// version bump is that bug's whole class). No other version opens and
-/// no migration path exists — ETL is the story.
-pub const FORMAT_VERSION: u32 = 2;
+/// version bump is that bug's whole class). Version 3: the
+/// dependency-vocabulary extension — the canonical schema encoding
+/// changed (literal-set selections, the cardinality-window and
+/// order-mark statement forms), so every stored fingerprint of a v2
+/// store is computed under a retired encoding (every encoding change
+/// bumps — `docs/architecture/50-storage.md` § open-time checks). No
+/// other version opens and no migration path exists — ETL is the story.
+pub const FORMAT_VERSION: u32 = 3;
 
 /// The persisted storage transaction id: the generation a snapshot
 /// witnessed and a state-changing commit advances. This is not the

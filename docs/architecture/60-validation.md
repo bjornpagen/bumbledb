@@ -54,18 +54,69 @@ implementation. The lane: `crates/bumbledb-bench/src/conformance.rs` serializes
 Tiny worlds + queries + engine answers into the checked-in replay corpus
 (`lean/conformance/cases/`, format and recorded exclusions in
 `lean/conformance/README.md`), and the three-way comparator
-(`three_way_conformance_over_the_checked_in_corpus`) holds engine, naive model,
-and `lake exe conformance` to agreement per case — any disagreement names the
-case file and is a trophy triaged per the fuzzing charter (below), whichever
-oracle turns out wrong.
+(`three_way_conformance_over_the_checked_in_corpus`, run by `scripts/lean.sh`
+— the Lean-dependent lane owns the Lean-dependent test) holds engine, naive
+model, and `lake exe conformance` to agreement per case — any disagreement
+names the case file and is a trophy triaged per the fuzzing charter (below),
+whichever oracle turns out wrong.
+
+**The Lean judge is the third oracle for the write side** (the judgment arm of
+the same lane). Commit verdicts get the same treatment as answer sets: the
+executable judge is *proved* to render the model judge's verdict phase for
+phase with the same per-phase violation sets
+(`lean/Bumbledb/Decide.lean: Txn.judgeB_agrees_of_declared`; the checker face
+is `lean/Bumbledb/Decide.lean: holdsB_iff_holds`), so running it judges the
+engine against the spec's own two-phase judgment
+(`lean/Bumbledb/Txn.lean: judge_key_preempts`).
+`crates/bumbledb-bench/src/conformance/judgment.rs` serializes hand-authored
+`(theory, instance, delta)` fixtures — both classical forms, both extension
+forms at their window and order boundaries, the two-phase preemption mix,
+set-selections, the delete-then-reinsert touched-group seam, and the
+permuted-interval lock (a containment written interval-first against a
+pointwise key declared scalar-first, accepted set-canonically —
+`lean/Bumbledb/Schema.lean: Header.intervalSplit` — and coverage-judged) —
+each checked in only after the engine and the naive model agreed on the
+verdict; `lake exe conformance` dispatches `judgment-*.json` to `Txn.judgeB`
+and compares whole (format in `lean/conformance/README.md` § judgment cases).
+
+**All three oracles run recursion — and so does the engine.** The shipping
+law (recorded in `20-query-ir.md` § engine recursion) demanded the oracles
+land before the evaluator, so the differential existed on day one of driver
+work; the oracles did land first, the per-stratum fixpoint driver followed
+(`40-execution.md` § the fixpoint driver), and the R1 execution fence is
+gone — a sealed `ValidatedProgram` executes whole. The naive model evaluates programs by the **naive
+stratified fixpoint** (`NaiveDb::program` — per stratum in condensation order,
+every rule against the current predicate sets, union, stop on no change;
+deliberately naive, never semi-naive: staying on the plain chain loses nothing,
+`lean/Bumbledb/Exec/Fixpoint.lean: semi_naive_agrees`, and keeps the trust root
+definitional). The SQLite lane translates **linear self-recursive
+projection-shaped** predicates to `WITH RECURSIVE` under `UNION`
+(`translate::translate_program`, hand-written goldens beside the query forms);
+non-linear rules, mutual recursion, and program folds join the enumerated
+`Inexpressible` set — counted, reported, never silent (the ψ-subset
+division-of-labor precedent). The Lean lane judges the checked-in
+`program-*.json` cases with the **proved fueled fixpoint**
+(`lean/Bumbledb/Exec/Fixpoint.lean: evalProgram`, sound and complete against
+the stratified denotation by `lean/Bumbledb/Exec/Fixpoint.lean:
+program_eval_sound`), each case written only after the naive fixpoint — and
+SQLite, where expressible — agreed; the hand-verified closure goldens (a fixed
+tree, a fixed cyclic graph, the empty store) hold every program-capable oracle
+to the same answers — the naive fixpoint, the SQLite lane, and the ENGINE's
+per-stratum fixpoint driver (`40-execution.md` § the fixpoint driver;
+`lean/Bumbledb/Exec/Fixpoint.lean: program_eval_sound` is the semantics both
+the Lean lane and the driver compute), three-way.
 
 **The store sweeper is the third leg: the oracles judge semantics; the sweeper
 judges the store.** `Db::verify_store` takes one read snapshot and sweeps
 O(store): every namespace pairing re-verified against the schema (F↔M↔U↔R plus
 the `S` counters against the `F` scan — including the `R`-delete class the
-commit path defers, `50-storage.md`), and **both judgment forms re-verified
-globally** over the full committed state through the commit path's own probe
-and coverage walk — the class no incremental check can see: an incremental form
+commit path defers, `50-storage.md`), and **every judgment form re-verified
+globally** over the full committed state through the commit path's own probes —
+the scalar probe and coverage walk per source fact, the child-group count per
+ψ-selected window parent, the ordered group walk per order-mark group (writable
+subjects; a closed subject's mark is plain-only by the gate refusal
+`RankedOrderClosedSubject` and was decided at validate against the sealed
+extension) — the class no incremental check can see: an incremental form
 wrong once, long ago, preserved by every commit since. Findings are report
 data, never errors; CLI-wrapped as `bumbledb-bench verify-store` (nonzero exit
 on non-empty findings, zero otherwise).
@@ -361,6 +412,24 @@ time the emulation, not the engine.
   Empty relations are covered by the verify run's **empty-store pass**: every
   family plus a seeded randomized slice runs against a zero-fact store pair each
   verify — every gate false, every scan empty, every aggregate folding nothing.
+- **The recursive-shape arm** (`querygen/shapes_recursive.rs`, its own
+  coverage-contract test): seeded random programs over the org tree — closure
+  sizes bounded **by construction** (the corpus org relation is a binary tree,
+  so every fixpoint sits inside `orgs × log₂ orgs`; the cost-bound rule's
+  sibling), predicate counts bounded at 2–3, recursive atoms per rule at 1–2.
+  Rows asserted per run: linear self-recursion; a mutual pair; a non-linear
+  rule; negation of a lower stratum; a fold over a recursive predicate from a
+  higher stratum; and the empty-Δ-at-round-1 boundary (constructed —
+  the reachable set below a node whose children are leaves — and verified
+  dynamically: the base rules alone denote the fixpoint). Every program
+  passes the engine's whole program roster, prepares through
+  `Db::prepare_program`, and EXECUTES under the fixpoint driver — engine
+  answers set-equal to the naive fixpoint on every program, and every
+  expressible one through SQLite too. **The budget-trip row is active and
+  constructed, never hoped for** (`RecursiveCoverage::budget_trip`): a drawn
+  closure under a zero-round budget raises the typed
+  `Error::FixpointBudgetExceeded`, and the widened budget then executes clean
+  — the snapshot stays usable.
 - **The entropy seam** (`corpus_gen::rng`): every generator draw goes through
   one closed sum — `Rng::Seeded` (the bench/differential arm, the seeded
   stream above) and `Rng::Bytes` (the fuzzer arm: draws consume a fuzzer's

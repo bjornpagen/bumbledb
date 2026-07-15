@@ -92,18 +92,17 @@ fact. The pointwise KEY checker is pairwise value-level disjointness
 neighbor probe (`Applier::probe_neighbors`) is mechanism below this
 altitude, recorded in the Bridge rows that already exist.
 
-## Third oracle, write side — Undischarged (spec-ahead)
+## Third oracle, write side — discharged
 
-The conformance lane's third oracle executes the QUERY denotation
-today (`Conformance.lean`; `lake exe conformance` in the gate). This
-module extends the prepared surface to the WRITE side: `holdsB` and
-`Txn.judgeB` are the executable JUDGMENT arm — engine verdict vs
-naive verdict vs this judge — whose prepared consumer is the
-judgment-case corpus, landing with the Rust swoop. Undischarged
-(spec-ahead): no conformance case exercises these checkers yet, no
-`Bridge.lean` row cites this module (deliberate — the ledger carries
-only what exists), and nothing here claims the lane runs a judgment
-arm today.
+The conformance lane runs a judgment arm: `lake exe conformance`
+dispatches `judgment-*.json` cases (`lean/Main.lean`) to `Txn.judgeB`
+over `(theory, instance, delta)` documents serialized by
+`crates/bumbledb-bench/src/conformance/judgment.rs`, comparing the
+verdict and the per-phase violation sets against what the engine and
+the naive model agreed on — engine verdict vs naive verdict vs this
+judge, the write-side third oracle. `Bridge.lean` carries the rows
+(`holdsB_iff_holds`, `Txn.judgeB_agrees_of_declared`); the corpus
+format lives in `lean/conformance/README.md` § judgment cases.
 
 ## Narrowings recorded (law 5: narrow and record)
 

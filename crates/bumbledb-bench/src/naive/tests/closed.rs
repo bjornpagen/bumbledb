@@ -82,7 +82,10 @@ fn schema() -> SchemaDescriptor {
                 target: Side {
                     relation: SEVERITY,
                     projection: Box::new([FieldId(0)]),
-                    selection: Box::new([(FieldId(1), Value::Bool(true))]),
+                    selection: Box::new([(
+                        FieldId(1),
+                        bumbledb::schema::LiteralSet::One(Value::Bool(true)),
+                    )]),
                 },
             },
             StatementDescriptor::Containment {

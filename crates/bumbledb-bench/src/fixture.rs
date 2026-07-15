@@ -18,7 +18,7 @@ pub(crate) fn var(id: u16) -> Term {
 #[cfg(test)]
 pub(crate) fn atom(relation: RelationId, bindings: &[(u16, Term)]) -> Atom {
     Atom {
-        relation,
+        source: bumbledb::AtomSource::Edb(relation),
         bindings: bindings
             .iter()
             .map(|(field, term)| (FieldId(*field), term.clone()))
@@ -49,7 +49,12 @@ pub(crate) fn side(relation: RelationId, projection: &[u16], selection: &[(u16, 
         projection: projection.iter().map(|field| FieldId(*field)).collect(),
         selection: selection
             .iter()
-            .map(|(field, value)| (FieldId(*field), value.clone()))
+            .map(|(field, value)| {
+                (
+                    FieldId(*field),
+                    bumbledb::schema::LiteralSet::One(value.clone()),
+                )
+            })
             .collect(),
     }
 }
@@ -65,7 +70,16 @@ pub(crate) struct TempDir(std::path::PathBuf);
 #[cfg(test)]
 impl TempDir {
     pub(crate) fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-bench-{tag}"));
+        // Unique per run (pid + wall-clock nanos): a fixed tag path lets
+        // a concurrent or wedged prior run collide on the LMDB flock.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "bumbledb-bench-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create test dir");
         Self(path)

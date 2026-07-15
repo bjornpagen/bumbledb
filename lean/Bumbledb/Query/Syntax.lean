@@ -53,21 +53,21 @@ lives in `Bumbledb.Query.Denotation`.
   unsound: each theorem quantifies over arbitrary syntax or assumes
   only `Safe`/`WellTyped`, so a rejected-but-denotable program simply
   never reaches execution.
-* **The unknown-PredId gap, recorded LOUDLY, with its screen.** A rule
-  reading `idb k` with `k` outside `predicates` reads the EMPTY fact
-  set: a positive phantom read kills its rule, but a NEGATED phantom
-  read is vacuously satisfied — and `Program.StratifiedBy` never
-  refuses the shape (a stratum witness may map the phantom low). The
-  screen is `Program.WellFormed` (every `idb` source's `PredId` in
-  range, positive and negated); the refusal itself is validation's
-  roster item (`docs/reference/recursion-design.md` §1, the
-  unknown-`PredId` row — queued with the engine discharge). The
-  degenerate embedding carries the screen vacuously
-  (`Query.toProgram_wellFormed`). The `Exec/Fixpoint.lean` agreement
-  theorems are exact equalities with or without the screen — both the
-  denotation and the evaluator read a phantom as empty (the record
-  there, with `wellFormed_reads_real` as the spent form) — so the
-  premise belongs to acceptance readings, not to the agreement.
+* **The unknown-PredId gap, recorded LOUDLY, with its screen —
+  DISCHARGED (R1).** A rule reading `idb k` with `k` outside
+  `predicates` reads the EMPTY fact set: a positive phantom read kills
+  its rule, but a NEGATED phantom read is vacuously satisfied — and
+  `Program.StratifiedBy` never refuses the shape (a stratum witness may
+  map the phantom low). The screen is `Program.WellFormed` (every `idb`
+  source's `PredId` in range, positive and negated); the engine's
+  refusal is `ValidationError::UnknownPredicate`
+  (`ir/validate/strata.rs`, the R1 discharge — the Bridge row cites
+  `wellFormed_reads_real`). The degenerate embedding carries the screen
+  vacuously (`Query.toProgram_wellFormed`). The `Exec/Fixpoint.lean`
+  agreement theorems are exact equalities with or without the screen —
+  both the denotation and the evaluator read a phantom as empty (the
+  record there, with `wellFormed_reads_real` as the spent form) — so
+  the premise belongs to acceptance readings, not to the agreement.
 
 ## The creation-quarantine gravestones (law text; the full record is
 `Txn/Fresh.lean`'s module doc)
@@ -83,10 +83,10 @@ heads are `List VarId` too), so recursion's safety roster
 law restated for fixpoint topology, not a new rule
 (`docs/architecture/20-query-ir.md` § the creation quarantine).
 
-## The program cut (recursion-design §1, landed)
+## The program cut (recursion's IR, landed)
 
 `Program`/`PredicateDef`/`AtomSource`/`PAtom`/`PRule` are the IR cut
-of `docs/reference/recursion-design.md` §1: a query is a non-recursive
+(`docs/architecture/20-query-ir.md` § engine recursion): a query is a non-recursive
 Datalog program one step short of the fixpoint, and the cut takes that
 step and nothing else. The degenerate form is today's `Query` — a
 one-predicate program with no `idb` atom — and the embedding is a
@@ -105,16 +105,27 @@ strictly decreasing. Recorded shapes:
   rejected.
 * **Fold-input edges are unrepresentable at this level.** `PRule`
   heads are projected variables (`finds : List VarId`), so program
-  predicates are projection-shaped BY CONSTRUCTION (the design's §5);
+  predicates are projection-shaped BY CONSTRUCTION (the
+  executable-class item, `docs/architecture/20-query-ir.md` § engine
+  recursion — the engine's validation roster holds interior heads to
+  this class);
   aggregation is the `Query/Aggregates.lean` composition over a
   program's OUTPUT, which reads a finished fixpoint — strictly lower
   by construction. The edge label sum therefore carries
   positive/negated only; a fold-input edge has no writable syntax.
-* **`Query` and `Atom` stay as they are.** The engine's IR today is
-  `Atom.relation : RelationId`; the modeled `Atom` matches it, and the
-  program shapes model the design's post-trigger cut. When the Rust
-  cut lands (`Atom.relation → Atom.source`), the two atom shapes merge
-  here in the same change (the gate law).
+* **The two atom shapes, and the landed Rust cut.** The engine's IR
+  now carries `Atom.source : AtomSource` (the R1 cut,
+  `crates/bumbledb/src/ir.rs` — one atom type, both arms); the modeled
+  `Atom` keeps the pre-cut `relation : RelId` shape and `PAtom` models
+  the cut form, with the coding transport (`PAtom.code`,
+  `pderives_code` in `Exec/Fixpoint.lean`) the proved bridge between
+  them. Merging the two modeled shapes is a spec-side amendment queued
+  for its own change under the gate law — a recorded seam, not a
+  drift: every theorem over `Query`/`Atom` reads the engine's
+  `Edb`-only degenerate carrier, which is exactly the degenerate
+  program's execution surface (the fence is gone — the engine's
+  per-stratum fixpoint driver executes recursive programs whole, and
+  `PAtom`/`Exec/Fixpoint.lean` model that surface directly).
 -/
 
 namespace Bumbledb.Query
@@ -348,7 +359,8 @@ def Rule.WellTyped (r : Rule) : Prop :=
     ∀ b, b ∈ a.bindings → ¬ b.2.isMeasure) ∧
   (∀ t, t ∈ r.conditions → t.wellShaped)
 
-/-! ## The program cut — recursion's IR (recursion-design §1) -/
+/-! ## The program cut — recursion's IR (`20-query-ir.md` § engine
+recursion) -/
 
 /-- Dense predicate id — the index into a program's predicate list
 (the design's `PredId`; `Program.predicates` is the address space).
@@ -454,7 +466,8 @@ def PRule.allVars (r : PRule) : List VarId :=
     ++ r.conditions.flatMap Condition.vars
 
 /-! ## Stratification — the dependency graph as data, the witness as
-a predicate (recursion-design §2; validation models it) -/
+a predicate (`20-query-ir.md` § engine recursion; validation models
+it) -/
 
 /-- An edge label: how a rule reads its target predicate. Fold-input
 is UNREPRESENTABLE at this level (module doc: heads are projected
@@ -504,7 +517,8 @@ def Program.Stratified (p : Program) : Prop :=
 
 /-- Every `idb` source of every rule — positive and negated — names a
 real predicate: the index sits inside `predicates`. This is the
-unknown-PredId roster item of `docs/reference/recursion-design.md` §1
+unknown-PredId roster item of the validation boundary
+(`docs/architecture/20-query-ir.md` § engine recursion)
 as a predicate over the syntax (the module-doc gap record): WITHOUT
 it, a phantom `idb` read denotes the empty fact set — a positive
 phantom read kills its rule, a NEGATED phantom read is vacuously

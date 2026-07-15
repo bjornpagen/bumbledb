@@ -72,15 +72,18 @@ pub fn translate(
 
 /// The query-global positional param space, threaded through the
 /// per-rule builders (a param repeated across rules keeps one `?N`).
+/// Programs share it too: every CTE arm draws from one `?N` space
+/// (`super::program`).
 #[derive(Default)]
-struct SharedParams {
+pub(super) struct SharedParams {
     index: BTreeMap<ParamSlot, usize>,
-    params: Vec<ParamSlot>,
+    pub(super) params: Vec<ParamSlot>,
 }
 
 /// Builds one rule's core (FROM entries, WHERE conjuncts, variable
-/// columns) — the conjunctive walk every template selects from.
-fn rule_core<'q>(
+/// columns) — the conjunctive walk every template selects from, the
+/// program lane's per-arm core included.
+pub(super) fn rule_core<'q>(
     rule: &'q Rule,
     schema: &'q Schema,
     sets: &'q [(ParamId, Vec<Value>)],
@@ -114,6 +117,14 @@ fn rule_core<'q>(
     params.index = std::mem::take(&mut b.param_index);
     params.params = std::mem::take(&mut b.params);
     Ok(b)
+}
+
+/// The FROM/WHERE tail of one rendered rule core — the program lane's
+/// per-arm body (`super::program` renders its own column list; the
+/// body is the shared conjunctive walk).
+pub(super) fn arm_body(b: &Builder) -> String {
+    let (from, where_clause) = from_where(b);
+    format!(" FROM {from}{where_clause}")
 }
 
 fn from_where(b: &Builder) -> (String, String) {

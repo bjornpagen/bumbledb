@@ -64,10 +64,12 @@ pre-rules query is a one-rule program.
   typing, finalize's all-words decision, and plan introspection's header all read that
   one object — no second derivation of the answer exists anywhere.
   The fence: the predicate is anonymous and engine-internal, **referenced
-  by nothing** (names live in the host, exactly like relations pre-`as`).
-  The moment something REFERENCES a predicate — a head usable as a body
-  atom — that is the recursion trigger firing: go through the recursion
-  design's ledger, not around it.
+  only by `PredId`, from inside the same `Program`** (names live in the
+  host, exactly like relations pre-`as`; no stored, named, or
+  cross-program reference exists). That one reference form is the
+  recursion cut's `Idb` atom (§ engine recursion), typed against the
+  sealed columns — the ledger's rewrite of the old *referenced by
+  nothing* sentence, gone through the ledger, not around it.
 
 - **A query's answers are the set union of its rules' answers**
   (`lean/Bumbledb/Query/Denotation.lean: mem_queryAnswers`). Under set
@@ -78,91 +80,137 @@ pre-rules query is a one-rule program.
   rule is its own typing scope and its own plan.
 - **Params are query-global**: one binding surface; any rule may reference
   any param, and every rule's anchors must resolve one type per param.
-- Rules are deliberately **one step short of the fixpoint**: a rule's head
-  is never a body atom, so no recursion is expressible. The recursion
-  refusal (next section) gains its landing pad here and is not entered.
+- A query's rules are **one step short of the fixpoint**: within a
+  `Query`, a rule's head is never a body atom. The `Program` (next
+  section) takes exactly that step — a body atom may name a predicate by
+  `PredId` — and the query stays the degenerate carrier: one predicate,
+  no `Idb` atom, field for field
+  (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`).
 
-## Engine recursion — refused (recorded 2026-07, with its trigger)
+## Engine recursion — the cut, executing end to end
 
-**The derivation, three legs.** *No census sighting*: the 2026-07 recursion
-analysis found none — both censused applications' query surfaces collapse
-onto the current IR. *The closure idiom covers the sighted class*: the
-censused hierarchies are depth-bounded, and host-driven semi-naive
-reachability over one ∈-set query — `docs/cookbook.md` recipe 24 (the
-idiom) and recipe 25 (the ledger's subtree rollup, closure composed with
-one `Sum`) — computes their closures in depth-many microsecond-class
-rounds on the engine as it stands. *The constraint-side motivation is
-void*: recursive commit-time judgments (acyclicity, closure-sound rollups)
-fail the acceptance gate categorically — a judgment is accepted only with
-an enforcement plan costing O(log n) per delta-touched fact, and a
-fixpoint judgment's blast radius is the store (`30-dependencies.md` § the
-acceptance gate) — so recursion buys the statement vocabulary nothing.
+A query is a non-recursive Datalog program one step short of the
+fixpoint, and the **`Program` shape takes that step and nothing else**:
+`Program { predicates, output }` with each `PredicateDef` today's query
+verbatim, and `Atom.source: AtomSource = Edb(RelationId) | Idb(PredId)`
+— a head becomes usable as a body atom by naming its `PredId`
+(`crates/bumbledb/src/ir.rs`): the cut, the strata judge, the three
+oracles (`60-validation.md` § the two oracles), the delta-variant
+plans, the transient images, the per-stratum fixpoint driver
+(`40-execution.md` § the fixpoint driver), the counted round surface
+(`40-execution.md` § observability), and the named-head notation
+(§ the query notation) — the whole surface. The degenerate form
+is today's `Query` — a one-predicate, no-`Idb` program, field for field
+— and the embedding is a theorem, not a convention
+(`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`;
+`From<Query> for Program` is the Rust form, `Query::single` its
+precedent one level down). An `Idb` atom's bindings address **head
+positions**: `FieldId(i)` is the target predicate's column `i`, typed by
+its sealed signature column — positional, never nominal, and the
+membership typing rule reads through it unchanged (an interval-typed
+predicate column participates in point membership exactly as an interval
+field does).
 
-**The trigger, three clauses** — a real workload where the idiom
-*measurably* fails:
+**Validation quantifies over predicates** (`ir/validate::validate_program`;
+an `Idb`-carrying `Query` routes through it as the degenerate embedding
+read backwards). One sealed `Predicate` derives per `PredicateDef` — the
+same one derivation, run per predicate by a signature fixpoint (a
+predicate seals from its first rule whose `Idb` targets are sealed;
+`p(x) | p(x)` alone never seals and is the typed
+`UnresolvedPredicateSignature`) — and the per-rule alignment rule
+restates unchanged: every rule derives its predicate. Params are
+program-global: one binding surface, unified across predicates. The
+roster grows the screen and the strata judge, each refusal typed:
 
-1. **Unbounded or large depth**: the host loop's per-round query cost
-   stops being noise.
-2. **Closure composed into a larger plan**: the reachable set must join
-   further *inside one plan* for performance — the per-hop host round trip
-   is the measured bottleneck.
-3. **Interval-intersection-along-paths** — the chain-window class ("the
-   window over which an entire path holds"): the idiom carries the window
-   in the host's frontier, one intersection per hop, and a workload this
-   clause dominates re-opens theory before engineering.
+- **The well-formedness screen** — every `Idb` source names a real
+  predicate and addresses within its arity
+  (`lean/Bumbledb/Query/Syntax.lean: Program.WellFormed`, spent by
+  `lean/Bumbledb/Exec/Fixpoint.lean: wellFormed_reads_real`): without
+  it a negated phantom read would be vacuously satisfied, and the
+  stratification witness alone never refuses the shape.
+- **The strata judge** (`ir/validate/strata.rs`) — the dependency graph
+  is condensed by iterative Tarjan (the nesting judge's iterative
+  convention), and the condensation's topological index is the
+  stratification witness (`lean/Bumbledb/Query/Syntax.lean:
+  Program.StratifiedBy`). Through a cycle, three refusals:
+  `NegationThroughCycle` (negation *of* lower strata stays legal — a
+  finished set is what keeps the operator monotone,
+  `lean/Bumbledb/Exec/Fixpoint.lean: stratumOp_mono`;
+  `lean/Bumbledb/Countermodels.lean: odd_not_monotone` is the wall),
+  `AggregationThroughCycle` (a fold reads finished sets only), and
+  `MeasureInRecursiveHead` (a measure is a computation, not a binding,
+  and its ray error's timing must not depend on iteration order).
+  Recursive heads therefore project **bound variables only** — the
+  creation quarantine (§ below) restated for fixpoint topology, and the
+  premise under which every predicate's fixpoint is finite
+  (`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite`;
+  `lean/Bumbledb/Countermodels.lean: succ_prefixed_infinite` is the wall
+  when a head creates values). Mutual recursion within one SCC is
+  ordinary and passes whole.
 
-The execution plan is pre-paid: the full recursion design — IR cut,
-stratification, delta rewrite, transient images, driver, oracles,
-notation — is a paper proof with a seam ledger in
-`docs/reference/recursion-design.md`; a firing trigger goes through that
-ledger, not around it. The spec side is PAID (2026-07): the stratified
-fixpoint model landed in `lean/Bumbledb/Exec/Fixpoint.lean`, beside the
-proved rewrites as promised — the degenerate one-predicate program is
-today's query (`lean/Bumbledb/Exec/Fixpoint.lean:
-degenerate_embedding`), the per-stratum operator is monotone under the
-stratification witness and only under it
-(`lean/Bumbledb/Exec/Fixpoint.lean: stratumOp_mono`;
-`lean/Bumbledb/Countermodels.lean: odd_not_monotone` is the wall), every
-predicate's fixpoint is finite and executably listed
-(`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite`,
-`program_eval_sound`), the semi-naive frontier loses nothing
-(`lean/Bumbledb/Exec/Fixpoint.lean: semi_naive_agrees`), and the
-head-creation wall is the successor chain
-(`lean/Bumbledb/Countermodels.lean: succ_prefixed_infinite`). The ENGINE
-still refuses recursion today: nothing recursion-shaped exists in
-`crates/`, and the Bridge carries no rows for the fixpoint model —
-deliberate, not an omission: obligations ledger only what exists, and the
-rows land with the engine discharge campaign, which is decided and priced
-(the seam ledger's 6–8 PRD set) and queued behind the trigger below, not
-yet built. The rules shape (§ above) is the landing pad,
-deliberately not entered — a query is already a non-recursive Datalog
-program, one step short of the fixpoint — and nothing in this chapter
-assumes the step is never taken. Until a trigger fires, the dogfooding
-period is the census instrument: reachability needs go through the
-cookbook recipes, and the day one fails on a clause above is the day this
-refusal earns its reversal.
+**Execution consumes the whole witness — the fence is dead.** A sealed
+`ValidatedProgram` executes under the per-stratum fixpoint driver
+(`api/prepared/fixpoint.rs`, `40-execution.md` § the fixpoint driver),
+which computes exactly the model's answers
+(`lean/Bumbledb/Exec/Fixpoint.lean: evalProgram`; `program_eval_sound`
+is the agreement theorem). The consumer table's guards are permanent
+law, not fence residue: both grounding rewrites refuse `Idb` —
+statements quantify over stored relations permanently
+(`30-dependencies.md`), so elimination has no licensing statement and
+evaluation no stage-0 rows; statistics pin nothing for an `Idb`
+occurrence and cost on the ladder's delta/accumulated floors
+(`plan/selectivity.rs`); view binding takes the per-round
+transient-image bind, never the cache or the memo.
+`Db::prepare_program` is the surface: a no-`Idb` program prepares as
+its output predicate's query — zero new code paths, which is what it
+denotes (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`) —
+and a recursive program prepares its delta-variant plans and executes
+whole.
 
-**The ruling that survives the trigger — queries stay query-shaped.** A
-firing trigger opens stratified fixpoints over query-sized programs and
-nothing else. The caps (`MAX_RULES`, and the design's `MAX_PREDICATES`
-when recursion lands) are product decisions, not provisional limits: they
-keep queries query-shaped so pin-at-prepare, the selectivity ladder, and
-the allocation high-water contract stay meaningful. The engine is never a
+**The chain-window fence — the standing OPEN item** (the README's OPEN
+list carries its trigger). The chain-window class wants *the interval
+over which an entire path holds* — `path(x, z, w) | edge(x, y, w₁),
+path(y, z, w₂), w = w₁ ∩ w₂` — and the head position `w` is **created**
+(`[max(s₁, s₂), min(e₁, e₂))`), not bound, which exits the safety
+theorem at its premise (`lean/Bumbledb/Exec/Fixpoint.lean:
+program_den_finite` requires bound heads;
+`lean/Bumbledb/Countermodels.lean: succ_prefixed_infinite` is the wall)
+and therefore sits outside the landed recursion surface, honestly. The
+termination sketch is recorded for the day it is sighted: intersection
+*selects* its endpoints from stored endpoints, never invents them, so
+the representable windows over a finite store are a finite lattice
+(≤ n² endpoint pairs) and monotonicity survives — the same
+lattice-closure `Pack` already exhibits
+(`lean/Bumbledb/Query/Aggregates.lean: pack_lattice_closed`). What
+keeps it open anyway: emptiness must kill the tuple by a typed rule
+(the constructor invariant is a boundary law, `10-data-model.md`); the
+honest per-pair answer is a *set* of maximal windows — a
+relation-shaped fold inside a fixpoint, composing exactly what the
+strata roster keeps apart; and the frontier key would grow from
+|reachable pairs| to |pairs × windows|. Until it is answered, the
+closure idiom computes chain windows the honest way — the window
+carried in the host's frontier, one intersection per hop
+(`docs/cookbook.md` recipe 24 is the pattern's home).
+
+**The ruling that survives — queries stay query-shaped.** The caps
+(`MAX_RULES`, `MAX_PREDICATES` (16), documented at their definitions)
+are product decisions, not provisional limits: they keep programs
+query-shaped so pin-at-prepare, the selectivity ladder, and the
+allocation high-water contract stay meaningful. The engine is never a
 rule-program runtime — *deductive database* is a named non-goal
-(`00-product.md`) — so program-level machinery is refused with the
-refusal recorded here: no stored or composable rule artifacts (a query is
-host data, assembled per prepare), no magic sets or demand transformation
-(demand lives in the host loop — the host seeds the frontier), no
-cross-rule join reuse or rule inlining, no incremental maintenance of
-rule programs, and statements never reference predicates
-(`30-dependencies.md`, the stored-relations decision).
+(`00-product.md`): no stored or composable rule artifacts (a program is
+host data, assembled per prepare), no magic sets or demand
+transformation (demand lives in the host loop — the host seeds the
+frontier), no cross-rule join reuse or rule inlining, no incremental
+maintenance of rule programs, and statements never reference predicates
+(`30-dependencies.md`, the stored-relations decision — `PredId` and
+`RelationId` are separate identities that never pun, so a statement
+about a predicate is unwritable, not rejected).
 **Alternative:** a full Datalog runtime (the Soufflé/Ascent shape).
 **Why it lost:** program-scale workloads invalidate the prepared-query
 economics wholesale, and every accreted feature pays this project's full
 oracle + differential + fuzz cost — cheap in a Datalog engine, ruinous
-here. **Reverses if:** never — the identity is the thesis; individual
-capabilities re-enter only through this refusal's trigger discipline, one
-recorded decision at a time.
+here. **Reverses if:** never — the identity is the thesis.
 
 ## Semantics
 
@@ -207,8 +255,11 @@ must also occur in a positive atom — a negated atom binds nothing; it only
 rejects (`lean/Bumbledb/Query/Denotation.lean: Safe`,
 `antijoin_over_active_domain`; the unsafe rule's infinite-answer countermodel
 is `lean/Bumbledb/Countermodels.lean: unsafe_rule_infinite`). Literals, params,
-param sets, and membership bindings are all legal inside negated atoms. There is no
-stratification concern because there is no recursion. Negated atoms contribute no
+param sets, and membership bindings are all legal inside negated atoms. Within one
+predicate's rules there is no stratification concern — a head is never a body atom
+there; across a program's predicates the strata judge refuses negation through a
+cycle and admits negation of finished lower strata (§ engine recursion). Negated
+atoms contribute no
 find variables and never multiply anything — they are filters with a relation's
 worth of vocabulary.
 
@@ -305,10 +356,19 @@ join costume.
 ## IR shape (normative)
 
 ```rust
+Program {
+    predicates: Vec<PredicateDef>,    // ≥1, ≤ MAX_PREDICATES (16); PredId = index
+    output:     PredId,               // the program's answer predicate
+}
+PredicateDef {
+    head:       Vec<HeadTerm>,        // Query.head, verbatim
+    rules:      Vec<Rule>,            // Query.rules, verbatim
+}
 Query {
     head:       Vec<HeadTerm>,        // ≥1; the find shape every rule aligns to
     rules:      Vec<Rule>,            // ≥1, ≤ MAX_RULES (16)
-}
+}                                     // = the degenerate Program: one predicate,
+                                      //   no Idb atom (From<Query> for Program)
 Rule {
     finds:      Vec<FindTerm>,        // one per head position; duplicates rejected
     atoms:      Vec<Atom>,            // ≥1; conjunctive, positive
@@ -327,9 +387,13 @@ HeadTerm   = Var | Aggregate(HeadOp)  // var-free: variables are rule-scoped,
                                       //   a u64 value per binding)
 HeadOp     = Sum | Min | Max | Count | CountDistinct | ArgMax | ArgMin | Pack
 Atom {
-    relation:   RelationId,
+    source:     AtomSource,
     bindings:   Vec<(FieldId, Term)>, // named-field; absence of a field IS the wildcard
 }
+AtomSource = Edb(RelationId)          // a stored relation, exactly as ever
+           | Idb(PredId)              // a predicate of the same Program; FieldId(i)
+                                      //   addresses head position i (positional,
+                                      //   never nominal — § engine recursion)
 Term       = Var(VarId) | Param(ParamId) | ParamSet(ParamId) | Literal(Value)
            | Measure(VarId)           // the measure — comparison side only
                                       //   (§ the measure; a binding position
@@ -493,7 +557,9 @@ arithmetic the denotation defines (`10-data-model.md`); everything else that
 looks like interval arithmetic is endpoint math and stays refused.
 **Legal positions,
 exhaustively:** a find term (`FindTerm::Measure` — a group-key position
-under aggregation, exactly like a plain variable find); the aggregated
+under aggregation, exactly like a plain variable find; in a `Program`,
+legal at the OUTPUT predicate's head only — `MeasureInteriorPredicate` /
+`MeasureInRecursiveHead`, § engine recursion); the aggregated
 input of `Sum`/`Min`/`Max` (`FindTerm::AggregateMeasure` — `Sum` in the
 wide accumulator with the single finalize range check, like every Sum); and
 one side of an **order comparison** (`Lt`/`Le`/`Gt`/`Ge`) against a
@@ -592,16 +658,17 @@ active domain; `Pack` creates lattice-closed values (a coalesced segment's
 endpoints are *selected* from stored endpoints, never invented —
 `lean/Bumbledb/Query/Aggregates.lean: pack_lattice_closed`) and
 relation-shaped rows; `fresh` mints on the write path, never during evaluation.
-Today the law is enforced by representation — heads are never body atoms, and
-each creating operator's legal positions are enumerated with typed rejections —
-and when engine recursion lands, the design's safety roster
-(`MeasureInRecursiveHead`, `AggregationThroughCycle` —
-`docs/reference/recursion-design.md` §2) is this same law restated for fixpoint
-topology, not a new rule: value invention inside a fixpoint is the
+The law is enforced by representation — each creating operator's legal
+positions are enumerated with typed rejections — and, since the recursion
+cut, by the strata judge's safety roster (`MeasureInRecursiveHead`,
+`AggregationThroughCycle` — `ir/validate/strata.rs`;
+`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite` is the theorem the
+roster's premise buys): this same law restated for fixpoint
+topology, not a new rule — one law, two enforcement sites: value invention inside a fixpoint is the
 Turing-completeness door, and it stays shut. The fence for future interval
 operators follows: only lattice-closed, endpoint-selecting operations are ever
 candidates (intersection, someday, under the chain-window fence —
-recursion-design §8); endpoint-inventing operations (shift, widen, arithmetic
+§ engine recursion above); endpoint-inventing operations (shift, widen, arithmetic
 on bounds) are refused categorically. **Alternative:** computed columns /
 general expressions in rule bodies. **Why it lost:** it breaks the pure-data IR,
 the fingerprint, and both oracles today, and becomes undecidable termination the
@@ -778,6 +845,23 @@ Params, being query-global, unify after the rules' own fixpoints: type,
 scalar-vs-set role, and value-vs-mask role must agree across rules, and id
 density is judged jointly across the whole program.
 
+**The program roster** (`validate_program`; § engine recursion) wraps the
+same per-predicate machinery: the predicate cap (`MAX_PREDICATES`,
+documented at its definition), the output screen, the `Idb`
+well-formedness screen (unknown `PredId`, a binding beyond the target's
+arity), the strata judge's three typed refusals, the executable-class item
+(`AggregateInteriorPredicate` / `MeasureInteriorPredicate` — folds and
+measures are legal only at the output predicate's head; interior heads,
+recursive or not, project bound variables, the Lean cut's own class:
+`PRule.finds : List VarId`), the signature fixpoint's
+`UnresolvedPredicateSignature`, and program-global param unification —
+every refusal testable on recursive programs, and a sealed witness
+executable whole (no fence stands between validation and the driver).
+The trust-boundary law extends
+verbatim: the adversarial sweep drives hostile `Program`s (random
+predicate ids, injected `Idb` reads, phantom targets) through
+`prepare_program` and reddens on any panic.
+
 Per-rule rejections: unknown
 relation/field ids; duplicate FieldId in one atom's bindings; variable type conflicts
 (structural — membership bindings anchor the *element* type); literal-vs-field and
@@ -840,6 +924,9 @@ membership as `in`, `Allen(term, MASK, term)` with masks as named basics joined 
 notation's normative grammar block is § the query notation, below; the renderer
 emits it.) When the write-side surface is data, the renderer **is** the pretty
 syntax — ergonomics on the side that costs nothing and crosses every boundary.
+`render_program` is the program twin: predicates in `PredId` order, interior
+rules carrying the synthesized `p{id}` name, output rules bare — total like
+`render`, and equally golden-pinned.
 
 **Handles print as handles.** A literal word at a closed-reference position — a
 binding on a field whose declared containment targets a closed relation's id, or
@@ -869,7 +956,7 @@ raw IR. Rendering allocates; it runs on no warm path.
 ## The query notation (normative — the render grammar)
 
 **The notation is derived, not designed.** The schema grammar already contains a
-query notation: the two judgments are parameterized by single-atom queries written
+query notation: the dependency statements are parameterized by single-atom queries written
 `R(X | φ)`, and `|` already reads *such that* — set-builder's own bar. The query
 notation is that form **promoted**: multi-atom, given a head, terminated by the
 statement's `;`. Borrowed grammar is refused (owner ruling 2026-07-10; the refusals
@@ -879,8 +966,8 @@ statement surface's query side, not an import. One notational family, schema to
 query.
 
 ```text
-query   := rule+                       // answers: the set union over rules
-rule    := '(' head ')' '|' body ';'
+program := rule+                       // bare-headed rules ARE the output predicate
+rule    := [pred] '(' head ')' '|' body ';'
 head    := headterm (',' headterm)*
 headterm:= var | [name ':'] agg        // named positions become result columns
 agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
@@ -893,9 +980,11 @@ item    := atom                        // positive occurrence
          | Allen '(' term ',' mask ',' term ')'
          | term cmp term               // ==  !=  <  <=  >  >=
 atom    := Relation '(' binding (',' binding)* ')'
+         | pred '(' position ':' var (',' position ':' var)* ')'
 binding := field                       // punning: binds a var named after the field
          | field ':' var               // explicit variable — the join spelling
          | field '==' value            // selection, schema-grammar-verbatim
+pred    := lowercase ident             // relations are UpperCamel — the case split
 mask    := MASK ('|' MASK)* | ?param   // masks are sets of basics; '|' is set union
 term    := var | ?param | literal
 ```
@@ -914,6 +1003,26 @@ named otherwise reparses through the qualified spelling). The
 two bars are the two the audit already upheld: rule-level `|` is *such that*;
 mask-level `|` is set union over the 13 basics — set-builder and set-union,
 context-separated exactly as the two levels of `==` are.
+
+**Named heads are the notation's recursion form — bare rules ARE the
+output predicate.** `path(x, z) | edge(x, y), path(y, z);` declares the
+predicate at its head and reads it as a body atom whose bindings address
+**head positions** (`path(0: y, 1: z)` — positional, never nominal,
+never punned: predicate columns have no fields to name). Predicate names
+begin lowercase, so a predicate spelled like a relation is unwritable
+(the punning law's discipline applied to names), and a program of only
+named rules is a macro error — bare rules are the output, so every
+existing query is already a program whose every rule is bare and denotes
+what it denoted (`lean/Bumbledb/Exec/Fixpoint.lean:
+degenerate_embedding` is that sentence as a theorem). Names are a
+**macro-local sidecar**, exactly as variable names are: resolution
+happens at expansion, the emitted `Program` carries bare `PredId`s, and
+no name ever enters the IR, the fingerprint, or any engine surface. The
+renderer prints interior predicates as `p{id}` (the `v{id}`/`?{id}`
+convention extended, `ir::render::render_program`) and output rules
+bare, so the rendered text of any macro-written program is its own
+fixed point — pinned byte-exact by the round-trip goldens
+(`bumbledb-query/tests/notation.rs`).
 
 **The punning law (B, decided; alternative (A) is in the refusals ledger).** A bare
 field name binds a **rule-local variable named after the field** — Rust's

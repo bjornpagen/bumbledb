@@ -33,8 +33,13 @@ mod common;
 
 /// Posting(id fresh, account u64, amount i64, memo str) +
 /// Account(id fresh, holder u64) +
-/// Busy(id fresh, person u64, slot interval<u64>), with
-/// `Posting(account) <= Account(id)`.
+/// Busy(id fresh, person u64, slot interval<u64>) +
+/// Item(doc u64, pos u64, note u64), with
+/// `Posting(account) <= Account(id)`,
+/// `Item(doc) in 1..4096 per Account(id)` (the cardinality window), and
+/// `order Item(pos) per Item(doc)` (the order mark) — the marks
+/// machinery lives in the store the read windows measure, and the
+/// window/order-heavy write family churns it between them.
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -103,25 +108,83 @@ fn schema() -> SchemaDescriptor {
                     },
                 ],
             },
+            RelationDescriptor {
+                extension: None,
+                name: "Item".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "doc".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "pos".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "note".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                ],
+            },
         ],
-        statements: vec![StatementDescriptor::Containment {
-            source: Side {
-                relation: RelationId(0),
-                projection: Box::new([FieldId(1)]),
-                selection: Box::new([]),
+        statements: vec![
+            StatementDescriptor::Containment {
+                source: Side {
+                    relation: RelationId(0),
+                    projection: Box::new([FieldId(1)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: RelationId(1),
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
             },
-            target: Side {
-                relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
-                selection: Box::new([]),
+            // `Item(doc) in 1..4096 per Account(id)`: every account
+            // parents a chain, so each marks-family commit walks live
+            // window counts.
+            StatementDescriptor::Cardinality {
+                source: Side {
+                    relation: RelationId(3),
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+                lo: 1,
+                hi: Some(4096),
+                target: Side {
+                    relation: RelationId(1),
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
             },
-        }],
+            // `order Item(pos) per Item(doc)`: chains are exactly 1..k.
+            StatementDescriptor::Order {
+                relation: RelationId(3),
+                position: FieldId(1),
+                grouping: Box::new([FieldId(0)]),
+                ranking: None,
+            },
+        ],
     }
 }
 
 const POSTING: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 const BUSY: RelationId = RelationId(2);
+const ITEM: RelationId = RelationId(3);
+
+/// The steady-state marks chains' length (docs 0..20) — long enough that
+/// the family's scans and sinks have real work, short enough to keep the
+/// gate binary fast.
+const ITEM_CHAIN: u64 = 8;
+
+/// The marks escalation ladder: chain lengths per ladder doc (docs
+/// 20..25) — each rung's group walk, sink, and result set strictly
+/// dominate the last's.
+const ITEM_LADDER: [u64; 5] = [6, 24, 72, 240, 660];
 
 // The borrowed-struct gate's typed schema (PRD 22): a str-bearing
 // relation whose generated struct borrows its memo (`&'a str`).
@@ -194,9 +257,39 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 id += 1;
             }
         }
+        // The marks chains: every account parents an Item chain (the
+        // window floor is 1), positions exactly 1..k (the order mark).
+        // Steady-state docs 0..20 share one length; ladder docs 20..25
+        // escalate per ITEM_LADDER.
+        for doc in 0..20u64 {
+            item_chain(tx, doc, ITEM_CHAIN)?;
+        }
+        for (doc, len) in (20u64..).zip(ITEM_LADDER) {
+            item_chain(tx, doc, len)?;
+        }
         Ok(())
     })
     .expect("populate");
+}
+
+/// One `Item` chain: positions exactly `1..=len` under group `doc`, notes
+/// derived deterministically so the write family can delete by value.
+fn item_chain(
+    tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>,
+    doc: u64,
+    len: u64,
+) -> Result<(), bumbledb::Error> {
+    for pos in 1..=len {
+        tx.insert_dyn(
+            ITEM,
+            &[
+                Value::U64(doc),
+                Value::U64(pos),
+                Value::U64(doc * 10_000 + pos),
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 /// Q(holder, amount) :- Posting(account = a, amount), Account(id = a,
@@ -206,14 +299,14 @@ fn join_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: POSTING,
+                source: bumbledb::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(2))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ACCOUNT),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Var(VarId(0))),
@@ -245,7 +338,7 @@ fn aggregate_query() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: POSTING,
+                source: bumbledb::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(3))),
                     (FieldId(1), Term::Var(VarId(2))),
@@ -253,7 +346,7 @@ fn aggregate_query() -> Query {
                 ],
             },
             Atom {
-                relation: ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ACCOUNT),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Var(VarId(0))),
@@ -278,14 +371,14 @@ fn string_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(3))],
         atoms: vec![
             Atom {
-                relation: POSTING,
+                source: bumbledb::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(2))),
                     (FieldId(3), Term::Var(VarId(3))),
                 ],
             },
             Atom {
-                relation: ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ACCOUNT),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Var(VarId(0))),
@@ -317,7 +410,7 @@ fn minmax_query() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: POSTING,
+                source: bumbledb::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(3))),
                     (FieldId(1), Term::Var(VarId(2))),
@@ -325,7 +418,7 @@ fn minmax_query() -> Query {
                 ],
             },
             Atom {
-                relation: ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ACCOUNT),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Var(VarId(0))),
@@ -347,7 +440,7 @@ fn latch_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: bumbledb::AtomSource::Edb(POSTING),
             bindings: vec![
                 (
                     FieldId(3),
@@ -369,7 +462,7 @@ fn selection_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: bumbledb::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(3), Term::Param(ParamId(0))),
                 (FieldId(2), Term::Var(VarId(0))),
@@ -387,7 +480,7 @@ fn string_rotation_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: bumbledb::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(1), Term::Param(ParamId(0))),
                 (FieldId(3), Term::Var(VarId(0))),
@@ -411,7 +504,7 @@ fn escalation_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: POSTING,
+                source: bumbledb::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(2))),
                     (FieldId(3), Term::Var(VarId(0))),
@@ -419,7 +512,7 @@ fn escalation_query() -> Query {
                 ],
             },
             Atom {
-                relation: ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ACCOUNT),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Param(ParamId(0))),
@@ -429,6 +522,79 @@ fn escalation_query() -> Query {
         negated: vec![],
         conditions: vec![],
     })
+}
+
+/// The recursive family (docs/architecture/40-execution.md § the
+/// fixpoint driver — the allocation contract's iteration-shape axis):
+/// `p0(a, h) | Account(id: a, holder: h), a <= ?0;
+///  p0(a, h2) | Account(id: a, holder: h), a <= ?0, p0(h, h2);
+///  p1(x) | p0(x, _)` — an interior recursive closure (its own
+/// projection seen-set, per-round delta/accumulated transient images,
+/// the delta-variant plan) under a non-recursive output that reads the
+/// FINISHED closure (the finished-image slot). The `?0` cap bounds the
+/// admitted edge set, so the fixpoint's size — and every per-round
+/// image slab — scales with the parameter: rotation exercises the
+/// steady state, the cap ladder the escalation window.
+fn recursive_program() -> bumbledb::Program {
+    use bumbledb::ir::{AtomSource, HeadTerm};
+    let account = |a: u16, h: u16| Atom {
+        source: AtomSource::Edb(ACCOUNT),
+        bindings: vec![
+            (FieldId(0), Term::Var(VarId(a))),
+            (FieldId(1), Term::Var(VarId(h))),
+        ],
+    };
+    let cap = ConditionTree::Leaf(Comparison {
+        op: CmpOp::Le,
+        lhs: Term::Var(VarId(0)),
+        rhs: Term::Param(ParamId(0)),
+    });
+    bumbledb::Program {
+        predicates: vec![
+            bumbledb::PredicateDef {
+                head: vec![bumbledb::ir::HeadTerm::Var, HeadTerm::Var],
+                rules: vec![
+                    Rule {
+                        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                        atoms: vec![account(0, 1)],
+                        negated: vec![],
+                        conditions: vec![cap.clone()],
+                    },
+                    Rule {
+                        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+                        atoms: vec![
+                            account(0, 1),
+                            Atom {
+                                source: AtomSource::Idb(bumbledb::PredId(0)),
+                                bindings: vec![
+                                    (FieldId(0), Term::Var(VarId(1))),
+                                    (FieldId(1), Term::Var(VarId(2))),
+                                ],
+                            },
+                        ],
+                        negated: vec![],
+                        conditions: vec![cap],
+                    },
+                ],
+            },
+            bumbledb::PredicateDef {
+                head: vec![HeadTerm::Var],
+                rules: vec![Rule {
+                    finds: vec![FindTerm::Var(VarId(0))],
+                    atoms: vec![Atom {
+                        source: AtomSource::Idb(bumbledb::PredId(0)),
+                        bindings: vec![
+                            (FieldId(0), Term::Var(VarId(0))),
+                            (FieldId(1), Term::Var(VarId(1))),
+                        ],
+                    }],
+                    negated: vec![],
+                    conditions: vec![],
+                }],
+            },
+        ],
+        output: bumbledb::PredId(1),
+    }
 }
 
 /// Q(holder, amount) :- account-side rule ∪ posting-side rule — the
@@ -442,14 +608,14 @@ fn union_rules_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: POSTING,
+                source: bumbledb::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(2))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ACCOUNT),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Var(VarId(0))),
@@ -487,14 +653,14 @@ fn union_aggregate_query() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: POSTING,
+                source: bumbledb::AtomSource::Edb(POSTING),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(2))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ACCOUNT),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Var(VarId(0))),
@@ -534,7 +700,7 @@ fn pack_query() -> Query {
             },
         ],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: bumbledb::AtomSource::Edb(BUSY),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(2), Term::Var(VarId(1))),
@@ -550,7 +716,7 @@ fn key_probe_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: bumbledb::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Param(ParamId(0))),
                 (FieldId(2), Term::Var(VarId(0))),
@@ -559,6 +725,79 @@ fn key_probe_query() -> Query {
         negated: vec![],
         conditions: vec![],
     })
+}
+
+/// Q(pos, note) :- Item(doc = ?0, pos, note) — the marks family's read
+/// shape: one ordered, window-parented group per parameter. The
+/// steady-state rotation binds the fixed-length docs; the escalation
+/// walks the ITEM_LADDER docs, each group strictly longer than the last.
+fn marks_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![Atom {
+            source: bumbledb::AtomSource::Edb(ITEM),
+            bindings: vec![
+                (FieldId(0), Term::Param(ParamId(0))),
+                (FieldId(1), Term::Var(VarId(0))),
+                (FieldId(2), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    })
+}
+
+/// The window/order-heavy write family (docs/architecture/60-validation.md
+/// § the allocation gate): warm commits that churn the marks machinery —
+/// per round, five window parents each take a tail append (window count
+/// +1, positions stay exactly 1..k+1), a net-nothing delete-reinsert of
+/// the head (the touched-group re-judge — the count walk and the ordinal
+/// walk both run on a delta that nets to nothing,
+/// `lean/Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound`),
+/// and then a restoring commit removes the tails. The write delta's arena
+/// is per-commit by design (`docs/architecture/50-storage.md` § memory
+/// discipline) — the family's assertions are the judgment's (every round
+/// commits green through live windows and ordered groups) and the read
+/// windows' (the caller re-runs the steady-state gate after the churn:
+/// post-commit rebuild is sanctioned in warmup, then the pools must
+/// re-converge to zero).
+fn marks_write_family(db: &Db<SchemaDescriptor>) {
+    for round in 0..8u64 {
+        db.write(|tx| {
+            for doc in 0..5u64 {
+                // The tail append: positions become 1..=ITEM_CHAIN+1.
+                tx.insert_dyn(
+                    ITEM,
+                    &[
+                        Value::U64(doc),
+                        Value::U64(ITEM_CHAIN + 1),
+                        Value::U64(round),
+                    ],
+                )?;
+                // The net-nothing head delete-reinsert.
+                let head = [Value::U64(doc), Value::U64(1), Value::U64(doc * 10_000 + 1)];
+                tx.delete_dyn(ITEM, &head)?;
+                tx.insert_dyn(ITEM, &head)?;
+            }
+            Ok(())
+        })
+        .expect("marks write round commits through live windows and orders");
+        db.write(|tx| {
+            for doc in 0..5u64 {
+                // The restoring removal: chains return to 1..=ITEM_CHAIN.
+                tx.delete_dyn(
+                    ITEM,
+                    &[
+                        Value::U64(doc),
+                        Value::U64(ITEM_CHAIN + 1),
+                        Value::U64(round),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("marks restore round commits");
+    }
 }
 
 /// The gate protocol for one prepared query and its fixed param set.
@@ -803,6 +1042,15 @@ fn zero_warm_allocation_gate() {
         let mut key_probe = db.prepare(&key_probe_query())?;
         gate("key_probe", &mut key_probe, snap, &key_probe_params);
 
+        // The marks family, steady state: rotating window-parented,
+        // ordered groups — the store's window counts and order marks are
+        // rent paid at commit time, and the read pools over the marked
+        // relation converge like any other scan.
+        let marks_params: Vec<Vec<BindValue<'_>>> =
+            (0..4u64).map(|doc| vec![BindValue::U64(doc)]).collect();
+        let mut marks = db.prepare(&marks_query())?;
+        gate("marks", &mut marks, snap, &marks_params);
+
         // The rule loop (docs/architecture/40-execution.md § the rule
         // loop): multi-rule prepared queries in the measured window —
         // per-rule sink re-aiming, the shared binding scratch, and the
@@ -846,6 +1094,19 @@ fn zero_warm_allocation_gate() {
             &account_params,
         );
 
+        // The recursive family, steady state (docs/architecture/
+        // 40-execution.md § the fixpoint driver): rotating edge caps —
+        // per-round delta/accumulated transient refills, the interior
+        // seen-set, the finished-image slot, and the frontier watermark
+        // all inside the measured window, at their (parameter envelope,
+        // iteration shape) high-water after warmup.
+        let recursive_params: Vec<Vec<BindValue<'_>>> = [5u64, 10, 15, 20]
+            .iter()
+            .map(|cap| vec![BindValue::U64(*cap)])
+            .collect();
+        let mut recursive = db.prepare_program(&recursive_program())?;
+        gate("recursive", &mut recursive, snap, &recursive_params);
+
         // The high-water window (docs/architecture/40-execution.md § CI
         // gate protocol): holders 5..10 bind the ladder accounts —
         // strictly hotter keys, strictly larger intermediates per step.
@@ -853,6 +1114,22 @@ fn zero_warm_allocation_gate() {
             (5..10u64).map(|h| vec![BindValue::U64(h)]).collect();
         let mut escalation = db.prepare(&escalation_query())?;
         escalation_gate("escalation", &mut escalation, snap, &escalation_params);
+
+        // The recursive escalation (the iteration-shape axis of the
+        // high-water fixpoint): each cap admits strictly more edges, so
+        // the closure — and every per-round transient image slab —
+        // strictly dominates the last rung's; repeats are silent.
+        let recursive_escalation: Vec<Vec<BindValue<'_>>> = [4u64, 9, 14, 19, 24]
+            .iter()
+            .map(|cap| vec![BindValue::U64(*cap)])
+            .collect();
+        let mut recursive_escalation_q = db.prepare_program(&recursive_program())?;
+        escalation_gate(
+            "recursive-escalation",
+            &mut recursive_escalation_q,
+            snap,
+            &recursive_escalation,
+        );
 
         // Warmup convergence: allocation is finite — by the third warmup
         // round a run allocates nothing.
@@ -873,6 +1150,33 @@ fn zero_warm_allocation_gate() {
         Ok(())
     })
     .expect("gate");
+
+    // The window/order-heavy write family, then both marks windows over
+    // the churned store: the writes ran the count walk and the ordinal
+    // walk sixteen commits deep; the steady-state window must re-converge
+    // to zero after the sanctioned post-commit rebuild (warmup), and the
+    // escalation window walks the ITEM_LADDER groups — strictly longer
+    // ordered chains per rung, growth only on new high-waters, repeats
+    // silent.
+    marks_write_family(&db);
+    db.read(|snap| {
+        let marks_params: Vec<Vec<BindValue<'_>>> =
+            (0..4u64).map(|doc| vec![BindValue::U64(doc)]).collect();
+        let mut marks = db.prepare(&marks_query())?;
+        gate("marks-postwrite", &mut marks, snap, &marks_params);
+
+        let marks_escalation: Vec<Vec<BindValue<'_>>> =
+            (20..25u64).map(|doc| vec![BindValue::U64(doc)]).collect();
+        let mut marks_escalation_q = db.prepare(&marks_query())?;
+        escalation_gate(
+            "marks-escalation",
+            &mut marks_escalation_q,
+            snap,
+            &marks_escalation,
+        );
+        Ok(())
+    })
+    .expect("marks windows");
 
     // Borrowed structs (PRD 22): construct + typed insert and typed get +
     // compare of a str-bearing fact are host-allocation-free. The memo

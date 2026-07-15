@@ -202,6 +202,101 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     Ok(seal(row_count, frame))
 }
 
+/// One pooled transient-image slot (40-execution.md § the fixpoint driver): the fixpoint
+/// driver's per-round delta and accumulated images, built on the
+/// [`synthesize_closed`] precedent — the image machinery is
+/// source-agnostic after decode, and here the source is cheaper still:
+/// the rows are already encoded column words (a seen-set's dense
+/// suffix), so the build is a columnar transpose with no fact-bytes
+/// decode at all. **Never cached, never memoized, never pinned**: a
+/// transient image is valid for one round of one execution — a lifetime
+/// the generation vocabulary cannot express — so it lives entirely
+/// outside `image/cache.rs` (whose diff for the recursion campaign is
+/// zero lines) and the view memo; the closed carve-out's `OnceLock`
+/// slots already proved images can live outside the map.
+///
+/// The slot is a retained-capacity pool on the prepared query (the
+/// allocation contract's iteration-shape axis): a refill whose row
+/// count fits the slot's high-water — and whose previous round's views
+/// have all been dropped, the driver's ping-pong discipline — rewrites
+/// the slabs in place through `Arc::get_mut`, touching the allocator
+/// zero times.
+#[derive(Debug, Default)]
+pub struct TransientImage {
+    image: Option<Arc<RelationImage>>,
+    /// Rows the current allocation was framed for (column strides are
+    /// laid out at this count; `row_count` may sit below it).
+    capacity: usize,
+}
+
+impl TransientImage {
+    /// Rebuilds this slot's image from `row_count` encoded word rows —
+    /// one row per answer tuple, in the seen-set's find-word order,
+    /// which is exactly the column order `column_spans(field_types)`
+    /// lays out (an interval column two words, a `bytes<N>` column its
+    /// padded words, a Bool column one 0/1 word written back as the
+    /// byte). Reuses the retained allocation when the row count fits
+    /// and no view still holds the `Arc`; otherwise allocates a fresh
+    /// frame at the new high-water.
+    ///
+    /// # Panics
+    ///
+    /// Only on programmer-invariant violations: a row narrower than the
+    /// field types' total column count, or a row count past the checked
+    /// slab ceiling (seen-set positions are `u32`-bounded, orders of
+    /// magnitude below it).
+    pub fn refill<'r>(
+        &mut self,
+        field_types: &[TypeDesc],
+        row_count: usize,
+        rows: impl Iterator<Item = &'r [u64]>,
+    ) -> Arc<RelationImage> {
+        let reusable = row_count <= self.capacity
+            && self
+                .image
+                .as_mut()
+                .is_some_and(|arc| Arc::get_mut(arc).is_some());
+        if !reusable {
+            let frame = allocate(field_types, row_count)
+                .expect("seen-set row counts sit far below the checked slab ceiling");
+            self.image = Some(seal(row_count, frame));
+            self.capacity = row_count;
+        }
+        let image = Arc::get_mut(self.image.as_mut().expect("filled above"))
+            .expect("a non-reusable slot was just replaced by a unique Arc");
+        image.row_count = row_count;
+        // The lazy distinct counters restart with the rows (no consumer
+        // reads them on the execution path today; staying honest is one
+        // assignment per column, allocation-free).
+        for lock in &mut image.distincts {
+            *lock = std::sync::OnceLock::new();
+        }
+        let RelationImage {
+            columns,
+            words,
+            bytes,
+            ..
+        } = image;
+        let mut filled = 0usize;
+        for (position, row) in rows.enumerate() {
+            debug_assert_eq!(
+                row.len(),
+                columns.len(),
+                "seen-set rows carry one word per image column"
+            );
+            for (column, &word) in columns.iter().zip(row) {
+                match *column {
+                    Column::Words { start } => words[start + position] = word,
+                    Column::Bytes { start } => bytes[start + position] = u8::from(word != 0),
+                }
+            }
+            filled = position + 1;
+        }
+        debug_assert_eq!(filled, row_count, "the caller counted its rows");
+        Arc::clone(self.image.as_ref().expect("filled above"))
+    }
+}
+
 /// Synthesizes a closed relation's image from its sealed extension — the
 /// fingerprint's preimage IS the storage
 /// (`docs/architecture/50-storage.md` § virtual relations). No LMDB

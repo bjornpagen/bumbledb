@@ -428,7 +428,7 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![crate::ir::Atom {
-            relation: RelationId(0),
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
             bindings: (0..129u16).map(|i| (FieldId(i), var(i))).collect(),
         }],
         negated: vec![],

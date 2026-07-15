@@ -33,7 +33,7 @@ fn containment(
         projection: projection.iter().map(|f| FieldId(*f)).collect(),
         selection: selection
             .iter()
-            .map(|(f, v)| (FieldId(*f), v.clone()))
+            .map(|(f, v)| (FieldId(*f), crate::schema::LiteralSet::One(v.clone())))
             .collect(),
     };
     StatementDescriptor::Containment {
@@ -103,14 +103,14 @@ fn walk_query() -> Query {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
             },
         ],
@@ -198,14 +198,14 @@ fn du_one_sided_walk_eliminates_the_header() {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Literal(Value::U64(0))),
@@ -265,21 +265,21 @@ fn a_containment_chain_eliminates_both_targets_in_fixpoint() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(1))),
                     (FieldId(1), Term::Var(VarId(2))),
                 ],
             },
             Atom {
-                relation: RelationId(2),
+                source: crate::ir::AtomSource::Edb(RelationId(2)),
                 bindings: vec![(FieldId(0), Term::Var(VarId(2)))],
             },
         ],
@@ -336,14 +336,14 @@ fn a_partial_key_join_refuses() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
             },
         ],
@@ -363,14 +363,14 @@ fn a_projected_non_key_field_refuses() {
         finds: vec![FindTerm::Var(VarId(1)), FindTerm::Var(VarId(2))],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(2))),
@@ -419,14 +419,14 @@ fn a_negated_atom_referencing_the_target_refuses() {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(2))),
@@ -434,7 +434,7 @@ fn a_negated_atom_referencing_the_target_refuses() {
             },
         ],
         negated: vec![Atom {
-            relation: RelationId(2),
+            source: crate::ir::AtomSource::Edb(RelationId(2)),
             bindings: vec![(FieldId(0), Term::Var(VarId(2)))],
         }],
         conditions: vec![],
@@ -485,21 +485,21 @@ fn a_membership_point_sourced_from_the_target_refuses() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(1))),
                     (FieldId(1), Term::Var(VarId(2))),
                 ],
             },
             Atom {
-                relation: RelationId(2),
+                source: crate::ir::AtomSource::Edb(RelationId(2)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(1))),
                     (FieldId(1), Term::Var(VarId(2))),
@@ -550,7 +550,7 @@ fn a_missing_source_selection_refuses() {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![
                 Atom {
-                    relation: RelationId(0),
+                    source: crate::ir::AtomSource::Edb(RelationId(0)),
                     bindings: if kind_filter {
                         vec![
                             (FieldId(0), Term::Var(VarId(0))),
@@ -561,7 +561,7 @@ fn a_missing_source_selection_refuses() {
                     },
                 },
                 Atom {
-                    relation: RelationId(1),
+                    source: crate::ir::AtomSource::Edb(RelationId(1)),
                     bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
                 },
             ],
@@ -593,14 +593,14 @@ fn an_extra_target_selection_refuses() {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (
@@ -655,14 +655,14 @@ fn an_interval_typed_pair_refuses() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
@@ -702,14 +702,14 @@ fn residue_query() -> Query {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(2))),
@@ -828,11 +828,11 @@ fn mutual_containments_never_eliminate_both() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Literal(Value::U64(0))),

@@ -34,14 +34,14 @@ fn closed_join_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::ACCOUNT,
+                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
                 bindings: vec![
                     (ids::account::ID, Term::Var(VarId(0))),
                     (ids::account::CURRENCY, Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: ids::CURRENCY,
+                source: bumbledb::AtomSource::Edb(ids::CURRENCY),
                 bindings: vec![(FieldId(0), Term::Var(VarId(1)))],
             },
         ],

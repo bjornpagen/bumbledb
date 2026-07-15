@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::SchemaError;
 
 fn member_set(indices: &[u16]) -> MemberSet {
     let mut members = MemberSet::empty();
@@ -531,4 +532,270 @@ fn a_satisfied_closed_to_closed_containment_validates() {
     };
     decl.validate()
         .expect("every Kind severity is an axiom of Severity");
+}
+
+/// The task/parent fixture the extension-form tests share: Parent(id key)
+/// and Task(parent, pos, rank, flag) — the window's target key, an order
+/// mark's grouping, and a rankable payload.
+fn task_tree() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Parent".into(),
+                fields: vec![field("id", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Task".into(),
+                fields: vec![
+                    field("parent", ValueType::U64),
+                    field("pos", ValueType::U64),
+                    field("rank", ValueType::U64),
+                    field("flag", ValueType::Bool),
+                ],
+            },
+        ],
+        statements: vec![fd(RelationId(0), &[FieldId(0)])],
+    }
+}
+
+/// `Task(parent) in 1..3 per Parent(id)` seals into the window arena with
+/// the containment target-key rule reused — the acceptance premise of
+/// `lean/Bumbledb/Admission.lean: cardinalityForm`, and the plan the gate
+/// promises is `lean/Bumbledb/Oracle.lean: cardinality_plan_decides`.
+#[test]
+fn a_cardinality_window_over_a_declared_key_validates() {
+    let mut decl = task_tree();
+    decl.statements.push(cardinality(
+        side(RelationId(1), &[FieldId(0)]),
+        1,
+        Some(3),
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    let schema = decl.validate().expect("the window passes the gate");
+    assert_eq!(schema.windows().len(), 1);
+    let window = schema.window(WindowId(0));
+    assert_eq!(window.id, StatementId(1));
+    assert_eq!((window.lo, window.hi), (1, Some(3)));
+    // The spine resolves the materialized id to the typed arena arm.
+    assert!(matches!(
+        schema.statement(StatementId(1)),
+        StatementView::Cardinality(WindowId(0), _)
+    ));
+}
+
+/// `1..*` — `hi = None` is the `*` spelling, the only spelling of "no
+/// upper bound" (`lean/Bumbledb/Schema.lean: Window`).
+#[test]
+fn a_star_window_validates_with_no_ceiling() {
+    let mut decl = task_tree();
+    decl.statements.push(cardinality(
+        side(RelationId(1), &[FieldId(0)]),
+        1,
+        None,
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    let schema = decl.validate().expect("the floored window validates");
+    assert_eq!(schema.window(WindowId(0)).hi, None);
+}
+
+/// A window into a closed target compiles the member-set plan through the
+/// same key rule containments use — the closed-side mirror.
+#[test]
+fn a_window_into_a_closed_target_validates() {
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Severity",
+                vec![],
+                vec![row("Low", vec![]), row("High", vec![])],
+            ),
+            RelationDescriptor {
+                extension: None,
+                name: "Handler".into(),
+                fields: vec![field("severity", ValueType::U64)],
+            },
+        ],
+        statements: vec![cardinality(
+            side(RelationId(1), &[FieldId(0)]),
+            1,
+            None,
+            side(RelationId(0), &[FieldId(0)]),
+        )],
+    };
+    decl.validate()
+        .expect("every severity demands at least one handler");
+}
+
+/// Both sides constant and the counts inside the window: decided at
+/// validate, satisfied, sealed
+/// (`lean/Bumbledb/Schema.lean: den_closed_constant`).
+#[test]
+fn a_satisfied_closed_to_closed_window_validates() {
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Kind",
+                vec![field("severity", ValueType::U64)],
+                vec![
+                    row("Soft", vec![Value::U64(0)]),
+                    row("Hard", vec![Value::U64(1)]),
+                ],
+            ),
+            closed(
+                "Severity",
+                vec![],
+                vec![row("Low", vec![]), row("High", vec![])],
+            ),
+        ],
+        statements: vec![cardinality(
+            side(RelationId(0), &[FieldId(1)]),
+            1,
+            Some(1),
+            side(RelationId(1), &[FieldId(0)]),
+        )],
+    };
+    decl.validate()
+        .expect("each severity counts exactly one kind axiom");
+}
+
+/// `order Task(pos) per Task(parent)` seals into the order arena — the
+/// plain mark's acceptance (`lean/Bumbledb/Admission.lean: orderForm`;
+/// the promised plan is `lean/Bumbledb/Oracle.lean: order_plan_decides`).
+#[test]
+fn a_plain_order_mark_validates() {
+    let mut decl = task_tree();
+    decl.statements
+        .push(order_mark(RelationId(1), FieldId(1), &[FieldId(0)], None));
+    let schema = decl.validate().expect("the mark passes the gate");
+    assert_eq!(schema.orders().len(), 1);
+    let order = schema.order(OrderId(0));
+    assert_eq!(order.position, FieldId(1));
+    assert!(order.ranking.is_none());
+    assert!(matches!(
+        schema.statement(StatementId(1)),
+        StatementView::Order(OrderId(0), _)
+    ));
+}
+
+/// A ranked mark whose one hop probes a declared single-field key seals
+/// the hop's key witness — the enforcement plan the model prices per hop
+/// (`lean/Bumbledb/Oracle.lean: ranked_order_plan_decides`,
+/// `chain_cost_hops`), accepted at declaration exactly because the plan
+/// seals.
+#[test]
+fn a_ranked_order_mark_with_a_keyed_hop_validates() {
+    let mut decl = task_tree();
+    // Priority(id key, weight) — the rank vocabulary the chain reads.
+    decl.relations.push(RelationDescriptor {
+        extension: None,
+        name: "Priority".into(),
+        fields: vec![field("id", ValueType::U64), field("weight", ValueType::U64)],
+    });
+    decl.statements.push(fd(RelationId(2), &[FieldId(0)]));
+    decl.statements.push(order_mark(
+        RelationId(1),
+        FieldId(1),
+        &[FieldId(0)],
+        Some(RankChain {
+            link: FieldId(2),
+            hops: Box::new([RankHop {
+                relation: RelationId(2),
+                key: FieldId(0),
+                read: FieldId(1),
+            }]),
+        }),
+    ));
+    let schema = decl.validate().expect("the keyed chain passes the gate");
+    let order = schema.order(OrderId(0));
+    let chain = order.ranking.as_ref().expect("the chain sealed");
+    assert_eq!(chain.link, FieldId(2));
+    // The sealed hop carries the declared key's witness — Priority's FD
+    // is the second key statement (Parent's is first).
+    assert_eq!(chain.hops[0].key_statement, KeyId(1));
+}
+
+/// An order mark on a closed relation whose axioms are contiguous per
+/// group is decided satisfied at validate — the axioms ARE the final
+/// state.
+#[test]
+fn a_contiguous_closed_order_mark_validates() {
+    let decl = SchemaDescriptor {
+        relations: vec![closed(
+            "Step",
+            vec![field("phase", ValueType::U64), field("pos", ValueType::U64)],
+            vec![
+                row("A", vec![Value::U64(0), Value::U64(1)]),
+                row("B", vec![Value::U64(0), Value::U64(2)]),
+                row("C", vec![Value::U64(1), Value::U64(1)]),
+            ],
+        )],
+        statements: vec![order_mark(RelationId(0), FieldId(2), &[FieldId(1)], None)],
+    };
+    decl.validate()
+        .expect("each phase's positions are exactly 1..k");
+}
+
+/// A literal-set σ seals — and seals CANONICALLY: the sealed side sorts
+/// the set, so both spellings of one set are one statement and one
+/// fingerprint (`lean/Bumbledb/Schema.lean: Selection` — the set is the
+/// binding's identity, not its spelling).
+#[test]
+fn a_literal_set_selection_seals_sorted() {
+    let build = |literals: Vec<Value>| {
+        let mut decl = task_tree();
+        decl.statements.push(containment(
+            side_where_sets(
+                RelationId(1),
+                &[FieldId(0)],
+                vec![(FieldId(2), LiteralSet::Many(literals.into_boxed_slice()))],
+            ),
+            side(RelationId(0), &[FieldId(0)]),
+        ));
+        decl.validate().expect("the set binding passes the gate")
+    };
+    let ascending = build(vec![Value::U64(1), Value::U64(2)]);
+    let descending = build(vec![Value::U64(2), Value::U64(1)]);
+    let sealed = |schema: &Schema| {
+        let statement = schema.containment(ContainmentId(0));
+        statement.source.selection[0].1.clone()
+    };
+    assert_eq!(
+        sealed(&ascending),
+        LiteralSet::Many(Box::new([Value::U64(1), Value::U64(2)]))
+    );
+    assert_eq!(sealed(&ascending), sealed(&descending));
+    assert_eq!(
+        crate::schema::fingerprint::fingerprint(&ascending),
+        crate::schema::fingerprint::fingerprint(&descending),
+    );
+}
+
+/// Two spellings of one literal set are one statement — the duplicate
+/// rule compares canonical sets, not written order.
+#[test]
+fn a_reordered_literal_set_is_a_duplicate_statement() {
+    let selected = |literals: Vec<Value>| {
+        containment(
+            side_where_sets(
+                RelationId(1),
+                &[FieldId(0)],
+                vec![(FieldId(2), LiteralSet::Many(literals.into_boxed_slice()))],
+            ),
+            side(RelationId(0), &[FieldId(0)]),
+        )
+    };
+    let mut decl = task_tree();
+    decl.statements
+        .push(selected(vec![Value::U64(1), Value::U64(2)]));
+    decl.statements
+        .push(selected(vec![Value::U64(2), Value::U64(1)]));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::DuplicateStatement {
+            statement: StatementId(2),
+            earlier: StatementId(1),
+        }
+    );
 }

@@ -10,8 +10,8 @@
 use std::fmt;
 
 use super::{
-    FieldDescriptor, FieldId, RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor,
-    StatementId, StatementView, Value, ValueType,
+    FieldDescriptor, FieldId, LiteralSet, RelationId, Schema, SchemaDescriptor, Side,
+    StatementDescriptor, StatementId, StatementView, Value, ValueType,
 };
 
 /// Renders one sealed statement in the exact macro notation: an FD as
@@ -37,6 +37,25 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
             source: &statement.source,
             target: &statement.target,
             mirror: statement.mirror,
+        },
+        StatementView::Cardinality(_, statement) => RenderedStatement::Cardinality {
+            source: &statement.source,
+            lo: statement.lo,
+            hi: statement.hi,
+            target: &statement.target,
+        },
+        StatementView::Order(_, statement) => RenderedStatement::Order {
+            relation: statement.relation,
+            position: statement.position,
+            grouping: &statement.grouping,
+            ranking: statement.ranking.as_ref().map(|chain| RenderedChain {
+                link: chain.link,
+                hops: chain
+                    .hops
+                    .iter()
+                    .map(|hop| (hop.relation, hop.read))
+                    .collect(),
+            }),
         },
     };
     Rendered {
@@ -80,6 +99,35 @@ pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String
                 mirror: super::validate::mirror_of(&materialized, index),
             }
         }
+        StatementDescriptor::Cardinality {
+            source,
+            lo,
+            hi,
+            target,
+        } => RenderedStatement::Cardinality {
+            source,
+            lo: *lo,
+            hi: *hi,
+            target,
+        },
+        StatementDescriptor::Order {
+            relation,
+            position,
+            grouping,
+            ranking,
+        } => RenderedStatement::Order {
+            relation: *relation,
+            position: *position,
+            grouping,
+            ranking: ranking.as_ref().map(|chain| RenderedChain {
+                link: chain.link,
+                hops: chain
+                    .hops
+                    .iter()
+                    .map(|hop| (hop.relation, hop.read))
+                    .collect(),
+            }),
+        },
     };
     Rendered {
         names: &DeclaredNames(descriptor),
@@ -205,7 +253,9 @@ impl Names for DeclaredNames<'_> {
                 .iter()
                 .filter_map(|statement| match statement {
                     StatementDescriptor::Containment { source, target } => Some((source, target)),
-                    StatementDescriptor::Functionality { .. } => None,
+                    StatementDescriptor::Functionality { .. }
+                    | StatementDescriptor::Cardinality { .. }
+                    | StatementDescriptor::Order { .. } => None,
                 }),
             |id| {
                 self.0
@@ -239,6 +289,14 @@ struct Rendered<'a> {
     id: StatementId,
 }
 
+/// A `by` chain reduced to what the notation spells: the link field and
+/// each hop's `K(read)` — the hop key is inferred, never written
+/// (`docs/architecture/30-dependencies.md` § the order mark).
+struct RenderedChain {
+    link: FieldId,
+    hops: Vec<(RelationId, FieldId)>,
+}
+
 enum RenderedStatement<'a> {
     Key {
         relation: RelationId,
@@ -249,6 +307,18 @@ enum RenderedStatement<'a> {
         target: &'a Side,
         /// The `==` partner, if any — the sealed fact, never re-detected.
         mirror: Option<StatementId>,
+    },
+    Cardinality {
+        source: &'a Side,
+        lo: u64,
+        hi: Option<u64>,
+        target: &'a Side,
+    },
+    Order {
+        relation: RelationId,
+        position: FieldId,
+        grouping: &'a [FieldId],
+        ranking: Option<RenderedChain>,
     },
 }
 
@@ -288,6 +358,41 @@ impl fmt::Display for Rendered<'_> {
                     side(f, self.names, target)
                 }
             },
+            RenderedStatement::Cardinality {
+                source,
+                lo,
+                hi,
+                target,
+            } => {
+                side(f, self.names, source)?;
+                write!(f, " in {lo}..")?;
+                match hi {
+                    Some(hi) => write!(f, "{hi}")?,
+                    None => write!(f, "*")?,
+                }
+                write!(f, " per ")?;
+                side(f, self.names, target)
+            }
+            RenderedStatement::Order {
+                relation,
+                position,
+                grouping,
+                ref ranking,
+            } => {
+                write!(f, "order ")?;
+                side_parts(f, self.names, relation, &[position], &[])?;
+                write!(f, " per ")?;
+                side_parts(f, self.names, relation, grouping, &[])?;
+                if let Some(chain) = ranking {
+                    write!(f, " by ")?;
+                    field_name(f, self.names, relation, chain.link)?;
+                    for (hop_relation, read) in &chain.hops {
+                        write!(f, " -> ")?;
+                        side_parts(f, self.names, *hop_relation, &[*read], &[])?;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -319,14 +424,15 @@ fn side(f: &mut fmt::Formatter<'_>, names: &dyn Names, side: &Side) -> fmt::Resu
     side_parts(f, names, side.relation, &side.projection, &side.selection)
 }
 
-/// `Name(p1, p2 | s1 == lit1, s2 == lit2)` — the one side shape; the
-/// selection block only when σ is nonempty.
+/// `Name(p1, p2 | s1 == lit1, s2 == {lit2, lit3})` — the one side shape;
+/// the selection block only when σ is nonempty; a disjunctive binding
+/// renders its literal set in braces.
 fn side_parts(
     f: &mut fmt::Formatter<'_>,
     names: &dyn Names,
     relation: RelationId,
     projection: &[FieldId],
-    selection: &[(FieldId, Value)],
+    selection: &[(FieldId, LiteralSet)],
 ) -> fmt::Result {
     relation_name(f, names, relation)?;
     write!(f, "(")?;
@@ -338,30 +444,53 @@ fn side_parts(
     }
     if !selection.is_empty() {
         write!(f, " | ")?;
-        for (index, (field, value)) in selection.iter().enumerate() {
+        for (index, (field, literals)) in selection.iter().enumerate() {
             if index > 0 {
                 write!(f, ", ")?;
             }
             field_name(f, names, relation, *field)?;
             write!(f, " == ")?;
-            // A word at a closed-reference position prints its handle
-            // (the macro's own bare-handle spelling back out); an
-            // out-of-range word prints visibly wrong as `Kind(7?)` —
-            // the `ir/render` convention, one fallback everywhere.
-            match (value, names.closed_target(relation, *field)) {
-                (Value::U64(word), Some(closed)) => {
-                    if let Some(handle) = names.handle(closed, *word) {
-                        write!(f, "{handle}")?;
-                    } else {
-                        relation_name(f, names, closed)?;
-                        write!(f, "({word}?)")?;
+            match literals {
+                LiteralSet::One(value) => selection_literal(f, names, relation, *field, value)?,
+                LiteralSet::Many(values) => {
+                    write!(f, "{{")?;
+                    for (value_index, value) in values.iter().enumerate() {
+                        if value_index > 0 {
+                            write!(f, ", ")?;
+                        }
+                        selection_literal(f, names, relation, *field, value)?;
                     }
+                    write!(f, "}}")?;
                 }
-                _ => literal(f, value)?,
             }
         }
     }
     write!(f, ")")
+}
+
+/// One selection literal at its field position. A word at a
+/// closed-reference position prints its handle (the macro's own
+/// bare-handle spelling back out); an out-of-range word prints visibly
+/// wrong as `Kind(7?)` — the `ir/render` convention, one fallback
+/// everywhere.
+fn selection_literal(
+    f: &mut fmt::Formatter<'_>,
+    names: &dyn Names,
+    relation: RelationId,
+    field: FieldId,
+    value: &Value,
+) -> fmt::Result {
+    match (value, names.closed_target(relation, field)) {
+        (Value::U64(word), Some(closed)) => {
+            if let Some(handle) = names.handle(closed, *word) {
+                write!(f, "{handle}")
+            } else {
+                relation_name(f, names, closed)?;
+                write!(f, "({word}?)")
+            }
+        }
+        _ => literal(f, value),
+    }
 }
 
 /// The one selection-literal formatter: intervals render as their macro

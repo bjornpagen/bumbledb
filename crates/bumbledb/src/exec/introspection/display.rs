@@ -17,11 +17,17 @@ impl fmt::Display for IntrospectionReport<'_> {
                 write!(f, "{pending}")?;
             }
         }
-        let multi = self.rules.len() > 1;
+        let multi = self.stats.rules.len() > 1;
         for (rule_idx, rule) in self.rules.iter().enumerate() {
-            let stats = &self.stats.rules[rule_idx];
-            if multi {
-                writeln!(f, "rule {rule_idx}:")?;
+            // Fixpoint plan units carry labels and no per-unit counted
+            // stats — their counted surface is the strata section
+            // below (docs/architecture/40-execution.md § the fixpoint
+            // driver).
+            let stats = self.stats.rules.get(rule_idx);
+            match self.unit_labels.get(rule_idx) {
+                Some(label) => writeln!(f, "{label}:")?,
+                None if multi => writeln!(f, "rule {rule_idx}:")?,
+                None => {}
             }
             match rule {
                 RulePlan::KeyProbe(plan) => fmt_key_probe(f, plan)?,
@@ -30,6 +36,7 @@ impl fmt::Display for IntrospectionReport<'_> {
                 // the death record (`stats.dead`).
                 RulePlan::Empty => writeln!(f, "access path: statically empty")?,
             }
+            let Some(stats) = stats else { continue };
             writeln!(
                 f,
                 "  distinct_bindings: {}",
@@ -68,6 +75,29 @@ impl fmt::Display for IntrospectionReport<'_> {
                     witness.relation, witness.field,
                 )?,
                 None => writeln!(f, "disjoint_rules: unproven")?,
+            }
+        }
+        // The fixpoint round section (docs/architecture/40-execution.md
+        // § the fixpoint driver): per recursive stratum, per round —
+        // round 0 is the stratum's non-recursive rules — the delta rows
+        // each predicate's frontier carried and the union accounting.
+        for stratum in &self.stats.strata {
+            writeln!(
+                f,
+                "stratum {}: {} rounds",
+                stratum.stratum,
+                stratum.rounds.len()
+            )?;
+            for (round_idx, round) in stratum.rounds.iter().enumerate() {
+                write!(f, "  round {round_idx}:")?;
+                if !round.deltas.is_empty() {
+                    write!(f, " delta")?;
+                    for delta in &round.deltas {
+                        write!(f, " p{}={}", delta.predicate, delta.rows)?;
+                    }
+                    write!(f, ";")?;
+                }
+                writeln!(f, " emitted {}, absorbed {}", round.emitted, round.absorbed)?;
             }
         }
         // The subsumption record (`plan/ground.rs`): rules deleted at
@@ -109,17 +139,24 @@ fn fmt_key_probe(f: &mut fmt::Formatter<'_>, plan: &KeyProbePlan) -> fmt::Result
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one plan's rendering reads as one fixed-order artifact"
+)]
 fn fmt_free_join(
     f: &mut fmt::Formatter<'_>,
     plan: &ValidatedPlan,
-    stats: &crate::api::stats::RuleStats,
+    stats: Option<&crate::api::stats::RuleStats>,
 ) -> fmt::Result {
     writeln!(f, "access path: free join ({} nodes)", plan.nodes().len())?;
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
+        let source = match occurrence.source {
+            crate::ir::AtomSource::Edb(relation) => format!("relation {}", relation.0),
+            crate::ir::AtomSource::Idb(pred) => format!("predicate p{}", pred.0),
+        };
         writeln!(
             f,
-            "  occurrence {occ_idx}: relation {} trie schema {:?} ({} filters)",
-            occurrence.relation.0,
+            "  occurrence {occ_idx}: {source} trie schema {:?} ({} filters)",
             occurrence
                 .trie_schema
                 .iter()
@@ -131,8 +168,8 @@ fn fmt_free_join(
         // (absent for occurrences that earned no statistics read —
         // negated, grounding-eliminated).
         if let Some(pin) = stats
-            .pinned
-            .iter()
+            .into_iter()
+            .flat_map(|stats| stats.pinned.iter())
             .find(|p| usize::from(p.occurrence) == occ_idx)
         {
             write!(
@@ -146,6 +183,11 @@ fn fmt_free_join(
             }
         }
     }
+    let Some(stats) = stats else {
+        // A fixpoint plan unit: the plan is the whole per-unit story;
+        // the counted stats live in the strata section.
+        return Ok(());
+    };
     // The grounding's marks (`plan/ground.rs`): occurrences the
     // plan never joined, with the licensing statement.
     for eliminated in &stats.eliminated {

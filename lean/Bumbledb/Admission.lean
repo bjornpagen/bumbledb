@@ -24,7 +24,8 @@ oracle-plan field (`Countermodels.joined_window_form_uninhabitable`,
 composing the blast countermodel `Countermodels.joined_window_blast`):
 "prohibitively expensive" is a type error, not an opinion. The
 query-side sibling is the recursion safety roster
-(`Exec/Fixpoint.lean`, `docs/reference/recursion-design.md` §2): one
+(`Exec/Fixpoint.lean`, `docs/architecture/20-query-ir.md` § engine
+recursion): one
 doctrine on both paths — a feature's admission is a proof obligation,
 never a vibe.
 
@@ -143,16 +144,28 @@ pattern, per form, as one theorem of the structure.
   (`Exec/Sweep.lean: sweep_ignores_spent_segments`, the recorded
   license in `Oracle.lean`).
 
-## Undischarged (spec-ahead): the window and order-mark inhabitants
+## The window and order-mark inhabitants: acceptance and enforcement discharged
 
-The engine's accepted statement forms today are functionality and
-containment, full stop (`crate::schema::StatementDescriptor`).
-`cardinalityForm` and `orderForm` are inhabited NOW because the terms
-are the queued vocabulary campaign's design brief — the checklist
-filled in before the Rust exists. No `Bridge.lean` row cites this
-module: the FD and containment fields' mechanisms are already
-ledgered by the modules they come from, and the ledger carries only
-what exists.
+The engine ACCEPTS both forms at declaration (2026-07-14:
+`StatementDescriptor::Cardinality` / `::Order`; the gate arms in
+`schema/validate.rs` check exactly these inhabitants' acceptance
+premises — the window's target key and interval refusal, the order
+mark's shape rules — and the ranked form's acceptance case is the
+plan calculus, per the structural-refusal record above) and JUDGES
+both per commit for WRITABLE subjects: the checker and delta
+machinery these terms describe are
+`storage/commit/judgment.rs::check_windows` / `::check_orders` over
+`storage/commit/plan.rs`'s touched sets. A CLOSED subject's order
+mark is plain-only — the engine refuses the ranked form there at the
+gate (`SchemaError::RankedOrderClosedSubject`, the sound narrowing
+recorded in `Order.lean` § narrowings) — and the plain discipline is
+decided at validate against the sealed extension, so no commit walk
+is owed for it. No
+`Bridge.lean` row cites this module directly: the acceptance rows
+cite the plan theorems (`Oracle.lean`), the enforcement rows cite
+the delta-restriction theorems (`Txn/DeltaRestriction.lean`), and
+the FD and containment fields' mechanisms are already ledgered by
+the modules they come from.
 -/
 
 namespace Bumbledb
@@ -448,7 +461,7 @@ theorem containmentForm_denotes {T : Theory} {I : Instance}
   | none => simp only [Statement.judgment, hs, ht]
   | some q => simp only [Statement.judgment, hs, ht]
 
-/-! ## Inhabitant 3 — the cardinality window (spec-ahead)
+/-! ## Inhabitant 3 — the cardinality window (accepted and enforced)
 
 Denotation `CardinalityWindow` (`Cardinality.lean`); checker
 `cardinalityB` (`cardinalityB_iff`); restriction
@@ -570,7 +583,7 @@ theorem cardinalityForm_denotes {T : Theory} {I : Instance}
       (Statement.cardinality src w tgt).judgment T I :=
   Iff.rfl
 
-/-! ## Inhabitant 4 — the order mark (spec-ahead)
+/-! ## Inhabitant 4 — the order mark (accepted and enforced)
 
 Denotation `OrderMark` (`Order.lean`); checker `orderMarkB`
 (`orderMarkB_iff`); restriction `order_delta_restriction`; plan

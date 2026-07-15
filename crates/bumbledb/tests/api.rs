@@ -42,14 +42,14 @@ fn join_query() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: Account::RELATION,
+                source: bumbledb::AtomSource::Edb(Account::RELATION),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(2))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: Holder::RELATION,
+                source: bumbledb::AtomSource::Edb(Holder::RELATION),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Var(VarId(0))),
@@ -74,14 +74,14 @@ fn aggregate_query() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: Account::RELATION,
+                source: bumbledb::AtomSource::Edb(Account::RELATION),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(2))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: Holder::RELATION,
+                source: bumbledb::AtomSource::Edb(Holder::RELATION),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Var(VarId(0))),
@@ -98,7 +98,7 @@ fn point_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: Account::RELATION,
+            source: bumbledb::AtomSource::Edb(Account::RELATION),
             bindings: vec![
                 (FieldId(0), Term::Param(ParamId(0))),
                 (FieldId(2), Term::Var(VarId(0))),
@@ -780,14 +780,14 @@ fn cover_choice_iterates_the_selected_side() {
         ],
         atoms: vec![
             Atom {
-                relation: Account::RELATION,
+                source: bumbledb::AtomSource::Edb(Account::RELATION),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: Holder::RELATION,
+                source: bumbledb::AtomSource::Edb(Holder::RELATION),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Param(ParamId(0))),
@@ -1438,4 +1438,410 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
         Ok(())
     })
     .expect("shrunk read");
+}
+
+/// The degenerate-equivalence contract (20-query-ir.md § engine recursion; the
+/// theorem is `lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`):
+/// a one-predicate, no-`Idb` `Program` prepares through the program
+/// boundary (`Db::prepare_program` — the whole program roster, then the
+/// output predicate's ordinary pipeline) and executes identically to
+/// its `Query` form, end to end.
+#[test]
+fn a_degenerate_program_executes_as_its_query() {
+    let dir = common::TempDir::new("api-degenerate-program");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    db.write(|tx| {
+        for (name, balances) in [("alice", vec![100, -25]), ("bob", vec![40])] {
+            let holder: HolderId = tx.alloc()?;
+            tx.insert(&Holder { id: holder, name })?;
+            for balance in balances {
+                let id: AccountId = tx.alloc()?;
+                tx.insert(&Account {
+                    id,
+                    holder,
+                    balance,
+                })?;
+            }
+        }
+        Ok(())
+    })
+    .expect("write");
+
+    let query = join_query();
+    let mut as_query = db.prepare(&query).expect("prepare query");
+    let mut as_program = db
+        .prepare_program(&bumbledb::Program::from(query))
+        .expect("prepare degenerate program");
+    db.read(|snap| {
+        let query_answers = snap.execute_collect(&mut as_query, &[])?;
+        let program_answers = snap.execute_collect(&mut as_program, &[])?;
+        assert_eq!(
+            name_amount_answers(&query_answers),
+            name_amount_answers(&program_answers),
+            "the degenerate program IS its query"
+        );
+        assert_eq!(query_answers.len(), 3);
+        // The byte-identity check: a no-`Idb` program takes ZERO new
+        // code paths — `prepare_program` routes the degenerate form
+        // through `prepare` verbatim, so the introspection reports (the
+        // rendered query, the plans, the counted stats) are the same
+        // bytes.
+        let (_, query_report) = snap.introspect(&mut as_query, &[])?;
+        let (_, program_report) = snap.introspect(&mut as_program, &[])?;
+        assert_eq!(
+            query_report, program_report,
+            "the degenerate program's artifact is byte-identical to its query's"
+        );
+        Ok(())
+    })
+    .expect("read");
+}
+
+/// Recursion at the public surface (the deleted R1 fence's ground): a
+/// roster-clean recursive program prepares and executes under the
+/// fixpoint driver (`api/prepared/fixpoint.rs`), and the self-loop
+/// closure `p0(x) | Account(id: x); p0(x) | p0(x)` denotes exactly the
+/// base rule's set — the recursive rule re-derives, the seen-set
+/// absorbs, the fixpoint closes in one growing round
+/// (`lean/Bumbledb/Exec/Fixpoint.lean: program_eval_sound`).
+#[test]
+fn prepare_program_executes_recursion_under_the_driver() {
+    use bumbledb::ir::{AtomSource, HeadTerm};
+    let dir = common::TempDir::new("api-program-driver");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    db.write(|tx| {
+        let holder: HolderId = tx.alloc()?;
+        tx.insert(&Holder {
+            id: holder,
+            name: "alice",
+        })?;
+        for balance in [100, -25, 40] {
+            let id: AccountId = tx.alloc()?;
+            tx.insert(&Account {
+                id,
+                holder,
+                balance,
+            })?;
+        }
+        Ok(())
+    })
+    .expect("write");
+
+    let base = Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: AtomSource::Edb(Account::RELATION),
+            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    };
+    let recursive = Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: AtomSource::Idb(bumbledb::PredId(0)),
+            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    };
+    let program = bumbledb::Program {
+        predicates: vec![bumbledb::PredicateDef {
+            head: vec![HeadTerm::Var],
+            rules: vec![base.clone(), recursive],
+        }],
+        output: bumbledb::PredId(0),
+    };
+    let mut recursive_prepared = db.prepare_program(&program).expect("recursion executes");
+    let mut base_prepared = db.prepare(&Query::single(base)).expect("prepare base");
+    db.read(|snap| {
+        let closure = snap.execute_collect(&mut recursive_prepared, &[])?;
+        let base_only = snap.execute_collect(&mut base_prepared, &[])?;
+        let ids = |answers: &bumbledb::Answers| -> std::collections::BTreeSet<u64> {
+            answers
+                .answers()
+                .map(|answer| match answer.get(0) {
+                    bumbledb::AnswerValue::U64(id) => id,
+                    other => panic!("account ids are u64, got {other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(
+            ids(&closure),
+            ids(&base_only),
+            "the self-loop fixpoint is the base set"
+        );
+        assert!(!base_only.is_empty(), "the populated store has accounts");
+        Ok(())
+    })
+    .expect("read");
+}
+
+bumbledb::schema! {
+    pub Graph;
+
+    relation GraphEdge {
+        src: u64,
+        dst: u64,
+    }
+}
+
+/// The transitive-closure program over [`Graph`]:
+/// `p0(x, z) | GraphEdge(x, z); p0(x, z) | GraphEdge(x, y), p0(y, z)`.
+fn closure_program() -> bumbledb::Program {
+    use bumbledb::ir::{AtomSource, HeadTerm};
+    let edge = |a: u16, b: u16| Atom {
+        source: AtomSource::Edb(GraphEdge::RELATION),
+        bindings: vec![
+            (FieldId(0), Term::Var(VarId(a))),
+            (FieldId(1), Term::Var(VarId(b))),
+        ],
+    };
+    bumbledb::Program {
+        predicates: vec![bumbledb::PredicateDef {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            rules: vec![
+                Rule {
+                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                    atoms: vec![edge(0, 1)],
+                    negated: vec![],
+                    conditions: vec![],
+                },
+                Rule {
+                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+                    atoms: vec![
+                        edge(0, 1),
+                        Atom {
+                            source: AtomSource::Idb(bumbledb::PredId(0)),
+                            bindings: vec![
+                                (FieldId(0), Term::Var(VarId(1))),
+                                (FieldId(1), Term::Var(VarId(2))),
+                            ],
+                        },
+                    ],
+                    negated: vec![],
+                    conditions: vec![],
+                },
+            ],
+        }],
+        output: bumbledb::PredId(0),
+    }
+}
+
+/// Scalar/vectorized equality on a recursive fixture: the closure over
+/// a chain-with-branches graph answers identically at batch size 1 (the
+/// scalar regime) and the default vectorized batch — the driver rides
+/// the ordinary executor, so the batch-size affordance covers the delta
+/// variants exactly as it covers plain rules.
+#[test]
+fn recursive_answers_agree_scalar_and_vectorized() {
+    let dir = common::TempDir::new("api-recursive-batch");
+    let db = Db::create(dir.path(), Graph).expect("create");
+    db.write(|tx| {
+        for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (2, 6)] {
+            tx.insert(&GraphEdge { src, dst })?;
+        }
+        Ok(())
+    })
+    .expect("write");
+
+    let pairs = |answers: &bumbledb::Answers| -> std::collections::BTreeSet<(u64, u64)> {
+        answers
+            .answers()
+            .map(|answer| {
+                let (AnswerValue::U64(x), AnswerValue::U64(z)) = (answer.get(0), answer.get(1))
+                else {
+                    panic!("closure columns are u64")
+                };
+                (x, z)
+            })
+            .collect()
+    };
+    let mut vectorized = db.prepare_program(&closure_program()).expect("prepare");
+    let mut scalar = db.prepare_program(&closure_program()).expect("prepare");
+    scalar.set_batch_size(1);
+    db.read(|snap| {
+        let vectorized = pairs(&snap.execute_collect(&mut vectorized, &[])?);
+        let scalar = pairs(&snap.execute_collect(&mut scalar, &[])?);
+        assert_eq!(scalar, vectorized, "one denotation, two batch regimes");
+        // The hand answer: reachability over the fixed graph.
+        let expected: std::collections::BTreeSet<(u64, u64)> = [
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (0, 4),
+            (0, 5),
+            (0, 6),
+            (1, 2),
+            (1, 3),
+            (1, 4),
+            (1, 5),
+            (1, 6),
+            (2, 3),
+            (2, 4),
+            (2, 6),
+            (3, 4),
+            (5, 6),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(vectorized, expected, "the closure matches the hand answer");
+        Ok(())
+    })
+    .expect("read");
+}
+
+/// The fixpoint observability surface (docs/architecture/40-execution.md
+/// § observability): `profile` on a recursive program reports the
+/// driver's per-stratum, per-round delta sizes and union accounting
+/// through the `Counters` seam's fixpoint hooks, and `introspect`
+/// renders labeled plan units plus the stratum section — counted paths
+/// only; the release execute path monomorphizes `NoopCounters` and
+/// reports nothing.
+#[test]
+fn fixpoint_profile_reports_strata_rounds_and_deltas() {
+    let dir = common::TempDir::new("api-fixpoint-profile");
+    let db = Db::create(dir.path(), Graph).expect("create");
+    db.write(|tx| {
+        for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (2, 6)] {
+            tx.insert(&GraphEdge { src, dst })?;
+        }
+        Ok(())
+    })
+    .expect("write");
+    let mut prepared = db.prepare_program(&closure_program()).expect("prepare");
+    db.read(|snap| {
+        let (answers, stats) = snap.profile(&mut prepared, &[])?;
+        assert_eq!(answers.len(), 16, "the closure's hand answer");
+        assert!(
+            stats.rules.is_empty(),
+            "per-unit node stats do not exist under the driver"
+        );
+        // One recursive stratum, its rounds in order: round 0 is the
+        // base rule (no delta images), each later round's delta is the
+        // previous round's newly seen rows, and the converging round
+        // derives nothing new.
+        assert_eq!(stats.strata.len(), 1, "one predicate, one stratum");
+        let stratum = &stats.strata[0];
+        assert_eq!(stratum.stratum, 0);
+        assert!(stratum.rounds[0].deltas.is_empty(), "round 0 has no delta");
+        assert_eq!(
+            stratum.rounds[0].emitted, 7,
+            "the base rule emits each edge"
+        );
+        assert_eq!(stratum.rounds[0].absorbed, 0);
+        let mut new_rows = Vec::new();
+        for (idx, round) in stratum.rounds.iter().enumerate() {
+            if idx > 0 {
+                assert_eq!(round.deltas.len(), 1, "one predicate carries a delta");
+                assert_eq!(round.deltas[0].predicate, 0);
+                let prev = &stratum.rounds[idx - 1];
+                assert_eq!(
+                    round.deltas[0].rows,
+                    prev.emitted - prev.absorbed,
+                    "a round's delta is the previous round's newly seen rows"
+                );
+            }
+            new_rows.push(round.emitted - round.absorbed);
+        }
+        assert_eq!(*new_rows.last().expect("rounds ran"), 0, "convergence");
+        assert_eq!(
+            new_rows.iter().sum::<u64>(),
+            16,
+            "newly seen across rounds is exactly the closure"
+        );
+        assert_eq!(
+            stats.emits,
+            stratum.rounds.iter().map(|r| r.emitted).sum::<u64>(),
+            "whole-program emits are the per-round sum"
+        );
+        // The rendered report tells the same story: the version marker,
+        // labeled plan units, and the stratum section.
+        let (_, report) = snap.introspect(&mut prepared, &[])?;
+        assert!(report.starts_with("introspection v3\n"), "{report}");
+        assert!(report.contains("predicate p0 rule 0:"), "{report}");
+        assert!(
+            report.contains("predicate p0 rule 1 delta variant 0"),
+            "{report}"
+        );
+        assert!(report.contains("stratum 0:"), "{report}");
+        assert!(report.contains("round 1: delta p0=7; emitted "), "{report}");
+        Ok(())
+    })
+    .expect("read");
+}
+
+/// The fixpoint budget at the public surface: a one-round budget trips
+/// on a two-round closure with the typed execution error — constructed,
+/// not hoped for (`Error::FixpointBudgetExceeded`, `MeasureOfRay`'s
+/// error model: ids and counts, the snapshot stays usable).
+#[test]
+fn a_tight_fixpoint_budget_trips_with_the_typed_error() {
+    use bumbledb::ir::{AtomSource, HeadTerm};
+    let dir = common::TempDir::new("api-program-budget");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    db.write(|tx| {
+        let holder: HolderId = tx.alloc()?;
+        tx.insert(&Holder {
+            id: holder,
+            name: "alice",
+        })?;
+        for balance in [100, -25, 40] {
+            let id: AccountId = tx.alloc()?;
+            tx.insert(&Account {
+                id,
+                holder,
+                balance,
+            })?;
+        }
+        Ok(())
+    })
+    .expect("write");
+
+    let base = Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: AtomSource::Edb(Account::RELATION),
+            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    };
+    let recursive = Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: AtomSource::Idb(bumbledb::PredId(0)),
+            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    };
+    let program = bumbledb::Program {
+        predicates: vec![bumbledb::PredicateDef {
+            head: vec![HeadTerm::Var],
+            rules: vec![base, recursive],
+        }],
+        output: bumbledb::PredId(0),
+    };
+    let mut prepared = db.prepare_program(&program).expect("recursion executes");
+    prepared.set_fixpoint_budget(0, u64::MAX);
+    let error = db
+        .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+        .expect_err("a zero-round budget cannot close a nonempty fixpoint");
+    assert!(
+        matches!(
+            error,
+            bumbledb::Error::FixpointBudgetExceeded {
+                stratum: 0,
+                rounds: 0,
+                ..
+            }
+        ),
+        "expected the typed budget error, got: {error}"
+    );
+    // The snapshot stays usable — MeasureOfRay's model: the same
+    // prepared query executes clean once the budget admits the rounds.
+    prepared.set_fixpoint_budget(16, u64::MAX);
+    db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+        .expect("the widened budget closes the fixpoint");
 }

@@ -216,7 +216,11 @@ fn point_outside(interval: (u64, u64), point: u64) -> bool {
 /// rules, then emission — the folded summaries replace their constituent
 /// order filters in place.
 fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<String> {
-    let relation = schema.relation(occurrence.relation);
+    // An `Idb` occurrence is left unfolded: the contradiction pictures
+    // print stored field names, and constant contradictions on predicate
+    // columns are the rare shape — skipping is sound (the fold is an
+    // optimization; the rule just executes and denotes ∅ honestly).
+    let relation = schema.relation(occurrence.source.edb()?);
 
     // Pass 1 — the Eq pins: the first constant Eq per field (params are
     // stage-3 and never fold), judging rules (b) and (d) as later

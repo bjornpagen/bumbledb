@@ -43,7 +43,7 @@ fn leaf(op: CmpOp, lhs: Term, rhs: Term) -> ConditionTree {
 /// `Mandate(account = v0, active = v1)`.
 fn mandate_atom() -> Atom {
     Atom {
-        relation: ids::MANDATE,
+        source: bumbledb::AtomSource::Edb(ids::MANDATE),
         bindings: vec![
             (ids::mandate::ACCOUNT, var(0)),
             (ids::mandate::ACTIVE, var(1)),
@@ -54,7 +54,7 @@ fn mandate_atom() -> Atom {
 /// `Posting(account = v0, at = v1)`.
 fn posting_atom() -> Atom {
     Atom {
-        relation: ids::POSTING,
+        source: bumbledb::AtomSource::Edb(ids::POSTING),
         bindings: vec![(ids::posting::ACCOUNT, var(0)), (ids::posting::AT, var(1))],
     }
 }
@@ -72,7 +72,7 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
     let entry_arm = |ordinal: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::JOURNAL_ENTRY,
+            source: bumbledb::AtomSource::Edb(ids::JOURNAL_ENTRY),
             bindings: vec![
                 (ids::journal_entry::ID, var(0)),
                 (
@@ -269,7 +269,7 @@ fn pack_and_measure_ops() -> (Vec<Op>, u64) {
             },
         ],
         atoms: vec![Atom {
-            relation: ids::MANDATE,
+            source: bumbledb::AtomSource::Edb(ids::MANDATE),
             bindings: vec![
                 (ids::mandate::ACCOUNT, var(0)),
                 (ids::mandate::ORG, Term::Literal(Value::U64(org))),
@@ -380,7 +380,7 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
             atoms: vec![
                 mandate_atom(),
                 Atom {
-                    relation: ids::MANDATE,
+                    source: bumbledb::AtomSource::Edb(ids::MANDATE),
                     bindings: vec![
                         (ids::mandate::ACCOUNT, var(0)),
                         (ids::mandate::ACTIVE, var(2)),

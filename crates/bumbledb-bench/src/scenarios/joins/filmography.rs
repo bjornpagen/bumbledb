@@ -11,11 +11,11 @@ pub(super) fn filmography() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::CAST_INFO,
+                source: bumbledb::AtomSource::Edb(ids::CAST_INFO),
                 bindings: vec![(FieldId(1), param(0)), (FieldId(0), var(2))],
             },
             Atom {
-                relation: ids::MOVIE,
+                source: bumbledb::AtomSource::Edb(ids::MOVIE),
                 bindings: vec![
                     (FieldId(0), var(2)),
                     (FieldId(1), var(0)),

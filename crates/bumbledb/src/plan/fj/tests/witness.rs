@@ -130,11 +130,11 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
         finds: vec![FindTerm::Var(x), FindTerm::Var(y)],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![(FieldId(0), Term::Var(x))],
             },
             Atom {
-                relation: RelationId(1),
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
                 bindings: vec![(FieldId(1), Term::Var(x)), (FieldId(2), Term::Var(y))],
             },
         ],
@@ -178,11 +178,11 @@ fn outer_join_idiom_absence_half_validates_into_the_witness() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(x)],
         atoms: vec![Atom {
-            relation: RelationId(0),
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
             bindings: vec![(FieldId(0), Term::Var(x))],
         }],
         negated: vec![Atom {
-            relation: RelationId(1),
+            source: crate::ir::AtomSource::Edb(RelationId(1)),
             bindings: vec![(FieldId(1), Term::Var(x))],
         }],
         conditions: vec![],
@@ -219,11 +219,11 @@ fn allen_residual_query_validates_into_the_witness() {
         finds: vec![FindTerm::Var(e1), FindTerm::Var(e2)],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![(FieldId(0), Term::Var(e1)), (FieldId(1), Term::Var(d1))],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![(FieldId(0), Term::Var(e2)), (FieldId(1), Term::Var(d2))],
             },
         ],
@@ -319,11 +319,11 @@ fn interval_value_equality_joins_with_a_two_word_key() {
         finds: vec![FindTerm::Var(e1)],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![(FieldId(0), Term::Var(e1)), (FieldId(1), Term::Var(d))],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![(FieldId(2), Term::Var(d))],
             },
         ],

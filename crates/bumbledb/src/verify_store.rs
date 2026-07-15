@@ -9,21 +9,28 @@
 //!
 //! ```text
 //! F  facts          key/schema/width/canonical-field decode, forward checks
-//!                   into M/U/R, tallies, intern references, and the global
-//!                   containment judgment per outgoing statement
+//!                   into M/U/R, tallies, intern references, the global
+//!                   containment judgment per outgoing statement, and the
+//!                   global window judgment per ψ-selected parent
 //! M  membership     resolves back to its fact, hash-verified
 //! U  FD determinants      resolves back + per-group pointwise disjointness
 //! R  reverse edges  resolves back to a live source inside φ (the heart:
-//!                   the one namespace with no online verification)
+//!                   the one namespace with no online verification) —
+//!                   containment, window, and order edges alike
+//! marks             the order-mark walk over every group, plus the
+//!                   closed-parent window roster
 //! S  counters       row count and high-water against the F tallies
 //! _dict             dangling-id statistic (the accepted leak)
 //! ```
 //!
-//! Beyond namespace coherence, both judgment forms
-//! (`docs/architecture/30-dependencies.md`) are re-verified **globally**
+//! Beyond namespace coherence, every judgment form
+//! (`docs/architecture/30-dependencies.md`) is re-verified **globally**
 //! over the full committed state — the class no incremental check can
 //! see: the incremental form was wrong once, long ago, and every commit
-//! since preserved the corruption. **Functionality** needs no pass of its
+//! since preserved the corruption (the delta-restriction theorems'
+//! missing-premise half,
+//! `lean/Bumbledb/Countermodels.lean: incremental_verdict_needs_holds`).
+//! **Functionality** needs no pass of its
 //! own: duplicate scalar determinants are impossible by LMDB key uniqueness, so
 //! the global judgment *is* the F pass's every-fact-holds-its-determinant check
 //! plus the U pass's per-group disjointness walk — functionality findings
@@ -34,7 +41,13 @@
 //! sweeper copy). The U pass independently re-derives pointwise
 //! disjointness from stored bytes, while the shared coverage call still
 //! consumes the schema's validator-minted `DisjointDeterminantProof`; a miss is
-//! [`StoreFinding::JudgmentViolation`].
+//! [`StoreFinding::JudgmentViolation`]. **Cardinality windows** ride the
+//! F scan on their parent side (every ψ-selected parent counts its child
+//! group through the commit path's own walk —
+//! [`StoreFinding::WindowViolation`]); closed parents re-check in the
+//! marks pass. **Order marks** are walked whole in the marks pass —
+//! every group, the commit path's own ordered walk
+//! ([`StoreFinding::OrderViolation`]).
 //!
 //! Findings are data, not errors: a desynced store returns `Ok` with a
 //! populated report and the *caller* decides fatality. `Err` is
@@ -55,6 +68,7 @@ mod counters;
 mod determinants;
 mod dict_stat;
 mod facts;
+mod marks;
 mod membership;
 mod reverse;
 
@@ -148,6 +162,27 @@ pub enum StoreFinding {
         /// The source fact — canonical bytes, never a row id.
         fact: Box<[u8]>,
     },
+    /// A cardinality statement globally violated by the committed state:
+    /// a ψ-selected parent whose child-group count falls outside the
+    /// window (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`) —
+    /// the commit path's own window check, re-run per committed parent.
+    WindowViolation {
+        statement: StatementId,
+        /// The convicting parent fact — canonical bytes.
+        fact: Box<[u8]>,
+        /// The observed child-group count.
+        count: u64,
+    },
+    /// An order statement globally violated by the committed state: a
+    /// group breaking the ordinal discipline or the ranked monotonicity
+    /// (`lean/Bumbledb/Order.lean: OrderMark` / `RankedOrderMark`) — the
+    /// commit path's own ordered group walk, run over every group.
+    OrderViolation {
+        statement: StatementId,
+        defect: crate::error::OrderDefect,
+        /// The convicting group member — canonical bytes.
+        fact: Box<[u8]>,
+    },
     /// The stored `S` row count disagrees with the `F`-scan cardinality.
     RowCountDesync {
         relation: RelationId,
@@ -220,6 +255,7 @@ impl<S> Db<S> {
         membership::sweep(&mut sweep)?;
         determinants::sweep(&mut sweep)?;
         reverse::sweep(&mut sweep)?;
+        marks::sweep(&mut sweep)?;
         counters::sweep(&mut sweep)?;
         let dangling_intern_ids = dict_stat::dangling(&mut sweep)?;
         Ok(StoreReport {

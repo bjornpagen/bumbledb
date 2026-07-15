@@ -52,7 +52,9 @@ fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
         | StoreFinding::PointwiseOverlap { statement, .. }
         | StoreFinding::FactWithoutReverseEdge { statement, .. }
         | StoreFinding::ReverseEdgeWithoutFact { statement, .. }
-        | StoreFinding::JudgmentViolation { statement, .. } => Some(*statement),
+        | StoreFinding::JudgmentViolation { statement, .. }
+        | StoreFinding::WindowViolation { statement, .. }
+        | StoreFinding::OrderViolation { statement, .. } => Some(*statement),
         StoreFinding::FactWithoutMembership { .. }
         | StoreFinding::MembershipWithoutFact { .. }
         | StoreFinding::RowCountDesync { .. }

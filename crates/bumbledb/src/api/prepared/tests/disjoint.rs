@@ -72,7 +72,7 @@ fn arm_rule(kind: u8) -> Rule {
     Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ITEM,
+            source: crate::ir::AtomSource::Edb(ITEM),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::Literal(Value::U64(u64::from(kind)))),
@@ -212,7 +212,7 @@ fn count_over_a_proven_disjoint_union_absorbs_nothing() {
             },
         ],
         atoms: vec![Atom {
-            relation: ITEM,
+            source: crate::ir::AtomSource::Edb(ITEM),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::Literal(Value::U64(u64::from(kind)))),

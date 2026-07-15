@@ -242,7 +242,7 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
             crate::ir::FindTerm::Var(crate::ir::VarId(1)),
         ],
         atoms: vec![crate::ir::Atom {
-            relation: rel,
+            source: crate::ir::AtomSource::Edb(rel),
             bindings: vec![
                 (FieldId(0), crate::ir::Term::Var(crate::ir::VarId(0))),
                 (FieldId(1), crate::ir::Term::Var(crate::ir::VarId(1))),

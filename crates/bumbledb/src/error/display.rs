@@ -12,8 +12,8 @@ use std::fmt;
 use crate::schema::{Schema, SchemaDescriptor, StatementId, render};
 
 use super::{
-    CorruptionError, Direction, Error, FactShapeError, SchemaError, TargetKeyCandidate,
-    ValidationError, Violation,
+    CorruptionError, Direction, Error, FactShapeError, OrderDefect, SchemaError,
+    TargetKeyCandidate, ValidationError, Violation,
 };
 
 fn field_set(f: &mut fmt::Formatter<'_>, projection: &[crate::schema::FieldId]) -> fmt::Result {
@@ -85,6 +85,32 @@ impl fmt::Display for Violation {
                 Direction::TargetRequired => write!(
                     f,
                     "statement {}: containment violated — a deleted target key is still required",
+                    statement.0
+                ),
+            },
+            Self::Cardinality {
+                statement, count, ..
+            } => write!(
+                f,
+                "statement {}: cardinality violated — a parent's child-group count ({count}) falls outside the window",
+                statement.0
+            ),
+            Self::Order {
+                statement, defect, ..
+            } => match defect {
+                OrderDefect::DuplicatePosition => write!(
+                    f,
+                    "statement {}: order violated — two facts of one group carry one position",
+                    statement.0
+                ),
+                OrderDefect::PositionGap => write!(
+                    f,
+                    "statement {}: order violated — a group's positions are not exactly 1..k",
+                    statement.0
+                ),
+                OrderDefect::RankOrder => write!(
+                    f,
+                    "statement {}: order violated — a smaller rank sits later than a larger one",
                     statement.0
                 ),
             },
@@ -432,6 +458,94 @@ impl fmt::Display for SchemaError {
                 "statement {}: duplicates statement {} — write it once",
                 s.0, earlier.0
             ),
+            Self::DegenerateSelectionSet {
+                statement: s,
+                relation: r,
+                field: fd,
+                len,
+            } => write!(
+                f,
+                "statement {}: literal set of {len} on relation {}, field {} — a set binding \
+                 carries at least two literals (one literal is the equality spelling)",
+                s.0, r.0, fd.0
+            ),
+            Self::DuplicateSelectionLiteral {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: duplicate literal in the set binding on relation {}, field {} — \
+                 write it once",
+                s.0, r.0, fd.0
+            ),
+            Self::CardinalityIntervalPosition {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: interval field {} on relation {} in a cardinality window — \
+                 a window counts facts per parent, and an interval position would make the \
+                 count ambiguous between facts and points",
+                s.0, fd.0, r.0
+            ),
+            Self::OrderPositionNotU64 {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: order position field {} on relation {} must be u64 — \
+                 positions are 1-based ordinals",
+                s.0, fd.0, r.0
+            ),
+            Self::OrderGroupingInterval {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: interval grouping field {} on relation {} in an order mark — \
+                 groups are keyed by scalar bytes",
+                s.0, fd.0, r.0
+            ),
+            Self::RankedOrderClosedSubject {
+                statement: s,
+                relation: r,
+            } => write!(
+                f,
+                "statement {}: ranked order mark on closed relation {} — the ranks read \
+                 through writable hop relations no walk over a closed subject ever judges; \
+                 declare the plain form or open the subject",
+                s.0, r.0
+            ),
+            Self::RankHopUnkeyed {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: `by` hop against relation {}, field {} which no declared key \
+                 backs — declare the single-field key `R(field) -> R` the hop probes",
+                s.0, r.0, fd.0
+            ),
+            Self::RankChainTypeMismatch { statement: s, hop } => write!(
+                f,
+                "statement {}: `by` chain type mismatch at hop {hop} — the running value's \
+                 type must equal the hop's key field type",
+                s.0
+            ),
+            Self::OrderRankNotU64 {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: rank payload field {} on relation {} must be u64 — the rank \
+                 is the final read's ordinal",
+                s.0, fd.0, r.0
+            ),
         }
     }
 }
@@ -643,6 +757,64 @@ impl fmt::Display for ValidationError {
             Self::TooManyVariables { count } => {
                 write!(f, "{count} distinct variables exceed the 128-bit bitset")
             }
+            Self::TooManyPredicates { count } => {
+                write!(f, "{count} predicates exceed the program cap")
+            }
+            Self::UnknownOutputPredicate { pred } => {
+                write!(f, "output predicate p{} is not in the program", pred.0)
+            }
+            Self::UnknownPredicate { atom, pred } => {
+                write!(
+                    f,
+                    "atom {atom}: predicate p{} is not in the program",
+                    pred.0
+                )
+            }
+            Self::PredicateColumnOutOfRange { atom, field } => write!(
+                f,
+                "atom {atom}: head position {} is beyond the target predicate's arity",
+                field.0
+            ),
+            Self::NegationThroughCycle { pred, via } => write!(
+                f,
+                "predicate p{} negates p{} inside its own recursive component — \
+                 negation reads finished lower strata only",
+                pred.0, via.0
+            ),
+            Self::AggregationThroughCycle { pred, via } => write!(
+                f,
+                "predicate p{}'s fold reads p{} inside its own recursive component — \
+                 aggregation reads finished lower strata only",
+                pred.0, via.0
+            ),
+            Self::MeasureInRecursiveHead { pred } => write!(
+                f,
+                "recursive predicate p{} projects a Duration — recursive heads \
+                 project bound variables only",
+                pred.0
+            ),
+            Self::UnresolvedPredicateSignature { pred } => write!(
+                f,
+                "predicate p{}'s signature never resolves — every rule's types \
+                 depend on its own recursive component",
+                pred.0
+            ),
+            Self::AggregateInteriorPredicate { pred } => write!(
+                f,
+                "predicate p{} folds below the output — a fold's answers \
+                 materialize only at the output predicate's finalize; \
+                 aggregate over the finished predicate from the output \
+                 instead",
+                pred.0
+            ),
+            Self::MeasureInteriorPredicate { pred } => write!(
+                f,
+                "predicate p{} projects a Duration below the output — the \
+                 executable program class keeps interior heads to bound \
+                 variables; project the interval and measure it at the \
+                 output instead",
+                pred.0
+            ),
         }
     }
 }
@@ -781,6 +953,16 @@ impl fmt::Display for Error {
                 "Duration of a ray: encoded interval [{start}, {end}) has no finite \
                  measure — exclude rays with an Allen predicate or a bounded-end filter"
             ),
+            Self::FixpointBudgetExceeded {
+                stratum,
+                rounds,
+                tuples,
+            } => write!(
+                f,
+                "fixpoint budget exceeded: stratum {stratum} ran {rounds} rounds and \
+                 derived {tuples} tuples — raise the budget \
+                 (PreparedQuery::set_fixpoint_budget) or bound the closure"
+            ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")
             }
@@ -852,6 +1034,24 @@ impl fmt::Display for DisplayWith<'_> {
                                 "containment violated (target side): `{rendered}` — a deleted target key is still required"
                             )?,
                         },
+                        Violation::Cardinality { count, .. } => write!(
+                            f,
+                            "cardinality violated: `{rendered}` — a parent's child-group count ({count}) falls outside the window"
+                        )?,
+                        Violation::Order { defect, .. } => match defect {
+                            OrderDefect::DuplicatePosition => write!(
+                                f,
+                                "order violated: `{rendered}` — two facts of one group carry one position"
+                            )?,
+                            OrderDefect::PositionGap => write!(
+                                f,
+                                "order violated: `{rendered}` — a group's positions are not exactly 1..k"
+                            )?,
+                            OrderDefect::RankOrder => write!(
+                                f,
+                                "order violated: `{rendered}` — a smaller rank sits later than a larger one"
+                            )?,
+                        },
                     }
                 }
                 Ok(())
@@ -895,7 +1095,16 @@ impl SchemaError {
             | Self::NoPointwiseTargetKey { statement, .. }
             | Self::ClosedContainmentInterval { statement, .. }
             | Self::ClosedStatementRefuted { statement, .. }
-            | Self::DuplicateStatement { statement, .. } => Some(*statement),
+            | Self::DuplicateStatement { statement, .. }
+            | Self::DegenerateSelectionSet { statement, .. }
+            | Self::DuplicateSelectionLiteral { statement, .. }
+            | Self::CardinalityIntervalPosition { statement, .. }
+            | Self::OrderPositionNotU64 { statement, .. }
+            | Self::OrderGroupingInterval { statement, .. }
+            | Self::RankedOrderClosedSubject { statement, .. }
+            | Self::RankHopUnkeyed { statement, .. }
+            | Self::RankChainTypeMismatch { statement, .. }
+            | Self::OrderRankNotU64 { statement, .. } => Some(*statement),
         }
     }
 

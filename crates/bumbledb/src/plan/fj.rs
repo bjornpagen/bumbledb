@@ -31,7 +31,9 @@ pub use factor::factor;
 pub use provably_disjoint::{DisjointWitness, provably_disjoint_rules};
 pub(crate) use provably_distinct::{DistinctWitness, provably_distinct};
 pub(crate) use split_filters::split_filters;
+#[cfg(test)]
 pub use validate::validate;
+pub use validate::validate_with_signatures;
 
 /// A subatom: one occurrence with a subset of its variables. The plan
 /// partitions every **positive** occurrence's variables across its
@@ -141,7 +143,15 @@ pub struct PointProbe {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanOccurrence {
     pub occ_id: OccId,
-    pub relation: RelationId,
+    /// The atom's source, carried whole through plan validation
+    /// (`docs/architecture/20-query-ir.md` § engine recursion's consumer
+    /// guards): an
+    /// `Edb` occurrence binds through the image cache and the view memo
+    /// as ever; an `Idb` occurrence binds to the fixpoint driver's
+    /// per-round transient image (`api/prepared/run_join.rs` — never
+    /// the cache, never the memo), its `spans` derived from the target
+    /// predicate's sealed signature columns.
+    pub source: crate::ir::AtomSource,
     /// The occurrence's planning state, carried from normalization —
     /// execution's view-bind and filter-resolution loops read it to
     /// skip eliminated occurrences, and PRD 12's introspection reads the
@@ -192,6 +202,28 @@ pub struct PlanOccurrence {
     /// wordmap keys tuples, and this is the key-width bookkeeping it
     /// reads.
     pub key_widths: Vec<u16>,
+}
+
+impl PlanOccurrence {
+    /// The stored relation this occurrence reads — for callers whose
+    /// occurrences are stored-relation-only by their own prior guard
+    /// (the key-probe classifier refuses `Idb` rules before minting a
+    /// [`KeyProbePlan`]). Source-aware consumers match on
+    /// [`PlanOccurrence::source`].
+    ///
+    /// # Panics
+    ///
+    /// On an `Idb` occurrence — the caller asserted a stored-relation
+    /// occurrence.
+    #[must_use]
+    pub fn relation(&self) -> RelationId {
+        match self.source {
+            crate::ir::AtomSource::Edb(relation) => relation,
+            crate::ir::AtomSource::Idb(_) => {
+                unreachable!("caller asserted a stored-relation (Edb) occurrence")
+            }
+        }
+    }
 }
 
 /// One validated node.

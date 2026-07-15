@@ -27,6 +27,12 @@
 //!   fuzzing charter, `docs/architecture/60-validation.md`); this test
 //!   reports, it never fixes.
 //!
+//! The RECURSIVE arm ([`program`], `program-*.json`) rides the same
+//! corpus and comparator: program cases the naive fixpoint and the
+//! `SQLite` recursive lane agreed on, judged by the proved
+//! `lean/Bumbledb/Exec/Fixpoint.lean: evalProgram` — the third oracle
+//! wired for recursion before the engine can run one program.
+//!
 //! ## Scope fences (each counted in [`Report`], never silent)
 //!
 //! * Tiny scale, the valid querygen arm only — the hostile arm
@@ -64,6 +70,9 @@
 //!
 //! No engine `pub` accessor was needed: `Answers` extraction via
 //! `differential::engine_query` sufficed (recorded per the PRD).
+
+pub mod judgment;
+pub mod program;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -170,7 +179,16 @@ struct ScratchDir(PathBuf);
 
 impl ScratchDir {
     fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-conformance-{tag}"));
+        // Unique per run (pid + wall-clock nanos): a fixed tag path lets
+        // a concurrent or wedged prior run collide on the LMDB flock.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "bumbledb-conformance-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create conformance scratch dir");
         Self(path)
@@ -624,7 +642,7 @@ fn scalar_anchors(rule: &Rule, var_count: u16) -> Vec<bool> {
     for atom in &rule.atoms {
         for (field, term) in &atom.bindings {
             if let Term::Var(var) = term
-                && !field_is_interval(atom.relation, *field)
+                && !field_is_interval(atom.relation(), *field)
             {
                 anchored[usize::from(var.0)] = true;
             }
@@ -680,7 +698,7 @@ fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> Result<LoweredRule<'
     for atom in &rule.atoms {
         let mut bindings = Vec::with_capacity(atom.bindings.len());
         for (field, term) in &atom.bindings {
-            if field_is_interval(atom.relation, *field) && membership(term, &anchored, params)? {
+            if field_is_interval(atom.relation(), *field) && membership(term, &anchored, params)? {
                 let interval_var = VarId(fresh);
                 fresh += 1;
                 bindings.push((*field, Term::Var(interval_var)));
@@ -694,13 +712,13 @@ fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> Result<LoweredRule<'
             }
         }
         atoms.push(Atom {
-            relation: atom.relation,
+            source: bumbledb::AtomSource::Edb(atom.relation()),
             bindings,
         });
     }
     for atom in &rule.negated {
         for (field, term) in &atom.bindings {
-            if field_is_interval(atom.relation, *field) && membership(term, &anchored, params)? {
+            if field_is_interval(atom.relation(), *field) && membership(term, &anchored, params)? {
                 return Err(Exclusion::NegatedMembership);
             }
         }
@@ -720,7 +738,7 @@ fn mentioned(rules: &[LoweredRule<'_>]) -> BTreeSet<RelationId> {
     let mut set = BTreeSet::new();
     for rule in rules {
         for atom in rule.atoms.iter().chain(rule.negated.iter()) {
-            set.insert(atom.relation);
+            set.insert(atom.relation());
         }
     }
     set
@@ -768,10 +786,6 @@ fn closed_facts(relation: RelationId) -> Vec<Vec<Value>> {
 /// out of the corpus. The answers are canonically sorted: each row
 /// rendered in the tagged compact form, rows in lexicographic byte
 /// order of that rendering (the README's canonical-order rule).
-#[expect(
-    clippy::too_many_lines,
-    reason = "one flat document assembly, data not logic"
-)]
 fn render_case(
     world: &World,
     name: &str,
@@ -872,13 +886,37 @@ fn render_case(
 
     // The theory + instance blocks (mentioned relations only —
     // `snapshot_single`: the denotation reads nothing else).
+    let (relations_block, instance_block, axioms_block) =
+        world_blocks(world, &mut used, mentioned(&lowered))?;
+
+    // The used slice of the intern dictionary (hand-readability: the
+    // ids Lean compares, with their texts beside them).
+    let strings_block = strings_block(world, &used);
+
+    Ok(format!(
+        "{{\n\"case\":\"{name}\",\n\"provenance\":{provenance},\n\"strings\":{strings_block},\n\
+         \"theory\":{{\"relations\":{relations_block},\n\"ground_axioms\":{axioms_block}}},\n\
+         \"instance\":{instance_block},\n\"query\":{query_block},\n\"params\":{params_block},\n\
+         \"answers\":{answers_block}\n}}\n"
+    ))
+}
+
+/// The theory + instance + ground-axiom blocks for one
+/// mentioned-relation set — the shared tail of the query and program
+/// serializers (the recursive arm's cases carry the identical world
+/// shape).
+fn world_blocks(
+    world: &World,
+    used: &mut BTreeSet<u64>,
+    mentioned: BTreeSet<RelationId>,
+) -> Result<(String, String, String), Exclusion> {
     let schema = target::schema();
     let mut relations_block = String::from("[");
     let mut instance_block = String::from("[");
     let mut axioms_block = String::from("[");
     let mut open_count = 0usize;
     let mut closed_count = 0usize;
-    for relation in mentioned(&lowered) {
+    for relation in mentioned {
         let descriptor = schema.relation(relation);
         if open_count + closed_count > 0 {
             relations_block.push_str(",\n");
@@ -921,16 +959,19 @@ fn render_case(
             if index > 0 {
                 block.push_str(",\n");
             }
-            push_fact(world, &mut used, block, fact)?;
+            push_fact(world, used, block, fact)?;
         }
         block.push_str("\n]}");
     }
     relations_block.push(']');
     instance_block.push(']');
     axioms_block.push(']');
+    Ok((relations_block, instance_block, axioms_block))
+}
 
-    // The used slice of the intern dictionary (hand-readability: the
-    // ids Lean compares, with their texts beside them).
+/// The used slice of the intern dictionary (hand-readability: the ids
+/// Lean compares, with their texts beside them).
+fn strings_block(world: &World, used: &BTreeSet<u64>) -> String {
     let mut strings_block = String::from("[");
     for (index, id) in used.iter().enumerate() {
         if index > 0 {
@@ -943,13 +984,7 @@ fn render_case(
         strings_block.push(']');
     }
     strings_block.push(']');
-
-    Ok(format!(
-        "{{\n\"case\":\"{name}\",\n\"provenance\":{provenance},\n\"strings\":{strings_block},\n\
-         \"theory\":{{\"relations\":{relations_block},\n\"ground_axioms\":{axioms_block}}},\n\
-         \"instance\":{instance_block},\n\"query\":{query_block},\n\"params\":{params_block},\n\
-         \"answers\":{answers_block}\n}}\n"
-    ))
+    strings_block
 }
 
 /// Serializes one atom.
@@ -959,7 +994,7 @@ fn push_atom(
     out: &mut String,
     atom: &Atom,
 ) -> Result<(), Exclusion> {
-    let _ = write!(out, "{{\"relation\":{},\"bindings\":[", atom.relation.0);
+    let _ = write!(out, "{{\"relation\":{},\"bindings\":[", atom.relation().0);
     for (index, (field, term)) in atom.bindings.iter().enumerate() {
         if index > 0 {
             out.push(',');
@@ -1065,7 +1100,7 @@ fn execute_case(
     );
     match engine {
         Answers::Ok(answers) => (Some(answers), naive_ms),
-        Answers::Overflow | Answers::MeasureOfRay => (None, naive_ms),
+        Answers::Overflow | Answers::MeasureOfRay | Answers::FixpointBudget => (None, naive_ms),
     }
 }
 
@@ -1092,7 +1127,7 @@ fn rule(
 
 fn atom(relation: RelationId, bindings: &[(FieldId, Term)]) -> Atom {
     Atom {
-        relation,
+        source: bumbledb::AtomSource::Edb(relation),
         bindings: bindings.to_vec(),
     }
 }
@@ -1398,6 +1433,36 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
+        // The colliding-measure lock: two distinct intervals with EQUAL
+        // measure land in ONE group under a `[Measure, Count]` head —
+        // grouping fibers by the measure VALUE, not the interval, so
+        // the answers merge (every collision group's parent interval
+        // has width 256 by construction, and groups are disjoint, so
+        // the collision is guaranteed data, not luck; the COVERED_BY
+        // filter excludes the ray mandates first — the documented host
+        // pattern).
+        HandCase {
+            name: "hand-measure-count-collision",
+            query: Query::single(rule(
+                vec![
+                    FindTerm::Measure(VarId(0)),
+                    FindTerm::Aggregate {
+                        op: AggOp::Count,
+                        over: None,
+                    },
+                ],
+                vec![atom(ids::MANDATE, &[(ids::mandate::ACTIVE, v(0))])],
+                vec![],
+                vec![ConditionTree::Leaf(Comparison {
+                    op: CmpOp::Allen {
+                        mask: MaskTerm::Literal(AllenMask::COVERED_BY),
+                    },
+                    lhs: v(0),
+                    rhs: Term::Literal(full_i64.clone()),
+                })],
+            )),
+            params: vec![],
+        },
         // The measure in a predicate.
         HandCase {
             name: "hand-measure-predicate",
@@ -1599,8 +1664,9 @@ pub fn corpus_dir() -> PathBuf {
         .join("lean/conformance/cases")
 }
 
-/// Regenerates the checked-in corpus on disk (the builder half; the
-/// `regenerate_the_conformance_corpus` test wraps it).
+/// Regenerates the checked-in corpus on disk — the query cases AND the
+/// judgment cases (the write-side lane, [`judgment`]) — (the builder
+/// half; the `regenerate_the_conformance_corpus` test wraps it).
 ///
 /// # Panics
 ///
@@ -1608,6 +1674,9 @@ pub fn corpus_dir() -> PathBuf {
 #[must_use = "the coverage report is the recorded number"]
 pub fn write_corpus(dir: &Path) -> Report {
     let (report, cases) = generate_corpus();
+    let program_world = build_world(WORLD_SEEDS[0]);
+    let (program_report, program_cases) = program::generate_program_corpus(&program_world);
+    eprintln!("{}", program_report.coverage_line());
     std::fs::create_dir_all(dir).expect("create the corpus directory");
     for entry in std::fs::read_dir(dir).expect("list the corpus directory") {
         let path = entry.expect("corpus dir entry").path();
@@ -1615,7 +1684,11 @@ pub fn write_corpus(dir: &Path) -> Report {
             std::fs::remove_file(&path).expect("clear a stale corpus case");
         }
     }
-    for (name, document) in &cases {
+    for (name, document) in cases
+        .iter()
+        .chain(&judgment::generate_judgment_corpus())
+        .chain(&program_cases)
+    {
         std::fs::write(dir.join(name), document).expect("write a corpus case");
     }
     report
@@ -1657,7 +1730,13 @@ pub fn replay_checked_in_corpus() -> usize {
             .expect("corpus names are UTF-8")
             .to_owned();
         let text = std::fs::read_to_string(path).expect("read a corpus case");
-        let document = replay_case(&mut worlds, &name, &text);
+        let document = if name.starts_with("judgment-") {
+            judgment::replay_judgment_case(&name)
+        } else if name.starts_with("program-") {
+            program::replay_program_case(&mut worlds, &name, &text)
+        } else {
+            replay_case(&mut worlds, &name, &text)
+        };
         assert!(
             text == document,
             "conformance case {name}: the checked-in file differs from the fresh \
@@ -1749,6 +1828,17 @@ mod tests {
         eprintln!("{}", report.coverage_line());
     }
 
+    /// Regenerates the RECURSIVE arm's `program-*.json` cases only —
+    /// the query and judgment cases keep their bytes (their wall-clock
+    /// budgets were measured at their own build time and never
+    /// re-measure on replay).
+    #[test]
+    #[ignore = "regenerates the checked-in program cases; run deliberately"]
+    fn regenerate_the_recursive_conformance_corpus() {
+        let report = program::write_program_corpus(&corpus_dir());
+        eprintln!("{}", report.coverage_line());
+    }
+
     /// The engine+naive half of the comparator, no Lean toolchain
     /// needed: replay every checked-in case from its provenance (fresh
     /// worlds, fresh engine executions, naive parity asserted inside)
@@ -1765,10 +1855,13 @@ mod tests {
     /// checked-in file), then `lake exe conformance` — the Lean
     /// denotation, `evalList` under `eval_sound` — over the same files.
     /// Any disagreement names the case file. Ignored in the plain
-    /// workspace run because it needs the Lean toolchain; the CI lean
-    /// lane runs it with `--ignored`.
+    /// workspace run because it needs the Lean toolchain;
+    /// `scripts/lean.sh` runs it with `--ignored` after the corpus
+    /// replay — the Lean-dependent lane owns the Lean-dependent test,
+    /// so the three-way comparator gates every lean.sh run while
+    /// check.sh stays toolchain-independent.
     #[test]
-    #[ignore = "needs the Lean toolchain (elan/lake) on PATH; the CI lean lane runs it"]
+    #[ignore = "needs the Lean toolchain (elan/lake) on PATH; scripts/lean.sh runs it"]
     fn three_way_conformance_over_the_checked_in_corpus() {
         let engine_started = Instant::now();
         let cases = replay_checked_in_corpus();

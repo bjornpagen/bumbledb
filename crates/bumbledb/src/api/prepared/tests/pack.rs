@@ -120,7 +120,7 @@ fn pack_query() -> Query {
             },
         ],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(3), Term::Var(VarId(1))),
@@ -206,7 +206,7 @@ fn pack_absorbs_rays_over_i64_spans() {
             },
         ],
         atoms: vec![Atom {
-            relation: SHIFT,
+            source: crate::ir::AtomSource::Edb(SHIFT),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(2), Term::Var(VarId(1))),
@@ -260,7 +260,7 @@ fn pack_groups_exactly_as_sum_does() {
             },
         ],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(2), Term::Var(VarId(2))),
@@ -320,7 +320,7 @@ fn multi_rule_pack_folds_the_union() {
             },
         ],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(2), Term::Var(VarId(2))),

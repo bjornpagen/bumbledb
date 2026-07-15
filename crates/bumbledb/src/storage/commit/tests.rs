@@ -18,6 +18,7 @@ mod closed;
 mod commit;
 mod functionality;
 mod judgment;
+mod marks;
 mod plan;
 mod sealed_checks;
 mod target;
@@ -59,7 +60,7 @@ fn selected(relation: RelationId, projection: &[u16], selection: &[(u16, Value)]
         projection: projection.iter().map(|&f| FieldId(f)).collect(),
         selection: selection
             .iter()
-            .map(|(f, literal)| (FieldId(*f), literal.clone()))
+            .map(|(f, literal)| (FieldId(*f), crate::schema::LiteralSet::One(literal.clone())))
             .collect(),
     }
 }

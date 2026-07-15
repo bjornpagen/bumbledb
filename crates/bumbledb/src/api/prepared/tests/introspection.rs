@@ -45,7 +45,7 @@ fn the_introspection_header_renders_the_predicate() {
             },
         ],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
         }],
         negated: vec![],
@@ -103,7 +103,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
     let key_probe_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Param(crate::ir::ParamId(0))),
                 (FieldId(3), Term::Var(VarId(0))),
@@ -169,7 +169,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
     let key_probe_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Param(crate::ir::ParamId(0))),
                 (FieldId(3), Term::Var(VarId(0))),

@@ -250,6 +250,16 @@ impl<S> Db<S> {
     pub fn render_query(&self, query: &crate::ir::Query) -> String {
         crate::ir::render::render(&self.schema, query)
     }
+
+    /// [`Db::render_query`]'s program twin
+    /// ([`crate::ir::render::render_program`]): interior predicates
+    /// named `p{id}`, output rules bare — the diagnostic surface for
+    /// programs [`Db::prepare_program`] rejects. Allocates; diagnostics
+    /// only.
+    #[must_use]
+    pub fn render_program(&self, program: &crate::ir::Program) -> String {
+        crate::ir::render::render_program(&self.schema, program)
+    }
 }
 
 /// One parked read transaction and the commit sequence it saw.

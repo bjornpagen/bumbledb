@@ -147,7 +147,7 @@ fn contradiction_draws_are_empty_on_both_sides() {
     let control = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::ACCOUNT,
+            source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
             bindings: vec![(ids::account::ID, Term::Var(VarId(0)))],
         }],
         negated: vec![],

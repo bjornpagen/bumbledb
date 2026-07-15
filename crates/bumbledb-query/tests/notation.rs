@@ -208,6 +208,18 @@ fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
     render(&schema, query)
 }
 
+/// [`pin`]'s program twin: prepared through the program boundary, then
+/// rendered by `render_program` (interior predicates `p{id}`, output
+/// bare).
+fn pin_program<S: Theory + Copy>(tag: &str, theory: S, program: &bumbledb::Program) -> String {
+    let dir = TempDir::new(tag);
+    let db = Db::create(dir.path(), theory).expect("create the theory's store");
+    db.prepare_program(program)
+        .expect("the golden program validates");
+    let schema: Schema = theory.descriptor().validate().expect("a landed theory");
+    bumbledb::ir::render::render_program(&schema, program)
+}
+
 /// The calendar union example: Busy ∪ Ooo is
 /// the Claim relation's two arms — two rules, one head, a window param.
 /// The qualified handle spelling (`ClaimKind::Busy`) resolves through the
@@ -248,7 +260,7 @@ fn calendar_union_lowers_to_the_exact_ir() {
     let arm_rule = |arm: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: Scheduling::CLAIM,
+            source: bumbledb::AtomSource::Edb(Scheduling::CLAIM),
             bindings: vec![
                 (Scheduling::CLAIM_PERSON, Term::Var(VarId(0))),
                 (Scheduling::CLAIM_SPAN, Term::Var(VarId(1))),
@@ -539,6 +551,94 @@ fn scalar_comparisons_round_trip() {
         pin("scalar-comparisons-fixed-point", Ledger, &reparsed),
         normalized
     );
+}
+
+/// The named-head program (the notation's recursion form): named heads
+/// declare predicates, a body atom names one (bindings address head
+/// POSITIONS — `0: v`, positional never nominal), and bare rules ARE
+/// the output. The org-hierarchy closure over `OrgParent`, rendered:
+/// interior rules carry the synthesized `p0` name, output rules render
+/// bare — and that normalized text reparses to the same bytes.
+const ORG_REACH_NORMALIZED: &str = "p0(v0, v1) | OrgParent(child: v0, parent: v1);\n\
+     p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(0: v1, 1: v2);\n\
+     (v0, v1) | p0(0: v0, 1: v1);";
+
+#[test]
+fn named_head_program_golden() {
+    let reachable = query!(Ledger {
+        reach(c, a) | OrgParent(child: c, parent: a);
+        reach(c, a) | OrgParent(child: c, parent: m), reach(0: m, 1: a);
+        (c, a) | reach(0: c, 1: a);
+    });
+    assert_eq!(
+        pin_program("org-reach", Ledger, &reachable),
+        ORG_REACH_NORMALIZED
+    );
+}
+
+#[test]
+fn named_head_normalized_text_is_a_fixed_point() {
+    let reparsed = query!(Ledger {
+        p0(v0, v1) | OrgParent(child: v0, parent: v1);
+        p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(0: v1, 1: v2);
+        (v0, v1) | p0(0: v0, 1: v1);
+    });
+    assert_eq!(
+        pin_program("org-reach-fixed-point", Ledger, &reparsed),
+        ORG_REACH_NORMALIZED
+    );
+}
+
+/// The program lowering pinned as data: predicate names are macro-local
+/// and never enter the IR — the emitted value carries bare `PredId`s,
+/// `Idb` sources, and head-position `FieldId`s, exactly what a host
+/// writes by hand.
+#[test]
+fn named_head_program_lowers_to_the_exact_ir() {
+    use bumbledb::ir::HeadTerm;
+    use bumbledb::{Atom, AtomSource, FieldId, FindTerm, PredId, Rule, Term, VarId};
+    let lowered = query!(Ledger {
+        reach(c, a) | OrgParent(child: c, parent: a);
+        reach(c, a) | OrgParent(child: c, parent: m), reach(0: m, 1: a);
+        (c, a) | reach(0: c, 1: a);
+    });
+    let parent_atom = |child: u16, parent: u16| Atom {
+        source: AtomSource::Edb(Ledger::ORG_PARENT),
+        bindings: vec![
+            (Ledger::ORG_PARENT_CHILD, Term::Var(VarId(child))),
+            (Ledger::ORG_PARENT_PARENT, Term::Var(VarId(parent))),
+        ],
+    };
+    let reach_atom = |a: u16, b: u16| Atom {
+        source: AtomSource::Idb(PredId(0)),
+        bindings: vec![
+            (FieldId(0), Term::Var(VarId(a))),
+            (FieldId(1), Term::Var(VarId(b))),
+        ],
+    };
+    let rule = |finds: [u16; 2], atoms: Vec<Atom>| Rule {
+        finds: finds.map(|v| FindTerm::Var(VarId(v))).to_vec(),
+        atoms,
+        negated: vec![],
+        conditions: vec![],
+    };
+    let expected = bumbledb::Program {
+        predicates: vec![
+            bumbledb::PredicateDef {
+                head: vec![HeadTerm::Var, HeadTerm::Var],
+                rules: vec![
+                    rule([0, 1], vec![parent_atom(0, 1)]),
+                    rule([0, 2], vec![parent_atom(0, 1), reach_atom(1, 2)]),
+                ],
+            },
+            bumbledb::PredicateDef {
+                head: vec![HeadTerm::Var, HeadTerm::Var],
+                rules: vec![rule([0, 1], vec![reach_atom(0, 1)])],
+            },
+        ],
+        output: PredId(1),
+    };
+    assert_eq!(lowered, expected);
 }
 
 /// A non-composite mask unions basics with `|` (set union over the 13),

@@ -122,9 +122,14 @@ fn fairness_and_the_prepared_sample_contract() {
 }
 
 /// The write mirrors run their full protocols with directionally sane
-/// results (a 512-row transaction outlasts a 1-row one).
+/// results (a 512-row transaction outlasts a 1-row one). Both commit
+/// shapes are `F_FULLFSYNC`-dominated (~24 ms each on the pinned
+/// machine), so under a saturated test host the direction can invert by
+/// scheduler noise alone — the measurement re-runs up to three rounds
+/// and fails only when the inversion is reproducible.
 #[test]
 fn write_mirrors_run_with_sane_direction() {
+    const ROUNDS: usize = 3;
     let dir = scratch("write");
     let conn = Connection::open(dir.join("oracle.sqlite")).expect("open");
     corpus::configure_sqlite(&conn).expect("configure");
@@ -134,21 +139,33 @@ fn write_mirrors_run_with_sane_direction() {
     for rel in non_posting_relations() {
         corpus::load_sqlite_relation(&conn, CFG, rel).expect("seed");
     }
-    let single = commit_single(&conn, CFG).expect("commit_single");
-    assert!(single.stats.min > 0);
-    assert_eq!(single.work, 64);
-    let batch = commit_batch(&conn, CFG).expect("commit_batch");
-    assert_eq!(batch.work, 512 * 32);
-    assert!(
-        batch.stats.p50 > single.stats.p50,
-        "512 rows outlast 1: batch {} vs single {}",
-        batch.stats.p50,
-        single.stats.p50
-    );
+    let mut rounds = 0usize;
+    loop {
+        let single = commit_single(&conn, CFG).expect("commit_single");
+        assert!(single.stats.min > 0);
+        assert_eq!(single.work, 64);
+        let batch = commit_batch(&conn, CFG).expect("commit_batch");
+        assert_eq!(batch.work, 512 * 32);
+        rounds += 1;
+        if batch.stats.p50 > single.stats.p50 {
+            break;
+        }
+        assert!(
+            rounds < ROUNDS,
+            "512 rows outlast 1 in none of {ROUNDS} rounds: batch {} vs single {}",
+            batch.stats.p50,
+            single.stats.p50
+        );
+    }
+    let per_round = i64::from(64 + 8 + 512 * (32 + 4));
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM \"Posting\"", [], |row| row.get(0))
         .expect("count");
-    assert_eq!(count, 64 + 8 + 512 * (32 + 4), "warmups included");
+    assert_eq!(
+        count,
+        per_round * i64::try_from(rounds).expect("fits"),
+        "warmups included, per measured round"
+    );
     drop(conn);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -3,8 +3,18 @@ use super::*;
 use crate::cli::{BenchArgs, CorpusArgs};
 use crate::corpus_gen::Scale;
 
+/// A unique-per-run scratch path: pid + wall-clock nanos, so two test
+/// runs (or a wedged prior run's residue — a stale LMDB flock, a
+/// half-compacted cal-db) can never collide on a fixed tag path.
 fn scratch(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("bumbledb-bench-driver-{tag}"));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "bumbledb-bench-driver-{tag}-{}-{nanos}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }

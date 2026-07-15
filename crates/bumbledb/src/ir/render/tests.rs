@@ -89,7 +89,7 @@ fn projection_rule(relation: RelationId) -> Rule {
     Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation,
+            source: crate::ir::AtomSource::Edb(relation),
             bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
         }],
         negated: vec![],
@@ -131,7 +131,7 @@ fn selection_negation_and_literal_mask_golden() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![
                 (PERSON, Term::Var(VarId(0))),
                 (DURING, Term::Var(VarId(1))),
@@ -139,7 +139,7 @@ fn selection_negation_and_literal_mask_golden() {
             ],
         }],
         negated: vec![Atom {
-            relation: OOO,
+            source: crate::ir::AtomSource::Edb(OOO),
             bindings: vec![(PERSON, Term::Var(VarId(0)))],
         }],
         conditions: vec![ConditionTree::Leaf(Comparison {
@@ -171,7 +171,7 @@ fn closed_reference_handles_golden() {
         Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
-                relation: BUSY,
+                source: crate::ir::AtomSource::Edb(BUSY),
                 bindings: vec![
                     (PERSON, Term::Var(VarId(0))),
                     (KIND, Term::Literal(Value::U64(word))),
@@ -199,11 +199,11 @@ fn closed_reference_handles_golden() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: BUSY,
+                source: crate::ir::AtomSource::Edb(BUSY),
                 bindings: vec![(PERSON, Term::Var(VarId(0))), (KIND, Term::Var(VarId(1)))],
             },
             Atom {
-                relation: KIND_RELATION,
+                source: crate::ir::AtomSource::Edb(KIND_RELATION),
                 bindings: vec![(FieldId(0), Term::Literal(Value::U64(1)))],
             },
         ],
@@ -229,7 +229,7 @@ fn pack_head_golden() {
             },
         ],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
         }],
         negated: vec![],
@@ -256,7 +256,7 @@ fn duration_head_golden() {
             },
         ],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
         }],
         negated: vec![],
@@ -282,7 +282,7 @@ fn membership_and_param_forms() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![
                 (PERSON, Term::ParamSet(ParamId(0))),
                 (DURING, Term::Var(VarId(1))),
@@ -315,7 +315,7 @@ fn malformed_queries_render_with_placeholders() {
             over: None,
         }],
         atoms: vec![Atom {
-            relation: RelationId(9),
+            source: crate::ir::AtomSource::Edb(RelationId(9)),
             bindings: vec![(FieldId(7), Term::Var(VarId(3)))],
         }],
         negated: vec![],
@@ -345,7 +345,7 @@ fn mask_union_spelling() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: BUSY,
+            source: crate::ir::AtomSource::Edb(BUSY),
             bindings: vec![(PERSON, Term::Var(VarId(0))), (DURING, Term::Var(VarId(1)))],
         }],
         negated: vec![],

@@ -75,7 +75,10 @@ struct IndexSpec {
 /// (statements are anonymous — materialized order is their identity).
 fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
     let mut plan = Vec::new();
-    let statement_count = schema.keys().len() + schema.containments().len();
+    let statement_count = schema.keys().len()
+        + schema.containments().len()
+        + schema.windows().len()
+        + schema.orders().len();
     for sid in 0..statement_count {
         let id = StatementId(u16::try_from(sid).expect("statement count fits u16"));
         match schema.statement(id) {
@@ -130,6 +133,11 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                         .collect(),
                 });
             }
+            // The extension forms are the naive lane's alone — SQL has no
+            // window or order-mark judgment, and no index accelerates a
+            // verdict SQLite never renders
+            // (`crate::translate::sqlite_expressible`).
+            StatementView::Cardinality(..) | StatementView::Order(..) => {}
         }
     }
     plan

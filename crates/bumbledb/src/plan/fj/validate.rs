@@ -55,6 +55,7 @@ fn build_occurrences(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
     schema: &Schema,
+    signatures: &[&crate::ir::validate::Predicate],
     slots: &[(VarId, SlotWidth)],
 ) -> Vec<PlanOccurrence> {
     normalized
@@ -97,10 +98,25 @@ fn build_occurrences(
                         .sum()
                 })
                 .collect();
-            let layout = schema.relation(occurrence.relation).layout();
-            let field_types: Vec<crate::encoding::TypeDesc> = (0..layout.field_count())
-                .map(|idx| layout.field_type(idx))
-                .collect();
+            // The field→column shape: a stored relation's layout, or —
+            // for an `Idb` occurrence — the target predicate's sealed
+            // signature columns (`FieldId(i)` is head position `i`, the
+            // positional reading `lean/Bumbledb/Exec/Fixpoint.lean:
+            // tupleFact` promises; the transient image is built with
+            // exactly these types, so the spans agree by construction).
+            let field_types: Vec<crate::encoding::TypeDesc> = match occurrence.source {
+                crate::ir::AtomSource::Edb(relation) => {
+                    let layout = schema.relation(relation).layout();
+                    (0..layout.field_count())
+                        .map(|idx| layout.field_type(idx))
+                        .collect()
+                }
+                crate::ir::AtomSource::Idb(pred) => signatures[usize::from(pred.0)]
+                    .columns
+                    .iter()
+                    .map(|column| column.ty.type_desc())
+                    .collect(),
+            };
             // A positive occurrence's Eq-constants become selection
             // levels (probes); a negated occurrence keeps its whole
             // filter list — the ordinary filtered view its anti-probe
@@ -130,7 +146,7 @@ fn build_occurrences(
             };
             PlanOccurrence {
                 occ_id: occurrence.occ_id,
-                relation: occurrence.relation,
+                source: occurrence.source,
                 role: occurrence.role,
                 vars: occurrence.vars.clone(),
                 selections,
@@ -177,15 +193,44 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// Only on programmer-invariant violations (more than 256 subatoms in one
 /// node — impossible for plans over the planner's occurrence cap — or a
 /// normalized query whose slot-width map misses a variable).
+/// The query-path entry: the empty `Idb` signature surface (a sealed
+/// `ValidatedQuery` carries no `Idb` occurrence). Test observability —
+/// production rules route through [`validate_with_signatures`].
+#[cfg(test)]
+pub fn validate(
+    plan: &FjPlan,
+    normalized: &NormalizedQuery,
+    schema: &Schema,
+    estimates: Vec<u64>,
+    sink_vars: &BTreeSet<VarId>,
+) -> Result<ValidatedPlan, PlanError> {
+    validate_with_signatures(plan, normalized, schema, &[], estimates, sink_vars)
+}
+
+/// [`validate`] with the program's `Idb` signature surface: an `Idb`
+/// occurrence's field→column spans derive from the target predicate's
+/// sealed columns (in `PredId` order) instead of a stored relation's
+/// layout — everything else is the conjunctive validation, verbatim.
+/// The query path passes the empty surface through [`validate`]: a
+/// sealed `ValidatedQuery` carries no `Idb` occurrence.
+///
+/// # Errors
+///
+/// As [`validate`].
+///
+/// # Panics
+///
+/// As [`validate`].
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // the placement rules read in order;
 // each attaches one residual kind
-pub fn validate(
+pub fn validate_with_signatures(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
     schema: &Schema,
+    signatures: &[&crate::ir::validate::Predicate],
     estimates: Vec<u64>,
     sink_vars: &BTreeSet<VarId>,
 ) -> Result<ValidatedPlan, PlanError> {
@@ -349,7 +394,7 @@ pub fn validate(
         }
     }
 
-    let occurrences = build_occurrences(plan, normalized, schema, &slots);
+    let occurrences = build_occurrences(plan, normalized, schema, signatures, &slots);
     // A tautology at this call site — `split_filters` just constructed
     // these occurrences, so no Eq-constant can sit in `filters`. The real
     // producers `check_selections` checks against are hand-built

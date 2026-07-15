@@ -67,15 +67,19 @@ store sweeper). The checks here quantify over RAW instances, not
 `State`, precisely so the countermodel can exhibit the missing
 premise.
 
-## Undischarged (spec-ahead): the window and order-mark checks
+## Discharged (2026-07-14): the window and order-mark CHECKS
 
-The engine's accepted statement forms today are functionality and
-containment, full stop (`crate::schema::StatementDescriptor`). The
-cardinality-window and order-mark delta-restriction theorems land NOW
-because they gate the queued Rust checker's design — the touched
-notions above ARE that checker's consultation plan — and their
-engine discharge is the 2026-07-14 vocabulary campaign's queued work.
-No `Bridge.lean` row cites them: deliberate, not an omission.
+The engine both ACCEPTS the window and order-mark forms at declaration
+(`StatementDescriptor::Cardinality` / `::Order`, the gate arms in
+`schema/validate.rs`) and ENFORCES them per commit: the
+delta-restricted checks this module states are the Rust checker's
+consultation plan, implemented as stated — the touched-parent set is
+`storage/commit/plan.rs`'s window derivation
+(`cardinality_delta_restriction`'s ledger row), the touched-group set
+with the ranked escalation is its order derivation
+(`order_delta_restriction`'s and `ranked_order_delta_restriction`'s
+rows), and `storage/commit/judgment.rs::check_windows` /
+`::check_orders` judge exactly those sets against the final state.
 
 ## Narrowings recorded (law 5: narrow and record)
 
@@ -450,7 +454,7 @@ theorem coverage_delta_restriction {T : Theory} {I : Instance}
       · exact coverage_untouched_point hpre hf₀ hφ hx ht
       · exact absurd (Or.inl ⟨f, Or.inl hadd, rfl, hx⟩) ht
 
-/-! ## Form 5 — the cardinality window (spec-ahead) -/
+/-! ## Form 5 — the cardinality window -/
 
 /-- The touched parent keys of one window statement: every parent key
 tuple any delta source fact projects to (a count that may have
@@ -497,7 +501,7 @@ theorem cardinality_untouched_group_eq {T : Theory} {I : Instance}
     · exact h'
     · exact absurd (Or.inl ⟨f, Or.inr h', hproj⟩) hun
 
-/-- **The window restriction theorem (spec-ahead).** Over a pre-state
+/-- **The window restriction theorem.** Over a pre-state
 holding the window, the final state holds it IFF the touched-parents
 check passes: an untouched parent is a pre-state parent whose child
 group is unchanged (`cardinality_untouched_group_eq`), so its window
@@ -525,7 +529,7 @@ theorem cardinality_delta_restriction {T : Theory} {I : Instance}
       rw [cardinality_untouched_group_eq ht]
       exact hpre g hg₀ hψ
 
-/-! ## Form 6 — the order mark (spec-ahead) -/
+/-! ## Form 6 — the order mark -/
 
 /-- The delta-restricted plain-order check: the ordinal discipline
 judged only at TOUCHED groups, against the final state. -/
@@ -557,7 +561,7 @@ theorem order_untouched_group_eq {T : Theory} {I : Instance}
     · exact h'
     · exact absurd ⟨f, Or.inr h', hproj⟩ hun
 
-/-- **The plain order-mark restriction theorem (spec-ahead).** Over a
+/-- **The plain order-mark restriction theorem.** Over a
 pre-state holding the mark, the final state holds it IFF the
 touched-groups check passes: an untouched group's fact set is
 unchanged (`order_untouched_group_eq`), so its ordinal discipline is
@@ -662,7 +666,7 @@ theorem rankOf_clean {T : Theory} {I : Instance} {d : Delta}
     obtain ⟨w, hw, hr⟩ := h
     exact ⟨w, (chainEval_clean c.hops hclean _ w).mpr hw, hr⟩
 
-/-- **The ranked order-mark restriction theorem (spec-ahead).** Over
+/-- **The ranked order-mark restriction theorem.** Over
 a pre-state holding the ranked mark, the final state holds it IFF the
 touched-groups check passes. The untouched case spends BOTH unchanged
 lemmas: the group's fact set is unchanged
@@ -804,10 +808,10 @@ final state models the theory. This is the one prose sentence of
 `docs/architecture/30-dependencies.md` § enforcement as mathematics —
 the incremental judgment convicts exactly what the full judgment
 convicts, so running only the restricted checks at commit loses
-nothing. Bridge, scoped: `storage/commit/judgment.rs::judge` +
-`storage/commit/apply.rs::apply` run the DISCHARGED forms' restricted
-checks (FD and containment — the window and order arms are
-spec-ahead, module doc § undischarged), and equivalent-under-premise
+nothing. Bridge: `storage/commit/judgment.rs::judge` +
+`storage/commit/apply.rs::apply` run every form's restricted check
+(FD, containment, window, and order — module doc § discharged), and
+equivalent-under-premise
 rather than literally these; the two recorded coincidences: (1) the
 Applier's FD probe covers only inserted determinant images while
 `Delta.projected` also spans remove-touched tuples — a superset that

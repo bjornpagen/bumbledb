@@ -1,7 +1,9 @@
 # 30 — Dependencies
 
 This chapter owns every invariant the engine enforces on committed states. There are
-exactly **two judgment forms**, both statements *about queries*, and nothing else:
+exactly **four statement forms** — the two original judgments (functionality,
+containment) and the two extension forms (the cardinality window, the order
+mark) — all statements *about queries*, and nothing else:
 no constraint kinds, no modes, no triggers, no deferral. The words *unique key*,
 *referential constraint*, *primary key*, *check constraint*, *exclusion constraint*, *cascade*,
 and *restrict* name nothing here; where one of them used to name something, this
@@ -10,9 +12,16 @@ chapter derives that something as an instance and the word is retired.
 ## The two judgments
 
 Both are parameterized by **single-atom queries** in the ordinary query IR
-(`20-query-ir.md`): a relation, a **selection** φ (a set of (field, literal)
-equality bindings — any type's literal), and a **projection** X (an ordered field
-list). Write such a query `R(X | φ)`; an empty selection is written `R(X)`.
+(`20-query-ir.md`): a relation, a **selection** φ (a set of (field, literal-set)
+bindings read conjunctively — each binding a disjunction over its spelled set,
+any type's literals; a singleton set is the equality binding, exactly
+(`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`), and the sets
+are first-class rather than per-literal sugar because counts over a union do not
+decompose (`lean/Bumbledb/Countermodels.lean:
+disjunctive_window_not_literal_conjunction`)), and a **projection** X (an ordered
+field list). Write such a query `R(X | φ)`; an empty selection is written `R(X)`;
+a set binding is written `field == {A, B}` (canonical form sorted and
+duplicate-free — validation sorts and rejects the degenerate spellings).
 Dependencies and queries share one representation; a dependency is not a new kind of
 thing, it is a required property of an old kind of thing.
 
@@ -88,12 +97,68 @@ without any staging concept (`50-storage.md` delta write path).
 ordering obligations onto the caller, and fights the accumulate-then-commit write
 path. **Reverses if:** never — semantics.
 
+## The extension forms
+
+**Cardinality window.** `A(X | φ) in lo..hi per B(Y | ψ)`: per selected target
+fact, the count of selected source facts sharing its projected tuple lies in the
+window (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`;
+`lean/Bumbledb/Schema.lean: Statement.cardinality`). `hi = *` is the only
+spelling of "no upper bound" and the default posture — the `0..*` window says
+nothing (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`), so a spelled
+statement always strengthens the default. Windows never manufacture parents —
+existence obligations are containments' alone
+(`lean/Bumbledb/Cardinality.lean: cardinality_of_empty_parent`). The form
+extends, never contradicts, the original vocabulary: a floored window implies the
+reverse containment (`lean/Bumbledb/Subsumption.lean: window_floor_containment`),
+and keyed `==` is exactly the `1..1` window
+(`lean/Bumbledb/Subsumption.lean: keyed_eq_unit_window`,
+`unit_window_containsEq` — the reconstruction returns bare mutual inclusion, the
+key premises staying acceptance's). The upper bound is load-bearing, not
+decorative (`lean/Bumbledb/Countermodels.lean: unit_window_two_children`).
+
+**Order mark.** `order R(pos) per R(grp) [by link -> K(rank) ...]`: per parent
+group, positions are exactly `1..k` — duplicate-free, 1-based, contiguous
+(`lean/Bumbledb/Order.lean: OrderMark`; `lean/Bumbledb/Schema.lean:
+Statement.order`) — and, when a `by` chain is spelled, monotone with the chased
+ranks, ties broken by exactly the lexicographic (rank, position) order
+(`lean/Bumbledb/Order.lean: RankedOrderMark`, `ranked_tiebreak_lex`). A
+hand-built row set is judged exactly like a generated one — which is what keeps
+hand-numbered columns honest; the gap and the duplicate are the two ways such a
+column lies (`lean/Bumbledb/Countermodels.lean: order_gap`, `order_duplicate`).
+The uniqueness half is the original key judgment on a restricted fact set
+(`lean/Bumbledb/Subsumption.lean: order_group_functionality`), and dropping the
+chain only weakens the judgment
+(`lean/Bumbledb/Order.lean: ranked_order_shadow`).
+
+Both forms' sides are **single atoms, permanently** (the E1 refusal: a join
+inside the judge breaks the linear per-statement cost model — the shape is
+proved uninhabitable at the gate type,
+`lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`).
+
+**Both forms are accepted at declaration and judged per commit.** Acceptance
+seals each statement's plan handle (the window's resolved target key; the
+ranked chain's per-hop key witnesses), and the commit pipeline runs exactly
+the plans the calculus prices (`lean/Bumbledb/Oracle.lean:
+cardinality_plan_decides`, `order_plan_decides`, `ranked_order_plan_decides`):
+per touched parent one keyed parent probe and one child-group walk; per
+touched group one position-ordered walk, the ranked form chasing its sealed
+hops per member. The touched sets are the delta-restriction theorems'
+(`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`, `rankedTouched`),
+and both forms' violations join the statement phase's complete citation set
+(§ judged on final states). `Db::verify_store` re-verifies both forms
+globally — the sweeper's half of the division of authority.
+
 ## Statements: the schema surface
 
 Dependencies are declared as standalone statements between relation blocks — the
 macro surface is the algebra with ASCII operator images (`⊆` is not a Rust token):
 `->` for FD, `<=` for ⊆ (the subset order *is* an order), `==` for set equality,
-`(fields)` for projection, `| field == literal` for selection.
+`in lo..hi per` for the cardinality window (`*` the no-ceiling spelling),
+`order R(pos) per R(grp) [by link -> K(rank)]` for the order mark (both atoms
+name one relation; a `by` hop spells its read field only — the hop key resolves
+to the relation's one single-field key at expansion, and an ambiguous key is an
+expansion error), `(fields)` for projection, `| field == literal` for selection
+with `| field == {A, B}` the literal-set binding.
 
 ```rust
 bumbledb::schema! {
@@ -112,6 +177,7 @@ bumbledb::schema! {
     Account(id | kind == Savings) == SavingsTerms(account);
     SavingsTerms(account) -> SavingsTerms;
     Account(holder, active) <= Employment(holder, during);
+    Account(holder | kind == {Checking, Savings}) in 1..4 per Holder(id);
 }
 ```
 
@@ -131,7 +197,10 @@ to statements (`key`, `in`, `union`). **Why it lost:** owner ruling —
 the surface must *be* the mental model; three keywords re-import three SQL concepts
 and hide that they were one. The derivations below are documentation, not syntax.
 **Reverses if:** never — and a future text frontend would lower to statements, not
-around them.
+around them. (The window's `in` is not that rejected sugar: it is a first-class
+judgment form with its own denotation
+(`lean/Bumbledb/Cardinality.lean: CardinalityWindow`), not a keyword lowering to
+other statements.)
 
 ## The acceptance gate
 
@@ -144,8 +213,8 @@ gate itself is one inhabited type: each single-key statement form's case for
 acceptance is its `lean/Bumbledb/Admission.lean: AdmissibleForm` term — denotation,
 executable judge, delta restriction, oracle plan, and creation-quarantine
 compliance, the checklist as a type. Six forms inhabit it (scalar and pointwise
-FD, scalar and coverage IND, the window, the plain order mark — the last two
-spec-ahead, like their checkers); a future form enters the vocabulary by
+FD, scalar and coverage IND, the window, the plain order mark — every one
+accepted at declaration and judged per commit); a future form enters the vocabulary by
 inhabiting it first, and the E1 joined-window shape is proved uninhabitable on
 the plan field (`lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`).
 The ranked order mark sits outside the type by design, not by omission: a rank
@@ -154,7 +223,9 @@ two read shapes whose refusal IS the E1 fence — so its acceptance case is the
 plan calculus directly (`lean/Bumbledb/Oracle.lean: ranked_order_plan_decides`,
 per-hop pricing proved, `lean/Bumbledb/Oracle.lean: chain_cost_hops`) with the
 touched-set escalation recorded
-(`lean/Bumbledb/Txn/DeltaRestriction.lean: rankedTouched`).
+(`lean/Bumbledb/Txn/DeltaRestriction.lean: rankedTouched`); the engine accepts
+the ranked form exactly by sealing that plan — one declared-key witness per hop
+(`schema/validate.rs::validate_rank_chain`).
 Concretely, validation demands:
 
 - **FD:** key form, no selection; at most **one** interval-typed field, and it must
@@ -194,9 +265,47 @@ Concretely, validation demands:
   **refused v0**: a pointwise judgment against a virtual extension would mix the
   coverage walk with virtual storage, and a constant source's coverage demand has
   no delete-time re-judgment path (*trigger* for lifting: a census sighting).
+- **Cardinality window:** the shared side shapes (arity, positional structural
+  type equality, the σ rules), then the containment target-key rule **reused
+  verbatim** — Y must resolve a declared key of B (`resolve_target_key`, the
+  same probe-ability demand; the promised plan is per touched parent one keyed
+  point probe plus one child-group walk,
+  `lean/Bumbledb/Oracle.lean: cardinality_plan_decides`,
+  `window_plan_consultations`) — and the **v0 interval refusal**: window
+  projections carry no interval-typed position, either side
+  (`CardinalityIntervalPosition` — a window counts FACTS per parent, and an
+  interval position would make the count ambiguous between facts and points;
+  *trigger* for lifting: a sighted counting-over-denotation workload —
+  `lean/Bumbledb/Cardinality.lean` § v0 refusals). Closed-side rules mirror
+  containment's: a closed target compiles the member-set plan through the same
+  key rule (projection = the synthetic id), and a window between constants is
+  decided at validate outright.
+- **Order mark:** position field u64 (`OrderPositionNotU64` — the ordinal
+  reading is of u64 numerals, `lean/Bumbledb/Order.lean: Value.ordinal`),
+  grouping a non-empty duplicate-free scalar projection
+  (`OrderGroupingInterval`; the degenerate empty grouping is refused — one
+  "group" must never be the whole relation, the walk-pricing narrowing of
+  `lean/Bumbledb/Admission.lean`); the promised plan is one prefix walk per
+  touched group (`lean/Bumbledb/Oracle.lean: order_plan_decides`,
+  `order_plan_consultations`). For the RANKED form, every `by` hop must resolve
+  a **declared single-field key** of its relation (`RankHopUnkeyed`) — the
+  demand that makes the rank read deterministic
+  (`lean/Bumbledb/Subsumption.lean: chain_eval_deterministic`) and each chase
+  probe a unit consultation (`lean/Bumbledb/Oracle.lean: chain_cost_hops`,
+  honest by `point_probe_honest`) — with the chain type-consistent hop to hop
+  (`RankChainTypeMismatch`) and the final payload u64 (`OrderRankNotU64`);
+  acceptance seals one key witness per hop, which IS the ranked plan's handle.
+  A PLAIN order mark on a closed relation is decided at validate (the whole
+  discipline over the sealed axioms); the RANKED form on a closed subject is
+  refused outright (`RankedOrderClosedSubject`): closed rows ride no delta and
+  no sweep, so the ranked clause — whose ranks read through writable hop
+  relations — would be judged nowhere (the sound narrowing recorded in
+  `lean/Bumbledb/Order.lean` § narrowings).
 - **Statements between constants** (both sides closed) are decided at validate
   outright: a declaration the ground axioms refute — a source axiom outside the
-  member set, or a declared key two axioms collide under — is a schema error, not
+  member set, a declared key two axioms collide under, a parent axiom whose
+  child count falls outside its window, or a closed order group with a gap or
+  duplicate — is a schema error, not
   a latent judgment, because a theory whose axioms refute its own statement has no
   model to commit (`lean/Bumbledb/Schema.lean: den_closed_constant` — a closed
   relation denotes the same sealed fact set at every instance).
@@ -213,13 +322,16 @@ This is the simplicity doctrine applied to invariants: generality of representat
 discipline of acceptance — an accepted statement is a *measured promise*, exactly
 like an accepted optimization (`00-product.md`).
 
-The sealed representation is a sum with homogeneous key and containment arenas.
+The sealed representation is a sum with homogeneous typed arenas — keys,
+containments, windows, order marks.
 `FieldSet` gives each projection canonical set identity (sorted and
 duplicate-free), while `Projection` retains statement order beside that set so
 validation compares identity and execution derives the target-key permutation.
-Validation is the only mint for `KeyId` and `ContainmentId`: a key witness resolves
+Validation is the only mint for `KeyId`, `ContainmentId`, `WindowId`, and
+`OrderId`: a key witness resolves
 totally through `Schema::key`, a containment witness resolves totally through
-`Schema::containment`, and `Schema::dependents` carries containment witnesses indexed
+`Schema::containment` (windows and order marks through `Schema::window` /
+`Schema::order`), and `Schema::dependents` carries containment witnesses indexed
 by a key witness. The global `StatementId` order survives as a separate sum-typed
 spine; `Schema::statement` parses it into the corresponding borrowed typed arm for
 fingerprint identity, storage, diagnostics, and rendering. Downstream code consumes
@@ -249,13 +361,12 @@ rule above is this law's acceptance face, and the entailment-vs-acceptance gap
 is formal (`lean/Bumbledb/Dependencies.lean: no_closure_superkey_implication` —
 proved, deliberately unspent); enforcement never skips a check as implied;
 schema evolution re-judges instances (`Db::verify_store`, ETL), never proves
-theory-to-theory entailment; statement selections stay equality-shaped —
-today's accepted surface is the (field, literal) equality binding above, and
-the tripwire's edge is a recorded decision (2026-07-14): it moves to
-equality-to-literal-SET — the disjunctive set fragment is admitted in the spec
-(`lean/Bumbledb/Schema.lean: Selection`; singleton = today's equality,
-`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`) and its engine
-discharge is queued, while the engine today accepts singletons only (richer σ
+theory-to-theory entailment; statement selections stay literal-SET-shaped —
+the 2026-07-14 decision executed: today's accepted surface is the
+(field, literal-set) disjunctive binding above, exactly the spec's fragment
+(`lean/Bumbledb/Schema.lean: Selection`; a singleton set is today's equality,
+`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`), and the
+tripwire's edge is now the set form itself — nothing richer enters (richer σ
 than literal sets moves the class toward denial constraints, where even
 satisfiability stops being trivial). **Alternative:** a decidable-fragment implication engine
 (unary INDs, acyclic reference graphs) powering redundancy elimination and
@@ -268,10 +379,11 @@ even then the feature lands diagnostics-side first, never on enforcement.
 
 **Decision: statements quantify over stored relations, permanently.** By
 representation: a statement's atoms carry `RelationId`, and no predicate
-vocabulary exists — or will exist — in the statement language, including after
-engine recursion lands (the recursion design's one-line `Idb` refusal in both
-grounding rewrites is this law's mechanism, `docs/reference/recursion-design.md`
-§1/§9 row 2). A containment between derived predicates is Datalog query
+vocabulary exists — or will exist — in the statement language, including under
+the landed recursion cut (query-side `PredId` and `RelationId` are separate
+identities that never pun, and the one-line `Idb` guard in both grounding
+rewrites — `plan/ground.rs`, `plan/ground/evaluate.rs` — is this law's
+mechanism, `20-query-ir.md` § engine recursion's consumer guards). A containment between derived predicates is Datalog query
 containment — undecidable outright — and commit-time enforcement would require
 materializing every constrained view per commit. **Alternative:**
 deductive-database constraints over views. **Why it lost:** the undecidability
@@ -421,6 +533,35 @@ untouched by it. The phases:
   extension's selected ground axioms — an honest ≤256-element scan on the delete path replaces the
   `R`-prefix probe, since a constant source stored no edges.
 - `==`: both directions, symmetric machinery.
+- Cardinality window: per **touched parent** — every parent key tuple any
+  delta child fact projects to (φ-blind, the recorded superset: a non-φ
+  fact never changes a group, and wider touched only re-checks more), plus
+  the delta's ψ-selected parents themselves
+  (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`) — one keyed
+  probe resolves the parent's ψ-selected holder in the final state (no
+  holder, no obligation: windows never manufacture parents), then one
+  ordered walk of the statement's `R` bucket counts the child group
+  (`lean/Bumbledb/Oracle.lean: cardinality_plan_decides` — the walk's
+  length verdict IS the delta-restricted check; a closed child set scans
+  its ≤256 axioms instead, exactly the domain-quantification move). A
+  count outside the window convicts with the statement id and the parent
+  fact's bytes. A floored window may share the containment's probe
+  machinery (`lean/Bumbledb/Subsumption.lean: window_floor_containment`)
+  but never skips its own check.
+- Order mark: per **touched group** — every grouping tuple any delta fact
+  projects to, removes included (a removal can break downward closure);
+  a delta touching any `by`-hop relation escalates to EVERY group
+  (`lean/Bumbledb/Txn/DeltaRestriction.lean: rankedTouched`) — one
+  position-ordered walk of the group's `R` keys checks uniqueness,
+  1-basedness, and downward closure as one positions-are-exactly-`1..k`
+  sweep (`lean/Bumbledb/Oracle.lean: order_plan_decides`); the ranked
+  form additionally chases each member's sealed key-backed hops — one
+  keyed probe per hop (`lean/Bumbledb/Oracle.lean: chain_cost_hops`) — and
+  demands ranks non-decreasing in position order
+  (`lean/Bumbledb/Order.lean: ranked_tiebreak_lex`; a hop miss means no
+  rank and imposes nothing — the relational reading). A broken group
+  convicts with the statement id, the defect kind, and a convicting
+  member's bytes.
 
 **Domain quantification, worked.** `Severity(id) <= Handler(severity)` with
 `Severity` closed and `Handler(severity) -> Handler` declared says *every severity
@@ -436,9 +577,11 @@ exactly the division of authority the delta-restricted judgment implies.
 
 **The checker consumes constants** (the staging law): every σ literal whose
 canonical bytes are a pure function of the value is sealed into the statement at
-validate — the commit path byte-compares against sealed encodings and resolves
+validate — the commit path byte-compares against sealed encodings (a set
+binding compares membership among its sealed alternatives; a singleton stays
+the one classic compare) and resolves
 only interned text (dictionary state is per-database; a never-interned literal
-still proves its side unsatisfiable). The pointwise/coverage judgment instead
+still proves its side — for a set binding, that alternative — unsatisfiable). The pointwise/coverage judgment instead
 consumes the `IntervalCoverage` variant's validator-minted
 `DisjointDeterminantProof`; no boolean can license the sweep.
 Two audited stays, recorded so the staging audit's lines are discharged rather
@@ -464,19 +607,30 @@ already certifies.
 Rejected at schema validation, each with a distinct error: unknown relation/field
 ids; empty or duplicate-carrying projections; arity mismatch between sides;
 positional structural-type mismatch; selection literal type mismatch (including
-non-UTF-8 string literals); a selected field also
-projected; FD with >1 interval position, interval not in
+non-UTF-8 string literals — every literal of a set binding checks); a selected field also
+projected; a degenerate literal set (a `Many` of zero or one literals — the
+empty set selects nothing and the singleton is the equality spelling); a
+duplicate literal within one binding's set (the set is canonical — sorted,
+duplicate-free); FD with >1 interval position, interval not in
 final position, or determinant width overflow; IND whose target projection matches no key
-of the target (or, with an interval position, no pointwise key carrying it);
+of the target (or, with an interval position, no pointwise key carrying it) —
+the same line covering a window's target projection, the rule being one;
+an interval-typed position in a window projection (the v0 refusal above);
+an order-mark position field that is not u64; an interval-typed order-mark
+grouping field (and the empty grouping falls to the empty-projection line);
+a `by` hop whose key field no declared single-field key backs; a `by` chain
+whose running type disagrees with a hop's key field; a `by` chain whose final
+payload is not u64;
 duplicate statements (identical normalized sides and form — write it once), where
 two FDs over one field *set* are duplicates regardless of projection order (the
-order shapes only the determinant, and key resolution is by set);
+order shapes only the determinant, and key resolution is by set) and two
+spellings of one literal set are one statement;
 a statement referencing an interval position against a scalar position (that is the
 type-mismatch case, called out because it is the one migration authors will hit);
 an interval position on a containment with a closed side (the v0 refusal above);
 a closed-target projection that is not the synthetic id (no key matches — the
 handle is the one probe-able identity); a statement between constants that the
-ground axioms refute.
+ground axioms refute (containment, window, and order-mark forms alike).
 FD-with-selection and non-key FD forms are not rejected here — they are
 **unrepresentable**: the descriptor cannot carry them, and the macro grammar
 rejects the utterance (`70-api.md`).

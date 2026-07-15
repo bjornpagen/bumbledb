@@ -6,6 +6,7 @@ use crate::schema::{
 };
 
 mod accept;
+mod program;
 mod reject;
 mod rules;
 mod signature;
@@ -76,7 +77,7 @@ const SPAN: u16 = 6; // Posting.span
 
 fn atom(relation: RelationId, bindings: Vec<(u16, Term)>) -> crate::ir::Atom {
     crate::ir::Atom {
-        relation,
+        source: crate::ir::AtomSource::Edb(relation),
         bindings: bindings.into_iter().map(|(f, t)| (FieldId(f), t)).collect(),
     }
 }

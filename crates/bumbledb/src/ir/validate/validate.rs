@@ -1,7 +1,13 @@
-use super::{Context, ParamKind, RuleTyping, TypeSlot, ValidatedQuery};
+use super::{
+    Context, IdbSignatures, ParamKind, Predicate, RuleTyping, TypeSlot, ValidatedProgram,
+    ValidatedQuery,
+};
 use crate::error::ValidationError;
 use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
-use crate::ir::{AggOp, FindTerm, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, VarId};
+use crate::ir::{
+    AggOp, FindTerm, MAX_CONDITION_DEPTH, MAX_PREDICATES, MAX_RULES, ParamId, PredId, Program,
+    Query, VarId,
+};
 use crate::schema::{Schema, ValueType};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,81 +38,24 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Rule-local payloads name positions inside the first failing
 /// **lowered** rule.
 pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, ValidationError> {
-    if query.rules.is_empty() {
-        return Err(ValidationError::EmptyRuleSet);
-    }
-    if query.rules.len() > MAX_RULES {
-        return Err(ValidationError::TooManyRules {
-            count: query.rules.len(),
-        });
-    }
-    if query.head.is_empty() {
-        return Err(ValidationError::EmptyFinds);
-    }
-
-    // The nesting boundary check runs before ANY recursive tree walk
-    // (the trust-boundary law: `disjunct_count` and `distribute` recurse
-    // by depth, so a hostile depth must be a typed rejection here, judged
-    // by the iterative `nesting_depth`, never a stack exhaustion there).
-    for (rule_idx, rule) in query.rules.iter().enumerate() {
-        let depth = nesting_depth(&rule.conditions);
-        if depth > MAX_CONDITION_DEPTH {
-            return Err(ValidationError::ConditionNestingTooDeep {
-                rule: rule_idx,
-                depth,
-                cap: MAX_CONDITION_DEPTH,
-            });
-        }
-    }
-
-    // DNF distribution: the cap is judged on the structural term count —
-    // no disjunct of an exponential case is ever materialized — and the
-    // distributed program collapses duplicates (set semantics at the
-    // representation level).
-    let produced = query
-        .rules
-        .iter()
-        .map(disjunct_count)
-        .fold(0, usize::saturating_add);
-    if produced > MAX_RULES {
-        return Err(ValidationError::DnfExceedsRules {
-            produced,
-            cap: MAX_RULES,
-        });
-    }
-    let lowered = collapse(query.rules.iter().flat_map(distribute).collect());
-    if lowered.is_empty() {
-        // Every rule's disjunction was empty: the program lowered to the
-        // empty union — no query.
-        return Err(ValidationError::EmptyRuleSet);
-    }
-    // Arg-restriction across rules is undefined — the restriction key is
-    // a rule-scoped variable outside the head's vocabulary, and rules
-    // need not even agree on its type — so it refuses at the boundary,
-    // judged on the LOWERED rule count (a DNF blowup of one Arg rule
-    // refuses too). Modeling answer: one Arg query per disjunct,
-    // host-merged (20-query-ir § aggregation).
-    if lowered.len() > 1
-        && query.head.iter().any(|term| {
-            matches!(
-                term,
-                crate::ir::HeadTerm::Aggregate(
-                    crate::ir::HeadOp::ArgMax | crate::ir::HeadOp::ArgMin
-                )
-            )
-        })
-    {
-        return Err(ValidationError::ArgAcrossRules {
-            rules: lowered.len(),
-        });
-    }
+    // An `Idb` atom at the QUERY boundary refuses inside the per-rule
+    // roster with the screen's own vocabulary (`UnknownPredicate`): a
+    // bare query has no predicate address space —
+    // [`IdbSignatures::EMPTY`] — and a `ValidatedQuery` cannot carry a
+    // fixpoint. Recursion's surface is the program boundary
+    // ([`validate_program`], executed by
+    // [`crate::Db::prepare_program`]'s per-stratum driver); the
+    // degenerate embedding runs the other way — a no-`Idb` program IS
+    // its output query (`lean/Bumbledb/Exec/Fixpoint.lean:
+    // degenerate_embedding`).
+    let lowered = lower_rules(&query.head, &query.rules)?;
 
     let mut pinned_row: Vec<ValueType> = Vec::new();
     let mut rules = Vec::with_capacity(lowered.len());
     let mut params = ParamTables::default();
     for (rule_idx, rule) in lowered.iter().enumerate() {
         check_head_alignment(&query.head, rule, rule_idx)?;
-        let (typing, ctx) = validate_rule(schema, rule)?;
+        let (typing, ctx) = validate_rule(schema, &IdbSignatures::EMPTY, rule)?;
         // Every rule derives the predicate: rule 0's resolved positional
         // input row pins the head, and every later rule must agree
         // position by position (the input row, not the signature — a
@@ -130,25 +79,343 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     // alignment above), and nothing downstream re-derives the signature.
     let predicate = super::Predicate::derive(&lowered[0], &rules[0]);
 
-    let ParamTables {
-        param_types,
-        param_kinds,
-        mask_params,
-        point_params,
-    } = params;
-    let set_params = param_kinds
-        .into_iter()
-        .filter_map(|(param, kind)| matches!(kind, ParamKind::Set).then_some(param))
+    Ok(seal(lowered, predicate, rules, &params))
+}
+
+/// Validates a program against the schema — the recursion cut's boundary
+/// (`docs/architecture/20-query-ir.md` § engine recursion), yielding the sealed
+/// per-predicate witnesses. The roster, in order:
+///
+/// 1. **Program shape**: the predicate cap ([`MAX_PREDICATES`]), the
+///    output screen, and per predicate the whole query shape roster
+///    (rule cap, empty edges, nesting, DNF distribution, head-shape
+///    alignment) — a predicate validates exactly as a query did.
+/// 2. **The well-formedness screen and the strata judge**
+///    (`ir/validate/strata.rs`): every `Idb` source names a real
+///    predicate and addresses inside its arity
+///    (`lean/Bumbledb/Query/Syntax.lean: Program.WellFormed`), the
+///    dependency graph's SCC condensation is computed iteratively, and
+///    the safety roster refuses `NegationThroughCycle`,
+///    `AggregationThroughCycle`, and `MeasureInRecursiveHead` — so
+///    recursive heads project bound variables only, which is the
+///    termination theorem's premise
+///    (`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite`).
+/// 3. **The executable-class item**
+///    ([`ValidationError::AggregateInteriorPredicate`] /
+///    [`ValidationError::MeasureInteriorPredicate`]): fold-headed AND
+///    measure-projecting predicates are legal only at the output —
+///    interior predicates are projection-shaped word-row tables of
+///    bound variables (the Lean cut's own class:
+///    `lean/Bumbledb/Query/Syntax.lean: PRule` heads are variable
+///    rows, `finds : List VarId`).
+/// 4. **The signature fixpoint**: each predicate's sealed signature
+///    derives from its first rule whose `Idb` targets are all already
+///    sealed — chaotic iteration, at most one pass per predicate — and
+///    a predicate that never seals is the typed
+///    `UnresolvedPredicateSignature`. Then the strict pass: every rule
+///    of every predicate under the full per-rule roster with all
+///    signatures sealed, head types aligned against the sealing rule's
+///    row, params unified **program-globally** (one binding surface).
+///
+/// A sealed [`ValidatedProgram`] executes whole: the per-stratum
+/// fixpoint driver (`api/prepared/fixpoint.rs`) consumes the witness —
+/// `Idb` occurrences included — and computes
+/// `lean/Bumbledb/Exec/Fixpoint.lean: evalProgram`'s answers
+/// (`program_eval_sound`).
+///
+/// # Errors
+///
+/// A distinct [`ValidationError`] per roster item. Predicates validate
+/// in `PredId` order; rule-local payloads name positions inside the
+/// first failing rule of the first failing predicate.
+///
+/// # Panics
+///
+/// Only on programmer-invariant violations (the sealing loop seals
+/// every predicate before the witnesses assemble).
+pub fn validate_program(
+    schema: &Schema,
+    program: &Program,
+) -> Result<ValidatedProgram, ValidationError> {
+    if program.predicates.len() > MAX_PREDICATES {
+        return Err(ValidationError::TooManyPredicates {
+            count: program.predicates.len(),
+        });
+    }
+    if usize::from(program.output.0) >= program.predicates.len() {
+        return Err(ValidationError::UnknownOutputPredicate {
+            pred: program.output,
+        });
+    }
+    let lowered: Vec<Vec<LoweredRule>> = program
+        .predicates
+        .iter()
+        .map(|def| lower_rules(&def.head, &def.rules))
+        .collect::<Result<_, _>>()?;
+    // Head-shape alignment per predicate (the type half runs after the
+    // typing fixpoint, against the sealing rule's row).
+    for (def, rules) in program.predicates.iter().zip(&lowered) {
+        for (rule_idx, rule) in rules.iter().enumerate() {
+            check_head_alignment(&def.head, rule, rule_idx)?;
+        }
+    }
+    let arities: Vec<usize> = program
+        .predicates
+        .iter()
+        .map(|def| def.head.len())
         .collect();
-    Ok(ValidatedQuery {
+    let strata = super::strata::stratify(&arities, &lowered)?;
+
+    // The executable-class roster item beside the strata judge: a fold-
+    // headed predicate is legal only AT the output — a fold's answers
+    // materialize at finalize, on the output's head-owned sink, while an
+    // interior predicate's answers are a transient word-row table read
+    // by `Idb` occurrences (the Lean cut cannot even represent a
+    // program-level fold head: `lean/Bumbledb/Query/Syntax.lean: PRule`
+    // has `finds : List VarId`, and `lean/Bumbledb/Exec/Fixpoint.lean:
+    // evalProgram` computes projection heads only). Aggregation *of*
+    // lower strata stays legal (20-query-ir.md § engine recursion): the OUTPUT
+    // predicate folds over finished `Idb` sets freely.
+    for (index, def) in program.predicates.iter().enumerate() {
+        let pred = PredId(u16::try_from(index).expect("predicate count capped at 16"));
+        if pred == program.output {
+            continue;
+        }
+        if def
+            .head
+            .iter()
+            .any(|term| matches!(term, crate::ir::HeadTerm::Aggregate(_)))
+        {
+            return Err(ValidationError::AggregateInteriorPredicate { pred });
+        }
+        // The measure half of the same item: a `Measure` find lowers to a
+        // `HeadTerm::Var` position (a value column), so the head scan
+        // above never sees it — but `PRule.finds : List VarId` cannot
+        // represent it either, recursive or not. The recursive form was
+        // already refused by the strata roster (`MeasureInRecursiveHead`);
+        // this arm refuses the non-recursive interior remainder.
+        if lowered[index]
+            .iter()
+            .flat_map(|rule| &rule.finds)
+            .any(|term| matches!(term, FindTerm::Measure(_)))
+        {
+            return Err(ValidationError::MeasureInteriorPredicate { pred });
+        }
+    }
+
+    let (sealed, pinned_rows) = seal_signatures(schema, &arities, &lowered)?;
+
+    // The strict pass: the full per-rule roster with every signature
+    // sealed, the head-type alignment against the sealing rule's row,
+    // and program-global param unification.
+    let count = program.predicates.len();
+    let mut params = ParamTables::default();
+    let mut typings: Vec<Vec<RuleTyping>> = Vec::with_capacity(count);
+    for index in 0..count {
+        let sigs = IdbSignatures {
+            arities: &arities,
+            sealed: &sealed,
+        };
+        let mut rules = Vec::with_capacity(lowered[index].len());
+        for (rule_idx, rule) in lowered[index].iter().enumerate() {
+            let (typing, ctx) = validate_rule(schema, &sigs, rule)?;
+            let row = input_row(rule, &typing);
+            if let Some(position) = (0..row.len()).find(|i| row[*i] != pinned_rows[index][*i]) {
+                return Err(ValidationError::HeadTypeMismatch {
+                    rule: rule_idx,
+                    position,
+                });
+            }
+            params.unify(ctx)?;
+            rules.push(typing);
+        }
+        typings.push(rules);
+    }
+    params.check_masks_and_density()?;
+
+    let predicates = lowered
+        .into_iter()
+        .zip(sealed)
+        .zip(typings)
+        .map(|((lowered, predicate), rules)| {
+            seal(
+                lowered,
+                predicate.expect("every predicate sealed above"),
+                rules,
+                &params,
+            )
+        })
+        .collect();
+    Ok(ValidatedProgram {
+        predicates,
+        output: program.output,
+        strata,
+    })
+}
+
+/// The sealing loop — the one signature derivation, quantified over
+/// predicates: a predicate seals from its FIRST rule whose `Idb`
+/// targets are all sealed (for a no-`Idb` predicate that is rule 0,
+/// exactly the query path's pinning). Chaotic iteration; every pass
+/// seals at least one predicate or stops, so the loop is bounded by the
+/// predicate cap. A rule eligible for sealing validates with every
+/// anchor available, so its errors are real and propagate. A predicate
+/// that never seals — every rule reads a same-SCC predicate whose own
+/// signature is still underived — is the typed
+/// `UnresolvedPredicateSignature`. Returns the sealed signatures
+/// (every entry `Some`) and each predicate's pinned input row.
+#[expect(
+    clippy::type_complexity,
+    reason = "the paired seal products are consumed immediately by the strict pass"
+)]
+fn seal_signatures(
+    schema: &Schema,
+    arities: &[usize],
+    lowered: &[Vec<LoweredRule>],
+) -> Result<(Vec<Option<Predicate>>, Vec<Vec<ValueType>>), ValidationError> {
+    let count = lowered.len();
+    let mut sealed: Vec<Option<Predicate>> = vec![None; count];
+    let mut pinned_rows: Vec<Vec<ValueType>> = vec![Vec::new(); count];
+    loop {
+        let mut progress = false;
+        for index in 0..count {
+            if sealed[index].is_some() {
+                continue;
+            }
+            let eligible = lowered[index].iter().find(|rule| {
+                idb_targets(rule)
+                    .all(|pred| sealed.get(usize::from(pred.0)).is_some_and(Option::is_some))
+            });
+            let Some(rule) = eligible else { continue };
+            let sigs = IdbSignatures {
+                arities,
+                sealed: &sealed,
+            };
+            let (typing, _ctx) = validate_rule(schema, &sigs, rule)?;
+            pinned_rows[index] = input_row(rule, &typing);
+            sealed[index] = Some(Predicate::derive(rule, &typing));
+            progress = true;
+        }
+        if !progress {
+            break;
+        }
+    }
+    if let Some(index) = sealed.iter().position(Option::is_none) {
+        return Err(ValidationError::UnresolvedPredicateSignature {
+            pred: PredId(u16::try_from(index).expect("predicate count capped at 16")),
+        });
+    }
+    Ok((sealed, pinned_rows))
+}
+
+/// The `Idb` predicates a lowered rule reads, positive and negated —
+/// the sealing loop's eligibility surface.
+fn idb_targets(rule: &LoweredRule) -> impl Iterator<Item = PredId> + '_ {
+    rule.atoms
+        .iter()
+        .chain(&rule.negated)
+        .filter_map(|atom| atom.source.idb())
+}
+
+/// One predicate's witness, sealed from its lowered rules, signature,
+/// typings, and the (program-global on the program path) param tables.
+fn seal(
+    lowered: Vec<LoweredRule>,
+    predicate: Predicate,
+    rules: Vec<RuleTyping>,
+    params: &ParamTables,
+) -> ValidatedQuery {
+    let set_params = params
+        .param_kinds
+        .iter()
+        .filter_map(|(param, kind)| matches!(kind, ParamKind::Set).then_some(*param))
+        .collect();
+    ValidatedQuery {
         lowered,
         predicate,
         rules,
-        param_types,
+        param_types: params.param_types.clone(),
         set_params,
-        point_params,
-        mask_params,
-    })
+        point_params: params.point_params.clone(),
+        mask_params: params.mask_params.clone(),
+    }
+}
+
+/// The query-shape half of the roster, per predicate: empty rule set,
+/// the rule cap, empty head, the nesting boundary check, DNF
+/// distribution under its structural cap, and the Arg-across-rules
+/// refusal — yielding the Or-free lowered rules everything downstream
+/// reads.
+fn lower_rules(
+    head: &[crate::ir::HeadTerm],
+    rules: &[crate::ir::Rule],
+) -> Result<Vec<LoweredRule>, ValidationError> {
+    if rules.is_empty() {
+        return Err(ValidationError::EmptyRuleSet);
+    }
+    if rules.len() > MAX_RULES {
+        return Err(ValidationError::TooManyRules { count: rules.len() });
+    }
+    if head.is_empty() {
+        return Err(ValidationError::EmptyFinds);
+    }
+
+    // The nesting boundary check runs before ANY recursive tree walk
+    // (the trust-boundary law: `disjunct_count` and `distribute` recurse
+    // by depth, so a hostile depth must be a typed rejection here, judged
+    // by the iterative `nesting_depth`, never a stack exhaustion there).
+    for (rule_idx, rule) in rules.iter().enumerate() {
+        let depth = nesting_depth(&rule.conditions);
+        if depth > MAX_CONDITION_DEPTH {
+            return Err(ValidationError::ConditionNestingTooDeep {
+                rule: rule_idx,
+                depth,
+                cap: MAX_CONDITION_DEPTH,
+            });
+        }
+    }
+
+    // DNF distribution: the cap is judged on the structural term count —
+    // no disjunct of an exponential case is ever materialized — and the
+    // distributed program collapses duplicates (set semantics at the
+    // representation level).
+    let produced = rules
+        .iter()
+        .map(disjunct_count)
+        .fold(0, usize::saturating_add);
+    if produced > MAX_RULES {
+        return Err(ValidationError::DnfExceedsRules {
+            produced,
+            cap: MAX_RULES,
+        });
+    }
+    let lowered = collapse(rules.iter().flat_map(distribute).collect());
+    if lowered.is_empty() {
+        // Every rule's disjunction was empty: the program lowered to the
+        // empty union — no query.
+        return Err(ValidationError::EmptyRuleSet);
+    }
+    // Arg-restriction across rules is undefined — the restriction key is
+    // a rule-scoped variable outside the head's vocabulary, and rules
+    // need not even agree on its type — so it refuses at the boundary,
+    // judged on the LOWERED rule count (a DNF blowup of one Arg rule
+    // refuses too). Modeling answer: one Arg query per disjunct,
+    // host-merged (20-query-ir § aggregation).
+    if lowered.len() > 1
+        && head.iter().any(|term| {
+            matches!(
+                term,
+                crate::ir::HeadTerm::Aggregate(
+                    crate::ir::HeadOp::ArgMax | crate::ir::HeadOp::ArgMin
+                )
+            )
+        })
+    {
+        return Err(ValidationError::ArgAcrossRules {
+            rules: lowered.len(),
+        });
+    }
+    Ok(lowered)
 }
 
 /// Head alignment, the shape half: arity, then var-vs-aggregate-op kind
@@ -178,9 +445,12 @@ fn check_head_alignment(
 }
 
 /// The per-rule roster — exactly the conjunctive query's checks, over one
-/// rule's own variable scope and its own bivalent-anchor typing fixpoint.
+/// rule's own variable scope and its own bivalent-anchor typing fixpoint;
+/// `idb` is the target-signature surface `Idb` anchors resolve against
+/// (empty on the query path).
 fn validate_rule(
     schema: &Schema,
+    idb: &IdbSignatures<'_>,
     rule: &LoweredRule,
 ) -> Result<(RuleTyping, Context), ValidationError> {
     if rule.atoms.is_empty() {
@@ -203,7 +473,7 @@ fn validate_rule(
     }
 
     let mut ctx = Context::default();
-    ctx.check_atoms(schema, rule)?;
+    ctx.check_atoms(schema, idb, rule)?;
     let classified = ctx.check_comparisons(rule)?;
     ctx.check_membership_domains()?;
     // The group key (non-aggregated find variables) is computed once and

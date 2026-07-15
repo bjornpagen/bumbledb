@@ -70,7 +70,7 @@ fn disjoint_arms(rng: &mut Rng) -> Query {
         .map(|ordinal| Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             atoms: vec![Atom {
-                relation: ids::JOURNAL_ENTRY,
+                source: bumbledb::AtomSource::Edb(ids::JOURNAL_ENTRY),
                 bindings: vec![
                     (ids::journal_entry::ID, Term::Var(VarId(0))),
                     (
@@ -95,7 +95,7 @@ fn du_twin() -> Query {
         Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
-                relation: ids::JOURNAL_ENTRY,
+                source: bumbledb::AtomSource::Edb(ids::JOURNAL_ENTRY),
                 bindings: vec![
                     (ids::journal_entry::ID, Term::Var(VarId(0))),
                     (
@@ -110,7 +110,7 @@ fn du_twin() -> Query {
         Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
-                relation: ids::IMPORT_BATCH,
+                source: bumbledb::AtomSource::Edb(ids::IMPORT_BATCH),
                 bindings: vec![(ids::import_batch::ENTRY, Term::Var(VarId(0)))],
             }],
             negated: vec![],
@@ -125,7 +125,7 @@ fn posting_arm(finds: Vec<FindTerm>, floor: i64) -> Rule {
     Rule {
         finds,
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            source: bumbledb::AtomSource::Edb(ids::POSTING),
             bindings: vec![
                 (ids::posting::ACCOUNT, Term::Var(VarId(0))),
                 (ids::posting::AT, Term::Var(VarId(1))),

@@ -19,7 +19,7 @@ impl Builder {
 
     pub(super) fn add_atom(&mut self, relation: RelationId) -> usize {
         self.atoms.push(Atom {
-            relation,
+            source: bumbledb::AtomSource::Edb(relation),
             bindings: Vec::new(),
         });
         self.atoms.len() - 1
@@ -38,7 +38,7 @@ impl Builder {
     /// membership anchors select by (relation, field), never by hope).
     pub(super) fn bind_var(&mut self, atom: usize, field: FieldId) -> VarId {
         let var = self.fresh_var();
-        let relation = self.atoms[atom].relation;
+        let relation = self.atoms[atom].relation();
         self.bind(atom, field, Term::Var(var));
         self.bound.push(var);
         self.anchors.push((var, relation, field));
@@ -89,7 +89,7 @@ impl Builder {
     /// rejects, so every variable placed in it must come from `anchors`).
     pub(super) fn negated_atom(&mut self, relation: RelationId) -> usize {
         self.negated.push(Atom {
-            relation,
+            source: bumbledb::AtomSource::Edb(relation),
             bindings: Vec::new(),
         });
         self.negated.len() - 1

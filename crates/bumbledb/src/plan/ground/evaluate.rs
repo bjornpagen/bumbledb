@@ -132,7 +132,13 @@ fn fold_positive(
     c_idx: usize,
 ) -> bool {
     let occurrence = &normalized.occurrences[c_idx];
-    let relation = schema.relation(occurrence.relation);
+    // THE GUARD (20-query-ir.md § engine recursion's consumer guards): sealed
+    // extensions exist only for closed stored relations, so an `Idb`
+    // occurrence has no stage-0 rows and never folds.
+    let Some(relation_id) = occurrence.source.edb() else {
+        return false;
+    };
+    let relation = schema.relation(relation_id);
     if relation.extension().is_none() {
         return false; // ordinary relations have no stage-0 rows
     }
@@ -181,11 +187,7 @@ fn fold_positive(
         // nothing on ANY store.
         normalized.dead = Some(format!(
             "folded to ∅: {}",
-            folded_picture(
-                schema,
-                normalized.occurrences[c_idx].relation,
-                &normalized.occurrences[c_idx].filters,
-            )
+            folded_picture(schema, relation_id, &normalized.occurrences[c_idx].filters,)
         ));
         return true;
     }
@@ -202,7 +204,12 @@ fn fold_positive(
 /// fold — direction pinned there and by the tests).
 fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize) -> bool {
     let occurrence = &normalized.occurrences[c_idx];
-    let relation = schema.relation(occurrence.relation);
+    // The positive fold's `Idb` guard, verbatim: no sealed extension,
+    // no stage-0 rows, no fold (20-query-ir.md § engine recursion's consumer guards).
+    let Some(relation_id) = occurrence.source.edb() else {
+        return false;
+    };
+    let relation = schema.relation(relation_id);
     let Some(rows) = relation.extension() else {
         return false;
     };
@@ -227,7 +234,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         // every store, so the probe rejects every binding — rule dead.
         normalized.dead = Some(format!(
             "folded: !{} rejects every binding",
-            folded_picture(schema, occurrence.relation, &occurrence.filters)
+            folded_picture(schema, relation_id, &occurrence.filters)
         ));
         return true;
     }
@@ -238,7 +245,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     let &[(FieldId(0), k)] = occurrence.vars.as_slice() else {
         return false;
     };
-    let closed = occurrence.relation;
+    let closed = relation_id;
     let binders = membership_binders(normalized, c_idx, k);
     if binders.is_empty() {
         return false; // the complement membership needs a home
@@ -530,7 +537,7 @@ pub(super) fn domain_within_ids(
         .any(|(_, occ)| {
             occ.vars.iter().any(|(field, var)| {
                 *var == k
-                    && ((occ.relation == closed && *field == FieldId(0))
+                    && ((occ.source.edb() == Some(closed) && *field == FieldId(0))
                         || containment_into_id(schema, occ, *field, closed))
             })
         })
@@ -547,13 +554,15 @@ fn containment_into_id(
     closed: RelationId,
 ) -> bool {
     schema.containments().iter().any(|statement| {
-        statement.source.relation == occurrence.relation
+        occurrence.source.edb() == Some(statement.source.relation)
             && statement.source.projection.as_ref() == [field]
             && statement.target.relation == closed
             && statement.target.projection.as_ref() == [FieldId(0)]
-            && super::encoded_selection(&statement.source)
-                .iter()
-                .all(|(f, value)| {
+            && super::encoded_selection(&statement.source).is_some_and(|phi| {
+                // A disjunctive φ binding answers "unknown" (`None`
+                // upstream): no single-literal filter list certifies a
+                // set binding, so the domain guarantee is not spent.
+                phi.iter().all(|(f, value)| {
                     occurrence.filters.iter().any(|filter| {
                         matches!(
                             filter,
@@ -562,6 +571,7 @@ fn containment_into_id(
                         )
                     })
                 })
+            })
     })
 }
 

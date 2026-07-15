@@ -153,6 +153,14 @@ impl<S> PreparedQuery<'_, S> {
         cache: &ImageCache,
         counters: &mut C,
     ) -> Result<bool> {
+        // A recursive program takes the per-stratum fixpoint driver
+        // (`fixpoint.rs`); the non-recursive rule loop below is
+        // untouched — the degenerate form never reaches the driver
+        // (`prepare_program` prepares a no-`Idb` program as its output
+        // predicate's query, byte for byte).
+        if matches!(self.program, Program::Fixpoint(_)) {
+            return self.run_fixpoint(txn, cache, counters);
+        }
         self.sink.reset();
         let mut ran = false;
         let rule_count = self.program.rules().len();
@@ -168,6 +176,10 @@ impl<S> PreparedQuery<'_, S> {
     /// sink. `Ok(false)` = the positive-occurrence `Eq` short-circuit (a
     /// dictionary miss or empty set emptied this conjunctive rule; the
     /// other rules still run — a rule is one disjunct).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the rule loop's one step reads as one protocol: aim, resolve, run, account"
+    )]
     pub(super) fn run_rule<C: Counters>(
         &mut self,
         rule_idx: usize,
@@ -199,6 +211,9 @@ impl<S> PreparedQuery<'_, S> {
             return Ok(false);
         };
         let ran = match &mut rules[rule_idx] {
+            PreparedRule::Recursive(_) => {
+                unreachable!("recursive rules run under the fixpoint driver, never the rule loop")
+            }
             PreparedRule::KeyProbe(rule) => {
                 execute_key_probe(
                     &rule.plan,
@@ -243,19 +258,44 @@ impl<S> PreparedQuery<'_, S> {
                     // join runs — the hot path never touches the param
                     // slice.
                     rule.executor.bind_allen_masks(&self.resolved_params);
-                    run_join(
-                        plan,
-                        self.schema,
-                        txn,
-                        cache,
-                        &mut rule.executor,
-                        &mut self.bindings,
-                        &rule.resolved_filters,
-                        &rule.resolved_selections,
-                        &mut rule.memo,
-                        &mut self.sink,
-                        counters,
-                    )?;
+                    // One match per execution: the executor monomorphizes
+                    // per concrete sink type — no per-emit enum branch on
+                    // the hot path. No `Idb` image slice (and so no
+                    // retired-buffer pool): a query-path plan carries
+                    // only stored occurrences.
+                    let mut no_retired = Vec::new();
+                    match &mut self.sink {
+                        super::EitherSink::Projection(s) => run_join(
+                            plan,
+                            self.schema,
+                            txn,
+                            cache,
+                            &mut rule.executor,
+                            &mut self.bindings,
+                            &rule.resolved_filters,
+                            &rule.resolved_selections,
+                            &mut rule.memo,
+                            &[],
+                            &mut no_retired,
+                            s,
+                            counters,
+                        )?,
+                        super::EitherSink::Aggregate(s) => run_join(
+                            plan,
+                            self.schema,
+                            txn,
+                            cache,
+                            &mut rule.executor,
+                            &mut self.bindings,
+                            &rule.resolved_filters,
+                            &rule.resolved_selections,
+                            &mut rule.memo,
+                            &[],
+                            &mut no_retired,
+                            s.as_mut(),
+                            counters,
+                        )?,
+                    }
                 }
                 resolved
             }

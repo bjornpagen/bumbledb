@@ -113,7 +113,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
     // R(a = v, b = v): one var position, one same-fact equality filter.
     let query = query(
         vec![Atom {
-            relation: R,
+            source: crate::ir::AtomSource::Edb(R),
             bindings: vec![(FieldId(1), var(0)), (FieldId(2), var(0))],
         }],
         vec![],
@@ -167,7 +167,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
 fn literal_and_param_bindings_lower_to_eq_filters() {
     let query = query(
         vec![Atom {
-            relation: R,
+            source: crate::ir::AtomSource::Edb(R),
             bindings: vec![
                 (FieldId(0), var(0)),
                 (FieldId(1), Term::Literal(Value::I64(-7))),
@@ -263,14 +263,14 @@ fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: R,
+                source: crate::ir::AtomSource::Edb(R),
                 bindings: vec![
                     (FieldId(0), var(0)),
                     (FieldId(1), Term::Literal(Value::I64(1))),
                 ],
             },
             Atom {
-                relation: R,
+                source: crate::ir::AtomSource::Edb(R),
                 bindings: vec![
                     (FieldId(0), var(1)),
                     (FieldId(1), Term::Literal(Value::I64(2))),
@@ -284,8 +284,8 @@ fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
     assert_eq!(norm.occurrences.len(), 2);
     assert_eq!(norm.occurrences[0].occ_id, OccId(0));
     assert_eq!(norm.occurrences[1].occ_id, OccId(1));
-    assert_eq!(norm.occurrences[0].relation, R);
-    assert_eq!(norm.occurrences[1].relation, R);
+    assert_eq!(norm.occurrences[0].relation(), R);
+    assert_eq!(norm.occurrences[1].relation(), R);
     assert_ne!(norm.occurrences[0].filters, norm.occurrences[1].filters);
 }
 
@@ -296,11 +296,11 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
     let query = query(
         vec![
             Atom {
-                relation: R,
+                source: crate::ir::AtomSource::Edb(R),
                 bindings: vec![(FieldId(0), var(2)), (FieldId(1), var(0))],
             },
             Atom {
-                relation: S,
+                source: crate::ir::AtomSource::Edb(S),
                 bindings: vec![(FieldId(1), var(1))],
             },
         ],
@@ -366,7 +366,7 @@ fn occurrence_vars_are_duplicate_free_over_generated_inputs() {
         }
         let query = query(
             vec![Atom {
-                relation: R,
+                source: crate::ir::AtomSource::Edb(R),
                 bindings,
             }],
             vec![],
@@ -394,11 +394,11 @@ fn zero_binding_atom_becomes_an_empty_occurrence() {
     let query = query(
         vec![
             Atom {
-                relation: R,
+                source: crate::ir::AtomSource::Edb(R),
                 bindings: vec![(FieldId(0), var(0))],
             },
             Atom {
-                relation: S,
+                source: crate::ir::AtomSource::Edb(S),
                 bindings: vec![],
             },
         ],
@@ -418,7 +418,7 @@ fn same_atom_var_var_comparison_lowers_to_a_filter() {
     // only, docs/architecture/20-query-ir.md).
     let query = query(
         vec![Atom {
-            relation: R,
+            source: crate::ir::AtomSource::Edb(R),
             bindings: vec![(FieldId(1), var(0)), (FieldId(2), var(1))],
         }],
         vec![],
@@ -451,7 +451,7 @@ fn constant_point_membership_lowers_to_point_in() {
     // interval field lowers to a per-atom PointIn range filter.
     let literal = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_EMP, var(0)), (P_DURING, Term::Literal(Value::I64(5)))],
         }],
         vec![],
@@ -472,11 +472,11 @@ fn constant_point_membership_lowers_to_point_in() {
     let param = query(
         vec![
             Atom {
-                relation: P,
+                source: crate::ir::AtomSource::Edb(P),
                 bindings: vec![(P_EMP, var(0)), (P_DURING, Term::Param(ParamId(0)))],
             },
             Atom {
-                relation: E,
+                source: crate::ir::AtomSource::Edb(E),
                 bindings: vec![(E_AT, Term::Param(ParamId(0)))],
             },
         ],
@@ -500,7 +500,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
     // residual.
     let allen = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_DURING, var(0)), (P_REVIEW, var(1))],
         }],
         vec![],
@@ -534,7 +534,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
     // complement): exactly one interval-pair form leaves normalization.
     let eq = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_DURING, var(0)), (P_REVIEW, var(1))],
         }],
         vec![],
@@ -554,7 +554,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
     );
     let ne = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_DURING, var(0)), (P_REVIEW, var(1))],
         }],
         vec![],
@@ -576,7 +576,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
     // PointIn's surviving point form: same-atom membership predicate.
     let point_in = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_DURING, var(1)), (P_AT, var(0))],
         }],
         vec![],
@@ -605,11 +605,11 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
     // descriptor carries the occurrence and its variable set.
     let query = query(
         vec![Atom {
-            relation: R,
+            source: crate::ir::AtomSource::Edb(R),
             bindings: vec![(FieldId(0), var(0))],
         }],
         vec![Atom {
-            relation: S,
+            source: crate::ir::AtomSource::Edb(S),
             bindings: vec![
                 (FieldId(0), var(0)),
                 (FieldId(1), Term::Literal(Value::I64(-7))),
@@ -622,7 +622,7 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
     let negated = &norm.occurrences[1];
     assert_eq!(negated.occ_id, OccId(1));
     assert_eq!(negated.role, Role::Negated);
-    assert_eq!(negated.relation, S);
+    assert_eq!(negated.relation(), S);
     assert_eq!(negated.vars, vec![(FieldId(0), VarId(0))]);
     assert_eq!(
         negated.filters,
@@ -654,11 +654,11 @@ fn cross_atom_allen_becomes_the_mask_residual() {
     let allen = query(
         vec![
             Atom {
-                relation: P,
+                source: crate::ir::AtomSource::Edb(P),
                 bindings: vec![(P_DURING, var(0))],
             },
             Atom {
-                relation: P,
+                source: crate::ir::AtomSource::Edb(P),
                 bindings: vec![(P_DURING, var(1))],
             },
         ],
@@ -685,11 +685,11 @@ fn cross_atom_allen_becomes_the_mask_residual() {
     let eq = query(
         vec![
             Atom {
-                relation: P,
+                source: crate::ir::AtomSource::Edb(P),
                 bindings: vec![(P_DURING, var(0))],
             },
             Atom {
-                relation: P,
+                source: crate::ir::AtomSource::Edb(P),
                 bindings: vec![(P_DURING, var(1))],
             },
         ],
@@ -726,11 +726,11 @@ fn cross_atom_allen_becomes_the_mask_residual() {
     let point_in = query(
         vec![
             Atom {
-                relation: P,
+                source: crate::ir::AtomSource::Edb(P),
                 bindings: vec![(P_DURING, var(0))],
             },
             Atom {
-                relation: E,
+                source: crate::ir::AtomSource::Edb(E),
                 bindings: vec![(E_AT, var(1))],
             },
         ],
@@ -768,7 +768,7 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
     // executor side is PRD 17).
     let scalar = query(
         vec![Atom {
-            relation: S,
+            source: crate::ir::AtomSource::Edb(S),
             bindings: vec![
                 (FieldId(0), var(0)),
                 (FieldId(1), Term::ParamSet(ParamId(0))),
@@ -789,7 +789,7 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
     // On an interval field the set holds points: AnyPointIn.
     let point_set = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_EMP, var(0)), (P_DURING, Term::ParamSet(ParamId(0)))],
         }],
         vec![],
@@ -813,7 +813,7 @@ fn same_atom_membership_variable_lowers_to_the_field_composition() {
     // binding order must not matter (the membership binding comes first).
     let query = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_DURING, var(0)), (P_AT, var(0))],
         }],
         vec![],
@@ -841,11 +841,11 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: P,
+                source: crate::ir::AtomSource::Edb(P),
                 bindings: vec![(P_EMP, var(1)), (P_DURING, var(0))],
             },
             Atom {
-                relation: E,
+                source: crate::ir::AtomSource::Edb(E),
                 bindings: vec![(E_AT, var(0))],
             },
         ],
@@ -882,7 +882,7 @@ fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
         end: w(9),
     };
     let p_atom = || Atom {
-        relation: P,
+        source: crate::ir::AtomSource::Edb(P),
         bindings: vec![(P_DURING, var(0))],
     };
 
@@ -973,7 +973,7 @@ fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
     // containment on the point's field.
     let point_within = query(
         vec![Atom {
-            relation: E,
+            source: crate::ir::AtomSource::Edb(E),
             bindings: vec![(FieldId(0), var(0)), (E_AT, var(1))],
         }],
         vec![],
@@ -1013,7 +1013,7 @@ fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
     // (a probeable selection over the two-word pair).
     let equality = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_EMP, var(0)), (P_DURING, iv())],
         }],
         vec![],
@@ -1035,7 +1035,7 @@ fn interval_param_equality_binding_stays_an_eq_compare() {
     // to the interval reading — value equality, a bind-resolved selection.
     let query = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_EMP, var(0)), (P_DURING, Term::Param(ParamId(0)))],
         }],
         vec![],
@@ -1093,7 +1093,7 @@ fn sweep_scalar_var_var_placements() {
     for op in [CmpOp::Lt, CmpOp::Ge, CmpOp::Eq, CmpOp::Ne] {
         let same = query(
             vec![Atom {
-                relation: R,
+                source: crate::ir::AtomSource::Edb(R),
                 bindings: vec![
                     (FieldId(0), var(0)),
                     (FieldId(1), var(1)),
@@ -1122,11 +1122,11 @@ fn sweep_scalar_var_var_placements() {
         let cross = query(
             vec![
                 Atom {
-                    relation: R,
+                    source: crate::ir::AtomSource::Edb(R),
                     bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
                 },
                 Atom {
-                    relation: S,
+                    source: crate::ir::AtomSource::Edb(S),
                     bindings: vec![(FieldId(1), var(2))],
                 },
             ],
@@ -1157,7 +1157,7 @@ fn sweep_scalar_var_const_placements() {
     // constant-first: the filter's operator is sealed variable-on-left
     // (a constant-first order comparison mirrors; Eq/Ne are symmetric).
     let r_atom = || Atom {
-        relation: R,
+        source: crate::ir::AtomSource::Edb(R),
         bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
     };
     let cases = [
@@ -1207,7 +1207,7 @@ fn sweep_param_set_comparison_placements() {
         };
         let q = query(
             vec![Atom {
-                relation: R,
+                source: crate::ir::AtomSource::Edb(R),
                 bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
             }],
             vec![],
@@ -1244,7 +1244,7 @@ fn sweep_allen_param_placements() {
     };
     let same = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_DURING, var(0)), (P_REVIEW, var(1))],
         }],
         vec![],
@@ -1265,11 +1265,11 @@ fn sweep_allen_param_placements() {
     let cross = query(
         vec![
             Atom {
-                relation: P,
+                source: crate::ir::AtomSource::Edb(P),
                 bindings: vec![(P_DURING, var(0))],
             },
             Atom {
-                relation: P,
+                source: crate::ir::AtomSource::Edb(P),
                 bindings: vec![(P_DURING, var(1))],
             },
         ],
@@ -1291,7 +1291,7 @@ fn sweep_allen_param_placements() {
 
     // A param constant side under a literal mask.
     let p_atom = || Atom {
-        relation: P,
+        source: crate::ir::AtomSource::Edb(P),
         bindings: vec![(P_DURING, var(0))],
     };
     let against_param = query(
@@ -1374,7 +1374,7 @@ fn sweep_contains_param_placements() {
     // variable, and a scalar variable within a param interval.
     let point_param = query(
         vec![Atom {
-            relation: P,
+            source: crate::ir::AtomSource::Edb(P),
             bindings: vec![(P_EMP, var(0)), (P_DURING, var(1))],
         }],
         vec![],
@@ -1394,7 +1394,7 @@ fn sweep_contains_param_placements() {
 
     let within_param = query(
         vec![Atom {
-            relation: E,
+            source: crate::ir::AtomSource::Edb(E),
             bindings: vec![(FieldId(0), var(0)), (E_AT, var(1))],
         }],
         vec![],
@@ -1423,7 +1423,7 @@ fn sweep_duration_placements() {
     // written orders — measure-second mirrors the operator), the
     // same-atom variable side, and the cross-atom residual.
     let p_atom = || Atom {
-        relation: P,
+        source: crate::ir::AtomSource::Edb(P),
         bindings: vec![(P_EMP, var(0)), (P_DURING, var(1))],
     };
     let duration = || Term::Measure(VarId(1));
@@ -1512,7 +1512,7 @@ fn sweep_duration_placements() {
             vec![
                 p_atom(),
                 Atom {
-                    relation: S,
+                    source: crate::ir::AtomSource::Edb(S),
                     bindings: vec![(FieldId(0), var(2))],
                 },
             ],
@@ -1545,11 +1545,11 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
         query(
             vec![
                 Atom {
-                    relation: P,
+                    source: crate::ir::AtomSource::Edb(P),
                     bindings: vec![(P_DURING, var(0)), (P_REVIEW, var(1))],
                 },
                 Atom {
-                    relation: P,
+                    source: crate::ir::AtomSource::Edb(P),
                     bindings: vec![(P_DURING, var(2))],
                 },
             ],
@@ -1598,16 +1598,16 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: R,
+                source: crate::ir::AtomSource::Edb(R),
                 bindings: vec![(FieldId(0), var(2)), (FieldId(1), var(0))],
             },
             Atom {
-                relation: S,
+                source: crate::ir::AtomSource::Edb(S),
                 bindings: vec![(FieldId(1), var(1))],
             },
         ],
         negated: vec![Atom {
-            relation: R,
+            source: crate::ir::AtomSource::Edb(R),
             bindings: vec![(FieldId(1), var(0)), (FieldId(2), var(1))],
         }],
         conditions: vec![ConditionTree::Leaf(Comparison {

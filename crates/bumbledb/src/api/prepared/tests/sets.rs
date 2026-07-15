@@ -12,7 +12,7 @@ fn by_account_set_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::ParamSet(ParamId(0))),
@@ -146,7 +146,7 @@ fn out_of_vocabulary_string_elements_contribute_nothing() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(2), Term::ParamSet(ParamId(0))),
                 (FieldId(3), Term::Var(VarId(0))),
@@ -292,14 +292,14 @@ fn membership_point_var_join_end_to_end() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: PAYROLL,
+                source: crate::ir::AtomSource::Edb(PAYROLL),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))), // membership: at ∈ during
                 ],
             },
             Atom {
-                relation: EVENT,
+                source: crate::ir::AtomSource::Edb(EVENT),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
@@ -336,7 +336,7 @@ fn set_membership_matches_any_element() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: PAYROLL,
+            source: crate::ir::AtomSource::Edb(PAYROLL),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::ParamSet(ParamId(0))),
@@ -400,7 +400,7 @@ fn membership_literal_query(point: u64) -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: PAYROLL,
+            source: crate::ir::AtomSource::Edb(PAYROLL),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::Literal(Value::U64(point))),
@@ -468,14 +468,14 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: PAYROLL,
+                source: crate::ir::AtomSource::Edb(PAYROLL),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Param(ParamId(0))),
                 ],
             },
             Atom {
-                relation: EVENT,
+                source: crate::ir::AtomSource::Edb(EVENT),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Param(ParamId(0))),
@@ -499,7 +499,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
     let set_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: PAYROLL,
+            source: crate::ir::AtomSource::Edb(PAYROLL),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::ParamSet(ParamId(0))),
@@ -613,14 +613,14 @@ fn negated_set_bindings_reject_under_any_element() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: RelationId(0),
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::Var(VarId(1))),
             ],
         }],
         negated: vec![Atom {
-            relation: RelationId(1),
+            source: crate::ir::AtomSource::Edb(RelationId(1)),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::ParamSet(ParamId(0))),

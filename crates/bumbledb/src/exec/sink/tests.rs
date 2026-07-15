@@ -281,7 +281,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                 .collect();
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.relation.0).expect("small")],
+                    &images[usize::try_from(occurrence.relation().0).expect("small")],
                     &[],
                     &[],
                     Vec::new(),
@@ -297,7 +297,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
 fn occurrence(occ: u16, relation: RelationId, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
-        relation,
+        source: crate::ir::AtomSource::Edb(relation),
         role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
@@ -316,7 +316,7 @@ fn normalized(
     let slot_widths: BTreeMap<VarId, SlotWidth> = occurrences
         .iter()
         .flat_map(|o| {
-            let relation = schema.relation(o.relation);
+            let relation = schema.relation(o.relation());
             o.vars
                 .iter()
                 .map(move |(f, v)| (*v, SlotWidth::of(&relation.field(*f).value_type)))

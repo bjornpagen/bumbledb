@@ -13,11 +13,12 @@
 //! rejected.
 
 use super::{
-    AxiomIndex, CompiledCheck, CompiledSides, ContainmentId, ContainmentStatement,
-    DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyId,
-    KeyStatement, MemberSet, Relation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    SchemaWarning, Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
-    value_matches,
+    AxiomIndex, CardinalityStatement, CompiledCheck, CompiledSides, ContainmentId,
+    ContainmentStatement, DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor,
+    FieldId, Generation, KeyId, KeyStatement, LiteralSet, MemberSet, OrderId, OrderStatement,
+    RankChain, Relation, RelationDescriptor, RelationId, Schema, SchemaDescriptor, SchemaWarning,
+    SealedRankChain, SealedRankHop, Side, StatementDescriptor, StatementId, StatementRef,
+    ValueMismatch, ValueType, WindowId, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{SchemaError, TargetKeyCandidate};
@@ -37,6 +38,11 @@ impl SchemaDescriptor {
     /// Only on programmer-invariant violations: declaration counts exceeding
     /// the id widths (2³² relations, 2¹⁶ fields per relation, 2¹⁶
     /// statements).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the one materialized-order sealing pass — one arm per \
+                  statement form, clearer kept together"
+    )]
     pub fn validate(self) -> Result<Schema, SchemaError> {
         let descriptors = self.materialized_statements();
 
@@ -65,12 +71,16 @@ impl SchemaDescriptor {
             .iter()
             .filter(|descriptor| matches!(descriptor, StatementDescriptor::Functionality { .. }))
             .count();
-        let containment_count = descriptors.len() - key_count;
         let mut keys = Vec::with_capacity(key_count);
-        let mut containments = Vec::with_capacity(containment_count);
+        let mut containments = Vec::new();
+        let mut windows = Vec::new();
+        let mut orders = Vec::new();
         let mut order = Vec::with_capacity(descriptors.len());
         let mut relation_keys: Vec<Vec<KeyId>> = vec![Vec::new(); relations.len()];
         let mut relation_outgoing: Vec<Vec<ContainmentId>> = vec![Vec::new(); relations.len()];
+        let mut relation_window_sources: Vec<Vec<WindowId>> = vec![Vec::new(); relations.len()];
+        let mut relation_window_targets: Vec<Vec<WindowId>> = vec![Vec::new(); relations.len()];
+        let mut relation_orders: Vec<Vec<OrderId>> = vec![Vec::new(); relations.len()];
         let mut dependents: Vec<Vec<ContainmentId>> = vec![Vec::new(); key_count];
 
         for (idx, descriptor) in descriptors.iter().enumerate() {
@@ -110,8 +120,8 @@ impl SchemaDescriptor {
                     relation_outgoing[source.relation.0 as usize].push(containment_id);
                     containments.push(ContainmentStatement {
                         id,
-                        source: source.clone(),
-                        target: target.clone(),
+                        source: canonical_side(source),
+                        target: canonical_side(target),
                         enforcement,
                         checks: CompiledSides {
                             source: compiled_checks(&source.selection),
@@ -120,6 +130,71 @@ impl SchemaDescriptor {
                         mirror: mirror_of(&descriptors, idx),
                     });
                     StatementRef::Containment(containment_id)
+                }
+                StatementDescriptor::Cardinality {
+                    source,
+                    lo,
+                    hi,
+                    target,
+                } => {
+                    let enforcement = validate_cardinality(
+                        id,
+                        source,
+                        *lo,
+                        *hi,
+                        target,
+                        &relations,
+                        &descriptors,
+                    )?;
+                    let window_id =
+                        WindowId(u16::try_from(windows.len()).expect("statement count fits u16"));
+                    relation_window_sources[source.relation.0 as usize].push(window_id);
+                    relation_window_targets[target.relation.0 as usize].push(window_id);
+                    windows.push(CardinalityStatement {
+                        id,
+                        source: canonical_side(source),
+                        lo: *lo,
+                        hi: *hi,
+                        target: canonical_side(target),
+                        enforcement,
+                        checks: CompiledSides {
+                            source: compiled_checks(&source.selection),
+                            target: compiled_checks(&target.selection),
+                        },
+                    });
+                    StatementRef::Cardinality(window_id)
+                }
+                StatementDescriptor::Order {
+                    relation,
+                    position,
+                    grouping,
+                    ranking,
+                } => {
+                    let sealed_ranking = validate_order(
+                        id,
+                        *relation,
+                        *position,
+                        grouping,
+                        ranking.as_ref(),
+                        &relations,
+                        &descriptors,
+                    )?;
+                    let order_id =
+                        OrderId(u16::try_from(orders.len()).expect("statement count fits u16"));
+                    relation_orders[relation.0 as usize].push(order_id);
+                    orders.push(OrderStatement {
+                        id,
+                        relation: *relation,
+                        position: *position,
+                        grouping: grouping.clone(),
+                        edge_projection: grouping
+                            .iter()
+                            .copied()
+                            .chain(std::iter::once(*position))
+                            .collect(),
+                        ranking: sealed_ranking,
+                    });
+                    StatementRef::Order(order_id)
                 }
             };
             // Roster "duplicate statements": identical descriptors after
@@ -137,13 +212,23 @@ impl SchemaDescriptor {
             order.push(sealed);
         }
 
-        for ((relation, keys), outgoing) in relations
-            .iter_mut()
-            .zip(relation_keys)
-            .zip(relation_outgoing)
+        for ((((relation, keys), outgoing), (window_sources, window_targets)), order_marks) in
+            relations
+                .iter_mut()
+                .zip(relation_keys)
+                .zip(relation_outgoing)
+                .zip(
+                    relation_window_sources
+                        .into_iter()
+                        .zip(relation_window_targets),
+                )
+                .zip(relation_orders)
         {
             relation.keys = keys.into_boxed_slice();
             relation.outgoing = outgoing.into_boxed_slice();
+            relation.window_sources = window_sources.into_boxed_slice();
+            relation.window_targets = window_targets.into_boxed_slice();
+            relation.order_marks = order_marks.into_boxed_slice();
         }
 
         Ok(Schema {
@@ -151,6 +236,8 @@ impl SchemaDescriptor {
             relations: relations.into_boxed_slice(),
             keys: keys.into_boxed_slice(),
             containments: containments.into_boxed_slice(),
+            windows: windows.into_boxed_slice(),
+            orders: orders.into_boxed_slice(),
             order: order.into_boxed_slice(),
             dependents: dependents.into_iter().map(Vec::into_boxed_slice).collect(),
         })
@@ -287,23 +374,104 @@ fn interval_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec
         .collect()
 }
 
-/// The descriptor with each selection sorted by [`FieldId`] — σ is a set of
-/// bindings, so its written order is not identity (roster "duplicate
+/// A deterministic total order over literal values — the canonical order
+/// of a disjunctive binding's set (`docs/architecture/30-dependencies.md`
+/// § validation roster: literal sets seal sorted and duplicate-free).
+/// Within one validated binding every literal shares the field's type, so
+/// the cross-variant rank only makes the comparison total on plain data.
+fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
+    fn rank(value: &Value) -> u8 {
+        match value {
+            Value::Bool(_) => 0,
+            Value::U64(_) => 1,
+            Value::I64(_) => 2,
+            Value::String(_) => 3,
+            Value::FixedBytes(_) => 4,
+            Value::IntervalU64(_) => 5,
+            Value::IntervalI64(_) => 6,
+            Value::AllenMask(_) => 7,
+        }
+    }
+    match (a, b) {
+        (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+        (Value::U64(x), Value::U64(y)) => x.cmp(y),
+        (Value::I64(x), Value::I64(y)) => x.cmp(y),
+        (Value::String(x), Value::String(y)) | (Value::FixedBytes(x), Value::FixedBytes(y)) => {
+            x.cmp(y)
+        }
+        (Value::IntervalU64(x), Value::IntervalU64(y)) => {
+            (x.start(), x.end()).cmp(&(y.start(), y.end()))
+        }
+        (Value::IntervalI64(x), Value::IntervalI64(y)) => {
+            (x.start(), x.end()).cmp(&(y.start(), y.end()))
+        }
+        (Value::AllenMask(x), Value::AllenMask(y)) => x.bits().cmp(&y.bits()),
+        _ => rank(a).cmp(&rank(b)),
+    }
+}
+
+/// One binding's literal set in canonical form: `Many` sorts by
+/// [`literal_cmp`]. Duplicates were rejected by
+/// [`validate_side_shape`] before any side seals, so sorting is the whole
+/// canonicalization.
+fn canonical_literals(literals: &LiteralSet) -> LiteralSet {
+    match literals {
+        LiteralSet::One(_) => literals.clone(),
+        LiteralSet::Many(values) => {
+            let mut sorted = values.to_vec();
+            sorted.sort_by(literal_cmp);
+            LiteralSet::Many(sorted.into_boxed_slice())
+        }
+    }
+}
+
+/// One side with every disjunctive binding in canonical (sorted) literal
+/// order — what seals into the arena and what the fingerprint hashes, so
+/// two spellings of one set are one statement.
+fn canonical_side(side: &Side) -> Side {
+    Side {
+        relation: side.relation,
+        projection: side.projection.clone(),
+        selection: side
+            .selection
+            .iter()
+            .map(|(field, literals)| (*field, canonical_literals(literals)))
+            .collect(),
+    }
+}
+
+/// The descriptor with each selection sorted by [`FieldId`] and each
+/// binding's literal set canonicalized — σ is a set of bindings over sets
+/// of literals, so neither written order is identity (roster "duplicate
 /// statements (identical normalized sides and form)").
 fn normalize(descriptor: &StatementDescriptor) -> StatementDescriptor {
     fn side(side: &Side) -> Side {
-        let mut selection = side.selection.to_vec();
+        let canonical = canonical_side(side);
+        let mut selection = canonical.selection.to_vec();
         selection.sort_by_key(|(field, _)| *field);
         Side {
-            relation: side.relation,
-            projection: side.projection.clone(),
+            relation: canonical.relation,
+            projection: canonical.projection,
             selection: selection.into_boxed_slice(),
         }
     }
     match descriptor {
-        StatementDescriptor::Functionality { .. } => descriptor.clone(),
+        StatementDescriptor::Functionality { .. } | StatementDescriptor::Order { .. } => {
+            descriptor.clone()
+        }
         StatementDescriptor::Containment { source, target } => StatementDescriptor::Containment {
             source: side(source),
+            target: side(target),
+        },
+        StatementDescriptor::Cardinality {
+            source,
+            lo,
+            hi,
+            target,
+        } => StatementDescriptor::Cardinality {
+            source: side(source),
+            lo: *lo,
+            hi: *hi,
             target: side(target),
         },
     }
@@ -515,8 +683,12 @@ fn validate_containment(
                 continue;
             }
             let word = decoded_word(layout, source.projection[0], &row.fact);
-            let index = AxiomIndex::try_from(word).expect("sealed axiom index fits u16");
-            if !members.contains(index) {
+            // An out-of-range word narrows to non-membership — the same
+            // miss the commit path takes (`storage/commit/judgment.rs`)
+            // and the `AxiomIndex` contract ("values beyond `u16` are
+            // absent") applied at validate: the row escapes the member
+            // set, so the statement is refuted, never a panic.
+            if !AxiomIndex::try_from(word).is_ok_and(|index| members.contains(index)) {
                 return Err(SchemaError::ClosedStatementRefuted {
                     statement: id,
                     relation: source.relation,
@@ -529,44 +701,461 @@ fn validate_containment(
     Ok(resolved)
 }
 
+/// Roster "cardinality …" lines: `A(X | φ) in lo..hi per B(Y | ψ)` under
+/// the acceptance gate (`docs/architecture/30-dependencies.md`). The
+/// premises are exactly the model's
+/// (`lean/Bumbledb/Admission.lean: cardinalityForm`;
+/// `lean/Bumbledb/Oracle.lean: cardinality_plan_decides` is the promised
+/// plan): the shared side shapes, the containment target-key rule reused
+/// verbatim, and the v0 interval refusal — a window counts FACTS per
+/// parent, and an interval position would make the count ambiguous
+/// between facts and points (`lean/Bumbledb/Cardinality.lean` § v0
+/// refusals; *trigger* for lifting: a sighted counting-over-denotation
+/// workload). Closed-side rules mirror containment's: a closed target
+/// compiles the member-set plan through the same key rule, and a
+/// statement between constants is decided here outright.
+fn validate_cardinality(
+    id: StatementId,
+    source: &Side,
+    lo: u64,
+    hi: Option<u64>,
+    target: &Side,
+    relations: &[Relation],
+    descriptors: &[StatementDescriptor],
+) -> Result<Enforcement, SchemaError> {
+    validate_side_shape(id, source, relations)?;
+    let target_projection = validate_side_shape(id, target, relations)?;
+
+    // Roster "arity mismatch between sides": |X| = |Y| — the child group
+    // compares whole projected tuples.
+    if source.projection.len() != target.projection.len() {
+        return Err(SchemaError::ContainmentArityMismatch {
+            statement: id,
+            source: source.projection.len(),
+            target: target.projection.len(),
+        });
+    }
+
+    // Roster "positional structural-type mismatch" — as for containment.
+    let source_fields = &relations[source.relation.0 as usize].fields;
+    let target_fields = &relations[target.relation.0 as usize].fields;
+    for (position, (s, t)) in source
+        .projection
+        .iter()
+        .zip(target.projection.iter())
+        .enumerate()
+    {
+        if source_fields[usize::from(s.0)].value_type != target_fields[usize::from(t.0)].value_type
+        {
+            return Err(SchemaError::ContainmentTypeMismatch {
+                statement: id,
+                position,
+            });
+        }
+    }
+
+    validate_side_selection(id, source, relations)?;
+    validate_side_selection(id, target, relations)?;
+
+    // The v0 interval refusal: window projections carry no interval
+    // position, either side (the positional type match above makes the
+    // sides' interval positions identical, so one scan suffices).
+    let positions = interval_positions(source_fields, &source.projection);
+    if let Some(pos) = positions.first() {
+        return Err(SchemaError::CardinalityIntervalPosition {
+            statement: id,
+            relation: source.relation,
+            field: source.projection[*pos],
+        });
+    }
+
+    // Probe-ability, the containment rule reused: Y resolves a declared
+    // key of B (a closed target takes the member-set arm through the same
+    // call — the closed-side mirror).
+    let resolved = resolve_target_key(id, target, &target_projection, relations, descriptors)?;
+
+    // Both sides constant: the count judgment is decidable here — per
+    // ψ-selected parent axiom, the φ-selected child axioms sharing its
+    // projected tuple must count inside the window
+    // (`lean/Bumbledb/Schema.lean: den_closed_constant`). The cited row
+    // is the parent axiom whose group fails.
+    if let (Enforcement::Closed { .. }, Some(source_rows)) = (
+        &resolved,
+        relations[source.relation.0 as usize].extension.as_deref(),
+    ) {
+        let target_relation = &relations[target.relation.0 as usize];
+        let target_rows = target_relation
+            .extension
+            .as_deref()
+            .expect("the Closed enforcement arm resolves only against a closed target");
+        let source_layout = &relations[source.relation.0 as usize].layout;
+        let phi = compiled_checks(&source.selection);
+        let psi = compiled_checks(&target.selection);
+        for (row_idx, parent) in target_rows.iter().enumerate() {
+            if !sealed_satisfies(&psi, &target_relation.layout, &parent.fact) {
+                continue;
+            }
+            let count =
+                source_rows
+                    .iter()
+                    .filter(|child| {
+                        sealed_satisfies(&phi, source_layout, &child.fact)
+                            && source.projection.iter().zip(target.projection.iter()).all(
+                                |(s, t)| {
+                                    field_bytes(&child.fact, source_layout, usize::from(s.0))
+                                        == field_bytes(
+                                            &parent.fact,
+                                            &target_relation.layout,
+                                            usize::from(t.0),
+                                        )
+                                },
+                            )
+                    })
+                    .count();
+            let count = u64::try_from(count).expect("extension row count fits u64");
+            if count < lo || hi.is_some_and(|hi| count > hi) {
+                return Err(SchemaError::ClosedStatementRefuted {
+                    statement: id,
+                    relation: target.relation,
+                    row: row_idx,
+                });
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+/// Roster "order …" lines: `order R(pos) per R(grp) [by …]` under the
+/// acceptance gate. The shape premises are the model's
+/// (`lean/Bumbledb/Admission.lean: orderForm`;
+/// `lean/Bumbledb/Oracle.lean: order_plan_decides` is the promised plan):
+/// a u64 position column (the ordinal reading —
+/// `lean/Bumbledb/Order.lean: Value.ordinal` reads u64 numerals), a
+/// non-empty scalar grouping (the walked group must be real — the
+/// degenerate grouping refusal recorded in
+/// `lean/Bumbledb/Admission.lean` § narrowings), and for the RANKED form
+/// every `by` hop resolving a declared single-field key of its relation —
+/// the sealed hop-key witnesses ARE the enforcement plan the model prices
+/// (`lean/Bumbledb/Oracle.lean: ranked_order_plan_decides`,
+/// `chain_cost_hops`: one keyed point probe per hop) — with the chain
+/// type-consistent and its final payload u64 (the rank ordinal). A PLAIN
+/// order mark on a closed relation is a statement about constants: its
+/// whole discipline is decided here outright against the sealed
+/// extension. A RANKED mark on a closed subject is refused
+/// ([`SchemaError::RankedOrderClosedSubject`]): its ranks read through
+/// writable hop relations, and a closed subject rides no delta and no
+/// sweep — nothing downstream would ever judge the clause.
+fn validate_order(
+    id: StatementId,
+    relation_id: RelationId,
+    position: FieldId,
+    grouping: &[FieldId],
+    ranking: Option<&RankChain>,
+    relations: &[Relation],
+    descriptors: &[StatementDescriptor],
+) -> Result<Option<SealedRankChain>, SchemaError> {
+    let relation = known_relation(id, relation_id, relations)?;
+    validate_projection(id, relation_id, grouping, relation)?;
+
+    let Some(position_field) = relation.fields.get(usize::from(position.0)) else {
+        return Err(SchemaError::StatementUnknownField {
+            statement: id,
+            relation: relation_id,
+            field: position,
+        });
+    };
+    if position_field.value_type != ValueType::U64 {
+        return Err(SchemaError::OrderPositionNotU64 {
+            statement: id,
+            relation: relation_id,
+            field: position,
+        });
+    }
+    for field in grouping {
+        if matches!(
+            relation.fields[usize::from(field.0)].value_type,
+            ValueType::Interval { .. }
+        ) {
+            return Err(SchemaError::OrderGroupingInterval {
+                statement: id,
+                relation: relation_id,
+                field: *field,
+            });
+        }
+    }
+
+    // Roster "determinant width overflow", the order-mark form: the mark's
+    // `R`-edge key embeds grouping bytes plus the 8-byte position tail —
+    // rejected at declaration, never discovered at write time (the FD
+    // width rule, one bound, one owner).
+    let width: usize = grouping
+        .iter()
+        .map(|field| {
+            relation.fields[usize::from(field.0)]
+                .value_type
+                .type_desc()
+                .width()
+        })
+        .sum::<usize>()
+        + 8;
+    if width > MAX_DETERMINANT_WIDTH {
+        return Err(SchemaError::DeterminantKeyTooWide {
+            statement: id,
+            width,
+        });
+    }
+
+    // A RANKED mark on a closed subject is refused outright: the closed
+    // relation's rows never enter a delta, so the mark writes no order
+    // `R` edges and no commit walk or store sweep would ever judge the
+    // ranked clause — yet the ranks read through `by` hop relations whose
+    // instances mutate after declaration, so the sealed extension does
+    // not decide the clause either. Refusal at the gate is the sound
+    // narrowing of the model's admission
+    // (`lean/Bumbledb/Admission.lean: orderForm` admits the shape; the
+    // narrowing is recorded in `lean/Bumbledb/Order.lean` § module doc).
+    // The plain form stays: its whole discipline is the 1..k walk below.
+    if relation.extension.is_some() && ranking.is_some() {
+        return Err(SchemaError::RankedOrderClosedSubject {
+            statement: id,
+            relation: relation_id,
+        });
+    }
+
+    let sealed_ranking = match ranking {
+        None => None,
+        Some(chain) => Some(validate_rank_chain(
+            id,
+            relation_id,
+            relation,
+            chain,
+            relations,
+            descriptors,
+        )?),
+    };
+
+    // A closed relation's mark is judged here, once: the axioms ARE the
+    // final state, so per grouping tuple the positions must be exactly
+    // 1..k — duplicate-free, 1-based, gap-free. The cited row is the
+    // first axiom of the violating group.
+    if let Some(rows) = relation.extension.as_deref() {
+        let layout = &relation.layout;
+        let group_bytes = |fact: &[u8]| -> Vec<u8> {
+            grouping
+                .iter()
+                .flat_map(|field| field_bytes(fact, layout, usize::from(field.0)).to_vec())
+                .collect()
+        };
+        for (row_idx, row) in rows.iter().enumerate() {
+            let key = group_bytes(&row.fact);
+            if rows[..row_idx]
+                .iter()
+                .any(|earlier| group_bytes(&earlier.fact) == key)
+            {
+                continue; // the group was judged at its first member
+            }
+            let mut positions: Vec<u64> = rows
+                .iter()
+                .filter(|member| group_bytes(&member.fact) == key)
+                .map(|member| decoded_word(layout, position, &member.fact))
+                .collect();
+            positions.sort_unstable();
+            let contiguous = positions.iter().enumerate().all(|(idx, pos)| {
+                *pos == u64::try_from(idx).expect("extension row count fits u64") + 1
+            });
+            if !contiguous {
+                return Err(SchemaError::ClosedStatementRefuted {
+                    statement: id,
+                    relation: relation_id,
+                    row: row_idx,
+                });
+            }
+        }
+    }
+
+    Ok(sealed_ranking)
+}
+
+/// The ranked form's chain gate: hop relations and fields resolve, the
+/// running value's type is consistent hop to hop (the probe compares the
+/// running value against the hop's key field), each hop's key field is a
+/// declared single-field key of its relation (what makes the read
+/// deterministic — `lean/Bumbledb/Subsumption.lean:
+/// chain_eval_deterministic` — and the unit probe honest —
+/// `lean/Bumbledb/Oracle.lean: point_probe_honest`), and the final
+/// payload is u64 (the rank ordinal). Each resolved key seals into the
+/// hop as its plan witness.
+fn validate_rank_chain(
+    id: StatementId,
+    relation_id: RelationId,
+    relation: &Relation,
+    chain: &RankChain,
+    relations: &[Relation],
+    descriptors: &[StatementDescriptor],
+) -> Result<SealedRankChain, SchemaError> {
+    let Some(link_field) = relation.fields.get(usize::from(chain.link.0)) else {
+        return Err(SchemaError::StatementUnknownField {
+            statement: id,
+            relation: relation_id,
+            field: chain.link,
+        });
+    };
+    let mut running = link_field.value_type.clone();
+    let mut hops = Vec::with_capacity(chain.hops.len());
+    for (hop_idx, hop) in chain.hops.iter().enumerate() {
+        let hop_relation = known_relation(id, hop.relation, relations)?;
+        let Some(key_field) = hop_relation.fields.get(usize::from(hop.key.0)) else {
+            return Err(SchemaError::StatementUnknownField {
+                statement: id,
+                relation: hop.relation,
+                field: hop.key,
+            });
+        };
+        let Some(read_field) = hop_relation.fields.get(usize::from(hop.read.0)) else {
+            return Err(SchemaError::StatementUnknownField {
+                statement: id,
+                relation: hop.relation,
+                field: hop.read,
+            });
+        };
+        if key_field.value_type != running {
+            return Err(SchemaError::RankChainTypeMismatch {
+                statement: id,
+                hop: hop_idx,
+            });
+        }
+        let key_statement = resolve_hop_key(id, hop.relation, hop.key, descriptors)?;
+        hops.push(SealedRankHop {
+            relation: hop.relation,
+            key: hop.key,
+            read: hop.read,
+            key_statement,
+        });
+        running = read_field.value_type.clone();
+    }
+    if running != ValueType::U64 {
+        let (rank_relation, rank_field) = match chain.hops.last() {
+            Some(hop) => (hop.relation, hop.read),
+            None => (relation_id, chain.link),
+        };
+        return Err(SchemaError::OrderRankNotU64 {
+            statement: id,
+            relation: rank_relation,
+            field: rank_field,
+        });
+    }
+    Ok(SealedRankChain {
+        link: chain.link,
+        hops: hops.into_boxed_slice(),
+    })
+}
+
+/// One hop's key demand: `{key}` must be the field set of a declared
+/// `Functionality` on the hop's relation — the same exact-field-set rule
+/// containment targets resolve, at width one.
+fn resolve_hop_key(
+    id: StatementId,
+    relation: RelationId,
+    key: FieldId,
+    descriptors: &[StatementDescriptor],
+) -> Result<KeyId, SchemaError> {
+    let mut next_key = 0usize;
+    for descriptor in descriptors {
+        if let StatementDescriptor::Functionality {
+            relation: r,
+            projection,
+        } = descriptor
+        {
+            if *r == relation && projection.as_ref() == [key] {
+                return Ok(KeyId(
+                    u16::try_from(next_key).expect("statement count fits u16"),
+                ));
+            }
+            next_key += 1;
+        }
+    }
+    Err(SchemaError::RankHopUnkeyed {
+        statement: id,
+        relation,
+        field: key,
+    })
+}
+
+/// One encodable literal's sealed canonical bytes.
+fn encoded_literal(literal: &Value) -> Box<[u8]> {
+    let mut bytes = Vec::with_capacity(16);
+    crate::encoding::encode_literal(literal, &mut bytes);
+    bytes.into()
+}
+
 /// One side's σ compiled at validate: canonical bytes sealed for every
 /// literal whose encoding is a pure function of the value; `str` literals
-/// stay [`CompiledCheck::Interned`] (their word is per-database dictionary
-/// state, resolved at commit). The one compile walk — the sealed
-/// [`ContainmentStatement::checks`] and the closed-extension evaluations
-/// below both consume it.
-fn compiled_checks(selection: &[(FieldId, Value)]) -> Box<[CompiledCheck]> {
+/// stay [`CompiledCheck::Interned`]/[`CompiledCheck::InternedSet`] (their
+/// word is per-database dictionary state, resolved at commit). Singleton
+/// bindings compile to the classic one-compare arms unchanged; disjunctive
+/// bindings seal their alternatives in canonical order. The one compile
+/// walk — the sealed [`ContainmentStatement::checks`] and the
+/// closed-extension evaluations below both consume it.
+fn compiled_checks(selection: &[(FieldId, LiteralSet)]) -> Box<[CompiledCheck]> {
     selection
         .iter()
-        .map(|(field, literal)| match literal {
-            Value::String(raw) => CompiledCheck::Interned {
+        .map(|(field, literals)| match canonical_literals(literals) {
+            LiteralSet::One(Value::String(raw)) => CompiledCheck::Interned {
                 field: *field,
-                text: std::str::from_utf8(raw)
+                text: std::str::from_utf8(&raw)
                     .expect("selection literals validated UTF-8")
                     .into(),
             },
-            literal => {
-                let mut bytes = Vec::with_capacity(16);
-                crate::encoding::encode_literal(literal, &mut bytes);
-                CompiledCheck::Encoded {
+            LiteralSet::One(literal) => CompiledCheck::Encoded {
+                field: *field,
+                bytes: encoded_literal(&literal),
+            },
+            // A validated binding is type-homogeneous: a `str` field's set
+            // is all strings, any other field's set all encodable.
+            LiteralSet::Many(values) if matches!(values[0], Value::String(_)) => {
+                CompiledCheck::InternedSet {
                     field: *field,
-                    bytes: bytes.into(),
+                    texts: values
+                        .iter()
+                        .map(|value| {
+                            let Value::String(raw) = value else {
+                                unreachable!("validated string binding is homogeneous")
+                            };
+                            std::str::from_utf8(raw)
+                                .expect("selection literals validated UTF-8")
+                                .into()
+                        })
+                        .collect(),
                 }
             }
+            LiteralSet::Many(values) => CompiledCheck::EncodedSet {
+                field: *field,
+                alternatives: values.iter().map(encoded_literal).collect(),
+            },
         })
         .collect()
 }
 
-/// σ over one sealed row: one byte compare per selected field. Total over
-/// Closed relations refuse `str` columns, so the `Interned` arm is absent
-/// for a validated closed side. Keeping the evaluator total makes malformed
-/// internal data fail the predicate instead of opening a panic path.
+/// σ over one sealed row: per binding, a byte compare against the sealed
+/// encoding (singleton) or membership among the sealed alternatives (set).
+/// Closed relations refuse `str` columns, so the `Interned` arms are
+/// absent for a validated closed side. Keeping the evaluator total makes
+/// malformed internal data fail the predicate instead of opening a panic
+/// path.
 fn sealed_satisfies(checks: &[CompiledCheck], layout: &FactLayout, fact: &[u8]) -> bool {
     checks.iter().all(|check| match check {
         CompiledCheck::Encoded { field, bytes } => {
             field_bytes(fact, layout, usize::from(field.0)) == &bytes[..]
         }
-        CompiledCheck::Interned { .. } => false,
+        CompiledCheck::EncodedSet {
+            field,
+            alternatives,
+        } => {
+            let actual = field_bytes(fact, layout, usize::from(field.0));
+            alternatives.iter().any(|bytes| actual == &bytes[..])
+        }
+        CompiledCheck::Interned { .. } | CompiledCheck::InternedSet { .. } => false,
     })
 }
 
@@ -626,7 +1215,11 @@ fn validate_projection<'p>(
 }
 
 /// One side's id and duplication shape: unknown relation/field ids, empty
-/// or duplicate projection, duplicate selection binding (σ is a set).
+/// or duplicate projection, duplicate selection binding (σ is a set), and
+/// the literal-set canon — a `Many` binding carries at least two distinct
+/// literals (an empty set selects nothing and the one-literal set is the
+/// `One` spelling; both degenerate spellings are rejected so the singleton
+/// arm stays the only singleton by representation).
 fn validate_side_shape<'s>(
     id: StatementId,
     side: &'s Side,
@@ -634,7 +1227,7 @@ fn validate_side_shape<'s>(
 ) -> Result<Projection<'s>, SchemaError> {
     let relation = known_relation(id, side.relation, relations)?;
     let projection = validate_projection(id, side.relation, &side.projection, relation)?;
-    for (idx, (field, _)) in side.selection.iter().enumerate() {
+    for (idx, (field, literals)) in side.selection.iter().enumerate() {
         if usize::from(field.0) >= relation.fields.len() {
             return Err(SchemaError::StatementUnknownField {
                 statement: id,
@@ -648,6 +1241,28 @@ fn validate_side_shape<'s>(
                 relation: side.relation,
                 field: *field,
             });
+        }
+        if let LiteralSet::Many(values) = literals {
+            if values.len() < 2 {
+                return Err(SchemaError::DegenerateSelectionSet {
+                    statement: id,
+                    relation: side.relation,
+                    field: *field,
+                    len: values.len(),
+                });
+            }
+            for (value_idx, value) in values.iter().enumerate() {
+                if values[..value_idx]
+                    .iter()
+                    .any(|earlier| literal_cmp(earlier, value) == std::cmp::Ordering::Equal)
+                {
+                    return Err(SchemaError::DuplicateSelectionLiteral {
+                        statement: id,
+                        relation: side.relation,
+                        field: *field,
+                    });
+                }
+            }
         }
     }
     Ok(projection)
@@ -671,14 +1286,16 @@ fn validate_side_selection(
             });
         }
     }
-    for (field, literal) in &side.selection {
-        validate_selection_literal(
-            id,
-            side.relation,
-            *field,
-            &relation.fields[usize::from(field.0)].value_type,
-            literal,
-        )?;
+    for (field, literals) in &side.selection {
+        for literal in literals.literals() {
+            validate_selection_literal(
+                id,
+                side.relation,
+                *field,
+                &relation.fields[usize::from(field.0)].value_type,
+                literal,
+            )?;
+        }
     }
     Ok(())
 }
@@ -764,9 +1381,10 @@ fn resolve_target_key(
             {
                 Some((index, projection.as_ref()))
             }
-            StatementDescriptor::Functionality { .. } | StatementDescriptor::Containment { .. } => {
-                None
-            }
+            StatementDescriptor::Functionality { .. }
+            | StatementDescriptor::Containment { .. }
+            | StatementDescriptor::Cardinality { .. }
+            | StatementDescriptor::Order { .. } => None,
         });
 
     // Roster "IND whose target projection matches no key of the target
@@ -1002,6 +1620,9 @@ fn validate_relation(
         extension,
         keys: Box::new([]),
         outgoing: Box::new([]),
+        window_sources: Box::new([]),
+        window_targets: Box::new([]),
+        order_marks: Box::new([]),
     })
 }
 

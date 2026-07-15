@@ -153,7 +153,7 @@ fn revenue_by_region() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: ids::SALE,
+                source: bumbledb::AtomSource::Edb(ids::SALE),
                 bindings: vec![
                     (FieldId(0), var(2)),
                     (FieldId(2), var(3)),
@@ -161,7 +161,7 @@ fn revenue_by_region() -> Query {
                 ],
             },
             Atom {
-                relation: ids::STORE,
+                source: bumbledb::AtomSource::Edb(ids::STORE),
                 bindings: vec![(FieldId(0), var(3)), (FieldId(1), var(0))],
             },
         ],
@@ -186,7 +186,7 @@ fn category_window() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: ids::SALE,
+                source: bumbledb::AtomSource::Edb(ids::SALE),
                 bindings: vec![
                     (FieldId(0), var(2)),
                     (FieldId(1), var(3)),
@@ -195,7 +195,7 @@ fn category_window() -> Query {
                 ],
             },
             Atom {
-                relation: ids::PRODUCT,
+                source: bumbledb::AtomSource::Edb(ids::PRODUCT),
                 bindings: vec![(FieldId(0), var(4)), (FieldId(1), var(0))],
             },
         ],
@@ -236,7 +236,7 @@ fn promo_split() -> Query {
             },
         ],
         atoms: vec![Atom {
-            relation: ids::SALE,
+            source: bumbledb::AtomSource::Edb(ids::SALE),
             bindings: vec![
                 (FieldId(0), var(2)),
                 (FieldId(6), var(1)),
@@ -261,7 +261,7 @@ fn segment_category() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: ids::SALE,
+                source: bumbledb::AtomSource::Edb(ids::SALE),
                 bindings: vec![
                     (FieldId(0), var(2)),
                     (FieldId(3), var(3)),
@@ -269,11 +269,11 @@ fn segment_category() -> Query {
                 ],
             },
             Atom {
-                relation: ids::CUSTOMER,
+                source: bumbledb::AtomSource::Edb(ids::CUSTOMER),
                 bindings: vec![(FieldId(0), var(4)), (FieldId(1), var(0))],
             },
             Atom {
-                relation: ids::PRODUCT,
+                source: bumbledb::AtomSource::Edb(ids::PRODUCT),
                 bindings: vec![(FieldId(0), var(3)), (FieldId(1), var(1))],
             },
         ],
@@ -298,7 +298,7 @@ fn store_extremes() -> Query {
             },
         ],
         atoms: vec![Atom {
-            relation: ids::SALE,
+            source: bumbledb::AtomSource::Edb(ids::SALE),
             bindings: vec![
                 (FieldId(0), var(2)),
                 (FieldId(2), var(0)),
@@ -319,7 +319,7 @@ fn brand_drill() -> Query {
         }],
         atoms: vec![
             Atom {
-                relation: ids::SALE,
+                source: bumbledb::AtomSource::Edb(ids::SALE),
                 bindings: vec![
                     (FieldId(0), var(1)),
                     (FieldId(1), var(2)),
@@ -328,7 +328,7 @@ fn brand_drill() -> Query {
                 ],
             },
             Atom {
-                relation: ids::PRODUCT,
+                source: bumbledb::AtomSource::Edb(ids::PRODUCT),
                 bindings: vec![(FieldId(0), var(3)), (FieldId(2), param(0))],
             },
         ],

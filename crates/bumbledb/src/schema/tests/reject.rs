@@ -1027,6 +1027,43 @@ fn rejects_a_closed_to_closed_containment_the_axioms_refute() {
 }
 
 #[test]
+fn rejects_a_closed_to_closed_containment_whose_value_exceeds_the_index_range() {
+    // A referencing value beyond `u16::MAX` narrows to non-membership —
+    // the same miss the commit path takes — so the statement is refuted
+    // at validate, never a panic (the F1 lock: the old scan `expect`ed
+    // the word to fit the axiom-index width).
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Kind",
+                vec![field("severity", ValueType::U64)],
+                vec![
+                    row("Soft", vec![Value::U64(0)]),
+                    row("Hard", vec![Value::U64(70_000)]),
+                ],
+            ),
+            closed(
+                "Severity",
+                vec![],
+                vec![row("Low", vec![]), row("High", vec![])],
+            ),
+        ],
+        statements: vec![containment(
+            side(RelationId(0), &[FieldId(1)]),
+            side(RelationId(1), &[FieldId(0)]),
+        )],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ClosedStatementRefuted {
+            statement: StatementId(2),
+            relation: RelationId(0),
+            row: 1
+        }
+    );
+}
+
+#[test]
 fn rejects_a_declared_key_the_axioms_refute() {
     // A key on a closed relation is judged at validate — the axioms ARE
     // the final state. Usd and Eur agree on minor_units = 2.
@@ -1087,6 +1124,485 @@ fn rejects_a_declared_pointwise_key_the_axioms_refute() {
             statement: StatementId(1),
             relation: RelationId(0),
             row: 1
+        }
+    );
+}
+
+// --- The dependency-vocabulary extension's negative corpus: every new
+// --- rejection, one pinned typed error each
+// --- (`docs/architecture/30-dependencies.md` § validation roster).
+
+/// The extension fixture: Parent(id key) + Task(parent, pos, rank, flag,
+/// span) — enough surface for every extension-form rejection.
+fn extension_tree() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Parent".into(),
+                fields: vec![field("id", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Task".into(),
+                fields: vec![
+                    field("parent", ValueType::U64),
+                    field("pos", ValueType::U64),
+                    field("rank", ValueType::U64),
+                    field("flag", ValueType::Bool),
+                    field(
+                        "span",
+                        ValueType::Interval {
+                            element: IntervalElement::U64,
+                        },
+                    ),
+                ],
+            },
+        ],
+        statements: vec![fd(RelationId(0), &[FieldId(0)])],
+    }
+}
+
+#[test]
+fn rejects_an_empty_literal_set() {
+    // A `Many` of zero literals selects nothing — write no statement.
+    let mut decl = extension_tree();
+    decl.statements.push(containment(
+        side_where_sets(
+            RelationId(1),
+            &[FieldId(0)],
+            vec![(FieldId(2), LiteralSet::Many(Box::new([])))],
+        ),
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::DegenerateSelectionSet {
+            statement: StatementId(1),
+            relation: RelationId(1),
+            field: FieldId(2),
+            len: 0,
+        }
+    );
+}
+
+#[test]
+fn rejects_a_singleton_spelled_as_a_set() {
+    // The one-literal set is the `One` spelling — kept the only singleton
+    // by representation, so the equality arm stays zero-cost and
+    // unambiguous.
+    let mut decl = extension_tree();
+    decl.statements.push(containment(
+        side_where_sets(
+            RelationId(1),
+            &[FieldId(0)],
+            vec![(FieldId(2), LiteralSet::Many(Box::new([Value::U64(1)])))],
+        ),
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::DegenerateSelectionSet {
+            statement: StatementId(1),
+            relation: RelationId(1),
+            field: FieldId(2),
+            len: 1,
+        }
+    );
+}
+
+#[test]
+fn rejects_a_duplicate_literal_within_a_set() {
+    // The set is canonical — sorted, duplicate-free; a repeat is rejected
+    // (write it once), never silently collapsed.
+    let mut decl = extension_tree();
+    decl.statements.push(containment(
+        side_where_sets(
+            RelationId(1),
+            &[FieldId(0)],
+            vec![(
+                FieldId(2),
+                LiteralSet::Many(Box::new([Value::U64(1), Value::U64(1)])),
+            )],
+        ),
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::DuplicateSelectionLiteral {
+            statement: StatementId(1),
+            relation: RelationId(1),
+            field: FieldId(2),
+        }
+    );
+}
+
+#[test]
+fn rejects_a_set_literal_of_the_wrong_type() {
+    // Every literal of a set binding type-checks against the selected
+    // field — the same shared check as the singleton form.
+    let mut decl = extension_tree();
+    decl.statements.push(containment(
+        side_where_sets(
+            RelationId(1),
+            &[FieldId(0)],
+            vec![(
+                FieldId(2),
+                LiteralSet::Many(Box::new([Value::U64(1), Value::Bool(true)])),
+            )],
+        ),
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::SelectionLiteralTypeMismatch {
+            statement: StatementId(1),
+            relation: RelationId(1),
+            field: FieldId(2),
+        }
+    );
+}
+
+#[test]
+fn rejects_a_window_with_an_interval_position() {
+    // The v0 refusal: a window counts FACTS per parent; an interval
+    // position would make the count ambiguous between facts and points
+    // (`lean/Bumbledb/Cardinality.lean` § v0 refusals; trigger: a sighted
+    // counting-over-denotation workload).
+    let mut decl = extension_tree();
+    // A pointwise key on Task(span) so only the interval refusal fires.
+    decl.relations[0].fields.push(field(
+        "active",
+        ValueType::Interval {
+            element: IntervalElement::U64,
+        },
+    ));
+    decl.statements = vec![
+        fd(RelationId(0), &[FieldId(0), FieldId(1)]),
+        cardinality(
+            side(RelationId(1), &[FieldId(0), FieldId(4)]),
+            1,
+            Some(3),
+            side(RelationId(0), &[FieldId(0), FieldId(1)]),
+        ),
+    ];
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::CardinalityIntervalPosition {
+            statement: StatementId(1),
+            relation: RelationId(1),
+            field: FieldId(4),
+        }
+    );
+}
+
+#[test]
+fn rejects_a_window_whose_target_is_no_key() {
+    // Probe-ability, the containment rule reused verbatim: Y must resolve
+    // a declared key of B.
+    let mut decl = extension_tree();
+    decl.statements = vec![cardinality(
+        side(RelationId(1), &[FieldId(0)]),
+        1,
+        Some(3),
+        side(RelationId(0), &[FieldId(0)]),
+    )];
+    assert!(matches!(
+        decl.validate().unwrap_err(),
+        SchemaError::NoMatchingTargetKey {
+            statement: StatementId(0),
+            target: RelationId(0),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn rejects_a_window_arity_mismatch() {
+    let mut decl = extension_tree();
+    decl.statements.push(cardinality(
+        side(RelationId(1), &[FieldId(0), FieldId(2)]),
+        1,
+        Some(3),
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ContainmentArityMismatch {
+            statement: StatementId(1),
+            source: 2,
+            target: 1,
+        }
+    );
+}
+
+#[test]
+fn rejects_a_closed_to_closed_window_the_axioms_refute() {
+    // Severity High counts zero Kind axioms against a 1..1 window — a
+    // theory whose axioms refute its own statement has no model
+    // (`lean/Bumbledb/Schema.lean: den_closed_constant`). The cited row
+    // is the parent axiom whose group fails.
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Kind",
+                vec![field("severity", ValueType::U64)],
+                vec![
+                    row("Soft", vec![Value::U64(0)]),
+                    row("Hard", vec![Value::U64(0)]),
+                ],
+            ),
+            closed(
+                "Severity",
+                vec![],
+                vec![row("Low", vec![]), row("High", vec![])],
+            ),
+        ],
+        statements: vec![cardinality(
+            side(RelationId(0), &[FieldId(1)]),
+            1,
+            Some(1),
+            side(RelationId(1), &[FieldId(0)]),
+        )],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ClosedStatementRefuted {
+            statement: StatementId(2),
+            relation: RelationId(1),
+            row: 0,
+        }
+    );
+}
+
+#[test]
+fn rejects_an_order_position_that_is_not_u64() {
+    // The ordinal reading is of u64 numerals
+    // (`lean/Bumbledb/Order.lean: Value.ordinal`); any other type never
+    // satisfies the 1-based discipline — refused at declaration.
+    let mut decl = extension_tree();
+    decl.statements
+        .push(order_mark(RelationId(1), FieldId(3), &[FieldId(0)], None));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::OrderPositionNotU64 {
+            statement: StatementId(1),
+            relation: RelationId(1),
+            field: FieldId(3),
+        }
+    );
+}
+
+#[test]
+fn rejects_an_interval_grouping_field() {
+    let mut decl = extension_tree();
+    decl.statements
+        .push(order_mark(RelationId(1), FieldId(1), &[FieldId(4)], None));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::OrderGroupingInterval {
+            statement: StatementId(1),
+            relation: RelationId(1),
+            field: FieldId(4),
+        }
+    );
+}
+
+#[test]
+fn rejects_an_empty_grouping() {
+    // The degenerate grouping — one "group" the whole relation — is
+    // gate-refused (`lean/Bumbledb/Admission.lean` § narrowings: the walk
+    // must be priced at a real group).
+    let mut decl = extension_tree();
+    decl.statements
+        .push(order_mark(RelationId(1), FieldId(1), &[], None));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::EmptyProjection {
+            statement: StatementId(1),
+            relation: RelationId(1),
+        }
+    );
+}
+
+#[test]
+fn rejects_an_unkeyed_rank_hop() {
+    // The hop-key demand: what makes the rank read deterministic
+    // (`lean/Bumbledb/Subsumption.lean: chain_eval_deterministic`) and
+    // the per-hop unit probe honest
+    // (`lean/Bumbledb/Oracle.lean: chain_cost_hops`).
+    let mut decl = extension_tree();
+    decl.relations.push(RelationDescriptor {
+        extension: None,
+        name: "Priority".into(),
+        fields: vec![field("id", ValueType::U64), field("weight", ValueType::U64)],
+    });
+    decl.statements.push(order_mark(
+        RelationId(1),
+        FieldId(1),
+        &[FieldId(0)],
+        Some(RankChain {
+            link: FieldId(2),
+            hops: Box::new([RankHop {
+                relation: RelationId(2),
+                key: FieldId(0),
+                read: FieldId(1),
+            }]),
+        }),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::RankHopUnkeyed {
+            statement: StatementId(1),
+            relation: RelationId(2),
+            field: FieldId(0),
+        }
+    );
+}
+
+#[test]
+fn rejects_a_rank_chain_type_mismatch() {
+    // The running value's type must equal each hop's key field type — the
+    // positional structural-type rule along the chain: Task.flag (bool)
+    // cannot probe Parent.id (u64).
+    let mut decl = extension_tree();
+    decl.statements.push(order_mark(
+        RelationId(1),
+        FieldId(1),
+        &[FieldId(0)],
+        Some(RankChain {
+            link: FieldId(3),
+            hops: Box::new([RankHop {
+                relation: RelationId(0),
+                key: FieldId(0),
+                read: FieldId(0),
+            }]),
+        }),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::RankChainTypeMismatch {
+            statement: StatementId(1),
+            hop: 0,
+        }
+    );
+}
+
+#[test]
+fn rejects_a_non_u64_rank_payload() {
+    // The rank is the final read's ordinal
+    // (`lean/Bumbledb/Order.lean: RankChain.rankOf`) — a bool payload
+    // reads no rank.
+    let mut decl = extension_tree();
+    decl.relations.push(RelationDescriptor {
+        extension: None,
+        name: "Priority".into(),
+        fields: vec![field("id", ValueType::U64), field("hot", ValueType::Bool)],
+    });
+    decl.statements.push(fd(RelationId(2), &[FieldId(0)]));
+    decl.statements.push(order_mark(
+        RelationId(1),
+        FieldId(1),
+        &[FieldId(0)],
+        Some(RankChain {
+            link: FieldId(2),
+            hops: Box::new([RankHop {
+                relation: RelationId(2),
+                key: FieldId(0),
+                read: FieldId(1),
+            }]),
+        }),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::OrderRankNotU64 {
+            statement: StatementId(2),
+            relation: RelationId(2),
+            field: FieldId(1),
+        }
+    );
+}
+
+#[test]
+fn rejects_a_closed_order_mark_the_axioms_refute() {
+    // Positions {1, 3} in one group: downward closure fails at 2 — the
+    // gap, one of the two ways a hand-numbered column lies
+    // (`lean/Bumbledb/Countermodels.lean: order_gap` is the model's
+    // countermodel; here the axioms are the final state, so the gap is a
+    // declaration error).
+    let decl = SchemaDescriptor {
+        relations: vec![closed(
+            "Step",
+            vec![field("phase", ValueType::U64), field("pos", ValueType::U64)],
+            vec![
+                row("A", vec![Value::U64(0), Value::U64(1)]),
+                row("B", vec![Value::U64(0), Value::U64(3)]),
+            ],
+        )],
+        statements: vec![order_mark(RelationId(0), FieldId(2), &[FieldId(1)], None)],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ClosedStatementRefuted {
+            statement: StatementId(1),
+            relation: RelationId(0),
+            row: 0,
+        }
+    );
+}
+
+#[test]
+fn rejects_a_ranked_order_mark_on_a_closed_subject() {
+    // The fanout's witness, locked: closed Step (grp, pos, kind — the
+    // extension contiguous per group, so the PLAIN discipline holds) with
+    // `order Step(pos) per Step(grp) by kind -> KindRank(kind).rank`
+    // hopping into WRITABLE KindRank. A closed subject rides no delta and
+    // no sweep, so the ranked clause would be judged nowhere — commit
+    // could hold a rank inversion the model rejects
+    // (`lean/Bumbledb/Order.lean: RankedOrderMark.mono`). Refused at the
+    // gate: the sound narrowing of the model's admission.
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Step",
+                vec![
+                    field("grp", ValueType::U64),
+                    field("pos", ValueType::U64),
+                    field("kind", ValueType::U64),
+                ],
+                vec![
+                    row("A", vec![Value::U64(1), Value::U64(1), Value::U64(10)]),
+                    row("B", vec![Value::U64(1), Value::U64(2), Value::U64(20)]),
+                ],
+            ),
+            RelationDescriptor {
+                extension: None,
+                name: "KindRank".into(),
+                fields: vec![field("kind", ValueType::U64), field("rank", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            fd(RelationId(1), &[FieldId(0)]),
+            order_mark(
+                RelationId(0),
+                FieldId(2),
+                &[FieldId(1)],
+                Some(RankChain {
+                    link: FieldId(3),
+                    hops: Box::new([RankHop {
+                        relation: RelationId(1),
+                        key: FieldId(0),
+                        read: FieldId(1),
+                    }]),
+                }),
+            ),
+        ],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::RankedOrderClosedSubject {
+            statement: StatementId(2),
+            relation: RelationId(0),
         }
     );
 }

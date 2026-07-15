@@ -161,6 +161,300 @@ pub(crate) fn prepare<'s, S>(
     })
 }
 
+/// Prepares a program — the recursion cut's prepare surface
+/// (`docs/architecture/40-execution.md` § the fixpoint driver).
+/// The whole program validates under the
+/// program roster; then:
+///
+/// * **The degenerate form takes zero new code paths**: a no-`Idb`
+///   program IS its output predicate's query
+///   (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`), and it
+///   routes through [`prepare`] verbatim — same pipeline, same
+///   artifact, byte for byte.
+/// * **A recursive program prepares per predicate through the ordinary
+///   per-rule pipeline** (strata above the output's are never
+///   evaluated — `evalProgramAt`'s reading — and never prepared): each
+///   recursive rule mints its k delta-variant plans (`DeltaVariant`,
+///   one per same-stratum positive `Idb` atom), delta and accumulated
+///   occurrences costed on the selectivity ladder's floors; interior
+///   predicates get projection-shaped seen-set sinks; the output keeps
+///   the head-owned sink. Pin-at-prepare: no round ever re-plans.
+///
+/// # Errors
+///
+/// The program roster's `Validation` errors; planner caps;
+/// `Lmdb`/`Corruption` from the statistics reads.
+///
+/// # Panics
+///
+/// Only on programmer-invariant violations (plan construction; an
+/// `Idb`-reading rule can never classify as a key probe).
+#[expect(
+    clippy::too_many_lines,
+    reason = "the program prepare reads as one protocol: degenerate embedding, per-predicate pipeline, whole-query artifacts"
+)]
+pub(crate) fn prepare_program<'s, S>(
+    txn: &ReadTxn<'_>,
+    cache: &ImageCache,
+    schema: &'s Schema,
+    program: &crate::ir::Program,
+) -> Result<PreparedQuery<'s, S>> {
+    let witness = crate::ir::validate::validate_program(schema, program)?;
+    let has_idb = program
+        .predicates
+        .iter()
+        .flat_map(|def| def.rules.iter())
+        .flat_map(|rule| rule.atoms.iter().chain(&rule.negated))
+        .any(|atom| atom.source.idb().is_some());
+    if !has_idb {
+        // The degenerate embedding: the output predicate, as the query
+        // it is — re-validated inside `prepare` (one boundary, one
+        // sealing path; the pipeline is cold and the double validation
+        // costs a prepare, never an execution).
+        let output = &program.predicates[usize::from(witness.output().0)];
+        let query = Query {
+            head: output.head.clone(),
+            rules: output.rules.clone(),
+        };
+        return prepare(txn, cache, schema, &query);
+    }
+
+    let _prepare = obs::span(obs::names::PREPARE, obs::Category::Prepare);
+    let count = program.predicates.len();
+    let output = witness.output();
+    let strata = witness.strata();
+    let top_stratum = strata[usize::from(output.0)];
+    let signatures: Vec<&crate::ir::validate::Predicate> = (0..count)
+        .map(|p| {
+            witness
+                .witness(crate::ir::PredId(u16::try_from(p).expect("capped")))
+                .predicate()
+        })
+        .collect();
+
+    let mut predicates = Vec::with_capacity(count);
+    let mut subsumed_record = Vec::new();
+    let mut dead_record = Vec::new();
+    let mut disjoint_rules = None;
+    for p in 0..count {
+        let pred_id = crate::ir::PredId(u16::try_from(p).expect("capped"));
+        let stratum = strata[p];
+        if stratum > top_stratum {
+            // Above the output's stratum: never evaluated
+            // (`evalProgramAt` runs strata through the output's own),
+            // so never prepared — no statistics read, no plan, no sink.
+            predicates.push(crate::api::prepared::fixpoint::FixpointPredicate {
+                stratum,
+                recursive: false,
+                field_types: Vec::new(),
+                rules: Vec::new(),
+                sink: None,
+                units: 0,
+            });
+            continue;
+        }
+        let wq = witness.witness(pred_id);
+        let normalized = crate::ir::normalize::normalize_predicate(schema, wq, &signatures);
+        if pred_id == output {
+            // The rule-disjointness diagnostic, output predicate only
+            // (the record surfaces on the query-level stats).
+            disjoint_rules = disjointness(wq, &normalized, schema);
+        }
+        let (survivors, subsumed) = ground_program(normalized, wq, schema);
+        if pred_id == output {
+            subsumed_record = subsumed;
+        }
+        let predicate = wq.predicate().clone();
+        let mut rules: Vec<PreparedRule> = Vec::with_capacity(survivors.len());
+        for (rule_idx, normalized_rule) in survivors {
+            if let Some(reason) = &normalized_rule.dead {
+                if pred_id == output {
+                    dead_record.push(crate::api::stats::DeadRule {
+                        rule: u16::try_from(rule_idx).expect("rule count fits u16"),
+                        rendered: reason.clone(),
+                    });
+                }
+                continue;
+            }
+            let rule = wq.rule(rule_idx);
+            // The recursive atoms: positive occurrences reading this
+            // predicate's own stratum (same SCC — the strata judge's
+            // witness). Negated and fold-input same-stratum reads were
+            // refused at validation, so positives are the whole set.
+            let recursive_occs: Vec<crate::ir::normalize::OccId> = normalized_rule
+                .occurrences
+                .iter()
+                .filter(|occ| occ.role.participates())
+                .filter_map(|occ| occ.source.idb().map(|q| (occ.occ_id, q)))
+                .filter(|(_, q)| strata[usize::from(q.0)] == stratum)
+                .map(|(occ_id, _)| occ_id)
+                .collect();
+            if recursive_occs.is_empty() {
+                rules.push(prepare_rule_variant(
+                    txn,
+                    cache,
+                    schema,
+                    &rule,
+                    &normalized_rule,
+                    &predicate.columns,
+                    &signatures,
+                    None,
+                )?);
+                continue;
+            }
+            // The typed variant sum (40-execution.md § the fixpoint driver): k variants
+            // through the ordinary pipeline, minted by this one parse
+            // and consumed totally by the driver.
+            let mut variants = Vec::with_capacity(recursive_occs.len());
+            for delta in recursive_occs {
+                let prepared = prepare_rule_variant(
+                    txn,
+                    cache,
+                    schema,
+                    &rule,
+                    &normalized_rule,
+                    &predicate.columns,
+                    &signatures,
+                    Some(delta),
+                )?;
+                let PreparedRule::FreeJoin(fj) = prepared else {
+                    unreachable!("an Idb-reading rule never classifies as a key probe")
+                };
+                variants.push(super::DeltaVariant { delta, rule: fj });
+            }
+            rules.push(PreparedRule::Recursive(super::RecursiveRule {
+                variants: variants.into_boxed_slice(),
+            }));
+        }
+        let units: usize = rules
+            .iter()
+            .map(|rule| match rule {
+                PreparedRule::Recursive(rule) => rule.variants.len(),
+                PreparedRule::FreeJoin(_) | PreparedRule::KeyProbe(_) => 1,
+            })
+            .sum();
+        let recursive = rules
+            .iter()
+            .any(|rule| matches!(rule, PreparedRule::Recursive(_)));
+        // Interior predicates own projection-shaped seen-sets (the
+        // strata roster keeps folds out of interior heads — the
+        // executable-class item); the output keeps the main sink.
+        let sink = if pred_id == output {
+            None
+        } else {
+            let hint = output_hint(&rules);
+            Some(rules.first().map_or_else(
+                || crate::exec::sink::ProjectionSink::with_capacity_hint(&[], 0, 0),
+                |first| {
+                    crate::exec::sink::ProjectionSink::with_capacity_hint(
+                        first.finds(),
+                        first.slot_count(),
+                        hint,
+                    )
+                },
+            ))
+        };
+        predicates.push(crate::api::prepared::fixpoint::FixpointPredicate {
+            stratum,
+            recursive,
+            field_types: signatures[p]
+                .columns
+                .iter()
+                .map(|column| column.ty.type_desc())
+                .collect(),
+            rules,
+            sink,
+            units,
+        });
+    }
+
+    // The whole-query artifacts, aimed at the OUTPUT predicate: sink
+    // shape, result typing, bind contracts (params are program-global —
+    // every per-predicate witness carries the one unified table).
+    let out_wq = witness.output_witness();
+    let predicate = out_wq.predicate().clone();
+    let params = param_specs(out_wq);
+    let output_rules = &predicates[usize::from(output.0)].rules;
+    let output_hint_rows = output_hint(output_rules);
+    let sink = output_rules.first().map_or_else(
+        || make_sink(&[], 0, SinkProgram::SingleRule(None), 0),
+        |first| {
+            let regime = if output_rules.len() > 1 {
+                SinkProgram::Union
+            } else {
+                SinkProgram::SingleRule(first.distinct_witness())
+            };
+            make_sink(first.finds(), first.slot_count(), regime, output_hint_rows)
+        },
+    );
+    let disjoint_rules = (output_rules.len() > 1).then_some(disjoint_rules).flatten();
+    let bindings = Bindings::new(
+        predicates
+            .iter()
+            .flat_map(|pred| pred.rules.iter())
+            .map(PreparedRule::slot_count)
+            .max()
+            .unwrap_or(0),
+    );
+    let answer_heap = if predicate
+        .columns
+        .iter()
+        .all(|column| !matches!(column.ty, ValueType::String | ValueType::FixedBytes { .. }))
+    {
+        super::AnswerHeap::Words
+    } else {
+        super::AnswerHeap::Bytes
+    };
+    let unresolved_literals = predicates
+        .iter()
+        .flat_map(|pred| pred.rules.iter())
+        .map(pending_literals)
+        .sum();
+    // The program in the rule notation (`ir/render::render_program`):
+    // interior predicates named `p{id}`, output rules bare — the
+    // notation's own program form.
+    let rendered = crate::ir::render::render_program(schema, program);
+    // The per-stratum membership table, computed once so the driver's
+    // stratum walk allocates nothing.
+    let strata_members: Vec<Vec<usize>> = (0..=top_stratum)
+        .map(|s| {
+            (0..count)
+                .filter(|&p| strata[p] == s)
+                .collect::<Vec<usize>>()
+        })
+        .collect();
+
+    Ok(PreparedQuery {
+        schema,
+        env_instance: txn.env_instance(),
+        disjoint_rules,
+        subsumed: subsumed_record,
+        dead: dead_record,
+        program: Program::Fixpoint(Box::new(crate::api::prepared::fixpoint::FixpointProgram {
+            predicates,
+            output,
+            top_stratum,
+            strata_members,
+            rounds_budget: crate::api::prepared::fixpoint::DEFAULT_FIXPOINT_ROUNDS,
+            tuples_budget: crate::api::prepared::fixpoint::DEFAULT_FIXPOINT_TUPLES,
+            scratch: crate::api::prepared::fixpoint::FixpointScratch::default(),
+        })),
+        predicate,
+        params,
+        resolved_params: Vec::new(),
+        unresolved_literals,
+        missed_params: Vec::new(),
+        sink,
+        bindings,
+        answer_scratch: Vec::new(),
+        answer_heap,
+        resolve_memo: ResolveMemo::new(),
+        determinant_key: Vec::new(),
+        rendered,
+        marker: std::marker::PhantomData,
+    })
+}
+
 /// The shared sink's capacity hint, derived only from the already-frozen
 /// rule plans.
 fn output_hint(rules: &[PreparedRule]) -> usize {
@@ -171,6 +465,12 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
             // the binding stream the sink consumes.
             PreparedRule::FreeJoin(rule) => {
                 let plan = &rule.plan;
+                usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
+                    .expect("clamped")
+            }
+            // Variant estimates share the floors; variant 0 speaks.
+            PreparedRule::Recursive(rule) => {
+                let plan = &rule.variants[0].rule.plan;
                 usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
                     .expect("clamped")
             }
@@ -190,10 +490,21 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
 /// and never resolved — a fold must not block the fully-latched fast
 /// path.
 fn pending_literals(rule: &PreparedRule) -> u32 {
-    let PreparedRule::FreeJoin(rule) = rule else {
-        return 0;
-    };
-    let plan = &rule.plan;
+    match rule {
+        PreparedRule::FreeJoin(rule) => plan_pending_literals(&rule.plan),
+        // Each variant carries its own plan templates and latches
+        // independently — the counter sums them all.
+        PreparedRule::Recursive(rule) => rule
+            .variants
+            .iter()
+            .map(|variant| plan_pending_literals(&variant.rule.plan))
+            .sum(),
+        PreparedRule::KeyProbe(_) => 0,
+    }
+}
+
+/// One Free Join plan's `str` literals awaiting dictionary words.
+fn plan_pending_literals(plan: &crate::plan::fj::ValidatedPlan) -> u32 {
     let pending = |value: &crate::image::view::Const| {
         matches!(value, crate::image::view::Const::PendingIntern { .. })
     };
@@ -323,6 +634,29 @@ fn prepare_rule(
     normalized: &NormalizedQuery,
     columns: &[crate::ir::validate::PredicateColumn],
 ) -> Result<PreparedRule> {
+    prepare_rule_variant(txn, cache, schema, rule, normalized, columns, &[], None)
+}
+
+/// [`prepare_rule`] with the program surface: the sealed signatures
+/// (`Idb` occurrences' field→column spans) and — for one delta variant
+/// of a recursive rule — the marked delta occurrence, whose statistics
+/// take the ladder's delta floor while other `Idb` occurrences take the
+/// accumulated floor (`plan/selectivity.rs`; 40-execution.md § the fixpoint driver, the
+/// param-plan precedent). The query path passes the empty surface.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the per-rule pipeline's inputs are clearer unpacked"
+)]
+fn prepare_rule_variant(
+    txn: &ReadTxn<'_>,
+    cache: &ImageCache,
+    schema: &Schema,
+    rule: &RuleWitness<'_>,
+    normalized: &NormalizedQuery,
+    columns: &[crate::ir::validate::PredicateColumn],
+    signatures: &[&crate::ir::validate::Predicate],
+    delta: Option<crate::ir::normalize::OccId>,
+) -> Result<PreparedRule> {
     let distinct_witness = provably_distinct(normalized, schema);
     // Classification first: a key probe needs no statistics or planning.
     let classified = {
@@ -359,12 +693,30 @@ fn prepare_rule(
         .iter()
         .filter(|o| o.role.participates())
     {
-        let rows = read::row_count(txn, occurrence.relation)?;
+        // An `Idb` occurrence pins nothing (20-query-ir.md § engine recursion's
+        // consumer table): its cardinality is prepare-unknowable, so it
+        // reads no row counter and costs on the selectivity ladder's
+        // floors — the delta floor for the variant's marked occurrence,
+        // the accumulated floor for every other predicate read — the
+        // staleness surface already knows the shape (negated and
+        // grounding-discharged occurrences carry no pin today).
+        let Some(relation) = occurrence.source.edb() else {
+            let floor = if delta == Some(occurrence.occ_id) {
+                crate::plan::selectivity::DELTA_PLANNING_CARDINALITY
+            } else {
+                crate::plan::selectivity::ACCUMULATED_PLANNING_CARDINALITY
+            };
+            stats.push(crate::plan::selectivity::occurrence_stats(
+                txn, cache, schema, occurrence, floor,
+            )?);
+            continue;
+        };
+        let rows = read::row_count(txn, relation)?;
         let occ_stats =
             crate::plan::selectivity::occurrence_stats(txn, cache, schema, occurrence, rows)?;
         pins.push(OccurrencePin {
             occ_id: occurrence.occ_id,
-            relation: occurrence.relation,
+            relation,
             rows,
             survivors: (!occurrence.filters.is_empty()).then_some(occ_stats.rows),
         });
@@ -383,9 +735,15 @@ fn prepare_rule(
     // skip-illegality under a fold is encoded in the bits themselves
     // (`RuleWitness::sink_vars`).
     let sink_vars = rule.sink_vars();
-    let plan =
-        crate::plan::fj::validate(&fj, normalized, schema, order.estimates.clone(), &sink_vars)
-            .expect("binary2fj + factor construct valid plans");
+    let plan = crate::plan::fj::validate_with_signatures(
+        &fj,
+        normalized,
+        schema,
+        signatures,
+        order.estimates.clone(),
+        &sink_vars,
+    )
+    .expect("binary2fj + factor construct valid plans");
     lower_span.end();
 
     let finds = find_specs(rule, &plan);

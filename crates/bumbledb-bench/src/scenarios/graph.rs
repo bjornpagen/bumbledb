@@ -134,7 +134,7 @@ fn neighbors() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::EDGE,
+            source: bumbledb::AtomSource::Edb(ids::EDGE),
             bindings: vec![(FieldId(0), param(0)), (FieldId(1), var(0))],
         }],
         negated: vec![],
@@ -148,11 +148,11 @@ fn two_hop() -> Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), param(0)), (FieldId(1), var(1))],
             },
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(0))],
             },
         ],
@@ -170,15 +170,15 @@ fn three_hop_count() -> Query {
         }],
         atoms: vec![
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), param(0)), (FieldId(1), var(0))],
             },
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
             },
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
             },
         ],
@@ -193,15 +193,15 @@ fn mutual() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
             },
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(0))],
             },
             Atom {
-                relation: ids::NODE,
+                source: bumbledb::AtomSource::Edb(ids::NODE),
                 bindings: vec![(FieldId(0), var(0)), (FieldId(1), param(0))],
             },
         ],
@@ -219,15 +219,15 @@ fn triangles_from() -> Query {
         }],
         atoms: vec![
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), param(0)), (FieldId(1), var(0))],
             },
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
             },
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), param(0))],
             },
         ],
@@ -242,7 +242,7 @@ fn weighted_hop() -> Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::EDGE,
+                source: bumbledb::AtomSource::Edb(ids::EDGE),
                 bindings: vec![
                     (FieldId(0), param(0)),
                     (FieldId(1), var(0)),
@@ -250,7 +250,7 @@ fn weighted_hop() -> Query {
                 ],
             },
             Atom {
-                relation: ids::NODE,
+                source: bumbledb::AtomSource::Edb(ids::NODE),
                 bindings: vec![(FieldId(0), var(0)), (FieldId(2), var(2))],
             },
         ],

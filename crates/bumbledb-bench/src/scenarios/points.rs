@@ -94,7 +94,7 @@ fn by_id() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::DOC,
+            source: bumbledb::AtomSource::Edb(ids::DOC),
             bindings: vec![
                 (FieldId(0), param(0)),
                 (FieldId(3), var(0)),
@@ -121,7 +121,7 @@ fn by_key() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: ids::DOC,
+            source: bumbledb::AtomSource::Edb(ids::DOC),
             bindings: vec![
                 (FieldId(1), param(0)),
                 (FieldId(0), var(0)),
@@ -150,11 +150,11 @@ fn bucket_fetch() -> Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: ids::DOC,
+                source: bumbledb::AtomSource::Edb(ids::DOC),
                 bindings: vec![(FieldId(2), var(1)), (FieldId(0), var(0))],
             },
             Atom {
-                relation: ids::BUCKET,
+                source: bumbledb::AtomSource::Edb(ids::BUCKET),
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), param(0))],
             },
         ],
@@ -185,7 +185,7 @@ fn size_band() -> Query {
             over: None,
         }],
         atoms: vec![Atom {
-            relation: ids::DOC,
+            source: bumbledb::AtomSource::Edb(ids::DOC),
             bindings: vec![(FieldId(0), var(0)), (FieldId(3), var(1))],
         }],
         negated: vec![],

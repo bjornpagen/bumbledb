@@ -209,3 +209,105 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
     };
     noted.expect("no fact can satisfy an uninterned σ — the edge never derives");
 }
+
+/// The disjunctive σ (`f == {a, b}`): the set seals as `EncodedSet` in
+/// canonical order, the commit judgment reads membership among the
+/// alternatives (a singleton binding stays byte-identical to the classic
+/// arm), and a str set drops never-interned alternatives — all missing is
+/// `Never` (`lean/Bumbledb/Schema.lean: Selection.satisfies` — the
+/// field's value a MEMBER of the spelled set).
+#[test]
+fn a_literal_set_sigma_seals_and_judges_membership() {
+    use crate::schema::LiteralSet;
+
+    let schema: Schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Account".into(),
+                fields: vec![field("id", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Transfer".into(),
+                fields: vec![
+                    field("account", ValueType::U64),
+                    field("status", ValueType::U64),
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: ACCOUNT,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: crate::schema::Side {
+                    relation: TRANSFER,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([(
+                        FieldId(1),
+                        LiteralSet::Many(Box::new([Value::U64(3), Value::U64(1)])),
+                    )]),
+                },
+                target: side(ACCOUNT, &[0]),
+            },
+        ],
+    }
+    .validate()
+    .expect("valid fixture");
+
+    // Sealed shape: the alternatives in canonical (sorted) order.
+    assert_eq!(
+        schema.containment(ContainmentId(0)).checks.source.as_ref(),
+        &[CompiledCheck::EncodedSet {
+            field: FieldId(1),
+            alternatives: Box::new([
+                Box::new(1u64.to_be_bytes()) as Box<[u8]>,
+                Box::new(3u64.to_be_bytes()) as Box<[u8]>,
+            ]),
+        }]
+    );
+
+    let dir = TempDir::new("sealed-set");
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let status_transfer = |status: u64| {
+        fact(
+            &schema,
+            TRANSFER,
+            &[ValueRef::U64(9), ValueRef::U64(status)],
+        )
+    };
+
+    // A member of the set without its target: rejected, source side.
+    let result = apply_delta(&env, &schema, &[], &[(TRANSFER, status_transfer(3))]);
+    let Err(Error::CommitRejected { violations }) = result else {
+        panic!("expected a rejected commit");
+    };
+    assert!(matches!(
+        violations.as_slice(),
+        [Violation::Containment {
+            statement: StatementId(1),
+            direction: Direction::SourceUnsatisfied,
+            ..
+        }]
+    ));
+
+    // Outside the set: no edge, no probe — commits against the empty
+    // store.
+    apply_delta(&env, &schema, &[], &[(TRANSFER, status_transfer(2))])
+        .expect("a fact outside the set has no edge");
+
+    // The other member, landing with its target: the final state
+    // satisfies.
+    apply_delta(
+        &env,
+        &schema,
+        &[],
+        &[
+            (ACCOUNT, account(&schema, 9)),
+            (TRANSFER, status_transfer(1)),
+        ],
+    )
+    .expect("target and in-set source in one delta");
+}

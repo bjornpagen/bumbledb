@@ -16,8 +16,8 @@
 //! (`docs/architecture/10-data-model.md`).
 
 use super::{
-    FieldId, Generation, IntervalElement, RelationId, Schema, Side, StatementId, StatementView,
-    ValueType,
+    FieldId, Generation, IntervalElement, LiteralSet, RelationId, Schema, Side, StatementId,
+    StatementView, ValueType,
 };
 use crate::encoding::encode_literal;
 use crate::value::Value;
@@ -26,8 +26,11 @@ use crate::value::Value;
 /// the statement redesign. `v2`: closed relations — every relation gains a
 /// closedness tag byte (so ordinary and closed relations can never alias
 /// one byte stream), and a closed relation's ground axioms hash after its
-/// fields.
-const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v2";
+/// fields. `v3`: the dependency-vocabulary extension — every selection
+/// binding hashes a literal COUNT before its literals (the disjunctive
+/// set form), and the two new statement forms take tags 2 (cardinality
+/// window) and 3 (order mark).
+const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v3";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
@@ -48,9 +51,14 @@ pub struct SchemaFingerprint(pub [u8; 32]);
 ///   each: handle bytes, then the row's canonical fact bytes, each
 ///   length-prefixed like everything else);
 /// - the dependency statements in **materialized order** — for each: the
-///   judgment form (Functionality = 0, Containment = 1) and its sides as
-///   (relation id, projection field-id list in statement order, selection
-///   list as (field id, literal value) pairs in statement order).
+///   judgment form (Functionality = 0, Containment = 1, Cardinality = 2,
+///   Order = 3) and its body — sides as (relation id, projection field-id
+///   list in statement order, selection list as (field id, literal count,
+///   literal values in canonical set order) bindings in statement order);
+///   a cardinality window adds `lo` and the `hi` presence tag + bound
+///   between its sides; an order mark hashes relation, position, the
+///   grouping list, and the ranking presence tag + link + hop
+///   (relation, key, read) triples.
 fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
     put_bytes(out, FORMAT_VERSION_LABEL);
     put_len(out, schema.relations().len());
@@ -81,7 +89,10 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             }
         }
     }
-    let statement_count = schema.keys().len() + schema.containments().len();
+    let statement_count = schema.keys().len()
+        + schema.containments().len()
+        + schema.windows().len()
+        + schema.orders().len();
     put_len(out, statement_count);
     for index in 0..statement_count {
         let id = StatementId(u16::try_from(index).expect("statement count fits u16"));
@@ -98,6 +109,41 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                 out.push(1);
                 put_side(out, &statement.source);
                 put_side(out, &statement.target);
+            }
+            StatementView::Cardinality(_, statement) => {
+                out.push(2);
+                put_side(out, &statement.source);
+                out.extend_from_slice(&statement.lo.to_le_bytes());
+                match statement.hi {
+                    None => out.push(0),
+                    Some(hi) => {
+                        out.push(1);
+                        out.extend_from_slice(&hi.to_le_bytes());
+                    }
+                }
+                put_side(out, &statement.target);
+            }
+            StatementView::Order(_, statement) => {
+                out.push(3);
+                put_relation_id(out, statement.relation);
+                put_field_id(out, statement.position);
+                put_len(out, statement.grouping.len());
+                for field in &statement.grouping {
+                    put_field_id(out, *field);
+                }
+                match &statement.ranking {
+                    None => out.push(0),
+                    Some(chain) => {
+                        out.push(1);
+                        put_field_id(out, chain.link);
+                        put_len(out, chain.hops.len());
+                        for hop in &chain.hops {
+                            put_relation_id(out, hop.relation);
+                            put_field_id(out, hop.key);
+                            put_field_id(out, hop.read);
+                        }
+                    }
+                }
             }
         }
     }
@@ -136,9 +182,24 @@ fn put_side(out: &mut Vec<u8>, side: &Side) {
         put_field_id(out, *field);
     }
     put_len(out, side.selection.len());
-    for (field, literal) in &side.selection {
+    for (field, literals) in &side.selection {
         put_field_id(out, *field);
-        put_literal(out, literal);
+        // The literal COUNT precedes the literals: a one-literal binding
+        // and a set binding can never alias, and the sealed side's
+        // canonical (sorted, deduplicated) set order makes the stream a
+        // function of the set, not its spelling.
+        match literals {
+            LiteralSet::One(literal) => {
+                put_len(out, 1);
+                put_literal(out, literal);
+            }
+            LiteralSet::Many(values) => {
+                put_len(out, values.len());
+                for literal in values {
+                    put_literal(out, literal);
+                }
+            }
+        }
     }
 }
 
@@ -244,12 +305,12 @@ mod tests {
     #[test]
     fn golden_fingerprint_pins_the_hash() {
         // Pinned: the canonical encoding (and therefore blake3 of it)
-        // must not drift while the format label stays `v2`. `base()` covers
+        // must not drift while the format label stays `v3`. `base()` covers
         // every literal-adjacent input: fresh auto-keys, a declared key,
         // and a containment with a selection literal.
         assert_eq!(
             hex_of(&base_fingerprint()),
-            "06681953fa8e913841b80ab76ab4be3093e8b4f5df242a2fbe83e8a884958079"
+            "8580c7306e642f4b958d1bd224d603e53d3bca7fcb8caec80b727e8ef81a9436"
         );
     }
 
@@ -277,7 +338,7 @@ mod tests {
         );
         assert_eq!(
             hex_of(&fingerprint(&schema)),
-            "d3e7542befb8a131f37a0272726faba24ebb0a31d077abc4a22b21e65aad3a73"
+            "5d3fa9359bc9e1c7fd7821398715bb3ba2234a2772ab97fd771744a400d248f9"
         );
     }
 
@@ -428,7 +489,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v2");
+        expected.extend_from_slice(b"bumbledb-schema-v3");
         expected.extend_from_slice(&1u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&1u32.to_le_bytes()); // name len
         expected.extend_from_slice(b"R");
@@ -484,7 +545,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v2");
+        expected.extend_from_slice(b"bumbledb-schema-v3");
         expected.extend_from_slice(&2u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"Holder");
@@ -517,6 +578,7 @@ mod tests {
         expected.extend_from_slice(&0u16.to_le_bytes()); // field id
         expected.extend_from_slice(&1u32.to_le_bytes()); // selection len
         expected.extend_from_slice(&1u16.to_le_bytes()); // selected field id
+        expected.extend_from_slice(&1u32.to_le_bytes()); // literal count (singleton)
         expected.extend_from_slice(&1u64.to_be_bytes()); // u64 literal, canonical encoding
         expected.extend_from_slice(&0u32.to_le_bytes()); // target relation id
         expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
@@ -600,7 +662,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v2");
+        expected.extend_from_slice(b"bumbledb-schema-v3");
         expected.extend_from_slice(&1u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&8u32.to_le_bytes());
         expected.extend_from_slice(b"Currency");

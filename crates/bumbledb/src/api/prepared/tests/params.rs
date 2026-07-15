@@ -103,7 +103,7 @@ fn string_params_resolve_per_execution() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(2), Term::Param(crate::ir::ParamId(0))),
                 (FieldId(3), Term::Var(VarId(0))),
@@ -218,7 +218,7 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: RelationId(0),
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::Var(VarId(1))),
@@ -295,14 +295,14 @@ fn a_cross_atom_mask_param_resolves_into_the_executors_residual() {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
                     (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: RelationId(0),
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(2))),
                     (FieldId(1), Term::Var(VarId(3))),

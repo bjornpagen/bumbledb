@@ -113,7 +113,7 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
     let rule = |account: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(1), Term::Literal(Value::U64(account))),
                 (FieldId(3), Term::Var(VarId(0))),
@@ -294,7 +294,7 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     let key_probe_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Param(crate::ir::ParamId(0))),
                 (FieldId(3), Term::Var(VarId(0))),
@@ -384,7 +384,7 @@ fn closed_relation_views_stay_warm_across_generations() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: currency,
+            source: crate::ir::AtomSource::Edb(currency),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::Var(VarId(1))),

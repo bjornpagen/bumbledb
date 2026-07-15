@@ -48,7 +48,7 @@ fn count_distinct_collapses_multiplicities_per_group_and_over_strings() {
             },
         ],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(3))),
                 (FieldId(1), Term::Var(VarId(0))),
@@ -108,7 +108,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
             },
         ],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(2))), // fresh id bound: key covered
                 (FieldId(1), Term::Var(VarId(0))),
@@ -150,7 +150,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
             },
         ],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(3), Term::Var(VarId(1))),
@@ -184,7 +184,7 @@ fn arg_max_picks_the_latest_posting_per_account() {
     let txn = env.read_txn().expect("txn");
 
     let atoms = vec![Atom {
-        relation: POSTING,
+        source: crate::ir::AtomSource::Edb(POSTING),
         bindings: vec![
             (FieldId(0), Term::Var(VarId(2))),
             (FieldId(1), Term::Var(VarId(0))),
@@ -295,7 +295,7 @@ fn arg_ties_are_set_honest() {
             },
         ],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(3))),
                 (FieldId(1), Term::Var(VarId(0))),
@@ -338,7 +338,7 @@ fn arg_ties_are_set_honest() {
             },
         ],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(2))),
                 (FieldId(1), Term::Var(VarId(0))),
@@ -443,7 +443,7 @@ fn interval_find_round_trips_through_answers() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: PAYROLL,
+            source: crate::ir::AtomSource::Edb(PAYROLL),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(2), Term::Var(VarId(1))),
@@ -518,7 +518,7 @@ fn count_distinct_over_intervals_uses_value_identity() {
             },
         ],
         atoms: vec![Atom {
-            relation: PAYROLL,
+            source: crate::ir::AtomSource::Edb(PAYROLL),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(2))),
                 (FieldId(1), Term::Var(VarId(0))),

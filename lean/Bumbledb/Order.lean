@@ -66,17 +66,40 @@ ways a hand-numbered column lies.
   (`RankHop.eval`, `chainEval`): the key premise that makes it a
   function is acceptance's, spent in `Subsumption.lean` — never baked
   into the denotation.
-* **Undischarged (spec-ahead): the engine has no order-mark statement
-  form yet.** The engine's accepted statement forms today are
-  functionality and containment, full stop
-  (`crate::schema::StatementDescriptor`,
-  `crates/bumbledb/src/schema.rs`);
-  `order A(pos) per A(parent) [by … -> K(rank)]` is the 2026-07-14
-  vocabulary campaign's admission, and its Rust discharge — macro
-  form, the key-backed-hop acceptance rule, the statement-phase
-  judgment — is decided and queued. That is why no `Bridge.lean` row
-  cites this module: deliberate, not an omission. Nothing here claims
-  the engine accepts, judges, or enforces an order mark today.
+* **Acceptance and enforcement discharged (2026-07-14).** The engine
+  ACCEPTS the form at declaration: `StatementDescriptor::Order` and
+  the gate arm `validate_order`
+  (`crates/bumbledb/src/schema/validate.rs`) implement the shape
+  premises — u64 position, non-empty scalar grouping, and for the
+  RANKED form the key-backed-hop rule (`validate_rank_chain` seals a
+  declared-key witness per hop, the plan handle
+  `ranked_order_plan_decides` prices) — and the macro's
+  `order R(pos) per R(grp) [by …]` form lowers to it. The engine also
+  JUDGES the mark per commit for WRITABLE subjects:
+  `storage/commit/judgment.rs::check_orders` walks each touched group
+  once in position order (the ranked form chases the sealed hops per
+  member; a dirty hop relation walks every group), and
+  `Db::verify_store` re-walks every group globally for writable
+  subjects. The `Bridge.lean` rows cite `Oracle.order_plan_decides` /
+  `Oracle.ranked_order_plan_decides` (acceptance) and
+  `Txn.order_delta_restriction` / `Txn.ranked_order_delta_restriction`
+  (enforcement).
+* **The engine narrows the admission: no ranked mark on a closed
+  subject (sound direction, recorded 2026-07-15).** This model admits
+  `order A(pos) per A(grp) by …` with `A` closed (`Admission.lean:
+  orderForm` carries no openness premise), but a closed relation's
+  rows never enter a delta — the mark writes no order `R` edges, the
+  chain-dirty AllGroups escalation walks an empty namespace, and the
+  store sweep skips closed subjects — so the ranked clause (whose
+  ranks read through WRITABLE hop relations that mutate after
+  declaration) would be judged nowhere. The engine refuses the shape
+  at the gate (`SchemaError::RankedOrderClosedSubject`,
+  `validate_order`'s closed-relation arm): every schema the engine
+  accepts is judged exactly as this module states, and the refused
+  shape is a strict narrowing of the model's admission — the model is
+  unchanged. The PLAIN form on a closed subject stays: its whole
+  discipline is the `1..k` walk over the sealed extension, decided at
+  validate outright, so the sweep's skip is justified by the refusal.
 -/
 
 namespace Bumbledb

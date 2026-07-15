@@ -24,7 +24,7 @@ fn overflow_errors_leave_answers_reusable() {
             },
         ],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(2))),
                 (FieldId(1), Term::Var(VarId(0))),
@@ -54,7 +54,7 @@ fn overflow_errors_leave_answers_reusable() {
     let ok_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(2))),
                 (FieldId(1), Term::Var(VarId(0))),

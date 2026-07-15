@@ -15,20 +15,19 @@ relations as instance-independent sealed constants.
   (E3, disjunctive selections).** `Selection` is a finite list of
   (field, literal-set) bindings read conjunctively, each binding a
   disjunction over its spelled set — no richer predicate is writable
-  at this level. The ENGINE's accepted σ fragment today is the
-  SINGLETON sub-fragment of this representation: equality-to-one-
-  literal bindings (`Side.selection`,
-  `crates/bumbledb/src/schema.rs:184-193`; the macro's `parse_side`
-  parses exactly one literal per binding). A singleton set is exactly
-  that equality binding (`Selection.singleton_satisfies_iff`), so the
-  wider representation re-reads every accepted σ unchanged; the sets
-  are first-class rather than per-literal sugar because counts over a
-  union do not decompose
+  at this level. The ENGINE's accepted σ fragment is this same
+  representation: `Side.selection` carries (field, literal-set)
+  bindings (`LiteralSet` in `crates/bumbledb/src/schema.rs`; the
+  macro's `parse_side` parses `f == L` and `f == {A, B}`). A
+  singleton set is exactly the equality binding
+  (`Selection.singleton_satisfies_iff`) and stays the engine's
+  zero-cost `One` arm, so the wider representation re-reads every
+  previously accepted σ unchanged; the sets are first-class rather
+  than per-literal sugar because counts over a union do not decompose
   (`Countermodels.disjunctive_window_not_literal_conjunction`). The
-  set form itself is spec-ahead — the record is the "Undischarged"
-  bullet below, and the decidability-firewall tripwire's recorded
-  edge (`docs/architecture/30-dependencies.md` § the decidability
-  firewall) is the same decision docs-side.
+  decidability-firewall tripwire's recorded edge
+  (`docs/architecture/30-dependencies.md` § the decidability
+  firewall) is the same decision docs-side, executed 2026-07-14.
 * **Statements are the four judgment forms**: functionality and
   containment exactly as `StatementDescriptor`, plus the two
   extension forms — cardinality windows and order marks — with their
@@ -41,18 +40,16 @@ relations as instance-independent sealed constants.
 
 ## Narrowings recorded (law 5: narrow and record)
 
-* **Undischarged (spec-ahead): the literal-SET σ form.** The engine's
-  accepted σ fragment today is the singleton sub-fragment — one
-  equality literal per selected field (`Side.selection` is
-  `Box<[(FieldId, Value)]>`, `crates/bumbledb/src/schema.rs:184-193`;
-  `validate_side_selection` and the sealed `CompiledCheck` byte
-  compares consume those single literals). The wider (field,
-  literal-set) disjunctive form is the 2026-07-14 vocabulary
-  campaign's admission; its Rust discharge is decided and queued,
-  which is why no `Bridge.lean` row exists for the set form —
-  deliberate, not an omission. Nothing here claims the engine
-  accepts, mirrors, or enforces a non-singleton binding today;
-  `Selection.singleton_satisfies_iff` is the sub-fragment agreement.
+* **Discharged (2026-07-14): the literal-SET σ form.** The engine's
+  accepted σ fragment is the (field, literal-set) disjunctive form —
+  `Side.selection` is `Box<[(FieldId, LiteralSet)]>`
+  (`crates/bumbledb/src/schema.rs`), the sealed `CompiledCheck`
+  set arms judge membership among the sealed encodings, and the
+  canonical form is sorted and duplicate-free (validation rejects
+  the degenerate spellings). The singleton `One` arm is
+  byte-identical to the pre-set engine —
+  `Selection.singleton_satisfies_iff` is that agreement, and the
+  `Bridge.lean` row for the set form cites it.
 * **A fact is a total field-indexed value assignment**
   (`Fact := FieldId → Value`). Arity and positional typing are the
   header's concern, and no PRD 03 theorem needs a typing premise —
@@ -173,14 +170,12 @@ def sameFields (X Y : List FieldId) : Prop :=
 (field, literal-SET) bindings, read conjunctively; each binding is
 the DISJUNCTION over its spelled set (the field's value is a MEMBER).
 Membership-to-literal-set BY REPRESENTATION: no richer predicate is
-writable. The SINGLETON sub-fragment is the engine's whole accepted σ
-today — one equality literal per selected field
-(`crates/bumbledb/src/schema.rs:184-193`; `validate_side_selection`
-and the sealed `CompiledCheck` byte compares consume exactly that
-sub-fragment), and `Selection.singleton_satisfies_iff` proves the
-singleton reading is that equality. The set form is spec-ahead (the
-module doc's Undischarged record: the 2026-07-14 vocabulary
-campaign's admission, Rust discharge queued). The sets are
+writable. The engine's accepted σ is this same fragment
+(`LiteralSet` in `crates/bumbledb/src/schema.rs`;
+`validate_side_selection` and the sealed `CompiledCheck` arms consume
+it), and `Selection.singleton_satisfies_iff` proves the singleton
+reading is exactly the equality binding — the engine's zero-cost
+`One` arm, unchanged in meaning. The sets are
 first-class, not sugar: a window over a disjunctive selection is not
 any conjunction of per-literal windows
 (`Countermodels.disjunctive_window_not_literal_conjunction`). -/

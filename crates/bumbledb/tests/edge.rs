@@ -5,11 +5,11 @@
 //! precise per-position errors for every scalar/set misuse, and a valid
 //! mixed bind through the public [`bumbledb::ParamArg`] surface.
 
-use bumbledb::error::ValidationError;
+use bumbledb::error::{SchemaError, ValidationError};
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, VarId};
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Row, SchemaDescriptor,
-    Side, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RankChain, RankHop, RelationDescriptor, RelationId, Row,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{AnswerValue, Answers, BindValue, Db, Error, Fact, ParamArg, Value};
 
@@ -206,6 +206,97 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
     assert!(matches!(err, Error::CommitRejected { .. }));
 }
 
+/// The rank-inversion witness, locked at `Db::create`: a RANKED order
+/// mark on a CLOSED subject whose `by` chain hops into a writable
+/// relation. Closed relations ride no delta (no order `R` edges, the
+/// chain-dirty `AllGroups` escalation walks an empty namespace) and the
+/// store sweep skips them, so the ranked clause would be judged nowhere —
+/// commit would hold a rank inversion the model rejects
+/// (`lean/Bumbledb/Order.lean: RankedOrderMark.mono`). The gate refuses
+/// the shape outright with the typed error.
+#[test]
+fn create_refuses_a_ranked_order_mark_on_a_closed_subject() {
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: Some(Box::new([
+                    Row {
+                        handle: "A".into(),
+                        values: Box::new([Value::U64(1), Value::U64(1), Value::U64(10)]),
+                    },
+                    Row {
+                        handle: "B".into(),
+                        values: Box::new([Value::U64(1), Value::U64(2), Value::U64(20)]),
+                    },
+                ])),
+                name: "Step".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "grp".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "pos".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "kind".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "KindRank".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "kind".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "rank".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Order {
+                relation: RelationId(0),
+                position: FieldId(2),
+                grouping: Box::new([FieldId(1)]),
+                ranking: Some(RankChain {
+                    link: FieldId(3),
+                    hops: Box::new([RankHop {
+                        relation: RelationId(1),
+                        key: FieldId(0),
+                        read: FieldId(1),
+                    }]),
+                }),
+            },
+        ],
+    };
+    let dir = common::TempDir::new("edge-ranked-order-closed");
+    let err = Db::create(dir.path(), schema).map(|_| ()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Schema(SchemaError::RankedOrderClosedSubject { relation, .. })
+                if relation == RelationId(0)
+        ),
+        "{err:?}"
+    );
+}
+
 /// A compound key plus a containment over 1-byte fields (bool, bool):
 /// the dense 2-byte determinant shape in `U`/`R` keys, commit-judged.
 #[test]
@@ -337,11 +428,11 @@ fn zero_binding_gate_with_global_count() {
         }],
         atoms: vec![
             Atom {
-                relation: Node::RELATION,
+                source: bumbledb::AtomSource::Edb(Node::RELATION),
                 bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
             },
             Atom {
-                relation: Gate::RELATION,
+                source: bumbledb::AtomSource::Edb(Gate::RELATION),
                 bindings: vec![],
             },
         ],
@@ -371,7 +462,7 @@ fn mixed_params_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: Posting::RELATION,
+            source: bumbledb::AtomSource::Edb(Posting::RELATION),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::ParamSet(ParamId(1))),

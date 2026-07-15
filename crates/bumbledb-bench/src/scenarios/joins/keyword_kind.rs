@@ -14,15 +14,15 @@ pub(super) fn keyword_kind() -> Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
-                relation: ids::KEYWORD,
+                source: bumbledb::AtomSource::Edb(ids::KEYWORD),
                 bindings: vec![(FieldId(0), var(2)), (FieldId(1), param(0))],
             },
             Atom {
-                relation: ids::MOVIE_KEYWORD,
+                source: bumbledb::AtomSource::Edb(ids::MOVIE_KEYWORD),
                 bindings: vec![(FieldId(1), var(2)), (FieldId(0), var(3))],
             },
             Atom {
-                relation: ids::MOVIE,
+                source: bumbledb::AtomSource::Edb(ids::MOVIE),
                 bindings: vec![
                     (FieldId(0), var(3)),
                     (FieldId(1), var(0)),

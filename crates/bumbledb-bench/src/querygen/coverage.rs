@@ -66,7 +66,7 @@ struct Typing {
 
 fn field_type(atom: &Atom, field: bumbledb::FieldId) -> ValueType {
     target::schema()
-        .relation(atom.relation)
+        .relation(atom.relation())
         .field(field)
         .value_type
         .clone()
@@ -92,7 +92,7 @@ fn typing(rule: &Rule) -> Typing {
             match term {
                 Term::Var(var) => {
                     t.var_types.entry(*var).or_insert(ty);
-                    t.var_pos.entry(*var).or_insert((atom.relation, *field));
+                    t.var_pos.entry(*var).or_insert((atom.relation(), *field));
                 }
                 Term::Param(p) | Term::ParamSet(p) => {
                     t.scalar_params.insert(p.0);
@@ -122,7 +122,7 @@ fn typing(rule: &Rule) -> Typing {
             }
             if let Term::Var(var) = term {
                 t.var_types.entry(*var).or_insert(ty.clone());
-                t.var_pos.entry(*var).or_insert((atom.relation, *field));
+                t.var_pos.entry(*var).or_insert((atom.relation(), *field));
             }
         }
     }
@@ -410,7 +410,7 @@ impl Coverage {
                 self.negation_gate += 1;
                 continue;
             }
-            let relation = target::schema().relation(atom.relation);
+            let relation = target::schema().relation(atom.relation());
             let key_covered = atom
                 .bindings
                 .iter()
@@ -419,7 +419,7 @@ impl Coverage {
                 self.negation_key_covered += 1;
             } else {
                 self.negation_open += 1;
-                if atom.relation == ids::POSTING_TAG || atom.relation == ids::POSTING {
+                if atom.relation() == ids::POSTING_TAG || atom.relation() == ids::POSTING {
                     self.negation_multi_witness += 1;
                 }
             }

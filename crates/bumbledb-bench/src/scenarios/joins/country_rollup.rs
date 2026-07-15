@@ -20,15 +20,15 @@ pub(super) fn country_rollup() -> Query {
         ],
         atoms: vec![
             Atom {
-                relation: ids::MOVIE_COMPANY,
+                source: bumbledb::AtomSource::Edb(ids::MOVIE_COMPANY),
                 bindings: vec![(FieldId(0), var(2)), (FieldId(1), var(3))],
             },
             Atom {
-                relation: ids::COMPANY,
+                source: bumbledb::AtomSource::Edb(ids::COMPANY),
                 bindings: vec![(FieldId(0), var(3)), (FieldId(2), var(0))],
             },
             Atom {
-                relation: ids::MOVIE,
+                source: bumbledb::AtomSource::Edb(ids::MOVIE),
                 bindings: vec![(FieldId(0), var(2)), (FieldId(2), var(1))],
             },
         ],

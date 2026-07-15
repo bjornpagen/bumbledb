@@ -73,7 +73,7 @@ impl CountingCounters {
                 };
                 Some(EliminatedOccurrence {
                     occurrence: occurrence.occ_id.0,
-                    relation: schema.relation(occurrence.relation).name().to_owned(),
+                    relation: schema.relation(occurrence.relation()).name().to_owned(),
                     statement,
                     rendered: crate::schema::render::render(schema, statement),
                 })
@@ -93,7 +93,7 @@ impl CountingCounters {
                 let Role::Folded(mark) = occurrence.role else {
                     return None;
                 };
-                let relation = schema.relation(occurrence.relation);
+                let relation = schema.relation(occurrence.relation());
                 let parsed = crate::plan::ground::evaluate::parse_resolvable(&occurrence.filters);
                 debug_assert!(parsed.is_some(), "folded occurrences parsed at fold time");
                 let handles = parsed
@@ -111,7 +111,7 @@ impl CountingCounters {
                     relation: relation.name().to_owned(),
                     rendered: crate::plan::ground::evaluate::folded_picture(
                         schema,
-                        occurrence.relation,
+                        occurrence.relation(),
                         &occurrence.filters,
                     ),
                     handles,

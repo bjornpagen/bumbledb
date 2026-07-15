@@ -48,7 +48,7 @@ fn schema(relations: usize, arity: usize) -> Schema {
 fn occurrence(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
-        relation: RelationId(relation),
+        source: crate::ir::AtomSource::Edb(RelationId(relation)),
         role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), *v)).collect(),
         filters: vec![],

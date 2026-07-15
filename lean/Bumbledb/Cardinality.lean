@@ -49,9 +49,9 @@ and `KeyBackedEquality`, so they live downstream in
   ambiguous between facts and points, and no sighted workload demands
   a pointwise count. Recorded trigger to revisit: a sighted
   counting-over-denotation workload (counting points, not rows).
-  Until then the vocabulary refuses the shape at acceptance (a rule
-  of the spec'd gate — the spec-ahead record below), and this module
-  states nothing about it.
+  Until then the vocabulary refuses the shape at acceptance (the
+  engine gate's typed error, CardinalityIntervalPosition — the
+  discharge record below), and this module states nothing about it.
 * **Window sides are single atoms, permanently (E1).** A join inside
   a window side would put join evaluation into the judge and break
   the linear per-statement cost model — the same acceptance-gate
@@ -80,17 +80,22 @@ express: why E3's literal sets are first-class, not sugar.
   the interval refusal above) are validator mechanism this level does
   not restate; `CardinalityWindow` is consumed on accepted theories
   only, exactly as `holds` is.
-* **Undischarged (spec-ahead): the engine has no cardinality
-  statement form yet.** The engine's accepted statement forms today
-  are functionality and containment, full stop
-  (`crate::schema::StatementDescriptor`,
-  `crates/bumbledb/src/schema.rs`); `A(X | φ) in n..m per B(Y | ψ)`
-  is the 2026-07-14 vocabulary campaign's admission, and its Rust
-  discharge — macro form, the acceptance gate above, the statement-
-  phase judgment — is decided and queued. That is why no
-  `Bridge.lean` row cites this module: deliberate, not an omission.
-  Nothing here claims the engine accepts, judges, or enforces a
-  window today.
+* **Acceptance and enforcement discharged (2026-07-14).** The engine
+  ACCEPTS the form at declaration: `StatementDescriptor::Cardinality`
+  and the gate arm `validate_cardinality`
+  (`crates/bumbledb/src/schema/validate.rs`) implement the acceptance
+  premises above — the containment target-key rule reused, the v0
+  interval refusal as the typed error `CardinalityIntervalPosition`,
+  closed-side rules mirroring containment's (a statement between
+  constants is decided at validate) — and the macro's `in lo..hi per`
+  form lowers to it. The engine also JUDGES the window per commit:
+  the statement-phase checker the plan calculus prices is
+  `storage/commit/judgment.rs::check_windows` — per touched parent
+  one keyed parent probe and one child-group walk, exactly
+  `Oracle.cardinality_plan_decides`' shape — and `Db::verify_store`
+  re-counts every parent globally. The `Bridge.lean` rows cite
+  `Oracle.cardinality_plan_decides` (acceptance) and
+  `Txn.cardinality_delta_restriction` (enforcement).
 -/
 
 namespace Bumbledb

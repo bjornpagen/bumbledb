@@ -28,7 +28,7 @@ fn by_account_rule(account: u64) -> Rule {
     Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(1), Term::Literal(Value::U64(account))),
                 (FieldId(2), Term::Var(VarId(0))),
@@ -194,7 +194,7 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
             },
         ],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(1), Term::Literal(Value::U64(account))),
                 (FieldId(3), Term::Var(VarId(0))),
@@ -244,7 +244,7 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
             },
         ],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(1), Term::Literal(Value::U64(account))),
                 (FieldId(2), Term::Var(VarId(0))),
@@ -305,7 +305,7 @@ fn the_all_count_head_counts_the_singleton_union() {
             over: None,
         }],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(1), Term::Literal(Value::U64(account))),
                 (FieldId(3), Term::Var(VarId(0))),
@@ -392,7 +392,7 @@ fn a_key_probe_rule_unions_through_the_sink() {
     let key_probe_rule = Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(0), Term::Literal(Value::U64(2))),
                 (FieldId(2), Term::Var(VarId(0))),
@@ -441,7 +441,7 @@ fn arg_restriction_across_rules_is_the_typed_validation_refusal() {
             over: Some(VarId(0)),
         }],
         atoms: vec![Atom {
-            relation: POSTING,
+            source: crate::ir::AtomSource::Edb(POSTING),
             bindings: vec![
                 (FieldId(1), Term::Literal(Value::U64(account))),
                 (FieldId(2), Term::Var(VarId(0))),

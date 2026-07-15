@@ -31,7 +31,7 @@ pub fn contradiction_query(rng: &mut Rng, cfg: GenConfig) -> Query {
 fn plant(rule: &mut Rule, rng: &mut Rng) -> bool {
     let Some((var, signed)) = rule.atoms.iter().find_map(|atom| {
         atom.bindings.iter().find_map(|(field, term)| match term {
-            Term::Var(var) => int_field(atom.relation, *field).map(|signed| (*var, signed)),
+            Term::Var(var) => int_field(atom.relation(), *field).map(|signed| (*var, signed)),
             _ => None,
         })
     }) else {

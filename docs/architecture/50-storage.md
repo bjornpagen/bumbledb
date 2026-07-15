@@ -39,7 +39,9 @@ F | relation_id | row_id            -> fact_bytes     row-major facts   (reader:
 M | relation_id | fact_hash         -> row_id         membership        (reader: insert/delete idempotence, point lookups, WriteTx point reads)
 U | relation_id | statement | key   -> row_id         FD determinants         (reader: functionality checks — put-conflict and neighbor probes —
                                                       key-probe lookups, WriteTx key reads, coverage walks)
-R | statement | key | source_rel | source_row -> ()   IND reverse edges (reader: target-side containment checks on delete/shrink)
+R | statement | key | source_rel | source_row -> ()   statement-scoped edges  (readers: target-side containment checks on delete/shrink;
+                                                      the window judgment's child-group count walk; the order judgment's
+                                                      position-ordered group walk)
 Q | relation_id | field_id          -> next_u64       fresh sequences  (reader: alloc)
 S | relation_id | stat              -> u64            counters: stat 0 = row count (readers: the planner,
                                                       and image build's cross-check against the F scan);
@@ -90,7 +92,18 @@ facts, never interned, so the key hash carries no type tag: forward
   satisfies — conditional containments write reverse edges only for facts inside
   their σ, so the arm-validity and totality directions of a `==` each get exactly
   the edges they need. Bidirectional statements are two statement ids, symmetric
-  entries.
+  entries. The two extension forms write the same machinery under their own
+  statement ids: a **cardinality window** writes one edge per φ-satisfying
+  child fact, `key` = the child's projection in target-key determinant order —
+  the window judgment's child-group count is one prefix walk of that bucket
+  (reader: `check_windows`; the window's edges exist for closed TARGETS too,
+  where they are the count's only index — unlike a closed-target containment,
+  whose member test needs none). An **order mark** writes one edge per fact of
+  the marked relation (the form has no σ), `key` = the grouping projection's
+  bytes with the 8-byte position encoding as its tail — order embeddings, so
+  one group's entries walk in position order (reader: `check_orders`,
+  uniqueness/1-basedness/downward-closure in one sweep,
+  `lean/Bumbledb/Oracle.lean: order_plan_decides`).
 - The `statement` component of every `U` and `R` key is always the
   fingerprint-pinned `StatementId`. Validation-minted `KeyId` and
   `ContainmentId` witnesses exist only in the sealed in-memory schema and never
@@ -105,7 +118,10 @@ facts, never interned, so the key hash carries no type tag: forward
   `00-product.md`). **Every on-disk encoding change bumps the version** — the
   untagged-dictionary cutover (version 2) initially shipped without a bump and a
   stale cached store silently mis-decoded until the two-oracle run caught it; a
-  version bump turns that whole class into a loud open-time refusal.
+  version bump turns that whole class into a loud open-time refusal. Version 3 is
+  the dependency-vocabulary extension: the canonical schema encoding moved
+  (literal-set selections, the window and order-mark statement forms), so every
+  v2 fingerprint was computed under a retired encoding.
 
 **Decision: one `_data` database with first-byte namespaces.** **Alternative:** one
 LMDB database per namespace (enables per-namespace append mode and integer-key layouts).
@@ -218,6 +234,31 @@ variant agreement.
      under selections.
    - Bidirectional statements run both bullets with the sides swapped — the same
      two code paths, no third.
+   - **Cardinality windows:** every TOUCHED parent key tuple — derived by the
+     plan from the delta's child facts (both dispositions, φ-blind) and its
+     ψ-selected parent facts (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+     touchedParents`) — probes the target key's `U` determinant for its
+     ψ-selected holder in the final state (one get, plus one `F` get where ψ
+     is nonempty; a closed parent answers from the compiled member set), then
+     counts the child group by one ordered walk of the window statement's `R`
+     bucket, stopped as soon as the verdict is decided
+     (`lean/Bumbledb/Oracle.lean: cardinality_plan_decides`,
+     `window_plan_consultations`). A closed CHILD set stored no edges: the
+     φ-selected axioms are counted by an honest ≤256-row extension scan. A
+     count under the floor or over the ceiling records a violation carrying
+     the statement id, the parent fact's bytes, and the observed count.
+   - **Order marks:** every TOUCHED group — the delta-projected grouping
+     tuples, escalated to every group of the statement when any `by`-hop
+     relation is dirty (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+     rankedTouched`) — is walked once in position order over its `R` keys:
+     positions must read exactly `1..k` (`lean/Bumbledb/Oracle.lean:
+     order_plan_decides`), and under a sealed rank chain each member's rank is
+     chased through the hops (one keyed `U` probe + one `F` get per hop, a
+     closed hop relation scanning its axioms;
+     `lean/Bumbledb/Oracle.lean: chain_cost_hops`) and must be non-decreasing
+     (`lean/Bumbledb/Order.lean: ranked_tiebreak_lex`). The plain walk needs
+     no `F` get on the accept path — group and position live in the key
+     bytes; a conviction fetches the offending member's bytes once.
    Any failure → typed error carrying the statement id, abort. The probe primitive
    ("does any fact match / does no fact match") is shared with the query executor's
    anti-probe (`40-execution.md`) — one mechanism, two callers.
@@ -446,7 +487,8 @@ design — recorded so nobody re-derives it:
   LMDB never shrinks its file; length reflects peak usage.
 - **Several `_data` entries per fact by design**: fact (`F`) + membership hash
   (`M`) + one FD determinant (`U`) per key + one reverse edge (`R`) per satisfied
-  containment direction. This is deliberate rent for O(log n) commit-time
+  containment direction, per window whose φ the fact satisfies, and per order
+  mark on the relation. This is deliberate rent for O(log n) commit-time
   judgment checks and stays.
 - **16 KB pages** on Apple Silicon (LMDB uses the OS page size) — chunkier
   B-tree overhead than SQLite's 4 KB pages with varint-packed rows.

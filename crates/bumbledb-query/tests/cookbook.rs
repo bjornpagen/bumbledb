@@ -1285,6 +1285,28 @@ fn r24_closure_idiom_reaches_the_exact_set() {
         (c) | Parent(child: c, parent in ?frontier);
     });
     let mut prepared = db.prepare(&children).expect("prepare the frontier query");
+    // The engine-native form (recipe 24's second dialect): the same
+    // closure as one stratified program — the named head declares the
+    // predicate, the ?root param seeds it, the bare rule is the output
+    // — executed whole under the fixpoint driver.
+    let native = query!(r24::Closure {
+        reach(c) | Node(id: c), c == ?root;
+        reach(c) | Parent(child: c, parent: m), reach(0: m);
+        (c) | reach(0: c);
+    });
+    let mut native_q = db
+        .prepare_program(&native)
+        .expect("prepare the engine-native closure");
+    let ids_of = |out: &Answers| -> BTreeSet<u64> {
+        (0..out.len())
+            .map(|answer| {
+                let AnswerValue::U64(node) = out.get(answer, 0) else {
+                    panic!("the closure finds one u64 column");
+                };
+                node
+            })
+            .collect()
+    };
     db.read(|snap| {
         let from_root = reachable(snap, &mut prepared, ids[0].0)?;
         let whole_tree: BTreeSet<u64> = ids[..6].iter().map(|id| id.0).collect();
@@ -1298,6 +1320,13 @@ fn r24_closure_idiom_reaches_the_exact_set() {
             from_a, a_subtree,
             "an interior node reaches exactly its own subtree"
         );
+        // Both dialects compute one closure — the idiom and the driver
+        // agree, root for root.
+        let native_root =
+            ids_of(&snap.execute_collect(&mut native_q, &[BindValue::U64(ids[0].0)])?);
+        assert_eq!(native_root, whole_tree, "the engine-native closure agrees");
+        let native_a = ids_of(&snap.execute_collect(&mut native_q, &[BindValue::U64(ids[1].0)])?);
+        assert_eq!(native_a, a_subtree, "per-root agreement holds");
         Ok(())
     })
     .expect("the closure loop reaches its fixpoint");
@@ -1356,6 +1385,29 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
     });
     let mut frontier_q = db.prepare(&children).expect("prepare the frontier query");
     let mut rollup_q = db.prepare(&rollup).expect("prepare the rollup");
+    // The engine-native form (recipe 25's second dialect): the closure
+    // stratum converges first, then the output's fold runs once over the
+    // finished subtree — aggregation OF a lower stratum, the one shape
+    // the strata roster admits.
+    let native = query!(r25::Accounts {
+        sub(a) | Account(id: a), a == ?root;
+        sub(a) | AccountParent(child: a, parent: p), sub(0: p);
+        (total: Sum(minor)) | Posting(id, account: a, minor), sub(0: a);
+    });
+    let mut native_q = db
+        .prepare_program(&native)
+        .expect("prepare the engine-native rollup");
+    let native_sum = |snap: &Snapshot<'_, Accounts>,
+                      native_q: &mut PreparedQuery<'_, Accounts>,
+                      root: u64|
+     -> bumbledb::Result<i64> {
+        let out = snap.execute_collect(native_q, &[BindValue::U64(root)])?;
+        assert_eq!(out.len(), 1, "one all-aggregate answer");
+        let AnswerValue::I64(total) = out.get(0, 0) else {
+            panic!("the native rollup sums an i64 column");
+        };
+        Ok(total)
+    };
     let sum_over = |snap: &Snapshot<'_, Accounts>,
                     rollup_q: &mut PreparedQuery<'_, Accounts>,
                     subtree: &BTreeSet<u64>|
@@ -1380,6 +1432,10 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
         // The whole-tree rollup from the root: 6432 + 9999 + 1 = 16432.
         let all = reachable(snap, &mut frontier_q, ids[0].0)?;
         assert_eq!(sum_over(snap, &mut rollup_q, &all)?, 16_432);
+        // Both dialects fold one subtree — the composed idiom and the
+        // engine-native program agree, root for root.
+        assert_eq!(native_sum(snap, &mut native_q, ids[1].0)?, 6_432);
+        assert_eq!(native_sum(snap, &mut native_q, ids[0].0)?, 16_432);
         Ok(())
     })
     .expect("the rollup composes the closure with one Sum");

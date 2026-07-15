@@ -35,7 +35,7 @@ pub use dnf::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 pub use fold::with_fold_disabled;
 pub(crate) use fold::{decoded_interval, decoded_scalar, render_const};
 pub(crate) use lower_literal::{fixed_bytes_const, lower_literal};
-pub use normalize::normalize;
+pub use normalize::{normalize, normalize_predicate};
 
 /// Dense atom-occurrence id. Everything downstream (plan validity, trie
 /// schemas) quantifies over occurrences, never relation names — self-joins
@@ -124,7 +124,15 @@ impl Role {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Occurrence {
     pub occ_id: OccId,
-    pub relation: RelationId,
+    /// The atom's source, carried through lowering verbatim
+    /// (`docs/architecture/20-query-ir.md` § engine recursion's consumer guards:
+    /// filters and residuals are slot/word-shaped and indifferent to
+    /// it). An `Idb` occurrence reads a predicate of the same program:
+    /// its field types are the target's sealed signature columns, its
+    /// execution bind is the fixpoint driver's transient image
+    /// (`api/prepared/run_join.rs`), and it pins no statistics
+    /// (`plan/selectivity.rs` — the delta/accumulated floors).
+    pub source: crate::ir::AtomSource,
     pub role: Role,
     /// Distinct variables with the field each is read from (a repeated
     /// variable keeps its first field; later positions became filters).
@@ -134,6 +142,28 @@ pub struct Occurrence {
     pub vars: Vec<(FieldId, VarId)>,
     /// Per-occurrence filters, evaluated at the source (filtered view).
     pub filters: Vec<FilterPredicate>,
+}
+
+impl Occurrence {
+    /// The stored relation this occurrence reads — the accessor for
+    /// callers whose occurrences are stored-relation-only **by their own
+    /// prior guard** (the key-probe classifier and the grounding refuse
+    /// `Idb` rules before reading it). Source-aware consumers match on
+    /// [`Occurrence::source`].
+    ///
+    /// # Panics
+    ///
+    /// On an `Idb` occurrence — the caller asserted a stored-relation
+    /// occurrence.
+    #[must_use]
+    pub fn relation(&self) -> RelationId {
+        match self.source {
+            crate::ir::AtomSource::Edb(relation) => relation,
+            crate::ir::AtomSource::Idb(_) => {
+                unreachable!("caller asserted a stored-relation (Edb) occurrence")
+            }
+        }
+    }
 }
 
 /// A comparison whose sides are variables — evaluated inside the join at

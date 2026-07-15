@@ -196,6 +196,7 @@ fn judge(db: &Db<target::Target>, query: &Query) -> Verdict {
             | Error::EmptyAllenMaskParam { .. }
             | Error::FullAllenMaskParam { .. }
             | Error::MeasureOfRay { .. }
+            | Error::FixpointBudgetExceeded { .. }
             | Error::Overflow(_)
             | Error::ResultBytesOverflow
             | Error::Corruption(_)),
@@ -265,5 +266,20 @@ fn validation_variant(rejection: &ValidationError) -> &'static str {
         ValidationError::DurationBothSides { .. } => "DurationBothSides",
         ValidationError::TooManyAtoms { .. } => "TooManyAtoms",
         ValidationError::TooManyVariables { .. } => "TooManyVariables",
+        // The program roster (docs/architecture/20-query-ir.md
+        // § engine recursion). The query fuzz target generates
+        // Edb-only atoms today; a program-shape fuzz arm is open
+        // follow-on work now that the fixpoint driver executes
+        // recursive programs.
+        ValidationError::TooManyPredicates { .. } => "TooManyPredicates",
+        ValidationError::UnknownOutputPredicate { .. } => "UnknownOutputPredicate",
+        ValidationError::UnknownPredicate { .. } => "UnknownPredicate",
+        ValidationError::PredicateColumnOutOfRange { .. } => "PredicateColumnOutOfRange",
+        ValidationError::NegationThroughCycle { .. } => "NegationThroughCycle",
+        ValidationError::AggregationThroughCycle { .. } => "AggregationThroughCycle",
+        ValidationError::MeasureInRecursiveHead { .. } => "MeasureInRecursiveHead",
+        ValidationError::UnresolvedPredicateSignature { .. } => "UnresolvedPredicateSignature",
+        ValidationError::AggregateInteriorPredicate { .. } => "AggregateInteriorPredicate",
+        ValidationError::MeasureInteriorPredicate { .. } => "MeasureInteriorPredicate",
     }
 }

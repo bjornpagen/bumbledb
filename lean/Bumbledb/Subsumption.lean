@@ -35,15 +35,23 @@ judgment against an original one.
   holding instance. Acceptance enters as HYPOTHESES throughout, never
   as a conjunct of any denotation.
 
-Undischarged (spec-ahead): both extension forms this module reads —
-cardinality windows and order marks — are spec vocabulary ahead of the
-engine, whose accepted statement forms today are functionality and
-containment (`crate::schema::StatementDescriptor`,
-`crates/bumbledb/src/schema.rs`); the full record (2026-07-14
-admission, Rust discharge queued, deliberately no `Bridge.lean` rows)
-lives in `Cardinality.lean`'s and `Order.lean`'s module docs. Nothing
-here claims the engine judges either form today; the acceptance rules
-named above are the spec'd gate's.
+Both extension forms this module reads — cardinality windows and
+order marks — are ACCEPTED by the engine at declaration
+(2026-07-14: `StatementDescriptor::Cardinality` / `::Order`,
+`crates/bumbledb/src/schema.rs`; the gate arms in
+`schema/validate.rs` implement the acceptance rules named above,
+the key-backed-hop rule included) and, for WRITABLE subjects, JUDGED
+per commit (`storage/commit/judgment.rs::check_windows` /
+`::check_orders`); a CLOSED subject's order mark is plain-only — the
+engine gate-refuses the ranked form there
+(`SchemaError::RankedOrderClosedSubject`, the sound narrowing
+recorded in `Order.lean` § narrowings) and decides the plain
+discipline at validate against the sealed extension. The discharge
+records live in `Cardinality.lean`'s and `Order.lean`'s module docs. The sharing this module licenses is spent conservatively:
+a floored window MAY share the containment's probe machinery — window
+edges are written exactly as containment edges — but the engine never
+skips a declared window's check (`window_floor_containment` is
+subsumption, not an enforcement shortcut).
 -/
 
 namespace Bumbledb

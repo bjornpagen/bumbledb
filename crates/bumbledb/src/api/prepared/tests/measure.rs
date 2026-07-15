@@ -175,7 +175,7 @@ fn duration_find_projects_the_measure_u64() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         atoms: vec![Atom {
-            relation: SESSION,
+            source: crate::ir::AtomSource::Edb(SESSION),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(3), Term::Var(VarId(1))),
@@ -216,7 +216,7 @@ fn duration_find_projects_the_measure_i64() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
         atoms: vec![Atom {
-            relation: SHIFT,
+            source: crate::ir::AtomSource::Edb(SHIFT),
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(2), Term::Var(VarId(1))),
@@ -262,7 +262,7 @@ fn sum_min_max_over_the_measure() {
             over(AggOp::Max),
         ],
         atoms: vec![Atom {
-            relation: SESSION,
+            source: crate::ir::AtomSource::Edb(SESSION),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(2))),
                 (FieldId(1), Term::Var(VarId(0))),
@@ -303,7 +303,7 @@ fn duration_comparisons_filter_and_join() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let session_atom = Atom {
-        relation: SESSION,
+        source: crate::ir::AtomSource::Edb(SESSION),
         bindings: vec![
             (FieldId(1), Term::Var(VarId(0))),
             (FieldId(2), Term::Var(VarId(2))),
@@ -365,14 +365,14 @@ fn duration_comparisons_filter_and_join() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
-                relation: SESSION,
+                source: crate::ir::AtomSource::Edb(SESSION),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(3), Term::Var(VarId(1))),
                 ],
             },
             Atom {
-                relation: WINDOW,
+                source: crate::ir::AtomSource::Edb(WINDOW),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(2), Term::Var(VarId(3))),
@@ -432,7 +432,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let session_atom = Atom {
-        relation: SESSION,
+        source: crate::ir::AtomSource::Edb(SESSION),
         bindings: vec![
             (FieldId(1), Term::Var(VarId(0))),
             (FieldId(3), Term::Var(VarId(1))),
@@ -523,7 +523,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
         atoms: vec![
             session_atom.clone(),
             Atom {
-                relation: WINDOW,
+                source: crate::ir::AtomSource::Edb(WINDOW),
                 bindings: vec![
                     (FieldId(1), Term::Var(VarId(0))),
                     (FieldId(2), Term::Var(VarId(3))),
@@ -569,7 +569,7 @@ fn sum_of_durations_overflow_is_the_typed_overflow_error() {
             },
         ],
         atoms: vec![Atom {
-            relation: SESSION,
+            source: crate::ir::AtomSource::Edb(SESSION),
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(2))),
                 (FieldId(1), Term::Var(VarId(0))),
