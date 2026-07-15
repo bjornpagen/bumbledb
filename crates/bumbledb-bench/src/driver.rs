@@ -23,7 +23,9 @@ mod scenarios;
 mod tests;
 mod trace;
 mod verify_store;
-mod write_families;
+// pub(crate): the device-honesty lock test drives the write families
+// against a live ram disk from `crate::devhonesty::tests`.
+pub(crate) mod write_families;
 
 pub use bench::cmd_bench;
 pub use corpus::{corpus_paths, ensure_corpus, ensure_corpus_with};

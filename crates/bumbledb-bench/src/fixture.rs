@@ -76,7 +76,13 @@ impl TempDir {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
+        // BUMBLEDB_SCRATCH_DIR points the differential/adversarial
+        // scratch stores at a RAM-backed volume (`scripts/ramdisk.sh`,
+        // docs/architecture/60-validation.md § the ramdisk sanction);
+        // unset, the system temp dir stands.
+        let root = std::env::var_os("BUMBLEDB_SCRATCH_DIR")
+            .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+        let path = root.join(format!(
             "bumbledb-bench-{tag}-{}-{nanos}",
             std::process::id()
         ));

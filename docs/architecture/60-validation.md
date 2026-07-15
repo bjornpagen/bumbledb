@@ -601,6 +601,47 @@ runner.
   gates are local measurement discipline on the pinned M2 Max, and
   firepower is the owner's machine (the human work register).
 
+**The ramdisk sanction.** The verify, differential, and fuzz lanes may
+run their scratch stores on a RAM-backed volume (`scripts/ramdisk.sh`;
+the lanes point themselves there via `BUMBLEDB_SCRATCH_DIR`, which the
+fuzz harness's `StoreDir` and the bench tests' scratch `TempDir`
+respect) — they check answers, not wall clocks, and the ram disk buys
+them the fullfsync floor back (~21x per small commit, ~94–100x on
+back-to-back commit loops on the pinned M2 Max —
+`docs/reports/ramdisk-phase-r.md`). Timing is governed by the
+device-honesty rule, and the rule is symmetric: every timed family —
+read and write alike — refuses to run against a RAM-backed volume with
+a named refusal (`crates/bumbledb-bench/src/devhonesty.rs` — the
+detector resolves the volume's mount identity and its `ram://`-image
+backing; `bench` checks both its corpus `--dir` and its write scratch),
+because a timed number measured on RAM is a number physics never
+signed. The exemption is exactly the untimed lanes above.
+Scope note: the crash target stays valid on a ramdisk — its adversary
+is process-kill ordering (the child aborts mid-commit and the parent
+autopsies the surviving bytes), which a RAM-backed filesystem preserves
+exactly; only power-loss durability is lost, and no test tests power
+loss.
+
+**The ephemeral store kind's evidence** (`50-storage.md` § the
+ephemeral store kind; Lean owns none of it — durability and crash are
+mechanism, outside the model, so no Bridge row and no citation exist
+to expect). Two instruments: (1) the **durable/ephemeral differential
+oracle** (`crates/bumbledb/tests/ephemeral.rs`) — one deterministic
+ops sequence replayed against a `Db::create` store and a
+`Db::ephemeral` store, asserting identical commit verdicts, identical
+COMPLETE violation sets, identical WriteTx point reads, and identical
+full relation contents: the flags change the durability mechanism,
+never a semantic; plus the typed cross-open matrix in the same file.
+(2) The **ephemeral crashpoint sweep** (`fuzz/tests/crash.rs`) — the
+identical crashpoint × ops-prefix matrix with the victim store built
+by `Db::ephemeral`: all-or-nothing recovery under `WRITEMAP|NOSYNC`,
+no third observable outcome (the empirical verdict WRITEMAP shipped
+on). Device honesty is unchanged and orthogonal: *ephemeral* is a
+store kind (an on-disk durability claim), *RAM-backed* is a device
+fact — the timed lanes' refusal keys on the device, never the kind,
+and an ephemeral store on the SSD is as legitimate as a durable store
+on a ramdisk is for the untimed lanes.
+
 ## Small worlds, Miri, and ASAN — the charter's complement
 
 Where a domain is finite and small, random exploration is strictly worse than

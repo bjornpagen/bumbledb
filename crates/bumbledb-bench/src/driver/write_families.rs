@@ -18,7 +18,10 @@ fn facts_per_sec(m: &harness::Measurement, samples: u32) -> f64 {
 /// The write/cold families, run against a scratch corpus loaded under
 /// `scratch` — bench never mutates the verified digest-dir corpus, so
 /// the stamp stays honest.
-pub(super) fn write_families(
+///
+/// `pub(crate)` (not `pub(super)`) so the device-honesty lock test can
+/// point it at a live ram disk and assert the refusal.
+pub(crate) fn write_families(
     cfg: GenConfig,
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
@@ -45,6 +48,14 @@ pub(super) fn write_families(
             sqlite_run::cold_containment_walk,
         ),
     ];
+
+    // The device-honesty rule (docs/architecture/60-validation.md): the
+    // timed write families are fsync-bound, so a RAM-backed scratch
+    // would report a number physics never signed. Checked before any
+    // store exists; the verify/differential/fuzz lanes are exempt (they
+    // check answers, not clocks).
+    crate::devhonesty::assert_disk_backed(scratch, "the timed write families")
+        .map_err(|refusal| refusal.to_string())?;
 
     let mut out = Vec::new();
     if PAIRED.iter().any(|(name, ..)| selected(name)) || selected("commit_witnessed") {

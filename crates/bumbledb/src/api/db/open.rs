@@ -37,6 +37,41 @@ impl<S: Theory> Db<S> {
         Ok(Self::assemble(Environment::open(path, &schema)?, schema))
     }
 
+    /// Opens or initializes an EPHEMERAL store at `path` — a distinct
+    /// constructor, never a flag on `create`/`open`
+    /// (`docs/architecture/70-api.md` § environment lifecycle). The
+    /// store kind is marked on disk: `Db::open` on an ephemeral store
+    /// and `Db::ephemeral` on a durable store are each the typed
+    /// [`crate::error::Error::StoreKindMismatch`]. The environment
+    /// carries `MDB_WRITEMAP|MDB_NOSYNC`, so commits skip the fullfsync
+    /// boundary — a machine crash loses the store BY THE KIND'S OWN
+    /// CLAIM (device-independent: ephemeral-on-SSD is legitimate);
+    /// process-kill atomicity, the dependency judgment, [`crate::WriteTx`] point
+    /// reads, and every other semantic are identical to a durable store.
+    /// The sighting: staging stores judged before ETL into a durable
+    /// store, analysis working sets, scratch stores.
+    ///
+    /// A missing or empty directory initializes fresh; an existing
+    /// ephemeral store opens with the same version/fingerprint
+    /// verification as `open` (create-or-open — scratch stores earn the
+    /// convenience because a mistaken fresh store at a typo'd path
+    /// destroys nothing durable).
+    ///
+    /// # Errors
+    ///
+    /// The typed [`crate::error::SchemaError`] on an invalid
+    /// declaration; `StoreKindMismatch` on a durable store;
+    /// `AlreadyInitialized` on a foreign LMDB environment;
+    /// `FormatMismatch`/`SchemaMismatch` on verification failure;
+    /// `EnvironmentLocked`/`Io`/`Lmdb` otherwise.
+    pub fn ephemeral(path: &Path, schema: S) -> Result<Self> {
+        let schema = schema.descriptor().validate()?;
+        Ok(Self::assemble(
+            Environment::ephemeral(path, &schema)?,
+            schema,
+        ))
+    }
+
     fn assemble(env: Environment, schema: Schema) -> Self {
         Self {
             env,

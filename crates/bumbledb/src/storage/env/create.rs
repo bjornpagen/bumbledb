@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
+use heed::WithoutTls;
 use heed::types::Bytes;
 
 use crate::error::{Error, Result};
@@ -11,12 +12,13 @@ use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;
 use super::{
     Environment, FORMAT_VERSION, META_DICT_NEXT_ID, META_FINGERPRINT, META_FORMAT_VERSION,
-    META_TX_ID, NEXT_INSTANCE,
+    META_STORE_KIND, META_TX_ID, NEXT_INSTANCE, StoreKind,
 };
 
 impl Environment {
-    /// Initializes a fresh environment: creates the three databases and
-    /// writes format version, schema fingerprint, and storage tx id 0.
+    /// Initializes a fresh DURABLE environment: creates the three
+    /// databases and writes format version, store kind, schema
+    /// fingerprint, and storage tx id 0.
     ///
     /// # Errors
     ///
@@ -27,7 +29,21 @@ impl Environment {
     pub fn create(path: &Path, schema: &Schema) -> Result<Self> {
         std::fs::create_dir_all(path)?;
         let lock = acquire_lock(path)?;
-        let env = open_env(path)?;
+        let env = open_env(path, StoreKind::Durable)?;
+        Self::initialize(env, lock, schema, StoreKind::Durable)
+    }
+
+    /// The shared initialization body ([`Environment::create`] durable,
+    /// [`Environment::ephemeral`]'s fresh-directory arm): refuses an
+    /// already-initialized directory, creates the three databases, and
+    /// writes the `_meta` block — the store kind included, so the store
+    /// carries its durability claim on disk from birth.
+    pub(super) fn initialize(
+        env: heed::Env<WithoutTls>,
+        lock: std::fs::File,
+        schema: &Schema,
+        kind: StoreKind,
+    ) -> Result<Self> {
         let mut wtxn = env.write_txn()?;
         // Refuse to re-initialize: rewriting `_meta` over live `_data`
         // would reset the tx id and the dictionary counter — silent
@@ -58,6 +74,7 @@ impl Environment {
             META_FORMAT_VERSION,
             FORMAT_VERSION.to_le_bytes().as_slice(),
         )?;
+        meta.put(&mut wtxn, META_STORE_KIND, [kind.meta_byte()].as_slice())?;
         meta.put(
             &mut wtxn,
             META_FINGERPRINT,

@@ -33,6 +33,20 @@ fn every_crashpoint_recovers_across_the_prefix_matrix() {
     }
 }
 
+/// The ephemeral twin: the identical crashpoint × matrix product with
+/// the victim store built by `Db::ephemeral` (`WRITEMAP|NOSYNC`) — the
+/// empirical verdict on the ephemeral kind's process-kill atomicity
+/// (`docs/architecture/50-storage.md` § the ephemeral store kind): the
+/// same all-or-nothing table, no third observable outcome.
+#[test]
+fn every_crashpoint_recovers_across_the_prefix_matrix_on_an_ephemeral_store() {
+    for cell in 0..bumbledb_fuzz::crash::MATRIX_CELLS {
+        for index in 0..bumbledb_fuzz::crash::point_count() {
+            bumbledb_fuzz::crash::sweep_ephemeral(cell, index);
+        }
+    }
+}
+
 /// Replays every file under `dir` (sorted, deterministic) through one
 /// runner; returns how many replayed. A missing directory is zero — the
 /// trophy shelves only exist once a finding lands.

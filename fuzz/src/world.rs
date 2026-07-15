@@ -241,6 +241,7 @@ fn runtime_refusal(err: Error) -> Answers {
         | Error::SchemaMismatch { .. }
         | Error::AlreadyInitialized
         | Error::EnvironmentLocked
+        | Error::StoreKindMismatch { .. }
         | Error::Io(_)
         | Error::Lmdb(_)
         | Error::ReadersFull { .. }
