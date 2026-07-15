@@ -27,7 +27,7 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
-use bumbledb::{Answers, BindValue, ConditionTree, Db, PreparedQuery, Snapshot};
+use bumbledb::{Answers, BindValue, ConditionTree, Db, ParamArg, PreparedQuery, Snapshot};
 
 mod common;
 
@@ -38,7 +38,12 @@ mod common;
 /// `Posting(account) <= Account(id)` and
 /// `Item(doc) in 1..4096 per Account(id)` (the cardinality window) — the
 /// marks machinery lives in the store the read windows measure, and the
-/// window-heavy write family churns it between them.
+/// window-heavy write family churns it between them. Blob(id fresh,
+/// digest bytes<16>) carries the fixed-width inline family.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the one fixture schema — a linear declaration table"
+)]
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -129,6 +134,26 @@ fn schema() -> SchemaDescriptor {
                     },
                 ],
             },
+            // The bytes<16> family's relation: an inline fixed-width
+            // value (two column words per digest) behind a fresh id —
+            // scalar param, Ne filter, param set, and key-probe find
+            // shapes all draw from here.
+            RelationDescriptor {
+                extension: None,
+                name: "Blob".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::Fresh,
+                    },
+                    FieldDescriptor {
+                        name: "digest".into(),
+                        value_type: ValueType::FixedBytes { len: 16 },
+                        generation: Generation::None,
+                    },
+                ],
+            },
         ],
         statements: vec![
             StatementDescriptor::Containment {
@@ -168,6 +193,14 @@ const POSTING: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 const BUSY: RelationId = RelationId(2);
 const ITEM: RelationId = RelationId(3);
+const BLOB: RelationId = RelationId(4);
+
+/// Blob row `id`'s deterministic digest: 16 distinct bytes per id, so
+/// rotating params and set elements are real probes.
+fn digest16(id: u64) -> [u8; 16] {
+    let seed = u8::try_from(id % 251).expect("mod 251 fits u8");
+    std::array::from_fn(|i| seed.wrapping_mul(31).wrapping_add(u8::try_from(i).expect("i < 16")))
+}
 
 /// The steady-state marks chains' length (docs 0..20) — long enough that
 /// the family's scans and sinks have real work, short enough to keep the
@@ -249,6 +282,14 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 )?;
                 id += 1;
             }
+        }
+        // The bytes<16> fixture: one digest per id, deterministic so
+        // the read windows can rotate real probes.
+        for id in 0..32u64 {
+            tx.insert_dyn(
+                BLOB,
+                &[Value::U64(id), Value::FixedBytes(Box::from(digest16(id)))],
+            )?;
         }
         // The marks chains: every account parents an Item chain (the
         // window floor is 1), positions kept 1..k by the writer.
@@ -720,10 +761,95 @@ fn key_probe_query() -> Query {
     })
 }
 
+/// Q(digest) :- Blob(id = ?0, digest) — the key-probe fast lane with a
+/// bytes<16> find: the operand's fixed word block must slice straight
+/// into the caller's buffer (no temporary heap on the point lane).
+fn blob_probe_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: bumbledb::AtomSource::Edb(BLOB),
+            bindings: vec![
+                (FieldId(0), Term::Param(ParamId(0))),
+                (FieldId(1), Term::Var(VarId(0))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    })
+}
+
+/// Q(id) :- Blob(id, digest = ?0) — the bytes<16> scalar param: the
+/// bind's word conversion must land in the slot's pooled `Words` box,
+/// never a fresh allocation per re-bind.
+fn blob_selection_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: bumbledb::AtomSource::Edb(BLOB),
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::Param(ParamId(0))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    })
+}
+
+/// Q(id) :- Blob(id, digest), digest != ?0, digest != literal — the
+/// bytes<16> Ne filters: both multi-word constants (the param and the
+/// plan literal) resolve per execution (a param exists, so the latched
+/// fast path never engages) and must rewrite the slot's pooled `Words`
+/// box in place, never clone the `Box`.
+fn blob_ne_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: bumbledb::AtomSource::Edb(BLOB),
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
+                op: CmpOp::Ne,
+                lhs: Term::Var(VarId(1)),
+                rhs: Term::Param(ParamId(0)),
+            }),
+            ConditionTree::Leaf(Comparison {
+                op: CmpOp::Ne,
+                lhs: Term::Var(VarId(1)),
+                rhs: Term::Literal(Value::FixedBytes(Box::from([0xAA; 16]))),
+            }),
+        ],
+    })
+}
+
+/// Q(id) :- Blob(id, digest ∈ ?0) — the bytes<16> param set: elements
+/// land as two-word spans in the slot's pooled `WordSet`, sorted and
+/// deduplicated span-wise IN PLACE (zero allocator traffic per re-bind).
+fn blob_set_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: bumbledb::AtomSource::Edb(BLOB),
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::ParamSet(ParamId(0))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    })
+}
+
 /// Q(pos, note) :- Item(doc = ?0, pos, note) — the marks family's read
 /// shape: one ordered, window-parented group per parameter. The
 /// steady-state rotation binds the fixed-length docs; the escalation
-/// walks the ITEM_LADDER docs, each group strictly longer than the last.
+/// walks the `ITEM_LADDER` docs, each group strictly longer than the last.
 fn marks_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -812,6 +938,46 @@ fn gate(
     for _ in 0..8 {
         for params in param_set {
             snap.execute(prepared, params, &mut out).expect(label);
+        }
+    }
+    assert_eq!(
+        alloc_counter::count(),
+        0,
+        "{label}: a warm execution allocated"
+    );
+    assert_eq!(
+        alloc_counter::dealloc_count(),
+        0,
+        "{label}: a warm execution freed retained capacity"
+    );
+    let bytes = alloc_counter::snapshot();
+    assert_eq!(
+        (bytes.alloc_bytes, bytes.dealloc_bytes),
+        (0, 0),
+        "{label}: warm byte totals must be zero too"
+    );
+    assert!(!out.is_empty(), "{label}: the fixture produced rows");
+}
+
+/// The gate protocol over mixed scalar/set arguments (the [`ParamArg`]
+/// entry): N=8 warmups, M=8 measured runs at zero — the set-bearing
+/// twin of [`gate`].
+fn gate_args(
+    label: &str,
+    prepared: &mut PreparedQuery<'_, SchemaDescriptor>,
+    snap: &Snapshot<'_, SchemaDescriptor>,
+    arg_set: &[Vec<ParamArg<'_>>],
+) {
+    let mut out = Answers::new();
+    for _ in 0..8 {
+        for args in arg_set {
+            snap.execute_args(prepared, args, &mut out).expect(label);
+        }
+    }
+    alloc_counter::reset();
+    for _ in 0..8 {
+        for args in arg_set {
+            snap.execute_args(prepared, args, &mut out).expect(label);
         }
     }
     assert_eq!(
@@ -981,6 +1147,11 @@ fn borrowed_struct_gate() {
 
 /// One test function: the gate binary is single-threaded by construction.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one test function by the binary's invariant — every gate \
+              scenario lives inside it"
+)]
 fn zero_warm_allocation_gate() {
     let dir = common::TempDir::new("alloc-gate");
     let db = Db::create(dir.path(), schema()).expect("create");
@@ -1034,6 +1205,59 @@ fn zero_warm_allocation_gate() {
 
         let mut key_probe = db.prepare(&key_probe_query())?;
         gate("key_probe", &mut key_probe, snap, &key_probe_params);
+
+        // The bytes<16> family (the inline fixed-width value): scalar
+        // param bind (pooled Words slot), the Ne filter constants
+        // (param and plan literal, both rewriting the slot's box in
+        // place), the key-probe find (fixed block, no temporary), and
+        // the param set (span-wise in-place dedup) — every shape at
+        // zero in the measured window.
+        let blob_digests: Vec<[u8; 16]> = (0..4u64).map(digest16).collect();
+        let blob_digest_params: Vec<Vec<BindValue<'_>>> = blob_digests
+            .iter()
+            .map(|digest| vec![BindValue::FixedBytes(digest)])
+            .collect();
+        let mut blob_selection = db.prepare(&blob_selection_query())?;
+        gate(
+            "bytes-selection",
+            &mut blob_selection,
+            snap,
+            &blob_digest_params,
+        );
+        let mut blob_ne = db.prepare(&blob_ne_query())?;
+        gate("bytes-ne-filter", &mut blob_ne, snap, &blob_digest_params);
+
+        // The miss (9999) runs first so the last measured execution
+        // leaves rows, exactly like the u64 key probe above.
+        let blob_probe_params = vec![
+            vec![BindValue::U64(9999)],
+            vec![BindValue::U64(3)],
+            vec![BindValue::U64(7)],
+        ];
+        let mut blob_probe = db.prepare(&blob_probe_query())?;
+        gate(
+            "bytes-key-probe",
+            &mut blob_probe,
+            snap,
+            &blob_probe_params,
+        );
+
+        // Two rotating sets of different sizes (a duplicate element in
+        // the first: the dedup is real work every bind).
+        let set_a: Vec<Value> = [0u64, 2, 1, 2]
+            .iter()
+            .map(|id| Value::FixedBytes(Box::from(digest16(*id))))
+            .collect();
+        let set_b: Vec<Value> = [3u64, 1]
+            .iter()
+            .map(|id| Value::FixedBytes(Box::from(digest16(*id))))
+            .collect();
+        let blob_set_args = vec![
+            vec![ParamArg::Set(&set_a)],
+            vec![ParamArg::Set(&set_b)],
+        ];
+        let mut blob_set = db.prepare(&blob_set_query())?;
+        gate_args("bytes-set", &mut blob_set, snap, &blob_set_args);
 
         // The marks family, steady state: rotating window-parented
         // groups — the store's window counts are

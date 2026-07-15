@@ -34,7 +34,7 @@ pub use dnf::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 #[cfg(any(test, feature = "fold-off"))]
 pub use fold::with_fold_disabled;
 pub(crate) use fold::{decoded_interval, decoded_scalar, render_const};
-pub(crate) use lower_literal::{fixed_bytes_const, lower_literal};
+pub(crate) use lower_literal::{fixed_bytes_word_buf, lower_literal};
 pub use normalize::{normalize, normalize_predicate};
 
 /// Dense atom-occurrence id. Everything downstream (plan validity, trie
