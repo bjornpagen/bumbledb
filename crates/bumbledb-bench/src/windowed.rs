@@ -9,12 +9,12 @@
 //!   statements (same relations, same containment, same seeded mass):
 //!   the control every window number is read against;
 //! - `commit_window_admission` — one child insert per commit under the
-//!   `WChild(parent) in 0..64 per WParent(id)` window: the touched-
+//!   `WParent(id) <={0..64} WChild(parent)` window: the touched-
 //!   parent count probe on the hot path;
 //! - `commit_window_exclusion` — one φ-selected child (`flag == 1`)
 //!   per commit under the **`{0}` exclusion**
-//!   `WChild(parent | flag == 1) in 0..0 per WParent(id | kind == 1)`
-//!   (`lo = hi = 0`: no selected child may exist per selected parent —
+//!   `WParent(id | kind == 1) <={0} WChild(parent | flag == 1)`
+//!   (the `{0}` exclusion: no selected child may exist per selected parent —
 //!   the exclusion window as a count), inserted under unselected
 //!   parents so every commit is legal and the measured cost is the
 //!   judge, not a refusal.
@@ -53,8 +53,8 @@ pub mod world {
         }
 
         WChild(parent) <= WParent(id);
-        WChild(parent) in 0..64 per WParent(id);
-        WChild(parent | flag == 1) in 0..0 per WParent(id | kind == 1);
+        WParent(id) <={0..64} WChild(parent);
+        WParent(id | kind == 1) <={0} WChild(parent | flag == 1);
     }
 }
 
@@ -155,7 +155,7 @@ pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec
 /// Engine errors, stringified.
 pub fn load<S>(db: &Db<S>, mass: Mass) -> Result<(), String> {
     for rel in [ids::PARENT, ids::CHILD] {
-        db.bulk_load(rel, relation_rows(mass, rel))
+        db.bulk_load_dyn(rel, relation_rows(mass, rel))
             .map_err(|e| format!("windowed load: {e:?}"))?;
     }
     Ok(())

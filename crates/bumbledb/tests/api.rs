@@ -1122,7 +1122,7 @@ fn bulk_load_inside_a_write_closure_panics_per_its_documented_contract() {
     let db = Db::create(dir.path(), Ledger).expect("create");
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = db.write(|_| {
-            let _ = db.bulk_load(Holder::RELATION, Vec::new());
+            let _ = db.bulk_load_dyn(Holder::RELATION, Vec::new());
             Ok(())
         });
     }));

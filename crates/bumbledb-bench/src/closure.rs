@@ -5,7 +5,7 @@
 //! corpus world whose EDGE SHAPES are the point — one deep chain (the
 //! depth axis: one new tuple per round, the round-overhead price) and
 //! one wide tree (the fanout axis: frontier width, few rounds) — driven
-//! through `Db::prepare_program` (`AtomSource::Idb`, the delta-variant
+//! through `Db::prepare` (`AtomSource::Idb`, the delta-variant
 //! plans, the finished-image slot) against `SQLite`'s recursive CTE.
 //!
 //! Discipline mirrors the primary suite: seeded corpus regenerated per
@@ -317,7 +317,7 @@ pub fn load_stores(
     let sizes = ClosSizes::of(cfg.scale);
     let db = mode.create(&dir.join("db"), Reachability)?;
     for rel in [ids::NODE, ids::EDGE] {
-        db.bulk_load(rel, relation_rows(sizes, rel))
+        db.bulk_load_dyn(rel, relation_rows(sizes, rel))
             .map_err(|e| format!("load: {e:?}"))?;
     }
     let conn = rusqlite::Connection::open(dir.join("oracle.sqlite"))
@@ -359,8 +359,8 @@ pub fn verify_family(
 ) -> Result<(), String> {
     let program = (family.program)();
     let mut prepared = db
-        .prepare_program(&program)
-        .map_err(|e| format!("{}: prepare_program: {e:?}", family.name))?;
+        .prepare(&program)
+        .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
     let types: Vec<bumbledb::schema::ValueType> = prepared
         .predicate()
         .columns
@@ -431,8 +431,8 @@ pub fn bench_families(
 
         let program = (family.program)();
         let mut prepared = db
-            .prepare_program(&program)
-            .map_err(|e| format!("{}: prepare_program: {e:?}", family.name))?;
+            .prepare(&program)
+            .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
         let mut rotation = Rotation::new(draws.clone());
         let mut buffer = Answers::new();
         let mut run_ours = |prepared: &mut bumbledb::PreparedQuery<'_, Reachability>| {

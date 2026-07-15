@@ -46,7 +46,8 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
     let sizes = ClosSizes::of(CFG.scale);
     let db = Db::create(&dir, Reachability).expect("create");
     for rel in [ids::NODE, ids::EDGE] {
-        db.bulk_load(rel, relation_rows(sizes, rel)).expect("load");
+        db.bulk_load_dyn(rel, relation_rows(sizes, rel))
+            .expect("load");
     }
     let mut naive = NaiveDb::new(&Reachability.descriptor());
     for rel in [ids::NODE, ids::EDGE] {
@@ -58,7 +59,7 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
     }
 
     let program = closure_program();
-    let mut prepared = db.prepare_program(&program).expect("prepare_program");
+    let mut prepared = db.prepare(&program).expect("prepare");
     let types: Vec<bumbledb::schema::ValueType> = prepared
         .predicate()
         .columns
@@ -120,7 +121,7 @@ fn closure_cardinalities_match_the_shapes() {
     let sizes = ClosSizes::of(CFG.scale);
     let (db, _conn) = load_stores(&dir, CFG, crate::storemode::StoreMode::Durable).expect("stores");
     let program = closure_program();
-    let mut prepared = db.prepare_program(&program).expect("prepare_program");
+    let mut prepared = db.prepare(&program).expect("prepare");
     let mut buffer = Answers::new();
     let count = |db: &Db<Reachability>,
                  prepared: &mut bumbledb::PreparedQuery<'_, Reachability>,
