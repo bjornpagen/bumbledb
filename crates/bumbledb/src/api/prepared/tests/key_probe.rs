@@ -678,4 +678,43 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
             "{err:?}"
         );
     }
+
+    // The IMAGE lane's twin: the same corrupt bytes driven through the
+    // Free Join path (no key coverage — the image build decodes every
+    // stored fact). Same decoder, same conviction, different lane —
+    // this pins the routing, since the shared decoder's boundary
+    // behavior is already unit-pinned in `encoding/tests.rs`.
+    let scan = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Var(VarId(1)),
+            FindTerm::Var(VarId(2)),
+        ],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::Var(VarId(1))),
+                (FieldId(2), Term::Var(VarId(2))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let txn = env.read_txn().expect("txn");
+    let mut prepared = prepare(&txn, &cache, &schema, &scan).expect("prepare");
+    assert!(
+        !matches!(prepared.program.rules(), [PreparedRule::KeyProbe(_)]),
+        "the all-vars scan must not take the key-probe lane"
+    );
+    let err = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect_err("the image build convicts the corrupt start");
+    assert!(
+        matches!(
+            err,
+            Error::Corruption(CorruptionError::InvalidFixedIntervalStart(_))
+        ),
+        "{err:?}"
+    );
 }

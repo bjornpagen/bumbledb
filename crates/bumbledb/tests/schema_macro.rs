@@ -1316,6 +1316,34 @@ mod fixed_width_intervals {
         );
     }
 
+    /// The width-matched ray at the TYPED boundary: the newtype carries
+    /// a general `Interval<u64>`, so `[MAX-5, MAX)` is constructible —
+    /// width 5 exactly, and a ray. The Q2 bar must reject it here too,
+    /// or the store would hold `start = MAX - 5`, which every later
+    /// read convicts: committed-then-unreadable, the shape a
+    /// regression pin exists for.
+    #[test]
+    fn a_width_matched_ray_is_rejected_at_the_typed_boundary() {
+        let dir = crate::common::TempDir::new("macro-fixed-ray");
+        let db = Db::create(dir.path(), Jukebox).expect("create");
+        let err = db
+            .write(|tx| {
+                tx.insert(&Slot {
+                    playlist: 1,
+                    slot: SlotSpan(
+                        Interval::<u64>::new(u64::MAX - 5, u64::MAX).expect("a legal general ray"),
+                    ),
+                    track: 79,
+                })?;
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, bumbledb::Error::FactShape(_)),
+            "the width-matched ray must be a typed shape error, got {err:?}"
+        );
+    }
+
     #[test]
     fn the_fixed_pointwise_key_rejects_overlap_and_accepts_adjacency() {
         let dir = crate::common::TempDir::new("macro-fixed-pointwise");

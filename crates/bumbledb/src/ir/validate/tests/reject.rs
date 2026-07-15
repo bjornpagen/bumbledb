@@ -1379,3 +1379,33 @@ fn rejects_a_wrong_width_interval_literal_at_a_fixed_width_field() {
         ValidationError::LiteralTypeMismatch { atom: 0, .. }
     ));
 }
+
+/// The one value the width-equality check alone would admit: a general
+/// interval whose width MATCHES the declared `w` but whose end is the
+/// domain ceiling — the ray in fixed clothing. The Q2 bar
+/// (`start + w < maxEnd`) rejects it; admitting it would encode
+/// `start = MAX − w`, the exact byte pattern every read path convicts
+/// as corruption.
+#[test]
+fn rejects_a_width_matched_ray_literal_at_a_fixed_width_field() {
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![atom(
+            RelationId(0),
+            vec![
+                (0, var(0)),
+                (
+                    1, // ulane: interval<u64, 5>
+                    Term::Literal(Value::IntervalU64(
+                        crate::Interval::<u64>::new(u64::MAX - 5, u64::MAX)
+                            .expect("a legal general ray"), // width 5 — and a ray
+                    )),
+                ),
+            ],
+        )],
+    );
+    assert!(matches!(
+        validate(&cross_domain_schema(), &query).expect_err("the width-matched ray must reject"),
+        ValidationError::LiteralTypeMismatch { atom: 0, .. }
+    ));
+}
