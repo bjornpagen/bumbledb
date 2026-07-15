@@ -411,6 +411,89 @@ fn a_witness_mints_the_same_sequence_as_the_typed_path() {
     .expect("mint again");
 }
 
+/// The drop-order lock window: `Db`'s fields drop in declaration
+/// order, and a parked reader's transaction owns its own env clone —
+/// if the `Environment` (and with it the advisory lock) dropped before
+/// `read_cache`, another handle could acquire the lock while heed
+/// still holds the path open, and its `Db::open` would surface heed's
+/// `EnvAlreadyOpened` as an untyped `Lmdb` error — breaking a retry
+/// loop keyed on the typed `EnvironmentLocked`. The opener thread
+/// hammers the window while the owner drops; every non-lock error is
+/// the regression.
+#[test]
+fn dropping_the_handle_never_leaks_an_env_already_opened_window() {
+    let dir = TempDir::new("db-drop-order");
+    drop(Db::create(dir.path(), named_schema()).expect("create"));
+    // 1,000 rounds reproduced the pre-fix window well within the first
+    // hundred on the M2 Max; the budget keeps the race real without
+    // dominating the suite.
+    for _ in 0..1000 {
+        let db = Db::open(dir.path(), named_schema()).expect("open owner");
+        db.read(|_| Ok(())).expect("park a reader");
+        let path = dir.path().to_path_buf();
+        let hot = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let hot_flag = std::sync::Arc::clone(&hot);
+        let opener = std::thread::spawn(move || -> Result<()> {
+            loop {
+                match Db::open(&path, named_schema()) {
+                    Ok(reopened) => {
+                        drop(reopened);
+                        return Ok(());
+                    }
+                    Err(Error::EnvironmentLocked) => {
+                        hot_flag.store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    Err(other) => return Err(other),
+                }
+            }
+        });
+        // The opener is provably in its retry loop before the drop
+        // opens the window.
+        while !hot.load(std::sync::atomic::Ordering::Acquire) {
+            std::hint::spin_loop();
+        }
+        drop(db);
+        opener
+            .join()
+            .expect("opener thread")
+            .expect("the retry loop must see EnvironmentLocked or success, never a raw Lmdb error");
+    }
+}
+
+/// The cross-schema witness hole (UNFIXED — owner ruling needed):
+/// [`crate::schema::FreshField`] carries no binding to the schema that
+/// resolved it, so a witness minted by schema A's `fresh_field` reaches
+/// `alloc_at` on a Db of schema B and the mint re-checks nothing — a
+/// debug build trips `WriteDelta::alloc`'s assert (or indexes out of
+/// range for an out-of-range relation id); a release build silently
+/// mints 0,1,2… from a Q key of a field that is NOT fresh in the
+/// store's schema, breaking `Generation::Fresh`'s never-reissue
+/// guarantee and persisting an unaudited Q entry at commit. Two fixes
+/// compete — re-check `(relation, field, generation)` per mint inside
+/// `alloc_at` (the `ForeignPreparedQuery` every-entry precedent), or
+/// bind the witness to its schema/environment in the type
+/// (parse-don't-validate) — and either reverses the documented "the
+/// witness carries the proof" decision, so this test pins the DESIRED
+/// behavior (a typed refusal, never a panic or a silent mint) and
+/// stays ignored until the ruling.
+#[test]
+#[ignore = "owner ruling: cross-schema FreshField witnesses reach alloc_at unchecked (debug: assert; release: silent mint)"]
+fn a_foreign_witness_is_refused_typed_not_minted() {
+    let foreign = fresh_schema().validate().expect("fixture");
+    let witness = foreign
+        .fresh_field(RelationId(0), FieldId(0))
+        .expect("fresh in ITS OWN schema");
+    let dir = TempDir::new("db-foreign-witness");
+    // A different schema at this store: field 0 of relation 0 is a
+    // plain String column, not fresh.
+    let db = Db::create(dir.path(), named_schema()).expect("create");
+    let outcome = db.write(|tx| tx.alloc_at(witness).map(|_| ()));
+    assert!(
+        outcome.is_err(),
+        "a foreign witness must refuse typed, not mint: {outcome:?}"
+    );
+}
+
 /// A mid-stream bulk-load failure surfaced through `?` (the
 /// `From<BulkLoadError> for Error` conversion) still exposes the
 /// committed count — the resumability payload the type exists for.
