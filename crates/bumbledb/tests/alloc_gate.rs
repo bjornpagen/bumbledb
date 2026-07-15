@@ -199,7 +199,10 @@ const BLOB: RelationId = RelationId(4);
 /// rotating params and set elements are real probes.
 fn digest16(id: u64) -> [u8; 16] {
     let seed = u8::try_from(id % 251).expect("mod 251 fits u8");
-    std::array::from_fn(|i| seed.wrapping_mul(31).wrapping_add(u8::try_from(i).expect("i < 16")))
+    std::array::from_fn(|i| {
+        seed.wrapping_mul(31)
+            .wrapping_add(u8::try_from(i).expect("i < 16"))
+    })
 }
 
 /// The steady-state marks chains' length (docs 0..20) — long enough that
@@ -1235,12 +1238,7 @@ fn zero_warm_allocation_gate() {
             vec![BindValue::U64(7)],
         ];
         let mut blob_probe = db.prepare(&blob_probe_query())?;
-        gate(
-            "bytes-key-probe",
-            &mut blob_probe,
-            snap,
-            &blob_probe_params,
-        );
+        gate("bytes-key-probe", &mut blob_probe, snap, &blob_probe_params);
 
         // Two rotating sets of different sizes (a duplicate element in
         // the first: the dedup is real work every bind).
@@ -1252,10 +1250,7 @@ fn zero_warm_allocation_gate() {
             .iter()
             .map(|id| Value::FixedBytes(Box::from(digest16(*id))))
             .collect();
-        let blob_set_args = vec![
-            vec![ParamArg::Set(&set_a)],
-            vec![ParamArg::Set(&set_b)],
-        ];
+        let blob_set_args = vec![vec![ParamArg::Set(&set_a)], vec![ParamArg::Set(&set_b)]];
         let mut blob_set = db.prepare(&blob_set_query())?;
         gate_args("bytes-set", &mut blob_set, snap, &blob_set_args);
 
