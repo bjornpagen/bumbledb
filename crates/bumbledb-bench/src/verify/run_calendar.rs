@@ -96,7 +96,7 @@ pub(super) fn calendar_fixed_count(cfg: &VerifyConfig) -> u64 {
 /// write deltas — every chunk judged over the full final state on both
 /// sides ([`crate::calendar::corpus`] is the loader twin).
 fn load_ops(cfg: crate::corpus_gen::GenConfig, sizes: CalSizes) -> Vec<Op> {
-    const ORDER: [RelationId; 7] = [
+    const ORDER: [RelationId; 8] = [
         ids::ACCOUNT,
         ids::PERSON,
         ids::CALENDAR,
@@ -104,6 +104,7 @@ fn load_ops(cfg: crate::corpus_gen::GenConfig, sizes: CalSizes) -> Vec<Op> {
         ids::EVENT,
         ids::ROOM,
         ids::BOOKING,
+        ids::SLOT,
     ];
     let mut ops = Vec::new();
     for rel in ORDER {

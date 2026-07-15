@@ -30,6 +30,17 @@
 //! is the scalar-instant lane (every censused events table carries one),
 //! the anchor the at-instant anti-probe binds through — exactly the
 //! ledger's `Posting.at` role.
+//!
+//! **The roster-extension reshape (no prior reshape note existed — this
+//! is the minimal reshape covering the order purge's fixed-width
+//! interval types):** `Slot` is the fixed-width lane — a per-room grid
+//! of `interval<i64, 7200>` bookable slots (the width IS the type; the
+//! encoding stores the start word only) under the pointwise key
+//! `Slot(room, span) -> Slot`. It exists so the benchmark prices the
+//! 8-byte start-only encoding against the general 16-byte form on the
+//! same corpus (`slot_scan`, `slot_booking_overlap`). Changing this
+//! schema re-baselined every corpus digest and verify stamp — a
+//! deliberate act.
 
 pub mod corpus;
 pub mod corpus_gen;
@@ -85,6 +96,10 @@ bumbledb::schema! {
         person: u64 as CalPersonId,
         hours: interval<i64>,
     }
+    relation Slot {
+        room: u64 as RoomId,
+        span: interval<i64, 7200>,
+    }
 
     closed relation Rsvp as RsvpId = { Accepted, Tentative, Declined };
     closed relation Arm as ClaimArmId = { Busy, Ooo };
@@ -107,6 +122,8 @@ bumbledb::schema! {
     Booking(room, span) -> Booking;
     WorkHours(person)   <= Person(id);
     WorkHours(person, hours) -> WorkHours;
+    Slot(room)          <= Room(id);
+    Slot(room, span)    -> Slot;
 }
 
 /// The validated calendar schema, memoized for the inspection surfaces
@@ -142,14 +159,15 @@ pub mod ids {
     pub const ROOM: RelationId = RelationId(6);
     pub const BOOKING: RelationId = RelationId(7);
     pub const WORK_HOURS: RelationId = RelationId(8);
-    pub const RSVP: RelationId = RelationId(9);
-    pub const CLAIM_ARM: RelationId = RelationId(10);
+    pub const SLOT: RelationId = RelationId(9);
+    pub const RSVP: RelationId = RelationId(10);
+    pub const CLAIM_ARM: RelationId = RelationId(11);
 
     /// The number of **writable** relations — loaders iterate
     /// `0..RELATIONS`. The closed relations (`Rsvp`/`ClaimArm`, ids
-    /// 9..11) sit after every ordinary relation by declaration: they
+    /// 10..12) sit after every ordinary relation by declaration: they
     /// are unwritable ground axioms, so no loader touches them.
-    pub const RELATIONS: u32 = 9;
+    pub const RELATIONS: u32 = 10;
 
     pub mod account {
         use super::FieldId;
@@ -204,6 +222,11 @@ pub mod ids {
         use super::FieldId;
         pub const PERSON: FieldId = FieldId(0);
         pub const HOURS: FieldId = FieldId(1);
+    }
+    pub mod slot {
+        use super::FieldId;
+        pub const ROOM: FieldId = FieldId(0);
+        pub const SPAN: FieldId = FieldId(1);
     }
 }
 

@@ -26,7 +26,7 @@ use crate::sqlmap;
 /// The engine load order minus the `==` cluster: every containment's
 /// target precedes its source, and `WorkHours` precedes the claims whose
 /// coverage it proves.
-const ORDER: [RelationId; 7] = [
+const ORDER: [RelationId; 8] = [
     ids::ACCOUNT,
     ids::PERSON,
     ids::CALENDAR,
@@ -34,6 +34,7 @@ const ORDER: [RelationId; 7] = [
     ids::EVENT,
     ids::ROOM,
     ids::BOOKING,
+    ids::SLOT,
 ];
 
 /// The joint chunk size of the `==` cluster (the engine's bulk chunk).

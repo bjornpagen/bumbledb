@@ -374,6 +374,78 @@ fn claim_hours_params(_: &GenConfig) -> Vec<Draw> {
     vec![scalar_draw(vec![])]
 }
 
+/// `slot_scan` — **times the mask kernel over the fixed-width interval
+/// type** (the order purge's `interval<i64, w>`: the encoding stores the
+/// start word only, the end derives as `start + w`): the `busy_scan`
+/// shape moved onto the 8-byte lane, so the pair prices the fixed
+/// encoding against the general 16-byte form under the identical O(n)
+/// scan. `Q(r, s) :- Slot(room = r, span = s), Allen(s, ?0, INTERSECTS)`.
+fn slot_scan_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![Atom {
+            source: bumbledb::AtomSource::Edb(ids::SLOT),
+            bindings: vec![(ids::slot::ROOM, var(0)), (ids::slot::SPAN, var(1))],
+        }],
+        negated: vec![],
+        conditions: vec![allen(var(1), param(0), AllenMask::INTERSECTS)],
+    })
+}
+
+/// The slot grid's covered stretch: one gapped-gapped-abutting triple
+/// per `8 × HOUR` ([`crate::calendar::corpus_gen::slot_span`]).
+fn grid_span(sizes: &CalSizes) -> i64 {
+    i64::try_from(sizes.slots_per_room / 3 + 1).expect("fits") * 8 * HOUR
+}
+
+fn slot_scan_params(cfg: &GenConfig) -> Vec<Draw> {
+    let sizes = CalSizes::of(cfg.scale);
+    let span = grid_span(&sizes);
+    let width = span / 16;
+    vec![
+        scalar_draw(vec![window(CAL_BASE + span / 8, width)]),
+        scalar_draw(vec![window(CAL_BASE + span / 2, width)]),
+        scalar_draw(vec![window(CAL_BASE + span * 7 / 8, width)]),
+        // The pre-epoch miss: no slot starts before CAL_BASE, and the
+        // fixed type has no rays, so nothing intersects.
+        scalar_draw(vec![window(CAL_BASE - 2 * HOUR, HOUR)]),
+    ]
+}
+
+/// `slot_booking_overlap` — **times the fixed × general Allen join**:
+/// one room's fixed-width grid against its general-interval bookings —
+/// the two interval encodings meeting under one `INTERSECTS` condition
+/// (the width is the type; the join is over values, so the pair is
+/// legal by the shared element domain). `Q(s, v) :- Slot(room = ?0,
+/// span = s), Booking(room = ?0, span = v), Allen(s, v, INTERSECTS)`.
+fn slot_booking_overlap_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                source: bumbledb::AtomSource::Edb(ids::SLOT),
+                bindings: vec![(ids::slot::ROOM, param(0)), (ids::slot::SPAN, var(0))],
+            },
+            Atom {
+                source: bumbledb::AtomSource::Edb(ids::BOOKING),
+                bindings: vec![(ids::booking::ROOM, param(0)), (ids::booking::SPAN, var(1))],
+            },
+        ],
+        negated: vec![],
+        conditions: vec![allen(var(0), var(1), AllenMask::INTERSECTS)],
+    })
+}
+
+fn slot_booking_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
+    let sizes = CalSizes::of(cfg.scale);
+    vec![
+        scalar_draw(vec![Value::U64(0)]), // the Zipf head's room
+        scalar_draw(vec![Value::U64(1)]),
+        scalar_draw(vec![Value::U64(sizes.rooms / 2)]),
+        scalar_draw(vec![Value::U64(sizes.rooms + 1_000_000)]),
+    ]
+}
+
 // ---------------------------------------------------------------------
 // Hand-written SQL goldens (docs/architecture/60-validation.md): never
 // regenerated from the translator; the pin test arbitrates.
@@ -459,14 +531,40 @@ pub const FREE_BUSY_SLOTS: &[ParamSlot] = &[
     ParamSlot::End(ParamId(1)),
 ];
 
+/// `slot_scan`: the fixed-width lane's scan — the mask's 9 sharing
+/// basics OR'd against the window's two placeholders over the slot
+/// grid (`SQLite` stores both halves; the 8-byte start-only encoding is
+/// the engine side's private economy, invisible to the mapped oracle).
+pub const SLOT_SCAN: &str = concat!(
+    "SELECT DISTINCT t0.\"room\", t0.\"span_start\", t0.\"span_end\" FROM \"Slot\" AS t0 ",
+    "WHERE ",
+    intersects_param!("t0.\"span_start\"", "t0.\"span_end\"", "?1", "?2")
+);
+
+/// `slot_booking_overlap`: the fixed × general Allen join within one
+/// room.
+pub const SLOT_BOOKING_OVERLAP: &str = concat!(
+    "SELECT DISTINCT t0.\"span_start\", t0.\"span_end\", t1.\"span_start\", t1.\"span_end\" ",
+    "FROM \"Slot\" AS t0, \"Booking\" AS t1 ",
+    "WHERE t0.\"room\" = ?1 AND t1.\"room\" = ?1 AND ",
+    intersects_param!(
+        "t0.\"span_start\"",
+        "t0.\"span_end\"",
+        "t1.\"span_start\"",
+        "t1.\"span_end\""
+    )
+);
+
 /// `claim_hours`: the normative fold template over the distinct binding
 /// set, the ray filter's 4 disjoint basics OR'd against the horizon
 /// literal (`[1800000000, ∞)` — ∞ = `i64::MAX`, the largest end word).
 pub const CLAIM_HOURS: &str = "SELECT v0, SUM(v2_end - v2_start) FROM (SELECT DISTINCT t0.\"arm\" AS v0, t0.\"source\" AS v1, t0.\"span_start\" AS v2_start, t0.\"span_end\" AS v2_end FROM \"Claim\" AS t0 WHERE ((t0.\"span_end\" < 1800000000) OR (t0.\"span_end\" = 1800000000) OR (9223372036854775807 = t0.\"span_start\") OR (9223372036854775807 < t0.\"span_start\"))) GROUP BY v0";
 
-/// The registry: the calendar's seven rows — the six numbered queries,
+/// The registry: the calendar's nine rows — the six numbered queries,
 /// the conflict family contributing its anti-probe variant as its own
-/// row (`60-validation.md`'s table).
+/// row (`60-validation.md`'s table), plus the roster extension's two
+/// fixed-width interval rows (`slot_scan`, `slot_booking_overlap` —
+/// report-only: measurement infrastructure, not gate claims).
 #[must_use]
 pub fn all() -> &'static [CalFamily] {
     &[
@@ -551,6 +649,30 @@ pub fn all() -> &'static [CalFamily] {
                 "Claim",
                 &["arm", "span_start", "span_end"],
             )],
+        },
+        CalFamily {
+            name: "slot_scan",
+            kind: Kind::Report,
+            query: slot_scan_query,
+            params: slot_scan_params,
+            golden_sql: SLOT_SCAN,
+            hand_param_slots: None,
+            param_policy: "3 ~6%-of-grid windows spread over the slot grid + 1 pre-epoch miss (fixed-width lane).",
+            indexes: &[(
+                "idx_slot_span",
+                "Slot",
+                &["span_start", "span_end"],
+            )],
+        },
+        CalFamily {
+            name: "slot_booking_overlap",
+            kind: Kind::Report,
+            query: slot_booking_overlap_query,
+            params: slot_booking_overlap_params,
+            golden_sql: SLOT_BOOKING_OVERLAP,
+            hand_param_slots: None,
+            param_policy: "The head room, room 1, a mid room, + 1 room miss (fixed x general Allen join).",
+            indexes: &[],
         },
     ]
 }
@@ -668,6 +790,22 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
             Value::U64(rng.range(sizes.accounts * 9 / 8)),
             window(rng, ACTIVE_SPAN / 4),
         ])),
+        "slot_scan" => {
+            // Windows over the slot grid's own stretch (the active-span
+            // windows would mostly miss the grid).
+            let span = grid_span(&sizes);
+            let start = CAL_BASE - HOUR
+                + i64::try_from(rng.range(u64::try_from(span + 2 * HOUR).expect("positive")))
+                    .expect("fits");
+            let width = 1 + i64::try_from(rng.range(u64::try_from(span / 8).expect("positive")))
+                .expect("fits");
+            Some(scalar_draw(vec![Value::IntervalI64(
+                bumbledb::Interval::<i64>::new(start, start + width).expect("nonempty interval"),
+            )]))
+        }
+        "slot_booking_overlap" => Some(scalar_draw(vec![Value::U64(
+            rng.range(sizes.rooms * 9 / 8),
+        )])),
         other => unreachable!("unregistered calendar family {other}"),
     }
 }
@@ -679,7 +817,7 @@ pub fn random_draw(name: &str, rng: &mut crate::corpus_gen::Rng, cfg: &GenConfig
 pub fn unit_draw(name: &str, seed: u64, sizes: &CalSizes) -> Draw {
     let wide = window(CAL_BASE - HOUR, CAL_HORIZON - CAL_BASE + HOUR - 1);
     match name {
-        "busy_scan" => scalar_draw(vec![wide]),
+        "busy_scan" | "slot_scan" => scalar_draw(vec![wide]),
         "meets_chain" | "free_busy" => scalar_draw(vec![Value::U64(0), wide]),
         "rsvp_union" | "claim_hours" => scalar_draw(vec![]),
         "conflict_pairs" => scalar_draw(vec![Value::U64(0)]),
@@ -687,6 +825,7 @@ pub fn unit_draw(name: &str, seed: u64, sizes: &CalSizes) -> Draw {
             Value::U64(0),
             Value::I64(created_at(seed, sizes.events / 2)),
         ]),
+        "slot_booking_overlap" => scalar_draw(vec![Value::U64(0)]),
         other => unreachable!("unregistered calendar family {other}"),
     }
 }
