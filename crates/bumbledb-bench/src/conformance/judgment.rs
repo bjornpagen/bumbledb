@@ -109,7 +109,7 @@ const ACCOUNT: RelationId = RelationId(1);
 const ITEM: RelationId = RelationId(2);
 
 /// Holder(id, tag; key id); Account(holder, kind, num) windowed
-/// `Account(holder | kind ∈ {1, 2}) in 1..2 per Holder(id)` — a
+/// `Holder(id) <={1..2} Account(holder | kind ∈ {1, 2})` — a
 /// SET selection, so the lane's σ compares disjunctively; Item is
 /// unconstrained payload data riding the same commits.
 fn marks_schema() -> SchemaDescriptor {
@@ -163,11 +163,14 @@ fn item(doc: u64, pos: u64, note: u64) -> (RelationId, Vec<Value>) {
     )
 }
 
-// ---------- the exactness world: n..n and 0..* windows ----------
+// ---------- the exactness world: {n} and {0} windows ----------
 
-/// Holder + Account under `in 2..2 per` (exactness) and a second
-/// `in 0..*` window (the provably vacuous default posture,
-/// `lean/Bumbledb/Cardinality.lean: zero_star_admits`).
+/// Holder + Account under `Holder(id) <={2} Account(holder | kind == 1)`
+/// (exactness) and a second `{0}` window on kind 9 (the exclusion —
+/// the vacuous `0..*` posture is unrepresentable, rejected at
+/// validation as `CardinalityVacuousWindow`; the default says nothing
+/// by not being spelled, `lean/Bumbledb/Cardinality.lean:
+/// zero_star_admits`).
 fn exact_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -188,7 +191,7 @@ fn exact_schema() -> SchemaDescriptor {
             StatementDescriptor::Cardinality {
                 source: side_where(ACCOUNT, &[0], &[(1, LiteralSet::One(Value::U64(9)))]),
                 lo: 0,
-                hi: None,
+                hi: Some(0),
                 target: side(HOLDER, &[0]),
             },
         ],
@@ -498,16 +501,18 @@ fn fixtures() -> Vec<JudgmentFixture> {
             inserts: vec![holder(2), account(2, 1, 0)],
         },
         JudgmentFixture {
-            name: "judgment-window-vacuity",
+            name: "judgment-window-exclusion-member",
             schema: exact_schema(),
             base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
             deletes: vec![],
-            inserts: vec![
-                account(1, 9, 0),
-                account(1, 9, 1),
-                account(1, 9, 2),
-                account(1, 9, 3),
-            ],
+            inserts: vec![account(1, 9, 0)],
+        },
+        JudgmentFixture {
+            name: "judgment-window-exclusion-clean",
+            schema: exact_schema(),
+            base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
+            deletes: vec![],
+            inserts: vec![account(1, 5, 0), account(1, 6, 1)],
         },
         JudgmentFixture {
             name: "judgment-window-empty-parent",

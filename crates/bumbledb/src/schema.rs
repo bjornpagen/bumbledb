@@ -295,12 +295,14 @@ pub enum StatementDescriptor {
     },
     /// `A(X | φ) <= B(Y | ψ)`: πX(σφ(A)) ⊆ πY(σψ(B)) as sets of tuples.
     Containment { source: Side, target: Side },
-    /// `A(X | φ) in lo..hi per B(Y | ψ)`: the cardinality window — per
-    /// selected target fact, the count of selected source facts sharing
-    /// its projected tuple lies in the window
+    /// `B(Y | ψ) <={lo..hi} A(X | φ)` (B-family, target-left — the left
+    /// side is `target`): the cardinality window — per selected target
+    /// fact, the count of selected source facts sharing its projected
+    /// tuple lies in the window
     /// (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`;
     /// `lean/Bumbledb/Schema.lean: Statement.cardinality`). `hi = None`
-    /// is the `*` spelling — the only spelling of "no upper bound".
+    /// is the `*` spelling — the only spelling of "no upper bound";
+    /// `lo = hi` is the `{n}` exact-count spelling (`{0}` the exclusion).
     Cardinality {
         source: Side,
         /// The inclusive lower count bound.
@@ -680,7 +682,7 @@ pub struct ContainmentStatement {
     pub mirror: Option<StatementId>,
 }
 
-/// One sealed cardinality window: `A(X | φ) in lo..hi per B(Y | ψ)`.
+/// One sealed cardinality window: `B(Y | ψ) <={lo..hi} A(X | φ)`.
 /// Accepted at declaration with its sealed target-key plan handle
 /// (the same probe-ability rule containments resolve —
 /// `lean/Bumbledb/Oracle.lean: cardinality_plan_decides` is the promised

@@ -324,8 +324,14 @@ fn unresolvable_names_fall_back_to_id_placeholders() {
     );
 }
 
-/// The extension forms render back in the exact grammar: the window with
-/// both bound spellings, the set selection in braces (canonical order).
+/// The extension forms render back in the exact grammar — B-family,
+/// target-left, and every legal window spelling round-trips canonically
+/// (the canonical-utterance law, `docs/architecture/70-api.md`): the
+/// `{lo..hi}` range, the `{lo..*}` floor (lo ≥ 2), the `{0..hi}`
+/// ceiling, the `{n}` exact, and the `{0}` exclusion — plus the set
+/// selection in braces (canonical order). Validation refuses the banned
+/// bound shapes (`{0..*}`, `{1..*}`, inverted — the reject suite), so
+/// no sealed statement can render a banned spelling.
 #[test]
 fn extension_forms_render_in_the_grammar() {
     use crate::schema::tests::{cardinality, side_where_sets};
@@ -357,6 +363,7 @@ fn extension_forms_render_in_the_grammar() {
         statements: vec![
             fd(RelationId(0), &[FieldId(0)]),
             fd(RelationId(2), &[FieldId(0)]),
+            // `{1..3}` — the two-bound range, over a set selection.
             cardinality(
                 side_where_sets(
                     RelationId(1),
@@ -370,42 +377,76 @@ fn extension_forms_render_in_the_grammar() {
                 Some(3),
                 side(RelationId(0), &[FieldId(0)]),
             ),
+            // `{2..*}` — the floor (lo ≥ 2; `{1..*}` is the banned
+            // containment respelling).
             cardinality(
                 side(RelationId(1), &[FieldId(0)]),
-                1,
+                2,
                 None,
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+            // `{0..4}` — the ceiling.
+            cardinality(
+                side(RelationId(1), &[FieldId(0)]),
+                0,
+                Some(4),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+            // `{3}` — the exact count (`lo = hi`).
+            cardinality(
+                side(RelationId(1), &[FieldId(0)]),
+                3,
+                Some(3),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+            // `{0}` — the exclusion.
+            cardinality(
+                side_where_sets(
+                    RelationId(1),
+                    &[FieldId(0)],
+                    vec![(FieldId(3), LiteralSet::One(Value::U64(9)))],
+                ),
+                0,
+                Some(0),
                 side(RelationId(0), &[FieldId(0)]),
             ),
         ],
     };
 
-    // Declared-side rendering (the diagnostic path).
+    let expected = [
+        "Parent(id) <={1..3} Task(parent | state == {1, 2})",
+        "Parent(id) <={2..*} Task(parent)",
+        "Parent(id) <={0..4} Task(parent)",
+        "Parent(id) <={3} Task(parent)",
+        "Parent(id) <={0} Task(parent | state == 9)",
+    ];
+
+    // Declared-side rendering (the diagnostic path) — the set as
+    // written.
     assert_eq!(
         render_declared(&decl, StatementId(2)),
-        "Task(parent | state == {2, 1}) in 1..3 per Parent(id)"
+        "Parent(id) <={1..3} Task(parent | state == {2, 1})"
     );
-    assert_eq!(
-        render_declared(&decl, StatementId(3)),
-        "Task(parent) in 1..* per Parent(id)"
-    );
+    for (offset, want) in expected.iter().enumerate().skip(1) {
+        assert_eq!(
+            render_declared(
+                &decl,
+                StatementId(u16::try_from(2 + offset).expect("small"))
+            ),
+            *want
+        );
+    }
 
-    // Sealed-side rendering — the set now canonical (sorted).
+    // Sealed-side rendering — the set now canonical (sorted), every
+    // survivor in its one spelling.
     let schema = decl.validate().expect("the extension forms validate");
-    assert_eq!(
-        render(&schema, StatementId(2)),
-        "Task(parent | state == {1, 2}) in 1..3 per Parent(id)"
-    );
-    assert_eq!(
-        render(&schema, StatementId(3)),
-        "Task(parent) in 1..* per Parent(id)"
-    );
-    // The spine agrees with the arenas.
-    assert!(matches!(
-        schema.statement(StatementId(2)),
-        StatementView::Cardinality(WindowId(0), _)
-    ));
-    assert!(matches!(
-        schema.statement(StatementId(3)),
-        StatementView::Cardinality(WindowId(1), _)
-    ));
+    for (offset, want) in expected.iter().enumerate() {
+        let id = StatementId(u16::try_from(2 + offset).expect("small"));
+        assert_eq!(render(&schema, id), *want);
+        // The spine agrees with the arenas.
+        assert!(matches!(
+            schema.statement(id),
+            StatementView::Cardinality(WindowId(w), _) if usize::from(w) == offset
+        ));
+    }
 }

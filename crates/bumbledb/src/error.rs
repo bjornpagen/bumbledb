@@ -259,6 +259,30 @@ pub enum SchemaError {
         relation: RelationId,
         field: FieldId,
     },
+    /// Roster "an inverted window": `hi < lo` is satisfied by no count —
+    /// the statement is unsatisfiable as declared. The canonical bounds
+    /// are `lo < hi` (an exact count is `lo = hi`, the `{n}` spelling).
+    CardinalityInvertedWindow {
+        statement: StatementId,
+        lo: u64,
+        hi: u64,
+    },
+    /// Roster "the vacuous window": `0..*` admits every count — the
+    /// statement provably says nothing
+    /// (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`), and a
+    /// statement that says nothing is not a statement (the
+    /// canonical-utterance law, `docs/architecture/70-api.md`).
+    CardinalityVacuousWindow {
+        statement: StatementId,
+    },
+    /// Roster "the containment respelled": `1..*` says exactly what the
+    /// bare containment `target <= source` says
+    /// (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) — one
+    /// meaning, one spelling: drop the window and declare the
+    /// containment.
+    CardinalityContainmentWindow {
+        statement: StatementId,
+    },
     /// Roster "an interval position in a window projection" — refused v0:
     /// a window counts FACTS per parent, and an interval position would
     /// make the count ambiguous between facts and points

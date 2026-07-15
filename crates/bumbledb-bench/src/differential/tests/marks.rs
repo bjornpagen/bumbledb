@@ -69,8 +69,8 @@ fn write(deletes: Vec<(RelationId, Vec<Value>)>, inserts: Vec<(RelationId, Vec<V
 }
 
 /// The window-boundary schema, verbatim from the naive marks fixture
-/// (`naive/tests/judgment.rs` § window exactness): the `2..2`
-/// exactness window (statement 1) and the `0..*` vacuity window
+/// (`naive/tests/judgment.rs` § window exactness): the `{2}`
+/// exactness window (statement 1) and the `{0}` exclusion window
 /// (statement 2) over Holder/Account.
 fn exact_schema() -> SchemaDescriptor {
     let u64_field = |name: &str| field(name, bumbledb::schema::ValueType::U64);
@@ -109,7 +109,7 @@ fn exact_schema() -> SchemaDescriptor {
                     selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(9)))]),
                 },
                 lo: 0,
-                hi: None,
+                hi: Some(0),
                 target: side(HOLDER, &[0], &[]),
             },
         ],
@@ -185,9 +185,10 @@ fn violating_deltas_against_a_zero_fact_store_agree_with_the_model() {
     );
 }
 
-/// The window-boundary subfamilies over both oracles: `n..n`
-/// exactness (one under by deletion, one over by insertion), `0..*`
-/// vacuity (never gates), the window over an absent parent, and the
+/// The window-boundary subfamilies over both oracles: `{n}`
+/// exactness (one under by deletion, one over by insertion), the `{0}`
+/// exclusion (its first member convicts; out-of-σ children never
+/// count), the window over an absent parent, and the
 /// delete-then-reinsert seams — a net-nothing delta re-judges its
 /// touched group (`lean/Bumbledb/Txn/DeltaRestriction.lean:
 /// delta_restricted_commit_sound`) and a net-nothing reinsert beside a
@@ -206,17 +207,11 @@ fn window_boundary_and_reinsert_verdicts_agree_with_the_model() {
         write(vec![account(1, 1, 1)], vec![]),
         // One over: an insertion hits the ceiling.
         write(vec![], vec![account(1, 1, 2)]),
-        // 0..* never gates.
-        write(
-            vec![],
-            vec![
-                account(1, 9, 0),
-                account(1, 9, 1),
-                account(1, 9, 2),
-                account(1, 9, 3),
-            ],
-        ),
-        // A window over an absent parent is vacuous.
+        // The {0} exclusion convicts its first member.
+        write(vec![], vec![account(1, 9, 0)]),
+        // The {0} exclusion admits everything outside sigma.
+        write(vec![], vec![account(1, 5, 0), account(1, 6, 1)]),
+        // A window over an absent parent constrains nothing.
         write(vec![], vec![account(3, 1, 0)]),
         // The net-nothing delete-reinsert: the touched group re-judged,
         // green.
@@ -232,7 +227,7 @@ fn window_boundary_and_reinsert_verdicts_agree_with_the_model() {
     });
     assert_eq!(
         (summary.commits, summary.aborts),
-        (4, 3),
+        (4, 4),
         "the stream exercises both verdicts"
     );
 }

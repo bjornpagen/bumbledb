@@ -42,13 +42,20 @@
 //! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality),
 //! `A(X | σ) <= B(Y | ψ)` (containment), `==` lowered here to the two
 //! adjacent containments, `A <= B` first;
-//! `A(X | σ) in lo..hi per B(Y | ψ)` (the cardinality window — `*` is the
-//! no-ceiling spelling, `in 1..* per`). Selection literals are typed
+//! `B(Y | ψ) <={lo..hi} A(X | σ)` (the cardinality window — B-family,
+//! target-left: per selected B fact, the count of selected A facts
+//! sharing its projected tuple lies in the window). The window
+//! vocabulary is closed under the canonical-utterance law
+//! (docs/architecture/70-api.md): `{n}` is THE exact-count spelling
+//! (`{0}` the exclusion), `{lo..hi}` with lo < hi, `{lo..*}` floors
+//! (lo ≥ 2), `{0..hi}` ceilings — every other spelling (`{n..n}`,
+//! `{0..0}`, `{1..*}`, `{0..*}`, inverted bounds, open shorthands) is
+//! an expansion error naming the canonical form. Selection literals are typed
 //! against the selected field in the macro (a bare handle resolves through
 //! the selected field's newtype to its closed relation's row id); interval
 //! literals are written `start..end`, half-open; a binding may carry a
-//! literal SET — `field == {A, B}`, read disjunctively (`{L}` is the
-//! equality spelling; `{}` does not parse).
+//! literal SET — `field == {A, B}`, read disjunctively (a one-element
+//! set is the bare literal — `{L}` and `{}` do not parse).
 //!
 //! **Closed relations** declare their extension in the schema — rows are
 //! ground axioms, handle = declaration-order row id
@@ -202,9 +209,10 @@ enum Literal {
 
 /// One σ binding's right side: a single literal (`f == L`, the equality
 /// spelling) or a braced literal set (`f == {A, B}`, the disjunctive
-/// spelling — `docs/architecture/30-dependencies.md`). `{L}` lowers to the
-/// single-literal form (a singleton set IS the equality) and `{}` is an
-/// expansion panic.
+/// spelling — `docs/architecture/30-dependencies.md`). By the
+/// canonical-utterance law both degenerate sets are expansion panics
+/// naming the canonical form: `{L}` (a one-element set is the bare
+/// literal) and `{}` (an empty set selects nothing; write no binding).
 #[derive(Debug, Clone)]
 enum Literals {
     One(Literal),
@@ -232,12 +240,14 @@ enum Statement {
         source: Side,
         target: Side,
     },
-    /// `A(X | φ) in lo..hi per B(Y | ψ);` — `hi` is `None` for the `*`
-    /// spelling.
+    /// `B(Y | ψ) <={lo..hi} A(X | σ);` — B-family, target-left: the
+    /// LEFT side is the window's target (the per-group parent), the
+    /// right side the counted source. `hi` is `None` for the `{lo..*}`
+    /// floor spelling; the `{n}` exact spelling lands as `lo = hi = n`.
     Cardinality {
         source: Side,
-        lo: String,
-        hi: Option<String>,
+        lo: u64,
+        hi: Option<u64>,
         target: Side,
     },
 }
@@ -647,9 +657,11 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
 }
 
 /// Parses one binding's right side: a braced literal set (`{A, B}`) or a
-/// single literal. `{L}` lowers to the single-literal spelling — the
-/// canonical singleton — and `{}` panics (an empty set selects nothing;
-/// write no binding).
+/// single literal. The degenerate sets are expansion panics naming the
+/// canonical form (the canonical-utterance law,
+/// `docs/architecture/70-api.md`): `{L}` — a one-element set is the bare
+/// literal `field == L` — and `{}` (an empty set selects nothing; write
+/// no binding).
 fn parse_literals(field: &str, tokens: &mut Tokens) -> Literals {
     if !peek_brace(tokens) {
         return Literals::One(parse_literal(tokens));
@@ -668,7 +680,10 @@ fn parse_literals(field: &str, tokens: &mut Tokens) -> Literals {
             "schema!: the literal set for `{field}` is empty — an empty set selects \
              nothing; write no binding"
         ),
-        1 => Literals::One(literals.remove(0)),
+        1 => panic!(
+            "schema!: the literal set for `{field}` has one element — a one-element \
+             set is the bare literal: write `{field} == L`, no braces"
+        ),
         _ => Literals::Many(literals),
     }
 }
@@ -740,14 +755,30 @@ fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<S
                 projection: left.projection,
             });
         }
-        // `<=`: containment.
+        // `<=`: containment — or, with a brace group riding the operator
+        // (`<={lo..hi}`), the cardinality window: B-family, target-left —
+        // the LEFT side is the window's target (the per-group parent),
+        // the right side the counted source.
         Some(TokenTree::Punct(p)) if p.as_char() == '<' => {
             expect_punct(tokens, '=');
-            let right = parse_statement_side(tokens);
-            statements.push(Statement::Containment {
-                source: left,
-                target: right,
-            });
+            if peek_brace(tokens) {
+                let body = take_group(tokens, Delimiter::Brace, "the window bounds");
+                let spelling = parse_window(body);
+                let right = parse_statement_side(tokens);
+                let (lo, hi) = admit_window(spelling, &left.relation, &right.relation);
+                statements.push(Statement::Cardinality {
+                    source: right,
+                    lo,
+                    hi,
+                    target: left,
+                });
+            } else {
+                let right = parse_statement_side(tokens);
+                statements.push(Statement::Containment {
+                    source: left,
+                    target: right,
+                });
+            }
         }
         // `==`: set equality, lowered to the two containments.
         Some(TokenTree::Punct(p)) if p.as_char() == '=' => {
@@ -762,43 +793,119 @@ fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<S
                 target: left,
             });
         }
-        // `in lo..hi per B(Y | ψ)`: the cardinality window — `hi` is an
-        // integer or `*` (no upper bound).
+        // The deleted `in lo..hi per` window spelling never parses —
+        // the window is B-family, target-left (the canonical-utterance
+        // law: one meaning, one spelling).
         Some(TokenTree::Ident(ident)) if ident.to_string() == "in" => {
-            let (negative, lo) = parse_int(tokens, "the window's lower bound");
-            assert!(
-                !negative,
-                "schema!: a window bound is a count — non-negative"
+            panic!(
+                "schema!: the `in lo..hi per` window form is deleted — a window is \
+                 B-family, target-left: `Parent(key) <={{lo..hi}} Child(field)`, \
+                 with `{{n}}` the exact-count spelling \
+                 (docs/architecture/30-dependencies.md § the extension form)"
             );
-            expect_punct(tokens, '.');
-            expect_punct(tokens, '.');
-            let hi = if peek_punct(tokens, '*') {
-                tokens.next();
-                None
-            } else {
-                let (negative, hi) = parse_int(tokens, "the window's upper bound or `*`");
-                assert!(
-                    !negative,
-                    "schema!: a window bound is a count — non-negative"
-                );
-                Some(hi)
-            };
-            let per = expect_ident(tokens, "`per` after the window");
-            assert_eq!(
-                per, "per",
-                "schema!: expected `per` after the window bounds, found `{per}`"
-            );
-            let right = parse_statement_side(tokens);
-            statements.push(Statement::Cardinality {
-                source: left,
-                lo,
-                hi,
-                target: right,
-            });
         }
-        other => panic!("schema!: expected `->`, `<=`, `==`, or `in`, found {other:?}"),
+        other => panic!("schema!: expected `->`, `<=`, `<={{lo..hi}}`, or `==`, found {other:?}"),
     }
     expect_punct(tokens, ';');
+}
+
+/// A window's bounds exactly as written — the spelling is judged by
+/// [`admit_window`] before it lowers to `(lo, hi)`.
+#[derive(Clone, Copy)]
+enum WindowSpelling {
+    /// `{n}` — THE exact-count spelling (`{0}` is the exclusion).
+    Exact(u64),
+    /// `{lo..hi}` — two explicit bounds.
+    Range(u64, u64),
+    /// `{lo..*}` — a floor, no ceiling.
+    Floor(u64),
+}
+
+/// One window bound out of the brace group: a non-negative integer,
+/// parsed here (not spliced) because the canonical-utterance law compares
+/// bounds at expansion.
+fn parse_window_bound(tokens: &mut Tokens, what: &str) -> u64 {
+    let (negative, text) = parse_int(tokens, what);
+    assert!(
+        !negative,
+        "schema!: a window bound is a count — non-negative"
+    );
+    text.replace('_', "")
+        .parse()
+        .unwrap_or_else(|_| panic!("schema!: malformed window bound `{text}`"))
+}
+
+/// Parses the `<={…}` brace group into the spelling as written. The open
+/// shorthands are never admitted — bounds are always explicit:
+/// `{..hi}` and `{lo..}` are expansion panics naming the explicit form.
+fn parse_window(body: TokenStream) -> WindowSpelling {
+    let mut tokens = body.into_iter().peekable();
+    assert!(
+        tokens.peek().is_some(),
+        "schema!: the window `{{}}` names no bounds — write `{{n}}`, `{{lo..hi}}`, or `{{lo..*}}`"
+    );
+    assert!(
+        !peek_punct(&mut tokens, '.'),
+        "schema!: `{{..hi}}` never parses — bounds are always explicit: a ceiling is \
+         written `{{0..hi}}`"
+    );
+    let lo = parse_window_bound(&mut tokens, "the window's lower bound");
+    if tokens.peek().is_none() {
+        return WindowSpelling::Exact(lo);
+    }
+    expect_punct(&mut tokens, '.');
+    expect_punct(&mut tokens, '.');
+    assert!(
+        tokens.peek().is_some(),
+        "schema!: `{{lo..}}` never parses — bounds are always explicit: a floor is \
+         written `{{lo..*}}`"
+    );
+    let spelling = if peek_punct(&mut tokens, '*') {
+        tokens.next();
+        WindowSpelling::Floor(lo)
+    } else {
+        WindowSpelling::Range(
+            lo,
+            parse_window_bound(&mut tokens, "the window's upper bound"),
+        )
+    };
+    assert!(
+        tokens.peek().is_none(),
+        "schema!: trailing tokens after the window bounds"
+    );
+    spelling
+}
+
+/// The canonical-utterance law over the window vocabulary
+/// (`docs/architecture/70-api.md`): every banned spelling is an expansion
+/// panic NAMING the canonical form. Survivors — each otherwise
+/// unrepresentable — lower to the descriptor's `(lo, hi)`: `{n}` exact
+/// (`{0}` the exclusion), `{lo..hi}` with lo < hi, `{lo..*}` floors
+/// (lo ≥ 2), `{0..hi}` ceilings.
+fn admit_window(spelling: WindowSpelling, target: &str, source: &str) -> (u64, Option<u64>) {
+    match spelling {
+        WindowSpelling::Exact(n) => (n, Some(n)),
+        WindowSpelling::Range(lo, hi) if hi < lo => panic!(
+            "schema!: the window `{{{lo}..{hi}}}` is inverted — no count satisfies it; \
+             bounds are `{{lo..hi}}` with lo < hi (an exact count is `{{n}}`)"
+        ),
+        WindowSpelling::Range(0, 0) => {
+            panic!("schema!: `{{0..0}}` — the exclusion is written `{{0}}`")
+        }
+        WindowSpelling::Range(lo, hi) if lo == hi => {
+            panic!("schema!: `{{{lo}..{hi}}}` — an exact count is written `{{{lo}}}`")
+        }
+        WindowSpelling::Range(lo, hi) => (lo, Some(hi)),
+        WindowSpelling::Floor(0) => panic!(
+            "schema!: the `{{0..*}}` window is vacuous — it provably says nothing \
+             (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`); delete the statement"
+        ),
+        WindowSpelling::Floor(1) => panic!(
+            "schema!: `{{1..*}}` says only what the bare containment says — drop the \
+             annotation and write `{target}(…) <= {source}(…)`"
+        ),
+        WindowSpelling::Floor(lo) => (lo, None),
+    }
 }
 
 /// Parses the whole `schema!` body: the `pub Name;` header first, then
@@ -1152,11 +1259,11 @@ fn statement_expr(
         } => {
             let hi = match hi {
                 None => "::std::option::Option::None".to_owned(),
-                Some(hi) => format!("::std::option::Option::Some({hi})"),
+                Some(hi) => format!("::std::option::Option::Some({hi}u64)"),
             };
             format!(
                 "::bumbledb::schema::StatementDescriptor::Cardinality {{ \
-                     source: {}, lo: {lo}, hi: {hi}, target: {} }},",
+                     source: {}, lo: {lo}u64, hi: {hi}, target: {} }},",
                 side_expr(&schema.relations, closed, source),
                 side_expr(&schema.relations, closed, target),
             )

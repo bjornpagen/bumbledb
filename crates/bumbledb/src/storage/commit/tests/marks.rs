@@ -25,9 +25,9 @@ const ACCOUNT: RelationId = RelationId(1);
 /// Declared statement order.
 const HOLDER_KEY: StatementId = StatementId(0);
 const ACCOUNT_HOLDER: StatementId = StatementId(1);
-/// `Account(holder | kind == 1) in 1..2 per Holder(id)`.
+/// `Holder(id) <={1..2} Account(holder | kind == 1)`.
 const SAVINGS_WINDOW: StatementId = StatementId(2);
-/// `Account(holder | kind == {1, 2}) in 0..3 per Holder(id)` — the
+/// `Holder(id) <={0..3} Account(holder | kind == {1, 2})` — the
 /// set-selection window (counts over a union do not decompose).
 const ANY_KIND_WINDOW: StatementId = StatementId(3);
 
@@ -325,6 +325,107 @@ fn window_judges_each_parent_group_independently() {
         &[(HOLDER, h8.clone())],
     );
     assert_window_violation(result, SAVINGS_WINDOW, &h8, 0);
+}
+
+// ---------- the exclusion window ----------
+
+/// Declared statement order in [`exclusion_schema`].
+const FORBIDDEN_WINDOW: StatementId = StatementId(1);
+
+/// `Holder(id) <={0} Account(holder | kind == 9)` — the `{0}` exclusion:
+/// no holder may have a kind-9 account. Its own fixture (the boundary
+/// family's schema inserts kind-9 accounts as non-members).
+fn exclusion_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Holder".into(),
+                fields: vec![field("id", ValueType::U64), field("tag", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Account".into(),
+                fields: vec![
+                    field("holder", ValueType::U64),
+                    field("kind", ValueType::U64),
+                    field("num", ValueType::U64),
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: HOLDER,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Cardinality {
+                source: Side {
+                    relation: ACCOUNT,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(9)))]),
+                },
+                lo: 0,
+                hi: Some(0),
+                target: side(HOLDER, &[0]),
+            },
+        ],
+    }
+    .validate()
+    .expect("the exclusion window seals")
+}
+
+/// `{0}` convicts at the first member: a kind-9 child under an existing
+/// holder counts 1 > 0, named by the parent's bytes.
+#[test]
+fn exclusion_window_convicts_the_first_member() {
+    let schema = exclusion_schema();
+    let h = holder(&schema, 7);
+    let result = base_then_delta(
+        "win-exclusion-member",
+        &schema,
+        &[(HOLDER, h.clone())],
+        &[],
+        &[(ACCOUNT, account(&schema, 7, 9, 0))],
+    );
+    assert_window_violation(result, FORBIDDEN_WINDOW, &h, 1);
+}
+
+/// `{0}` admits everything outside σ: non-selected kinds commit freely,
+/// and so does the childless parent (count 0 sits inside the window —
+/// both ends inclusive, `0..0`).
+#[test]
+fn exclusion_window_admits_non_members() {
+    let schema = exclusion_schema();
+    let result = base_then_delta(
+        "win-exclusion-clean",
+        &schema,
+        &[],
+        &[],
+        &[
+            (HOLDER, holder(&schema, 7)),
+            (ACCOUNT, account(&schema, 7, 1, 0)),
+            (ACCOUNT, account(&schema, 7, 2, 1)),
+        ],
+    );
+    result.expect("out-of-sigma children never count against the exclusion");
+}
+
+/// Deleting the parent releases the exclusion: the member lands in the
+/// same delta that removes its parent — the final state has no parent to
+/// constrain (windows never manufacture parents,
+/// `lean/Bumbledb/Cardinality.lean: cardinality_of_empty_parent`).
+#[test]
+fn exclusion_window_releases_with_the_parent() {
+    let schema = exclusion_schema();
+    let h = holder(&schema, 7);
+    let result = base_then_delta(
+        "win-exclusion-release",
+        &schema,
+        &[(HOLDER, h.clone())],
+        &[(HOLDER, h)],
+        &[(ACCOUNT, account(&schema, 7, 9, 0))],
+    );
+    result.expect("no parent, no exclusion obligation");
 }
 
 // ---------- the phase laws ----------

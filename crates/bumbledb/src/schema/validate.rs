@@ -712,7 +712,7 @@ fn validate_containment(
     Ok(resolved)
 }
 
-/// Roster "cardinality …" lines: `A(X | φ) in lo..hi per B(Y | ψ)` under
+/// Roster "cardinality …" lines: `B(Y | ψ) <={lo..hi} A(X | φ)` under
 /// the acceptance gate (`docs/architecture/30-dependencies.md`). The
 /// premises are exactly the model's
 /// (`lean/Bumbledb/Admission.lean: cardinalityForm`;
@@ -734,6 +734,32 @@ fn validate_cardinality(
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<Enforcement, SchemaError> {
+    // The window vocabulary is closed (the canonical-utterance law,
+    // `docs/architecture/70-api.md` — the descriptor face of the macro's
+    // ban table): an inverted window is satisfied by no count, `0..*`
+    // provably says nothing (`lean/Bumbledb/Cardinality.lean:
+    // cardinality_zero_star`), and `1..*` is the bare containment's
+    // duplicate spelling (`lean/Bumbledb/Subsumption.lean:
+    // window_floor_containment`). Rejecting all three here means a sealed
+    // schema holds canonical windows only — the renderer never faces a
+    // banned spelling.
+    match hi {
+        Some(hi) if hi < lo => {
+            return Err(SchemaError::CardinalityInvertedWindow {
+                statement: id,
+                lo,
+                hi,
+            });
+        }
+        None if lo == 0 => {
+            return Err(SchemaError::CardinalityVacuousWindow { statement: id });
+        }
+        None if lo == 1 => {
+            return Err(SchemaError::CardinalityContainmentWindow { statement: id });
+        }
+        _ => {}
+    }
+
     validate_side_shape(id, source, relations)?;
     let target_projection = validate_side_shape(id, target, relations)?;
 

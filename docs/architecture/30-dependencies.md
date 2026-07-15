@@ -118,22 +118,42 @@ path. **Reverses if:** never — semantics.
 
 ## The extension form
 
-**Cardinality window.** `A(X | φ) in lo..hi per B(Y | ψ)`: per selected target
-fact, the count of selected source facts sharing its projected tuple lies in the
+**Cardinality window.** `B(Y | ψ) <={lo..hi} A(X | φ)` — B-family, target-left
+(the left side is the window's target): per selected target fact, the count of
+selected source facts sharing its projected tuple lies in the
 window (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`;
-`lean/Bumbledb/Schema.lean: Statement.cardinality`). `hi = *` is the only
-spelling of "no upper bound" and the default posture — the `0..*` window says
-nothing (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`), so a spelled
-statement always strengthens the default. Windows never manufacture parents —
+`lean/Bumbledb/Schema.lean: Statement.cardinality`). The window vocabulary is
+closed under the **canonical-utterance law** (`70-api.md` records the law): the
+legal spellings are `{n}` — THE exact-count spelling, `{0}` the exclusion —
+`{lo..hi}` with lo < hi, `{lo..*}` floors (lo ≥ 2), and `{0..hi}` ceilings;
+each survivor is otherwise unrepresentable. `*` is the only spelling of "no
+upper bound". Every other spelling is an error naming the canonical form —
+grammar-side at expansion, descriptor-side at validation (`{n..n}`/`{0..0}`
+are the exact count respelled; `{hi..lo}` inverted is unsatisfiable,
+`CardinalityInvertedWindow`; `{0..*}` says nothing,
+`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`,
+`CardinalityVacuousWindow` — the default posture is unspelled, so a spelled
+statement always strengthens it; `{1..*}` is the bare containment respelled,
+`CardinalityContainmentWindow`). Windows never manufacture parents —
 existence obligations are containments' alone
 (`lean/Bumbledb/Cardinality.lean: cardinality_of_empty_parent`). The form
 extends, never contradicts, the original vocabulary: a floored window implies the
-reverse containment (`lean/Bumbledb/Subsumption.lean: window_floor_containment`),
-and keyed `==` is exactly the `1..1` window
+reverse containment (`lean/Bumbledb/Subsumption.lean: window_floor_containment` —
+which is why `{1..*}` is banned as a duplicate spelling of `<=`),
+and keyed `==` is exactly the `{1}` window
 (`lean/Bumbledb/Subsumption.lean: keyed_eq_unit_window`,
 `unit_window_containsEq` — the reconstruction returns bare mutual inclusion, the
 key premises staying acceptance's). The upper bound is load-bearing, not
 decorative (`lean/Bumbledb/Countermodels.lean: unit_window_two_children`).
+
+The `{0}` exclusion deserves its footnote: it is **denial-flavored but
+satisfaction-only** — "no ψ-selected parent has a φ-selected child" reads like
+a negative constraint, but the judgment is the same count-in-window
+satisfaction check as every window (count = 0, both ends inclusive), over the
+final state, through the same touched-parent plan. No negation enters the
+statement language, no denial constraint class opens, and the decidability
+firewall below is untouched: `{0}` is a window that happens to be small, not a
+new kind of statement.
 
 The form's sides are **single atoms, permanently** (the E1 refusal: a join
 inside the judge breaks the linear per-statement cost model — the shape is
@@ -174,9 +194,11 @@ type, never as a statement form.
 Dependencies are declared as standalone statements between relation blocks — the
 macro surface is the algebra with ASCII operator images (`⊆` is not a Rust token):
 `->` for FD, `<=` for ⊆ (the subset order *is* an order), `==` for set equality,
-`in lo..hi per` for the cardinality window (`*` the no-ceiling spelling),
+`<={lo..hi}` for the cardinality window (B-family, target-left; `{n}` the
+exact-count spelling, `{lo..*}` the no-ceiling floor),
 `(fields)` for projection, `| field == literal` for selection
-with `| field == {A, B}` the literal-set binding.
+with `| field == {A, B}` the literal-set binding (two or more literals — a
+one-element set is the bare literal, by the canonical-utterance law).
 
 ```rust
 bumbledb::schema! {
@@ -195,7 +217,7 @@ bumbledb::schema! {
     Account(id | kind == Savings) == SavingsTerms(account);
     SavingsTerms(account) -> SavingsTerms;
     Account(holder, active) <= Employment(holder, during);
-    Account(holder | kind == {Checking, Savings}) in 1..4 per Holder(id);
+    Holder(id) <={1..4} Account(holder | kind == {Checking, Savings});
 }
 ```
 
@@ -215,10 +237,12 @@ to statements (`key`, `in`, `union`). **Why it lost:** owner ruling —
 the surface must *be* the mental model; three keywords re-import three SQL concepts
 and hide that they were one. The derivations below are documentation, not syntax.
 **Reverses if:** never — and a future text frontend would lower to statements, not
-around them. (The window's `in` is not that rejected sugar: it is a first-class
-judgment form with its own denotation
+around them. (The window's `<={lo..hi}` annotation is not that rejected sugar: it
+is a first-class judgment form with its own denotation
 (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`), not a keyword lowering to
-other statements.)
+other statements — and its keyword-led ancestor spelling, `in lo..hi per`, is
+deleted vocabulary: the grammar rejects it at expansion naming the canonical
+form, the same funeral the `order` keyword received.)
 
 ## The acceptance gate
 
@@ -277,7 +301,13 @@ Concretely, validation demands:
   **refused v0**: a pointwise judgment against a virtual extension would mix the
   coverage walk with virtual storage, and a constant source's coverage demand has
   no delete-time re-judgment path (*trigger* for lifting: a census sighting).
-- **Cardinality window:** the shared side shapes (arity, positional structural
+- **Cardinality window:** first the **canonical window vocabulary** (the
+  canonical-utterance law's descriptor face — an inverted window is
+  unsatisfiable, `CardinalityInvertedWindow`; `0..*` says nothing,
+  `CardinalityVacuousWindow`; `1..*` is the containment respelled,
+  `CardinalityContainmentWindow` — so a sealed schema holds canonical windows
+  only and the renderer never faces a banned spelling), then the shared side
+  shapes (arity, positional structural
   type equality, the σ rules), then the containment target-key rule **reused
   verbatim** — Y must resolve a declared key of B (`resolve_target_key`, the
   same probe-ability demand; the promised plan is per touched parent one keyed

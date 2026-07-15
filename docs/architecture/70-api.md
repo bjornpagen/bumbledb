@@ -108,21 +108,59 @@ bumbledb::schema! {
 - **Dependency statements:** `Rel(fields...) -> Rel;` (FD, key form only),
   `A(fields... | field == Literal, ...) <= B(fields...);` (containment),
   `==` for bidirectional,
-  and `A(fields... | ...) in lo..hi per B(fields... | ...);` (the cardinality
-  window — `lo`/`hi` non-negative integers, `hi` alternatively `*` for no
-  ceiling).
+  and `B(fields... | ...) <={lo..hi} A(fields... | ...);` (the cardinality
+  window — B-family, target-left: the LEFT side is the window's target, the
+  per-group parent; the right side is counted. Bounds are non-negative
+  integers, `*` for no ceiling; `{n}` is THE exact-count spelling and `{0}`
+  the exclusion — the full spelling law is below).
   Projection lists are positional between the two sides;
   selections follow `|` as comma-separated `field == literal` pairs, or
-  `field == {A, B}` for a literal-set binding (read disjunctively; `{L}`
-  lowers to the equality spelling and `{}` does not parse); literals are
+  `field == {A, B}` for a literal-set binding (read disjunctively; a
+  one-element set is the bare literal and `{}` does not parse — both are
+  expansion errors naming the canonical form); literals are
   closed-relation handles, integer literals, `true`/`false`, string/byte literals, and
   `start..end` interval literals (half-open). The macro emits descriptors directly —
   relation/field names resolve to declaration-order ids at expansion time, so an
   unresolvable name is a compile error naming the relation and field — and
-  performs no semantic validation beyond parse shape and name-to-id resolution:
-  the schema validation boundary (`30-dependencies.md` roster) is the judge, and
-  everything semantic beyond names is a normal typed error with the statement
-  rendered back.
+  performs no semantic validation beyond parse shape, name-to-id resolution, and
+  the canonical-utterance law's ban table (each a compile-time error at the call
+  site): the schema validation boundary (`30-dependencies.md` roster) is the
+  judge, and everything semantic beyond names is a normal typed error with the
+  statement rendered back.
+
+**The canonical-utterance law** (owner-ruled 2026-07-15, the freeze's statement
+surface): **any single statement with two grammatical spellings is an expansion
+error naming the canonical form** — one meaning, one spelling. The rationale is
+operational, not aesthetic: greps are total (every window is `<={`, every
+exclusion is `{0}` — no disguise survives to be missed), the renderer is a
+bijection on legal statements (errors cite statements in exactly the spelling
+the author can paste back), and the duplicate-statement machinery never faces
+two spellings of one judgment. The window ban table, each error naming the
+canonical form:
+
+| banned                    | error names                                                       |
+| ------------------------- | ----------------------------------------------------------------- |
+| `X <={1..*} Y`            | drop the annotation — write `X <= Y`                              |
+| `X <={n..n} Y`            | an exact count is written `{n}`                                   |
+| `X <={0..0} Y`            | the exclusion is written `{0}`                                    |
+| `X <={0..*} Y`            | vacuous — provably says nothing (`cardinality_zero_star`); delete |
+| `X <={hi..lo} Y`, hi > lo | inverted, unsatisfiable                                           |
+| `f == {A}`                | a one-element set is the bare literal `f == A`                    |
+| `{..hi}` / `{lo..}`       | never admitted — bounds are always explicit                       |
+
+The legal survivors, each otherwise unrepresentable: `{n}` exact, `{lo..hi}`
+with lo < hi, `{lo..*}` floors (lo ≥ 2), `{0..hi}` ceilings, `{0}` exclusion.
+The same law binds the descriptor API at validation
+(`CardinalityInvertedWindow` / `CardinalityVacuousWindow` /
+`CardinalityContainmentWindow`, `DegenerateSelectionSet` — a sealed schema
+holds canonical statements only, so the renderer emits canonical spellings
+only). **`==` survives** as a definitional abbreviation (the `fresh`
+precedent: an abbreviation whose expansion IS its definition lives; a synonym
+dies): `==` IS the two adjacent containments it lowers to (`A <= B` first),
+the renderer prints the pair as `==` once, and separate-direction `<=` lines
+stay legal (they are two statements, not one utterance). The compile-fail
+suite (`crates/bumbledb/tests/schema-compile-fail/`) pins every ban's
+diagnostic.
 - **The header** `pub Ledger;` expands to `pub struct Ledger;` implementing the
   `Theory` trait (`fn descriptor(self) -> SchemaDescriptor`) — the value the `Db`
   functions take (`Db::create(path, Ledger)`) and the typestate `Db<Ledger>` carries.

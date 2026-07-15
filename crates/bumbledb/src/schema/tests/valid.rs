@@ -563,7 +563,7 @@ fn task_tree() -> SchemaDescriptor {
     }
 }
 
-/// `Task(parent) in 1..3 per Parent(id)` seals into the window arena with
+/// `Parent(id) <={1..3} Task(parent)` seals into the window arena with
 /// the containment target-key rule reused — the acceptance premise of
 /// `lean/Bumbledb/Admission.lean: cardinalityForm`, and the plan the gate
 /// promises is `lean/Bumbledb/Oracle.lean: cardinality_plan_decides`.
@@ -588,19 +588,40 @@ fn a_cardinality_window_over_a_declared_key_validates() {
     ));
 }
 
-/// `1..*` — `hi = None` is the `*` spelling, the only spelling of "no
-/// upper bound" (`lean/Bumbledb/Schema.lean: Window`).
+/// `{2..*}` — `hi = None` is the `*` spelling, the only spelling of "no
+/// upper bound" (`lean/Bumbledb/Schema.lean: Window`). The floor starts
+/// at 2: `{1..*}` is the bare containment's duplicate spelling and
+/// `{0..*}` the vacuous window, both rejected (the canonical-utterance
+/// law — the reject suite pins each).
 #[test]
 fn a_star_window_validates_with_no_ceiling() {
     let mut decl = task_tree();
     decl.statements.push(cardinality(
         side(RelationId(1), &[FieldId(0)]),
-        1,
+        2,
         None,
         side(RelationId(0), &[FieldId(0)]),
     ));
     let schema = decl.validate().expect("the floored window validates");
     assert_eq!(schema.window(WindowId(0)).hi, None);
+}
+
+/// `{0}` — the exclusion window: lo = hi = 0 is a legal exact count
+/// (no σ-selected child may exist per parent), sealed like any window.
+#[test]
+fn an_exclusion_window_validates() {
+    let mut decl = task_tree();
+    decl.statements.push(cardinality(
+        side(RelationId(1), &[FieldId(0)]),
+        0,
+        Some(0),
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    let schema = decl.validate().expect("the exclusion passes the gate");
+    assert_eq!(
+        (schema.window(WindowId(0)).lo, schema.window(WindowId(0)).hi),
+        (0, Some(0))
+    );
 }
 
 /// A window into a closed target compiles the member-set plan through the
@@ -622,13 +643,13 @@ fn a_window_into_a_closed_target_validates() {
         ],
         statements: vec![cardinality(
             side(RelationId(1), &[FieldId(0)]),
-            1,
+            2,
             None,
             side(RelationId(0), &[FieldId(0)]),
         )],
     };
     decl.validate()
-        .expect("every severity demands at least one handler");
+        .expect("every severity demands at least two handlers");
 }
 
 /// Both sides constant and the counts inside the window: decided at

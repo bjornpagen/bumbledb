@@ -1325,7 +1325,7 @@ const M_ACCOUNT: RelationId = RelationId(1);
 const M_WINDOW: StatementId = StatementId(1);
 
 /// Holder(id, tag; key id), Account(holder, kind, num) with
-/// `Account(holder | kind == 1) in 1..2 per Holder(id)`.
+/// `Holder(id) <={1..2} Account(holder | kind == 1)`.
 fn marks_schema() -> SchemaDescriptor {
     let plain = |name: &str| FieldDescriptor {
         name: name.into(),

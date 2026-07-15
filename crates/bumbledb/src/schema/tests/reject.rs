@@ -1340,6 +1340,66 @@ fn rejects_a_window_with_an_interval_position() {
 }
 
 #[test]
+fn rejects_an_inverted_window() {
+    // The canonical-utterance law's descriptor face: `hi < lo` is
+    // satisfied by no count — unsatisfiable as declared.
+    let mut decl = extension_tree();
+    decl.statements.push(cardinality(
+        side(RelationId(1), &[FieldId(0)]),
+        3,
+        Some(1),
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::CardinalityInvertedWindow {
+            statement: StatementId(1),
+            lo: 3,
+            hi: 1,
+        }
+    );
+}
+
+#[test]
+fn rejects_the_vacuous_window() {
+    // `0..*` admits every count — the statement provably says nothing
+    // (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`).
+    let mut decl = extension_tree();
+    decl.statements.push(cardinality(
+        side(RelationId(1), &[FieldId(0)]),
+        0,
+        None,
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::CardinalityVacuousWindow {
+            statement: StatementId(1),
+        }
+    );
+}
+
+#[test]
+fn rejects_the_containment_respelled_as_a_window() {
+    // `1..*` says exactly what the bare containment says
+    // (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) — one
+    // meaning, one spelling.
+    let mut decl = extension_tree();
+    decl.statements.push(cardinality(
+        side(RelationId(1), &[FieldId(0)]),
+        1,
+        None,
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::CardinalityContainmentWindow {
+            statement: StatementId(1),
+        }
+    );
+}
+
+#[test]
 fn rejects_a_window_whose_target_is_no_key() {
     // Probe-ability, the containment rule reused verbatim: Y must resolve
     // a declared key of B.

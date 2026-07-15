@@ -1153,8 +1153,10 @@ mod redundant_superkey_warning {
 
 mod extension_forms {
     //! The dependency-vocabulary extension's grammar: literal-set
-    //! selections and the cardinality window (`in lo..hi per`, `*` the
-    //! no-ceiling spelling) (`docs/architecture/30-dependencies.md`).
+    //! selections and the cardinality window — B-family, target-left
+    //! (`Parent(key) <={lo..hi} Child(field)`, `{lo..*}` the no-ceiling
+    //! floor, `{n}` the exact count)
+    //! (`docs/architecture/30-dependencies.md`).
 
     use bumbledb::schema::{LiteralSet, StatementDescriptor, StatementView};
     use bumbledb::{StatementId, Theory as _, Value};
@@ -1177,13 +1179,17 @@ mod extension_forms {
             state:  u64,
         }
 
-        Task(parent | state == {1, 2}) in 1..3 per Parent(id);
-        Task(parent) in 1..* per Parent(id);
+        Parent(id) <={1..3} Task(parent | state == {1, 2});
+        Parent(id) <={2..*} Task(parent);
+        Parent(id) <={4} Task(parent | state == 3);
+        Parent(id) <={0} Task(parent | state == 9);
     }
 
-    /// The macro lowers every extension form: the set selection lands as
-    /// `LiteralSet::Many` and the window bounds land verbatim
-    /// (`*` = None).
+    /// The macro lowers every extension form, target-left: the LEFT side
+    /// lands as the descriptor's `target`, the set selection as
+    /// `LiteralSet::Many`, and each canonical window spelling as its one
+    /// `(lo, hi)` — `{lo..*}` = no ceiling, `{n}` = `lo = hi = n`,
+    /// `{0}` = the exclusion.
     #[test]
     fn the_extension_forms_lower_and_validate() {
         let schema = Tracker
@@ -1191,13 +1197,15 @@ mod extension_forms {
             .validate()
             .expect("the declared schema is valid");
         // Materialized order: Parent.id's fresh auto-key, Priority's
-        // closed auto-key, then the two declared statements.
+        // closed auto-key, then the four declared statements.
         assert!(matches!(
             schema.statement(StatementId(2)),
             StatementView::Cardinality(_, _)
         ));
         let window = &schema.windows()[0];
         assert_eq!((window.lo, window.hi), (1, Some(3)));
+        assert_eq!(window.target.relation, Tracker::PARENT);
+        assert_eq!(window.source.relation, Tracker::TASK);
         assert_eq!(
             window.source.selection[..],
             [(
@@ -1206,34 +1214,26 @@ mod extension_forms {
             )]
         );
         let star = &schema.windows()[1];
-        assert_eq!((star.lo, star.hi), (1, None));
+        assert_eq!((star.lo, star.hi), (2, None));
+        let exact = &schema.windows()[2];
+        assert_eq!((exact.lo, exact.hi), (4, Some(4)));
+        let exclusion = &schema.windows()[3];
+        assert_eq!((exclusion.lo, exclusion.hi), (0, Some(0)));
     }
 
-    /// A singleton braced set is the equality spelling — `{1}` lowers to
-    /// `LiteralSet::One`, so the descriptor is canonical by construction.
+    /// The window's descriptor is target-left as declared: the first
+    /// declared statement's `target` is the written left side.
     #[test]
-    fn a_braced_singleton_lowers_to_the_equality() {
+    fn the_window_descriptor_is_target_left() {
         let descriptor = Tracker.descriptor();
-        let Some(StatementDescriptor::Cardinality { source, .. }) = descriptor.statements.first()
+        let Some(StatementDescriptor::Cardinality { source, target, .. }) =
+            descriptor.statements.first()
         else {
             panic!("the first declared statement is the window");
         };
+        assert_eq!(target.relation, Tracker::PARENT);
+        assert_eq!(source.relation, Tracker::TASK);
         assert!(matches!(source.selection[0].1, LiteralSet::Many(_)));
-        // The sibling singleton spelling, from a fresh invocation:
-        bumbledb::schema! {
-            pub Solo;
-
-            relation Parent { id: u64 as SoloParentId, fresh }
-            relation Task { parent: u64 as SoloParentId, state: u64 }
-
-            Task(parent | state == {7}) <= Parent(id);
-        }
-        let descriptor = Solo.descriptor();
-        let Some(StatementDescriptor::Containment { source, .. }) = descriptor.statements.first()
-        else {
-            panic!("the declared statement is a containment");
-        };
-        assert_eq!(source.selection[0].1, LiteralSet::One(Value::U64(7)));
     }
 }
 
