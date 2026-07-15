@@ -417,6 +417,13 @@ pub(crate) struct Subsumption {
 /// discipline); a deleted rule neither subsumes nor re-enters. Deleting
 /// a rule never changes the head — the caller re-checks the alignment
 /// invariant. `finds` is per rule, aligned with `rules`.
+///
+/// **Unmodeled in the lean calculus** — the recorded narrowing in
+/// `lean/Bumbledb/Exec/Rewrites.lean`'s module doc ("Rule subsumption
+/// is unmodeled"): `RewriteStep` names the five modeled rewrites only,
+/// so `rewrite_composition` never represents this deletion; the
+/// ground-off dual-pipeline differential and the prepare-level tests
+/// are the standing empirical check.
 pub(crate) fn subsume(rules: &[NormalizedQuery], finds: &[&[FindTerm]]) -> Vec<Subsumption> {
     #[cfg(any(test, feature = "ground-off"))]
     if DISABLED.with(std::cell::Cell::get) {
