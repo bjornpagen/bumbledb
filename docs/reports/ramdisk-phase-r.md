@@ -115,3 +115,25 @@ are reclaimable pressure on the UBC, not a wired floor.
 
 - R1: fullfsync is accepted on both ram-disk filesystems — no stop.
 - R4: the trigger (>=2x on bulk-shaped commits) did **not** fire.
+
+## The Phase-2 refusal (the decision record)
+
+**Decision: Phase 2 refused — no `Db::ephemeral`, no engine code
+lands.** **Alternative:** an ephemeral constructor setting
+`MDB_WRITEMAP|MDB_NOSYNC` on RAM-backed paths (durable `create`/`open`
+untouched). **Why it lost:** the trigger measured 1.14x
+(1.12–1.16x across three runs) on the bulk-load shape against the
+>=2x bar — the plain ramdisk already captures the win (24x
+small-commit latency, ~94x on back-to-back commit loops, 1.6x bulk vs
+the SSD), and an engine surface that buys a further 1.1x while
+adding a second flag regime, a RAM-backedness contract inside the
+dependency law, and a WRITEMAP crash-atomicity question is complexity
+the numbers refuse to pay for. The no-sync-mode law stands whole:
+durability is LMDB defaults, and `NOSYNC`/`WRITEMAP`/`MAPASYNC` remain
+inexpressible through the engine's types
+(`docs/architecture/50-storage.md`). **Reverses if:** a workload
+sights ephemeral stores where the flag delta matters — a lane bounded
+by sub-100 µs commit cadence on RAM (the small-commit shape shows
+~17x there: 51 µs → 3 µs, R4), or a bulk-shaped run whose re-measured
+trigger ratio reaches 2x. The harness above prints the trigger
+arithmetic; re-run it before reopening the decision.
