@@ -185,6 +185,14 @@ impl<S> Db<S> {
     /// leaving prior chunks committed, and the count makes the partial
     /// import sizable and resumable. Shape problems are typed `FactShape`
     /// errors, as [`WriteTx::insert_dyn`].
+    ///
+    /// # Panics
+    ///
+    /// Inside a [`Db::write`] closure on the same thread: `bulk_load`
+    /// chunks through `Db::write` internally, so it inherits the
+    /// non-reentrancy panic (the assert fires before the delta or LMDB
+    /// is touched — the outer transaction aborts cleanly by unwind).
+    /// Run the import outside the transaction.
     pub fn bulk_load<I>(&self, rel: RelationId, facts: I) -> std::result::Result<u64, BulkLoadError>
     where
         I: IntoIterator<Item = Vec<Value>>,

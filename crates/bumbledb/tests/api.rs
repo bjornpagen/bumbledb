@@ -1065,6 +1065,40 @@ fn nested_write_panics_instead_of_deadlocking() {
     .expect("the writer survives");
 }
 
+/// `Db::bulk_load` chunks through `Db::write` internally, so calling it
+/// inside a write closure inherits the non-reentrancy panic — now part
+/// of `bulk_load`'s documented contract (`# Panics`). The assert fires
+/// before the delta or LMDB is touched, and the outer transaction
+/// aborts cleanly by unwind: the store stays writable afterwards.
+#[test]
+fn bulk_load_inside_a_write_closure_panics_per_its_documented_contract() {
+    let dir = common::TempDir::new("api-nested-bulk-load");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = db.write(|_| {
+            let _ = db.bulk_load(Holder::RELATION, Vec::new());
+            Ok(())
+        });
+    }));
+    let payload = result.expect_err("must panic");
+    let message = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .expect("string panic payload");
+    assert!(message.contains("nested Db::write"), "{message}");
+
+    // The unwind left nothing poisoned: the next write commits.
+    db.write(|tx| {
+        let id: HolderId = tx.alloc()?;
+        tx.insert(&Holder {
+            id,
+            name: "after the panic",
+        })
+    })
+    .expect("the writer survives");
+}
+
 /// The concurrency family: prepared queries on
 /// reader threads race a writer that moves two facts together every
 /// commit. Every execution must observe both answers at one generation —
