@@ -566,6 +566,10 @@ pub const CLAIM_HOURS: &str = "SELECT v0, SUM(v2_end - v2_start) FROM (SELECT DI
 /// fixed-width interval rows (`slot_scan`, `slot_booking_overlap` —
 /// report-only: measurement infrastructure, not gate claims).
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the registry is a table, one entry per family
 pub fn all() -> &'static [CalFamily] {
     &[
         CalFamily {
@@ -820,12 +824,12 @@ pub fn unit_draw(name: &str, seed: u64, sizes: &CalSizes) -> Draw {
         "busy_scan" | "slot_scan" => scalar_draw(vec![wide]),
         "meets_chain" | "free_busy" => scalar_draw(vec![Value::U64(0), wide]),
         "rsvp_union" | "claim_hours" => scalar_draw(vec![]),
-        "conflict_pairs" => scalar_draw(vec![Value::U64(0)]),
+        // The head account and the head room share ordinal 0.
+        "conflict_pairs" | "slot_booking_overlap" => scalar_draw(vec![Value::U64(0)]),
         "conflict_free" => scalar_draw(vec![
             Value::U64(0),
             Value::I64(created_at(seed, sizes.events / 2)),
         ]),
-        "slot_booking_overlap" => scalar_draw(vec![Value::U64(0)]),
         other => unreachable!("unregistered calendar family {other}"),
     }
 }

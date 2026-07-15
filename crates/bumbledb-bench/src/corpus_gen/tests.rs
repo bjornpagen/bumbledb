@@ -20,12 +20,12 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
     assert_ne!(a, other, "seeds diverge");
     // The golden: changing the generator — or the storage format, now a
     // live ingredient — re-baselines every corpus. Re-baselined by the
-    // store-kind marker (storage format 5: every store carries a `_meta`
-    // kind byte, so the format-version ingredient moved; the generator
-    // itself is unchanged).
+    // roster extension's calendar reshape (the fixed-width `Slot` grid
+    // joined the calendar corpus stream; the ledger generator is
+    // unchanged).
     assert_eq!(
         digest_hex(&a),
-        "5aaace5f2043d1bfaa915e493e0fd7a173bdafa2bcf35a695fa106016c04408d",
+        "06e9620d6ec88418e5150de76c47996db8bc62a8b4add74b11633bb8f257a428",
         "generator output changed — re-baseline deliberately"
     );
 }

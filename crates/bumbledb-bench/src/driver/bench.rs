@@ -104,6 +104,10 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
 /// # Panics
 ///
 /// Only on tool-invariant violations.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the linear table or protocol is clearer kept together"
+)] // the run is one linear protocol: reads, closure lane, writes, report
 pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let cfg = gen_config(&args.corpus);
     let (paths, verified) = bench_preflight(args, cfg)?;
