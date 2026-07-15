@@ -132,6 +132,15 @@ the checked-in corpus was built at **219/325 expressible** (200 seeded
 * **element-typed param-set membership** (0 this build) — the lowered
   `PointIn`-with-set shape would violate the `WellTyped` premise
   `eval_sound` names.
+* **membership under an additive fold** (0 this build) — a fired
+  lowering under a `Count`/`Sum` head (scalar or measure): the fresh
+  interval variable enters the Lean fold domain (`Conformance.lean`'s
+  `ruleBindings` spans `body.allVars`) that neither the engine
+  (membership is a filter, never a binding) nor the naive model has —
+  `membership_lowering_preserves` licenses set-semantics answers only,
+  so the combination is refused representation rather than left to
+  querygen's accidental non-overlap (today's corpus has zero
+  aggregate-plus-membership cases by generator shape alone).
 * **engine runtime errors** (0 this build) — `Overflow` /
   `MeasureOfRay`: the lane compares answer sets on error-free
   executions only (the model reads a ray's measure as `none`; the

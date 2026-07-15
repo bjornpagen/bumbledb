@@ -145,7 +145,8 @@ while IFS= read -r cite; do
     echo "spec-census: FAIL — lean cites '$cite' but no crates/*/src or fuzz/src file matching '$path' contains '$final'" >&2
     fail=1
   fi
-done < <(grep -rhoE '`[A-Za-z0-9_/.-]+\.rs::[A-Za-z0-9_:]+`' lean/ \
+done < <(grep -rhoIE --include='*.lean' --include='*.md' --exclude-dir=.lake \
+           '`[A-Za-z0-9_/.-]+\.rs::[A-Za-z0-9_:]+`' lean/ \
            | sed 's/^`//; s/`$//' | sort -u)
 
 if [ "$lean_cites" -eq 0 ]; then
