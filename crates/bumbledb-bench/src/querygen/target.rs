@@ -59,6 +59,10 @@ pub mod ids {
     pub const CURRENCY: RelationId = RelationId(13);
     pub const SOURCE: RelationId = RelationId(14);
     pub const TAG: RelationId = RelationId(15);
+    /// The fixed-width lane (`interval<i64, 5>`), declared after the
+    /// closed vocabulary for corpus id-stability; loaded by its own
+    /// loader beside the `0..TARGET_RELATIONS` sweep.
+    pub const LANE: RelationId = RelationId(16);
 
     pub mod holder {
         use super::FieldId;
@@ -149,6 +153,12 @@ pub mod ids {
         use super::FieldId;
         pub const ID: FieldId = FieldId(0);
         pub const MINOR_UNITS: FieldId = FieldId(1);
+    }
+    pub mod lane {
+        use super::FieldId;
+        pub const ACCOUNT: FieldId = FieldId(0);
+        pub const LANE: FieldId = FieldId(1);
+        pub const TAG: FieldId = FieldId(2);
     }
 }
 
@@ -370,6 +380,28 @@ pub fn descriptor() -> SchemaDescriptor {
                 },
                 closed("Source", &["Manual", "Import", "System"]),
                 closed("Tag", &["Fee", "Rebate", "Adjustment"]),
+                // The one fixed-width relation (`interval<i64, 5>`) —
+                // declared AFTER the closed vocabulary so every earlier
+                // id (open and closed alike) is byte-stable in the
+                // checked-in conformance corpus. Statement-free payload:
+                // its job is the mixed-width Allen query surface beside
+                // Mandate's general `interval<i64>` (Q1's element-domain
+                // rule; `docs/architecture/30-dependencies.md` § Q1).
+                RelationDescriptor {
+                    extension: None,
+                    name: "Lane".into(),
+                    fields: vec![
+                        field("account", ValueType::U64),
+                        field(
+                            "lane",
+                            ValueType::Interval {
+                                element: IntervalElement::I64,
+                                width: Some(5),
+                            },
+                        ),
+                        field("tag", ValueType::U64),
+                    ],
+                },
             ],
             statements: statements(),
         }
@@ -737,7 +769,9 @@ pub fn corpus_rows(domains: &Domains, rel: bumbledb::RelationId) -> u64 {
         ids::POSTING_TAG => domains.posting_tags,
         ids::ORG => domains.orgs,
         ids::ORG_PARENT => domains.orgs - 1,
-        ids::MANDATE => domains.mandates,
+        // One fixed-width lane per mandate row (`LANE` has its own
+        // loader, beside the `0..TARGET_RELATIONS` sweep).
+        ids::MANDATE | ids::LANE => domains.mandates,
         ids::TRANSFER => domains.transfers,
         // Import entries are `i % 3 == 1` in `0..entries`: count them.
         ids::IMPORT_BATCH => (domains.entries + 1) / 3,
@@ -746,7 +780,7 @@ pub fn corpus_rows(domains: &Domains, rel: bumbledb::RelationId) -> u64 {
         ids::CURRENCY_BACKING => 3,
         // The one ψ-member row (`Gbp`, minor_units == 0).
         ids::CASH_ROUNDING => 1,
-        _ => unreachable!("thirteen target relations"),
+        _ => unreachable!("fourteen loadable target relations"),
     }
 }
 
@@ -838,7 +872,24 @@ pub fn corpus_row(
         ids::IMPORT_BATCH => vec![Value::U64(import_batch_entry(i)), Value::U64(i)],
         ids::CURRENCY_BACKING => vec![Value::U64(i), Value::U64(1_000 + i)],
         ids::CASH_ROUNDING => vec![Value::U64(ZERO_DECIMAL_CURRENCY)],
-        _ => unreachable!("thirteen target relations"),
+        // Lane row `i` opens at mandate row `i`'s start: `[s, s + 5)` —
+        // the fixed value beside the general interval it will classify
+        // against (Q1's mixed-width Allen surface). Deterministic, no
+        // draws: the corpus stream stays byte-stable for every earlier
+        // relation. Mandate starts sit far from the i64 ceiling, so the
+        // Q2 bound holds; the constructor is still the checked one.
+        ids::LANE => {
+            let (account, _, (start, _)) = mandate(cfg, domains, i);
+            vec![
+                Value::U64(account),
+                Value::IntervalI64(
+                    bumbledb::Interval::<i64>::fixed(start, 5)
+                        .expect("mandate starts sit far below the i64 ceiling"),
+                ),
+                Value::U64(i),
+            ]
+        }
+        _ => unreachable!("fourteen loadable target relations"),
     }
 }
 

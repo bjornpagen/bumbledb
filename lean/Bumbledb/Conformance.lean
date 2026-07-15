@@ -88,8 +88,9 @@ def renderValue : Value → String
       toString iv.«end».val ++ "]}"
   -- The fixed-width family: start + width render (injective — the
   -- width is the type's, and the tag separates the family from the
-  -- general spelling). No corpus case carries one yet; the arm keeps
-  -- the renderer total and honest.
+  -- general spelling). Carried by the corpus: the fixed judgment
+  -- fixtures (`judgment-fixed-*`) and the mixed-width Allen query
+  -- case (`hand-allen-mixed-width`).
   | { type := .intervalFixed .u64 w, val := v } =>
     "{\"interval_u64_fixed\":[" ++ toString v.val.val ++ "," ++
       toString w ++ "]}"
@@ -216,7 +217,53 @@ def decodeValue (j : Json) : Except String Value := do
     return ⟨.interval .u64, ← decodeIntervalU64 iv⟩
   if let some iv := objKey? j "interval_i64" then
     return ⟨.interval .i64, ← decodeIntervalI64 iv⟩
+  -- The fixed-width family, `[start, width]` — decode-as-corruption at
+  -- the format boundary: a zero width or a start at or past the Q2
+  -- bound (`start + w < maxEnd`; at-bound derives the ray sentinel,
+  -- unconstructible in the fixed family) REFUSES, exactly as
+  -- `crate::encoding::decode_fixed_interval_start` convicts the same
+  -- bytes (the ceiling negatives are `#guard`-pinned below).
+  if let some iv := objKey? j "interval_u64_fixed" then
+    match (← iv.getArr?).toList with
+    | [s, w] =>
+      let s ← decodeU64 (← s.getNat?)
+      let w ← w.getNat?
+      if h : 0 < w ∧ s.val + w < U64.maxEnd.val then
+        return ⟨.intervalFixed .u64 w, ⟨s, h⟩⟩
+      else .error "fixed u64 value violates the Q2 bound"
+    | _ => .error "fixed interval expects [start, width]"
+  if let some iv := objKey? j "interval_i64_fixed" then
+    match (← iv.getArr?).toList with
+    | [s, w] =>
+      let s ← decodeI64 (← s.getInt?)
+      let w ← w.getNat?
+      if h : 0 < w ∧ s.val + w < I64.maxEnd.val then
+        return ⟨.intervalFixed .i64 w, ⟨s, h⟩⟩
+      else .error "fixed i64 value violates the Q2 bound"
+    | _ => .error "fixed interval expects [start, width]"
   .error "unknown value tag"
+
+/-! The Q2 ceiling negatives, pinned at the decode boundary (both
+element domains, at-bound and past-bound starts, plus the zero
+width) — and the boundary POSITIVES one below each ceiling. -/
+
+#guard (decodeValue (Json.mkObj [("interval_u64_fixed",
+  Json.arr #[Json.num ⟨2 ^ 64 - 7, 0⟩,
+             Json.num 5])])).isOk  -- start + 5 = maxEnd − 1: legal
+#guard !(decodeValue (Json.mkObj [("interval_u64_fixed",
+  Json.arr #[Json.num ⟨2 ^ 64 - 6, 0⟩,
+             Json.num 5])])).isOk  -- start + 5 = maxEnd: the ray sentinel
+#guard !(decodeValue (Json.mkObj [("interval_u64_fixed",
+  Json.arr #[Json.num ⟨2 ^ 64 - 1, 0⟩,
+             Json.num 5])])).isOk  -- past the bound: overflow
+#guard (decodeValue (Json.mkObj [("interval_i64_fixed",
+  Json.arr #[Json.num ⟨2 ^ 63 - 7, 0⟩,
+             Json.num 5])])).isOk  -- i64 twin, one below the bound
+#guard !(decodeValue (Json.mkObj [("interval_i64_fixed",
+  Json.arr #[Json.num ⟨2 ^ 63 - 6, 0⟩,
+             Json.num 5])])).isOk  -- i64 at-bound
+#guard !(decodeValue (Json.mkObj [("interval_u64_fixed",
+  Json.arr #[Json.num 3, Json.num 0])])).isOk  -- w = 0 denotes nothing
 
 /-- The thirteen Allen relation names, as the format spells them. -/
 def relOfName : String → Except String Query.AllenRel

@@ -6,6 +6,7 @@
 
 mod closed;
 mod contradiction;
+mod fixed_width;
 mod fold;
 mod ground;
 mod identity_bytes;

@@ -1451,3 +1451,78 @@ fn a_stray_window_edge_is_convicted() {
         }]
     );
 }
+
+// ---------- interval<E, w> at rest: the Q2 bound is F coherence ----------
+
+/// FixedLane(kind bool, lane interval<u64, 5>) — keyless, so the F value
+/// mutates freely (as `canonical_field_schema`).
+fn fixed_lane_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "FixedLane".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "kind".into(),
+                    value_type: ValueType::Bool,
+                    generation: Generation::None,
+                },
+                FieldDescriptor {
+                    name: "lane".into(),
+                    value_type: ValueType::Interval {
+                        element: IntervalElement::U64,
+                        width: Some(5),
+                    },
+                    generation: Generation::None,
+                },
+            ],
+        }],
+        statements: vec![],
+    };
+    let dir = TempDir::new(tag);
+    let db = Db::create(dir.path(), schema).expect("create fixed-lane store");
+    db.write(|tx| {
+        tx.insert_dyn(
+            RelationId(0),
+            &[
+                Value::Bool(true),
+                Value::IntervalU64(crate::Interval::<u64>::new(10, 15).expect("width 5")),
+            ],
+        )
+        .map(|_| ())
+    })
+    .expect("insert fixed-lane fact");
+    (dir, db)
+}
+
+/// The fixed-width at-rest fixture: a stored start AT the Q2 bound
+/// (`start + w = MAX_END` — the derived end would be the ray sentinel)
+/// and one PAST it (overflow) are each a corruption conviction from the
+/// offline sweep — never a panic, never a silent ray.
+#[test]
+fn fixed_width_start_at_or_past_the_bound_at_rest_is_convicted() {
+    for (tag, corrupt_start) in [
+        ("verify-fixed-start-at-bound", u64::MAX - 5),
+        ("verify-fixed-start-overflow", u64::MAX),
+    ] {
+        let (_dir, db) = fixed_lane_fixture(tag);
+        // Healthy first: the untouched store verifies clean.
+        assert_eq!(db.verify_store().expect("verify healthy").findings, vec![]);
+        replace_fact_bytes(&db, RelationId(0), 0, |fact| {
+            // The lane field's one stored word sits after the bool byte's
+            // padded... no: layout-derived — bool is 1 byte, the fixed
+            // start is the trailing 8 bytes of the 9-byte fact.
+            let len = fact.len();
+            fact[len - 8..].copy_from_slice(&corrupt_start.to_be_bytes());
+        });
+        let f = key(|b| keys::fact_key(b, RelationId(0), 0));
+        assert_eq!(
+            db.verify_store().expect("verify").findings,
+            vec![StoreFinding::Malformed {
+                key: f.into(),
+                what: "F fact fixed interval start",
+            }],
+            "corrupt start {corrupt_start} must convict"
+        );
+    }
+}

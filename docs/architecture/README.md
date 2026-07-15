@@ -108,6 +108,10 @@ laws).
   violating the latency budget despite the cache — recorded with D1's reversal.*
 - **Vectorized batch size**: 64–256 starting range decided; the number is
   measurement-owned. *Trigger: the ledger benchmark.*
+- **Unit-slot determinant halving**: a fixed-width interval position stores one
+  word, so `interval<E, 1>` sidecar facts and their pointwise-key determinants
+  halve against the general spelling — a candidate store-size/write-path win,
+  measurement-owned. *Trigger: the ledger benchmark.*
 - **`70-api.md` open sub-items**: see that doc's own OPEN list (result ordering,
   multi-key typed `get` sugar, multi-process future).
 

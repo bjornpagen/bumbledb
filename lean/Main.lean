@@ -81,6 +81,19 @@ def typeOfName (s : String) : Except String ValueType :=
       match ((s.drop 6).dropEnd 1).toNat? with
       | some n => .ok (.fixedBytes n)
       | none => .error s!"bad bytes width in {s}"
+    -- `interval<E, w>`: the width is the type — the `bytes<N>`
+    -- spelling precedent, generalized (`w = 0` denotes nothing and is
+    -- refused exactly as the macro grammar refuses it).
+    else if s.startsWith "interval_u64_fixed<" && s.endsWith ">" then
+      match ((s.drop 19).dropEnd 1).toNat? with
+      | some w => if 0 < w then .ok (.intervalFixed .u64 w)
+                  else .error s!"zero width in {s}"
+      | none => .error s!"bad interval width in {s}"
+    else if s.startsWith "interval_i64_fixed<" && s.endsWith ">" then
+      match ((s.drop 19).dropEnd 1).toNat? with
+      | some w => if 0 < w then .ok (.intervalFixed .i64 w)
+                  else .error s!"zero width in {s}"
+      | none => .error s!"bad interval width in {s}"
     else .error s!"unknown field type {s}"
 
 /-- One declared relation: id, closedness, sealed positional types (a

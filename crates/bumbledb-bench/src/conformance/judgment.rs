@@ -245,6 +245,148 @@ fn claim(start: u64, end: u64, id: u64) -> (RelationId, Vec<Value>) {
     (CLAIM, vec![iv(start, end), Value::U64(id)])
 }
 
+// ---------- the fixed-width playlist world (Q1 + interval<E, w>) ----------
+
+const PLAYLIST: RelationId = RelationId(0);
+const FSLOT: RelationId = RelationId(1);
+
+/// The playlist recipe, verbatim (the cookbook's ordering triple —
+/// Q1's own replacement recipe): a general `interval<u64>` span
+/// exact-partitioned (`==`, its two containments) by `interval<u64, 1>`
+/// unit slots, both sides under pointwise keys. Element-domain typing
+/// meets at the containments' interval position (widths free —
+/// `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`).
+fn playlist_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Playlist".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field(
+                        "span",
+                        ValueType::Interval {
+                            element: bumbledb::schema::IntervalElement::U64,
+                            width: None,
+                        },
+                    ),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Slot".into(),
+                fields: vec![
+                    field("playlist", ValueType::U64),
+                    field(
+                        "slot",
+                        ValueType::Interval {
+                            element: bumbledb::schema::IntervalElement::U64,
+                            width: Some(1),
+                        },
+                    ),
+                    field("track", ValueType::U64),
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: PLAYLIST,
+                projection: Box::new([FieldId(0), FieldId(1)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: FSLOT,
+                projection: Box::new([FieldId(0), FieldId(1)]),
+            },
+            StatementDescriptor::Containment {
+                source: side(FSLOT, &[0, 1]),
+                target: side(PLAYLIST, &[0, 1]),
+            },
+            StatementDescriptor::Containment {
+                source: side(PLAYLIST, &[0, 1]),
+                target: side(FSLOT, &[0, 1]),
+            },
+        ],
+    }
+}
+
+fn playlist(id: u64, start: u64, end: u64) -> (RelationId, Vec<Value>) {
+    (PLAYLIST, vec![Value::U64(id), iv(start, end)])
+}
+
+/// A unit slot: the fixed value spells `[at, at + 1)` — the serializer
+/// re-derives the `[start, width]` spelling from the field's type.
+fn unit_slot(playlist: u64, at: u64, track: u64) -> (RelationId, Vec<Value>) {
+    (
+        FSLOT,
+        vec![Value::U64(playlist), iv(at, at + 1), Value::U64(track)],
+    )
+}
+
+/// LaneU(id, lane interval<u64, 5>) + LaneI(id, lane interval<i64, 5>)
+/// — both element domains, keyed pointwise; no containments (the
+/// boundary-start fixture exercises the encodings, not coverage).
+fn lanes_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "LaneU".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field(
+                        "lane",
+                        ValueType::Interval {
+                            element: bumbledb::schema::IntervalElement::U64,
+                            width: Some(5),
+                        },
+                    ),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "LaneI".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field(
+                        "lane",
+                        ValueType::Interval {
+                            element: bumbledb::schema::IntervalElement::I64,
+                            width: Some(5),
+                        },
+                    ),
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0), FieldId(1)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0), FieldId(1)]),
+            },
+        ],
+    }
+}
+
+fn lane_u(id: u64, start: u64) -> (RelationId, Vec<Value>) {
+    (RelationId(0), vec![Value::U64(id), iv(start, start + 5)])
+}
+
+fn lane_i(id: u64, start: i64) -> (RelationId, Vec<Value>) {
+    (
+        RelationId(1),
+        vec![
+            Value::U64(id),
+            Value::IntervalI64(
+                Interval::<i64>::new(start, start + 5).expect("fixture lanes are in-domain"),
+            ),
+        ],
+    )
+}
+
 // ---------- the closed-target world ----------
 
 /// Currency closed (two handle-only axioms) referenced by
@@ -409,15 +551,96 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![cur_account(3, 9)],
         },
+        // The playlist recipe verbatim (Q1 + interval<u64, 1>): an
+        // exact tiling COMMITS — unit slots partition the span, mixed
+        // widths meeting at the containments' interval position.
+        JudgmentFixture {
+            name: "judgment-fixed-partition-tiling",
+            schema: playlist_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![
+                playlist(1, 0, 3),
+                unit_slot(1, 0, 100),
+                unit_slot(1, 1, 200),
+                unit_slot(1, 2, 300),
+            ],
+        },
+        // A gap in the partition ABORTS: the span's point 1 has no
+        // covering unit slot — the Playlist-side coverage containment
+        // (statement 3) convicts.
+        JudgmentFixture {
+            name: "judgment-fixed-partition-gap",
+            schema: playlist_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![
+                playlist(1, 0, 3),
+                unit_slot(1, 0, 100),
+                unit_slot(1, 2, 300),
+            ],
+        },
+        // An overlapping unit slot ABORTS in the KEY phase: width 1
+        // makes overlap collision, and the pointwise key's disjointness
+        // (statement 1) preempts the statement phase
+        // (`lean/Bumbledb/Txn.lean: judge_key_preempts`).
+        JudgmentFixture {
+            name: "judgment-fixed-partition-overlap",
+            schema: playlist_schema(),
+            base: vec![
+                playlist(1, 0, 3),
+                unit_slot(1, 0, 100),
+                unit_slot(1, 1, 200),
+                unit_slot(1, 2, 300),
+            ],
+            deletes: vec![],
+            inserts: vec![unit_slot(1, 1, 999)],
+        },
+        // Boundary starts, both element domains: the largest legal
+        // starts (`start + w = MAX_END − 1`) and the i64 floor, plus an
+        // adjacent pair — all ACCEPT (the Q2 bound's positive edge; the
+        // at-bound negatives are decoder convictions, not commit
+        // verdicts: `Conformance.lean`'s ceiling `#guard`s and
+        // `verify_store`'s at-rest fixture own them).
+        JudgmentFixture {
+            name: "judgment-fixed-boundary-starts",
+            schema: lanes_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![
+                lane_u(1, u64::MAX - 11),
+                lane_u(2, u64::MAX - 6),
+                lane_i(1, i64::MIN),
+                lane_i(2, i64::MAX - 6),
+            ],
+        },
     ]
 }
 
 // ---------- the serializer ----------
 
-/// One value in the tagged compact form. Judgment fixtures are
+/// One value in the tagged compact form, AT ITS FIELD'S TYPE: a
+/// fixed-width position renders `[start, width]` under the family's
+/// own tag (the width is the type — `Value` spells bounds, so the
+/// field type re-derives the spelling; `Conformance.lean: decodeValue`
+/// re-checks the Q2 bound on the way back in). Judgment fixtures are
 /// hand-authored and carry no strings or masks — the two tags that
 /// would need a per-case context.
-fn push_value(out: &mut String, value: &Value) {
+fn push_value(out: &mut String, value: &Value, ty: Option<&ValueType>) {
+    if let Some(ValueType::Interval { width: Some(w), .. }) = ty {
+        match value {
+            Value::IntervalU64(iv) => {
+                debug_assert_eq!(iv.end() - iv.start(), *w, "typed writes checked the width");
+                let _ = write!(out, "{{\"interval_u64_fixed\":[{},{w}]}}", iv.start());
+                return;
+            }
+            Value::IntervalI64(iv) => {
+                let _ = write!(out, "{{\"interval_i64_fixed\":[{},{w}]}}", iv.start());
+                return;
+            }
+            _ => {}
+        }
+    }
     match value {
         Value::Bool(v) => {
             let _ = write!(out, "{{\"bool\":{v}}}");
@@ -450,24 +673,42 @@ fn push_value(out: &mut String, value: &Value) {
     }
 }
 
-fn push_fact(out: &mut String, fact: &[Value]) {
+fn push_fact(out: &mut String, fact: &[Value], types: &[ValueType]) {
     out.push('[');
     for (index, value) in fact.iter().enumerate() {
         if index > 0 {
             out.push(',');
         }
-        push_value(out, value);
+        push_value(out, value, types.get(index));
     }
     out.push(']');
 }
 
 /// One `{relation, facts}` block list from per-relation fact rows.
-fn push_blocks(out: &mut String, blocks: &[(RelationId, Vec<Vec<Value>>)]) {
+/// `id_prefixed` is the ground-axiom shape: facts open with the
+/// synthetic row id, so positional types shift by one.
+fn push_blocks(
+    out: &mut String,
+    blocks: &[(RelationId, Vec<Vec<Value>>)],
+    schema: &SchemaDescriptor,
+    id_prefixed: bool,
+) {
     out.push('[');
     for (index, (relation, facts)) in blocks.iter().enumerate() {
         if index > 0 {
             out.push_str(",\n");
         }
+        let mut types: Vec<ValueType> = if id_prefixed {
+            vec![ValueType::U64]
+        } else {
+            vec![]
+        };
+        types.extend(
+            schema.relations[relation.0 as usize]
+                .fields
+                .iter()
+                .map(|field| field.value_type.clone()),
+        );
         let _ = write!(out, "{{\"relation\":{},\"facts\":[", relation.0);
         for (position, fact) in facts.iter().enumerate() {
             if position > 0 {
@@ -475,7 +716,7 @@ fn push_blocks(out: &mut String, blocks: &[(RelationId, Vec<Vec<Value>>)]) {
             } else {
                 out.push('\n');
             }
-            push_fact(out, fact);
+            push_fact(out, fact, &types);
         }
         if facts.is_empty() {
             out.push_str("]}");
@@ -541,7 +782,10 @@ fn push_side(out: &mut String, side: &Side) {
             if position > 0 {
                 out.push(',');
             }
-            push_value(out, literal);
+            // Selection literals spell their own type (a σ over a
+            // fixed-width field is not a fixture shape this lane
+            // carries).
+            push_value(out, literal, None);
         }
         out.push_str("]]");
     }
@@ -765,13 +1009,23 @@ fn render_fixture(fixture: &JudgmentFixture) -> String {
     let mut statements_block = String::new();
     push_statements(&mut statements_block, &fixture.schema);
     let mut axioms_block = String::new();
-    push_blocks(&mut axioms_block, &axioms);
+    push_blocks(&mut axioms_block, &axioms, &fixture.schema, true);
     let mut instance_block = String::new();
-    push_blocks(&mut instance_block, &instance);
+    push_blocks(&mut instance_block, &instance, &fixture.schema, false);
     let mut deletes_block = String::new();
-    push_blocks(&mut deletes_block, &grouped(&fixture.deletes));
+    push_blocks(
+        &mut deletes_block,
+        &grouped(&fixture.deletes),
+        &fixture.schema,
+        false,
+    );
     let mut inserts_block = String::new();
-    push_blocks(&mut inserts_block, &grouped(&fixture.inserts));
+    push_blocks(
+        &mut inserts_block,
+        &grouped(&fixture.inserts),
+        &fixture.schema,
+        false,
+    );
     let mut verdict_block = String::new();
     push_verdict(&mut verdict_block, &verdict);
 

@@ -235,6 +235,18 @@ pub fn build_world(seed: u64) -> World {
             delta.inserts.push((rel, fact));
         }
     }
+    // The fixed-width Lane (`interval<i64, 5>`) sits after the closed
+    // vocabulary, so the `0..TARGET_RELATIONS` sweep skips it — its own
+    // load here (statement-free payload, no draws: every earlier
+    // relation's corpus stream is byte-stable).
+    db.bulk_load(
+        target::ids::LANE,
+        target::corpus_relation_rows(cfg, target::ids::LANE),
+    )
+    .expect("conformance lane bulk load");
+    for fact in target::corpus_relation_rows(cfg, target::ids::LANE) {
+        delta.inserts.push((target::ids::LANE, fact));
+    }
     naive
         .apply(&delta)
         .expect("the Tiny corpus satisfies the statements");
@@ -351,6 +363,35 @@ fn push_mask(out: &mut String, mask: AllenMask) {
     out.push(']');
 }
 
+/// [`push_value`] AT A FIELD'S TYPE: a fixed-width interval position
+/// renders `[start, width]` under the family's own tag — the width is
+/// the type, so the field re-derives the spelling and
+/// `Conformance.lean: decodeValue` re-checks the Q2 bound decoding it.
+/// Every other type falls through to the value's own spelling.
+fn push_value_typed(
+    world: &World,
+    used: &mut BTreeSet<u64>,
+    out: &mut String,
+    value: &Value,
+    ty: Option<&ValueType>,
+) -> Result<(), Exclusion> {
+    if let Some(ValueType::Interval { width: Some(w), .. }) = ty {
+        match value {
+            Value::IntervalU64(iv) => {
+                debug_assert_eq!(iv.end() - iv.start(), *w, "typed writes checked the width");
+                let _ = write!(out, "{{\"interval_u64_fixed\":[{},{w}]}}", iv.start());
+                return Ok(());
+            }
+            Value::IntervalI64(iv) => {
+                let _ = write!(out, "{{\"interval_i64_fixed\":[{},{w}]}}", iv.start());
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+    push_value(world, used, out, value)
+}
+
 /// Serializes one value in the tagged form; strings resolve through the
 /// world dictionary (`used` collects the ids the case actually spends,
 /// so the emitted dictionary stays small).
@@ -400,19 +441,24 @@ fn push_value(
     Ok(())
 }
 
-/// Serializes one fact as a value array.
+/// Serializes one fact as a value array, at its relation's positional
+/// types (`types` empty for answer rows — a fixed-width FIND is not a
+/// case shape this lane carries: the engine's answer channel widens to
+/// bounds, so the corpus keeps fixed values in instance columns and
+/// scalar finds in heads).
 fn push_fact(
     world: &World,
     used: &mut BTreeSet<u64>,
     out: &mut String,
     fact: &[Value],
+    types: &[ValueType],
 ) -> Result<(), Exclusion> {
     out.push('[');
     for (index, value) in fact.iter().enumerate() {
         if index > 0 {
             out.push(',');
         }
-        push_value(world, used, out, value)?;
+        push_value_typed(world, used, out, value, types.get(index))?;
     }
     out.push(']');
     Ok(())
@@ -760,12 +806,17 @@ fn type_name(value_type: &ValueType) -> String {
             element: bumbledb::schema::IntervalElement::I64,
             width: None,
         } => "interval_i64".into(),
-        // No corpus fixture carries a fixed-width interval field yet:
-        // the generator does not draw the family (provenance replay is
-        // byte-pinned), so a sighting here is a fixture-authoring error.
-        ValueType::Interval { width: Some(_), .. } => {
-            unreachable!("corpus fixtures carry no fixed-width interval fields")
-        }
+        // The fixed-width family: the width is the type, so it rides
+        // the spelling (`bytes<N>`'s precedent) — `Main.lean:
+        // typeOfName` parses exactly this form.
+        ValueType::Interval {
+            element: bumbledb::schema::IntervalElement::U64,
+            width: Some(w),
+        } => format!("interval_u64_fixed<{w}>"),
+        ValueType::Interval {
+            element: bumbledb::schema::IntervalElement::I64,
+            width: Some(w),
+        } => format!("interval_i64_fixed<{w}>"),
     }
 }
 
@@ -882,7 +933,7 @@ fn render_case(
     let mut rows: Vec<String> = Vec::with_capacity(answers.len());
     for tuple in answers {
         let mut row = String::new();
-        push_fact(world, &mut used, &mut row, &tuple.0)?;
+        push_fact(world, &mut used, &mut row, &tuple.0, &[])?;
         rows.push(row);
     }
     rows.sort_unstable();
@@ -943,6 +994,15 @@ fn world_blocks(
             let _ = write!(relations_block, "\"{}\"", type_name(&field.value_type));
         }
         relations_block.push_str("]}");
+        // The sealed positional types (a closed relation's list opens
+        // with the synthetic id, matching its id-prefixed facts) — the
+        // fixed-width positions re-derive their `[start, width]`
+        // spelling from these.
+        let field_types: Vec<ValueType> = descriptor
+            .fields()
+            .iter()
+            .map(|field| field.value_type.clone())
+            .collect();
         let facts: Vec<Vec<Value>> = if descriptor.is_closed() {
             closed_facts(relation)
         } else {
@@ -967,7 +1027,7 @@ fn world_blocks(
             if index > 0 {
                 block.push_str(",\n");
             }
-            push_fact(world, used, block, fact)?;
+            push_fact(world, used, block, fact, &field_types)?;
         }
         block.push_str("\n]}");
     }
@@ -1236,6 +1296,43 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
         },
         // A composite Allen mask between two mandate intervals of one
         // account (DISJOINT = before ∪ meets ∪ met-by ∪ after).
+        HandCase {
+            name: "hand-allen-mixed-width",
+            // Q1's element-domain rule through the third oracle: a
+            // FIXED-width lane (`interval<i64, 5>`) Allen-classified
+            // against the GENERAL mandate interval of one account —
+            // mixed widths, one element domain, classified over derived
+            // bounds (`Query/Denotation.lean: classifyValue`'s fixed
+            // arms). Scalar finds only: the answer channel widens fixed
+            // values to bounds, so fixed values live in the instance
+            // columns where the Lean side decodes the family's own tag.
+            query: Query::single(rule(
+                vec![fv(0), fv(3)],
+                vec![
+                    atom(
+                        ids::MANDATE,
+                        &[(ids::mandate::ACCOUNT, v(0)), (ids::mandate::ACTIVE, v(1))],
+                    ),
+                    atom(
+                        ids::LANE,
+                        &[
+                            (ids::lane::ACCOUNT, v(0)),
+                            (ids::lane::LANE, v(2)),
+                            (ids::lane::TAG, v(3)),
+                        ],
+                    ),
+                ],
+                vec![],
+                vec![ConditionTree::Leaf(Comparison {
+                    op: CmpOp::Allen {
+                        mask: MaskTerm::Literal(AllenMask::STARTS),
+                    },
+                    lhs: v(2),
+                    rhs: v(1),
+                })],
+            )),
+            params: vec![],
+        },
         HandCase {
             name: "hand-allen-composite-mask",
             query: Query::single(rule(

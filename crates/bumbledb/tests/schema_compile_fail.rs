@@ -125,12 +125,14 @@ fn schema_compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's eight cases (docs/architecture/70-api.md — the emission's roster,
-    // plus the two funerals): duplicate handle; missing column; extra
-    // column; type-mismatched literal; `closed relation` without `as`;
-    // handle literal on a non-closed field; the deleted inline `enum`
-    // type diagnosing its replacement; the deleted `order` statement form
-    // diagnosing its derivations (the grammar lock of
-    // `docs/architecture/30-dependencies.md` § refused: order marks).
-    assert_eq!(seen, 8, "the schema compile-fail roster has eight fixtures");
+    // The suite's ten cases (docs/architecture/70-api.md — the emission's roster,
+    // plus the two funerals and the width grammar): duplicate handle;
+    // missing column; extra column; type-mismatched literal; `closed
+    // relation` without `as`; handle literal on a non-closed field; the
+    // deleted inline `enum` type diagnosing its replacement; the deleted
+    // `order` statement form diagnosing its derivations (the grammar lock
+    // of `docs/architecture/30-dependencies.md` § refused: order marks);
+    // `interval<E, 0>` (denotes nothing) and the widthless
+    // `interval<E, >` (names no width), each naming the field.
+    assert_eq!(seen, 10, "the schema compile-fail roster has ten fixtures");
 }

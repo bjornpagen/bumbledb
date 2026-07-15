@@ -28,6 +28,8 @@ everything else is a **query case**. A judgment case also carries
 | `bytes` | `{"bytes":[7,0,255]}` | `bytes<N>`, N = the array length |
 | `interval_u64` | `{"interval_u64":[3,10]}` | half-open `[start, end)` |
 | `interval_i64` | `{"interval_i64":[0,9223372036854775807]}` | `end = MAX_END` IS the ray `[0, ∞)` |
+| `interval_u64_fixed` | `{"interval_u64_fixed":[3,5]}` | `[start, width]` — the width is the TYPE'S (`interval_u64_fixed<5>` in the field list); the decoder re-checks the Q2 bound `start + w < MAX_END` and `w ≥ 1`, refusing at-bound/past-bound starts and `w = 0` (`Conformance.lean`'s ceiling `#guard`s) |
+| `interval_i64_fixed` | `{"interval_i64_fixed":[3,5]}` | the i64 twin — never a ray, by the same bound |
 | `mask` | `{"mask":["before","meets"]}` | params only — the Allen mask value |
 
 Rays need no special spelling: an interval whose `end` is the element
@@ -116,8 +118,8 @@ checks.
 
 The query corpus is Tiny-scale, valid-arm only. Per-build coverage is
 logged by the builder and the comparator (`Report::coverage_line`);
-the checked-in corpus was built at **218/324 expressible** (200 seeded
-+ 18 hand cases), plus the 19 hand judgment cases outside the report
+the checked-in corpus was built at **219/325 expressible** (200 seeded
++ 19 hand cases), plus the 20 hand judgment cases outside the report
 (they have no expressibility gate):
 
 * **hostile arm** — not drawn at all: structurally-free IR types

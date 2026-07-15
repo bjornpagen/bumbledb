@@ -69,7 +69,11 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                     CorruptionError::InvalidBool(_) => "F fact bool",
                     CorruptionError::NonzeroFixedBytesPad(_) => "F fact fixed bytes padding",
                     CorruptionError::InvalidInterval(_) => "F fact interval",
-                    _ => unreachable!("decode_field has exactly three corruption classes"),
+                    // A fixed-width start at or past the Q2 bound — the
+                    // derived end would reach the ceiling (ray territory,
+                    // unconstructible in the fixed family) or overflow.
+                    CorruptionError::InvalidFixedIntervalStart(_) => "F fact fixed interval start",
+                    _ => unreachable!("decode_field has exactly four corruption classes"),
                 };
                 s.malformed(key, what);
             }

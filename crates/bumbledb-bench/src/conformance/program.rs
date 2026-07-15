@@ -236,7 +236,7 @@ fn render_program_case(
     let mut rows: Vec<String> = Vec::with_capacity(answers.len());
     for tuple in answers {
         let mut row = String::new();
-        push_fact(world, &mut used, &mut row, &tuple.0)?;
+        push_fact(world, &mut used, &mut row, &tuple.0, &[])?;
         rows.push(row);
     }
     rows.sort_unstable();

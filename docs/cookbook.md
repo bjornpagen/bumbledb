@@ -334,29 +334,65 @@ bumbledb::schema! {
 
 ## 9. Ordered collections
 
-Guarantee: validator/runtime premise + host discipline — the composite key
-permits one occupant per slot; ordering the result remains a host operation.
+Guarantee: Lean theorem + validator/runtime premises — mutual point coverage
+plus pointwise keys realizes exact partition
+(`lean/Bumbledb/Dependencies.lean: exact_partition_iff`), and the mixed-width
+interval positions type by element domain
+(`lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`); ordering the result
+remains a host presentation step.
 
 The linked-list verdict: successor pointers are control flow smuggled into
 data — every reorder becomes a dependent chain of writes. Order is a value.
+The idiomatic ordered collection is an interval partition, spelled as a
+**triple**:
+
+- **the entity** — `Playlist`, ordinary identity;
+- **the extent as a 0..1 child** — not a field on the entity, and the reason
+  is forcing, not taste: *empty lists exist, empty intervals do not*. A
+  playlist with no tracks has no span to record, and interval values are
+  nonempty by construction, so the span lives in an optional child (recipe
+  3's shape) whose presence *is* nonemptiness;
+- **the unit-slot sidecar** — each track occupies `interval<u64, 1>` (the
+  width is the type: one stored word, a wrong-width value unrepresentable),
+  and the exact-partition `==` (recipe 26) forces the slots to tile the
+  extent exactly: a gap aborts, an overlap aborts (the pointwise key
+  convicts it before coverage even runs).
 
 ```rust
 bumbledb::schema! {
     pub Playlists;
 
     relation Playlist { id: u64 as PlaylistId, fresh, name: str }
-    // Explicit position column; write gapped strides (1024, 2048, ...) so
-    // insertion between neighbors is one write, renumbering an amortized rarity.
-    relation Entry { playlist: u64 as PlaylistId, pos: u64, track: str }
+    // The extent: a 0..1 child, because empty playlists exist and empty
+    // intervals do not — presence of the child IS nonemptiness.
+    relation Extent { playlist: u64 as PlaylistId, span: interval<u64> }
+    // The unit slot: position p occupies [p, p+1) — the width is the type.
+    relation Slot { playlist: u64 as PlaylistId, slot: interval<u64, 1>, track: str }
 
-    Entry(playlist) <= Playlist(id);
-    Entry(playlist, pos) -> Entry;          // one occupant per slot
+    Extent(playlist) <= Playlist(id);
+    Slot(playlist)   <= Playlist(id);
+    Extent(playlist) -> Extent;             // 0..1 extent per playlist
+    Extent(playlist, span) -> Extent;       // exact target key (recipe 26's note)
+    Slot(playlist, slot) -> Slot;           // one occupant per position
+    Extent(playlist, span) == Slot(playlist, slot);  // slots tile the span exactly
 
-    // Results are sets; the host sorts by pos (ordering is presentation —
-    // the architecture README's OPEN item, not a query feature):
-    //   (pos, track) | Entry(playlist == ?list, pos, track);
+    // Positional access is membership — "what plays at position ?pos":
+    //   (track) | Slot(playlist == ?list, slot: s, track), ?pos in s;
 }
 ```
+
+Middle insert is honest about its cost: making room at position `k` shifts
+every later slot and grows the extent — O(k) writes in **one delta**, judged
+once at commit, so the partition never passes through an invalid
+intermediate state. That is the price of exact density; pay it knowingly.
+
+If middle inserts dominate and exact density is not worth their cost, the
+demoted escape hatch is the spread slot: a scalar `pos: u64` column written
+in gapped strides (1024, 2048, ...) under the same composite key, insertion
+between neighbors one write, renumbering an amortized rarity. That is the
+whole hatch — bumbledb has no lexicographic fractional indexing, because
+string order is refused (`docs/architecture/10-data-model.md`): there is no
+"between two strings" to allocate.
 
 ## 10. Trees and ASTs
 
@@ -877,7 +913,7 @@ bumbledb::schema! {
 
     // GRAVESTONE: successor pointers (a `next` column). A linked list inside
     // a relation is control flow smuggled into data; every reorder is a
-    // dependent chain of writes. REPLACEMENT: position columns (recipe 9).
+    // dependent chain of writes. REPLACEMENT: the ordering triple (recipe 9).
     relation Step { flow: u64, pos: u64, action: str }
     // GRAVESTONE: floats for scores, rates, money. Permanently refused (the
     // ledger). REPLACEMENT: fixed-point i64 — basis points (recipe 4).
@@ -1191,3 +1227,59 @@ fingerprint refusal (`Db::open` of the v1 store under `Payroll` is
 salaries, then prove the three laws — identity (the v1 ids answer the v2 query), catch-up (the next
 minted id clears the imported high water), and judgment (the migrated
 store answers under the new theory's guarantees).
+
+## Composition
+
+## 29. The zone ledger
+
+Guarantee: Lean theorem + validator/runtime premises — per-kind mutual point
+coverage realizes each arm's exact partition
+(`lean/Bumbledb/Dependencies.lean: exact_partition_iff`) over one
+disjointness witness, and the mixed-width `==` positions type by element
+domain (`lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`); witness
+segmentation is host discipline (the honesty note below).
+
+Recipe 9's sidecar, composed: a ledger whose timeline divides into zones of
+two kinds — unit zones (`interval<u64, 1>`) and pair zones
+(`interval<u64, 2>`), each kind carrying its own payload sidecar. The
+discriminated-union pattern (recipe 2) applied at interval positions: a
+kind-discriminated `Zone` witness relation owns **cross-sidecar
+disjointness** through its one pointwise key — all zones of a ledger are
+pairwise disjoint whatever their kind, and since each sidecar's point
+support equals its kind's zone support (the per-kind `==`), a unit slot can
+never overlap a pair slot even though they live in different relations. The
+arm widths are enforced **by type**: a `UnitSlot` value is width 1 or does
+not exist, a `PairSlot` width 2 — no runtime width check, nothing to
+enforce at commit.
+
+```rust
+bumbledb::schema! {
+    pub ZoneLedger;
+
+    closed relation Kind as KindId = { Unit, Pair };
+
+    relation Ledger   { id: u64 as LedgerId, fresh, name: str }
+    // The witness: every zone of the ledger, kind-discriminated; its one
+    // pointwise key is the cross-sidecar disjointness proof.
+    relation Zone     { ledger: u64 as LedgerId, kind: u64 as KindId, at: interval<u64> }
+    relation UnitSlot { ledger: u64 as LedgerId, at: interval<u64, 1>, entry: u64 }
+    relation PairSlot { ledger: u64 as LedgerId, at: interval<u64, 2>, entry: u64 }
+
+    Zone(ledger) <= Ledger(id);
+    Zone(kind)   <= Kind(id);
+    Zone(ledger, at) -> Zone;               // all zones disjoint, whatever the kind
+    UnitSlot(ledger, at) -> UnitSlot;
+    PairSlot(ledger, at) -> PairSlot;
+    // Each kind's zones carry exactly its sidecar's points — mixed widths,
+    // one element domain (30-dependencies.md § Q1):
+    Zone(ledger, at | kind == Unit) == UnitSlot(ledger, at);
+    Zone(ledger, at | kind == Pair) == PairSlot(ledger, at);
+}
+```
+
+The honesty note — **coalescing insensitivity**: the `==` judgments compare
+point supports, not rows. A single Unit-kind zone `[4,6)` beside two unit
+slots `[4,5)`, `[5,6)` satisfies both directions, because nothing forces the
+witness rows to mirror the sidecar's segmentation — only its points. If
+per-row correspondence matters, the host writes zones at slot granularity;
+the schema proves disjointness and coverage either way.

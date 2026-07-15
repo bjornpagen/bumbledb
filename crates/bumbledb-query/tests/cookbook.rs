@@ -176,10 +176,15 @@ recipe!(r09, Playlists, {
     pub Playlists;
 
     relation Playlist { id: u64 as PlaylistId, fresh, name: str }
-    relation Entry { playlist: u64 as PlaylistId, pos: u64, track: str }
+    relation Extent { playlist: u64 as PlaylistId, span: interval<u64> }
+    relation Slot { playlist: u64 as PlaylistId, slot: interval<u64, 1>, track: str }
 
-    Entry(playlist) <= Playlist(id);
-    Entry(playlist, pos) -> Entry;
+    Extent(playlist) <= Playlist(id);
+    Slot(playlist)   <= Playlist(id);
+    Extent(playlist) -> Extent;
+    Extent(playlist, span) -> Extent;
+    Slot(playlist, slot) -> Slot;
+    Extent(playlist, span) == Slot(playlist, slot);
 });
 
 recipe!(r10, Ast, {
@@ -534,6 +539,25 @@ mod r28_old {
     }
 }
 
+recipe!(r29, ZoneLedger, {
+    pub ZoneLedger;
+
+    closed relation Kind as KindId = { Unit, Pair };
+
+    relation Ledger   { id: u64 as LedgerId, fresh, name: str }
+    relation Zone     { ledger: u64 as LedgerId, kind: u64 as KindId, at: interval<u64> }
+    relation UnitSlot { ledger: u64 as LedgerId, at: interval<u64, 1>, entry: u64 }
+    relation PairSlot { ledger: u64 as LedgerId, at: interval<u64, 2>, entry: u64 }
+
+    Zone(ledger) <= Ledger(id);
+    Zone(kind)   <= Kind(id);
+    Zone(ledger, at) -> Zone;
+    UnitSlot(ledger, at) -> UnitSlot;
+    PairSlot(ledger, at) -> PairSlot;
+    Zone(ledger, at | kind == Unit) == UnitSlot(ledger, at);
+    Zone(ledger, at | kind == Pair) == PairSlot(ledger, at);
+});
+
 /// The roster, exhaustively — one entry per doc recipe, in doc order.
 struct Recipe {
     title: &'static str,
@@ -541,7 +565,7 @@ struct Recipe {
     validate: fn() -> Result<Schema, bumbledb::error::SchemaError>,
 }
 
-const ROSTER: [Recipe; 28] = [
+const ROSTER: [Recipe; 29] = [
     Recipe {
         title: "The minimal interval schema",
         source: r01::SOURCE,
@@ -682,6 +706,11 @@ const ROSTER: [Recipe; 28] = [
         source: r28::SOURCE,
         validate: r28::validate,
     },
+    Recipe {
+        title: "The zone ledger",
+        source: r29::SOURCE,
+        validate: r29::validate,
+    },
 ];
 
 /// Comments and whitespace out; what remains is exactly what the token
@@ -765,7 +794,7 @@ fn the_doc_roster_is_exactly_this_roster() {
         "doc recipes and test entries must correspond one-to-one"
     );
     for (i, ((n, title), recipe)) in headings.iter().zip(ROSTER.iter()).enumerate() {
-        assert_eq!(*n, i + 1, "recipe numbering is 1..=28 in order");
+        assert_eq!(*n, i + 1, "recipe numbering is 1..=29 in order");
         assert_eq!(title, recipe.title, "recipe {} title", i + 1);
     }
 }
@@ -976,6 +1005,291 @@ fn r26_exact_partition_commit_matrix() {
     .expect("two-field scalar prefixes support exact partitions");
 }
 
+/// A general `u64` interval literal for the ordering-triple matrices.
+fn uspan(start: u64, end: u64) -> bumbledb::Interval<u64> {
+    bumbledb::Interval::<u64>::new(start, end).expect("cookbook spans are nonempty")
+}
+
+/// A unit slot value: position `p` occupies `[p, p + 1)` — the width-1
+/// member of the fixed family (`Interval::fixed` discharges the Q2 bound).
+fn unit(p: u64) -> bumbledb::Interval<u64> {
+    bumbledb::Interval::<u64>::fixed(p, 1).expect("cookbook positions sit far below the ceiling")
+}
+
+/// Recipe 9's theorem-to-runtime matrix (the ordering triple), positive
+/// arms: an exact tiling commits, and the O(k) middle insert lands as
+/// one delta — the partition never passes through an invalid state.
+#[test]
+fn r09_ordering_triple_commit_matrix() {
+    use r09::{Extent, Playlist, Playlists, Slot};
+
+    // The tiling: span [0,3) exactly partitioned by unit slots 0, 1, 2.
+    let dir = TempDir::new("r09-tiling");
+    let db = Db::create(dir.path(), Playlists).expect("create playlists store");
+    let list = db
+        .write(|tx| {
+            let list = tx.alloc()?;
+            tx.insert(&Playlist {
+                id: list,
+                name: "road trip",
+            })?;
+            tx.insert(&Extent {
+                playlist: list,
+                span: uspan(0, 3),
+            })?;
+            for (position, track) in [(0, "first"), (1, "second"), (2, "third")] {
+                tx.insert(&Slot {
+                    playlist: list,
+                    slot: unit(position),
+                    track,
+                })?;
+            }
+            Ok(list)
+        })
+        .expect("an exact tiling commits");
+
+    // The middle insert, honestly O(k) and atomic: making room at
+    // position 1 shifts slots 1..3 up and grows the extent — one delta.
+    db.write(|tx| {
+        tx.delete(&Extent {
+            playlist: list,
+            span: uspan(0, 3),
+        })?;
+        tx.insert(&Extent {
+            playlist: list,
+            span: uspan(0, 4),
+        })?;
+        for (position, track) in [(1, "second"), (2, "third")] {
+            tx.delete(&Slot {
+                playlist: list,
+                slot: unit(position),
+                track,
+            })?;
+        }
+        for (position, track) in [(1, "interlude"), (2, "second"), (3, "third")] {
+            tx.insert(&Slot {
+                playlist: list,
+                slot: unit(position),
+                track,
+            })?;
+        }
+        Ok(())
+    })
+    .expect("the shift lands as one judged delta");
+}
+
+/// Recipe 9's violating deltas: a gap aborts on the span-side coverage
+/// direction of the `==`, an overlap aborts in the key phase — the two
+/// negative arms of the ordering triple's matrix.
+#[test]
+fn r09_gap_and_overlap_deltas_abort() {
+    use bumbledb::schema::StatementId;
+    use r09::{Extent, Playlist, Playlists, Slot};
+
+    // The gap: span [0,3) with slots 0 and 2 only — point 1 uncovered,
+    // the span-side coverage direction of the `==` convicts (its second
+    // expanded containment, statement 6).
+    let dir = TempDir::new("r09-gap");
+    let db = Db::create(dir.path(), Playlists).expect("create gap store");
+    let error = db
+        .write(|tx| {
+            let list = tx.alloc()?;
+            tx.insert(&Playlist {
+                id: list,
+                name: "gapped",
+            })?;
+            tx.insert(&Extent {
+                playlist: list,
+                span: uspan(0, 3),
+            })?;
+            tx.insert(&Slot {
+                playlist: list,
+                slot: unit(0),
+                track: "first",
+            })?;
+            tx.insert(&Slot {
+                playlist: list,
+                slot: unit(2),
+                track: "third",
+            })?;
+            Ok(())
+        })
+        .expect_err("a gap delta aborts");
+    assert_containment_statement(error, StatementId(6));
+
+    // The overlap: a second occupant of position 1 — the pointwise key
+    // convicts in the key phase, before coverage even runs.
+    let dir = TempDir::new("r09-overlap");
+    let db = Db::create(dir.path(), Playlists).expect("create overlap store");
+    let error = db
+        .write(|tx| {
+            let list = tx.alloc()?;
+            tx.insert(&Playlist {
+                id: list,
+                name: "doubled",
+            })?;
+            tx.insert(&Extent {
+                playlist: list,
+                span: uspan(0, 2),
+            })?;
+            for (position, track) in [(0, "first"), (1, "second")] {
+                tx.insert(&Slot {
+                    playlist: list,
+                    slot: unit(position),
+                    track,
+                })?;
+            }
+            tx.insert(&Slot {
+                playlist: list,
+                slot: unit(1),
+                track: "usurper",
+            })?;
+            Ok(())
+        })
+        .expect_err("an overlap delta aborts");
+    assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
+}
+
+/// Recipe 29's matrix (the zone ledger): the two-kind composition commits;
+/// a cross-sidecar overlap dies on the Zone pointwise key; the coalesced
+/// witness and width arms live in the honesty test below.
+#[test]
+fn r29_zone_ledger_commit_matrix() {
+    use r29::{Kind, Ledger, PairSlot, UnitSlot, Zone, ZoneLedger};
+
+    fn pair(p: u64) -> bumbledb::Interval<u64> {
+        bumbledb::Interval::<u64>::fixed(p, 2)
+            .expect("cookbook positions sit far below the ceiling")
+    }
+
+    // The composition: a unit zone and a pair zone, each arm's sidecar
+    // carrying exactly its zone's points.
+    let dir = TempDir::new("r29-compose");
+    let db = Db::create(dir.path(), ZoneLedger).expect("create zone ledger store");
+    db.write(|tx| {
+        let ledger = tx.alloc()?;
+        tx.insert(&Ledger {
+            id: ledger,
+            name: "day plan",
+        })?;
+        tx.insert(&Zone {
+            ledger,
+            kind: Kind::Unit.id(),
+            at: uspan(0, 1),
+        })?;
+        tx.insert(&Zone {
+            ledger,
+            kind: Kind::Pair.id(),
+            at: uspan(1, 3),
+        })?;
+        tx.insert(&UnitSlot {
+            ledger,
+            at: unit(0),
+            entry: 10,
+        })?;
+        tx.insert(&PairSlot {
+            ledger,
+            at: pair(1),
+            entry: 20,
+        })
+    })
+    .expect("the two-kind composition commits");
+
+    // Cross-sidecar disjointness: a pair zone overlapping a unit zone is
+    // one pointwise key violation — the kinds never meet in a relation,
+    // but their zones share the witness.
+    let dir = TempDir::new("r29-cross-overlap");
+    let db = Db::create(dir.path(), ZoneLedger).expect("create overlap store");
+    let error = db
+        .write(|tx| {
+            let ledger = tx.alloc()?;
+            tx.insert(&Ledger {
+                id: ledger,
+                name: "collided",
+            })?;
+            tx.insert(&Zone {
+                ledger,
+                kind: Kind::Unit.id(),
+                at: uspan(0, 1),
+            })?;
+            tx.insert(&Zone {
+                ledger,
+                kind: Kind::Pair.id(),
+                at: uspan(0, 2),
+            })?;
+            tx.insert(&UnitSlot {
+                ledger,
+                at: unit(0),
+                entry: 10,
+            })?;
+            tx.insert(&PairSlot {
+                ledger,
+                at: pair(0),
+                entry: 20,
+            })
+        })
+        .expect_err("a cross-sidecar overlap aborts on the zone key");
+    assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
+}
+
+/// Recipe 29's honesty arms: the coalesced witness is accepted (the
+/// judgments compare point supports, not rows), and a wrong-width arm
+/// value is a typed shape error — the width is enforced by type.
+#[test]
+fn r29_coalescing_insensitivity_and_width_by_type() {
+    use r29::{Kind, Ledger, UnitSlot, Zone, ZoneLedger};
+
+    // Coalescing insensitivity, pinned: one Unit-kind zone [4,6) beside
+    // two unit slots [4,5), [5,6) — equal point supports, so both `==`
+    // directions hold; nothing forces row correspondence.
+    let dir = TempDir::new("r29-coalesced");
+    let db = Db::create(dir.path(), ZoneLedger).expect("create coalesced store");
+    db.write(|tx| {
+        let ledger = tx.alloc()?;
+        tx.insert(&Ledger {
+            id: ledger,
+            name: "coalesced",
+        })?;
+        tx.insert(&Zone {
+            ledger,
+            kind: Kind::Unit.id(),
+            at: uspan(4, 6),
+        })?;
+        tx.insert(&UnitSlot {
+            ledger,
+            at: unit(4),
+            entry: 40,
+        })?;
+        tx.insert(&UnitSlot {
+            ledger,
+            at: unit(5),
+            entry: 50,
+        })
+    })
+    .expect("the coalesced witness satisfies both point-support directions");
+
+    // The width is the type: a width-2 value at the unit arm is a typed
+    // shape error before any judgment — unrepresentable, not rejected.
+    let dir = TempDir::new("r29-wrong-width");
+    let db = Db::create(dir.path(), ZoneLedger).expect("create width store");
+    let error = db
+        .write(|tx| {
+            let ledger = tx.alloc()?;
+            tx.insert(&Ledger {
+                id: ledger,
+                name: "wide",
+            })?;
+            tx.insert(&UnitSlot {
+                ledger,
+                at: uspan(0, 2),
+                entry: 10,
+            })?;
+            Ok(())
+        })
+        .expect_err("a wrong-width arm value is a typed shape error");
+    assert!(matches!(error, bumbledb::Error::FactShape(_)));
+}
+
 /// Renders after proving the query real: prepared against a `Db` of the
 /// theory (prepare runs the validation roster) — the notation-test `pin`.
 fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
@@ -1039,6 +1353,19 @@ fn r03_a_second_optional_child_is_rejected() {
         })
         .expect_err("the child key permits at most one address");
     assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
+}
+
+/// Recipe 9: positional access is membership — "what plays at position
+/// `?pos`" is one point-in probe against the unit slot.
+#[test]
+fn r09_positional_access_round_trips() {
+    let at_pos = query!(r09::Playlists {
+        (track) | Slot(playlist == ?list, slot: s, track), ?pos in s;
+    });
+    assert_eq!(
+        pin("r09-at-pos", r09::Playlists, &at_pos),
+        "(v1) | Slot(playlist == ?0, slot: v0, track: v1), ?1 in v0;"
+    );
 }
 
 /// Recipe 14: the room-conflict probe — one Allen mask against a param.
