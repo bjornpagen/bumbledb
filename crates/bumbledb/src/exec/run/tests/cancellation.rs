@@ -209,7 +209,10 @@ fn epoch_wrap_never_aliases_a_stale_cancellation() {
     // The wrap-free middle of the cycle, jumped: epochs 2..=u32::MAX
     // never equal the stamp, so the stale entry is inert.
     executor.cancel_epoch = u32::MAX;
-    assert!(!executor.origin_cancelled(3), "a later epoch never reads it");
+    assert!(
+        !executor.origin_cancelled(3),
+        "a later epoch never reads it"
+    );
 
     // Crossing the wrap clears the table; returning to the stamp's
     // recycled value must NOT resurrect the cancellation.
