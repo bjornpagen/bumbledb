@@ -194,6 +194,12 @@ pub mod names {
     pub const COMMIT_SYNC_RETRY: &str = "commit_sync_retry";
     /// One `bulk_load` chunk. (facts submitted, facts changed)
     pub const BULK_CHUNK: &str = "bulk_chunk";
+    /// `Db::compact`'s durability chain completed: the copied file, its
+    /// dirent in `dest`, and `dest`'s own dirent in the parent directory
+    /// all fsynced — fires only after the last sync succeeds, so its
+    /// presence pins that the parent-dirent sync path executed.
+    /// (directory fsyncs performed, -)
+    pub const COMPACT_DURABLE: &str = "compact_durable";
     /// One `Db::write`, closure plus commit. (1 committed / 0 aborted, -)
     pub const WRITE_TXN: &str = "write_txn";
 
