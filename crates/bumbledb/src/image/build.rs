@@ -53,6 +53,20 @@ struct Frame {
 /// checked; overflow is typed Corruption *before* any allocation is
 /// attempted.
 fn allocate(field_types: &[TypeDesc], row_count: usize) -> Result<Frame> {
+    allocate_with(field_types, row_count, StridePadder::new())
+}
+
+/// [`allocate`] with an explicit padder — the measured falsifier's hook:
+/// the shipped stride rule and its twin lay out side by side in one
+/// process. The slabs are sized identically either way ([`slab_lengths`]
+/// pre-pays one `SET_STRIDE + LINE` of slack per column, the worst-case
+/// alignment plus pad), so the tolerance moves column starts within the
+/// slack and never the allocation.
+fn allocate_with(
+    field_types: &[TypeDesc],
+    row_count: usize,
+    mut padder: StridePadder,
+) -> Result<Frame> {
     // The field→column map drives the layout: an interval field spans two
     // consecutive 8-byte columns (start, end), a bytes<N> field its
     // ⌈N/8⌉ word columns, everything else one column of its width — the
@@ -72,7 +86,6 @@ fn allocate(field_types: &[TypeDesc], row_count: usize) -> Result<Frame> {
 
     let words_addr = words.as_ptr().addr();
     let bytes_addr = bytes.as_ptr().addr();
-    let mut padder = StridePadder::new();
     let mut word_cursor = 0usize;
     let mut byte_cursor = 0usize;
     let mut columns: Vec<Column> = Vec::with_capacity(column_count);
@@ -126,6 +139,25 @@ fn seal(row_count: usize, frame: Frame) -> Arc<RelationImage> {
         words: frame.words,
         bytes: frame.bytes,
     })
+}
+
+/// An empty (all-zero) sealed image laid out under an explicit stride
+/// tolerance — the measured falsifier's constructor: identical shape and
+/// data either way, only the column starts move. Test-only; production
+/// layouts go through [`allocate`] and the one shipped tolerance.
+#[cfg(test)]
+pub(super) fn image_with_tolerance(
+    field_types: &[TypeDesc],
+    row_count: usize,
+    tolerance: usize,
+) -> Arc<RelationImage> {
+    let frame = allocate_with(
+        field_types,
+        row_count,
+        StridePadder::with_tolerance(tolerance),
+    )
+    .expect("falsifier row counts sit far below the checked slab ceiling");
+    seal(row_count, frame)
 }
 
 /// Builds the full-width image of `rel` from one sequential scan.

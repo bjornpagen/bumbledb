@@ -243,6 +243,10 @@ impl RelationImage {
 /// offset. Below [`PAD_MIN_STRIDE`], columns are cache-resident at scan
 /// time and no tracker interference was measured — disk is not free.
 struct StridePadder {
+    /// The band half-width in force ([`PAD_TOLERANCE`] in production;
+    /// parameterized so the measured falsifier can lay out the shipped
+    /// rule and its widened twin in one process — the interleaved A/B).
+    tolerance: usize,
     /// Previous column start per backing slab (element index), so the
     /// stride under test is always between neighbors in the SAME slab —
     /// lockstep scans stride within a slab.
@@ -256,6 +260,19 @@ const PAD_MIN_STRIDE: usize = 64 * 1024;
 /// How close (bytes) to a 16 KiB multiple a stride must land to count as
 /// tracker-aliasing-shaped: the measured discriminators put stagger 8,
 /// 32, 64, and 128 in the pathological band and 16,384 out of it.
+///
+/// A 2 KiB widening was proposed from the ledger's dense residue sweep
+/// (poison band ~48 B–2 KiB at small pitches) and REFUTED by the
+/// interleaved falsifier (`tests/stride_ab.rs`,
+/// `docs/reports/stride-padder-band.md`): at the pitches a real image's
+/// DRAM-tier lockstep scans can actually have (≥4 MiB — column stride
+/// IS the pitch, and ≥8 streams leave the SLC only at MB-scale spans)
+/// the band decays far faster than at the sweep's small pitches —
+/// residue 384 costs ~1.4×, 1 KiB ~1.1×, parity by ~1.5 KiB, and
+/// padding a 2 KiB residue INVERTS (~0.9×: the pad pessimizes) — all
+/// on a synthetic tight kernel; the engine's widest real lockstep
+/// reader (the scalar filter conjunction) is retire-bound at ~22 ns/row
+/// and measures 1.00× against any of these layouts. 384 stays.
 const PAD_TOLERANCE: usize = 384;
 
 #[cfg(test)]
