@@ -277,8 +277,10 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
   ```
 
   (The typed surface infers the field from the `Fresh` newtype; the untyped form is
-  `tx.alloc_at(witness)` with the witness resolved once through
-  `schema.fresh_field(relation, field)` — `70-api.md` § ETL.)
+  `tx.alloc_at(witness)` with the schema-bound witness resolved once through
+  `db.fresh_field(relation, field)` — the witness carries the handle's schema
+  typestate, so a foreign schema's witness is a compile error; `70-api.md` § ETL
+  records the ruling and the dyn-boundary refusal.)
 
   `alloc` is the only generator; `insert` is always full-fact and stays idempotent —
   one insert semantics, no generative form.

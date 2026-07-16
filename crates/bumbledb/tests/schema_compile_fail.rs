@@ -2,8 +2,9 @@
 //! dependency law; `bumbledb-query`'s runner is the precedent): each
 //! fixture under `tests/schema-compile-fail/` must **fail** to compile,
 //! and its `//@ error: <substring>` directives (repeatable) pin the
-//! diagnostic. The macro's grammar checks are expansion panics, so every
-//! diagnostic is spanned at the invocation — no `//@ line` directives.
+//! diagnostic. The macro's grammar checks are expansion panics spanned at
+//! the invocation, and the schema-bound-witness fixture is an ordinary
+//! type mismatch — either way, no `//@ line` directives.
 //!
 //! The runner drives `rustc` directly against the workspace's own build
 //! artifacts: this integration test lives in `target/…/deps`, so its
@@ -125,9 +126,10 @@ fn schema_compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's nineteen cases (docs/architecture/70-api.md — the emission's
-    // roster, the funerals, the width grammar, and the canonical-utterance
-    // law's ban table): duplicate handle; missing column; extra column;
+    // The suite's twenty cases (docs/architecture/70-api.md — the emission's
+    // roster, the funerals, the width grammar, the canonical-utterance
+    // law's ban table, and the schema-bound witness): duplicate handle;
+    // missing column; extra column;
     // type-mismatched literal; `closed relation` without `as`; handle
     // literal on a non-closed field; the deleted inline `enum` type
     // diagnosing its replacement; the deleted `order` statement form
@@ -140,9 +142,11 @@ fn schema_compile_fail_fixtures() {
     // respelled), `{n..n}` (write `{n}`), `{0..0}` (write `{0}`),
     // `{0..*}` (vacuous — `cardinality_zero_star`), inverted bounds, the
     // open shorthands `{..hi}` / `{lo..}`, and the singleton literal set
-    // (the bare literal's second spelling).
+    // (the bare literal's second spelling); and the cross-schema
+    // `FreshField` witness (the schema-bound witness law — the binding
+    // typestate makes a foreign witness a type mismatch).
     assert_eq!(
-        seen, 19,
-        "the schema compile-fail roster has nineteen fixtures"
+        seen, 20,
+        "the schema compile-fail roster has twenty fixtures"
     );
 }

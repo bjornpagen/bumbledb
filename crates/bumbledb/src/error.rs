@@ -436,14 +436,17 @@ pub enum FactShapeError {
     UnknownRelation { relation: RelationId },
     /// The field id is outside its relation — the field sibling of
     /// [`FactShapeError::UnknownRelation`], raised by the id-addressed
-    /// dynamic surface ([`crate::Schema::fresh_field`]).
+    /// dynamic surface ([`crate::Db::fresh_field`]).
     UnknownField {
         relation: RelationId,
         field: FieldId,
     },
-    /// [`crate::Schema::fresh_field`]'s field is not `Fresh` generation —
-    /// no witness exists, so no mint can be asked for (parse, don't
-    /// validate: the check runs once at resolution, never per mint).
+    /// [`crate::Db::fresh_field`]'s field is not `Fresh` generation — no
+    /// witness exists, so no mint can be asked for. Raised at resolution,
+    /// and again by the mint's per-transaction sequence init at the dyn
+    /// boundary, where `Db<SchemaDescriptor>` handles share one typestate
+    /// and a foreign descriptor's witness arrives well-typed (the
+    /// schema-bound witness law — [`crate::FreshField`]).
     NotAFreshField {
         relation: RelationId,
         field: FieldId,
