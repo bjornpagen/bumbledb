@@ -117,6 +117,21 @@ pub fn filter_duration_range_u64(
     Ok(())
 }
 
+/// Scalar reference of [`super::compact_u32_by_mask`]: the fully
+/// safe-indexed cursor-write (the pre-diet shape — `items[write]`
+/// bounds-checked, keep judged as `mask[i] != 0`). The property test
+/// asserts bit-identity on 0/1 masks, the live kernel's contract.
+#[cfg(test)]
+pub fn compact_u32_by_mask(items: &mut Vec<u32>, mask: &[u8]) {
+    assert!(mask.len() >= items.len());
+    let mut write = 0usize;
+    for read in 0..items.len() {
+        items[write] = items[read];
+        write += usize::from(mask[read] != 0);
+    }
+    items.truncate(write);
+}
+
 /// Branchless cursor-write over the whole column.
 #[cfg(test)]
 fn push_matching(len: usize, out: &mut Vec<u32>, keep: impl Fn(usize) -> bool) {
