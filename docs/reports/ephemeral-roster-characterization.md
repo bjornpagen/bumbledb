@@ -175,3 +175,29 @@ record). No pinned margins: single day, S scale, sibling sessions
 live. The ~6 µs window-judge price and the 194–205x one-fact dividend
 are characterization numbers awaiting the quiet-machine re-earn
 session before anything gates on them.
+
+## The 1.0.0 re-earn (2026-07-16, quiet machine, the final tree)
+
+The awaited quiet-machine session, run on the zero-known-bugs tree
+(post-freeze, post-paranoia: the schema-bound witness re-check, the
+determinant probe-first overwrite, the cancel-overlay fix, ProgramRef
+prepare, the ephemeral open's probe battery + `F_PREALLOCATE` all
+landed since the record above). Protocol: one verify stamp (2,862
+cases, `300541825a…`), then three durable + three ephemeral stamped
+runs under the measurement mutex, min-of-3 p50s, no sibling sessions.
+
+- **ALL-WIN printed on all three durable runs** — the vs-SQLite claim
+  holds on the shipped tree; the README's five charts are regenerated
+  from exactly these runs (`assets/bench-*.svg`).
+- **The write curve reproduces within noise:** commit_single 205.9x
+  (record: ~205x), commit_witnessed 184.3x (194x), 512-batch 6.89x
+  (6.8x), bulk 1.62x (1.63x). The window rows: baseline 11.2 µs →
+  admission 16.9 µs (+5.7 µs) → exclusion 15.5 µs (+4.3 µs) —
+  the judge's price is stable.
+- **Reads stay kind-independent:** 26 families, dur/eph median 1.00
+  (band 0.92–1.32, the usual bimodal suspects at the edges).
+- **Verdict: the zero-known-bugs pass is perf-neutral on this
+  roster.** R6's constructor cells were re-earned the same day under
+  their own three-run protocol (74.1x SSD / 4.2x ramdisk / 1.0x tax,
+  third run — see `ramdisk-phase-r.md` § R6 re-earned); quote the
+  dividend as the ~75–90x band, never a scalar.

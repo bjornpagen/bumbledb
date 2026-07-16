@@ -151,6 +151,12 @@ the bulk cells are the steady co-tenancy witness). Harness:
 and HFS+ has no sparse files, so ephemeral-on-HFS+ needs map size +
 slack (the SSD cells sit on APFS, which is sparse — `du` stays small
 there; a 2 GiB HFS+ disk refuses with `StorageFull`, typed).
+*Amended 2026-07-16:* the sparse-filesystem overcommit fix put an
+`fcntl(F_PREALLOCATE)` in every ephemeral open
+(`storage/env/open_env.rs::preallocate`), so the map's blocks are now
+reserved on APFS too — `du` shows the full map on EVERY filesystem,
+and an undersized volume refuses typed at open uniformly, never a
+silent overcommit. The sparse-`du` sentence above is historical.
 
 Three back-to-back unwarned runs; the table records the third; the
 two prior runs agree (dividend ratios 4.5x/4.2x/4.4x on the ramdisk,
@@ -183,6 +189,30 @@ under momentary fullfsync pressure — recorded, not averaged in):
   ramdisk) — the plain ramdisk path needs no flags on bulk loads,
   exactly as the 1.14x-vs-2x-bar record said. On the SSD, ephemeral
   bulk is 1.56x over durable bulk (the per-chunk fullfsync).
+
+### R6 re-earned (2026-07-16, the 1.0.0-candidate tree)
+
+The zero-known-bugs pass changed the write path (the schema-bound
+witness's per-transaction re-check, the determinant map's
+probe-first overwrite, the cancel-overlay fix) and the ephemeral
+open (the full probe battery, `F_PREALLOCATE`), so the cells were
+re-earned under the same protocol — three back-to-back runs, the
+third recorded. Medians (min–max), n=64 small / n=8 bulk:
+
+| Cell | small (16 facts) | run-3 dividend |
+|---|---|---|
+| `Db::create` @ SSD | 4.708 ms (4.027–5.724) | — |
+| `Db::ephemeral` @ SSD | 0.064 ms (0.032–0.204) | 74.1x |
+| `Db::create` @ HFS+ ramdisk | 0.255 ms (0.113–0.367) | — |
+| `Db::ephemeral` @ HFS+ ramdisk | 0.061 ms (0.030–0.167) | 4.2x |
+
+Device tax 1.0x. Per-session dividend bands: SSD 90x (07-15) /
+74.1x (07-16) — quote "~75–90x", never the scalar; ramdisk
+4.4x / 4.2x. The cold first runs of the session printed 0.10–0.14 ms
+small cells (45x/39x) — the warm third is the comparable protocol,
+and the drift against 07-15's 0.054 ms sits inside the small-cell
+band. Verdict: **the fixes are perf-neutral on the commit path and
+the admission decision's arithmetic stands.**
 
 ## The Phase-2 record (amended 2026-07-15: refusal → admission)
 

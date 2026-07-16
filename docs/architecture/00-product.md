@@ -129,8 +129,9 @@ language. **Reverses if:** never — owner axiom.
   durable store can quietly lose its guarantee. The sighting is the ephemeral
   relational engine: staging stores judged before ETL into a durable store, analysis
   working sets, scratch stores — the small-commit shape where the flags measure
-  ~4.4x over the plain ramdisk and ~90x over durable-on-SSD through the real
-  constructor, with a 1.0–1.1x device tax that makes ephemeral-on-SSD nearly free
+  ~4.2–4.4x over the plain ramdisk and ~75–90x over durable-on-SSD through the
+  real constructor (per-session band across the R6 earn and its 1.0.0 re-earn),
+  with a 1.0–1.1x device tax that makes ephemeral-on-SSD nearly free
   (`docs/reports/ramdisk-phase-r.md` § R6). The owner's doctrine, recorded
   verbatim: "everything we can do to make dogfooding easier is upgraded to a
   feature." **Alternative:** an ephemeral constructor gated on a RAM-backed-device
