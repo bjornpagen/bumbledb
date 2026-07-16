@@ -282,7 +282,10 @@ Both are emission; the grammar is untouched.
   A query is the degenerate one-predicate program
   (`From<Query> for Program` is the owned embedding;
   `lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`); a no-`Idb` program
-  prepares as its output predicate's query, byte for byte, and a recursive
+  prepares as its output predicate's query — byte for byte in the one-predicate
+  case, and always carrying the program-global bind contract (params are ONE
+  binding surface across predicates, `20-query-ir.md` § engine recursion; the
+  query roster never re-judges what the program roster sealed) — and a recursive
   program executes under the fixpoint driver with the host-settable budget
   `prepared.set_fixpoint_budget(rounds, tuples)` — `40-execution.md` § the
   fixpoint driver. **`ProgramRef` borrows by decision, not convenience**: an

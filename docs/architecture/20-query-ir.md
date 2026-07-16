@@ -163,9 +163,12 @@ occurrence and cost on the ladder's delta/accumulated floors
 transient-image bind, never the cache or the memo.
 `Db::prepare` is the surface: a no-`Idb` program prepares as
 its output predicate's query — zero new code paths, which is what it
-denotes (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`) —
-and a recursive program prepares its delta-variant plans and executes
-whole.
+denotes (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`),
+prepared from the program roster's own output witness so the bind
+contract stays the program-global table (one binding surface, exactly
+as the fixpoint arm binds it; the query roster never re-judges a
+sealed program) — and a recursive program prepares its delta-variant
+plans and executes whole.
 
 **The chain-window fence — the standing OPEN item** (the README's OPEN
 list carries its trigger). The chain-window class wants *the interval
