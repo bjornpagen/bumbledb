@@ -38,7 +38,7 @@ use std::ops::Bound;
 
 use heed::{AnyTls, RoTxn};
 
-use super::plan::{CommitPlan, EdgeOp, FactOp};
+use super::plan::CommitPlan;
 use super::{decode_row_id, fact_by_row};
 use crate::encoding::{FactLayout, encode_u64, field_bytes};
 use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
@@ -269,34 +269,6 @@ fn collect(outcome: Result<()>, violations: &mut Vec<Violation>) -> Result<()> {
     }
 }
 
-// The pin harness's off switch for the probe-order sort below: the
-// bench crate's interleaved A/B (reached through the `trace`
-// test-support feature, enabled only as the bench harness's
-// instrumentation feature — no production build can see it) alternates
-// sorted against arrival order inside one process. Thread-local because
-// the test harness runs tests concurrently. Probe order is observably
-// invisible (`crate::error::Violations::seal` sorts by citation), so
-// the switch toggles layout, never semantics.
-#[cfg(feature = "trace")]
-thread_local! {
-    static PROBE_SORT_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Runs `f` with the source-probe sort bypassed on this thread — the
-/// probe-order pin's arrival-order arm. Restores on unwind.
-#[cfg(feature = "trace")]
-pub fn with_probe_sort_disabled<T>(f: impl FnOnce() -> T) -> T {
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            PROBE_SORT_DISABLED.with(|d| d.set(false));
-        }
-    }
-    PROBE_SORT_DISABLED.with(|d| d.set(true));
-    let _reset = Reset;
-    f()
-}
-
 /// The source-side judgment: for each insert op's edges — exactly the
 /// facts this commit added that satisfy a containment's source selection,
 /// by the plan derivation over the net-disposition delta, so a redundant
@@ -308,85 +280,43 @@ pub fn with_probe_sort_disabled<T>(f: impl FnOnce() -> T) -> T {
 /// test, and an out-of-range word is simply a miss
 /// (`docs/architecture/30-dependencies.md`). Violations accumulate into
 /// `violations`; the caller seals the complete set.
-///
-/// Probe order: the worklist is sorted by the probed `U` key —
-/// `(target relation, target key statement, key bytes)`, exactly the
-/// stored byte order — so successive B-tree descents share upper pages
-/// and walk the leaf level monotonically, instead of revisiting the
-/// tree at the delta's fact-hash order. Order is invisible to the
-/// verdict: violations seal sorted and deduplicated by citation
-/// ([`crate::error::Violations::seal`]; `lean/Main.lean` `RVerdict` —
-/// the citation set is order-free by contract).
 pub(super) fn check_source(
     view: &FinalStateView<'_, '_, '_>,
     violations: &mut Vec<Violation>,
 ) -> Result<()> {
     let FinalStateView { txn, schema, plan } = view;
     let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
+    let mut probes = 0u64;
     let mut span = obs::span(obs::names::JUDGMENT_SOURCE, obs::Category::Commit);
-    // The flattened probe worklist, each edge tagged with its probed
-    // key's leading components (the key bytes ride in the edge itself).
-    let mut worklist: Vec<(RelationId, StatementId, &FactOp<'_>, &EdgeOp)> = Vec::new();
     for op in &plan.inserts {
         for edge in &op.edges {
+            probes += 1;
             let statement = schema.containment(edge.containment);
-            let target_key = match &statement.enforcement {
-                Enforcement::ScalarProbe { target_key, .. }
-                | Enforcement::IntervalCoverage { target_key, .. } => *target_key,
-                Enforcement::Closed { .. } => {
-                    unreachable!("closed-target containments produce memberships, not edges")
-                }
+            let probe = Probe {
+                statement: statement.id,
+                target_relation: statement.target.relation,
+                target_key: match &statement.enforcement {
+                    Enforcement::ScalarProbe { target_key, .. }
+                    | Enforcement::IntervalCoverage { target_key, .. } => *target_key,
+                    Enforcement::Closed { .. } => {
+                        unreachable!("closed-target containments produce memberships, not edges")
+                    }
+                },
+                target_check: &plan.selections.containment(edge.containment).target,
+                key_bytes: &edge.key_bytes,
+                fact_bytes: op.fact,
+                direction: Direction::SourceUnsatisfied,
+                source_tail: schema.source_tail(statement),
             };
-            worklist.push((
-                statement.target.relation,
-                schema.key(target_key).id,
-                op,
-                edge,
-            ));
-        }
-    }
-    #[cfg(feature = "trace")]
-    let sort = !PROBE_SORT_DISABLED.with(std::cell::Cell::get);
-    #[cfg(not(feature = "trace"))]
-    let sort = true;
-    if sort {
-        worklist.sort_unstable_by(|(rel_a, stmt_a, _, edge_a), (rel_b, stmt_b, _, edge_b)| {
-            (rel_a, stmt_a, edge_a.key_bytes.as_bytes()).cmp(&(
-                rel_b,
-                stmt_b,
-                edge_b.key_bytes.as_bytes(),
-            ))
-        });
-    }
-    let probes = worklist.len() as u64;
-    for &(_, _, op, edge) in &worklist {
-        let statement = schema.containment(edge.containment);
-        let probe = Probe {
-            statement: statement.id,
-            target_relation: statement.target.relation,
-            target_key: match &statement.enforcement {
-                Enforcement::ScalarProbe { target_key, .. }
-                | Enforcement::IntervalCoverage { target_key, .. } => *target_key,
-                Enforcement::Closed { .. } => {
-                    unreachable!("closed-target containments produce memberships, not edges")
+            let outcome = match &statement.enforcement {
+                Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
+                Enforcement::IntervalCoverage { disjoint, .. } => {
+                    checker.check_coverage(*disjoint, &probe)
                 }
-            },
-            target_check: &plan.selections.containment(edge.containment).target,
-            key_bytes: &edge.key_bytes,
-            fact_bytes: op.fact,
-            direction: Direction::SourceUnsatisfied,
-            source_tail: schema.source_tail(statement),
-        };
-        let outcome = match &statement.enforcement {
-            Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
-            Enforcement::IntervalCoverage { disjoint, .. } => {
-                checker.check_coverage(*disjoint, &probe)
-            }
-            Enforcement::Closed { .. } => unreachable!("classified above"),
-        };
-        collect(outcome, violations)?;
-    }
-    for op in &plan.inserts {
+                Enforcement::Closed { .. } => unreachable!("classified above"),
+            };
+            collect(outcome, violations)?;
+        }
         for membership in &op.memberships {
             let statement = schema.containment(membership.containment);
             let Enforcement::Closed { members } = &statement.enforcement else {
