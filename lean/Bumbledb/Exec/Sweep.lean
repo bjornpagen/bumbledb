@@ -69,22 +69,25 @@ semantics.
   rather than widening the class.
 * **The σ conjunct rides ABOVE the fold.** `check_coverage`'s full
   verdict is coverage AND every consumed segment satisfies ψ
-  (`GapAt::segment → check_segment`, `judgment.rs:764-776, 864-866`;
-  the hook noted at `sweep.rs:35-37`); `sweepCovered` models pure
-  coverage. The σ semantics belong to the `Coverage` denotation
+  (`storage/commit/judgment.rs::GapAt::segment` delegating to
+  `storage/commit/judgment.rs::check_segment`; the hook is
+  `interval/sweep.rs::Continuation::segment`); `sweepCovered` models
+  pure coverage. The σ semantics belong to the `Coverage` denotation
   (`Dependencies.lean`, which carries ψ); this file's fold is the
   coverage half only — delegated, not dropped.
 * **The degenerate window is unstatable here.** Rust declares an
-  empty window (`s = e`) vacuously covered (`sweep.rs:57-58`:
-  `run = (s, s)`, the `frontier ≥ e` exit fires immediately);
+  empty window (`s = e`) vacuously covered (`interval/sweep.rs::sweep`:
+  the run opens at `(s, s)`, the `frontier ≥ e` exit fires immediately);
   `Interval` carries `start < end`, so the shape cannot be written at
   this level — and it is unreachable through `check_coverage`, whose
   probe intervals are acceptance-gated valid intervals.
 * **The windowed gap verdict is delegated to the continuation.** A
   windowed continuation that declined to convict would make `sweep`
-  return accept on a gap (`sweep.rs:96-99`) where `sweepFrom`
+  return accept on a gap (the windowed early return in
+  `interval/sweep.rs::sweep`) where `sweepFrom`
   hard-codes `false`; the only windowed continuation, `GapAt`, always
-  errs (`judgment.rs:868-870`), so the divergence is unreachable —
+  errs (`storage/commit/judgment.rs::GapAt::maximal`), so the
+  divergence is unreachable —
   the spec does not determine `sweep` for a non-convicting windowed
   caller.
 

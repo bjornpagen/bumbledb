@@ -72,7 +72,7 @@ parameter that merely checks values would be a CHECK constraint
   `encode_literal` call sites route `String` elsewhere).
 * **The sentinel intern id is unmodeled.** `StrId.id` is unbounded and
   every id is a value; Rust reserves `SENTINEL_ID = u64::MAX`
-  (`storage/dict.rs:80`) as never-minted dictionary state —
+  (`storage/dict.rs::SENTINEL_ID`) as never-minted dictionary state —
   unobservable while the mint invariant holds, so the spec stays
   silent.
 * **`fixedBytes n` is total over ℕ here; Rust declares `1..=64`

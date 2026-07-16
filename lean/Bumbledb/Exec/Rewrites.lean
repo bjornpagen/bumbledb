@@ -10,41 +10,43 @@ are semantics-preserving". Algorithmic essence only, per the mechanism
 fence: grounding is substitution against ground axioms, a key probe is
 one determinant get, static emptiness is a refuted condition.
 
-## The Rust readings (READ-RUST-FIRST, file:line anchors)
+## The Rust readings (READ-RUST-FIRST, symbol anchors)
 
-* **The grounding loop** — `crates/bumbledb/src/plan/ground.rs:129-156`
-  (`ground`: elimination and evaluation interleaved, one action per
-  step); `:161-203` (`removable`, the deterministic statement-order
-  scan). The elimination conditions: `:214-229`
-  (`join_covers_full_key`, condition 1 — including
-  `shared_vars_pair_positions_only`, `:221-227`), `:241-276`
-  (`target_otherwise_unused`, condition 2 — Eq-constant filters within
-  ψ, φ carried literally, non-Y fields dead), `:281-299`
-  (`variables_join_or_dead`, condition 3), `:168`
-  (`Enforcement::ScalarProbe`, condition 4 — the interval refusal),
-  `:315-373` (`var_is_dead`). Chains and support: the module doc at
-  `:66-81` and `chain_reaches` — an ELIMINATED occurrence may source a
-  later elimination so long as its support chain avoids the candidate
-  (`ChainedElimStep`, `chained_elimination_sound` below).
+* **The grounding loop** — `plan/ground.rs::ground` (elimination and
+  evaluation interleaved, one action per step);
+  `plan/ground.rs::removable` (the deterministic statement-order
+  scan). The elimination conditions:
+  `plan/ground.rs::join_covers_full_key` (condition 1 — including its
+  `shared_vars_pair_positions_only` conjunct),
+  `plan/ground.rs::target_otherwise_unused` (condition 2 —
+  Eq-constant filters within ψ, φ carried literally, non-Y fields
+  dead), `plan/ground.rs::variables_join_or_dead` (condition 3), the
+  `Enforcement::ScalarProbe` screen in `removable` (condition 4 — the
+  interval refusal), and `plan/ground.rs::var_is_dead`. Chains and
+  support: the module doc (§ chains and support) and
+  `plan/ground.rs::chain_reaches` — an ELIMINATED occurrence may
+  source a later elimination so long as its support chain avoids the
+  candidate (`ChainedElimStep`, `chained_elimination_sound` below).
 * **The grounding evaluator** —
-  `crates/bumbledb/src/plan/ground/evaluate.rs:109-125` (`fold_step`,
-  first foldable occurrence per call); `:128-199` (`fold_positive`:
-  survivors, the membership attachment, the rule-death channel at
-  `:179-190`); `:379-485` (`parse_resolvable` — params, pending
-  interns, and measures refuse); `:576-590` (`surviving_ids`, the
-  prepare-time σ over sealed rows); `:203-273` (`fold_negated`, the
+  `plan/ground/evaluate.rs::fold_step` (first foldable occurrence per
+  call); `plan/ground/evaluate.rs::fold_positive` (survivors, the
+  membership attachment, the rule-death channel);
+  `plan/ground/evaluate.rs::parse_resolvable` (params, pending
+  interns, and measures refuse);
+  `plan/ground/evaluate.rs::surviving_ids` (the prepare-time σ over
+  sealed rows); `plan/ground/evaluate.rs::fold_negated` (the
   complement fold — unmodeled here, see the narrowings).
 * **The key-probe lowering** —
-  `crates/bumbledb/src/exec/dispatch/classify.rs:24-130` (`classify`:
-  exactly one positive occurrence, no residuals, no measure or
-  set-valued filters, by-value Eq bindings covering a declared key;
-  non-key per-field filters — order compares, `Ne`, `FieldsCompare`,
-  resolved `PointIn`/Allen — pass into `remaining_filters`, `:127`,
-  `:165-188`, applied post-get,
-  `crates/bumbledb/src/exec/dispatch/key_probe_fact.rs:253`);
-  `:134-161` (`key_probe_candidate`: the key statement — pointwise
-  interval-final keys included — or the full-fact `M` fallback);
-  `crates/bumbledb/src/api/prepared/build.rs:335`
+  `exec/dispatch/classify.rs::classify` (exactly one positive
+  occurrence, no residuals, no measure or set-valued filters,
+  by-value Eq bindings covering a declared key; non-key per-field
+  filters — order compares, `Ne`, `FieldsCompare`, resolved
+  `PointIn`/Allen — pass into `remaining_filters`, assembled by
+  `exec/dispatch/classify.rs::unconsumed_filters` and applied
+  post-get in `exec/dispatch/key_probe_fact.rs::key_probe_fact`);
+  `exec/dispatch/classify.rs::key_probe_candidate` (the key statement
+  — pointwise interval-final keys included — or the full-fact `M`
+  fallback); `api/prepared/build.rs::prepare_rule_variant`
   (`PreparedRule::KeyProbe` minted).
 * **The subsumption sweep** — `plan/ground.rs::subsume` (classical
   UCQ minimization restricted to the normalized-form witness;
@@ -52,22 +54,21 @@ one determinant get, static emptiness is a refuted condition.
   grounding at `api/prepared/build.rs::ground_program`: the deleted
   rules are filtered out of the prepared program. Unmodeled — see the
   narrowings.
-* **The statically-empty fold** —
-  `crates/bumbledb/src/ir/normalize/fold.rs:78-96` (`fold`:
-  participating occurrences only — a negated occurrence's contradiction
-  is NOT emptiness); `:152-214` (the contradiction rules (a)-(f), every
-  one judged on constants only).
-* **The literal latch** —
-  `crates/bumbledb/src/api/prepared/bind.rs:280-340`
-  (`resolve_filters`: `Ok(false)` = a dictionary miss or empty set
-  under an `Eq` filter of a POSITIVE occurrence — per-execution, never
-  a plan verdict); `:348-365` (`resolve_selection_into`: the
-  `PendingIntern` hit rewrites the template once; the miss
-  short-circuits THIS execution only).
-* **Repeated variables** —
-  `crates/bumbledb/src/ir/normalize/normalize.rs:132-187` (`lower_atom`
-  pass 1: the first domain binding per variable; later positions lower
-  to `FieldsCompare` filters, which condition 2 refuses — the
+* **The statically-empty fold** — `ir/normalize/fold.rs::fold`
+  (participating occurrences only — a negated occurrence's
+  contradiction is NOT emptiness); the contradiction rules (a)-(f),
+  one function each from `ir/normalize/fold.rs::range_is_empty` to
+  `ir/normalize/fold.rs::point_outside`, every one judged on
+  constants only.
+* **The literal latch** — `api/prepared/bind.rs::resolve_filters`
+  (`Ok(false)` = a dictionary miss or empty set under an `Eq` filter
+  of a POSITIVE occurrence — per-execution, never a plan verdict);
+  `api/prepared/bind.rs::resolve_selection_into` (the `PendingIntern`
+  hit rewrites the template once; the miss short-circuits THIS
+  execution only).
+* **Repeated variables** — `ir/normalize/normalize.rs::lower_atom`
+  (pass 1: the first domain binding per variable; later positions
+  lower to `FieldsCompare` filters, which condition 2 refuses — the
   `var_functional` premise's anchor).
 
 ## Narrowings recorded (law 5: narrow and record)
@@ -77,15 +78,18 @@ one determinant get, static emptiness is a refuted condition.
   sealed facts, of its bindings' equalities (`groundCondition`) — the
   `Const::WordSet` membership generalized. Rust's foldability
   conditions (at most one live variable, at the id position, payload
-  dead — `evaluate.rs:20-58`) are plan-shape mechanism: its algebra
+  dead — the foldability roster of `plan/ground/evaluate.rs`'s module
+  doc, enforced by `plan/ground/evaluate.rs::fold_positive`) are
+  plan-shape mechanism: its algebra
   attaches single-field memberships to siblings, so payload must be
   dead; the substitution carries payload constraints wholesale and
   needs no deadness premise. `Atom.foldableB` (vars and literals only)
   mirrors `parse_resolvable`'s refusals as the modeled acceptance;
   preservation never spends it — the param refusal is stage discipline
   (prepared plans carry resolved constants), not semantics.
-* **The negated complement fold is unmodeled** (`fold_negated`,
-  `evaluate.rs:203-273`): the complement rewrite needs the domain
+* **The negated complement fold is unmodeled**
+  (`plan/ground/evaluate.rs::fold_negated`): the complement rewrite
+  needs the domain
   guarantee (`domain_within_ids`) and a negated membership the
   condition grammar cannot write; the modeled step grounds positive
   occurrences only.
@@ -117,7 +121,8 @@ one determinant get, static emptiness is a refuted condition.
   suffice; the key-ness of Y (condition 1's full-key demand,
   acceptance-side) is what the AGGREGATE face spends — key-ness keeps
   a dead non-key variable from multiplying the binding-set fold domain
-  (`ground.rs:44-51`). The aggregate face lives in `Exec/Dedup.lean`
+  (the aggregate-safety bullet of `plan/ground.rs`'s module doc). The
+  aggregate face lives in `Exec/Dedup.lean`
   where the fold domains live, as THREE named pieces (2026-07-14,
   the admission-calculus docket): `elim_extension_exists` (the
   containment's extension, binding-level) and
@@ -138,16 +143,20 @@ one determinant get, static emptiness is a refuted condition.
   transfer.
 * **`var_functional`**: an eliminable occurrence binds each variable at
   one field — repeated variables keep their first binding and lower the
-  rest to `FieldsCompare` filters (`normalize.rs:174-187`), which
-  `selections_within_psi` refuses (`ground.rs:252-258`). Without it the
+  rest to `FieldsCompare` filters (pass 2 of
+  `ir/normalize/normalize.rs::lower_atom`), which
+  `plan/ground.rs::selections_within_psi` refuses. Without it the
   witness fact could disagree with itself (two dead fields, one
   variable), so the premise is load-bearing, not decorative.
-* **The full-fact `M` path is unmodeled** (`classify.rs:153-160`):
+* **The full-fact `M` path is unmodeled** (the fallback arm of
+  `exec/dispatch/classify.rs::key_probe_candidate`):
   model facts carry junk fields beyond the arity (the PRD 03
   narrowing), so whole-fact identity is a storage fact below this
   level; `KeyProbeShape` models the statement-key arm. The
-  closed-relation refusal (`classify.rs:94`) and the measure/set-filter
-  refusals (`classify.rs:44-75`) are dispatch mechanism. Residual
+  closed-relation refusal (the `is_closed` screen in
+  `exec/dispatch/classify.rs::classify`) and the measure/set-filter
+  refusals (the filter screens of the same function) are dispatch
+  mechanism. Residual
   per-field filters are MODELED: the rule's conditions ride the probe
   and filter the at-most-one hit (`keyProbeEval`'s condition check =
   `remaining_filters` applied post-get) — the model's conditions are
@@ -163,22 +172,25 @@ one determinant get, static emptiness is a refuted condition.
   step relation. Deeper support forests (a discharged source whose own
   source is discharged, or cross-links through other discharged
   readers) iterate the same existence/uniqueness argument from the
-  roots (`ground.rs:66-81`) but are not stated — the recorded
+  roots (`plan/ground.rs`'s module doc, § chains and support) but are
+  not stated — the recorded
   narrowing. The narrowing also covers the SOURCE-ROLE roster: the
-  engine's `removable` excludes only `Role::Negated` as a pairing
-  source (`ground.rs:178`), so a `Role::Folded` occurrence is
+  engine's `plan/ground.rs::removable` excludes only `Role::Negated`
+  as a pairing source, so a `Role::Folded` occurrence is
   admissible where the modeled chain step names `Eliminated` sources
   only. The Folded case is practically unreachable — a folded
   source's binders all carry the attached `WordSet` membership
   filter, which condition 2's `selections_within_psi` refuses
-  (Eq-to-ψ-literal filters only, `ground.rs:252-258`) — recorded, not
+  (Eq-to-ψ-literal filters only,
+  `plan/ground.rs::selections_within_psi`) — recorded, not
   proved.
 * **`StaticallyEmpty` is the kill rule's soundness spec**: a condition
   refuted under EVERY environment. The Rust detector judges constants
   only (`fold.rs`, rules (a)-(f)); its completeness is not claimed.
   The "every verdict is an instance" claim is read through the
   FILTERS-TO-CONDITIONS mapping: rules (b)/(d) kill on
-  occurrence-FILTER contradictions (`fold.rs:247-258`), and an
+  occurrence-FILTER contradictions (the Eq-pin pass of
+  `ir/normalize/fold.rs::fold_occurrence`), and an
   occurrence's Eq filter is this model's equality-condition leaf (the
   shape `groundCondition` writes), so an Eq-conflict kill refutes the
   corresponding lifted condition — honest emptiness either way; the
@@ -273,7 +285,8 @@ deletion arm, subsumed. -/
 /-- The modeled foldability screen: bindings are variables and
 literals only. Mirrors `parse_resolvable`'s refusals — params and
 pending interns are stage-3 values a stage-2 pass must not judge,
-measures raise per execution (`evaluate.rs:379-485`). Recorded: the
+measures raise per execution
+(`plan/ground/evaluate.rs::parse_resolvable`). Recorded: the
 preservation theorem never spends this screen (the narrowing note). -/
 def Atom.foldableB (a : Atom) : Bool :=
   a.bindings.all fun bd =>
@@ -367,8 +380,8 @@ structure Grounded where
   atom : Atom
 
 /-- The scan: the first foldable closed atom, with its extension and
-the remaining atoms — `fold_step`'s first-occurrence discipline
-(`evaluate.rs:109-125`). -/
+the remaining atoms — the first-occurrence discipline of
+`plan/ground/evaluate.rs::fold_step`. -/
 def groundSplit (T : Theory) :
     List Atom → Option (Atom × GroundExtension × List Atom)
   | [] => none
@@ -591,7 +604,8 @@ structure ElimStep (r r' : Rule) (a b : Atom) (X Y : List FieldId)
     (∃ v, bd.2 = Term.var v) ∨
       (∃ c, bd.2 = Term.lit c ∧ (bd.1, [c]) ∈ ψ.bindings)
   /-- The one-field-per-variable discipline: repeated variables lower
-  to `FieldsCompare` filters (`normalize.rs:174-187`), which condition
+  to `FieldsCompare` filters (pass 2 of
+  `ir/normalize/normalize.rs::lower_atom`), which condition
   2 refuses — so an eliminable occurrence binds each variable once. -/
   var_functional : ∀ i j v, (i, Term.var v) ∈ b.bindings →
     (j, Term.var v) ∈ b.bindings → i = j
@@ -767,7 +781,8 @@ theorem elimination_sound {C : Classify} {I : Instance} {ρ : ParamEnv}
 /-! ### Chained eliminations — the discharged source
 
 The engine deliberately lets an already-`Eliminated` occurrence serve
-as the pairing source of a later elimination (`ground.rs:66-81`): the
+as the pairing source of a later elimination (`plan/ground.rs`'s
+module doc, § chains and support): the
 discharged occurrence's witness fact still exists, uniquely, and
 satisfies its whole filter list, so the next containment applies to
 THE WITNESS instead of a live atom. The discipline is the support
@@ -808,7 +823,8 @@ atom of `r` (it was itself eliminated earlier; its witness fact
 stands in). The fields are `ElimStep`'s with two changes: the
 `source` membership is gone — that is the point — and `shared_join`,
 the engine's `shared_vars_pair_positions_only` conjunct
-(`ground.rs:221-227`) that plain `ElimStep` never needed, is
+(in `plan/ground.rs::join_covers_full_key`) that plain `ElimStep`
+never needed, is
 demanded: with the source discharged, a variable shared with it can
 reach the witness only by riding a projection pair. -/
 structure ChainedElimStep (r r' : Rule) (b c : Atom)
@@ -863,7 +879,8 @@ only by the discharged source is join-classified, not dead — and the
 elimination of `b` then follows on the smaller rule; `ruleAnswers`
 reads atom lists by membership, so the reordering is invisible to the
 denotation. Bridge: `plan/ground.rs::chain_reaches` and the support
-forest (`ground.rs:66-81`); deeper forests iterate this argument from
+forest (`plan/ground.rs`'s module doc, § chains and support); deeper
+forests iterate this argument from
 the roots (the recorded narrowing, module doc). -/
 theorem chained_elimination_sound {C : Classify} {I : Instance}
     {ρ : ParamEnv} {r r₁ r₂ : Rule} {a b c : Atom}
@@ -1026,9 +1043,10 @@ denotation, with the key's uniqueness
 at-most-one half. -/
 
 /-- A term bound BY VALUE — pinned to a constant an `Eq` filter can
-carry: a literal, or a param resolved at bind (`classify.rs:77-87`;
-`KeyProbePlan` resolves key constants per probe). Variables bind, sets
-and measures are refused filter shapes (`classify.rs:44-75`). -/
+carry: a literal, or a param resolved at bind (the `value_of` closure
+of `exec/dispatch/classify.rs::classify`; `KeyProbePlan` resolves key
+constants per probe). Variables bind, sets and measures are refused
+filter shapes (the filter screens of the same function). -/
 def Term.pinned : Term → Prop
   | .lit _ => True
   | .param _ => True
@@ -1067,7 +1085,8 @@ theorem Term.pin_selects {ρ : ParamEnv} {σ : Assignment} {t : Term}
   | measure v => cases hpv
 
 /-- The first pinned binding's value at a field — the probe's resolved
-key constant for that position (`value_of`, `classify.rs:77-87`). -/
+key constant for that position (the `value_of` closure of
+`exec/dispatch/classify.rs::classify`). -/
 def pinAt (ρ : ParamEnv) : List (FieldId × Term) → FieldId → Option Value
   | [], _ => none
   | bd :: bds, i =>
@@ -1134,14 +1153,16 @@ def probeHitB (ρ : ParamEnv) (a : Atom) (K : List FieldId)
     | none => false
 
 /-- **`KeyProbeShape`** — what the lowering ACCEPTS
-(`classify.rs:24-130`): one positive atom, nothing negated, and a key
+(`exec/dispatch/classify.rs::classify`): one positive atom, nothing
+negated, and a key
 statement of the theory whose every projection field is bound by
 value. The rule's CONDITIONS are unconstrained: `classify` accepts
 non-key per-field filters (order compares, `Ne`, `FieldsCompare`,
 resolved `PointIn`/Allen) into `remaining_filters`, applied post-get
 — the model carries them as the rule's conditions, checked on the one
 hit (`keyProbeEval`); the engine's per-field filters are instances of
-the general shape. The full-fact `M` fallback (`classify.rs:153-160`)
+the general shape. The full-fact `M` fallback (the fallback arm of
+`exec/dispatch/classify.rs::key_probe_candidate`)
 is a recorded narrowing (module doc). -/
 structure KeyProbeShape (T : Theory) (r : Rule) (a : Atom)
     (K : List FieldId) : Prop where
@@ -1159,7 +1180,8 @@ structure KeyProbeShape (T : Theory) (r : Rule) (a : Atom)
 /-- The point-probe evaluation: ONE determinant get — the first (and,
 under the key, only) tuple-equal fact — then the decoded fact's
 bindings checked, the residual conditions applied to the hit
-(`remaining_filters` post-get, `key_probe_fact.rs:253`), and the
+(`remaining_filters` post-get,
+`exec/dispatch/key_probe_fact.rs::key_probe_fact`), and the
 finds projected, exactly the probe kernel's shape
 (`exec/dispatch/execute_key_probe.rs`). Reuses the `evalList`
 machinery: `bindAtom` is the decode-and-check step, `condHoldsB` the
@@ -1223,8 +1245,9 @@ filters only shrink the at-most-one candidate, never widen it).
 `eval_sound` spends (the validator discharges both); `Safe` is also
 what makes the residual conditions decidable on the probe's state —
 every condition variable is bound by the one atom.
-Bridge: `PreparedRule::KeyProbe`; `api/prepared/build.rs:335`;
-`remaining_filters` (`classify.rs:127,165-188`). -/
+Bridge: `PreparedRule::KeyProbe` (minted at
+`api/prepared/build.rs::prepare_rule_variant`); `remaining_filters`
+(`exec/dispatch/classify.rs::unconsumed_filters`). -/
 theorem keyprobe_equiv_join {T : Theory} {C : Classify}
     {W : ListInstance} {ρ : ParamEnv} {r : Rule} {a : Atom}
     {K : List FieldId} (hshape : KeyProbeShape T r a K)
@@ -1348,8 +1371,9 @@ fact denotes at least one point at the split position — is PRD 03's
 arity-respecting-facts narrowing made a named hypothesis, discharged
 fieldwise by `Value.points_nonempty` on interval-typed columns. This
 closes `keyprobe_equiv_join`'s `hkey` for interval-final pointwise
-keys: the engine key-probes them too (`key_probe_candidate` accepts
-ANY declared key, `classify.rs:134-151`; the lock
+keys: the engine key-probes them too
+(`exec/dispatch/classify.rs::key_probe_candidate` accepts
+ANY declared key; the lock
 `pointwise_key_point_lookup_uses_key_probe_and_is_image_free`). -/
 theorem keyprobe_pointwise_key_spent {T : Theory} {I : Instance}
     (hI : holds T I) {R : RelId} {K S : List FieldId} {i : FieldId}
@@ -1408,7 +1432,9 @@ theorem statically_empty_sound {C : Classify} {r : Rule}
   exact href ρ σ (hconds c hc)
 
 /-- **The latch's two-constructor distinction, structural**
-(`api/prepared/bind.rs:280-365`): an execution comes up empty for one
+(`api/prepared/bind.rs::resolve_filters` and
+`api/prepared/bind.rs::resolve_selection_into`): an execution comes
+up empty for one
 of two reasons, and they are DIFFERENT verdicts. `selectionMiss` is
 `Ok(false)` — one positive atom's selection finds nothing in THIS
 instance (the dictionary miss: an unresolved `PendingIntern` means no
@@ -1464,7 +1490,8 @@ rewriting, which is the shape check on their statements. -/
 elimination step carries the THEORY-side premises: the declared
 containment (in the statement's own `Bumbledb.Atom` shape) and
 condition 4's scalar splits (`Enforcement::ScalarProbe` — the interval
-refusal, `plan/ground.rs:168`); `holds` cashes them into the semantic
+refusal, the `Enforcement::ScalarProbe` screen in
+`plan/ground.rs::removable`); `holds` cashes them into the semantic
 containment at execution. -/
 inductive RewriteStep (T : Theory) (C : Classify) :
     Query → Query → Prop where
