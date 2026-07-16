@@ -105,3 +105,18 @@ then and are dashed where unknown.
 | 2026-07-15 | rewrites | none | 12m x 8 workers | 1038630 | 1861/s | 12323 | 3380 -> 3563 | 1 |
 | 2026-07-15 | crash | none | 12m x 8 workers | 310918 | 430/s | 3151 | 441 -> 614 | 0 |
 | 2026-07-15 | query | address | 10m x 8 workers | 5614 | 6/s | 20897 | 2708 -> 2725 | 1 |
+
+## Kill sessions (the WRITEMAP commit-window sweep, `fuzz/tests/kill.rs`)
+
+One row per statistical lane (>= 2,000 random-timing SIGKILLs per
+store kind; the four-point corpse invariant per round — reopen,
+`verify_store` green, all-or-nothing batch prefix, working
+post-recovery commit). The in-window column is the calibrated
+estimate: `mdb_txn_commit`'s interior (sync surplus) on the durable
+kind, the whole write call on the ephemeral one (the torn-meta sliver
+is its µs-scale subset).
+
+| date | kind | rounds | window | in-window est | surviving batches | pre-first-commit kills | violations | seed |
+|---|---|---|---|---|---|---|---|---|
+| 2026-07-16 | durable | 2,000 | 20 ms (~4 periods) | ~632 in-commit | 51,257 (25.6 mean) | 37 | 0 | 1784215061224509000 |
+| 2026-07-16 | ephemeral | 2,000 | 20 ms (~4 periods) | ~2,000 whole-call | 68,245 (34.1 mean) | 24 | 0 | 1784215132296546000 |
