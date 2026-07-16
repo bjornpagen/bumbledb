@@ -125,7 +125,7 @@ fn schema_compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's nineteen cases (docs/architecture/70-api.md — the emission's
+    // The suite's twenty-one cases (docs/architecture/70-api.md — the emission's
     // roster, the funerals, the width grammar, and the canonical-utterance
     // law's ban table): duplicate handle; missing column; extra column;
     // type-mismatched literal; `closed relation` without `as`; handle
@@ -139,10 +139,12 @@ fn schema_compile_fail_fixtures() {
     // the deleted `in lo..hi per` spelling, `{1..*}` (the containment
     // respelled), `{n..n}` (write `{n}`), `{0..0}` (write `{0}`),
     // `{0..*}` (vacuous — `cardinality_zero_star`), inverted bounds, the
-    // open shorthands `{..hi}` / `{lo..}`, and the singleton literal set
-    // (the bare literal's second spelling).
+    // open shorthands `{..hi}` / `{lo..}`, the empty window `<={}`
+    // (names no bounds), the singleton literal set (the bare literal's
+    // second spelling), and the empty literal set `{}` (selects
+    // nothing — write no binding).
     assert_eq!(
-        seen, 19,
-        "the schema compile-fail roster has nineteen fixtures"
+        seen, 21,
+        "the schema compile-fail roster has twenty-one fixtures"
     );
 }
