@@ -290,6 +290,492 @@ fn fold_kernels_match_the_naive_folds_bit_for_bit() {
     }
 }
 
+/// The gather folds' overflow and sign edges, pinned closed-form:
+/// carry saturation (every lane wave overflows every step), duplicate
+/// indices on extreme words, and the biased extremes (`i64::MIN`
+/// encodes as word 0, `i64::MAX` as `u64::MAX`).
+#[test]
+fn gather_folds_pin_the_overflow_and_sign_edges() {
+    // Carry saturation: 1024 all-ones words + 9 duplicate revisits.
+    let values = vec![u64::MAX; 1024];
+    let mut indices: Vec<u32> = (0..1024).collect();
+    indices.extend(std::iter::repeat_n(7u32, 9));
+    let expected = u128::from(u64::MAX) * 1033;
+    assert_eq!(fold_sum_u64_idx(&values, 1, 0, &indices), expected);
+    // The same words read as biased i64 are all i64::MAX.
+    assert_eq!(
+        fold_sum_biased_i64_idx(&values, 1, 0, &indices),
+        i128::from(i64::MAX) * 1033
+    );
+    assert_eq!(
+        fold_min_max_u64_idx(&values, 1, 0, &indices),
+        (u64::MAX, u64::MAX)
+    );
+
+    // Signed extremes mixed: word 0 = i64::MIN, word u64::MAX = i64::MAX,
+    // word 1<<63 = 0 — an alternation whose naive i128 fold is the pin.
+    let words = [0u64, u64::MAX, 1 << 63, 0, u64::MAX, 1 << 63, 0];
+    let indices: Vec<u32> = (0..7).collect();
+    let naive: i128 = words.iter().map(|&w| i128::from(biased_to_i64(w))).sum();
+    assert_eq!(fold_sum_biased_i64_idx(&words, 1, 0, &indices), naive);
+    assert_eq!(naive, 3 * i128::from(i64::MIN) + 2 * i128::from(i64::MAX));
+    assert_eq!(fold_min_max_u64_idx(&words, 1, 0, &indices), (0, u64::MAX));
+}
+
+/// The gather-twin falsifier (timing evidence; ignored — run by hand
+/// under the machine mutex:
+/// `scripts/measure.sh cargo test -p bumbledb --release
+///  gather_fold_scalar_addressed_twin -- --ignored --nocapture`).
+///
+/// THE GRAVESTONE (2026-07-16, the scalar-addressed gather twin). The
+/// prediction: the shipped `Simd::gather_or_default` lowering — the
+/// lane addresses live in vector registers, the bounds mask reduces
+/// horizontally in-loop (`cmhi`/`uzp1`/`addv.4s`/`fmov`), and a 4-deep
+/// `tbnz` ladder extracts each address back through `fmov` to feed
+/// `ld1.d` lane loads (at runtime stride the indices additionally
+/// enter by scalar `mul` + `fmov`, a full GPR→vector→GPR round trip)
+/// — serializes lane issue and throttles the DRAM miss-lane budget
+/// (m2max.mem.miss-lanes), so a scalar-addressed twin (addresses in
+/// GPRs: `ldr w`/`madd`/direct loads, SIMD accumulation untouched)
+/// should win 1.3–2x on DRAM-tier sparse survivors. The measurement
+/// REFUTED it: at every DRAM shape every arm sits at the gather wall
+/// (~4.3–5.5 ns/idx ≈ m2max.mem.gather-wall's 3.98 under co-tenant
+/// ambient) — the `OoO` window spans enough waves that the ladder never
+/// limits lane count. What remains is a µop-cost residue in the
+/// 0.87–0.98 band (medians of 31 interleaved pairs, 2026-07-16) that
+/// is NOT stable evidence: a second build of the same arms moved the
+/// checked twin's displaced-s3 ratio from 0.97 to 0.87 (the
+/// code-placement lottery), the engine inlines the kernel into both a
+/// stride-1-specialized and a runtime-stride shape (no outlined
+/// `_idx` symbol survives in the release binary), and against the
+/// stride-1-specialized shape (`simd-index-spec-s1`, the scan-pushdown
+/// sink's real codegen, itself 0.87–0.97 vs the runtime shape) the
+/// checked twin is at parity-to-slight-loss. The unchecked twin
+/// reached 0.82–0.90 — the one repeatable single-digit lead, but it
+/// forfeits the crucible's deleted-`unsafe` ruling for a wall-bound
+/// regime; recorded as a lead, not landed. The full-scalar control
+/// confirms the crucible packet Q2: scalar `cmp`/`csel` min/max is
+/// 1.62–1.75x SLOWER at DRAM tier — the flag-strand MLP halving
+/// (m2max.core.flag-strand-mlp) in person. Q2's ADOPT stands. This
+/// pin re-runs the experiment: if any challenger ever beats the
+/// shipped kernel by the predicted margin at a displaced tier, the
+/// gravestone is wrong and this test fails loudly.
+#[test]
+#[ignore = "timing evidence, run by hand on the reference host"]
+#[expect(clippy::too_many_lines, reason = "a self-contained measurement rig")]
+fn gather_fold_scalar_addressed_twin() {
+    use std::fmt::Write as _;
+    use std::simd::prelude::*;
+    use std::time::Instant;
+
+    type ArmFn<'x> = &'x dyn Fn(&[u64], &[u32]) -> u128;
+
+    // --- The scalar-addressed challengers (the refuted twin). ---
+    fn scalar_addressed_sum_w4(
+        values: &[u64],
+        stride: usize,
+        offset: usize,
+        indices: &[u32],
+    ) -> u128 {
+        let mut lows = Simd::<u64, 4>::splat(0);
+        let mut carries = Simd::<u64, 4>::splat(0);
+        let (chunks, tail) = indices.as_chunks::<4>();
+        for chunk in chunks {
+            let v = Simd::<u64, 4>::from_array([
+                values[chunk[0] as usize * stride + offset],
+                values[chunk[1] as usize * stride + offset],
+                values[chunk[2] as usize * stride + offset],
+                values[chunk[3] as usize * stride + offset],
+            ]);
+            let new = lows + v;
+            carries -= lows.simd_gt(new).to_simd().cast::<u64>();
+            lows = new;
+        }
+        let mut total: u128 = 0;
+        for lane in 0..4 {
+            total +=
+                u128::from(lows.as_array()[lane]) + (u128::from(carries.as_array()[lane]) << 64);
+        }
+        for &i in tail {
+            total += u128::from(values[i as usize * stride + offset]);
+        }
+        total
+    }
+    fn scalar_addressed_sum_w8(
+        values: &[u64],
+        stride: usize,
+        offset: usize,
+        indices: &[u32],
+    ) -> u128 {
+        let mut lows = [Simd::<u64, 4>::splat(0); 2];
+        let mut carries = [Simd::<u64, 4>::splat(0); 2];
+        let (chunks, tail) = indices.as_chunks::<8>();
+        for chunk in chunks {
+            for half in 0..2 {
+                let c = &chunk[half * 4..half * 4 + 4];
+                let v = Simd::<u64, 4>::from_array([
+                    values[c[0] as usize * stride + offset],
+                    values[c[1] as usize * stride + offset],
+                    values[c[2] as usize * stride + offset],
+                    values[c[3] as usize * stride + offset],
+                ]);
+                let new = lows[half] + v;
+                carries[half] -= lows[half].simd_gt(new).to_simd().cast::<u64>();
+                lows[half] = new;
+            }
+        }
+        let mut total: u128 = 0;
+        for half in 0..2 {
+            for lane in 0..4 {
+                total += u128::from(lows[half].as_array()[lane])
+                    + (u128::from(carries[half].as_array()[lane]) << 64);
+            }
+        }
+        for &i in tail {
+            total += u128::from(values[i as usize * stride + offset]);
+        }
+        total
+    }
+    #[expect(
+        unsafe_code,
+        reason = "the falsifier's unchecked arm — bounds branches removed to exonerate them"
+    )]
+    fn scalar_addressed_sum_w4_unchecked(
+        values: &[u64],
+        stride: usize,
+        offset: usize,
+        indices: &[u32],
+    ) -> u128 {
+        let mut lows = Simd::<u64, 4>::splat(0);
+        let mut carries = Simd::<u64, 4>::splat(0);
+        let (chunks, tail) = indices.as_chunks::<4>();
+        for chunk in chunks {
+            // SAFETY: the rig generates in-bounds survivors by construction.
+            let v = unsafe {
+                Simd::<u64, 4>::from_array([
+                    *values.get_unchecked(chunk[0] as usize * stride + offset),
+                    *values.get_unchecked(chunk[1] as usize * stride + offset),
+                    *values.get_unchecked(chunk[2] as usize * stride + offset),
+                    *values.get_unchecked(chunk[3] as usize * stride + offset),
+                ])
+            };
+            let new = lows + v;
+            carries -= lows.simd_gt(new).to_simd().cast::<u64>();
+            lows = new;
+        }
+        let mut total: u128 = 0;
+        for lane in 0..4 {
+            total +=
+                u128::from(lows.as_array()[lane]) + (u128::from(carries.as_array()[lane]) << 64);
+        }
+        for &i in tail {
+            total += u128::from(values[i as usize * stride + offset]);
+        }
+        total
+    }
+    // The shipped lowering with stride hardwired to 1 — the shape the
+    // engine's scan-pushdown call site (`fold_sum_u64_idx(col, 1, 0,
+    // p)`, sink.rs) actually inlines: the vector multiply folds to
+    // `ushll`/`shl` shifts and the scalar-`mul`+`fmov` index entry
+    // disappears; only the ladder remains.
+    fn simd_index_sum_s1(values: &[u64], indices: &[u32]) -> u128 {
+        let mut lows = Simd::<u64, 4>::splat(0);
+        let mut carries = Simd::<u64, 4>::splat(0);
+        let (chunks, tail) = indices.as_chunks::<4>();
+        for chunk in chunks {
+            let idx = Simd::<u32, 4>::from_array(*chunk).cast::<usize>();
+            let v = Simd::gather_or_default(values, idx);
+            let new = lows + v;
+            carries -= lows.simd_gt(new).to_simd().cast::<u64>();
+            lows = new;
+        }
+        let mut total: u128 = 0;
+        for lane in 0..4 {
+            total +=
+                u128::from(lows.as_array()[lane]) + (u128::from(carries.as_array()[lane]) << 64);
+        }
+        for &i in tail {
+            total += u128::from(values[i as usize]);
+        }
+        total
+    }
+    fn simd_index_min_max_s1(values: &[u64], indices: &[u32]) -> (u64, u64) {
+        let mut mins = Simd::<u64, 4>::splat(u64::MAX);
+        let mut maxs = Simd::<u64, 4>::splat(u64::MIN);
+        let (chunks, tail) = indices.as_chunks::<4>();
+        for chunk in chunks {
+            let idx = Simd::<u32, 4>::from_array(*chunk).cast::<usize>();
+            let v = Simd::gather_or_default(values, idx);
+            mins = mins.simd_min(v);
+            maxs = maxs.simd_max(v);
+        }
+        let mut min_scalar = mins.reduce_min();
+        let mut max_scalar = maxs.reduce_max();
+        for &i in tail {
+            let word = values[i as usize];
+            min_scalar = min_scalar.min(word);
+            max_scalar = max_scalar.max(word);
+        }
+        (min_scalar, max_scalar)
+    }
+
+    // The full-scalar control arm (the pre-crucible shape: adds/cinc
+    // carry counting on the flag-port triad).
+    fn full_scalar_sum(values: &[u64], stride: usize, offset: usize, indices: &[u32]) -> u128 {
+        let mut lo = [0u64; 4];
+        let mut hi = [0u64; 4];
+        let (chunks, tail) = indices.as_chunks::<4>();
+        for chunk in chunks {
+            for lane in 0..4 {
+                let v = values[chunk[lane] as usize * stride + offset];
+                let (s, c) = lo[lane].overflowing_add(v);
+                lo[lane] = s;
+                hi[lane] += u64::from(c);
+            }
+        }
+        let mut total: u128 = 0;
+        for lane in 0..4 {
+            total += u128::from(lo[lane]) + (u128::from(hi[lane]) << 64);
+        }
+        for &i in tail {
+            total += u128::from(values[i as usize * stride + offset]);
+        }
+        total
+    }
+    fn scalar_addressed_min_max_w4(
+        values: &[u64],
+        stride: usize,
+        offset: usize,
+        indices: &[u32],
+    ) -> (u64, u64) {
+        let mut mins = Simd::<u64, 4>::splat(u64::MAX);
+        let mut maxs = Simd::<u64, 4>::splat(u64::MIN);
+        let (chunks, tail) = indices.as_chunks::<4>();
+        for chunk in chunks {
+            let v = Simd::<u64, 4>::from_array([
+                values[chunk[0] as usize * stride + offset],
+                values[chunk[1] as usize * stride + offset],
+                values[chunk[2] as usize * stride + offset],
+                values[chunk[3] as usize * stride + offset],
+            ]);
+            mins = mins.simd_min(v);
+            maxs = maxs.simd_max(v);
+        }
+        let mut min_scalar = mins.reduce_min();
+        let mut max_scalar = maxs.reduce_max();
+        for &i in tail {
+            let word = values[i as usize * stride + offset];
+            min_scalar = min_scalar.min(word);
+            max_scalar = max_scalar.max(word);
+        }
+        (min_scalar, max_scalar)
+    }
+    fn full_scalar_min_max(
+        values: &[u64],
+        stride: usize,
+        offset: usize,
+        indices: &[u32],
+    ) -> (u64, u64) {
+        let mut mins = [u64::MAX; 4];
+        let mut maxs = [u64::MIN; 4];
+        let (chunks, tail) = indices.as_chunks::<4>();
+        for chunk in chunks {
+            for lane in 0..4 {
+                let word = values[chunk[lane] as usize * stride + offset];
+                mins[lane] = mins[lane].min(word);
+                maxs[lane] = maxs[lane].max(word);
+            }
+        }
+        let mut min_scalar = mins.iter().copied().min().expect("four lanes");
+        let mut max_scalar = maxs.iter().copied().max().expect("four lanes");
+        for &i in tail {
+            let word = values[i as usize * stride + offset];
+            min_scalar = min_scalar.min(word);
+            max_scalar = max_scalar.max(word);
+        }
+        (min_scalar, max_scalar)
+    }
+
+    // Ascending sparse survivor sets — the filter-output shape the
+    // aggregate sinks actually see (gap span 0: shuffled, the
+    // non-engine random-gather diagnostic). Fresh per span (the TAGE
+    // law and cache honesty both).
+    fn survivors(rng: &mut Lcg, count: usize, gap_span: u64, bound: usize) -> Vec<u32> {
+        let mut v = Vec::with_capacity(count);
+        if gap_span == 0 {
+            for _ in 0..count {
+                v.push(u32::try_from(rng.next() % bound as u64).expect("bounded"));
+            }
+            return v;
+        }
+        let mut pos = rng.next() % gap_span;
+        for _ in 0..count {
+            if usize::try_from(pos).expect("u32-bounded") >= bound {
+                break;
+            }
+            v.push(u32::try_from(pos).expect("bounded"));
+            pos += 1 + rng.next() % gap_span;
+        }
+        v
+    }
+
+    fn median(mut xs: Vec<f64>) -> f64 {
+        xs.sort_by(f64::total_cmp);
+        xs[xs.len() / 2]
+    }
+
+    let mut rng = Lcg(0x5eed);
+
+    // (label, column words, stride, survivor count, gap span, calls
+    // per span). The displaced tiers are the regime the prediction
+    // named: ascending survivors whose mean byte-gap (~32 KB, two
+    // pages) defeats the stream trackers, so every gather is an
+    // un-prefetched DRAM miss — the shape a selective filter over a
+    // big column feeds the aggregate sinks (stride 3: the leaf batch's
+    // entry-major keys at arity 3). The 512B-gap tier is the
+    // prefetch-covered streaming regime; shuffled is the ledger's
+    // gather-wall diagnostic (not an engine shape — survivors ascend).
+    let tiers: &[(&str, usize, usize, usize, u64, usize)] = &[
+        ("DRAM-displaced s1", 1 << 25, 1, 8_000, 8_191, 8),
+        ("DRAM-displaced s3", 1 << 25, 3, 8_000, 2_730, 8),
+        ("DRAM-stream s1", 1 << 25, 1, 450_000, 127, 1),
+        ("DRAM-shuffled s1", 1 << 25, 1, 450_000, 0, 1),
+        ("L2-resident s1", 1 << 18, 1, 32_768, 13, 32),
+    ];
+    for &(label, words, stride, count, gap_span, calls) in tiers {
+        let values: Vec<u64> = (0..words as u64)
+            .map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+            .collect();
+        let bound = words / stride;
+
+        // Exactness cross-check across every arm on one shared set.
+        let shared = survivors(&mut rng, count, gap_span, bound);
+        let want_sum = fold_sum_u64_idx(&values, stride, 0, &shared);
+        assert_eq!(
+            scalar_addressed_sum_w4(&values, stride, 0, &shared),
+            want_sum
+        );
+        assert_eq!(
+            scalar_addressed_sum_w8(&values, stride, 0, &shared),
+            want_sum
+        );
+        assert_eq!(
+            scalar_addressed_sum_w4_unchecked(&values, stride, 0, &shared),
+            want_sum
+        );
+        assert_eq!(full_scalar_sum(&values, stride, 0, &shared), want_sum);
+        let want_mm = fold_min_max_u64_idx(&values, stride, 0, &shared);
+        assert_eq!(
+            scalar_addressed_min_max_w4(&values, stride, 0, &shared),
+            want_mm
+        );
+        assert_eq!(full_scalar_min_max(&values, stride, 0, &shared), want_mm);
+        if stride == 1 {
+            assert_eq!(simd_index_sum_s1(&values, &shared), want_sum);
+            assert_eq!(simd_index_min_max_s1(&values, &shared), want_mm);
+        }
+
+        // A span: `calls` kernel invocations, each over its own fresh
+        // survivor set, generated untimed. Returns (secs, indices).
+        let span = |f: ArmFn, sets: &[Vec<u32>]| -> (f64, usize) {
+            let start = Instant::now();
+            let mut sink = 0u128;
+            for set in sets {
+                sink = sink.wrapping_add(f(&values, set));
+            }
+            std::hint::black_box(sink);
+            let n: usize = sets.iter().map(Vec::len).sum();
+            (start.elapsed().as_secs_f64(), n)
+        };
+
+        let sum_shipped = |v: &[u64], s: &[u32]| fold_sum_u64_idx(v, stride, 0, s);
+        let sum_w4 = |v: &[u64], s: &[u32]| scalar_addressed_sum_w4(v, stride, 0, s);
+        let sum_w8 = |v: &[u64], s: &[u32]| scalar_addressed_sum_w8(v, stride, 0, s);
+        let sum_w4u = |v: &[u64], s: &[u32]| scalar_addressed_sum_w4_unchecked(v, stride, 0, s);
+        let sum_scalar = |v: &[u64], s: &[u32]| full_scalar_sum(v, stride, 0, s);
+        let sum_spec = |v: &[u64], s: &[u32]| simd_index_sum_s1(v, s);
+        let mut sum_arms: Vec<(&str, ArmFn)> = vec![
+            ("shipped-simd-index", &sum_shipped),
+            ("scalar-addr-w4", &sum_w4),
+            ("scalar-addr-w8", &sum_w8),
+            ("scalar-addr-w4-unchecked", &sum_w4u),
+            ("full-scalar", &sum_scalar),
+        ];
+        if stride == 1 {
+            sum_arms.push(("simd-index-spec-s1", &sum_spec));
+        }
+        let fold_mm = |(lo, hi): (u64, u64)| u128::from(lo) ^ u128::from(hi);
+        let mm_shipped = |v: &[u64], s: &[u32]| fold_mm(fold_min_max_u64_idx(v, stride, 0, s));
+        let mm_w4 = |v: &[u64], s: &[u32]| fold_mm(scalar_addressed_min_max_w4(v, stride, 0, s));
+        let mm_scalar = |v: &[u64], s: &[u32]| fold_mm(full_scalar_min_max(v, stride, 0, s));
+        let mm_spec = |v: &[u64], s: &[u32]| fold_mm(simd_index_min_max_s1(v, s));
+        let mut mm_arms: Vec<(&str, ArmFn)> = vec![
+            ("shipped-simd-index", &mm_shipped),
+            ("scalar-addr-w4", &mm_w4),
+            ("full-scalar", &mm_scalar),
+        ];
+        if stride == 1 {
+            mm_arms.push(("simd-index-spec-s1", &mm_spec));
+        }
+
+        for (op, arms) in [("sum", &sum_arms), ("minmax", &mm_arms)] {
+            let pairs = 31;
+            let mut ns: Vec<Vec<f64>> = vec![Vec::new(); arms.len()];
+            let fresh_sets = |rng: &mut Lcg| -> Vec<Vec<u32>> {
+                (0..calls)
+                    .map(|_| survivors(rng, count, gap_span, bound))
+                    .collect()
+            };
+            // Warmup: one untimed span per arm.
+            for (_, f) in arms {
+                span(*f, &fresh_sets(&mut rng));
+            }
+            for pair in 0..pairs {
+                // Interleaved same-session, order alternated per pair.
+                let run = |k: usize, ns: &mut Vec<Vec<f64>>, rng: &mut Lcg| {
+                    let sets = fresh_sets(rng);
+                    let (t, n) = span(arms[k].1, &sets);
+                    #[expect(
+                        clippy::cast_precision_loss,
+                        reason = "index counts are far below 2^52"
+                    )]
+                    ns[k].push(t / n as f64 * 1e9);
+                };
+                if pair % 2 == 0 {
+                    for k in 0..arms.len() {
+                        run(k, &mut ns, &mut rng);
+                    }
+                } else {
+                    for k in (0..arms.len()).rev() {
+                        run(k, &mut ns, &mut rng);
+                    }
+                }
+            }
+            let base = median(ns[0].clone());
+            let mut line = format!(
+                "{label} {op}: {} {base:.2} ns/idx (absolutes VOID under co-tenancy)",
+                arms[0].0
+            );
+            for (k, (name, _)) in arms.iter().enumerate().skip(1) {
+                let m = median(ns[k].clone());
+                write!(line, "; {name}/shipped = {:.3}", m / base).expect("String write");
+                // The live falsifier: the gravestone says no challenger
+                // approaches the predicted 1.3–2x at the displaced
+                // tiers (best measured: unchecked at 0.82); a ratio
+                // under 0.75 reopens it.
+                if label.starts_with("DRAM-displaced") {
+                    assert!(
+                        m / base > 0.75,
+                        "{label} {op}: challenger {name} beats the shipped kernel by >25% \
+                         ({m:.2} vs {base:.2} ns/idx) — the gravestone is wrong, reopen it"
+                    );
+                }
+            }
+            println!("{line}; pairs {pairs}");
+        }
+    }
+}
+
 /// Fold-throughput evidence (a gate; ignored: a timing
 /// test runs only by hand —
 /// `cargo test -p bumbledb --release fold_throughput -- --ignored --nocapture`).
