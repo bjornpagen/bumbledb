@@ -7,7 +7,7 @@
 //! (the dependency law: a downstream binding serializes it however it
 //! likes; the engine never learns the wire format).
 
-use super::{FieldId, RelationId, SchemaDescriptor, ValueType};
+use super::{FieldId, RelationId, SchemaDescriptor, StatementId, StatementKind, ValueType};
 use crate::value::Value;
 
 /// Every name → id pairing of one theory, in declaration order — named
@@ -15,12 +15,30 @@ use crate::value::Value;
 /// [`RowManifest`] list: the row id is the index, by the
 /// declaration-order law. Closed relations carry their extension — the
 /// vocabulary as data, so a foreign surface (render, future bindings)
-/// sees every ground axiom without touching Rust.
+/// sees every ground axiom without touching Rust. Statements ride in
+/// materialized order with their canonical spellings, so a foreign host
+/// can cite any statement id — a rejection's, a diagnostic's — without a
+/// Rust renderer in reach.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     /// One entry per relation; `RelationId` = the index, stated
     /// explicitly on each entry so a reader never re-derives it.
     pub relations: Vec<RelationManifest>,
+    /// One entry per MATERIALIZED statement (fresh auto-keys, closed
+    /// auto-keys, then declared statements —
+    /// [`SchemaDescriptor::materialized_statements`] owns the order);
+    /// `StatementId` = the index, stated explicitly.
+    pub statements: Vec<StatementManifest>,
+}
+
+/// One statement's identity, form tag, and canonical spelling
+/// ([`super::render::render_declared`] — the one renderer, a bijection
+/// on legal statements).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementManifest {
+    pub id: StatementId,
+    pub kind: StatementKind,
+    pub spelling: String,
 }
 
 /// One relation's names and ids.
@@ -65,6 +83,19 @@ impl SchemaDescriptor {
     #[must_use]
     pub fn manifest(&self) -> Manifest {
         Manifest {
+            statements: self
+                .materialized_statements()
+                .iter()
+                .enumerate()
+                .map(|(idx, statement)| {
+                    let id = StatementId(u16::try_from(idx).expect("statement count fits u16"));
+                    StatementManifest {
+                        id,
+                        kind: statement.kind(),
+                        spelling: super::render::render_declared(self, id),
+                    }
+                })
+                .collect(),
             relations: self
                 .relations
                 .iter()

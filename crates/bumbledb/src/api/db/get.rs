@@ -6,13 +6,126 @@
 //! determinant gets: no images, no plans, no snapshot.
 
 use super::encode_dyn::shape_mismatch;
-use super::{Fact, Fresh, FreshKeyed, WriteTx, plumbing};
+use super::{Fact, Fresh, FreshKeyed, InternMode, WriteTx, plumbing};
 use crate::encoding::encode_u64;
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
-use crate::schema::{FieldId, KeyId, RelationId, StatementId, StatementView};
+use crate::schema::{
+    FieldId, KeyId, KeyStatement, Relation, RelationId, Schema, StatementId, StatementView,
+};
 use crate::storage::delta::DeterminantOverlay;
 use crate::storage::read;
+
+/// Resolves a data-supplied `(relation, key statement)` pair to the
+/// sealed key — the shared shape gate of both point-read surfaces
+/// ([`WriteTx::get_dyn`] and [`super::Snapshot::get_dyn`]): the id must
+/// name a `Functionality` statement ON the queried relation, or the
+/// mismatch is a typed error, never an index panic.
+pub(super) fn key_statement_of(
+    schema: &Schema,
+    relation: RelationId,
+    key: StatementId,
+) -> Result<(KeyId, &KeyStatement)> {
+    let Some(rel) = schema.relation_checked(relation) else {
+        return Err(FactShapeError::UnknownRelation { relation }.into());
+    };
+    let Some(StatementView::Key(key_id, statement)) = schema.statement_checked(key) else {
+        return Err(FactShapeError::NotAKeyStatement {
+            relation,
+            statement: key,
+        }
+        .into());
+    };
+    if statement.relation != relation || !rel.keys().contains(&key_id) {
+        return Err(FactShapeError::NotAKeyStatement {
+            relation,
+            statement: key,
+        }
+        .into());
+    }
+    Ok((key_id, statement))
+}
+
+/// Encodes `key_values` into determinant bytes — the concatenated
+/// canonical field encodings in statement projection order,
+/// byte-identical to what `keys::determinant_image` slices out of a
+/// stored fact — under whichever string resolver the transaction kind
+/// supplies (pending-first inside a write transaction, the committed
+/// dictionary on a snapshot). `Ok(false)` = a string value was never
+/// interned: no fact can carry it.
+pub(super) fn encode_determinant_with(
+    schema: &Schema,
+    relation: RelationId,
+    projection: &[FieldId],
+    key_values: &[Value],
+    out: &mut Vec<u8>,
+    mut resolve_str: impl FnMut(&str) -> Result<Option<u64>>,
+) -> Result<bool> {
+    let rel = schema.relation(relation);
+    if key_values.len() != projection.len() {
+        return Err(FactShapeError::ArityMismatch {
+            relation,
+            expected: projection.len(),
+            supplied: key_values.len(),
+        }
+        .into());
+    }
+    for (value, &field) in key_values.iter().zip(projection) {
+        if let Err(mismatch) = crate::schema::value_matches(value, &rel.field(field).value_type) {
+            return Err(shape_mismatch(relation, field, mismatch).into());
+        }
+        match value {
+            Value::String(raw) => {
+                let text = std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
+                match resolve_str(text)? {
+                    Some(id) => out.extend_from_slice(&encode_u64(id)),
+                    None => return Ok(false),
+                }
+            }
+            // Every self-encoding value takes the one type-aware
+            // literal encoder — a fixed-width interval position
+            // contributes its 8-byte start, a general one its 16
+            // bytes, exactly what `determinant_image` slices out of
+            // a stored fact (String peeled above per the encoder's
+            // contract; a mask value is unreachable — `value_matches`
+            // rejected it: not a field type).
+            encodable => crate::encoding::encode_literal(
+                encodable,
+                rel.field(field).value_type.type_desc(),
+                out,
+            ),
+        }
+    }
+    Ok(true)
+}
+
+/// A **closed** relation's determinant lookup: virtual storage holds no
+/// `U` determinants, so the key's determinant bytes re-derive per sealed
+/// row by the same slicing the commit path uses — ≤256 rows, L1-resident
+/// (`docs/architecture/50-storage.md` § virtual relations). Shared by
+/// both transaction kinds (a closed relation reads identically
+/// everywhere: no delta arm can exist — writes are refused at entry).
+pub(super) fn closed_fact_by_determinant<'rel>(
+    rel: &'rel Relation,
+    statement: &KeyStatement,
+    determinant: &[u8],
+) -> Option<&'rel [u8]> {
+    let extension = rel.extension()?;
+    let mut derived =
+        crate::storage::keys::DeterminantImage::scratch_with_capacity(determinant.len());
+    for row in extension {
+        crate::storage::keys::determinant_image(
+            rel.layout(),
+            &statement.projection,
+            &row.fact,
+            &mut derived,
+        );
+        if derived.as_bytes() == determinant {
+            return Some(&row.fact);
+        }
+    }
+    None
+}
 
 impl<S> WriteTx<'_, S> {
     /// Whether `fact` is in the transaction's **final state** — reads
@@ -134,34 +247,18 @@ impl<S> WriteTx<'_, S> {
         key: StatementId,
         key_values: &[Value],
     ) -> Result<Option<Vec<Value>>> {
-        let Some(rel) = self.schema.relation_checked(relation) else {
-            return Err(FactShapeError::UnknownRelation { relation }.into());
-        };
-        let Some(StatementView::Key(key_id, statement)) = self.schema.statement_checked(key) else {
-            return Err(FactShapeError::NotAKeyStatement {
-                relation,
-                statement: key,
-            }
-            .into());
-        };
-        if statement.relation != relation || !rel.keys().contains(&key_id) {
-            return Err(FactShapeError::NotAKeyStatement {
-                relation,
-                statement: key,
-            }
-            .into());
-        }
+        let (key_id, statement) = key_statement_of(self.schema, relation, key)?;
         let projection = &statement.projection;
-        if key_values.len() != projection.len() {
-            return Err(FactShapeError::ArityMismatch {
-                relation,
-                expected: projection.len(),
-                supplied: key_values.len(),
-            }
-            .into());
-        }
         self.with_scratch(|tx, determinant| {
-            if !tx.encode_determinant(relation, projection, key_values, determinant)? {
+            let (delta, view, schema) = (&tx.delta, &tx.view, tx.schema);
+            if !encode_determinant_with(
+                schema,
+                relation,
+                projection,
+                key_values,
+                determinant,
+                |text| delta.resolve_str(view, text),
+            )? {
                 return Ok(None);
             }
             tx.fact_by_determinant(relation, key_id, determinant)?
@@ -170,47 +267,29 @@ impl<S> WriteTx<'_, S> {
         })
     }
 
-    /// Encodes `key_values` into determinant bytes — the concatenated canonical
-    /// field encodings in statement projection order, byte-identical to
-    /// what `keys::determinant_image` slices out of a stored fact. `Ok(false)` =
-    /// a string or bytes value was never interned: no fact can carry it.
-    fn encode_determinant(
-        &self,
-        relation: RelationId,
-        projection: &[FieldId],
-        key_values: &[Value],
-        out: &mut Vec<u8>,
-    ) -> Result<bool> {
-        let rel = self.schema.relation(relation);
-        for (value, &field) in key_values.iter().zip(projection) {
-            if let Err(mismatch) = crate::schema::value_matches(value, &rel.field(field).value_type)
-            {
-                return Err(shape_mismatch(relation, field, mismatch).into());
-            }
-            match value {
-                Value::String(raw) => {
-                    let text =
-                        std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
-                    match self.delta.resolve_str(&self.view, text)? {
-                        Some(id) => out.extend_from_slice(&encode_u64(id)),
-                        None => return Ok(false),
-                    }
-                }
-                // Every self-encoding value takes the one type-aware
-                // literal encoder — a fixed-width interval position
-                // contributes its 8-byte start, a general one its 16
-                // bytes, exactly what `determinant_image` slices out of
-                // a stored fact (String peeled above per the encoder's
-                // contract; a mask value is unreachable — `value_matches`
-                // rejected it: not a field type).
-                encodable => crate::encoding::encode_literal(
-                    encodable,
-                    rel.field(field).value_type.type_desc(),
-                    out,
-                ),
-            }
+    /// Final-state membership of a dynamic fact — the dynamic sibling of
+    /// [`WriteTx::contains`], completing the schema-generic write surface
+    /// (`docs/architecture/70-api.md` § the dyn lane): one [`Value`] per
+    /// field in declaration order, judged against the same base + pending
+    /// delta view the commit judges. Never mints: a string value known to
+    /// neither the delta nor the committed dictionary proves the fact
+    /// absent everywhere. A **closed** relation answers from its sealed
+    /// extension (virtual storage — no `M` rows exist).
+    ///
+    /// # Errors
+    ///
+    /// `FactShape` on an unknown relation id or an arity/type/UTF-8
+    /// mismatch (typed, never a panic — the id-addressed surface is
+    /// data); `Lmdb` on the membership probe or dictionary reads.
+    pub fn contains_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
+        if !self.encode_dyn(rel, values, InternMode::Resolve)? {
+            return Ok(false);
         }
-        Ok(true)
+        if let Some(extension) = self.schema.relation(rel).extension() {
+            let fact = self.scratch.as_slice();
+            return Ok(extension.iter().any(|row| row.fact.as_ref() == fact));
+        }
+        self.delta.contains(&self.view, rel, &self.scratch)
     }
 
     /// The shared lookup leg: delta determinant map first (`Present` → the
@@ -218,11 +297,8 @@ impl<S> WriteTx<'_, S> {
     /// view — `U` get → `F` fetch.
     ///
     /// A **closed** relation resolves against its sealed extension instead
-    /// — virtual storage, no `U` determinants exist
-    /// (`docs/architecture/50-storage.md` § virtual relations): the key's
-    /// determinant bytes are re-derived per row by the same slicing the commit
-    /// path uses, and the scan is ≤256 rows, L1-resident — O(rows) is
-    /// honest and tiny. No delta arm: writes are refused at entry.
+    /// ([`closed_fact_by_determinant`] — virtual storage, no `U`
+    /// determinants exist). No delta arm: writes are refused at entry.
     fn fact_by_determinant(
         &self,
         relation: RelationId,
@@ -231,21 +307,8 @@ impl<S> WriteTx<'_, S> {
     ) -> Result<Option<&[u8]>> {
         let rel = self.schema.relation(relation);
         let statement = self.schema.key(key);
-        if let Some(extension) = rel.extension() {
-            let mut derived =
-                crate::storage::keys::DeterminantImage::scratch_with_capacity(determinant.len());
-            for row in extension {
-                crate::storage::keys::determinant_image(
-                    rel.layout(),
-                    &statement.projection,
-                    &row.fact,
-                    &mut derived,
-                );
-                if derived.as_bytes() == determinant {
-                    return Ok(Some(&row.fact));
-                }
-            }
-            return Ok(None);
+        if rel.is_closed() {
+            return Ok(closed_fact_by_determinant(rel, statement, determinant));
         }
         match self.delta.determinant_overlay(key, determinant) {
             Some(DeterminantOverlay::Present(bytes)) => Ok(Some(bytes)),
@@ -261,7 +324,7 @@ impl<S> WriteTx<'_, S> {
     /// ids pending-first (a fact inserted this transaction carries
     /// provisional ids) — the dynamic sibling of [`Fact::decode_write`].
     fn decode_values(&self, relation: RelationId, fact: &[u8]) -> Result<Vec<Value>> {
-        super::encode_dyn::decode_values(fact, self.schema.relation(relation).layout(), |id| {
+        crate::encoding::decode_values(fact, self.schema.relation(relation).layout(), |id| {
             Ok(Box::from(
                 plumbing::resolve_string_write(self, id)?.as_bytes(),
             ))

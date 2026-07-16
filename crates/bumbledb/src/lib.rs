@@ -160,7 +160,20 @@ pub use ir::{
     MAX_CONDITION_DEPTH, MAX_PREDICATES, MAX_RULES, MaskTerm, ParamId, PredId, PredicateDef,
     Program, ProgramRef, Query, Rule, Term, Value, VarId,
 };
-pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
+// The bindings roster (docs/architecture/70-api.md § the SchemaSpec
+// bindings contract): everything a foreign-host bridge needs, reachable
+// from the crate root — the declared/spec schema surface with its typed
+// errors, the fingerprint identity, and the dynamic-surface error
+// vocabulary. `Db`, transactions, prepared queries, `Value`, the IR
+// vocabulary, and the rejection types (`Violation`/`Violations`) are
+// re-exported above.
+pub use error::{CitedFact, FactShapeError, SchemaError, ValidationError};
+pub use schema::fingerprint::SchemaFingerprint;
+pub use schema::{
+    FieldId, FreshField, Manifest, RelationId, RenderedFact, RenderedViolation, Schema,
+    SchemaDescriptor, SchemaSpec, SchemaSpecError, StatementId, StatementKind, Theory,
+    render_rejection,
+};
 pub use verify_store::{StoreFinding, StoreReport};
 
 /// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`

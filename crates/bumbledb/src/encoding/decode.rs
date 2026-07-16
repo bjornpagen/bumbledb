@@ -222,3 +222,38 @@ pub fn decode_field(
         }
     }
 }
+
+/// Decodes canonical fact bytes into owned dynamic [`Value`]s — the one
+/// body behind the write transaction's point-read decode
+/// (`WriteTx::get_dyn`), the snapshot's point-read and export decodes
+/// (`Snapshot::get_dyn` / `Snapshot::scan`), and the commit boundary's
+/// rejection decode (`storage/commit/write.rs`); only intern resolution
+/// differs by context (pending-first inside a write transaction, the
+/// committed dictionary on a snapshot, pending-then-committed at
+/// rejection), so the resolver is the parameter.
+pub(crate) fn decode_values(
+    fact: &[u8],
+    layout: &FactLayout,
+    mut resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
+) -> crate::error::Result<Vec<crate::value::Value>> {
+    use crate::value::Value;
+    (0..layout.field_count())
+        .map(|idx| {
+            Ok(match decode_field(fact, layout, idx)? {
+                ValueRef::Bool(v) => Value::Bool(v),
+                ValueRef::U64(v) => Value::U64(v),
+                ValueRef::I64(v) => Value::I64(v),
+                ValueRef::String(id) => Value::String(resolve_str(id)?),
+                ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
+                // A fixed-width field decodes to the same checked host
+                // interval — the end was derived from the type's width.
+                ValueRef::IntervalU64(interval) | ValueRef::FixedIntervalU64(interval) => {
+                    Value::IntervalU64(interval)
+                }
+                ValueRef::IntervalI64(interval) | ValueRef::FixedIntervalI64(interval) => {
+                    Value::IntervalI64(interval)
+                }
+            })
+        })
+        .collect()
+}

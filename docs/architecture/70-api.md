@@ -191,8 +191,10 @@ categorical, not temporal: **the macro speaks the theory language — schema and
 statements, whatever dependency theory grows into — and never the query language.**
 Statements are code; queries are data; that line does not move even as everything
 on the theory side of it does. The descriptor path (`SchemaDescriptor` implementing
-`Theory`) remains the *data* schema surface — the bench crate, the oracle, and any
-future binding that needs runtime schemas — existing, not blessed.
+`Theory`) is the *data* schema surface — the bench crate, the oracle, and any
+binding that needs runtime schemas — and its named-plain-data root,
+`SchemaSpec`, is frozen as the bindings contract (§ the SchemaSpec bindings
+contract below).
 
 ## Id constants and the manifest — named data, not ergonomics
 
@@ -208,13 +210,62 @@ how a typo'd relation becomes a compile error).
 
 The theory renders a **manifest** (`Theory::manifest()` → `schema::Manifest`): every
 name → id pairing as a plain Rust value straight off the descriptor — relations and
-fields with their ids stated explicitly, each field's structural type, and each
+fields with their ids stated explicitly, each field's structural type, each
 closed relation's **extension table**
-(relation → handle → declaration-order id → (column, value) pairs), so foreign
-surfaces see the vocabulary without touching Rust. A foreign host gets the same
+(relation → handle → declaration-order id → (column, value) pairs), and the
+**statement table** (materialized statement id → form tag (`StatementKind`) →
+canonical spelling, through the one renderer), so foreign
+surfaces see the vocabulary — and can cite any statement id a rejection or
+diagnostic names — without touching Rust. A foreign host gets the same
 numbers as data. No serde anywhere (the dependency law): a downstream binding
 serializes the value however it likes; the engine never learns the wire format.
 Both are emission; the grammar is untouched.
+
+## The SchemaSpec bindings contract (normative)
+
+The runtime descriptor path is public, complete, and FROZEN as the bindings
+contract: `schema::SchemaSpec` is the schema as **named plain data** — owned
+strings, vectors, integers, and the shared `Value` sum; no serde, no wire
+format (a bindings crate marshals it however it likes; the engine never learns
+the encoding). The shape mirrors the grammar one-for-one:
+
+- **Relations** (`RelationSpec`): name, fields (`FieldSpec`: name, structural
+  `ValueType`, optional host-newtype name, `fresh` mark), and an optional
+  extension (`RowSpec` ground axioms — the option is the closedness, both
+  tiers through one shape). Newtype names are host-side nominal vocabulary
+  carried only for handle resolution; they are dropped at lowering and are
+  not fingerprint inputs, exactly as the macro's `as` names are emission.
+- **Statements** (`StatementSpec`), tagged by form: `Fd` (no selection — the
+  FD-with-selection shape is unrepresentable), `Containment { bidirectional }`
+  (`bidirectional: true` IS the `==` spelling, lowered to the two adjacent
+  containments, `source <= target` first), and `Cardinality { window }` with
+  `WindowSpec` spelling the window exactly as written (`Exact(n)`,
+  `Range { lo, hi }`, `Floor(lo)`). Projections are field-name vectors;
+  selections are (field, literal-or-set) pairs over `LiteralSpec` — plain
+  `Value`s or closed-relation handles by name, resolved through the selected
+  field's newtype exactly as the macro resolves bare handles.
+
+`SchemaSpec::descriptor()` lowers to the `SchemaDescriptor` and does exactly
+what macro EXPANSION does — name→id resolution (declaration order mints every
+id) and the canonical-utterance ban table over window spellings and literal
+sets — returning the typed `SchemaSpecError`, which enumerates EVERY
+unresolvable name (relation, field, handle) and banned spelling in one pass
+(a foreign host repairs its whole spec in one round trip), each window error
+naming the canonical form verbatim as the ban table does. Everything semantic
+beyond names stays where the macro defers it: `SchemaDescriptor::validate`
+inside `Db::create`/`Db::open`, the typed `SchemaError` — the same
+two-boundary split.
+
+**Macro and spec produce indistinguishable descriptors**: the same theory
+built through either surface validates to the same sealed schema and carries
+the same fingerprint (pinned by `tests/schema_spec.rs`, which builds a theory
+using every construct — both closed tiers, `fresh`, fixed-width intervals,
+all three statement forms, `==`, literal-set selections, every legal window
+spelling — both ways and asserts fingerprint equality). The bindings roster
+is reachable from the crate root: `Db`, `Snapshot`/`WriteTx`, `Theory`,
+`SchemaDescriptor`, `SchemaSpec` + `SchemaSpecError`, `Value`, the `ir`
+module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
+`Violation`/`Violations`, and `SchemaFingerprint`.
 
 ## Environment lifecycle
 
@@ -561,7 +612,10 @@ proposition the commit checks in one integer compare.
   They abort the query; the read transaction remains usable.
 - **Write errors:** `CommitRejected` (raised at commit, against the final state,
   carrying the failing phase's COMPLETE violation set in statement order —
-  `lean/Bumbledb/Txn.lean: rejection_is_complete`), `GenerationMoved`
+  `lean/Bumbledb/Txn.lean: rejection_is_complete` — with each citation's
+  offending facts ALSO decoded to owned values at the rejection boundary,
+  renderable to named plain data via `schema::render_rejection`;
+  `30-dependencies.md` § rendering the rejection), `GenerationMoved`
   (the witness compare, § conditional writes — carrying the two generations),
   `ForeignSnapshot` (a witness of another database), `FreshExhausted`,
   `FactShape` (the dynamic surface's shape roster — including the dyn-boundary
@@ -633,6 +687,41 @@ surface — a stated decision: it reports "this fact cannot exist" for never-int
 values and is the membership-probe building block. `Db::compact` is safe concurrent
 with a writer (LMDB's copy transaction reads one consistent snapshot; the copy simply
 omits later commits). Backup = quiesced file copy (`50-storage.md`).
+
+## The dyn lane (the schema-generic roster, normative)
+
+A schema-generic bridge — the Node bindings, ETL tooling, any host without the
+generated fact structs — drives the FULL write-and-read surface through ids and
+`Value` rows alone. The roster, complete:
+
+- **Writes:** `tx.insert_dyn(relation, &[Value])` / `tx.delete_dyn(...)` (the
+  delete+insert identity idiom included: explicit fresh values preserve
+  identity, high-waters advance past them), `Db::bulk_load_dyn` (§ ETL).
+- **Fresh minting:** `Db::fresh_field(relation, field)` resolves the witness
+  once; `tx.alloc_at(witness) -> u64` mints per row and RETURNS the minted id
+  to the caller — the dyn lane's mint is the same alloc-then-insert shape the
+  typed lane uses (`alloc::<NewType>()` then `insert`), so there is no second
+  insert-with-omitted-fields spelling (one meaning, one spelling).
+- **Point reads, both transaction kinds:** `tx.contains_dyn` / `tx.get_dyn`
+  observe the final-state view the judgment judges (base + pending delta);
+  `snap.contains_dyn` / `snap.get_dyn` observe the snapshot's committed state.
+  `get_dyn` takes `(relation, key statement id, key values in projection
+  order)`; closed relations answer from their sealed extensions (virtual
+  storage), and an out-of-roster handle word is an honest miss, not an error.
+- **Scans:** `snap.scan(relation)` (dynamic export, § ETL).
+- **Queries:** prepared queries already take parameter values as plain data at
+  execute time (`BindValue` scalars / `ParamArg` sets of `ir::Value`) and
+  answers come back as owned decoded rows (`Answers`, one-copy) — confirmed
+  complete for schema-generic hosts; no generated type appears anywhere on the
+  bind or answer path.
+
+The trust boundary is uniform: malformed arity, wrong value types, non-UTF-8
+strings, unknown relation ids, mis-aimed key-statement ids are typed
+`FactShape` errors — never panics (the adversarial sweep,
+`crates/bumbledb/tests/dyn_surface.rs`). A rejected commit is consumable the
+same way: decoded cited facts ride the violation set and
+`schema::render_rejection` lowers it to named plain data
+(`30-dependencies.md` § rendering the rejection).
 
 ## Observability
 

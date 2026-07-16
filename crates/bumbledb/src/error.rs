@@ -989,6 +989,28 @@ impl Violation {
     }
 }
 
+/// One cited fact of a violation, decoded to owned field values — the
+/// bindings-consumable twin of the violation's canonical fact bytes
+/// (`docs/architecture/30-dependencies.md` § rendering the rejection).
+/// Decoding happens AT rejection time, inside the commit boundary,
+/// because that is the only time it is possible: an inserted fact's
+/// `str` fields may carry provisional intern ids minted by the very
+/// transaction the rejection aborts — after the abort those ids resolve
+/// nowhere, so a post-hoc decode helper would misread genuine rejections
+/// as corruption. `values` are in sealed field order (a closed
+/// relation's synthetic id first), `str` fields resolved to owned
+/// strings; the allocation is acceptable at rejection time (the
+/// rejection IS the repair diagnostic).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CitedFact {
+    /// The cited fact's relation: the statement's own relation for a
+    /// key, the SOURCE relation for a containment (the judgment speaks
+    /// about sources), the TARGET (parent) relation for a window.
+    pub relation: RelationId,
+    /// One decoded [`Value`] per sealed field, in declaration order.
+    pub values: Box<[crate::value::Value]>,
+}
+
 /// The complete violation set of one rejected commit — sealed: nonempty,
 /// one citation per statement (per direction for a containment), sorted
 /// by materialized statement order. The only constructors sort and dedup
@@ -996,8 +1018,24 @@ impl Violation {
 /// unrepresentable — a rejection IS this set, never an arbitrary
 /// representative (`docs/architecture/30-dependencies.md` § judged on
 /// final states).
+///
+/// Alongside each citation ride its **decoded cited facts**
+/// ([`CitedFact`], via [`Violations::cited_facts`] /
+/// [`Violations::citations`]): the commit boundary attaches them at
+/// rejection time — while the rejecting transaction's pending interns
+/// are still resolvable — so a bindings layer renders the whole
+/// rejection from plain data without the typed fact structs
+/// (`docs/architecture/30-dependencies.md` § rendering the rejection).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Violations(Box<[Violation]>);
+pub struct Violations {
+    citations: Box<[Violation]>,
+    /// Per citation, its decoded cited facts (the violation's `fact`,
+    /// then `incumbent` where one exists) — parallel to `citations`.
+    /// Empty until the commit boundary's decode pass attaches it: the
+    /// collectors seal bytes only (they run per probe, before the
+    /// complete set exists), and the one rejection exit decorates once.
+    cited: Box<[Box<[CitedFact]>]>,
+}
 
 impl Violations {
     /// Seals a collector's raw finds: stable-sorts by citation (so the
@@ -1010,25 +1048,69 @@ impl Violations {
         }
         found.sort_by_key(Violation::citation);
         found.dedup_by_key(|violation| violation.citation());
-        Some(Self(found.into_boxed_slice()))
+        Some(Self {
+            citations: found.into_boxed_slice(),
+            cited: Box::new([]),
+        })
     }
 
     /// The singleton set — a lone violation is trivially sealed. The
     /// judgment probes convict through this shape and the collectors
     /// flatten it ([`Violations::seal`] re-sorts the union).
     pub(crate) fn one(violation: Violation) -> Self {
-        Self(Box::new([violation]))
+        Self {
+            citations: Box::new([violation]),
+            cited: Box::new([]),
+        }
+    }
+
+    /// Attaches the decode pass's cited facts, one list per citation —
+    /// the commit boundary's one decoration site
+    /// (`storage/commit/write.rs`).
+    ///
+    /// # Panics
+    ///
+    /// When `cited` is not parallel to the citations — the decode pass
+    /// walks [`Violations::as_slice`], so a mismatch is a programmer
+    /// error, never data.
+    pub(crate) fn attach_cited(self, cited: Vec<Box<[CitedFact]>>) -> Self {
+        assert_eq!(
+            cited.len(),
+            self.citations.len(),
+            "cited-fact lists are parallel to citations"
+        );
+        Self {
+            citations: self.citations,
+            cited: cited.into_boxed_slice(),
+        }
     }
 
     /// Every violation, in citation order.
     #[must_use]
     pub fn as_slice(&self) -> &[Violation] {
-        &self.0
+        &self.citations
+    }
+
+    /// The decoded cited facts of the citation at `index` — the
+    /// violation's `fact` first, then its `incumbent` where one exists.
+    /// Empty for a set no decode pass decorated (the sweeper's re-play
+    /// findings) and for an out-of-range index.
+    #[must_use]
+    pub fn cited_facts(&self, index: usize) -> &[CitedFact] {
+        self.cited.get(index).map_or(&[], AsRef::as_ref)
+    }
+
+    /// Iterates citations paired with their decoded cited facts.
+    pub fn citations(&self) -> impl Iterator<Item = (&Violation, &[CitedFact])> {
+        self.citations
+            .iter()
+            .enumerate()
+            .map(|(index, violation)| (violation, self.cited_facts(index)))
     }
 
     /// Iterates the violations, in citation order.
     pub fn iter(&self) -> std::slice::Iter<'_, Violation> {
-        self.0.iter()
+        self.citations.iter()
     }
 }
 
@@ -1037,7 +1119,7 @@ impl IntoIterator for Violations {
     type IntoIter = std::vec::IntoIter<Violation>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_vec().into_iter()
+        self.citations.into_vec().into_iter()
     }
 }
 
@@ -1046,7 +1128,7 @@ impl<'a> IntoIterator for &'a Violations {
     type IntoIter = std::slice::Iter<'a, Violation>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
+        self.citations.iter()
     }
 }
 

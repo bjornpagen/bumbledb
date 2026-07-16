@@ -116,7 +116,7 @@ impl<S> Snapshot<'_, S> {
         let iter = read::scan(&self.txn, self.schema, rel)?;
         Ok(iter.map(move |entry| {
             let (_, bytes) = entry?;
-            super::encode_dyn::decode_values(bytes, layout, |id| {
+            crate::encoding::decode_values(bytes, layout, |id| {
                 Ok(Box::from(dict::resolve(&self.txn, id)?))
             })
         }))
@@ -124,6 +124,87 @@ impl<S> Snapshot<'_, S> {
 }
 
 impl<S> Snapshot<'_, S> {
+    /// Committed-state membership of a dynamic fact — the snapshot
+    /// sibling of [`super::WriteTx::contains_dyn`], completing the
+    /// schema-generic read surface (`docs/architecture/70-api.md` § the
+    /// dyn lane): one [`Value`] per field in declaration order, probed
+    /// against this snapshot's one consistent state. Never interns: a
+    /// string value the committed dictionary does not know proves the
+    /// fact absent. A **closed** relation answers from its sealed
+    /// extension (virtual storage — no `M` rows exist).
+    ///
+    /// # Errors
+    ///
+    /// `FactShape` on an unknown relation id or an arity/type/UTF-8
+    /// mismatch (typed, never a panic — ids at this surface are data);
+    /// `Lmdb` on the probe or dictionary reads.
+    pub fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
+        let Some(relation) = self.schema.relation_checked(rel) else {
+            return Err(FactShapeError::UnknownRelation { relation: rel }.into());
+        };
+        let mut refs = Vec::with_capacity(values.len());
+        if !super::encode_dyn::dyn_value_refs(rel, values, relation.fields(), &mut refs, |text| {
+            dict::lookup_str(&self.txn, text)
+        })? {
+            return Ok(false);
+        }
+        let mut fact = Vec::new();
+        crate::encoding::encode_fact(&refs, relation.layout(), &mut fact);
+        if let Some(extension) = relation.extension() {
+            return Ok(extension.iter().any(|row| row.fact.as_ref() == fact));
+        }
+        read::fact_row(&self.txn, rel, &fact).map(|row| row.is_some())
+    }
+
+    /// Point lookup of the full fact through any key statement of
+    /// `relation`, against committed state — the snapshot sibling of
+    /// [`super::WriteTx::get_dyn`]: `key_values` are the key statement's
+    /// projected fields in statement projection order, type-checked
+    /// against the projection; the decoded fact comes back as owned
+    /// [`Value`]s (strings resolved through the committed dictionary). A
+    /// **closed** relation resolves against its sealed extension.
+    ///
+    /// # Errors
+    ///
+    /// `FactShape` when `relation` is unknown, `key` is not one of its
+    /// `Functionality` statements, or `key_values` mismatch the
+    /// projection in arity or type; `Lmdb`/`Corruption` from storage.
+    pub fn get_dyn(
+        &self,
+        relation: RelationId,
+        key: crate::schema::StatementId,
+        key_values: &[Value],
+    ) -> Result<Option<Vec<Value>>> {
+        let (_, statement) = super::get::key_statement_of(self.schema, relation, key)?;
+        let mut determinant = Vec::new();
+        if !super::get::encode_determinant_with(
+            self.schema,
+            relation,
+            &statement.projection,
+            key_values,
+            &mut determinant,
+            |text| dict::lookup_str(&self.txn, text),
+        )? {
+            return Ok(None);
+        }
+        let rel = self.schema.relation(relation);
+        let bytes = if rel.is_closed() {
+            super::get::closed_fact_by_determinant(rel, statement, &determinant)
+        } else {
+            match read::determinant_row(&self.txn, relation, statement.id, &determinant)? {
+                Some(row) => Some(read::fetch(&self.txn, self.schema, relation, row)?),
+                None => None,
+            }
+        };
+        bytes
+            .map(|fact| {
+                crate::encoding::decode_values(fact, rel.layout(), |id| {
+                    Ok(Box::from(dict::resolve(&self.txn, id)?))
+                })
+            })
+            .transpose()
+    }
+
     /// The typed sibling of [`Snapshot::scan`]: decodes each fact into its
     /// `schema!`-generated struct via [`Fact::decode`]. The dynamic form
     /// remains the ETL pairing for [`Db::bulk_load`]; this one is for

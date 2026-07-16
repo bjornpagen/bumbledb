@@ -4,10 +4,46 @@
 //! Construction is the validation boundary (parse, don't validate): the only
 //! way to obtain a [`Schema`] is [`SchemaDescriptor::validate`], and everything
 //! downstream trusts the sealed witness without re-checking.
+//!
+//! # What a descriptor can hold — the parity roster (normative)
+//!
+//! [`SchemaDescriptor`] is the one schema representation: the `schema!`
+//! macro emits it directly, the runtime [`SchemaSpec`] path
+//! (`docs/architecture/70-api.md` § the `SchemaSpec` bindings contract)
+//! lowers to it, and both are judged by the same
+//! [`SchemaDescriptor::validate`]. Exhaustively, a descriptor holds:
+//!
+//! - **Relations** ([`RelationDescriptor`]): name plus ordered fields.
+//!   Field types ([`ValueType`]): `bool`, `u64`, `i64`, `str`
+//!   ([`ValueType::String`]), `bytes<N>` ([`ValueType::FixedBytes`],
+//!   N ∈ 1..=64), and the interval family ([`ValueType::Interval`] —
+//!   general `interval<i64|u64>`, or fixed-width `interval<T, w>` with
+//!   `width: Some(w)`). Field generation ([`Generation`]): `fresh` marks
+//!   on the mint fields.
+//! - **Closed relations** — both tiers through one shape:
+//!   `extension: Some(rows)` marks the relation closed (the option IS
+//!   the kind); each [`Row`] is a ground axiom (handle + one [`Value`]
+//!   per declared payload column, bare-handle vocabularies carrying zero
+//!   columns). Validation prepends the synthetic (`id`, `u64`) handle
+//!   field, so sealed statement ids address `FieldId(0)` as the handle.
+//! - **Statements** ([`StatementDescriptor`]), the three forms:
+//!   `Functionality` (the FD key form `R(X) -> R` — no selection, by
+//!   representation), `Containment` (`A(X | φ) <= B(Y | ψ)`; `==` is the
+//!   two adjacent containments, `A <= B` first — no bidirectional
+//!   variant exists), and `Cardinality` (the window
+//!   `B(Y | ψ) <={lo..hi} A(X | φ)`, `hi: None` the `*` spelling).
+//!   [`Side`] selections σ bind fields to literals or literal SETS
+//!   ([`LiteralSet`], read disjunctively) over the one [`Value`] sum —
+//!   scalar literals, interval literals, and closed-relation handles
+//!   (lowered to their declaration-order row-id words).
+//!
+//! Nothing else exists: no field-level constraint vocabulary, no order
+//! statements, no relation-kind enum, no per-statement names.
 
 pub mod fingerprint;
 pub mod manifest;
 pub mod render;
+pub mod spec;
 
 mod relation;
 #[cfg(test)]
@@ -19,7 +55,12 @@ use crate::encoding::FactLayout;
 use crate::error::FactShapeError;
 use crate::value::Value;
 
-pub use manifest::{FieldManifest, Manifest, RelationManifest, RowManifest};
+pub use manifest::{FieldManifest, Manifest, RelationManifest, RowManifest, StatementManifest};
+pub use render::{RenderedFact, RenderedViolation, render_rejection};
+pub use spec::{
+    FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SchemaSpec, SchemaSpecError,
+    SideSpec, SpecIssue, StatementSpec, WindowSpec,
+};
 
 /// Dense relation id: the relation's index in schema declaration order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -757,6 +798,32 @@ pub struct CardinalityStatement {
     /// commit into [`crate::storage::commit::judgment::Selections`]
     /// exactly as containments' are.
     pub(crate) checks: CompiledSides,
+}
+
+/// The statement-form tag, as plain data — the kind a bindings layer
+/// reads off a manifest entry or a rendered violation without matching
+/// the payload-carrying enums ([`StatementDescriptor`] /
+/// [`crate::Violation`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StatementKind {
+    /// `R(X) -> R` — the FD key form.
+    Functionality,
+    /// `A(X | φ) <= B(Y | ψ)`.
+    Containment,
+    /// `B(Y | ψ) <={lo..hi} A(X | φ)` — the cardinality window.
+    Cardinality,
+}
+
+impl StatementDescriptor {
+    /// The form tag of this statement.
+    #[must_use]
+    pub const fn kind(&self) -> StatementKind {
+        match self {
+            Self::Functionality { .. } => StatementKind::Functionality,
+            Self::Containment { .. } => StatementKind::Containment,
+            Self::Cardinality { .. } => StatementKind::Cardinality,
+        }
+    }
 }
 
 /// The global materialized-order spine: a [`StatementId`] selects one typed

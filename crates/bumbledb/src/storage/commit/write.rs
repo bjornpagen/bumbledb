@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::error::{CorruptionError, Error, Result};
+use crate::error::{CorruptionError, Error, Result, Violations};
 use crate::obs;
 use crate::schema::RelationId;
 use crate::storage::delta::WriteDelta;
@@ -119,7 +119,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         let selections = judgment::Selections::encode(&delta, &view)?;
         plan_commit(&delta, schema, selections)
     };
-    let report = commit_bounded(|| {
+    let outcome = commit_bounded(|| {
         let Applied {
             mut txn,
             row_id_next,
@@ -164,9 +164,100 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             changed: true,
             new_generation,
         })
-    })?;
+    });
+    // The one rejection exit: every `CommitRejected` — phase 2's key
+    // set, phase 3's containment/window set — passes here, so the cited
+    // facts decode here, ONCE, while the delta's provisional intern ids
+    // are still resolvable (the aborted transaction flushed nothing; a
+    // later decode would misread a novel `str` field as a dangling id —
+    // `docs/architecture/30-dependencies.md` § rendering the rejection).
+    let report = match outcome {
+        Err(Error::CommitRejected { violations }) => {
+            let view = env.read_txn()?;
+            return Err(Error::CommitRejected {
+                violations: decode_cited_facts(violations, schema, &view, &delta)?,
+            });
+        }
+        other => other?,
+    };
     commit_span.set_args(1, 0);
     Ok(report)
+}
+
+/// Decodes every citation's offending fact bytes into owned
+/// [`CitedFact`] values — relation resolved through the violated
+/// statement (a key's own relation; a containment's SOURCE, because the
+/// judgment speaks about sources; a window's TARGET, the convicted
+/// parent), `str` fields resolved pending-first through the rejecting
+/// delta, then the committed dictionary.
+///
+/// # Errors
+///
+/// `Corruption` on undecodable fact bytes or a genuinely dangling intern
+/// id (pending and committed both miss); `Lmdb` on dictionary reads.
+fn decode_cited_facts(
+    violations: Violations,
+    schema: &crate::schema::Schema,
+    view: &crate::storage::env::ReadTxn<'_>,
+    delta: &WriteDelta<'_>,
+) -> Result<Violations> {
+    use crate::error::{CitedFact, Violation};
+    use crate::schema::StatementView;
+    let mut cited: Vec<Box<[CitedFact]>> = Vec::with_capacity(violations.as_slice().len());
+    for violation in violations.as_slice() {
+        let (relation, facts): (_, Vec<&[u8]>) = match violation {
+            Violation::Functionality {
+                statement,
+                fact,
+                incumbent,
+            } => {
+                let StatementView::Key(_, key) = schema.statement(*statement) else {
+                    unreachable!("a Functionality citation names a key statement");
+                };
+                (
+                    key.relation,
+                    std::iter::once(fact.as_ref())
+                        .chain(incumbent.as_deref())
+                        .collect(),
+                )
+            }
+            Violation::Containment {
+                statement, fact, ..
+            } => {
+                let StatementView::Containment(_, containment) = schema.statement(*statement)
+                else {
+                    unreachable!("a Containment citation names a containment statement");
+                };
+                (containment.source.relation, vec![fact.as_ref()])
+            }
+            Violation::Cardinality {
+                statement, fact, ..
+            } => {
+                let StatementView::Cardinality(_, window) = schema.statement(*statement) else {
+                    unreachable!("a Cardinality citation names a window statement");
+                };
+                (window.target.relation, vec![fact.as_ref()])
+            }
+        };
+        let layout = schema.relation(relation).layout();
+        let decoded = facts
+            .into_iter()
+            .map(|bytes| {
+                let values = crate::encoding::decode_values(bytes, layout, |id| {
+                    match delta.pending_raw(id) {
+                        Some(raw) => Ok(Box::from(raw)),
+                        None => Ok(Box::from(crate::storage::dict::resolve(view, id)?)),
+                    }
+                })?;
+                Ok(CitedFact {
+                    relation,
+                    values: values.into_boxed_slice(),
+                })
+            })
+            .collect::<Result<Box<[CitedFact]>>>()?;
+        cited.push(decoded);
+    }
+    Ok(violations.attach_cited(cited))
 }
 
 /// The counters-only commit of a successful no-op write: exactly the

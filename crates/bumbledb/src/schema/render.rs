@@ -11,8 +11,121 @@ use std::fmt;
 
 use super::{
     FieldDescriptor, FieldId, LiteralSet, RelationId, Schema, SchemaDescriptor, Side,
-    StatementDescriptor, StatementId, StatementView, Value, ValueType,
+    StatementDescriptor, StatementId, StatementKind, StatementView, Value, ValueType,
 };
+use crate::error::{Direction, Violation, Violations};
+
+/// One rejected commit's citation rendered as plain data — everything a
+/// bindings layer needs to show (or prompt with) the rejection: the
+/// statement's fingerprint-pinned id, its form tag, its canonical
+/// spelling (the renderer is a bijection on legal statements, so the
+/// spelling pastes back), the direction/count payloads where the form
+/// carries them, and the offending facts as named decoded values
+/// (`docs/architecture/30-dependencies.md` § rendering the rejection).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedViolation {
+    pub statement: StatementId,
+    pub kind: StatementKind,
+    /// The statement in canonical spelling ([`render_declared`] — the
+    /// single renderer, never a second stringifier).
+    pub spelling: String,
+    /// A containment citation's violated side; `None` for keys and
+    /// windows.
+    pub direction: Option<Direction>,
+    /// A window citation's observed child-group count; `None` otherwise.
+    pub count: Option<u64>,
+    /// The offending facts — the violation's fact, then its incumbent
+    /// where one exists — as named decoded values.
+    pub facts: Vec<RenderedFact>,
+}
+
+/// One offending fact with its names resolved: the relation name and one
+/// `(field name, value)` pair per sealed field, in declaration order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedFact {
+    pub relation: Box<str>,
+    pub fields: Vec<(Box<str>, Value)>,
+}
+
+/// Renders a rejection's complete violation set as plain data — the
+/// bindings-consumable form of [`crate::error::Error::CommitRejected`]:
+/// per citation, the statement id, kind tag, canonical spelling, and the
+/// offending facts as `(relation name, [(field name, value)])` rows,
+/// read off the decoded cited facts the commit boundary attached
+/// ([`Violations::cited_facts`]). Pure over the descriptor: a foreign
+/// host renders with its cached [`crate::Theory`] descriptor and no
+/// database handle.
+///
+/// Total on plain data: unknown ids render as `relation#N` / `field#N`
+/// placeholders, the declared renderer's own convention.
+///
+/// # Panics
+///
+/// When a cited fact's field ordinal exceeds the id space (`u16`) —
+/// impossible for facts decoded from a schema the declaration boundary
+/// admitted ([`crate::error::SchemaError::RelationTooManyColumns`] is
+/// the typed rejection for such counts).
+#[must_use]
+pub fn render_rejection(
+    descriptor: &SchemaDescriptor,
+    violations: &Violations,
+) -> Vec<RenderedViolation> {
+    let names = DeclaredNames(descriptor);
+    let materialized = descriptor.materialized_statements();
+    violations
+        .citations()
+        .map(|(violation, cited)| {
+            let statement = violation.statement();
+            let (kind, direction, count) = match violation {
+                Violation::Functionality { .. } => (StatementKind::Functionality, None, None),
+                Violation::Containment { direction, .. } => {
+                    (StatementKind::Containment, Some(*direction), None)
+                }
+                Violation::Cardinality { count, .. } => {
+                    (StatementKind::Cardinality, None, Some(*count))
+                }
+            };
+            RenderedViolation {
+                statement,
+                kind,
+                // Guarded, not indexed: a statement id beyond this
+                // descriptor's materialized roster (a foreign
+                // descriptor) renders as a placeholder — the declared
+                // renderer's own convention, kept total.
+                spelling: if usize::from(statement.0) < materialized.len() {
+                    render_declared(descriptor, statement)
+                } else {
+                    format!("statement#{}", statement.0)
+                },
+                direction,
+                count,
+                facts: cited
+                    .iter()
+                    .map(|fact| RenderedFact {
+                        relation: names.relation_name(fact.relation).map_or_else(
+                            || format!("relation#{}", fact.relation.0).into(),
+                            Box::from,
+                        ),
+                        fields: fact
+                            .values
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, value)| {
+                                let field =
+                                    FieldId(u16::try_from(idx).expect("field count fits u16"));
+                                let name = names.field(fact.relation, field).map_or_else(
+                                    || format!("field#{}", field.0).into(),
+                                    |descriptor| descriptor.name.clone(),
+                                );
+                                (name, value.clone())
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
+}
 
 /// Renders one sealed statement in the exact macro notation: an FD as
 /// `SavingsTerms(account) -> SavingsTerms`, a containment as

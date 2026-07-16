@@ -124,6 +124,41 @@ without any staging concept (`50-storage.md` delta write path).
 ordering obligations onto the caller, and fights the accumulate-then-commit write
 path. **Reverses if:** never — semantics.
 
+## Rendering the rejection (normative)
+
+The rejection is the repair diagnostic, so it must be fully consumable as plain
+data by a host that has no typed fact structs — a bindings layer, an LLM repair
+prompt. Two mechanisms, both public:
+
+- **Decoded cited facts ride the set.** Alongside each citation's canonical
+  fact bytes, `Violations` carries the same facts decoded to owned values
+  (`CitedFact { relation, values }` via `Violations::cited_facts` /
+  `Violations::citations`): one `Value` per sealed field, `str` fields resolved
+  to owned strings. The decode happens AT the commit boundary's one rejection
+  exit (`storage/commit/write.rs`), and only there, because only there is it
+  possible: an inserted fact's `str` fields may carry provisional intern ids
+  minted by the very transaction the rejection aborts — the abort flushes
+  nothing, so a post-hoc decode would misread a genuine rejection as a dangling
+  id. The cited relation is derived from the violated statement: a key's own
+  relation, a containment's SOURCE (the judgment speaks about sources), a
+  window's TARGET (the convicted parent). The allocation is acceptable at
+  rejection time; the accept path allocates nothing new.
+- **`render_rejection(descriptor, violations)`** (`schema::render`) lowers the
+  whole set to `[{statement id, kind tag, canonical spelling, direction?,
+  count?, offending facts as (relation name, [(field name, value)])}]` — pure
+  over the descriptor (a foreign host renders with its cached manifest-side
+  descriptor, no database handle), spelling through the ONE canonical renderer
+  (`render_declared`; the renderer is a bijection on legal statements, so every
+  spelling pastes back). The manifest carries the same spellings per statement
+  id (`70-api.md` § the manifest), so a host can also cite statements without
+  the violations value in hand.
+
+Pinned by `crates/bumbledb/tests/dyn_surface.rs`: one commit violating a
+containment and a window renders both citations (the statement phase is
+scan-complete), a second violating an FD renders the key form (key violations
+preempt the statement phase — `rejection_never_mixes` — so no single commit can
+exhibit all three), and the provisional-intern case decodes.
+
 ## The extension form
 
 **Cardinality window.** `B(Y | ψ) <={lo..hi} A(X | φ)` — B-family, target-left
