@@ -183,7 +183,10 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
             bumbledb::schema::StatementId(0),
             &[bumbledb::Value::U64(id.0)],
         )?;
-        assert!(row.is_some(), "the dynamic point read sees the committed row");
+        assert!(
+            row.is_some(),
+            "the dynamic point read sees the committed row"
+        );
 
         // The upsert idiom takes the seen arm: delete + insert bumped.
         tx.delete(&Account {

@@ -1653,8 +1653,10 @@ fn a_degenerate_programs_bind_contract_is_program_global() {
     db.read(|snap| {
         // The gapped-locally program binds the full surface; its output
         // filters on ?1.
-        let answers =
-            snap.execute_collect(&mut prepared, &[BindValue::U64(0), BindValue::U64(account.0)])?;
+        let answers = snap.execute_collect(
+            &mut prepared,
+            &[BindValue::U64(0), BindValue::U64(account.0)],
+        )?;
         assert_eq!(answers.len(), 1, "?1 selects the seeded account");
 
         // The interior-only param is still demanded: one param is a

@@ -67,7 +67,10 @@ pub(super) fn open_env(path: &Path, kind: StoreKind) -> Result<heed::Env<Without
 /// non-sparse path produces — never a silent overcommit.
 fn preallocate(data: &std::path::Path) -> Result<()> {
     let full_map = || {
-        let file = std::fs::OpenOptions::new().read(true).write(true).open(data)?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(data)?;
         preallocate_blocks(&file, super::MAP_SIZE as u64)
     };
     // The same typed shape LMDB's own open produces when a non-sparse
