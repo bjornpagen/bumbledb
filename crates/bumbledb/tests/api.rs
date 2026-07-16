@@ -1363,7 +1363,10 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
 
 /// An out-of-range relation id at the dynamic
 /// (ETL) surface is a typed `FactShape` error at every public boundary —
-/// `insert_dyn`, `delete_dyn`, `bulk_load`, and `scan` — never a panic.
+/// `insert_dyn`, `delete_dyn`, `bulk_load_dyn`, and `scan` — never a
+/// panic. (The typed `Db::bulk_load` lane takes no `RelationId`, so an
+/// out-of-range relation is unrepresentable there — the fact type names
+/// its relation.)
 #[test]
 fn out_of_range_relation_ids_are_typed_errors() {
     let dir = common::TempDir::new("api-unknown-relation");
