@@ -36,9 +36,41 @@ pub fn measure_batched<F>(
     proto: Protocol,
     modes: Modes,
     batch: u32,
+    f: F,
+) -> Result<Measurement, String>
+where
+    F: FnMut() -> Result<u64, String>,
+{
+    measure_interleaved(proto, modes, batch, || (), f)
+}
+
+/// [`measure_batched`] with an untimed `between` closure run before
+/// every warmup call and every timed sample — the in-situ shape
+/// (`crate::displaced`): foreign traffic streams BETWEEN engine passes
+/// and never inside a timed span, so the sample prices the pass *given*
+/// the displacement, not the displacement itself
+/// (`docs/reference/apple-silicon-performance.md`
+/// `m2max.mem.residency-is-interleaving`). With `batch > 1` the
+/// `between` work runs once per timed sample (before the batch), not
+/// per call.
+///
+/// # Errors
+///
+/// The closure's error; a request for both modes at once; an
+/// alloc-window request on a build without the `obs` feature.
+///
+/// # Panics
+///
+/// On `batch == 0` (a programmer error).
+pub fn measure_interleaved<B, F>(
+    proto: Protocol,
+    modes: Modes,
+    batch: u32,
+    mut between: B,
     mut f: F,
 ) -> Result<Measurement, String>
 where
+    B: FnMut(),
     F: FnMut() -> Result<u64, String>,
 {
     assert!(batch >= 1, "a zero batch measures nothing");
@@ -50,6 +82,7 @@ where
         return Err("the alloc window needs the obs feature (bumbledb/alloc-counter)".to_owned());
     }
     for _ in 0..proto.warmups {
+        between();
         std::hint::black_box(f()?);
     }
     #[cfg(feature = "obs")]
@@ -63,6 +96,7 @@ where
     let mut work = 0u64;
     for _ in 0..proto.samples {
         let mut count = 0u64;
+        between();
         let start = Instant::now();
         for _ in 0..batch {
             count += f()?;
