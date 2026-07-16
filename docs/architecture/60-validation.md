@@ -566,8 +566,17 @@ runner.
   arms over engine error enums, so a new variant is a compile error —
   the matcher is a census instrument); *judgment determinism* — the same
   input judged twice on fresh stores yields the identical verdict, and
-  accepted schemas reopen cleanly with `verify_store` passing on the
-  empty store.
+  accepted schemas reopen cleanly with `verify_store` on the empty store
+  reporting exactly the schema's genesis debt — nothing more. Genesis
+  debt (`30-dependencies.md`: "the empty store violates the statement
+  until the handlers land") is the two extension-sourced classes the
+  sweeper owns: a closed-source containment against an ordinary target
+  with a φ-selected axiom, and a closed-parent floor window (`lo >= 1`,
+  ordinary child) with a ψ-selected axiom — the acceptance gate judges
+  the theory, never genesis satisfiability, so those citations on a
+  fresh store are the sweeper doing its documented job (the harness's
+  `genesis_debt_statements` computes the expected set; the trophy
+  `fuzz/trophies/theory/genesis-debt-closed-parent-window` pins it).
 - **Corpus policy**: `fuzz/corpus/<target>/` is a checked-in seed corpus
   from a small deterministic generator run; `fuzz/artifacts/` is
   gitignored. Every real counterexample is minimized (`cargo fuzz tmin`)
