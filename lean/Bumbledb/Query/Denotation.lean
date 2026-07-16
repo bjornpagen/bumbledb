@@ -738,9 +738,10 @@ answers — the union of the lowered rules' answers is the rule's. The
 normalize pass's contract: lowering-then-evaluating ≡ evaluating the
 tree naively; the engine never sees an `Or`.
 Bridge: `ir/normalize/dnf.rs::distribute` (each disjunct becomes a
-rule; `collapse` then dedups — sound by `union_idempotent`); the
-differential suite proves the same property against the naive
-model. -/
+rule; `collapse` then dedups by condition-SET equality — sound by
+`ruleAnswers_conditions_congr` composed with `union_idempotent`,
+theorem 6a below); the differential suite proves the same property
+against the naive model. -/
 theorem dnf_preserves_denotation (C : Classify) (r : Rule)
     (I : Instance) (ρ : ParamEnv) :
     ∀ t, t ∈ ruleAnswers C r I ρ ↔
@@ -772,7 +773,9 @@ rule adds nothing: duplicate rules, duplicate derivations, ONE answer
 union lives (`exec/sink.rs`): one seen-set spans every rule of a
 program, reset once per execution, so a later rule re-deriving a head
 fact is absorbed exactly like a within-rule duplicate; `dnf.rs::
-collapse` spends the same fact at the representation level. -/
+collapse` spends this at the representation level TOGETHER with
+theorem 6a — its dedup key reads condition lists as sets, so the
+collapsed pair is answer-equal (6a) before it is a duplicate (6). -/
 theorem union_idempotent (C : Classify) (n : Nat) (r : Rule)
     (rs : List Rule) (I : Instance) (ρ : ParamEnv) :
     ∀ t, t ∈ queryAnswers C ⟨n, r :: r :: rs⟩ I ρ ↔
@@ -787,6 +790,38 @@ theorem union_idempotent (C : Classify) (n : Nat) (r : Rule)
   · intro ht
     obtain ⟨r', hmem, h⟩ := mem_queryAnswers.mp ht
     exact mem_queryAnswers.mpr ⟨r', List.mem_cons.mpr (Or.inr hmem), h⟩
+
+/-- **Theorem 6a — the conditions congruence.** `derives` reads the
+condition list by MEMBERSHIP only, so two rules with the same finds,
+atoms and negated atoms whose condition lists are equal AS SETS answer
+alike — conjunction is idempotent and commutative, said at the
+denotation. This is what licenses `dnf.rs::collapse`'s dedup key
+(`condition_set_eq` — order- and multiplicity-insensitive by mutual
+containment): the collapsed rule is answer-equal to its keeper by THIS
+congruence, and then a duplicate rule adds nothing by
+`union_idempotent`. Bridge: `ir/normalize/dnf.rs::collapse`
+(`same_normalized_body`: finds, atoms, negated verbatim; conditions as
+sets). -/
+theorem ruleAnswers_conditions_congr {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {r s : Rule}
+    (hfinds : r.finds = s.finds) (hatoms : r.atoms = s.atoms)
+    (hneg : r.negated = s.negated)
+    (hconds : ∀ c : Condition, c ∈ r.conditions ↔ c ∈ s.conditions) :
+    ∀ t, t ∈ ruleAnswers C r I ρ ↔ t ∈ ruleAnswers C s I ρ := by
+  intro t
+  constructor
+  · intro ht
+    obtain ⟨σ, ⟨ha, hn, hc⟩, rfl⟩ := mem_ruleAnswers.mp ht
+    exact mem_ruleAnswers.mpr ⟨σ,
+      ⟨fun x hx => ha x (hatoms ▸ hx),
+       fun x hx => hn x (hneg ▸ hx),
+       fun x hx => hc x ((hconds x).mpr hx)⟩, by rw [hfinds]⟩
+  · intro ht
+    obtain ⟨σ, ⟨ha, hn, hc⟩, rfl⟩ := mem_ruleAnswers.mp ht
+    exact mem_ruleAnswers.mpr ⟨σ,
+      ⟨fun x hx => ha x (hatoms ▸ hx),
+       fun x hx => hn x (hneg ▸ hx),
+       fun x hx => hc x ((hconds x).mp hx)⟩, by rw [← hfinds]⟩
 
 /-! ## Theorem 7 — answer identity is the projected tuple -/
 

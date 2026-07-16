@@ -277,6 +277,11 @@ def ledger : List Obligation := [
     "exec/sink.rs::seen (crates/bumbledb/src/exec/sink.rs)"
     "r22_union_read_round_trips (crates/bumbledb-query/tests/cookbook.rs)",
 
+  .row @Query.ruleAnswers_conditions_congr `Bumbledb.Query.ruleAnswers_conditions_congr
+    "Condition lists equal as sets answer alike — the congruence the DNF collapse's set-equality dedup key spends before idempotence deletes the duplicate."
+    "dnf.rs::collapse (crates/bumbledb/src/ir/normalize/dnf.rs); condition_set_eq (crates/bumbledb/src/ir/normalize/dnf.rs)"
+    "duplicate_rules_after_distribution_collapse (crates/bumbledb/src/ir/validate/tests/rules.rs)",
+
   .row @Query.answer_identity_canonical `Bumbledb.Query.answer_identity_canonical
     "Answer identity is the projected head tuple: two body environments with one projected tuple are one answer, which is why head-shaped dedup keys are complete."
     "crate::exec::sink::projection (crates/bumbledb/src/exec/sink/projection.rs)"
@@ -435,6 +440,11 @@ def ledger : List Obligation := [
     "chain_reaches (crates/bumbledb/src/plan/ground.rs)"
     "fuzz/fuzz_targets/rewrites.rs",
 
+  .row @Query.subsume_containment `Bumbledb.Query.subsume_containment
+    "Under the subsumption witness the deleted rule's answers are contained in the kept sibling's on every instance, so the prepare-time deletion preserves the program union — the sixth rewrite, in the composition chain."
+    "subsume (crates/bumbledb/src/plan/ground.rs); subsumes (crates/bumbledb/src/plan/ground.rs); ground_program (crates/bumbledb/src/api/prepared/build.rs)"
+    "the_dnf_residue_subsumes_the_filtered_rule (crates/bumbledb/src/plan/ground/tests.rs); dnf_residue_subsumption_deletes_the_filtered_rule (crates/bumbledb/src/api/prepared/tests/ground.rs); fuzz/fuzz_targets/rewrites.rs",
+
   .row @Query.keyprobe_equiv_join `Bumbledb.Query.keyprobe_equiv_join
     "Under the accepted shape and the key's uniqueness, the point-probe evaluation equals the join denotation — one get finds exactly the one deriving fact, and the residual per-field filters only shrink that at-most-one hit."
     "PreparedRule::KeyProbe (crates/bumbledb/src/api/prepared.rs); PreparedRule::KeyProbe (crates/bumbledb/src/api/prepared/build.rs); remaining_filters (crates/bumbledb/src/exec/dispatch/classify.rs)"
@@ -449,6 +459,11 @@ def ledger : List Obligation := [
     "A statically refuted rule contributes the empty answer set on every instance — the verdict never consulted one."
     "Program::Empty (crates/bumbledb/src/api/prepared.rs); NormalizedQuery::dead (crates/bumbledb/src/ir/normalize.rs)"
     "an_all_dead_program_prepares_to_empty_and_binds_params_first (crates/bumbledb/src/api/prepared/tests/statically_empty.rs)",
+
+  .row @Query.range_summary_replacement `Bumbledb.Query.range_summary_replacement
+    "On the bounded word domain one slot's conjunction of constant order bounds means exactly its folded summary's at-most-two emitted bounds, and an in-range equality pin implies every constituent — the filter replacement never changes which words pass."
+    "RangeSummary (crates/bumbledb/src/ir/normalize/fold.rs); fold.rs::narrow (crates/bumbledb/src/ir/normalize/fold.rs); fold.rs::emit (crates/bumbledb/src/ir/normalize/fold.rs)"
+    "an_order_conjunction_folds_to_one_summary (crates/bumbledb/src/ir/normalize/fold/tests.rs); an_eq_pin_subsumes_its_folded_bounds (crates/bumbledb/src/ir/normalize/fold/tests.rs); fuzz/fuzz_targets/rewrites.rs",
 
   /- ## PRD 09 — the lifecycle -/
 
@@ -573,7 +588,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 89 := rfl
+theorem ledger_count : ledger.length = 92 := rfl
 
 end Bridge
 end Bumbledb

@@ -418,12 +418,14 @@ pub(crate) struct Subsumption {
 /// a rule never changes the head — the caller re-checks the alignment
 /// invariant. `finds` is per rule, aligned with `rules`.
 ///
-/// **Unmodeled in the lean calculus** — the recorded narrowing in
-/// `lean/Bumbledb/Exec/Rewrites.lean`'s module doc ("Rule subsumption
-/// is unmodeled"): `RewriteStep` names the five modeled rewrites only,
-/// so `rewrite_composition` never represents this deletion; the
-/// ground-off dual-pipeline differential and the prepare-level tests
-/// are the standing empirical check.
+/// **Modeled in the lean calculus** (2026-07-15):
+/// `lean/Bumbledb/Exec/Rewrites.lean`'s `SubsumeWitness` reads this
+/// witness at the spec's vocabulary, `subsume_containment` proves the
+/// deleted rule's answers contained in the keeper's, and
+/// `RewriteStep.subsume` puts the deletion in `rewrite_composition`'s
+/// chain — the sixth rewrite, discharged (the module doc's record
+/// names the spent half). The ground-off dual-pipeline differential
+/// and the prepare-level tests stay as the empirical arm.
 pub(crate) fn subsume(rules: &[NormalizedQuery], finds: &[&[FindTerm]]) -> Vec<Subsumption> {
     #[cfg(any(test, feature = "ground-off"))]
     if DISABLED.with(std::cell::Cell::get) {

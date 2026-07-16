@@ -131,8 +131,12 @@ fn tree_terms(tree: &ConditionTree) -> Vec<Vec<Comparison>> {
 /// the duplicate is a fact of the distribution, so it collapses instead).
 /// Normalized-form equality: finds, atoms, and negated atoms verbatim;
 /// condition lists as **sets** — order- and multiplicity-insensitive,
-/// because a conjunction is idempotent and commutative. First occurrence
-/// wins, so rule order (hence diagnostic indices) stays deterministic.
+/// because a conjunction is idempotent and commutative
+/// (`lean/Bumbledb/Query/Denotation.lean`:
+/// `ruleAnswers_conditions_congr` identifies the set-equal pair's
+/// answers, then `union_idempotent` deletes the duplicate). First
+/// occurrence wins, so rule order (hence diagnostic indices) stays
+/// deterministic.
 #[must_use]
 pub fn collapse(rules: Vec<LoweredRule>) -> Vec<LoweredRule> {
     let mut kept: Vec<LoweredRule> = Vec::with_capacity(rules.len());
