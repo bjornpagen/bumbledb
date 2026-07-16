@@ -67,7 +67,11 @@ phase with the same per-phase violation sets
 (`lean/Bumbledb/Decide.lean: Txn.judgeB_agrees`; the checker face
 is `lean/Bumbledb/Decide.lean: holdsB_iff_holds`), so running it judges the
 engine against the spec's own two-phase judgment
-(`lean/Bumbledb/Txn.lean: judge_key_preempts`).
+(`lean/Bumbledb/Txn.lean: judge_key_preempts`). The recorded verdict is
+compared whole, order included: citations ascend in materialized-statement
+order with a both-directions containment cited once at the index surface —
+the citation-order contract (`30-dependencies.md` § judged on final states;
+`lean/Main.lean: RVerdict` carries it spec-side).
 `crates/bumbledb-bench/src/conformance/judgment.rs` serializes hand-authored
 `(theory, instance, delta)` fixtures — both classical forms, the window
 form at its boundaries, the two-phase preemption mix,

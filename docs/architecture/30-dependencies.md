@@ -93,7 +93,15 @@ every violated statement of that phase, cited exactly once (per direction for a 
 source before target), in materialized statement order, each citation carrying
 the statement id and the offending fact's bytes (never storage row ids —
 `10-data-model.md`); the set is sealed — nonempty, sorted, deduplicated — by
-its only constructor, so an under-reported rejection is unrepresentable. One
+its only constructor (`Violations::seal` in `crates/bumbledb/src/error.rs`,
+stable-sorting by the citation key `Violation::citation`: statement id, then
+direction), so an under-reported rejection is unrepresentable. The citation
+ORDER is contract, not accident: the conformance verdicts compare the list
+whole, and at the statement-index surface (`lean/Main.lean: RVerdict`) the two
+directions of one containment collapse to a single cited index — ascending
+citation order keeps the direction pair adjacent, so the collapse
+(`lane_verdict` in `crates/bumbledb-bench/src/conformance/judgment.rs`) is
+total: ascending statement indices, a both-directions containment cited once. One
 preemption, from the enforcement structure
 itself: the containment probes are defined over the *keyed* final state
 (determinants are the probe index), which exists only when every key statement
