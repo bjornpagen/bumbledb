@@ -147,9 +147,18 @@ fn a_wrong_oracle_fails_with_a_bundle() {
 fn a_full_verify_at_s_succeeds() {
     let config = cfg("full");
     let report = run(&config).expect("verify succeeds");
-    assert!(
-        report.cases > 200,
-        "families + 25 x 4 randomized + naive ops"
+    // README.md's published oracle count ("N-case differential oracle";
+    // "N cases" under Measurement discipline) is the COMPLETED count of
+    // the default release run — this config differs from it in
+    // random_cases alone, and only the randomized lane consumes that
+    // knob, at exactly four draws per query. Projecting this run to the
+    // defaults must therefore land on the README's number (the ca7fc313
+    // precedent: the README is trued to the stamp) — any roster or lane
+    // change fails HERE until README.md is trued with it.
+    assert_eq!(
+        report.cases + u64::from(DEFAULT_RANDOM_CASES - config.random_cases) * 4,
+        2_862,
+        "README.md's oracle case count must equal the default run's completed count"
     );
     let stamp_path = config.out_dir.join("verify.stamp");
     assert!(stamp_matches(&config, &stamp_path));

@@ -279,6 +279,26 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: crate::corpus_gen::GenConfig) {
     }
 }
 
+/// The progress denominator — one owner for the enumerable-in-advance
+/// lanes: two passes over the ledger families (loaded + empty store),
+/// the calendar roster (randomized draws + fixed rotations), and the
+/// randomized lane's draws ((random + empty-store random) × the four
+/// draws per query). The converse, error-parity, and naive-slice lanes
+/// count per executed comparison, so the COMPLETED run's `cases`
+/// exceeds this floor — the README's published oracle count is the
+/// completed count, pinned end-to-end by
+/// `a_full_verify_at_s_succeeds`.
+pub(super) fn case_total(cfg: &VerifyConfig) -> u64 {
+    let family_cases: u64 = families::all()
+        .iter()
+        .map(|f| (f.params)(&cfg.corpus_gen).len() as u64)
+        .sum();
+    2 * family_cases
+        + super::run_calendar::calendar_case_count(cfg)
+        + super::run_calendar::calendar_fixed_count(cfg)
+        + (u64::from(cfg.random_cases) + u64::from(EMPTY_STORE_RANDOM_CASES)) * 4
+}
+
 /// The oracle against *pre-loaded* ledger and calendar stores (the
 /// CLI's digest-keyed cache path): stale bundles and the stamp are
 /// cleared, the stores are left untouched, and bundles/stamp land in
@@ -310,19 +330,12 @@ pub fn run_prepared(
     }
     let _ = std::fs::remove_file(cfg.out_dir.join("verify.stamp"));
 
-    let family_cases: u64 = families::all()
-        .iter()
-        .map(|f| (f.params)(&cfg.corpus_gen).len() as u64)
-        .sum();
     let mut run = Run {
         db,
         conn,
         out_dir: cfg.out_dir.clone(),
         cases: 0,
-        total: 2 * family_cases
-            + super::run_calendar::calendar_case_count(cfg)
-            + super::run_calendar::calendar_fixed_count(cfg)
-            + (u64::from(cfg.random_cases) + u64::from(EMPTY_STORE_RANDOM_CASES)) * 4,
+        total: case_total(cfg),
         bundles: Vec::new(),
     };
 
