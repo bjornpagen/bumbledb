@@ -78,10 +78,21 @@ const READY_MARKER: &str = "kill-child ready";
 /// (widening the mid-`mdb_txn_commit` page-write surface) while keeping
 /// per-round verification scans cheap.
 pub const BATCH: u64 = 32;
-/// The kill-delay window in microseconds, uniform draw per round. At
-/// ~0.05 ms per ephemeral commit this spans hundreds of commit periods,
-/// so the kill's phase within the commit pipeline is uniform.
+/// The kill-delay window FLOOR in microseconds. The working window is
+/// derived per kind from the calibration — at least
+/// [`WINDOW_COMMIT_PERIODS`] mean commit periods — so a slow durable
+/// commit (macOS `F_FULLFSYNC` on `/tmp` runs 5–20+ ms) cannot turn the
+/// whole session vacuous by outlasting a fixed window. At ~0.05 ms per
+/// ephemeral commit the floor spans hundreds of commit periods, so the
+/// kill's phase within the commit pipeline is uniform.
 const KILL_WINDOW_US: u64 = 20_000;
+/// The derived window's width in mean commit periods (see
+/// [`KILL_WINDOW_US`]): enough room that most rounds survive at least
+/// one commit, keeping the vacuity assert honest on any device.
+const WINDOW_COMMIT_PERIODS: u64 = 4;
+/// The readiness deadline: a child that cannot create its store and
+/// enter the commit loop within this is a failure, not a hang.
+const READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// The long lane's default rounds per kind (override: [`ROUNDS_VAR`]).
 const LONG_ROUNDS: u64 = 2_000;
 /// Calibration commits per kind (after [`CALIBRATION_WARMUP`]).
@@ -236,14 +247,31 @@ pub fn long_rounds() -> u64 {
 /// On every invariant violation, with the reproduction context in the
 /// message and the store directory preserved.
 pub fn sweep(kind: StoreKind, rounds: u64, seed: u64) {
+    refuse_stale_corpses();
     let calibration = calibrate();
+    // The working window: at least WINDOW_COMMIT_PERIODS mean commit
+    // periods (loop period = commit time / duty), never below the floor
+    // — derived, so the device's sync cost cannot vacate the session.
+    let period_us = calibration.commit(kind).as_secs_f64() * 1e6 / calibration.duty(kind);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let window_us = KILL_WINDOW_US.max((period_us * WINDOW_COMMIT_PERIODS as f64).ceil() as u64);
+    // The estimate log stays honest per kind: the durable number is the
+    // sync-surplus estimate of kills inside mdb_txn_commit itself; the
+    // ephemeral duty covers the WHOLE write call (mostly put staging —
+    // trivially recoverable), and the torn-meta sliver inside it is
+    // O(µs) — expect O(1) sliver hits per thousands of rounds, not per
+    // smoke. The invariants convict a torn meta whenever one lands.
     let window = match kind {
         StoreKind::Durable => "inside mdb_txn_commit (sync-surplus estimate)",
-        StoreKind::Ephemeral => "in the WRITEMAP dirty-page window (torn-meta sliver included)",
+        StoreKind::Ephemeral => {
+            "across the whole write call (the torn-meta sliver is a µs-scale \
+             subset — sliver hits are O(1) per thousands of rounds)"
+        }
     };
     eprintln!(
-        "kill sweep ({kind}): seed {seed}, {rounds} rounds, window {KILL_WINDOW_US} us — \
-         expected in-commit-call kills ~{:.0} ({:.0}% duty), {window} ~{:.0}",
+        "kill sweep ({kind}): seed {seed}, {rounds} rounds, window {window_us} us \
+         (~{WINDOW_COMMIT_PERIODS} commit periods) — expected in-commit-call kills \
+         ~{:.0} ({:.0}% duty), {window} ~{:.0}",
         calibration.duty(kind) * rounds as f64,
         calibration.duty(kind) * 100.0,
         calibration.in_window_fraction(kind) * rounds as f64,
@@ -252,7 +280,7 @@ pub fn sweep(kind: StoreKind, rounds: u64, seed: u64) {
     let mut committed_batches: u64 = 0;
     let mut empty_rounds: u64 = 0;
     for round in 0..rounds {
-        let delay = Duration::from_micros(rng.range(KILL_WINDOW_US));
+        let delay = Duration::from_micros(rng.range(window_us));
         let survived = run_round(kind, seed, round, delay);
         committed_batches += survived;
         empty_rounds += u64::from(survived == 0);
@@ -269,6 +297,43 @@ pub fn sweep(kind: StoreKind, rounds: u64, seed: u64) {
     );
 }
 
+/// The artifacts discipline, extended to corpses (the `fuzz.sh`
+/// precedent: a session refuses to start over untriaged evidence): any
+/// `bumbledb-kill-*` entry under the scratch root from ANOTHER process
+/// is either a preserved violation or debris from an interrupted
+/// session — and on the 5 GiB ramdisk a single 4 GiB ephemeral corpse
+/// also starves every following store. Autopsy it
+/// ([`autopsy`], the `BUMBLEDB_KILL_AUTOPSY` operator test) or remove
+/// it before sweeping.
+fn refuse_stale_corpses() {
+    let root =
+        std::env::var_os("BUMBLEDB_SCRATCH_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
+    let own = format!("bumbledb-kill-{}-", std::process::id());
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return;
+    };
+    let stale: Vec<String> = entries
+        .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
+        .filter(|name| name.starts_with("bumbledb-kill-") && !name.starts_with(&own))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "kill sweep: stale corpse(s) under {} — autopsy (BUMBLEDB_KILL_AUTOPSY) or remove \
+         before a new session: {stale:?}",
+        root.display()
+    );
+}
+
+/// The operator autopsy: the four-point corpse invariant
+/// ([`verify_round`]'s reopen / auditor / all-or-nothing prefix /
+/// working post-recovery commit) over a PRESERVED store directory.
+/// Returns the surviving high-water batch count. Panics exactly where
+/// the sweep would — a clean return means the corpse holds no finding.
+pub fn autopsy(store: &Path, kind: StoreKind) -> u64 {
+    let ctx = format!("kill autopsy ({kind}, store {})", store.display());
+    verify_round(store, kind, &ctx)
+}
+
 /// One round: spawn, await readiness, sleep the drawn delay, SIGKILL,
 /// classify the death, autopsy. Returns the surviving batch count `N`.
 fn run_round(kind: StoreKind, seed: u64, round: u64, delay: Duration) -> u64 {
@@ -279,8 +344,8 @@ fn run_round(kind: StoreKind, seed: u64, round: u64, delay: Duration) -> u64 {
         store.path().display()
     );
     let mut child = ChildGuard(spawn_child(store.path(), kind));
-    let mut ready = BufReader::new(child.0.stdout.take().expect("piped child stdout"));
-    await_ready(&mut ready, &mut child, &ctx);
+    let ready = BufReader::new(child.0.stdout.take().expect("piped child stdout"));
+    await_ready(ready, &mut child, &ctx);
     std::thread::sleep(delay);
     child
         .0
@@ -425,25 +490,47 @@ fn spawn_child(store: &Path, kind: StoreKind) -> Child {
 /// child died before entering its commit loop — a finding (or an
 /// environmental refusal, e.g. a scratch volume too small for the
 /// ephemeral map), reported with the child's stderr.
-fn await_ready(reader: &mut impl BufRead, child: &mut ChildGuard, ctx: &str) {
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let n = reader
-            .read_line(&mut line)
-            .unwrap_or_else(|err| panic!("{ctx}: reading the ready marker failed: {err}"));
-        if n == 0 {
+fn await_ready(reader: impl BufRead + Send + 'static, child: &mut ChildGuard, ctx: &str) {
+    // The blocking read lives on its own thread so readiness carries a
+    // deadline: a child wedged inside its store open (an env hang)
+    // fails the round instead of hanging the gate forever. On timeout
+    // the panic unwinds through [`ChildGuard`], which kills the child;
+    // the reader thread then sees EOF and exits.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = reader;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                // Suffix match: libtest prints its `test kill_child ...`
+                // prefix on the SAME line — the marker is not alone on it.
+                Ok(n) if n > 0 => {
+                    if line.trim_end().ends_with(READY_MARKER) {
+                        let _ = sender.send(true);
+                        return;
+                    }
+                }
+                _ => {
+                    let _ = sender.send(false);
+                    return;
+                }
+            }
+        }
+    });
+    match receiver.recv_timeout(READY_TIMEOUT) {
+        Ok(true) => {}
+        Ok(false) => {
             let status = child.0.wait();
             panic!(
                 "{ctx}: the child died before readiness (status {status:?}):\n{}",
                 drain(child.0.stderr.take())
             );
         }
-        // Suffix match: libtest prints its `test kill_child ... `
-        // prefix on the SAME line — the marker is not alone on it.
-        if line.trim_end().ends_with(READY_MARKER) {
-            return;
-        }
+        Err(_) => panic!(
+            "{ctx}: the child never reached readiness within {}s",
+            READY_TIMEOUT.as_secs()
+        ),
     }
 }
 
@@ -481,6 +568,7 @@ impl Drop for ChildGuard {
 /// `MDB_WRITEMAP` the dirty pages hit the shared map from the first
 /// staged put, so the OS-flushed-dirty-page surface under test spans
 /// the whole write call, torn-meta sliver included.
+#[derive(Clone, Copy)]
 struct Calibration {
     durable_commit: Duration,
     durable_duty: f64,
@@ -493,6 +581,14 @@ impl Calibration {
         match kind {
             StoreKind::Durable => self.durable_duty,
             StoreKind::Ephemeral => self.ephemeral_duty,
+        }
+    }
+
+    /// The kind's mean commit-call time.
+    fn commit(&self, kind: StoreKind) -> Duration {
+        match kind {
+            StoreKind::Durable => self.durable_commit,
+            StoreKind::Ephemeral => self.ephemeral_commit,
         }
     }
 
@@ -515,6 +611,14 @@ impl Calibration {
 }
 
 fn calibrate() -> Calibration {
+    // Once per process: the smoke calls `sweep` per kind, and 2×144
+    // calibration commits (durable ones under `F_FULLFSYNC`) are dead
+    // time worth spending exactly once.
+    static CALIBRATION: std::sync::OnceLock<Calibration> = std::sync::OnceLock::new();
+    *CALIBRATION.get_or_init(calibrate_uncached)
+}
+
+fn calibrate_uncached() -> Calibration {
     let (durable_commit, durable_duty) = calibrate_kind(StoreKind::Durable);
     let (ephemeral_commit, ephemeral_duty) = calibrate_kind(StoreKind::Ephemeral);
     eprintln!(

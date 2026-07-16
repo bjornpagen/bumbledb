@@ -43,6 +43,28 @@ fn random_kills_recover_on_both_kinds_smoke() {
     bumbledb_fuzz::kill::sweep(StoreKind::Ephemeral, 15, seed ^ 1);
 }
 
+/// The operator autopsy lane: the four-point corpse invariant over a
+/// PRESERVED store directory. Invocation:
+/// `BUMBLEDB_KILL_AUTOPSY=<path>,<durable|ephemeral> cargo test
+/// --manifest-path fuzz/Cargo.toml --test kill autopsy -- --ignored`.
+/// A clean pass means the corpse holds no finding — remove it after.
+#[test]
+#[ignore = "operator lane: set BUMBLEDB_KILL_AUTOPSY=<path>,<kind>"]
+fn autopsy_a_preserved_corpse() {
+    let spec = std::env::var("BUMBLEDB_KILL_AUTOPSY")
+        .expect("BUMBLEDB_KILL_AUTOPSY=<path>,<durable|ephemeral>");
+    let (path, kind) = spec
+        .rsplit_once(',')
+        .expect("BUMBLEDB_KILL_AUTOPSY=<path>,<durable|ephemeral>");
+    let kind = match kind {
+        "durable" => StoreKind::Durable,
+        "ephemeral" => StoreKind::Ephemeral,
+        other => panic!("unknown store kind {other:?}"),
+    };
+    let survived = bumbledb_fuzz::kill::autopsy(std::path::Path::new(path), kind);
+    eprintln!("autopsy clean: {survived} surviving batches — the corpse holds no finding");
+}
+
 /// The long ephemeral lane: >= 2,000 random-timing kills against
 /// `WRITEMAP|NOSYNC` commit loops.
 #[test]

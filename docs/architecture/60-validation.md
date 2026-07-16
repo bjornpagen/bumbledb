@@ -664,9 +664,16 @@ changes the write pattern (dirty pages in the shared page cache, the
 meta update a tearable memcpy into the map instead of a single
 `pwrite`); this instrument fills the gap with real SIGKILLs at
 seeded uniformly-random delays against a child's commit loop, phase
-uniform across the pipeline (the commit duty cycle is measured and
-the in-window hit estimate logged per session), on both kinds —
-ephemeral under test, durable as the control. The corpse invariant is
+uniform across the pipeline (the commit duty cycle is measured, the
+kill window derived from it — at least four mean commit periods, so
+no device's sync cost can vacate a session — and the in-window hit
+estimate logged per session), on both kinds — ephemeral under test,
+durable as the control. The estimate's honesty: the durable number
+is the sync-surplus estimate of kills inside `mdb_txn_commit`
+itself; the ephemeral duty covers the whole write call, of which the
+torn-meta sliver is a µs-scale subset — expect O(1) sliver hits per
+thousands of rounds, which is what the >= 2,000-round statistical
+lane is FOR, and why the smoke is a mechanism check, not coverage. The corpse invariant is
 four points: reopen through the kind's constructor, `verify_store`
 green, a complete batch prefix (all-or-nothing, no gap, no torn
 batch — every committed state is a pure function of the high-water
