@@ -15,6 +15,8 @@ impl<'s> WriteDelta<'s> {
             facts: BTreeMap::new(),
             determinants: BTreeMap::new(),
             determinant_scratch: DeterminantImage::scratch(),
+            #[cfg(test)]
+            determinant_scratch_clones: 0,
             marks: BTreeMap::new(),
             row_count_delta: BTreeMap::new(),
             pending_interns: BTreeMap::new(),
