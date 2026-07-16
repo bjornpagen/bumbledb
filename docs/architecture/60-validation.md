@@ -632,7 +632,7 @@ loss.
 **The ephemeral store kind's evidence** (`50-storage.md` § the
 ephemeral store kind; Lean owns none of it — durability and crash are
 mechanism, outside the model, so no Bridge row and no citation exist
-to expect). Two instruments: (1) the **durable/ephemeral differential
+to expect). Three instruments: (1) the **durable/ephemeral differential
 oracle** (`crates/bumbledb/tests/ephemeral.rs`) — one deterministic
 ops sequence replayed against a `Db::create` store and a
 `Db::ephemeral` store, asserting identical commit verdicts, identical
@@ -643,7 +643,27 @@ never a semantic; plus the typed cross-open matrix in the same file.
 identical crashpoint × ops-prefix matrix with the victim store built
 by `Db::ephemeral`: all-or-nothing recovery under `WRITEMAP|NOSYNC`,
 no third observable outcome (the empirical verdict WRITEMAP shipped
-on). Device honesty is unchanged and orthogonal: *ephemeral* is a
+on). (3) The **WRITEMAP commit-window kill sweep**
+(`fuzz/tests/kill.rs`, harness in `fuzz/src/kill.rs`) — the
+crashpoint sweep's named points bracket `mdb_txn_commit` but nothing
+cuts INSIDE it, and inside that window is exactly where WRITEMAP
+changes the write pattern (dirty pages in the shared page cache, the
+meta update a tearable memcpy into the map instead of a single
+`pwrite`); this instrument fills the gap with real SIGKILLs at
+seeded uniformly-random delays against a child's commit loop, phase
+uniform across the pipeline (the commit duty cycle is measured and
+the in-window hit estimate logged per session), on both kinds —
+ephemeral under test, durable as the control. The corpse invariant is
+four points: reopen through the kind's constructor, `verify_store`
+green, a complete batch prefix (all-or-nothing, no gap, no torn
+batch — every committed state is a pure function of the high-water
+commit number), and a working post-recovery commit. The ~30-kill
+smoke is a `scripts/check.sh` stage; the statistical lane is the
+`#[ignore]`d long variant (>= 2,000 kills per kind, sessions recorded
+in `fuzz/SESSIONS.md`):
+`BUMBLEDB_SCRATCH_DIR=... cargo test --manifest-path fuzz/Cargo.toml
+--test kill -- --ignored --test-threads=1 --nocapture random_kills`.
+Device honesty is unchanged and orthogonal: *ephemeral* is a
 store kind (an on-disk durability claim), *RAM-backed* is a device
 fact — the timed lanes' refusal keys on the device, never the kind,
 and an ephemeral store on the SSD is as legitimate as a durable store

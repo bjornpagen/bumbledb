@@ -10,6 +10,7 @@
 //! here: the matcher is itself a census instrument.
 
 pub mod crash;
+pub mod kill;
 pub mod query;
 pub mod rewrites;
 pub(crate) mod world;
