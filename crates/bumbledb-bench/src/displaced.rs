@@ -22,6 +22,20 @@
 //!   *less* under displacement than hit-heavy probes — the contrast
 //!   control that shows the lanes distinguish shapes, not just bytes.
 //!
+//! First measured sessions (S, durable, mutex-held, clock-proxy clean;
+//! 2026-07-16): the two shapes split exactly along the regime line. The
+//! probe pass is already DRAM-tier *undisturbed* — its own per-pass
+//!  traffic (~170 MiB of force writes + image reads) self-displaces
+//! everything, so the foreign mass is measured NEUTRAL on it
+//! (135.2/132.5 ms at d24/d96 vs 134.8 ms resident; an apparent 1.22×
+//! d24 gap in the first session did not reproduce and is recorded as
+//! cross-block ambient, not effect). The stream pass is L2/SLC-resident
+//! undisturbed and pays the displacement as predicted, reproducibly
+//! across two clean sessions: ≈ **1.08–1.10× at 24 MiB, 1.19–1.22× at
+//! 96 MiB**. Read the rows accordingly: `disp_probe` is the roster's
+//! standing DRAM-tier probe row (the >32 MiB working set itself);
+//! `disp_stream_d*` are its standing displaced-residency rows.
+//!
 //! The displaced variants stream a foreign buffer BETWEEN engine passes
 //! (the in-situ shape, [`ForeignStream`]) through
 //! [`harness::measure_interleaved`] — the foreign traffic is never
