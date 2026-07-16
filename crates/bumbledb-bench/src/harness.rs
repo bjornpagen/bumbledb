@@ -16,7 +16,7 @@ mod tests;
 mod traced;
 
 pub use cold::{measure_cold, org_touch};
-pub use measure::{measure, measure_batched};
+pub use measure::{measure, measure_batched, measure_interleaved};
 pub use stats::{normalized_p50, stats};
 pub use traced::{traced_cold_sample, traced_sample};
 

@@ -79,6 +79,7 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
         .map(|f| f.name)
         .chain(crate::calendar::families::all().iter().map(|f| f.name))
         .chain(crate::closure::all().iter().map(|f| f.name))
+        .chain(crate::displaced::all().iter().map(|f| f.name))
         .chain(families::write_families().iter().map(|f| f.name))
         .collect();
     if let Some(filter) = &args.families {
@@ -239,6 +240,21 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         &out_dir.join("scratch"),
         &selected,
         proto,
+        args.alloc,
+        args.proxy_per_rep,
+        mode,
+    )?);
+
+    // The displaced lanes (the roster extension): the DRAM-tier
+    // in-situ rows — their own scratch world, verified inline like the
+    // closure lane, foreign traffic streamed BETWEEN passes (untimed)
+    // with the mass as the row's parameter. After the closure lane
+    // (same reads-before-writes law), before the write families.
+    reads.extend(crate::displaced::bench_families(
+        cfg,
+        &out_dir.join("scratch"),
+        &selected,
+        args.samples,
         args.alloc,
         args.proxy_per_rep,
         mode,
