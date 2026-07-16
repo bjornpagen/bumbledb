@@ -5,7 +5,15 @@ use super::{LINE, PAD_MIN_STRIDE, PAD_TOLERANCE, SET_STRIDE, StridePadder};
 
 impl StridePadder {
     pub(super) fn new() -> Self {
+        Self::with_tolerance(PAD_TOLERANCE)
+    }
+
+    /// The production rule with an explicit band half-width — the
+    /// falsifier's hook: the shipped tolerance and its widened twin lay
+    /// out side by side in one process for the interleaved A/B.
+    pub(super) const fn with_tolerance(tolerance: usize) -> Self {
         Self {
+            tolerance,
             prev_start_by_width: [None; 2],
         }
     }
@@ -28,10 +36,12 @@ impl StridePadder {
             // The measured band: EXACT 16 KiB
             // multiples are the fast configuration (stagger 16,384 ran
             // clean); the poison is a small NONZERO offset from one
-            // (stagger 8/32 mild, 64/128 severe). Cure by rounding the
-            // stride UP to the next exact multiple.
-            let in_band =
-                (residue > 0 && residue <= PAD_TOLERANCE) || residue >= SET_STRIDE - PAD_TOLERANCE;
+            // (stagger 8/32 mild, 64/128 severe; at image-scale
+            // pitches the band ends by ~1.5 KiB — [`PAD_TOLERANCE`]).
+            // Cure by rounding the stride UP to the next exact
+            // multiple.
+            let in_band = (residue > 0 && residue <= self.tolerance)
+                || residue >= SET_STRIDE - self.tolerance;
             if stride >= PAD_MIN_STRIDE && in_band {
                 // Aligned starts make the residue a multiple of LINE,
                 // so the delta divides evenly by either element size.
