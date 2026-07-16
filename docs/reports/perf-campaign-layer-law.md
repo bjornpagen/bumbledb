@@ -96,3 +96,27 @@ rebuild), W2 (leaf batching), W3 (finalize dispatch) — plus the write
 side is fsync physics forever. The displaced lanes stand ready to judge
 any future DRAM-tier claim, and the budget table turns the next
 argument about "where does the time go" into a lookup.
+
+## The post-merge session (the campaign's numbers on the shipped tree)
+
+Full stamped session on the merged tree (verify 2,862 →
+`f4a9d094…`, three durable + three ephemeral runs + scenarios, one
+mutex hold, quiet machine): **ALL-WIN on all three durable runs**;
+the five README charts regenerate from exactly these runs.
+
+Min-of-3 p50 against the pre-campaign re-earn: **triangle +7.2%**
+(and +8.3% median in a same-corpus interleaved old-vs-new binary A/B
+— the campaign's headline, T5+T6 compounding), chain +3.2%,
+postings_without_tag +20% (min-of-3; the family is strongly bimodal
+— see below), **free_busy +15%** (interleaved-confirmed, 3 of 4
+pairs — an unforecast beneficiary, most plausibly T1's scan reshape
+under its Pack), meets_chain/mandate_overlap +1–3%, everything else
+within the band.
+
+Two families refused a stable verdict and are recorded as BIMODAL,
+not regressed: slot_booking_overlap (interleaved per-pair ratios
+0.50–1.15 on identical binaries) and postings_without_tag
+(0.34–2.01). Both flip between two performance modes across whole
+bench processes; the chart rule (min-of-3) selects the fast mode for
+both engines symmetrically. A mode-flip mechanism hunt (store page
+state vs the 35% code-placement lottery) is queued behind W1–W4.
