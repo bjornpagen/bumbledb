@@ -334,7 +334,7 @@ mod select;
 
 // The tag/hash/mask primitives shared with the sink `WordMap` — one
 // definition (`exec/swar.rs`), two independent probe structures.
-use super::swar::{ctrl_tag, eq_byte_mask, hash_words, zero_byte_mask};
+use super::swar::{ctrl_tag, eq_byte_mask, hash_core, hash_words, zero_byte_mask};
 
 /// The probe hash for a key — exposed so the vectorized executor's phase 1
 /// can compute all hashes (pure ALU) before phase 2 issues any bucket load
@@ -343,6 +343,17 @@ use super::swar::{ctrl_tag, eq_byte_mask, hash_words, zero_byte_mask};
 #[inline(always)]
 pub fn hash_key(words: &[u64]) -> u64 {
     hash_words(words)
+}
+
+/// [`hash_key`] with the word count fixed at compile time — the
+/// executor's phase-1 const-arity dispatch target (the wordmap's
+/// `hash_core` precedent). Hash-identical to [`hash_key`] by
+/// construction: both delegate to the one `swar` fold, and the
+/// equivalence is pinned by the wordmap contract test.
+#[must_use]
+#[inline(always)]
+pub fn hash_key_core<const K: usize>(words: &[u64]) -> u64 {
+    hash_core::<K>(words)
 }
 
 #[cfg(test)]

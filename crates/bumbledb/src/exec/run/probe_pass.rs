@@ -92,19 +92,87 @@ impl Executor {
                 let sources = &scratch.sources[sub_idx][..];
                 let probe_keys = &mut scratch.probe_keys[..n * sub_arity];
                 let hashes = &mut scratch.hashes[..n];
-                for (k, &e) in survivors.iter().enumerate() {
-                    let element = usize::try_from(e).expect("batch fits usize");
-                    let parent = parents[element] as usize;
-                    for i in 0..sub_arity {
-                        probe_keys[k * sub_arity + i] = match sources[i] {
-                            Source::Batch(word) => entry_keys[element * arity + word],
-                            Source::Slot(slot) => pending_bindings[parent * slot_count + slot],
-                        };
+                // The const-arity dispatch (the wordmap's `hash_core`
+                // precedent): one predictable branch per pass (the same
+                // arm every pass of a given subatom) buys the unrolled,
+                // gather-fused hash for the key widths in use; exotic
+                // widths keep the dyn loop.
+                let ab_dyn = HASH_AB_DYN.load(core::sync::atomic::Ordering::Relaxed);
+                match sub_arity {
+                    1 if !ab_dyn => gather_hash_core::<1, C>(
+                        survivors,
+                        parents,
+                        entry_keys,
+                        pending_bindings,
+                        sources,
+                        arity,
+                        slot_count,
+                        probe_keys,
+                        hashes,
+                        node_idx,
+                        sub_idx,
+                        counters,
+                    ),
+                    2 if !ab_dyn => gather_hash_core::<2, C>(
+                        survivors,
+                        parents,
+                        entry_keys,
+                        pending_bindings,
+                        sources,
+                        arity,
+                        slot_count,
+                        probe_keys,
+                        hashes,
+                        node_idx,
+                        sub_idx,
+                        counters,
+                    ),
+                    3 if !ab_dyn => gather_hash_core::<3, C>(
+                        survivors,
+                        parents,
+                        entry_keys,
+                        pending_bindings,
+                        sources,
+                        arity,
+                        slot_count,
+                        probe_keys,
+                        hashes,
+                        node_idx,
+                        sub_idx,
+                        counters,
+                    ),
+                    4 if !ab_dyn => gather_hash_core::<4, C>(
+                        survivors,
+                        parents,
+                        entry_keys,
+                        pending_bindings,
+                        sources,
+                        arity,
+                        slot_count,
+                        probe_keys,
+                        hashes,
+                        node_idx,
+                        sub_idx,
+                        counters,
+                    ),
+                    _ => {
+                        for (k, &e) in survivors.iter().enumerate() {
+                            let element = usize::try_from(e).expect("batch fits usize");
+                            let parent = parents[element] as usize;
+                            for i in 0..sub_arity {
+                                probe_keys[k * sub_arity + i] = match sources[i] {
+                                    Source::Batch(word) => entry_keys[element * arity + word],
+                                    Source::Slot(slot) => {
+                                        pending_bindings[parent * slot_count + slot]
+                                    }
+                                };
+                            }
+                            counters.probe_hash(node_idx, sub_idx);
+                            hashes[k] = crate::exec::colt::hash_key(
+                                &probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                            );
+                        }
                     }
-                    counters.probe_hash(node_idx, sub_idx);
-                    hashes[k] = crate::exec::colt::hash_key(
-                        &probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                    );
                 }
             }
             counters.phase_end(node_idx, JoinPhase::Hash);
@@ -506,5 +574,54 @@ impl Executor {
         if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
             self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
         }
+    }
+}
+
+/// TEMPORARY A/B switch (falsifier instrumentation, not for landing):
+/// `true` forces the runtime-arity hash loop — the interleaved twin's
+/// A arm. Stripped once the verdict is recorded.
+#[doc(hidden)]
+pub static HASH_AB_DYN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Phase-1 gather + hash with the key width fixed at K — the
+/// probe-pass twin of the wordmap's `hash_core` dispatch
+/// (`exec/swar.rs`): the per-word source match unrolls, the `k * K`
+/// indexing strength-reduces, and the hash fold fuses with the gather
+/// instead of the rolled ~5-cycle serial chain runtime arity leaves.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the split borrows and execution context are clearer unpacked"
+)]
+#[inline(always)]
+fn gather_hash_core<const K: usize, C: Counters>(
+    survivors: &[u32],
+    parents: &[u32],
+    entry_keys: &[u64],
+    pending_bindings: &[u64],
+    sources: &[Source],
+    arity: usize,
+    slot_count: usize,
+    probe_keys: &mut [u64],
+    hashes: &mut [u64],
+    node_idx: usize,
+    sub_idx: usize,
+    counters: &mut C,
+) {
+    // The width is a dispatch invariant; the array view kills the
+    // per-word bounds checks inside the loop.
+    let sources: &[Source; K] = sources.try_into().expect("dispatch matches width");
+    for (k, &e) in survivors.iter().enumerate() {
+        let element = usize::try_from(e).expect("batch fits usize");
+        let parent = parents[element] as usize;
+        let mut key = [0_u64; K];
+        for (i, word) in key.iter_mut().enumerate() {
+            *word = match sources[i] {
+                Source::Batch(word) => entry_keys[element * arity + word],
+                Source::Slot(slot) => pending_bindings[parent * slot_count + slot],
+            };
+        }
+        probe_keys[k * K..(k + 1) * K].copy_from_slice(&key);
+        counters.probe_hash(node_idx, sub_idx);
+        hashes[k] = crate::exec::colt::hash_key_core::<K>(&key);
     }
 }

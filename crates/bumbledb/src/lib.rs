@@ -266,6 +266,14 @@ pub mod __private {
     pub use crate::encoding::ValueRef;
 }
 
+/// TEMPORARY A/B switch (falsifier instrumentation, not for landing):
+/// `true` selects the runtime-arity probe-hash loop — the interleaved
+/// twin's A arm. Stripped once the verdict is recorded.
+#[doc(hidden)]
+pub fn __hash_ab_set_dyn(v: bool) {
+    exec::run::probe_pass::HASH_AB_DYN.store(v, core::sync::atomic::Ordering::Relaxed);
+}
+
 #[cfg(test)]
 pub(crate) mod testutil {
     //! Shared test scaffolding: a self-cleaning temp directory (no external

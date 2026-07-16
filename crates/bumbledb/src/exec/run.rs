@@ -611,7 +611,7 @@ mod execute;
 mod leaf;
 mod leaf_precompute;
 mod pipe_tables;
-mod probe_pass;
+pub mod probe_pass;
 mod pump;
 mod run_node;
 mod scan_table;
