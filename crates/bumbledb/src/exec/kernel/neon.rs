@@ -252,10 +252,66 @@ pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [
     // SAFETY: every window reads 16 bytes from within `codes` and
     // writes 16 within `keep` — full windows plus one overlapped window
     // at n-16 (n >= 16); keep bytes are idempotent per position. The
-    // countdown passes through `black_box` so LLVM keeps the
-    // flag-free `sub`+`cbnz` back edge instead of re-deriving a
-    // `cmp`-shaped trip count while unrolling (the gate is the machine
-    // code — `scripts/check-asm.sh`).
+    // countdown passes through an empty register-pinned `asm!` identity
+    // so LLVM keeps the flag-free `sub`+`cbnz` back edge instead of
+    // re-deriving a `cmp`-shaped trip count while unrolling (the gate
+    // is the machine code — `scripts/check-asm.sh`). `black_box` would
+    // do the same opaquing but routes the counter through a stack slot
+    // — a spill+reload per 16-code window, 2 extra memory µops in a
+    // 5-µop payload (m2max.core.scalar-memory-rename: the renamed
+    // round trip is bimodal, medians ~4.8 cy); the empty asm keeps the
+    // counter in its register and emits zero instructions.
+    unsafe {
+        use std::arch::aarch64::vqtbl1q_u8;
+        let mask_table = vld1q_u8(table.as_ptr());
+        let src = codes.as_ptr();
+        let dst = keep.as_mut_ptr();
+        let mut left = n / 16;
+        let mut base = 0usize;
+        while left != 0 {
+            left -= 1;
+            // The opaque back edge: an empty asm block whose only
+            // effect is that `left`'s value is no longer known to LLVM.
+            std::arch::asm!(
+                "/* {c} */",
+                c = inout(reg) left,
+                options(nomem, nostack, preserves_flags)
+            );
+            vst1q_u8(
+                dst.add(base),
+                vqtbl1q_u8(mask_table, vld1q_u8(src.add(base))),
+            );
+            base += 16;
+        }
+        let tail = n - 16;
+        vst1q_u8(
+            dst.add(tail),
+            vqtbl1q_u8(mask_table, vld1q_u8(src.add(tail))),
+        );
+    }
+}
+
+/// The T7 falsifier's arm A: [`allen_filter_batch_neon`] verbatim as it
+/// shipped before the counter-spill fix, its countdown routed through
+/// `std::hint::black_box` — which LLVM materializes as a stack
+/// spill+reload of the counter per 16-code window (`str x,[sp,#8]` /
+/// `ldr x,[sp,#8]` inside the 5-µop loop). Test-only: it exists so the
+/// `allen_filter_counter_spill_ab` timing pin can interleave the two
+/// back-edge shapes inside one process forever.
+#[cfg(test)]
+#[inline(never)]
+pub(super) fn allen_filter_batch_neon_spill_arm(codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
+    let n = codes.len();
+    debug_assert!(n >= 16, "the dispatch owns the small-batch fallback");
+    debug_assert_eq!(keep.len(), n);
+    let mut table = [0u8; 16];
+    let mut code = 0usize;
+    while code < 13 {
+        table[code] = ((mask_bits >> code) & 1) as u8;
+        code += 1;
+    }
+    // SAFETY: as `allen_filter_batch_neon` — same windows, same
+    // overlapped tail; only the countdown's opaquing differs.
     unsafe {
         use std::arch::aarch64::vqtbl1q_u8;
         let mask_table = vld1q_u8(table.as_ptr());
