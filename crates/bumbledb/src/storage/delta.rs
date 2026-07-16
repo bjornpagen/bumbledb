@@ -49,7 +49,10 @@ pub enum Disposition {
 /// last disposition wins, mirroring the fact map — except that a delete
 /// never erases a record established by a *different* pending fact under
 /// the same key bytes (the `delete(old); insert(new)`-in-either-order
-/// idiom).
+/// idiom), and a delete that *cancels* a pending insert restores the
+/// tuple's pre-insert overlay instead of recording absence
+/// (`restore_determinants` — the net effect of a cancelled pair is
+/// nothing, so the committed owner must keep answering).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeterminantDisposition {
     Present(ArenaSlice),
