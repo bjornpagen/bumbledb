@@ -858,3 +858,97 @@ fn compaction_keeps_exactly_the_masked_items_in_order() {
     compact_u32_by_mask(&mut items, &mask);
     assert_eq!(items, vec![0, 2, 5, 6, 9]);
 }
+
+/// The T7 counter-spill falsifier (timing evidence; ignored: runs by
+/// hand on the reference host —
+/// `scripts/measure.sh cargo test -p bumbledb --release allen_filter_counter -- --ignored --nocapture`).
+///
+/// Arm A is [`neon::allen_filter_batch_neon_spill_arm`] — the pre-T7
+/// kernel verbatim, its countdown routed through `std::hint::black_box`
+/// (LLVM materializes that as a stack spill+reload of the counter per
+/// 16-code window). Arm B is the shipped [`neon::allen_filter_batch_neon`]
+/// with the register-pinned `asm!` back edge. The arms alternate per
+/// span inside one process (m2max.method.interleaved-ab) on L1-resident
+/// buffers; the kernel has no data-dependent branch, so repetition on
+/// fixed data is the valid protocol here (the TAGE caveat's own
+/// counter-case), and every span is loop-amortized far above the sub-µs
+/// attribution floor.
+#[cfg(target_arch = "aarch64")]
+#[test]
+#[ignore = "timing evidence, run by hand on the reference host"]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "reporting accepts lossy integer-to-float conversion"
+)]
+fn allen_filter_counter_spill_ab() {
+    // Four distinct 8 KiB code buffers + one keep buffer: ~40 KiB
+    // touched, L1-resident on the reference host (128 KiB L1d). Spans
+    // loop-amortize CALLS kernel calls (~0.5M lanes, tens of µs).
+    const N: usize = 8192;
+    const BUFS: usize = 4;
+    const CALLS: usize = 64;
+    const SPANS: usize = 300;
+
+    let filter_spill = neon::allen_filter_batch_neon_spill_arm;
+    let filter_reg = neon::allen_filter_batch_neon;
+
+    let mut rng = Lcg(0xA11E);
+    let bufs: Vec<Vec<u8>> = (0..BUFS)
+        .map(|_| {
+            (0..N)
+                .map(|_| u8::try_from(rng.next() % 13).expect("code"))
+                .collect()
+        })
+        .collect();
+    let mask_bits = 0b0_0100_0010_0011u16; // an arbitrary nontrivial mask
+    let mut keep_a = vec![0u8; N];
+    let mut keep_b = vec![0u8; N];
+
+    // Sanity: identical outputs on every buffer.
+    for buf in &bufs {
+        filter_spill(buf, mask_bits, &mut keep_a);
+        filter_reg(buf, mask_bits, &mut keep_b);
+        assert_eq!(keep_a, keep_b, "the arms disagree — the twin is void");
+    }
+
+    // Interleaved spans: arms alternating A,B,A,B within the one
+    // process. Paired per-alternation ratios are the statistic.
+    let span = |f: fn(&[u8], u16, &mut [u8]), keep: &mut [u8], salt: usize| {
+        let start = std::time::Instant::now();
+        for call in 0..CALLS {
+            f(&bufs[(call + salt) % BUFS], mask_bits, keep);
+        }
+        start.elapsed().as_nanos()
+    };
+    // Warmup both arms.
+    for salt in 0..8 {
+        span(filter_spill, &mut keep_a, salt);
+        span(filter_reg, &mut keep_b, salt);
+    }
+    let mut ratios: Vec<f64> = Vec::with_capacity(SPANS);
+    let (mut min_a, mut min_b) = (u128::MAX, u128::MAX);
+    for s in 0..SPANS {
+        let a = span(filter_spill, &mut keep_a, s);
+        let b = span(filter_reg, &mut keep_b, s);
+        min_a = min_a.min(a);
+        min_b = min_b.min(b);
+        ratios.push(a as f64 / b as f64);
+    }
+    ratios.sort_by(|x, y| x.partial_cmp(y).expect("finite"));
+    let pct = |p: usize| ratios[(ratios.len() - 1) * p / 100];
+    let min_ratio = min_a as f64 / min_b as f64;
+    println!(
+        "allen_filter counter A/B (spill/reg), L1-resident, {SPANS} alternations x {CALLS} calls x {N} codes:"
+    );
+    println!(
+        "  paired ratio p10 {:.3}  p50 {:.3}  p90 {:.3}   min-of-spans ratio {min_ratio:.3}",
+        pct(10),
+        pct(50),
+        pct(90),
+    );
+    println!(
+        "  min span: spill {min_a} ns  reg {min_b} ns  ({:.3} vs {:.3} codes/ns)",
+        (N * CALLS) as f64 / min_a as f64,
+        (N * CALLS) as f64 / min_b as f64,
+    );
+}
