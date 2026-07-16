@@ -29,14 +29,14 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bumbledb::ir::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, FindTerm, HeadTerm, MaskTerm, ParamId, Query,
-    Rule, Term, Value, VarId,
+    AggOp, Atom, AtomSource, CmpOp, Comparison, FindTerm, HeadTerm, MaskTerm, ParamId, Query, Rule,
+    Term, Value, VarId,
 };
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
-use bumbledb::{AllenMask, Answers, BindValue, Db, ConditionTree};
+use bumbledb::{AllenMask, Answers, BindValue, ConditionTree, Db};
 
 // =====================================================================
 // The census allocator: counting always, backtrace capture when armed.
@@ -273,9 +273,9 @@ fn print_sites() {
         println!("  SITE {count:>6}x {bytes:>10}B (re={reallocs}) {key}");
     }
     if rows.len() > 28 {
-        let (c, b): (u64, u64) = rows[28..].iter().fold((0, 0), |(c, b), r| {
-            (c + r.1.0, b + r.1.1)
-        });
+        let (c, b): (u64, u64) = rows[28..]
+            .iter()
+            .fold((0, 0), |(c, b), r| (c + r.1.0, b + r.1.1));
         println!("  SITE {c:>6}x {b:>10}B (…{} more sites)", rows.len() - 28);
     }
     if dropped > 0 {
@@ -566,7 +566,9 @@ fn dnf_query(k: u16) -> Query {
             ],
         )],
         negated: vec![],
-        conditions: vec![ConditionTree::Or((0..k).map(|j| pair(u64::from(j))).collect())],
+        conditions: vec![ConditionTree::Or(
+            (0..k).map(|j| pair(u64::from(j))).collect(),
+        )],
     })
 }
 
@@ -835,17 +837,23 @@ fn flow_open() {
         Db::ephemeral(edir.path(), schema()).expect("ephemeral create")
     });
     drop(db);
-    let db = measured("open", "Db::ephemeral(reopen: probe battery)", false, || {
-        Db::ephemeral(edir.path(), schema()).expect("ephemeral reopen")
-    });
+    let db = measured(
+        "open",
+        "Db::ephemeral(reopen: probe battery)",
+        false,
+        || Db::ephemeral(edir.path(), schema()).expect("ephemeral reopen"),
+    );
     drop(db);
 
     // Validate/open scaling with schema width.
     for n in [4u16, 16, 64] {
         let wdir = common::TempDir::new(&format!("census-wide-{n}"));
-        let db = measured("open", &format!("Db::create(wide schema, {n} relations)"), false, || {
-            Db::create(wdir.path(), wide_schema(n)).expect("create wide")
-        });
+        let db = measured(
+            "open",
+            &format!("Db::create(wide schema, {n} relations)"),
+            false,
+            || Db::create(wdir.path(), wide_schema(n)).expect("create wide"),
+        );
         drop(db);
     }
 }
@@ -929,11 +937,20 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
     // restoring commit.
     for round in 0..3u64 {
         let attrib = round == 2;
-        let run = |label: &str, f: &dyn Fn(&mut bumbledb::WriteTx<'_, SchemaDescriptor>) -> Result<(), bumbledb::Error>, attrib: bool| {
+        let run = |label: &str,
+                   f: &dyn Fn(
+            &mut bumbledb::WriteTx<'_, SchemaDescriptor>,
+        ) -> Result<(), bumbledb::Error>,
+                   attrib: bool| {
             if attrib {
-                measured("commit", label, label.starts_with("windowed append"), || {
-                    db.write(|tx| f(tx)).expect("windowed commit");
-                });
+                measured(
+                    "commit",
+                    label,
+                    label.starts_with("windowed append"),
+                    || {
+                        db.write(|tx| f(tx)).expect("windowed commit");
+                    },
+                );
             } else {
                 db.write(|tx| f(tx)).expect("windowed commit");
             }
@@ -962,7 +979,10 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
     for round in 0..3u64 {
         let body = move |tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>| {
             for account in 0..8u64 {
-                tx.delete_dyn(PROFILE, &[Value::U64(account), Value::U64(account * 3 + round)])?;
+                tx.delete_dyn(
+                    PROFILE,
+                    &[Value::U64(account), Value::U64(account * 3 + round)],
+                )?;
                 tx.insert_dyn(
                     PROFILE,
                     &[Value::U64(account), Value::U64(account * 3 + round + 1)],
@@ -1002,9 +1022,14 @@ fn cold_and_warm(
     db.read(|snap| {
         let mut prepared = db.prepare(q)?;
         let mut out = Answers::new();
-        measured("execute", &format!("{label} COLD (first execution)"), attrib_cold, || {
-            snap.execute(&mut prepared, params, &mut out).expect(label);
-        });
+        measured(
+            "execute",
+            &format!("{label} COLD (first execution)"),
+            attrib_cold,
+            || {
+                snap.execute(&mut prepared, params, &mut out).expect(label);
+            },
+        );
         for _ in 0..3 {
             snap.execute(&mut prepared, params, &mut out)?;
         }
@@ -1021,8 +1046,20 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
     cold_and_warm(db, "aggregate sum/count", &aggregate_query(), &[], false);
     cold_and_warm(db, "string/Ne", &string_query(), &[], false);
     cold_and_warm(db, "pack", &pack_query(), &[], true);
-    cold_and_warm(db, "calendar/allen", &calendar_query(), &[BindValue::U64(2)], true);
-    cold_and_warm(db, "windowed/marks", &marks_query(), &[BindValue::U64(3)], false);
+    cold_and_warm(
+        db,
+        "calendar/allen",
+        &calendar_query(),
+        &[BindValue::U64(2)],
+        true,
+    );
+    cold_and_warm(
+        db,
+        "windowed/marks",
+        &marks_query(),
+        &[BindValue::U64(3)],
+        false,
+    );
 
     // The fixpoint driver: cold executions at increasing caps — rounds
     // ride the holder chain, so allocation-per-round is the slope.
@@ -1044,10 +1081,15 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
             for _ in 0..3 {
                 snap.execute(&mut prepared, &[BindValue::U64(cap)], &mut out)?;
             }
-            measured("execute", &format!("recursive WARM cap={cap}"), false, || {
-                snap.execute(&mut prepared, &[BindValue::U64(cap)], &mut out)
-                    .expect("recursive");
-            });
+            measured(
+                "execute",
+                &format!("recursive WARM cap={cap}"),
+                false,
+                || {
+                    snap.execute(&mut prepared, &[BindValue::U64(cap)], &mut out)
+                        .expect("recursive");
+                },
+            );
             Ok(())
         })
         .expect("read");
@@ -1079,10 +1121,15 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
     })
     .expect("commit");
     db.read(|snap| {
-        measured("execute", "join REBUILD (first execution post-commit)", true, || {
-            snap.execute(&mut prepared, &[BindValue::I64(0)], &mut out)
-                .expect("rebuild");
-        });
+        measured(
+            "execute",
+            "join REBUILD (first execution post-commit)",
+            true,
+            || {
+                snap.execute(&mut prepared, &[BindValue::I64(0)], &mut out)
+                    .expect("rebuild");
+            },
+        );
         measured("execute", "join post-rebuild WARM", false, || {
             snap.execute(&mut prepared, &[BindValue::I64(0)], &mut out)
                 .expect("warm");
@@ -1100,10 +1147,15 @@ fn flow_bulk_and_scan() {
     let rows: Vec<Vec<Value>> = (0..10_000u64)
         .map(|i| vec![Value::U64(i % 97), Value::U64(i / 97 + 1), Value::U64(i)])
         .collect();
-    measured("bulk", "bulk_load_dyn 10k Item rows (3 chunks)", true, || {
-        let n = db.bulk_load_dyn(ITEM, rows.clone()).expect("bulk");
-        assert_eq!(n, 10_000);
-    });
+    measured(
+        "bulk",
+        "bulk_load_dyn 10k Item rows (3 chunks)",
+        true,
+        || {
+            let n = db.bulk_load_dyn(ITEM, rows.clone()).expect("bulk");
+            assert_eq!(n, 10_000);
+        },
+    );
 
     // The dynamic scan/export lane over the loaded relation.
     db.read(|snap| {
@@ -1124,15 +1176,20 @@ fn flow_bulk_and_scan() {
     let tdir = common::TempDir::new("census-bulk-typed");
     let tdb = Db::create(tdir.path(), CensusLedger).expect("create typed");
     let memos: Vec<String> = (0..64).map(|i| format!("memo-{i}")).collect();
-    measured("bulk", "typed bulk_load 10k str facts (3 chunks)", true, || {
-        let n = tdb
-            .bulk_load((0..10_000u64).map(|i| CItem {
-                id: CItemId::from_fresh(i),
-                memo: &memos[(i % 64) as usize],
-            }))
-            .expect("typed bulk");
-        assert_eq!(n, 10_000);
-    });
+    measured(
+        "bulk",
+        "typed bulk_load 10k str facts (3 chunks)",
+        true,
+        || {
+            let n = tdb
+                .bulk_load((0..10_000u64).map(|i| CItem {
+                    id: CItemId::from_fresh(i),
+                    memo: &memos[(i % 64) as usize],
+                }))
+                .expect("typed bulk");
+            assert_eq!(n, 10_000);
+        },
+    );
     tdb.read(|snap| {
         measured("scan", "scan_facts 10k typed str facts", true, || {
             let n = snap.scan_facts::<CItem>().expect("scan").count();

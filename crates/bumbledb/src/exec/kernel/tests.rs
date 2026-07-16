@@ -1438,3 +1438,154 @@ fn allen_filter_counter_spill_ab() {
         (N * CALLS) as f64 / min_b as f64,
     );
 }
+
+/// The unsafe-allowlist law for the compaction kernel: bit-identical to
+/// the fully safe-indexed reference across randomized 0/1 masks (the
+/// producers' contract) at every selectivity, plus the degenerate
+/// shapes — all-zero, all-one, alternating — over the lane-stress
+/// lengths and a long tail. The mask is allowed to run longer than the
+/// items (the kernel's documented tolerance).
+#[test]
+fn compaction_matches_the_safe_reference_bit_for_bit() {
+    let mut rng = Lcg(0xC0 /*mpact*/);
+    let lengths = LENGTHS.iter().copied().chain([1_000, 8_192]);
+    for len in lengths {
+        let source: Vec<u32> = (0..len)
+            .map(|_| u32::try_from(rng.next() % u64::from(u32::MAX)).expect("bounded"))
+            .collect();
+        let mut masks: Vec<Vec<u8>> = vec![
+            vec![0u8; len],
+            vec![1u8; len],
+            (0..len).map(|i| u8::from(i % 2 == 0)).collect(),
+        ];
+        for percent in [1, 10, 50, 90, 99] {
+            masks.push(
+                (0..len)
+                    .map(|_| u8::from(rng.next() % 100 < percent))
+                    .collect(),
+            );
+        }
+        for mut mask in masks {
+            let mut kernel = source.clone();
+            let mut reference = source.clone();
+            compact_u32_by_mask(&mut kernel, &mask);
+            super::reference::compact_u32_by_mask(&mut reference, &mask);
+            assert_eq!(kernel, reference, "len {len}");
+            // The longer-mask tolerance: trailing mask bytes past the
+            // items are never read.
+            mask.push(1);
+            let mut kernel_long = source.clone();
+            compact_u32_by_mask(&mut kernel_long, &mask);
+            assert_eq!(kernel_long, kernel, "longer mask, len {len}");
+        }
+    }
+}
+
+/// Compaction-throughput evidence (a gate; ignored: a timing test runs
+/// only by hand, under the measurement mutex —
+/// `scripts/measure.sh cargo test -p bumbledb --release compact_throughput -- --ignored --nocapture`).
+///
+/// The interleaved A/B twin for the triad diet: arm A is the pre-diet
+/// safe-indexed shape ([`reference::compact_u32_by_mask`] behind an
+/// `#[inline(never)]` wall, its own disassembly subject), arm B the
+/// live kernel. L1-resident (8 K items = 32 KB + 8 KB mask), fresh
+/// masks per rep (128 distinct windows ≈ 1 M outcomes — past the TAGE
+/// capacity edge, `m2max.predict.tage-memorizes-benchmarks`),
+/// selectivity swept 1–99 % (the branchless law expects flatness,
+/// `m2max.predict.branchless-flat`). Only the same-session interleaved
+/// ratio is meaningful under co-tenancy (`m2max.method.interleaved-ab`);
+/// the printed ns/item are refill-subtracted estimates, not absolutes.
+/// The gate: the live kernel is never slower than the pre-diet shape
+/// beyond the ±2 % validity band, at any selectivity.
+#[test]
+#[ignore = "timing evidence, run by hand on the reference host"]
+fn compact_throughput_interleaved_ab() {
+    #[inline(never)]
+    fn arm_a(items: &mut Vec<u32>, mask: &[u8]) {
+        super::reference::compact_u32_by_mask(items, mask);
+    }
+    #[inline(never)]
+    fn arm_b(items: &mut Vec<u32>, mask: &[u8]) {
+        compact_u32_by_mask(items, mask);
+    }
+    const N: usize = 8_192;
+    const WINDOWS: usize = 128;
+    const REPS_PER_SPAN: usize = 128;
+    const PAIRS: usize = 24;
+    let source: Vec<u32> = (0..N).map(|i| u32::try_from(i).expect("small")).collect();
+    let mut rng = Lcg(0xAB);
+    // One timed span: REPS_PER_SPAN × (refill + compact), fresh mask
+    // window per rep. Returns ns/item including the refill.
+    let span =
+        |arm: &mut dyn FnMut(&mut Vec<u32>, &[u8]), items: &mut Vec<u32>, masks: &[Vec<u8>]| {
+            let start = std::time::Instant::now();
+            let mut sink = 0usize;
+            for rep in 0..REPS_PER_SPAN {
+                items.clear();
+                items.extend_from_slice(&source);
+                arm(items, &masks[rep % WINDOWS]);
+                sink = sink.wrapping_add(items.len());
+            }
+            let elapsed = start.elapsed();
+            std::hint::black_box(sink);
+            #[expect(clippy::cast_precision_loss, reason = "reporting")]
+            {
+                elapsed.as_nanos() as f64 / (N * REPS_PER_SPAN) as f64
+            }
+        };
+    let refill_only = |items: &mut Vec<u32>| {
+        let start = std::time::Instant::now();
+        for _ in 0..REPS_PER_SPAN {
+            items.clear();
+            items.extend_from_slice(&source);
+            std::hint::black_box(items.len());
+        }
+        #[expect(clippy::cast_precision_loss, reason = "reporting")]
+        {
+            start.elapsed().as_nanos() as f64 / (N * REPS_PER_SPAN) as f64
+        }
+    };
+    println!("sel%  A ns/item  B ns/item  A/B (refill-subtracted, medians of {PAIRS} pairs)");
+    for percent in [1u64, 25, 50, 75, 99] {
+        let masks: Vec<Vec<u8>> = (0..WINDOWS)
+            .map(|_| {
+                (0..N)
+                    .map(|_| u8::from(rng.next() % 100 < percent))
+                    .collect()
+            })
+            .collect();
+        let mut items = source.clone();
+        // Warmup both arms.
+        let _ = span(&mut arm_a, &mut items, &masks);
+        let _ = span(&mut arm_b, &mut items, &masks);
+        let refill = {
+            let mut samples: Vec<f64> = (0..8).map(|_| refill_only(&mut items)).collect();
+            samples.sort_by(f64::total_cmp);
+            samples[samples.len() / 2]
+        };
+        let mut ratios = Vec::with_capacity(PAIRS);
+        let (mut a_net, mut b_net) = (Vec::new(), Vec::new());
+        for _ in 0..PAIRS {
+            let a = span(&mut arm_a, &mut items, &masks) - refill;
+            let b = span(&mut arm_b, &mut items, &masks) - refill;
+            ratios.push(a / b);
+            a_net.push(a);
+            b_net.push(b);
+        }
+        ratios.sort_by(f64::total_cmp);
+        a_net.sort_by(f64::total_cmp);
+        b_net.sort_by(f64::total_cmp);
+        let median = ratios[PAIRS / 2];
+        println!(
+            "{percent:>3}   {:>8.4}  {:>8.4}  {median:.4} [{:.4} .. {:.4}]",
+            a_net[PAIRS / 2],
+            b_net[PAIRS / 2],
+            ratios[0],
+            ratios[PAIRS - 1],
+        );
+        assert!(
+            median >= 0.98,
+            "the diet regressed at {percent}% selectivity: A/B median {median:.4}"
+        );
+    }
+}
