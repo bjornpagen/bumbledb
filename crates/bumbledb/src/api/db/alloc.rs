@@ -57,15 +57,12 @@ impl<S> WriteTx<'_, S> {
     /// refused at declaration, so a closed relation's witness is
     /// unconstructible.
     ///
-    /// **The proof is schema-scoped**: the witness must have been
-    /// resolved by THIS database's schema. A witness minted by a
-    /// *different* schema's `fresh_field` is outside the contract and
-    /// nothing here re-binds it — cross-schema misuse is a programmer
-    /// error a debug build asserts on (the desired typed refusal is
-    /// pinned, `#[ignore]`d, by
-    /// `a_foreign_witness_is_refused_typed_not_minted`, awaiting the
-    /// owner ruling on which side of the witness-carries-the-proof
-    /// decision gives).
+    /// **The proof is schema-BOUND** (the 1.0.0 ruling that reversed
+    /// witness-carries-the-proof): a foreign `schema!`'s witness is a
+    /// type mismatch (the `foreign_fresh_witness` compile-fail fixture),
+    /// and a foreign *descriptor*'s witness at the dyn boundary refuses
+    /// typed, never mints — pinned live by
+    /// `a_foreign_witness_is_refused_typed_not_minted`.
     ///
     /// # Errors
     ///
