@@ -254,6 +254,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         cfg,
         &out_dir.join("scratch"),
         &selected,
+        args.samples,
         args.alloc,
         args.proxy_per_rep,
         mode,

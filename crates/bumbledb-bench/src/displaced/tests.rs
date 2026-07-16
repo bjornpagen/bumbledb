@@ -4,7 +4,9 @@ use crate::corpus_gen::{GenConfig, Scale};
 use crate::harness::{self, Modes, Protocol};
 use crate::storemode::StoreMode;
 
-use super::{DispSizes, ForeignStream, forced_hub_map_bytes};
+use super::{
+    DispSizes, FORCED_MAP_DISTINCT, FORCED_MAP_POSITIONS, ForeignStream, forced_spoke_map_bytes,
+};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-displaced-{tag}"));
@@ -38,25 +40,108 @@ fn the_schema_validates_and_the_registry_is_coherent() {
     }
 }
 
-/// The ≥ 32 MiB claim, computed from the engine's own layout rules —
-/// the lane's regime label is arithmetic, not hope. If the engine's
+/// The ≥ 32 MiB claim, computed from the engine's own layout rules over
+/// the TRACED force shape (2^20 spoke positions, 453,241 distinct hub
+/// keys — the obs test below pins those numbers against the engine
+/// itself; this one pins the arithmetic they imply). If the engine's
 /// COLT sizing or image encoding changes, this pins the drift.
 #[test]
 fn the_bench_shape_exceeds_the_l2_by_layout_arithmetic() {
     let sizes = DispSizes::of(Scale::S);
-    // The forced hub map alone: 2^18 buckets → 2 MiB ctrl + 32 MiB
+    // The pinned distinct count is the generator's arithmetic, not a
+    // free constant: 2^20 uniform draws over the 2^19 hub key space.
+    assert_eq!(FORCED_MAP_POSITIONS, sizes.spokes);
+    let mut seen = vec![false; usize::try_from(sizes.hubs).expect("64-bit usize")];
+    for i in 0..sizes.spokes {
+        let m = crate::corpus_gen::mix(1, super::ids::SPOKE, i);
+        seen[usize::try_from(m % sizes.hubs).expect("64-bit usize")] = true;
+    }
+    let distinct = u64::try_from(seen.iter().filter(|s| **s).count()).expect("fits u64");
+    assert_eq!(distinct, FORCED_MAP_DISTINCT, "1 - e^-2 of 2^19, exactly");
+    // The forced spoke map alone: 2^18 buckets → 2 MiB ctrl + 32 MiB
     // bucket words = 34 MiB, past one P-cluster's 32 MiB L2.
-    let map = forced_hub_map_bytes(sizes.hubs);
+    let map = forced_spoke_map_bytes(FORCED_MAP_POSITIONS, FORCED_MAP_DISTINCT);
     assert_eq!(map, (1 << 18) * 8 + (1 << 18) * 16 * 8, "2^18 buckets");
     assert!(map >= 32 << 20, "the forced map is the >= 32 MiB claim");
-    // The per-pass touched mass: map + both images.
-    let touched = map + sizes.hub_image_bytes() + sizes.spoke_image_bytes();
-    assert!(touched >= 64 << 20, "≈ 66 MiB per probe pass");
+    // The steady-state per-pass touched mass: the map, the iterated hub
+    // image, and the gathered spoke val column.
+    let touched = map + sizes.hub_image_bytes() + sizes.spokes * 8;
+    assert!(touched >= 48 << 20, "≈ 50 MiB per steady-state probe pass");
     // The stream shape's touched mass: two spoke columns = 16 MiB.
     assert_eq!(sizes.spokes * 2 * 8, 16 << 20);
     // Every timed scale shares the shape (the closure precedent).
     assert_eq!(DispSizes::of(Scale::M), sizes);
     assert_eq!(DispSizes::of(Scale::L), sizes);
+}
+
+/// The regime label observed on the ENGINE, not derived beside it (the
+/// arithmetic test above cannot catch plan drift — this one can): at
+/// the real bench shape, the first probe execute forces exactly one
+/// COLT map, ingesting all 2^20 SPOKE positions keyed by hub value with
+/// the pinned distinct count — the executor iterates the hub side and
+/// probes the ≈ 34 MiB spoke map. And the force is once per prepare:
+/// the second execute memo-hits, forcing nothing and rebuilding no
+/// image, so every timed pass after warmup 1 is the steady-state shape
+/// the module doc claims.
+#[cfg(feature = "obs")]
+#[test]
+fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
+    use bumbledb::obs;
+
+    let dir = scratch("trace-pin");
+    let cfg = GenConfig {
+        seed: 1, // the bench default; distinct is seed-invariant below 2^20 anyway
+        scale: Scale::S,
+    };
+    let sizes = DispSizes::of(cfg.scale);
+    // Engine store only — the mirror is parity's business, not this pin's.
+    let db = StoreMode::Durable
+        .create(&dir.join("db"), super::DisplacedWorld)
+        .expect("create");
+    for rel in [super::ids::HUB, super::ids::SPOKE] {
+        db.bulk_load_dyn(rel, super::relation_rows(sizes, cfg.seed, rel))
+            .expect("load");
+    }
+    let mut prepared = db.prepare(&super::probe_query()).expect("prepare");
+    let mut buffer = bumbledb::Answers::new();
+    let mut traced_execute = || {
+        obs::start_capture();
+        db.read(|snap| snap.execute_args(&mut prepared, &[], &mut buffer))
+            .expect("execute");
+        obs::finish_capture()
+    };
+
+    let first = traced_execute();
+    let forces: Vec<(u64, u64)> = first
+        .iter()
+        .filter(|e| e.name == obs::names::COLT_FORCE)
+        .map(|e| (e.a0, e.a1))
+        .collect();
+    assert_eq!(
+        forces,
+        vec![(FORCED_MAP_POSITIONS, FORCED_MAP_DISTINCT)],
+        "one force: all spoke positions, the pinned distinct hub keys"
+    );
+    assert!(
+        first.iter().any(|e| e.name == obs::names::IMAGE_BUILD),
+        "the first execute decodes the images"
+    );
+
+    let second = traced_execute();
+    let count = |name: &str| second.iter().filter(|e| e.name == name).count();
+    assert!(
+        count(obs::names::VIEW_MEMO_HIT) > 0,
+        "the second execute rides the view memo"
+    );
+    assert_eq!(
+        count(obs::names::COLT_FORCE),
+        0,
+        "force is once per prepare"
+    );
+    assert_eq!(count(obs::names::IMAGE_BUILD), 0, "images are cached");
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// `SQLite` parity at the shrunk scale (the windowed family's unit-mass

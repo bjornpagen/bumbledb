@@ -72,9 +72,11 @@ cargo test --manifest-path fuzz/Cargo.toml --test kill random_kills_recover_on_b
 
 # The bench crate must build and lint with the engine's observability on
 # (docs/architecture/60-validation.md); the harness tests run under both configs.
+# `the_engine_trace_pins`: the displaced lane's regime label observed on
+# the engine's own colt_force trace — obs-gated, so it only runs here.
 echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"
 cargo clippy -p bumbledb-bench --features obs --all-targets -- -D warnings
-cargo test -p bumbledb-bench --features obs -- harness trace_out tripwires
+cargo test -p bumbledb-bench --features obs -- harness trace_out tripwires the_engine_trace_pins
 
 # The x86-64 scalar-fallback check (docs/architecture/00-product.md):
 # report skip-vs-pass honestly. It needs the WHOLE cross toolchain, not
