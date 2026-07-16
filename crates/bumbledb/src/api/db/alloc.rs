@@ -26,6 +26,16 @@ impl<S> WriteTx<'_, S> {
     /// `fresh` on a closed relation is refused at declaration, so a
     /// closed relation's witness is unconstructible.
     ///
+    /// **The proof is schema-scoped**: the witness must have been
+    /// resolved by THIS database's schema. A witness minted by a
+    /// *different* schema's `fresh_field` is outside the contract and
+    /// nothing here re-binds it — cross-schema misuse is a programmer
+    /// error a debug build asserts on (the desired typed refusal is
+    /// pinned, `#[ignore]`d, by
+    /// `a_foreign_witness_is_refused_typed_not_minted`, awaiting the
+    /// owner ruling on which side of the witness-carries-the-proof
+    /// decision gives).
+    ///
     /// # Errors
     ///
     /// As [`WriteTx::alloc`].
