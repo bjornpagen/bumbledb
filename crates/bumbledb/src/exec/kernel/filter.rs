@@ -2,16 +2,24 @@
 //! target (the crucible packet (git ecec1dc3), Q2 — ADOPT, measured:
 //! the portable bodies beat the retired hand-NEON twins 1.03–1.5× on
 //! the reference host, delete the intrinsic dual and its `unsafe`, and
-//! are Miri-interpretable). The 128-bit width (2 × u64 / 16 × u8) is
-//! the shape every 64-bit target has; the scalar tail twin per kernel
-//! covers the remainder lanes. The scalar reference twins
-//! ([`super::reference`]) remain the independent differential oracle.
+//! are Miri-interpretable). The 256-bit width (4 × u64, two vectors per
+//! chunk) amortizes the mask consumption: one `to_bitmask()` vector→GPR
+//! transfer per chunk, then GPR shifts — never a per-lane extract or a
+//! flag-class increment (`m2max.core.flag-port-asymmetry`: flag µops
+//! confine to 3 of 6 integer ALUs) — and the survivor writes go through
+//! one hoisted capacity invariant instead of a per-lane bounds check
+//! (`m2max.codegen.bounds-checks-structural`: the check's second basic
+//! block is a codegen-shape tax, not arithmetic). The u8 shape keeps one
+//! 128-bit vector (16 lanes) — its win is the same one-transfer bitmask.
+//! The scalar tail twin per kernel covers the remainder lanes. The
+//! scalar reference twins ([`super::reference`]) remain the independent
+//! differential oracle.
 
 use std::simd::prelude::*;
-use std::simd::{MaskElement, SimdElement};
+use std::simd::SimdElement;
 
-/// The u64 kernel width: one 128-bit vector, two lanes.
-const U64_LANES: usize = 2;
+/// The u64 kernel width: two 128-bit vectors, four lanes per chunk.
+const U64_LANES: usize = 4;
 
 /// The u8 kernel width: one 128-bit vector, sixteen lanes.
 const U8_LANES: usize = 16;
@@ -114,6 +122,7 @@ pub fn filter_duration_range_u64(
     let start = out.len();
     out.resize(start + starts.len(), 0);
     let mut write = start;
+    let mut pos = positions_fit_u32(starts.len());
     let lo_v = Simd::<u64, U64_LANES>::splat(lo);
     let hi_v = Simd::<u64, U64_LANES>::splat(hi);
     let inf = Simd::<u64, U64_LANES>::splat(u64::MAX);
@@ -130,7 +139,7 @@ pub fn filter_duration_range_u64(
         }
         let duration = e - s;
         let mask = duration.simd_ge(lo_v) & duration.simd_le(hi_v);
-        write = write_survivors(out, write, base, mask);
+        (write, pos) = write_survivor_bits::<U64_LANES>(out, write, pos, mask.to_bitmask());
     }
     for i in tail_start..starts.len() {
         if ends[i] == u64::MAX {
@@ -145,7 +154,8 @@ pub fn filter_duration_range_u64(
 }
 
 /// Branchless cursor-write over the whole column: lane chunks through
-/// the `keep` mask, the remainder through its scalar twin `keep1`.
+/// the `keep` mask's bitmask, the remainder through its scalar twin
+/// `keep1`.
 fn push_matching<T, const N: usize>(
     col: &[T],
     out: &mut Vec<u32>,
@@ -157,11 +167,12 @@ fn push_matching<T, const N: usize>(
     let start = out.len();
     out.resize(start + col.len(), 0);
     let mut write = start;
+    let mut pos = positions_fit_u32(col.len());
     let (chunks, tail) = col.as_chunks::<N>();
     let tail_start = col.len() - tail.len();
-    for (chunk_idx, chunk) in chunks.iter().enumerate() {
-        let mask = keep(Simd::from_array(*chunk));
-        write = write_survivors(out, write, chunk_idx * N, mask);
+    for chunk in chunks {
+        let bits = keep(Simd::from_array(*chunk)).to_bitmask();
+        (write, pos) = write_survivor_bits::<N>(out, write, pos, bits);
     }
     for (i, &item) in tail.iter().enumerate() {
         out[write] = u32::try_from(tail_start + i).expect("positions fit u32");
@@ -181,13 +192,15 @@ fn push_matching_pair(
     let start = out.len();
     out.resize(start + starts.len(), 0);
     let mut write = start;
+    let mut pos = positions_fit_u32(starts.len());
     let (chunks, tail) = starts.as_chunks::<U64_LANES>();
     let tail_start = starts.len() - tail.len();
     for (chunk_idx, chunk) in chunks.iter().enumerate() {
         let base = chunk_idx * U64_LANES;
         let s = Simd::from_array(*chunk);
         let e = Simd::<u64, U64_LANES>::from_slice(&ends[base..base + U64_LANES]);
-        write = write_survivors(out, write, base, keep(s, e));
+        let bits = keep(s, e).to_bitmask();
+        (write, pos) = write_survivor_bits::<U64_LANES>(out, write, pos, bits);
     }
     for i in tail_start..starts.len() {
         out[write] = u32::try_from(i).expect("positions fit u32");
@@ -196,22 +209,50 @@ fn push_matching_pair(
     out.truncate(write);
 }
 
-/// The per-lane branchless survivor writes: position `base + lane`
-/// lands at the cursor, which advances by the lane's mask bit.
-fn write_survivors<M, const N: usize>(
+/// The one hoisted position guard (the per-lane `u32::try_from` was a
+/// per-item branch): a column of `len` rows writes positions
+/// `0..len`, so `len − 1` must fit u32 — the same programmer invariant
+/// the per-lane guard asserted, checked once. Returns the first
+/// position's cursor.
+fn positions_fit_u32(len: usize) -> u32 {
+    let _ = u32::try_from(len.saturating_sub(1)).expect("positions fit u32");
+    0
+}
+
+/// The per-chunk branchless survivor writes over the mask's bitmask
+/// (bit `lane` set ⇔ position `pos + lane` survives): each position
+/// lands at the cursor, which advances by the lane's bit — GPR shift
+/// and add per lane, no flag traffic, no per-lane vector→GPR transfer
+/// (`m2max.predict.branchless-flat`'s 1.00 cy/item cursor-write shape).
+/// Returns the advanced (cursor, position) pair.
+///
+/// The callers owe the capacity invariant asserted below: `out` is
+/// pre-sized to `start + col.len()` and the cursor advances at most
+/// once per visited position, so on entry `write + N <= out.len()`
+/// whenever a full chunk remains — every lane's write is in bounds.
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
+fn write_survivor_bits<const N: usize>(
     out: &mut [u32],
     mut write: usize,
-    base: usize,
-    mask: Mask<M, N>,
-) -> usize
-where
-    M: MaskElement,
-{
+    mut pos: u32,
+    bits: u64,
+) -> (usize, u32) {
+    debug_assert!(write + N <= out.len(), "the callers' pre-size invariant");
     for lane in 0..N {
-        out[write] = u32::try_from(base + lane).expect("positions fit u32");
-        write += usize::from(mask.test(lane));
+        // SAFETY: `write + N <= out.len()` on entry (asserted above,
+        // guaranteed by the callers' pre-size discipline) and `write`
+        // advances at most once per lane, so `write + lane < out.len()`
+        // bounds every iteration's cursor.
+        unsafe {
+            *out.get_unchecked_mut(write) = pos;
+        }
+        write += usize::from((bits >> lane) & 1 != 0);
+        pos = pos.wrapping_add(1);
     }
-    write
+    (write, pos)
 }
 
 // The old interval-vs-constant comparison kernels (overlaps, contains,

@@ -14,8 +14,11 @@ impl Lcg {
 }
 
 /// Lengths that stress lane boundaries: empty, single, odd, lane
-/// multiples +/- 1.
-const LENGTHS: &[usize] = &[0, 1, 2, 3, 15, 16, 17, 31, 32, 33, 100, 257];
+/// multiples +/- 1 for both kernel widths (4 × u64 chunks, 16 × u8),
+/// plus lengths past the chunk loop's unroll horizon.
+const LENGTHS: &[usize] = &[
+    0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 257, 1023, 4099,
+];
 
 #[test]
 fn u64_kernels_match_the_scalar_reference_bit_for_bit() {
@@ -340,6 +343,181 @@ fn fold_throughput_contiguous_sum() {
         unsigned >= 7.0,
         "exact u64 dense sum ≥7 rows/ns, got {unsigned:.2}"
     );
+}
+
+/// The A arm of the predicate-scan reshape twin (perf round T1): the
+/// retired 2-lane shape, verbatim — per-lane `mask.test` extracts
+/// (vector→GPR transfer + flag-class increment per lane), per-lane
+/// `u32::try_from` guard, per-lane `out[write]` bounds check. Kept
+/// test-only as the interleaved baseline; the shipped kernel is the
+/// 4-lane bitmask shape in `super::filter`.
+mod ab_baseline {
+    use std::simd::prelude::*;
+
+    const U64_LANES: usize = 2;
+
+    pub fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
+        let needle = Simd::splat(value);
+        push_matching::<U64_LANES>(col, out, |lanes| lanes.simd_eq(needle), |x| x == value);
+    }
+
+    pub fn filter_range_u64(col: &[u64], lo: u64, hi: u64, out: &mut Vec<u32>) {
+        let lo_v = Simd::splat(lo);
+        let hi_v = Simd::splat(hi);
+        push_matching::<U64_LANES>(
+            col,
+            out,
+            |lanes| lanes.simd_ge(lo_v) & lanes.simd_le(hi_v),
+            |x| (lo..=hi).contains(&x),
+        );
+    }
+
+    pub fn filter_point_in_u64(starts: &[u64], ends: &[u64], point: u64, out: &mut Vec<u32>) {
+        let p = Simd::splat(point);
+        let start = out.len();
+        out.resize(start + starts.len(), 0);
+        let mut write = start;
+        let (chunks, tail) = starts.as_chunks::<U64_LANES>();
+        let tail_start = starts.len() - tail.len();
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
+            let base = chunk_idx * U64_LANES;
+            let s = Simd::from_array(*chunk);
+            let e = Simd::<u64, U64_LANES>::from_slice(&ends[base..base + U64_LANES]);
+            let mask = s.simd_le(p) & e.simd_gt(p);
+            write = write_survivors(out, write, base, mask);
+        }
+        for i in tail_start..starts.len() {
+            out[write] = u32::try_from(i).expect("positions fit u32");
+            write += usize::from(starts[i] <= point && point < ends[i]);
+        }
+        out.truncate(write);
+    }
+
+    fn push_matching<const N: usize>(
+        col: &[u64],
+        out: &mut Vec<u32>,
+        keep: impl Fn(Simd<u64, N>) -> Mask<i64, N>,
+        keep1: impl Fn(u64) -> bool,
+    ) {
+        let start = out.len();
+        out.resize(start + col.len(), 0);
+        let mut write = start;
+        let (chunks, tail) = col.as_chunks::<N>();
+        let tail_start = col.len() - tail.len();
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
+            let mask = keep(Simd::from_array(*chunk));
+            write = write_survivors(out, write, chunk_idx * N, mask);
+        }
+        for (i, &item) in tail.iter().enumerate() {
+            out[write] = u32::try_from(tail_start + i).expect("positions fit u32");
+            write += usize::from(keep1(item));
+        }
+        out.truncate(write);
+    }
+
+    fn write_survivors<const N: usize>(
+        out: &mut [u32],
+        mut write: usize,
+        base: usize,
+        mask: Mask<i64, N>,
+    ) -> usize {
+        for lane in 0..N {
+            out[write] = u32::try_from(base + lane).expect("positions fit u32");
+            write += usize::from(mask.test(lane));
+        }
+        write
+    }
+}
+
+/// The predicate-scan reshape twin (perf round T1), interleaved in one
+/// process: A = the retired 2-lane per-lane-extract shape
+/// ([`ab_baseline`]), B = the shipped 4-lane bitmask shape. Regimes per
+/// the ledger's law: L1 (64 KB), L2 (2 MB), the 24–50 MiB resurgence
+/// band (32 MB), DRAM (256 MB). Many A/B alternations per cell; the
+/// per-pair ratio distribution is the result (absolute numbers are void
+/// under co-tenancy). Run by hand under the machine mutex:
+/// `scripts/measure.sh cargo test -p bumbledb --release
+/// filter_ab_predicate_scan_reshape -- --ignored --nocapture`.
+#[test]
+#[ignore = "timing evidence, run by hand on the reference host"]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "reporting accepts lossy integer-to-float conversion"
+)]
+fn filter_ab_predicate_scan_reshape() {
+    let mut rng = Lcg(0xAB_2026);
+    // (label, items) — items are u64 words, 8 B each.
+    let cells: &[(&str, usize)] = &[
+        ("L1   64KB", 8_192),
+        ("L2    2MB", 262_144),
+        ("band 32MB", 4_194_304),
+        ("DRAM256MB", 33_554_432),
+    ];
+    // Selectivity via value domain: values uniform in 0..domain, the
+    // needle/range picks ~1/domain of them.
+    for &(label, items) in cells {
+        for &(sel_label, domain) in &[("50%", 2u64), ("2%", 50u64)] {
+            let col: Vec<u64> = (0..items).map(|_| rng.next() % domain).collect();
+            let starts: Vec<u64> = col.iter().map(|&v| v * 10).collect();
+            let ends: Vec<u64> = starts.iter().map(|&s| s + 10).collect();
+            let mut out: Vec<u32> = Vec::with_capacity(items);
+            // Reps sized so each span is >= ~1 ms (sub-µs single shots
+            // are a protocol violation).
+            let reps = (2_000_000 / items).max(1);
+            let mut time = |f: &mut dyn FnMut(&mut Vec<u32>)| {
+                let t0 = std::time::Instant::now();
+                for _ in 0..reps {
+                    out.clear();
+                    f(&mut out);
+                }
+                let dt = t0.elapsed().as_nanos();
+                std::hint::black_box(&out);
+                u64::try_from(dt).expect("short span") as f64 / (items * reps) as f64
+            };
+            let mut report = |name: &str,
+                              a: &mut dyn FnMut(&mut Vec<u32>),
+                              b: &mut dyn FnMut(&mut Vec<u32>)| {
+                // Exactness first: the twins' survivor sets are
+                // bit-for-bit identical on this cell's data.
+                let (mut out_a, mut out_b) = (Vec::new(), Vec::new());
+                a(&mut out_a);
+                b(&mut out_b);
+                assert_eq!(out_a, out_b, "the twins diverge: {name}");
+                drop((out_a, out_b));
+                // Warm both arms once, then alternate.
+                let _ = time(a);
+                let _ = time(b);
+                let mut ratios: Vec<f64> = Vec::new();
+                for _ in 0..12 {
+                    let ta = time(a);
+                    let tb = time(b);
+                    ratios.push(ta / tb);
+                }
+                ratios.sort_by(f64::total_cmp);
+                let median = ratios[ratios.len() / 2];
+                let lo = ratios[1];
+                let hi = ratios[ratios.len() - 2];
+                println!(
+                    "{label} {sel_label:>3} {name:<9} A/B median {median:.3} (p10 {lo:.3}, p90 {hi:.3})"
+                );
+            };
+            report(
+                "eq_u64",
+                &mut |out| ab_baseline::filter_eq_u64(&col, 1, out),
+                &mut |out| filter_eq_u64(&col, 1, out),
+            );
+            report(
+                "range_u64",
+                &mut |out| ab_baseline::filter_range_u64(&col, 0, 0, out),
+                &mut |out| filter_range_u64(&col, 0, 0, out),
+            );
+            report(
+                "point_in",
+                &mut |out| ab_baseline::filter_point_in_u64(&starts, &ends, 5, out),
+                &mut |out| filter_point_in_u64(&starts, &ends, 5, out),
+            );
+        }
+    }
 }
 
 /// The configuration kernel's boundary corpus: four endpoint streams of
