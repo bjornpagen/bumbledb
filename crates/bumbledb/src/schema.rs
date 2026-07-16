@@ -111,19 +111,69 @@ pub enum Generation {
 }
 
 /// A witness that `(relation, field)` names a `Fresh`-generation field of
-/// this schema: the proof-carrying handle of the untyped mint path
+/// schema `S` — the handle of the untyped mint path
 /// ([`crate::WriteTx::alloc_at`]). Fields are private and
-/// [`Schema::fresh_field`] is the one construction site — holding a value
-/// *is* the proof, so the mint path never re-checks the generation (parse,
-/// don't validate; the ETL access pattern is resolve once per relation,
-/// mint per row).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FreshField {
+/// [`crate::Db::fresh_field`] is the one construction site; the ETL access
+/// pattern is resolve once per relation, mint per row (`70-api.md` § ETL).
+///
+/// The witness carries a **binding** proof: `S` is the resolving handle's
+/// schema typestate, so a witness of one `schema!` schema cannot reach a
+/// transaction of another — a compile error, the hard-structural-typing
+/// answer (nominal safety = host Rust newtypes; pinned by
+/// `tests/schema-compile-fail/foreign_fresh_witness.rs`). This REVERSES
+/// the earlier "the witness carries the proof" decision (2026-07-15): a
+/// value-level proof bound to no schema let a foreign witness mint
+/// silently. At the dyn boundary — every `Db<SchemaDescriptor>` shares
+/// one typestate — the binding proves nothing across descriptors, so the
+/// mint's per-transaction sequence init re-checks the generation and
+/// refuses typed ([`crate::error::FactShapeError`]); the steady-state
+/// mint path still re-checks nothing.
+pub struct FreshField<S> {
     relation: RelationId,
     field: FieldId,
+    /// The schema binding (`fn() -> S` keeps auto-traits independent of
+    /// `S`, the [`crate::Db`] marker's precedent).
+    marker: std::marker::PhantomData<fn() -> S>,
 }
 
-impl FreshField {
+// Manual impls: a derive would bound `S` (`S: Copy` etc.), and the
+// phantom binding must not inherit the schema type's own traits.
+impl<S> std::fmt::Debug for FreshField<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FreshField")
+            .field("relation", &self.relation)
+            .field("field", &self.field)
+            .finish()
+    }
+}
+
+impl<S> Clone for FreshField<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> Copy for FreshField<S> {}
+
+impl<S> PartialEq for FreshField<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.relation == other.relation && self.field == other.field
+    }
+}
+
+impl<S> Eq for FreshField<S> {}
+
+impl<S> FreshField<S> {
+    /// The one construction site's plumbing ([`crate::Db::fresh_field`]
+    /// validates first — nothing else constructs).
+    pub(crate) fn new(relation: RelationId, field: FieldId) -> Self {
+        Self {
+            relation,
+            field,
+            marker: std::marker::PhantomData,
+        }
+    }
+
     pub(crate) fn relation(self) -> RelationId {
         self.relation
     }
@@ -834,20 +884,23 @@ impl Schema {
         self.relations.get(id.0 as usize)
     }
 
-    /// Resolves `(relation, field)` to the [`FreshField`] witness — ids
-    /// and generation validated here, once; every
-    /// [`crate::WriteTx::alloc_at`] mint thereafter carries the proof
-    /// instead of re-checking it (`70-api.md` § ETL).
+    /// The `Fresh`-generation check behind the [`FreshField`] witness: ids
+    /// and generation, typed. Two callers, one law —
+    /// [`crate::Db::fresh_field`] at resolution (mints the schema-bound
+    /// witness), and the mint's per-transaction sequence init
+    /// (`WriteDelta::fresh_mark`) at the dyn boundary, where
+    /// `Db<SchemaDescriptor>` handles share one typestate and the
+    /// witness's binding proves nothing across descriptors.
     ///
     /// # Errors
     ///
     /// `UnknownRelation`/`UnknownField` on an out-of-range id;
     /// `NotAFreshField` when the field's generation is not `Fresh`.
-    pub fn fresh_field(
+    pub(crate) fn check_fresh_field(
         &self,
         relation: RelationId,
         field: FieldId,
-    ) -> Result<FreshField, FactShapeError> {
+    ) -> Result<(), FactShapeError> {
         let Some(rel) = self.relation_checked(relation) else {
             return Err(FactShapeError::UnknownRelation { relation });
         };
@@ -857,7 +910,7 @@ impl Schema {
         if descriptor.generation != Generation::Fresh {
             return Err(FactShapeError::NotAFreshField { relation, field });
         }
-        Ok(FreshField { relation, field })
+        Ok(())
     }
 
     /// All sealed keys, in typed-arena order.

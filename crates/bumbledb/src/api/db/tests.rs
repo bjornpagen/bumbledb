@@ -354,27 +354,28 @@ impl Fresh for SId {
     }
 }
 
-/// The resolver is the one checking boundary of the untyped mint path:
-/// ids and generation are data, so every mis-aimed resolution is a typed
+/// The resolver is the checking boundary of the untyped mint path: ids
+/// and generation are data, so every mis-aimed resolution is a typed
 /// `FactShape` error, never a panic.
 #[test]
 fn fresh_field_rejects_non_witnesses_with_typed_errors() {
-    let schema = fresh_schema().validate().expect("fixture");
+    let dir = TempDir::new("db-fresh-field-resolver");
+    let db = Db::create(dir.path(), fresh_schema()).expect("create");
     assert_eq!(
-        schema.fresh_field(RelationId(0), FieldId(1)).unwrap_err(),
+        db.fresh_field(RelationId(0), FieldId(1)).unwrap_err(),
         FactShapeError::NotAFreshField {
             relation: RelationId(0),
             field: FieldId(1),
         }
     );
     assert_eq!(
-        schema.fresh_field(RelationId(9), FieldId(0)).unwrap_err(),
+        db.fresh_field(RelationId(9), FieldId(0)).unwrap_err(),
         FactShapeError::UnknownRelation {
             relation: RelationId(9),
         }
     );
     assert_eq!(
-        schema.fresh_field(RelationId(0), FieldId(9)).unwrap_err(),
+        db.fresh_field(RelationId(0), FieldId(9)).unwrap_err(),
         FactShapeError::UnknownField {
             relation: RelationId(0),
             field: FieldId(9),
@@ -388,11 +389,10 @@ fn fresh_field_rejects_non_witnesses_with_typed_errors() {
 #[test]
 fn a_witness_mints_the_same_sequence_as_the_typed_path() {
     let dir = TempDir::new("db-alloc-witness");
-    let schema = fresh_schema().validate().expect("fixture");
-    let id_field = schema
+    let db = Db::create(dir.path(), fresh_schema()).expect("create");
+    let id_field = db
         .fresh_field(RelationId(0), FieldId(0))
         .expect("fresh field");
-    let db = Db::create(dir.path(), fresh_schema()).expect("create");
     db.write(|tx| {
         assert_eq!(tx.alloc_at(id_field)?, 0);
         assert_eq!(tx.alloc::<SId>()?, SId(1), "one sequence, two surfaces");
@@ -460,26 +460,24 @@ fn dropping_the_handle_never_leaks_an_env_already_opened_window() {
     }
 }
 
-/// The cross-schema witness hole (UNFIXED — owner ruling needed):
-/// [`crate::schema::FreshField`] carries no binding to the schema that
-/// resolved it, so a witness minted by schema A's `fresh_field` reaches
-/// `alloc_at` on a Db of schema B and the mint re-checks nothing — a
-/// debug build trips `WriteDelta::alloc`'s assert (or indexes out of
-/// range for an out-of-range relation id); a release build silently
-/// mints 0,1,2… from a Q key of a field that is NOT fresh in the
-/// store's schema, breaking `Generation::Fresh`'s never-reissue
-/// guarantee and persisting an unaudited Q entry at commit. Two fixes
-/// compete — re-check `(relation, field, generation)` per mint inside
-/// `alloc_at` (the `ForeignPreparedQuery` every-entry precedent), or
-/// bind the witness to its schema/environment in the type
-/// (parse-don't-validate) — and either reverses the documented "the
-/// witness carries the proof" decision, so this test pins the DESIRED
-/// behavior (a typed refusal, never a panic or a silent mint) and
-/// stays ignored until the ruling.
+/// The cross-schema witness law (RULED 2026-07-15, reversing "the
+/// witness carries the proof"): [`crate::schema::FreshField`] carries a
+/// BINDING — its resolving handle's schema typestate — so a witness of
+/// one `schema!` schema on another's transaction is a compile error
+/// (`tests/schema-compile-fail/foreign_fresh_witness.rs`, the other half
+/// of this lock). Here at the dyn boundary the binding proves nothing:
+/// every `Db<SchemaDescriptor>` shares one typestate, so a witness
+/// resolved by database A reaches database B well-typed — and the
+/// mint's per-transaction sequence init re-checks the generation and
+/// refuses typed, never a panic, never a silent mint (the pre-ruling
+/// hole: debug asserted, release minted 0,1,2… from a Q key of a field
+/// NOT fresh in the store's schema, breaking `Generation::Fresh`'s
+/// never-reissue guarantee). The refusal aborts the transaction whole:
+/// no Q entry, no state change.
 #[test]
-#[ignore = "owner ruling: cross-schema FreshField witnesses reach alloc_at unchecked (debug: assert; release: silent mint)"]
 fn a_foreign_witness_is_refused_typed_not_minted() {
-    let foreign = fresh_schema().validate().expect("fixture");
+    let foreign_dir = TempDir::new("db-foreign-witness-resolver");
+    let foreign = Db::create(foreign_dir.path(), fresh_schema()).expect("create foreign");
     let witness = foreign
         .fresh_field(RelationId(0), FieldId(0))
         .expect("fresh in ITS OWN schema");
@@ -488,10 +486,16 @@ fn a_foreign_witness_is_refused_typed_not_minted() {
     // plain String column, not fresh.
     let db = Db::create(dir.path(), named_schema()).expect("create");
     let outcome = db.write(|tx| tx.alloc_at(witness).map(|_| ()));
-    assert!(
-        outcome.is_err(),
-        "a foreign witness must refuse typed, not mint: {outcome:?}"
-    );
+    match outcome.unwrap_err() {
+        Error::FactShape(FactShapeError::NotAFreshField { relation, field }) => {
+            assert_eq!(relation, RelationId(0));
+            assert_eq!(field, FieldId(0));
+        }
+        other => panic!("a foreign witness must refuse typed, not mint: {other:?}"),
+    }
+    // The aborted transaction persisted nothing — the store's clock
+    // never moved.
+    assert_eq!(db.generation().expect("generation").value(), 0);
 }
 
 /// A mid-stream bulk-load failure surfaced through `?` (the

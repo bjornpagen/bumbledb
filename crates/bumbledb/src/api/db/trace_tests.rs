@@ -219,14 +219,10 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
         statements: vec![],
     };
     let dir = TempDir::new("db-trace-noop-fresh");
-    let db = Db::create(dir.path(), fresh_schema.clone()).expect("create");
+    let db = Db::create(dir.path(), fresh_schema).expect("create");
     let rel = RelationId(0);
     // Resolve once, mint per row: the witness is the untyped mint handle.
-    let id_field = fresh_schema
-        .validate()
-        .expect("fixture")
-        .fresh_field(rel, FieldId(0))
-        .expect("fresh field");
+    let id_field = db.fresh_field(rel, FieldId(0)).expect("fresh field");
     db.write(|tx| {
         let id = tx.alloc_at(id_field)?;
         tx.insert_dyn(rel, &[Value::U64(id), Value::U64(42)])

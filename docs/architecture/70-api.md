@@ -321,8 +321,8 @@ Both are emission; the grammar is untouched.
   panics with a named message ("nested Db::write") rather than self-deadlocking on
   the writer mutex forever.
   Write operations: typed `alloc::<NewType>()` via the generated `Fresh` newtypes
-  (untyped: `alloc_at(FreshField) -> u64`, taking the witness
-  `Schema::fresh_field(relation, field)` resolves — see the ETL section) — fresh
+  (untyped: `alloc_at(FreshField<S>) -> u64`, taking the schema-bound witness
+  `Db::fresh_field(relation, field)` resolves — see the ETL section) — fresh
   minting, insert new facts
   without reading a max (`10-data-model.md`); `insert(&fact) -> bool` (changed-state
   report); `delete(&fact) -> bool`; `_dyn` forms of both for ETL tooling.
@@ -560,6 +560,8 @@ proposition the commit checks in one integer compare.
   `lean/Bumbledb/Txn.lean: rejection_is_complete`), `GenerationMoved`
   (the witness compare, § conditional writes — carrying the two generations),
   `ForeignSnapshot` (a witness of another database), `FreshExhausted`,
+  `FactShape` (the dynamic surface's shape roster — including the dyn-boundary
+  foreign-`FreshField` refusal at the mint's sequence init, § ETL),
   `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write transaction — and
   since the transaction is a delta, an aborted transaction never touched LMDB at all.
 - Error payloads carry ids, not formatted strings, on hot paths (allocation contract).
@@ -598,12 +600,27 @@ judgment. Interval fields accept only the checked `Interval<T>` carried by
 `Value`, so `start ≥ end` cannot enter this path. Explicit fresh values preserve
 identity (high-water advances past them). Untyped fresh minting is
 resolve-once/mint-per-fact:
-`Schema::fresh_field(relation, field) -> Result<FreshField, FactShapeError>`
-validates the ids and the `Fresh` generation once and returns a `Copy` witness
-(private fields, one construction site — the type is the proof);
-`tx.alloc_at(witness)` mints with no generation re-check anywhere on the path
-(decided: a per-call typed error inside the mint was rejected — it validates on
-every call and throws the proof away). **Import order under bidirectional statements is
+`Db::fresh_field(relation, field) -> Result<FreshField<S>, FactShapeError>`
+validates the ids and the `Fresh` generation once and returns a `Copy`
+**schema-bound** witness (private fields, one construction site, and the
+resolving handle's typestate `S` in the witness's type), so handing the witness
+to another schema's transaction is a compile error
+(`tests/schema-compile-fail/foreign_fresh_witness.rs`); `tx.alloc_at(witness)`
+mints with no generation re-check on the steady-state path. (REVERSED
+2026-07-15, the cross-schema witness ruling: the original decision — "the type
+is the proof", resolved by `Schema::fresh_field` with no re-check anywhere, a
+per-call typed error rejected as validating on every call and throwing the
+proof away — bound the proof to no schema, so a witness resolved against
+schema A reached a database of schema B and release builds silently minted
+from a `Q` key of a non-fresh field, breaking `Fresh`'s never-reissue
+guarantee. The witness now carries a BINDING proof — the schema in its type,
+the hard-structural-typing answer: nominal safety = host Rust newtypes — at
+zero mint-path cost. At the dyn boundary, where every `Db<SchemaDescriptor>`
+shares one typestate and the binding proves nothing across descriptors, the
+mint's per-transaction sequence init re-checks the generation beside the `Q`
+read it already does and refuses a foreign witness as the typed `FactShape`
+error, never a panic, never a silent mint — pinned by
+`a_foreign_witness_is_refused_typed_not_minted`.) **Import order under bidirectional statements is
 the importer's obligation:** a `==` statement's cluster must land within one chunk's
 transaction, so the documented import order is dependency-cluster order — parent and
 arm facts interleaved — and a straddled cluster fails its chunk loudly

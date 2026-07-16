@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use crate::schema::{FieldId, Generation, RelationId};
+use crate::schema::{FieldId, RelationId};
 use crate::storage::env::ReadTxn;
 use crate::storage::keys;
 
@@ -12,18 +12,11 @@ impl WriteDelta<'_> {
     ///
     /// # Errors
     ///
-    /// `FreshExhausted` when the sequence reaches `u64::MAX`; `Lmdb` on a
-    /// failed `Q` read.
+    /// `FreshExhausted` when the sequence reaches `u64::MAX`; `FactShape`
+    /// from the sequence init's generation check (the dyn boundary's
+    /// foreign-witness refusal — see [`WriteDelta::fresh_mark`]); `Lmdb`
+    /// on a failed `Q` read.
     pub fn alloc(&mut self, view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Result<u64> {
-        // Both callers are proof-carrying — the macro-generated `Fresh`
-        // newtypes on the typed path, the `FreshField` witness on the
-        // dynamic path — so the assert documents the invariant; no
-        // boundary re-checks it.
-        debug_assert_eq!(
-            self.schema.relation(rel).field(field).generation,
-            Generation::Fresh,
-            "alloc on a non-fresh field is a programmer error"
-        );
         let mark = self.fresh_mark(view, rel, field)?;
         let next = mark.next;
         if next == u64::MAX {
@@ -39,6 +32,18 @@ impl WriteDelta<'_> {
     /// The sequence's transaction-local mark, lazily initialized whole
     /// from the committed `Q` value (read once per transaction; the base
     /// is the dirtiness baseline).
+    ///
+    /// The lazy init is the dyn boundary's foreign-witness refusal
+    /// (`70-api.md` § ETL): the schema-bound [`crate::FreshField`] makes
+    /// a cross-schema witness a compile error, but `Db<SchemaDescriptor>`
+    /// handles share one typestate, so another descriptor's witness can
+    /// reach `alloc` well-typed. The generation check here refuses it
+    /// typed before any `Q` key is touched — priced once per
+    /// `(relation, field)` per transaction beside the `Q` read it
+    /// precedes, zero on the steady-state mint (an occupied mark exists
+    /// only because this check, or the schema-derived insert advance,
+    /// admitted the pair). The typed lane's `Fresh` constants and the
+    /// insert advance's schema-derived pairs pass vacuously.
     pub(super) fn fresh_mark(
         &mut self,
         view: &ReadTxn<'_>,
@@ -48,6 +53,7 @@ impl WriteDelta<'_> {
         match self.marks.entry((rel, field)) {
             std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
             std::collections::btree_map::Entry::Vacant(entry) => {
+                self.schema.check_fresh_field(rel, field)?;
                 let base = read_fresh_next(view, rel, field)?;
                 Ok(entry.insert(FreshMark { base, next: base }))
             }
