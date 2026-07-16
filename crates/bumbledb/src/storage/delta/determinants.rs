@@ -49,7 +49,20 @@ impl WriteDelta<'_> {
                 }
                 DeterminantDisposition::Absent
             };
-            per_key.insert(self.determinant_scratch.clone(), disposition);
+            // Probe before inserting: an overwrite (the tuple was already
+            // recorded this transaction) updates the resident entry in
+            // place; the scratch is cloned only the first time a tuple is
+            // recorded — the scratch field's no-per-key-statement
+            // allocation contract.
+            if let Some(recorded) = per_key.get_mut(self.determinant_scratch.as_bytes()) {
+                *recorded = disposition;
+            } else {
+                #[cfg(test)]
+                {
+                    self.determinant_scratch_clones += 1;
+                }
+                per_key.insert(self.determinant_scratch.clone(), disposition);
+            }
         }
     }
 

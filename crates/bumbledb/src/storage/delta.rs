@@ -106,8 +106,16 @@ pub struct WriteDelta<'s> {
     /// host-allocation-free — PRD 22's gate).
     determinants: BTreeMap<KeyId, BTreeMap<DeterminantImage, DeterminantDisposition>>,
     /// Scratch for determinant derivation, reused across `insert`/`delete` calls
-    /// (the write path may allocate, but not per key statement per fact).
+    /// (the write path may allocate, but not per key statement per fact):
+    /// cloned into the determinant map only the first time a tuple is
+    /// recorded — an overwrite updates the resident entry in place.
     determinant_scratch: DeterminantImage,
+    /// Test-only pin of the scratch's clone discipline: how many times the
+    /// scratch was cloned into the determinant map — exactly once per
+    /// distinct `(key statement, determinant)` tuple recorded, never per
+    /// overwrite.
+    #[cfg(test)]
+    determinant_scratch_clones: u64,
     /// Fresh sequences touched this transaction, lazily initialized
     /// from `Q` once per `(relation, field)`. A mark is *dirty* — it
     /// escaped as an allocation the closure may have returned — iff its

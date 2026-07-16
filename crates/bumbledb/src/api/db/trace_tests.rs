@@ -296,6 +296,33 @@ fn bulk_load_traces_one_span_per_chunk() {
     assert_eq!(chunks.iter().map(|c| c.a1).sum::<u64>(), n);
 }
 
+/// `compact`'s durability chain runs to its end. Power-loss semantics
+/// cannot be pinned in-process; what CAN be is that the parent-dirent
+/// sync path executes — `COMPACT_DURABLE` records only after the copied
+/// file, the `dest` dirent contents, and `dest`'s own entry in its
+/// parent directory have all been fsynced, so the event's presence is
+/// the pin.
+#[test]
+fn compact_records_its_completed_durability_chain() {
+    let dir = TempDir::new("db-trace-compact");
+    let db = Db::create(dir.path(), schema()).expect("create");
+    db.write(|tx| {
+        tx.insert_dyn(R, &[Value::U64(1)])?;
+        Ok(())
+    })
+    .expect("seed");
+
+    let dest = dir.path().join("compacted");
+    obs::start_capture();
+    db.compact(&dest).expect("compact");
+    let events = obs::finish_capture();
+    let durable = events
+        .iter()
+        .find(|e| e.name == obs::names::COMPACT_DURABLE)
+        .expect("the durability-chain event");
+    assert_eq!(durable.a0, 2, "dest dirent + parent dirent, both synced");
+}
+
 #[test]
 fn an_aborting_write_records_no_lmdb_commit() {
     let dir = TempDir::new("db-trace-abort");

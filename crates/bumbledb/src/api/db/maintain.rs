@@ -28,10 +28,19 @@ impl<S> Db<S> {
     /// fallback until the caller swaps directories. The copy is a
     /// first-class store: open it, read it, write to it.
     ///
+    /// Durability, exactly: on return the copied `data.mdb` is fsynced,
+    /// then `dest` itself (the file's directory entry), then `dest`'s
+    /// parent directory (`dest`'s own entry) — the whole dirent chain a
+    /// power loss would have to survive for the copy to still exist.
+    /// Directories *above* the immediate parent are not fsynced, so a
+    /// `dest` whose parent had to be created by this call is only
+    /// power-loss-durable if the caller syncs those ancestors itself.
+    ///
     /// # Errors
     ///
-    /// `Io` when `dest` exists or cannot be created (never clobbers);
-    /// `Lmdb` from the copy itself.
+    /// `Io` when `dest` exists or cannot be created (never clobbers), or
+    /// when any sync of the durability chain fails; `Lmdb` from the copy
+    /// itself.
     pub fn compact(&self, dest: &Path) -> Result<()> {
         if dest.exists() {
             return Err(crate::error::Error::Io(std::io::Error::new(
@@ -43,12 +52,22 @@ impl<S> Db<S> {
         let data = dest.join("data.mdb");
         let mut file = std::fs::File::create(&data).map_err(crate::error::Error::Io)?;
         self.env.copy_compacted(&mut file)?;
-        // Durable before the caller swaps directories: the file, then
-        // its directory entry.
+        // Durable before the caller swaps directories: the file, its
+        // dirent in `dest`, then `dest`'s own dirent in the parent —
+        // without the parent sync, power loss could keep a durable file
+        // inside a directory entry that was never made durable.
         file.sync_all().map_err(crate::error::Error::Io)?;
-        std::fs::File::open(dest)
-            .and_then(|dir| dir.sync_all())
-            .map_err(crate::error::Error::Io)?;
+        for dir in [dest, parent_dir(dest)] {
+            std::fs::File::open(dir)
+                .and_then(|dir| dir.sync_all())
+                .map_err(crate::error::Error::Io)?;
+        }
+        crate::obs::event(
+            crate::obs::names::COMPACT_DURABLE,
+            crate::obs::Category::Storage,
+            2,
+            0,
+        );
         Ok(())
     }
 
@@ -70,5 +89,15 @@ impl<S> Db<S> {
     /// `Lmdb` on snapshot open; `Corruption` on a malformed tx id.
     pub fn generation(&self) -> Result<GenerationId> {
         self.env.read_txn()?.generation()
+    }
+}
+
+/// The directory whose entry names `dest` — `dest.parent()`, with the
+/// empty relative parent (`"x"` → `""`) spelled as the cwd so it can be
+/// opened and fsynced.
+fn parent_dir(dest: &Path) -> &Path {
+    match dest.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
     }
 }

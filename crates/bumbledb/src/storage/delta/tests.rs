@@ -376,6 +376,46 @@ fn deleting_the_old_fact_never_erases_the_new_facts_determinant_record() {
 }
 
 #[test]
+fn determinant_overwrites_never_reclone_the_scratch() {
+    // The scratch's no-per-key-statement allocation contract, pinned:
+    // the determinant map clones the scratch exactly once per distinct
+    // tuple; every later disposition for the same tuple — a pure
+    // overwrite — takes the in-place path.
+    const KEY: KeyId = KeyId(0);
+    let dir = TempDir::new("delta-determinant-clone");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let f = fact(&schema, 7, 700);
+    let g = fact(&schema, 7, 999); // same key tuple, changed non-key field
+
+    delta.insert(&view, R, &f).expect("insert");
+    assert_eq!(delta.determinant_scratch_clones, 1, "first record clones");
+
+    // Three overwrites of the same tuple — cancel, re-establish (the
+    // upsert shape), cancel again: dispositions move, clones do not.
+    delta.delete(&view, R, &f).expect("delete");
+    delta.insert(&view, R, &g).expect("insert");
+    delta.delete(&view, R, &g).expect("delete");
+    assert_eq!(
+        delta.determinant_scratch_clones, 1,
+        "overwrites take the no-insert path"
+    );
+    assert_eq!(
+        delta.determinant_overlay(KEY, &encode_u64(7)),
+        Some(DeterminantOverlay::Absent),
+        "correctness unchanged: last disposition wins"
+    );
+
+    // A distinct tuple is a genuine first record: one more clone.
+    delta
+        .insert(&view, R, &fact(&schema, 8, 800))
+        .expect("insert");
+    assert_eq!(delta.determinant_scratch_clones, 2);
+}
+
+#[test]
 fn drop_leaves_lmdb_untouched() {
     let dir = TempDir::new("delta-drop");
     let schema = schema();
