@@ -448,6 +448,9 @@ fn filter_ab_predicate_scan_reshape() {
     let mut rng = Lcg(0xAB_2026);
     // (label, items) — items are u64 words, 8 B each.
     let cells: &[(&str, usize)] = &[
+        ("tiny    4", 4),
+        ("tiny   16", 16),
+        ("small  1K", 1_024),
         ("L1   64KB", 8_192),
         ("L2    2MB", 262_144),
         ("band 32MB", 4_194_304),
