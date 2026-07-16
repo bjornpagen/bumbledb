@@ -32,9 +32,16 @@ impl Environment {
 
     /// The shared open body ([`Environment::open`] durable,
     /// [`Environment::ephemeral`]'s existing-store arm): version, then
-    /// kind, then fingerprint. The kind check is what makes the store
-    /// kind parse-don't-validate: a durable constructor can never hold
-    /// an ephemeral store's handle, nor the reverse.
+    /// kind, then the database roster, then fingerprint — ONE check
+    /// precedence, shared verbatim with the ephemeral probe
+    /// (`Environment::probe_ephemeral_kind`), so a store carrying two
+    /// faults gets the same diagnosis from every constructor. Version
+    /// precedes the roster because a pre-v5 store's database layout is
+    /// not this version's to judge: convicting it of corruption for
+    /// lacking `_data` would misname a merely-old store. The kind check
+    /// is what makes the store kind parse-don't-validate: a durable
+    /// constructor can never hold an ephemeral store's handle, nor the
+    /// reverse.
     pub(super) fn verify_and_open(
         env: heed::Env<WithoutTls>,
         lock: std::fs::File,
@@ -49,13 +56,6 @@ impl Environment {
         let meta: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_meta"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        let data: Database<Bytes, Bytes> = env
-            .open_database(&rtxn, Some("_data"))?
-            .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        let dict: Database<Bytes, Bytes> = env
-            .open_database(&rtxn, Some("_dict"))?
-            .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-
         let found_version = read_u32(&meta, &rtxn, META_FORMAT_VERSION)?;
         if found_version != FORMAT_VERSION {
             return Err(Error::FormatMismatch {
@@ -70,6 +70,12 @@ impl Environment {
                 expected: expected_kind,
             });
         }
+        let data: Database<Bytes, Bytes> = env
+            .open_database(&rtxn, Some("_data"))?
+            .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
+        let dict: Database<Bytes, Bytes> = env
+            .open_database(&rtxn, Some("_dict"))?
+            .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
         check_fingerprint(&meta, &rtxn, schema)?;
         rtxn.commit()?;
         Ok(Self {
