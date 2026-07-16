@@ -134,6 +134,90 @@ fn point_reads_fall_through_to_committed_state() {
     .expect("fallthrough reads");
 }
 
+/// Regression: a compensating delete that *cancels* a pending insert nets
+/// to nothing — the shared key tuple must keep answering with its
+/// committed owner, typed and dynamic alike, and the blessed upsert idiom
+/// composed after the cancelled pair takes the seen arm and commits
+/// cleanly (the poisoned overlay used to deny the committed row and
+/// steer the idiom into a spurious `CommitRejected`).
+#[test]
+fn a_cancelled_insert_never_shadows_the_committed_row() {
+    let dir = common::TempDir::new("points-cancelled-insert");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    let id = db
+        .write(|tx| {
+            let id = tx.alloc::<AccountId>()?;
+            tx.insert(&Account {
+                id,
+                holder: "ada",
+                balance: 10,
+            })?;
+            Ok(id)
+        })
+        .expect("seed");
+
+    db.write(|tx| {
+        // A pending insert on the committed key, then its compensating
+        // delete: the pair cancels, net delta nothing.
+        assert!(tx.insert(&Account {
+            id,
+            holder: "ada",
+            balance: 20,
+        })?);
+        assert!(tx.delete(&Account {
+            id,
+            holder: "ada",
+            balance: 20,
+        })?);
+
+        // Every point read answers exactly what a post-commit read would.
+        let committed = Account {
+            id,
+            holder: "ada",
+            balance: 10,
+        };
+        assert!(tx.contains(&committed)?);
+        assert_eq!(tx.get::<Account>(id)?, Some(committed));
+        let row = tx.get_dyn(
+            bumbledb::schema::RelationId(0),
+            bumbledb::schema::StatementId(0),
+            &[bumbledb::Value::U64(id.0)],
+        )?;
+        assert!(
+            row.is_some(),
+            "the dynamic point read sees the committed row"
+        );
+
+        // The upsert idiom takes the seen arm: delete + insert bumped.
+        tx.delete(&Account {
+            id,
+            holder: "ada",
+            balance: 10,
+        })?;
+        tx.insert(&Account {
+            id,
+            holder: "ada",
+            balance: 11,
+        })?;
+        Ok(())
+    })
+    .expect("the composed upsert commits cleanly");
+
+    db.read(|snap| {
+        let facts: Vec<Account> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
+        assert_eq!(
+            facts,
+            vec![Account {
+                id,
+                holder: "ada",
+                balance: 11,
+            }]
+        );
+        Ok(())
+    })
+    .expect("read");
+}
+
 /// The blessed upsert idiom, as written in `70-api.md`: get → delete +
 /// insert, or insert. The holder string comes back as a borrowed view of
 /// the transaction, so ownership is an explicit host act — copy the

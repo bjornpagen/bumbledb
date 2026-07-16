@@ -45,17 +45,44 @@ pub(crate) fn prepare<'s, S>(
         let _s = obs::span(obs::names::VALIDATE, obs::Category::Prepare);
         validate(schema, query)?
     };
+    prepare_witnessed(
+        txn,
+        cache,
+        schema,
+        &witness,
+        crate::ir::render::render(schema, query),
+    )
+}
+
+/// The pipeline after the roster — normalize → ground → per-rule prepare
+/// → sink and binding artifacts, over an already-sealed witness. Two
+/// callers, one roster each: [`prepare`] seals under the query roster;
+/// [`prepare_program`]'s degenerate route passes the program witness's
+/// output predicate, already sealed under the PROGRAM roster. The
+/// distinction is load-bearing for params: they are program-global (one
+/// binding surface, `docs/architecture/20-query-ir.md` § engine
+/// recursion), so a degenerate program's output predicate may be locally
+/// gapped yet roster-valid, and its bind contract must carry the unified
+/// table — re-validating it under the query roster would refuse the
+/// former and shrink the latter.
+fn prepare_witnessed<'s, S>(
+    txn: &ReadTxn<'_>,
+    cache: &ImageCache,
+    schema: &'s Schema,
+    witness: &crate::ir::validate::ValidatedQuery,
+    rendered: String,
+) -> Result<PreparedQuery<'s, S>> {
     let normalized = {
         let _s = obs::span(obs::names::NORMALIZE, obs::Category::Prepare);
-        normalize(schema, &witness)
+        normalize(schema, witness)
     };
 
     // The disjointness proof runs pre-grounding (the rewrite never changes
     // the denotation, so the proof stands), and pre-deletion: pairwise
     // over a superset holds over whichever rules survive below.
-    let disjoint_rules = disjointness(&witness, &normalized, schema);
+    let disjoint_rules = disjointness(witness, &normalized, schema);
 
-    let (survivors, subsumed) = ground_program(normalized, &witness, schema);
+    let (survivors, subsumed) = ground_program(normalized, witness, schema);
 
     // The predicate the query defines, sealed at validation (the ONE
     // signature derivation) — it exists even when every rule below dies,
@@ -89,7 +116,7 @@ pub(crate) fn prepare<'s, S>(
     // one live rule has no pair left to prove (the stats surface's
     // single-rule contract; pairwise over a superset held regardless).
     let disjoint_rules = (rules.len() > 1).then_some(disjoint_rules).flatten();
-    let params = param_specs(&witness);
+    let params = param_specs(witness);
 
     // The one sink configuration — head-owned shape (projection vs
     // aggregate, arity, distinctness), built aimed at rule 0's layout
@@ -156,7 +183,7 @@ pub(crate) fn prepare<'s, S>(
         answer_heap,
         resolve_memo: ResolveMemo::new(),
         determinant_key: Vec::new(),
-        rendered: crate::ir::render::render(schema, query),
+        rendered,
         marker: std::marker::PhantomData,
     })
 }
@@ -169,8 +196,11 @@ pub(crate) fn prepare<'s, S>(
 /// * **The degenerate form takes zero new code paths**: a no-`Idb`
 ///   program IS its output predicate's query
 ///   (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`), and it
-///   routes through [`prepare`] verbatim — same pipeline, same
-///   artifact, byte for byte.
+///   routes through the one shared pipeline ([`prepare_witnessed`])
+///   carrying the program witness's output predicate — same pipeline,
+///   same artifact, and the program-global param table intact (one
+///   binding surface; the query roster must never re-judge what the
+///   program roster sealed).
 /// * **A recursive program prepares per predicate through the ordinary
 ///   per-rule pipeline** (strata above the output's are never
 ///   evaluated — `evalProgramAt`'s reading — and never prepared): each
@@ -199,6 +229,7 @@ pub(crate) fn prepare_program<'s, S>(
     schema: &'s Schema,
     program: &crate::ir::Program,
 ) -> Result<PreparedQuery<'s, S>> {
+    let _prepare = obs::span(obs::names::PREPARE, obs::Category::Prepare);
     let witness = crate::ir::validate::validate_program(schema, program)?;
     let has_idb = program
         .predicates
@@ -208,18 +239,21 @@ pub(crate) fn prepare_program<'s, S>(
         .any(|atom| atom.source.idb().is_some());
     if !has_idb {
         // The degenerate embedding: the output predicate, as the query
-        // it is — re-validated inside `prepare` (one boundary, one
-        // sealing path; the pipeline is cold and the double validation
-        // costs a prepare, never an execution).
-        let output = &program.predicates[usize::from(witness.output().0)];
-        let query = Query {
-            head: output.head.clone(),
-            rules: output.rules.clone(),
-        };
-        return prepare(txn, cache, schema, &query);
+        // it is — prepared from the PROGRAM witness, never re-validated
+        // under the query roster. Params are program-global (one
+        // binding surface), so the output predicate alone may be
+        // locally gapped yet roster-valid, and its bind contract must
+        // demand exactly the unified table — the same surface the
+        // fixpoint arm enforces.
+        return prepare_witnessed(
+            txn,
+            cache,
+            schema,
+            witness.output_witness(),
+            crate::ir::render::render_program(schema, program),
+        );
     }
 
-    let _prepare = obs::span(obs::names::PREPARE, obs::Category::Prepare);
     let count = program.predicates.len();
     let output = witness.output();
     let strata = witness.strata();

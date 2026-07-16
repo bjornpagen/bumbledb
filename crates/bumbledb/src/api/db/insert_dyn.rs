@@ -9,11 +9,14 @@ impl<S> WriteTx<'_, S> {
     ///
     /// # Errors
     ///
-    /// `ClosedRelationWrite` on a closed relation (`bulk_load` shares this
-    /// entry per fact); `FactShape` on an arity/type/enum-range/UTF-8
-    /// mismatch between `values` and the relation's declaration (ETL input
-    /// is data, so shape problems are typed); otherwise as
-    /// [`WriteTx::insert`].
+    /// `ClosedRelationWrite` on a closed relation (`bulk_load_dyn` shares
+    /// this entry per fact); `FactShape` on an arity, type-kind,
+    /// fixed-interval width/ray, `bytes<N>` length, or UTF-8 mismatch
+    /// between `values` and the relation's declaration
+    /// (`schema::value_matches` is the rule set — ETL input is
+    /// data, so shape problems are typed; a closed-relation *handle*
+    /// value is a plain `u64` here, range-judged only by a declared
+    /// containment at commit); otherwise as [`WriteTx::insert`].
     pub fn insert_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
         self.refuse_closed(rel)?;
         let encoded = self.encode_dyn(rel, values, InternMode::Mint)?;

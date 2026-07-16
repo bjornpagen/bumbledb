@@ -22,7 +22,10 @@ use std::sync::{Mutex, OnceLock};
 use bumbledb::error::SchemaError;
 use bumbledb::schema::SchemaDescriptor;
 use bumbledb::schema::fingerprint::{self, SchemaFingerprint};
-use bumbledb::{AnswerValue, Db, Error, PreparedQuery, Query, RelationId, Value};
+use bumbledb::{
+    AnswerValue, Db, Direction, Error, PreparedQuery, Query, RelationId, StatementId,
+    StoreFinding, Value,
+};
 use bumbledb_bench::corpus_gen::Rng;
 use bumbledb_bench::corpus_gen::opgen::{self, FuzzOp, OpScenario};
 use bumbledb_bench::corpus_gen::theorygen;
@@ -65,7 +68,13 @@ fn theory_oracles(descriptor: &SchemaDescriptor) -> Verdict {
     if let Verdict::Accepted(created) = &first {
         // Oracle 3, continued: an accepted schema re-opens cleanly on the
         // store it created, to the same sealed theory, and `verify_store`
-        // passes on the empty store.
+        // on the empty store reports exactly the schema's genesis debt
+        // (`docs/architecture/30-dependencies.md`: "The empty store
+        // violates the statement until the handlers land"): the
+        // acceptance gate judges the theory, not genesis satisfiability,
+        // so a genesis-violating schema is legal and its fresh-store
+        // citations are the sweeper doing its documented job — anything
+        // beyond that set is a finding.
         let db = match Db::open(store.path(), descriptor.clone()) {
             Ok(db) => db,
             Err(err) => panic!("accepted schema failed to reopen: {err:?}"),
@@ -74,13 +83,92 @@ fn theory_oracles(descriptor: &SchemaDescriptor) -> Verdict {
             Ok(report) => report,
             Err(err) => panic!("verify_store errored on a fresh store: {err:?}"),
         };
-        assert!(
-            report.findings.is_empty(),
-            "fresh store of an accepted schema has findings: {:?} (fingerprint {created:?})",
+        let debt = genesis_debt_statements(descriptor);
+        let cited: BTreeSet<StatementId> = report
+            .findings
+            .iter()
+            .map(|finding| match finding {
+                StoreFinding::WindowViolation { statement, .. } => *statement,
+                StoreFinding::JudgmentViolation {
+                    statement,
+                    direction: Direction::TargetRequired,
+                    ..
+                } => *statement,
+                other => panic!(
+                    "fresh store of an accepted schema has a finding outside the \
+                     genesis-debt classes: {other:?} (fingerprint {created:?})"
+                ),
+            })
+            .collect();
+        assert_eq!(
+            cited, debt,
+            "fresh-store citations must be exactly the genesis-debt statements \
+             (fingerprint {created:?}; findings {:?})",
             report.findings
         );
     }
     first
+}
+
+/// The genesis-debt statements of an ACCEPTED descriptor: the statements a
+/// correct engine legally violates on the EMPTY store, by the recorded
+/// division of authority (`docs/architecture/30-dependencies.md` — the
+/// acceptance gate judges the theory, commit judges deltas, and the
+/// offline sweeper re-verifies the extension-sourced classes globally):
+///
+/// * a **containment whose source is closed and target ordinary** with at
+///   least one φ-selected axiom — every selected axiom requires a target
+///   row genesis lacks (the domain-quantification shape; a closed target
+///   is decided statically at acceptance, `ClosedStatementRefuted`);
+/// * a **cardinality window whose parent (target-left) is closed and
+///   child source ordinary**, with `lo >= 1` and at least one ψ-selected
+///   axiom — each selected parent's child count is 0 < lo at genesis (a
+///   closed child set is likewise decided statically).
+///
+/// Satisfaction is value comparison in the sealed field space (synthetic
+/// id at position 0, declared values after) — the naive model's own σ
+/// rule, never the engine's compiled sets.
+fn genesis_debt_statements(descriptor: &SchemaDescriptor) -> BTreeSet<StatementId> {
+    use bumbledb::schema::{Side, StatementDescriptor};
+
+    let closed_selected = |side: &Side| -> bool {
+        let Some(rows) = descriptor.relations[side.relation.0 as usize]
+            .extension
+            .as_deref()
+        else {
+            return false;
+        };
+        rows.iter().enumerate().any(|(row_id, row)| {
+            side.selection.iter().all(|(field, literals)| {
+                let synthetic_id;
+                let actual = if field.0 == 0 {
+                    synthetic_id = Value::U64(row_id as u64);
+                    &synthetic_id
+                } else {
+                    &row.values[usize::from(field.0) - 1]
+                };
+                literals.literals().contains(actual)
+            })
+        })
+    };
+    let ordinary =
+        |relation: RelationId| descriptor.relations[relation.0 as usize].extension.is_none();
+
+    descriptor
+        .materialized_statements()
+        .iter()
+        .enumerate()
+        .filter(|(_, statement)| match statement {
+            StatementDescriptor::Functionality { .. } => false,
+            StatementDescriptor::Containment { source, target } => {
+                closed_selected(source) && ordinary(target.relation)
+            }
+            StatementDescriptor::Cardinality {
+                source, lo, target, ..
+            } => *lo >= 1 && ordinary(source.relation) && closed_selected(target),
+        })
+        .map(|(index, _)| StatementId(u16::try_from(index).expect("accepted statements fit u16")))
+        .collect()
 }
 
 /// The ops runner — the flagship lifecycle target

@@ -34,6 +34,11 @@ crashpoint = []
 blake3 = "1"
 bumbledb-macros = { path = "../bumbledb-macros" }
 heed = { version = "0.22", default-features = false } # no serde codecs: the engine reads raw bytes; the dependency law's serde grep stays empty
+# The ephemeral kind's open-time block allocation (storage/env/open_env.rs:
+# fcntl(F_PREALLOCATE) / posix_fallocate) — the capacity contract enforced
+# uniformly on sparse filesystems. Already in the graph under heed's
+# lmdb-master-sys; this adds no node.
+libc = "0.2"
 
 # The phase-R measurement harness (tests/ramdisk_phase_r.rs) opens scratch
 # heed environments with the flags the engine forbids, to price them. The

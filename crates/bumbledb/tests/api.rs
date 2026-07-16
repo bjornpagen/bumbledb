@@ -1363,7 +1363,10 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
 
 /// An out-of-range relation id at the dynamic
 /// (ETL) surface is a typed `FactShape` error at every public boundary —
-/// `insert_dyn`, `delete_dyn`, `bulk_load`, and `scan` — never a panic.
+/// `insert_dyn`, `delete_dyn`, `bulk_load_dyn`, and `scan` — never a
+/// panic. (The typed `Db::bulk_load` lane takes no `RelationId`, so an
+/// out-of-range relation is unrepresentable there — the fact type names
+/// its relation.)
 #[test]
 fn out_of_range_relation_ids_are_typed_errors() {
     let dir = common::TempDir::new("api-unknown-relation");
@@ -1572,6 +1575,111 @@ fn a_degenerate_program_executes_as_its_query() {
             query_report, program_report,
             "the degenerate program's artifact is byte-identical to its query's"
         );
+        Ok(())
+    })
+    .expect("read");
+}
+
+/// Params are program-global — ONE binding surface across predicates
+/// (20-query-ir.md § engine recursion) — and the degenerate (no-`Idb`)
+/// prepare arm must enforce exactly the surface the fixpoint arm does:
+/// a no-`Idb` program whose output predicate is locally gapped but
+/// program-globally dense prepares cleanly (no spurious `ParamIdGap`
+/// from a query-roster re-judgment), and a param used only by an
+/// interior predicate stays in the bind contract (execute demands the
+/// unified table, never the output predicate's local slice).
+#[test]
+fn a_degenerate_programs_bind_contract_is_program_global() {
+    use bumbledb::ir::{AtomSource, PredId, PredicateDef, Program};
+
+    /// `p(balance) | Account(id == ?param, balance)`.
+    fn point_pred(param: u16) -> PredicateDef {
+        let rule = Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Edb(Account::RELATION),
+                bindings: vec![
+                    (FieldId(0), Term::Param(ParamId(param))),
+                    (FieldId(2), Term::Var(VarId(0))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        };
+        PredicateDef {
+            head: rule.head(),
+            rules: vec![rule],
+        }
+    }
+
+    let dir = common::TempDir::new("api-degenerate-global-params");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    let account = db
+        .write(|tx| {
+            let holder: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id: holder,
+                name: "ada",
+            })?;
+            let id: AccountId = tx.alloc()?;
+            tx.insert(&Account {
+                id,
+                holder,
+                balance: 42,
+            })?;
+            Ok(id)
+        })
+        .expect("seed");
+
+    // Output uses ?1 only, the interior predicate uses ?0: locally
+    // gapped, program-globally dense — the roster accepts it, so must
+    // the degenerate prepare arm.
+    let gapped_locally = Program {
+        predicates: vec![point_pred(1), point_pred(0)],
+        output: PredId(0),
+    };
+    let mut prepared = db
+        .prepare(&gapped_locally)
+        .expect("a roster-valid no-Idb program prepares");
+
+    // Output uses ?0 only, ?1 lives in the interior predicate: the bind
+    // contract keeps both — the one binding surface.
+    let interior_only = Program {
+        predicates: vec![point_pred(0), point_pred(1)],
+        output: PredId(0),
+    };
+    let mut prepared_interior = db.prepare(&interior_only).expect("prepare");
+
+    db.read(|snap| {
+        // The gapped-locally program binds the full surface; its output
+        // filters on ?1.
+        let answers = snap.execute_collect(
+            &mut prepared,
+            &[BindValue::U64(0), BindValue::U64(account.0)],
+        )?;
+        assert_eq!(answers.len(), 1, "?1 selects the seeded account");
+
+        // The interior-only param is still demanded: one param is a
+        // typed count mismatch against the program-global table...
+        let err = snap
+            .execute_collect(&mut prepared_interior, &[BindValue::U64(account.0)])
+            .expect_err("the unified table demands both params");
+        assert!(
+            matches!(
+                err,
+                bumbledb::Error::ParamCountMismatch {
+                    expected: 2,
+                    supplied: 1,
+                }
+            ),
+            "unexpected: {err:?}"
+        );
+        // ...and the full surface executes.
+        let answers = snap.execute_collect(
+            &mut prepared_interior,
+            &[BindValue::U64(account.0), BindValue::U64(7)],
+        )?;
+        assert_eq!(answers.len(), 1, "?0 selects the seeded account");
         Ok(())
     })
     .expect("read");

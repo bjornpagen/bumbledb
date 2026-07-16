@@ -62,6 +62,7 @@ dependencies = [
  "blake3",
  "bumbledb-macros",
  "heed",
+ "libc",
 ]
 
 [[package]]

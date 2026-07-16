@@ -296,6 +296,49 @@ fn a_wide_kind_value_is_store_kind_invalid_on_both_constructors() {
     }
 }
 
+/// Marker matrix row 5 — the DOUBLE fault: a pre-v5 store (version 4,
+/// no kind key) that also lacks the v5 database roster (`_data`/
+/// `_dict`). BOTH constructors refuse `FormatMismatch { found: 4 }`:
+/// the probe and `verify_and_open` share ONE check precedence —
+/// version, kind, roster, fingerprint — so the version check precedes
+/// the roster check everywhere (a pre-v5 store's database layout is
+/// not this version's to judge; convicting it of corruption would
+/// misname a merely-old store, and the two constructors would name
+/// different corruption for the same bytes).
+#[test]
+fn a_v4_store_without_the_database_roster_is_a_format_mismatch_on_both_constructors() {
+    let dir = TempDir::new("env-marker-v4-no-roster");
+    {
+        // A raw LMDB environment holding ONLY a backdated `_meta`: the
+        // doubly-faulted shape no bumbledb constructor can produce
+        // (initialize creates the roster in one atomic commit) but a
+        // damaged or forged store can carry.
+        let env = open_env::open_env(dir.path(), StoreKind::Durable).expect("raw fixture env");
+        let mut wtxn = env.write_txn().expect("txn");
+        let meta = env
+            .create_database::<heed::types::Bytes, heed::types::Bytes>(&mut wtxn, Some("_meta"))
+            .expect("create _meta only");
+        meta.put(&mut wtxn, META_FORMAT_VERSION, &4u32.to_le_bytes())
+            .expect("backdate version");
+        wtxn.commit().expect("commit forgery");
+    }
+    for err in [
+        Environment::open(dir.path(), &schema()).unwrap_err(),
+        Environment::ephemeral(dir.path(), &schema()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                err,
+                Error::FormatMismatch {
+                    found: 4,
+                    expected: FORMAT_VERSION
+                }
+            ),
+            "{err:?}"
+        );
+    }
+}
+
 /// The foreign-env non-mutation lock (the twin of the durable-store
 /// byte-identity test in `tests/ephemeral.rs`): `Environment::ephemeral`
 /// probed against someone else's LMDB environment refuses

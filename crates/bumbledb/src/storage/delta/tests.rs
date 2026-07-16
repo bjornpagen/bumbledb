@@ -307,20 +307,18 @@ fn determinant_map_mirrors_the_fact_dispositions() {
     // Untouched tuple: no overlay — the committed state answers.
     assert_eq!(delta.determinant_overlay(KEY, &determinant), None);
 
-    // Insert records the establishing fact; delete records absence —
-    // even a canceling delete, since the final-state view changed.
+    // Insert records the establishing fact; the canceling delete restores
+    // the tuple's pre-insert overlay — nothing touched it, so the overlay
+    // vanishes and the committed state answers (here: absent).
     delta.insert(&view, R, &f).expect("insert");
     assert_eq!(
         delta.determinant_overlay(KEY, &determinant),
         Some(DeterminantOverlay::Present(f.as_slice()))
     );
     delta.delete(&view, R, &f).expect("delete");
-    assert_eq!(
-        delta.determinant_overlay(KEY, &determinant),
-        Some(DeterminantOverlay::Absent)
-    );
+    assert_eq!(delta.determinant_overlay(KEY, &determinant), None);
 
-    // Delete + re-insert under the same key with a changed non-key field:
+    // Insert again under the same key with a changed non-key field:
     // the tuple is re-established by the *new* fact (the upsert shape).
     let g = fact(&schema, 7, 999);
     delta.insert(&view, R, &g).expect("insert");
@@ -376,36 +374,132 @@ fn deleting_the_old_fact_never_erases_the_new_facts_determinant_record() {
 }
 
 #[test]
-fn determinant_overwrites_never_reclone_the_scratch() {
-    // The scratch's no-per-key-statement allocation contract, pinned:
-    // the determinant map clones the scratch exactly once per distinct
-    // tuple; every later disposition for the same tuple — a pure
-    // overwrite — takes the in-place path.
+fn a_cancelled_insert_never_shadows_the_committed_owner_of_its_key_tuple() {
+    // Regression: committed {7,700}; a pending insert of a same-key fact
+    // is cancelled by its compensating delete — net nothing. The tuple's
+    // overlay must vanish so the committed owner answers; recording
+    // `Absent` would deny a live committed row to every point read in the
+    // transaction (the blocker repro shape).
     const KEY: KeyId = KeyId(0);
-    let dir = TempDir::new("delta-determinant-clone");
+    let dir = TempDir::new("delta-cancel-committed-owner");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let old = fact(&schema, 7, 700);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, R, &old).expect("insert");
+        drop(view);
+        crate::storage::commit::commit(delta, &env).expect("commit");
+    }
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let transient = fact(&schema, 7, 999);
+    assert!(delta.insert(&view, R, &transient).expect("insert"));
+    assert!(delta.delete(&view, R, &transient).expect("delete"));
+    assert!(delta.is_empty(), "the pair cancelled to nothing");
+    assert_eq!(
+        delta.determinant_overlay(KEY, &encode_u64(7)),
+        None,
+        "no overlay: the committed owner of key 7 answers"
+    );
+}
+
+#[test]
+fn a_cancelled_insert_restores_an_earlier_pending_owner() {
+    // Two pending inserts share the key tuple (commit-doomed, but
+    // representable pre-commit); cancelling the later one re-establishes
+    // the earlier — the surviving pending fact is the final-state owner.
+    const KEY: KeyId = KeyId(0);
+    let dir = TempDir::new("delta-cancel-pending-owner");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    let f = fact(&schema, 7, 700);
-    let g = fact(&schema, 7, 999); // same key tuple, changed non-key field
+    let first = fact(&schema, 7, 700);
+    let second = fact(&schema, 7, 999);
+    delta.insert(&view, R, &first).expect("insert");
+    delta.insert(&view, R, &second).expect("insert");
+    assert_eq!(
+        delta.determinant_overlay(KEY, &encode_u64(7)),
+        Some(DeterminantOverlay::Present(second.as_slice()))
+    );
+    delta.delete(&view, R, &second).expect("delete");
+    assert_eq!(
+        delta.determinant_overlay(KEY, &encode_u64(7)),
+        Some(DeterminantOverlay::Present(first.as_slice())),
+        "the earlier pending insert owns the tuple again"
+    );
+}
 
-    delta.insert(&view, R, &f).expect("insert");
+#[test]
+fn a_cancelled_insert_keeps_a_pending_deletes_absence() {
+    // delete(old); insert(new); delete(new): the cancel must restore the
+    // pending delete's absence, not erase it — the final state drops old.
+    const KEY: KeyId = KeyId(0);
+    let dir = TempDir::new("delta-cancel-keeps-absence");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let old = fact(&schema, 7, 700);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, R, &old).expect("insert");
+        drop(view);
+        crate::storage::commit::commit(delta, &env).expect("commit");
+    }
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let new = fact(&schema, 7, 999);
+    delta.delete(&view, R, &old).expect("delete");
+    delta.insert(&view, R, &new).expect("insert");
+    delta.delete(&view, R, &new).expect("delete");
+    assert_eq!(
+        delta.determinant_overlay(KEY, &encode_u64(7)),
+        Some(DeterminantOverlay::Absent),
+        "the pending delete of the committed owner still stands"
+    );
+}
+
+#[test]
+fn determinant_overwrites_never_reclone_the_scratch() {
+    // The scratch's no-per-key-statement allocation contract, pinned:
+    // the determinant map clones the scratch exactly once per distinct
+    // resident tuple; every later disposition that moves a RESIDENT
+    // entry — the upsert shape's overwrite and cancel-restore — takes
+    // the no-clone path. (A cancellation with no prior disposition
+    // removes the entry instead; the cancel trio above pins that law.)
+    const KEY: KeyId = KeyId(0);
+    let dir = TempDir::new("delta-determinant-clone");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let old = fact(&schema, 7, 700);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, R, &old).expect("insert");
+        drop(view);
+        crate::storage::commit::commit(delta, &env).expect("commit");
+    }
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let new = fact(&schema, 7, 999); // same key tuple, changed non-key field
+
+    delta.delete(&view, R, &old).expect("delete");
     assert_eq!(delta.determinant_scratch_clones, 1, "first record clones");
 
-    // Three overwrites of the same tuple — cancel, re-establish (the
-    // upsert shape), cancel again: dispositions move, clones do not.
-    delta.delete(&view, R, &f).expect("delete");
-    delta.insert(&view, R, &g).expect("insert");
-    delta.delete(&view, R, &g).expect("delete");
+    // The tuple stays resident across the upsert shape — dispositions
+    // move in place, clones do not.
+    delta.insert(&view, R, &new).expect("insert");
+    delta.delete(&view, R, &new).expect("delete");
     assert_eq!(
         delta.determinant_scratch_clones, 1,
-        "overwrites take the no-insert path"
+        "resident re-dispositions take the no-insert path"
     );
     assert_eq!(
         delta.determinant_overlay(KEY, &encode_u64(7)),
         Some(DeterminantOverlay::Absent),
-        "correctness unchanged: last disposition wins"
+        "correctness unchanged: the pending delete stands"
     );
 
     // A distinct tuple is a genuine first record: one more clone.

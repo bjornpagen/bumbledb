@@ -31,9 +31,12 @@ impl WriteDelta<'_> {
             Some(Disposition::Delete) => Ok(false),
             Some(Disposition::Insert) => {
                 // The pending Insert proves the fact committed-absent:
-                // cancel it.
+                // cancel it. The cancelled fact's key tuples revert to
+                // whatever still owns them — recording `Absent` here would
+                // shadow a committed owner of the same tuple
+                // (`restore_determinants`).
                 self.facts.remove(&(rel, hash));
-                self.record_determinants(rel, fact_bytes, None);
+                self.restore_determinants(rel, fact_bytes);
                 *self.row_count_delta.entry(rel).or_insert(0) -= 1;
                 Ok(true)
             }

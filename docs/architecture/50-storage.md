@@ -420,10 +420,18 @@ at a 1.0–1.1x device tax, so nearly nothing
 carries the no-durability claim, not the device, so no lie is possible — a
 machine crash loses an ephemeral store by the store's own definition. (The
 device-honesty rule for *timed* lanes is the orthogonal axis: `60-validation.md`.)
-One stated consequence of WRITEMAP: the data file is ftruncated to the full
-4 GiB map at open, so on a filesystem without sparse files (an HFS+ ram disk;
-APFS is sparse) the volume must hold map size + slack or open refuses with a
-typed `StorageFull`-carrying `Lmdb` error (§ R6's harness note).
+One stated consequence of WRITEMAP: the data file holds the full 4 GiB map
+from open — the ftruncate allocates it on a filesystem without sparse files
+(an HFS+ ram disk), and on a sparse one (APFS) the open allocates the blocks
+itself (`fcntl(F_PREALLOCATE)` / `posix_fallocate`,
+`storage/env/open_env.rs`) — so on EVERY filesystem the volume must hold map
+size + slack or open refuses with a typed `StorageFull`-carrying `Lmdb`
+error (§ R6's harness note). The allocation is what keeps the capacity
+contract honest under `NOSYNC`: without it a sparse filesystem accepts the
+ftruncate, every commit past the volume's physical capacity reports `Ok`,
+and the dirty pages the kernel can never write back are unbackable state a
+clean process handoff may still lose — the one failure the kind does NOT
+renounce. Capacity is judged once, at open, typed.
 
 Lean owns none of this: durability and crash recovery are mechanism, outside the
 model (`lean/README.md` § what Lean does NOT own), so the store kind adds no
