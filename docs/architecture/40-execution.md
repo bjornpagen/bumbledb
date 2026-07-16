@@ -617,9 +617,13 @@ minimization, restricted to the cheap witness the DNF path actually produces
 (a lowered `(φ ∨ true-by-elimination)` pair whose second disjunct's filter
 rode the eliminated occurrence). The check is normalized-form containment
 (`plan/ground.rs::subsume`), O(rules²) at prepare with rules ≤ 16, and nothing
-recursive. **Refused, the general form:** full CQ-homomorphism minimization is
-NP-hard, so the witness never searches variable mappings — `VarId`s must
-already agree, which is exactly what DNF-cloned rules provide. Deleting a rule
+recursive. The deletion is in the spec's rewrite chain
+(`lean/Bumbledb/Exec/Rewrites.lean: subsume_containment` — the deleted rule's
+answers are contained in the keeper's, and `RewriteStep.subsume` carries the
+step through `rewrite_composition`). **Refused, the general form:** full
+CQ-homomorphism minimization is NP-hard, so the witness never searches
+variable mappings — `VarId`s must already agree, which is exactly what
+DNF-cloned rules provide. Deleting a rule
 never changes the head (the head-alignment invariant is re-checked after
 deletion), a program shrunk to one rule sheds its union machinery like any
 single-rule program, plan introspection reports deleted rules with the subsuming rule's

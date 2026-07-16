@@ -716,8 +716,10 @@ disjoin by writing rules, which is what rules are for.
 - **Duplicate rules after distribution collapse** — set semantics at the
   representation level, the duplicate-statement machinery's sibling:
   identical normalized bodies (finds, atoms, negated verbatim; condition
-  lists as sets — conjunction is idempotent and commutative) keep their
-  first occurrence.
+  lists as sets — conjunction is idempotent and commutative,
+  `lean/Bumbledb/Query/Denotation.lean: ruleAnswers_conditions_congr`, then
+  `union_idempotent` deletes the identified duplicate) keep their first
+  occurrence.
 - **The empty combinations keep their algebraic readings**: `And([])` is
   true (no leaves), `Or([])` is false
   (`lean/Bumbledb/Query/Denotation.lean: Condition.allHold_iff`,

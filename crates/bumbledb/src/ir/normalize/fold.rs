@@ -12,7 +12,12 @@
 //!    kernel's precedent, `exec/kernel`). The summary REPLACES its
 //!    constituents, lowered back to at most two order filters + one Eq
 //!    per slot — existing [`FilterPredicate`] shapes, no new filter kind,
-//!    no new kernel. Fewer residuals means fewer keep-fraction
+//!    no new kernel. The replacement's word-level soundness is proved
+//!    (`lean/Bumbledb/Exec/Rewrites.lean`: `range_summary_replacement`,
+//!    with `range_pin_subsumes` for the Eq-pin arm; the
+//!    filter-level transport is the recorded narrowing in that module's
+//!    doc, with the fold-off differential as its empirical arm).
+//!    Fewer residuals means fewer keep-fraction
 //!    multiplications (`plan/selectivity.rs` counts a folded summary
 //!    once) and fewer kernel passes.
 //! 2. **Contradiction detection** — each rule judged on **constants

@@ -4,11 +4,13 @@ import Bumbledb.Query.Denotation
 # Exec/Rewrites — the prepare-time rewrites, proved (Level 1, PRD 08)
 
 Grounding as denotation-preserving partial evaluation, the key-probe
-plan, statically-empty folds, and their composition — the formal arm
-of the claim the rewrites fuzz target checks empirically: "rewrites
-are semantics-preserving". Algorithmic essence only, per the mechanism
-fence: grounding is substitution against ground axioms, a key probe is
-one determinant get, static emptiness is a refuted condition.
+plan, statically-empty folds, the subsumption deletion, and their
+composition — the formal arm of the claim the rewrites fuzz target
+checks empirically: "rewrites are semantics-preserving". Algorithmic
+essence only, per the mechanism fence: grounding is substitution
+against ground axioms, a key probe is one determinant get, static
+emptiness is a refuted condition, subsumption is rule containment at
+the identity variable mapping.
 
 ## The Rust readings (READ-RUST-FIRST, symbol anchors)
 
@@ -52,8 +54,9 @@ one determinant get, static emptiness is a refuted condition.
   UCQ minimization restricted to the normalized-form witness;
   `plan/ground.rs::subsumes`, the ordered-pair check), wired after
   grounding at `api/prepared/build.rs::ground_program`: the deleted
-  rules are filtered out of the prepared program. Unmodeled — see the
-  narrowings.
+  rules are filtered out of the prepared program. Modeled:
+  `SubsumeWitness`, `subsume_containment`, `RewriteStep.subsume` — the
+  sixth rewrite, in the chain (the discharge record below).
 * **The statically-empty fold** — `ir/normalize/fold.rs::fold`
   (participating occurrences only — a negated occurrence's
   contradiction is NOT emptiness); the contradiction rules (a)-(f),
@@ -93,29 +96,36 @@ one determinant get, static emptiness is a refuted condition.
   guarantee (`domain_within_ids`) and a negated membership the
   condition grammar cannot write; the modeled step grounds positive
   occurrences only.
-* **Rule subsumption is unmodeled** (`plan/ground.rs::subsume`, wired
-  at `api/prepared/build.rs::ground_program`): after grounding, a rule
+* **Rule subsumption is MODELED — the sixth rewrite, discharged**
+  (2026-07-15; `plan/ground.rs::subsume`, wired at
+  `api/prepared/build.rs::ground_program`): after grounding, a rule
   whose normalized body contains a sibling's — identical `finds`,
   identical participating-atom multiset with the keeper's per-atom
   filters ⊆ the candidate's, the keeper's residual sets ⊆ the
   candidate's, and every keeper negated atom present in the candidate
-  — is DELETED from the prepared program: a sixth denotation-affecting
-  rewrite `RewriteStep` does not name, so `rewrite_composition`'s
-  chain never represents it. The witness implies candidate-answers ⊆
-  keeper-answers under both the projection and head-projection union
-  regimes (every conjunct is either shared verbatim or only shrinks
-  the candidate's binding set), and deleting a rule whose answers a
-  kept rule covers preserves the union — hand-verified, NOT proved;
-  the general-form refusal (CQ-homomorphism minimization, NP-hard) is
-  the engine's own recorded fence (`plan/ground.rs`'s module doc). The
-  ground-off dual-pipeline differential (the fuzz rewrites target) and
-  the prepare-level instruments
+  — is DELETED from the prepared program. `SubsumeWitness` reads that
+  witness in this level's vocabulary (a per-occurrence Eq filter is a
+  literal binding, residuals are the rule's conditions): every keeper
+  atom pairs with a candidate atom of the same relation whose binding
+  list CONTAINS the keeper's, negated atoms and conditions transfer by
+  membership containment, heads verbatim. Only the keeper→candidate
+  half of the engine's multiset identity is SPENT — the
+  candidate→keeper half only shrinks the candidate's binding set
+  further, which the containment direction never needs, so the
+  engine's stronger check is sound a fortiori. `subsume_containment`
+  proves candidate-answers ⊆ keeper-answers, `RewriteStep.subsume`
+  names the deletion (the keeper's survival, `hk`, the named premise),
+  and `rewrite_composition` carries it in the chain. The general-form
+  refusal (CQ-homomorphism minimization, NP-hard) remains the engine's
+  own recorded fence (`plan/ground.rs`'s module doc): the witness
+  never searches variable mappings, and neither does the model —
+  `VarId`s must already agree, exactly what DNF-cloned rules provide.
+  The ground-off dual-pipeline differential (the fuzz rewrites target)
+  and the prepare-level instruments
   (`the_dnf_residue_subsumes_the_filtered_rule`,
   `crates/bumbledb/src/plan/ground/tests.rs`;
-  `crates/bumbledb/src/api/prepared/tests/ground.rs`) stand as the
-  empirical check until a `subsume` step constructor and its
-  rule-containment lemma land — the recorded narrowing, and the one
-  live rewrite whose soundness rests on record rather than theorem.
+  `crates/bumbledb/src/api/prepared/tests/ground.rs`) stay as the
+  empirical arm beside the theorem.
 * **`elimination_sound` is the projection-sink face.** For
   set-semantics `ruleAnswers`, containment existence plus deadness
   suffice; the key-ness of Y (condition 1's full-key demand,
@@ -196,6 +206,24 @@ one determinant get, static emptiness is a refuted condition.
   corresponding lifted condition — honest emptiness either way; the
   claim does NOT say every kill site literally inspects
   `Rule.conditions`.
+* **The range-summary replacement is PROVED at the word level**
+  (`fold.rs`, job 1 — `RangeSummary::narrow` via `fold.rs::narrow`,
+  the splice via `fold.rs::emit`): one slot's conjunction of constant
+  order filters means exactly the folded inclusive `[lo, hi]`
+  summary's at-most-two emitted bounds — `range_summary_replacement`
+  below, over the bounded word domain `[0, max]` (the strict-bound
+  domain edges land as `mark_empty`, case for case) — and an Eq pin
+  inside the summary implies every constituent
+  (`range_pin_subsumes`, the `pinned` arm that drops them all; rule
+  (c) is exactly the in-range premise). What stays recorded rather
+  than proved is the TRANSPORT: the engine replaces `FilterPredicate`
+  lists over encoded words, and the bridge to values is the two
+  order-preserving encodings (`encode_u64_order_embedding` /
+  `encode_i64_order_embedding`, PRD 02) plus the in-place splice
+  discipline (`emit` lands the bounds at the first constituent's
+  position — the filter-order law); the fold-off dual-pipeline
+  differential (the rewrites fuzz target, feature `fold-off`) is that
+  plumbing's empirical arm.
 -/
 
 namespace Bumbledb.Query
@@ -1031,6 +1059,69 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
   exact (elimination_sound stepB hcont₁ t).trans
     ((elimination_sound stepA hcont₂ t).trans hAr)
 
+/-! ## Item 2b — the subsumption sweep: rule deletion under containment
+
+`plan/ground.rs::subsume`, wired after grounding at
+`api/prepared/build.rs::ground_program`: rule K subsumes rule D when,
+after elimination, K's normalized body equals D's modulo the filters
+elimination removed — identical head projection, identical
+participating-atom multisets with K's per-atom filters ⊆ D's, K's
+residual sets ⊆ D's, and every negated atom of K present in D
+(`plan/ground.rs::subsumes`, the ordered-pair check). Every D-binding
+then satisfies K and the heads agree, so K ⊇ D in denotation and D is
+deleted — the union loses nothing. The witness below reads that check
+in this level's vocabulary; the module doc's discharge record names
+what is spent and what the engine checks beyond it. -/
+
+/-- The subsumption witness (`plan/ground.rs::subsumes`), modeled:
+identical head projection; every keeper atom pairs with a candidate
+atom of the same relation whose binding list CONTAINS the keeper's
+(`atoms_match`: same source, same variable positions, keeper filters
+⊆ the candidate's — a per-occurrence Eq filter is a literal binding
+at this level); every keeper negated atom present in the candidate
+(`negated_within` — fewer rejections is weaker, hence larger); every
+keeper condition present in the candidate (the residual subsets —
+residuals are conditions here). Only the keeper→candidate half of the
+engine's multiset identity appears: the other half only shrinks the
+candidate further, which the containment never needs. -/
+structure SubsumeWitness (k d : Rule) : Prop where
+  /-- Identical head projection (`keeper_finds == candidate_finds`). -/
+  finds_eq : k.finds = d.finds
+  /-- Every keeper occurrence pairs with a candidate occurrence of the
+  same relation carrying AT LEAST the keeper's bindings. -/
+  atoms_within : ∀ a : Atom, a ∈ k.atoms → ∃ a', a' ∈ d.atoms ∧
+    a'.relation = a.relation ∧ ∀ bd, bd ∈ a.bindings → bd ∈ a'.bindings
+  /-- Every keeper negated atom present verbatim in the candidate. -/
+  negated_within : ∀ a : Atom, a ∈ k.negated → a ∈ d.negated
+  /-- The keeper's conditions within the candidate's. -/
+  conditions_within : ∀ c : Condition,
+    c ∈ k.conditions → c ∈ d.conditions
+
+/-- **The rule-containment lemma** — the subsumption witness spent:
+the candidate's answers are CONTAINED in the keeper's, on every
+instance and parameter environment. A deriving assignment for the
+candidate matches every keeper atom through its paired candidate atom
+(`Matches` reads bindings by membership, and the pairing only ADDS
+binding constraints on the candidate side), rejects at least what the
+keeper's negated list demands, and satisfies every keeper condition —
+and the heads agree, so the projected tuple transfers verbatim.
+Bridge: `plan/ground.rs::subsume` (`Subsumption`, the deletion
+record); `the_dnf_residue_subsumes_the_filtered_rule`
+(`plan/ground/tests.rs`) and the ground-off dual pipeline are the
+empirical arm. -/
+theorem subsume_containment {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {k d : Rule} (hw : SubsumeWitness k d) :
+    ∀ t, t ∈ ruleAnswers C d I ρ → t ∈ ruleAnswers C k I ρ := by
+  intro t ht
+  obtain ⟨σ, ⟨hatoms, hneg, hconds⟩, rfl⟩ := mem_ruleAnswers.mp ht
+  refine mem_ruleAnswers.mpr ⟨σ, ⟨?_, ?_, ?_⟩, by rw [hw.finds_eq]⟩
+  · intro a ha
+    obtain ⟨a', ha', hrel, hbds⟩ := hw.atoms_within a ha
+    obtain ⟨f, hf, hm⟩ := hatoms a' ha'
+    exact ⟨f, hrel ▸ hf, fun bd hbd => hm bd (hbds bd hbd)⟩
+  · exact fun a ha => hneg a (hw.negated_within a ha)
+  · exact fun c hc => hconds c (hw.conditions_within c hc)
+
 /-! ## Item 3 — the key probe
 
 The shape `exec/dispatch/classify.rs` lowers to a point probe: exactly
@@ -1478,13 +1569,177 @@ theorem emptyAt_refuted_everywhere {C : Classify} {r : Rule}
     ∀ (I : Instance) (ρ : ParamEnv), EmptyAt C ρ r I :=
   fun _ _ => .refuted h
 
+/-! ## Item 4b — the range-summary fold (SPLIT B)
+
+The fold's other job (`fold.rs`, job 1): a conjunction of constant
+order filters on one u64/i64 slot collapses into a single inclusive
+`[lo, hi]` summary over ENCODED WORDS, which then REPLACES its
+constituents — lowered back to at most two order filters per slot, or
+none at all where a consistent Eq pin subsumes the range
+(`fold.rs::emit`). The theorems below are that replacement's
+soundness at the word level: the summary means exactly its
+constituents on the bounded domain, so swapping one for the other
+never changes which words pass. The word domain is `[0, max]` for an
+arbitrary ceiling (`u64::MAX` at the engine's width — the arithmetic
+is width-generic, and both integer encodings are order-preserving
+maps onto it, PRD 02). The transport to `FilterPredicate` lists is
+the recorded narrowing (module doc). -/
+
+/-- One constant order bound over encoded words — exactly the shape
+`fold.rs::constant_order_bound` admits (`Ne` prunes nothing statically
+and params are stage-3, so neither reaches the summary). -/
+inductive WordBound where
+  | lt (c : Nat)
+  | le (c : Nat)
+  | gt (c : Nat)
+  | ge (c : Nat)
+
+/-- The bound's denotation at one word. -/
+def WordBound.holds (w : Nat) : WordBound → Prop
+  | .lt c => w < c
+  | .le c => w ≤ c
+  | .gt c => c < w
+  | .ge c => c ≤ w
+
+/-- The inclusive `[lo, hi]` summary — empty iff `lo > hi`
+(`RangeSummary`, `fold.rs`). -/
+structure WordRange where
+  lo : Nat
+  hi : Nat
+
+/-- The full domain (`RangeSummary::new` — every word satisfies
+it). -/
+def WordRange.full (max : Nat) : WordRange := ⟨0, max⟩
+
+/-- Membership: the two inclusive bounds. -/
+def WordRange.mem (s : WordRange) (w : Nat) : Prop :=
+  s.lo ≤ w ∧ w ≤ s.hi
+
+/-- One narrowing step (`RangeSummary::narrow`): `Ge`/`Le` tighten the
+matching edge; the strict bounds tighten by one. The domain edges are
+`mark_empty`'s two cases, exactly: `< 0` has no word below it (the
+`checked_sub` refusal — here the explicit zero case), and `> c` at
+`c = max` sets the floor past every domain word (the `checked_add`
+overflow — here `max + 1` needs no special case because ℕ carries it,
+and no `w ≤ max` can reach it). -/
+def WordRange.narrow (s : WordRange) : WordBound → WordRange
+  | .ge c => ⟨Nat.max s.lo c, s.hi⟩
+  | .le c => ⟨s.lo, Nat.min s.hi c⟩
+  | .gt c => ⟨Nat.max s.lo (c + 1), s.hi⟩
+  | .lt 0 => ⟨1, 0⟩
+  | .lt (c + 1) => ⟨s.lo, Nat.min s.hi c⟩
+
+/-- One narrowing step is exactly one conjunct: membership in the
+narrowed summary is membership in the old one AND the bound — no
+domain premise; the edge cases carry themselves. -/
+theorem WordRange.narrow_mem {s : WordRange} {b : WordBound}
+    {w : Nat} : (s.narrow b).mem w ↔ s.mem w ∧ b.holds w := by
+  cases b with
+  | ge c => simp only [narrow, mem, WordBound.holds, Nat.max_le]; omega
+  | le c => simp only [narrow, mem, WordBound.holds, Nat.le_min]; omega
+  | gt c => simp only [narrow, mem, WordBound.holds, Nat.max_le]; omega
+  | lt c =>
+    cases c with
+    | zero => simp only [narrow, mem, WordBound.holds]; omega
+    | succ c =>
+      simp only [narrow, mem, WordBound.holds, Nat.le_min]; omega
+
+/-- The pass over one slot's constant order bounds
+(`fold_occurrence`, pass 2): fold `narrow` from the full domain. -/
+def WordRange.fold (max : Nat) (bs : List WordBound) : WordRange :=
+  bs.foldl WordRange.narrow (WordRange.full max)
+
+/-- The fold's accumulator invariant: membership in the folded
+summary is membership in the seed AND every listed bound. -/
+theorem WordRange.foldl_mem {w : Nat} :
+    ∀ (bs : List WordBound) (s : WordRange),
+      (bs.foldl WordRange.narrow s).mem w ↔
+        s.mem w ∧ ∀ b, b ∈ bs → b.holds w
+  | [], s => by simp
+  | b :: bs, s => by
+    rw [List.foldl_cons, WordRange.foldl_mem bs, WordRange.narrow_mem]
+    constructor
+    · rintro ⟨⟨hs, hb⟩, hrest⟩
+      refine ⟨hs, fun x hx => ?_⟩
+      rcases List.mem_cons.mp hx with rfl | hx'
+      · exact hb
+      · exact hrest x hx'
+    · rintro ⟨hs, hall⟩
+      exact ⟨⟨hs, hall b (List.mem_cons_self ..)⟩,
+        fun x hx => hall x (List.mem_cons_of_mem _ hx)⟩
+
+/-- **The summary means its constituents**: on the bounded word
+domain, membership in the folded summary is exactly the conjunction
+of the constituent order bounds — the range fold computes the
+intersection, nothing else. -/
+theorem WordRange.fold_mem {max : Nat} {bs : List WordBound} {w : Nat}
+    (hw : w ≤ max) :
+    (WordRange.fold max bs).mem w ↔ ∀ b, b ∈ bs → b.holds w := by
+  rw [WordRange.fold, WordRange.foldl_mem]
+  simp [WordRange.mem, WordRange.full, hw]
+
+/-- The emitted replacement (`fold.rs::emit`, the ≥2-constituents
+arm): at most two bounds — `Ge lo` unless the floor is vacuous,
+`Le hi` unless the ceiling is; the domain edges are simply
+dropped. -/
+def WordRange.emit (s : WordRange) (max : Nat) : List WordBound :=
+  (if 0 < s.lo then [WordBound.ge s.lo] else []) ++
+    (if s.hi < max then [WordBound.le s.hi] else [])
+
+/-- The emitted bounds mean the summary: on the bounded domain the
+dropped vacuous edges cost nothing — `0 ≤ w` always, `w ≤ max` is the
+domain itself. -/
+theorem WordRange.emit_mem {s : WordRange} {max w : Nat}
+    (hw : w ≤ max) :
+    (∀ b, b ∈ s.emit max → b.holds w) ↔ s.mem w := by
+  unfold WordRange.emit WordRange.mem
+  by_cases hlo : 0 < s.lo <;> by_cases hhi : s.hi < max <;>
+    simp [hlo, hhi, WordBound.holds] <;> omega
+
+/-- **The range-summary replacement** — `fold.rs::emit`'s soundness
+at the word level: one slot's constant order conjunction holds
+exactly when the folded summary's emitted bounds do, on every domain
+word — the replacement never changes which words pass. The empty
+summary's face is `range_fold_empty` (rule (a), the kill); the Eq-pin
+face is `range_pin_subsumes` (the `pinned` arm). -/
+theorem range_summary_replacement {max : Nat} {bs : List WordBound}
+    {w : Nat} (hw : w ≤ max) :
+    (∀ b, b ∈ bs → b.holds w) ↔
+      (∀ b, b ∈ (WordRange.fold max bs).emit max → b.holds w) := by
+  rw [WordRange.emit_mem hw, WordRange.fold_mem hw]
+
+/-- The Eq-pin arm (`fold.rs::emit`, the `pinned` branch): rule (c)
+held, so the pin lies INSIDE the summary, and a word equal to the pin
+satisfies every constituent — dropping all of them under the standing
+Eq filter is sound (a point implies every bound it survived). -/
+theorem range_pin_subsumes {max : Nat} {bs : List WordBound} {c : Nat}
+    (hc : c ≤ max) (hin : (WordRange.fold max bs).mem c) :
+    ∀ b, b ∈ bs → b.holds c :=
+  (WordRange.fold_mem hc).mp hin
+
+/-- Rule (a)'s justification: an EMPTY folded summary (`lo > hi`)
+refutes the constituent conjunction on every domain word — the
+statically-empty verdict this feeds (`range_is_empty`,
+`order_filters_picture`) is honest emptiness, an instance of the
+`StaticallyEmpty` reading through the filters-to-conditions mapping
+(module doc). -/
+theorem range_fold_empty {max : Nat} {bs : List WordBound} {w : Nat}
+    (hw : w ≤ max)
+    (hempty : (WordRange.fold max bs).hi < (WordRange.fold max bs).lo) :
+    ¬ ∀ b, b ∈ bs → b.holds w := by
+  intro h
+  have hmem := (WordRange.fold_mem hw).mpr h
+  unfold WordRange.mem at hmem
+  omega
+
 /-! ## Item 5 — the rewrites compose
 
-The prepare pipeline's licence to chain: grounding steps, eliminations
-and kills, in any order, any number — each preserves `queryAnswers` on
-instances that hold the theory and agree with its ground axioms, so
-any sequence does. The theorem falls out of items 1, 2 and 4 by
-rewriting, which is the shape check on their statements. -/
+The prepare pipeline's licence to chain: grounding steps,
+eliminations, subsumption deletions and kills, in any order, any
+number — each preserves `queryAnswers` on instances that hold the
+theory and agree with its ground axioms, so any sequence does. The
+theorem falls out of items 1, 2, 2b and 4 by rewriting, which is the
+shape check on their statements. -/
 
 /-- One prepare-time rewrite step on a program, at one rule. The
 elimination step carries the THEORY-side premises: the declared
@@ -1537,6 +1792,17 @@ inductive RewriteStep (T : Theory) (C : Classify) :
   | kill {n : Nat} {pre post : List Rule} {r : Rule}
       (h : StaticallyEmpty C r) :
       RewriteStep T C ⟨n, pre ++ r :: post⟩ ⟨n, pre ++ post⟩
+  /-- The subsumption deletion (`plan/ground.rs::subsume`, wired at
+  `api/prepared/build.rs::ground_program`): a rule the witness proves
+  covered by a KEPT sibling is deleted from the program — the sixth
+  denotation-affecting rewrite, in the chain. The keeper's membership
+  (`hk`) is the sweep's own discipline made a premise: a deleted rule
+  neither subsumes nor re-enters, so the keeper of every recorded
+  `Subsumption` survives to the output program. Purely syntactic — no
+  theory premise: the containment holds on EVERY instance. -/
+  | subsume {n : Nat} {pre post : List Rule} {d k : Rule}
+      (hw : SubsumeWitness k d) (hk : k ∈ pre ++ post) :
+      RewriteStep T C ⟨n, pre ++ d :: post⟩ ⟨n, pre ++ post⟩
 
 /-- Replacing one rule by an answer-equal rule preserves the query's
 answers — the union reads members only. -/
@@ -1599,9 +1865,40 @@ theorem queryAnswers_drop_at {C : Classify} {I : Instance}
         ⟨x, List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hx')),
           hta⟩
 
+/-- Deleting a rule whose answers a KEPT rule covers preserves the
+query's answers — `queryAnswers_drop_at`'s covered sibling: the union
+loses nothing a survivor still supplies. The subsumption deletion's
+program-level face. -/
+theorem queryAnswers_drop_covered {C : Classify} {I : Instance}
+    {ρ : ParamEnv} {n : Nat} {pre post : List Rule} {d k : Rule}
+    (hk : k ∈ pre ++ post)
+    (hcov : ∀ t, t ∈ ruleAnswers C d I ρ → t ∈ ruleAnswers C k I ρ) :
+    ∀ t, t ∈ queryAnswers C ⟨n, pre ++ d :: post⟩ I ρ ↔
+      t ∈ queryAnswers C ⟨n, pre ++ post⟩ I ρ := by
+  intro t
+  constructor
+  · intro ht
+    obtain ⟨x, hx, hta⟩ := mem_queryAnswers.mp ht
+    rcases List.mem_append.mp hx with hx' | hx'
+    · exact mem_queryAnswers.mpr
+        ⟨x, List.mem_append.mpr (Or.inl hx'), hta⟩
+    · rcases List.mem_cons.mp hx' with rfl | hx''
+      · exact mem_queryAnswers.mpr ⟨k, hk, hcov t hta⟩
+      · exact mem_queryAnswers.mpr
+          ⟨x, List.mem_append.mpr (Or.inr hx''), hta⟩
+  · intro ht
+    obtain ⟨x, hx, hta⟩ := mem_queryAnswers.mp ht
+    rcases List.mem_append.mp hx with hx' | hx'
+    · exact mem_queryAnswers.mpr
+        ⟨x, List.mem_append.mpr (Or.inl hx'), hta⟩
+    · exact mem_queryAnswers.mpr
+        ⟨x, List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hx')),
+          hta⟩
+
 /-- One step preserves the query's answers on every instance that
-holds the theory and agrees with its ground axioms — items 1, 2 and 4,
-lifted to the program. -/
+holds the theory and agrees with its ground axioms — items 1, 2, 2b
+and 4, lifted to the program (the subsumption arm needs neither
+premise: its containment is instance-blind). -/
 theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
     (hstep : RewriteStep T C q q') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :
@@ -1634,21 +1931,25 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
       t).symm
   | kill h =>
     exact queryAnswers_drop_at fun t => statically_empty_sound h I ρ t
+  | subsume hw hk =>
+    exact queryAnswers_drop_covered hk (subsume_containment hw)
 
 /-- A rewrite sequence: any chain of the rewrites (grounding, kill,
-elimination — the chained composed step included). -/
+elimination — the chained composed step included — and the
+subsumption deletion). -/
 inductive Rewrites (T : Theory) (C : Classify) : Query → Query → Prop
   | refl (q : Query) : Rewrites T C q q
   | step {q q' q'' : Query} (h : RewriteStep T C q q')
       (rest : Rewrites T C q' q'') : Rewrites T C q q''
 
 /-- **Item 5 — `rewrite_composition`.** ANY sequence of grounding,
-elimination (chained-source pairs included) and kill steps preserves
-`queryAnswers` on every instance holding the theory and agreeing with
-its ground axioms — the prepare pipeline's licence to chain for the
-MODELED steps (the subsumption deletion runs outside this chain — the
-recorded narrowing in the module doc). Falls out of items 1, 2 and 4
-by induction over the chain, one rewrite per step. -/
+elimination (chained-source pairs included), subsumption deletion and
+kill steps preserves `queryAnswers` on every instance holding the
+theory and agreeing with its ground axioms — the prepare pipeline's
+licence to chain, all six rewrites in the chain (the subsumption
+deletion's admission is 2026-07-15's discharge — the module doc's
+record). Falls out of items 1, 2, 2b and 4 by induction over the
+chain, one rewrite per step. -/
 theorem rewrite_composition {T : Theory} {C : Classify} {q q' : Query}
     (h : Rewrites T C q q') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :
