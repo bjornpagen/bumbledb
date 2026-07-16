@@ -9,7 +9,7 @@
 //! The layout is TRACED, never assumed: every arm asserts its strides'
 //! residues before a single span is timed.
 //!
-//! VERDICT (2026-07-16, `docs/reports/stride-padder-band.md`): the
+//! VERDICT (2026-07-16, this file's falsifiers, re-runnable): the
 //! widening is REFUTED — at image-scale pitches the band decays by
 //! ~1.5 KiB of residue (1 KiB costs ~1.1× on the tight kernel, 1.00×
 //! on the real filter surface, which is retire-bound) and padding a

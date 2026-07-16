@@ -45,7 +45,7 @@
 # default filesystem is non-journaled HFS+ (`diskutil erasevolume HFS+`
 # — the journaled personality is spelled "Journaled HFS+"); --apfs is
 # the fallback flag (measured ~0.4 ms slower per small commit,
-# docs/reports/ramdisk-phase-r.md). Every attach is guarded by a trap:
+# the phase-R harness, crates/bumbledb/tests/ramdisk_phase_r.rs). Every attach is guarded by a trap:
 # a failed create detaches its own device.
 #
 # Linux arm: WRITTEN CAREFULLY BUT UNTESTED (the owner's explicit

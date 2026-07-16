@@ -416,7 +416,7 @@ proof the expectation is not doing the work.
 The kind is **device-independent**: ephemeral-on-SSD is legitimate, and
 ephemeral-on-ramdisk buys the flags' latency on top of the device's — measured
 at a 1.0–1.1x device tax, so nearly nothing
-(`docs/reports/ramdisk-phase-r.md` § R6). The kind
+(the R6 lane of `crates/bumbledb/tests/ramdisk_phase_r.rs`). The kind
 carries the no-durability claim, not the device, so no lie is possible — a
 machine crash loses an ephemeral store by the store's own definition. (The
 device-honesty rule for *timed* lanes is the orthogonal axis: `60-validation.md`.)

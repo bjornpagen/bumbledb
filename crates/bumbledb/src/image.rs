@@ -263,8 +263,7 @@ const PAD_MIN_STRIDE: usize = 64 * 1024;
 ///
 /// A 2 KiB widening was proposed from the ledger's dense residue sweep
 /// (poison band ~48 B–2 KiB at small pitches) and REFUTED by the
-/// interleaved falsifier (`tests/stride_ab.rs`,
-/// `docs/reports/stride-padder-band.md`): at the pitches a real image's
+/// interleaved falsifier (`tests/stride_ab.rs`): at the pitches a real image's
 /// DRAM-tier lockstep scans can actually have (≥4 MiB — column stride
 /// IS the pitch, and ≥8 streams leave the SLC only at MB-scale spans)
 /// the band decays far faster than at the sweep's small pitches —

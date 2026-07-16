@@ -1,4 +1,4 @@
-//! The ramdisk phase-R measurement harness (`docs/reports/ramdisk-phase-r.md`):
+//! The ramdisk phase-R measurement harness — the executable record of
 //! the numbers the ephemeral-store decision stands on. Ignored — it
 //! attaches real ram disks and runs minutes of timed commits; run it
 //! manually on the pinned M2 Max:
@@ -80,7 +80,7 @@ impl RamDisk {
     /// an EPHEMERAL store's `MDB_WRITEMAP` ftruncates the data file to
     /// the full 4 GiB map size at open, and HFS+ has no sparse files,
     /// so the disk must hold the whole map plus slack (a recorded
-    /// consequence — `docs/reports/ramdisk-phase-r.md` § R6).
+    /// consequence — `50-storage.md` § the ephemeral store kind).
     fn attach_sized(personality: &str, label: &str, sectors: u64) -> Self {
         let dev = run(
             "hdiutil",

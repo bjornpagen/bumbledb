@@ -621,7 +621,7 @@ fuzz harness's `StoreDir` and the bench tests' scratch `TempDir`
 respect) — they check answers, not wall clocks, and the ram disk buys
 them the fullfsync floor back (~21x per small commit, ~94–100x on
 back-to-back commit loops on the pinned M2 Max —
-`docs/reports/ramdisk-phase-r.md`). Timing is governed by the
+the phase-R harness, `crates/bumbledb/tests/ramdisk_phase_r.rs`). Timing is governed by the
 device-honesty rule, and the rule is symmetric: every timed family —
 read and write alike — refuses to run against a RAM-backed volume with
 a named refusal (`crates/bumbledb-bench/src/devhonesty.rs` — the
