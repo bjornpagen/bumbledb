@@ -15,8 +15,8 @@
 //! scalar reference twins ([`super::reference`]) remain the independent
 //! differential oracle.
 
-use std::simd::prelude::*;
 use std::simd::SimdElement;
+use std::simd::prelude::*;
 
 /// The u64 kernel width: two 128-bit vectors, four lanes per chunk.
 const U64_LANES: usize = 4;
