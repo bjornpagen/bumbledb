@@ -33,7 +33,8 @@ the theorem "generation conflict ≠ dependency failure"
 anyway; it is the API's contract sentence). Bridge:
 `crate::error::Error::CommitRejected` vs `Error::GenerationMoved`;
 `api/db/write.rs::write_witnessed`'s one integer compare inside the
-critical section (write.rs:136-140) is `writeWitnessed`'s one `if`.
+critical section (the `api/db/write.rs::GenerationMoved` return) is
+`writeWitnessed`'s one `if`.
 
 ## Bridges
 
@@ -499,8 +500,9 @@ def liftCommit {T : Theory} :
 /-- **The one write body** (`api/db/write.rs::write_witnessed`): an
 optional witnessed generation is the only difference between `write`
 and `writeFrom` — one compare against the head's generation, before
-anything is judged (write.rs:136-140: "Mismatch aborts before any page
-is touched"). `head` is the current committed state and its
+anything is judged (the `api/db/write.rs::GenerationMoved` arm:
+"Mismatch aborts before any page is touched"). `head` is the current
+committed state and its
 generation; the delta is whatever the host derived from its witness
 snapshot. -/
 noncomputable def writeWitnessed {T : Theory} (head : Snapshot T) :

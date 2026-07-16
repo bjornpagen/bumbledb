@@ -23,7 +23,9 @@ Three arms, dispatched by file name (`lean/conformance/README.md`):
   for phase (`Txn.judgeB_agrees`, under no premise beyond the
   closed-roster merge). The recorded verdict is compared WHOLE:
   accept, or the rejecting phase plus the per-phase violation set as
-  statement indices. The decode + index glue below is IO-shell
+  statement indices, in the contracted citation order — ascending
+  statement indices, a both-directions containment cited once
+  (`RVerdict`'s doc carries the contract and its engine anchors). The decode + index glue below is IO-shell
   material (this file), never spec: `verdictOf` spends `judgeB` for
   the verdict and re-derives the citation indices with `judgeB`'s own
   filter predicates (`isKey && !checkB`), position-tagged.
@@ -160,7 +162,21 @@ def decodeStatement (j : Json) : Except String Statement := do
   .error "unknown statement form"
 
 /-- The recorded engine verdict: accept, or the rejecting phase with
-its complete violation set as statement indices. -/
+its complete violation set as statement indices. **The citation-order
+contract** (the verdict is compared WHOLE — list `BEq` — so the order
+is normative, not incidental): indices ascend in materialized-statement
+order, and each violated statement of the failing phase is cited
+exactly once — a containment violated in BOTH directions is ONE index.
+The engine side: `storage/commit/judgment.rs::judge` collects the
+phase's finds and the sealing constructor
+(`error.rs::Violations::seal`) stable-sorts by the citation key
+(`error.rs::Violation::citation` — statement id, then direction,
+source before target) and dedups by it; the fixture writer's index
+projection (`conformance/judgment.rs::lane_verdict`) maps each
+citation to its statement index and collapses adjacent duplicates —
+ascending citation order keeps a containment's two directions
+adjacent, so the collapse is total. `verdictOf` below meets the same
+contract by construction. -/
 inductive RVerdict where
   /-- The commit was accepted. -/
   | accept
@@ -267,7 +283,10 @@ def finalWorld (c : JCase) : RowInstance :=
 renders accept/reject (the PROVED artifact — `judgeB_agrees`);
 the indices re-run `judgeB`'s own phase filters (`isKey && !checkB`)
 over the position-tagged statement list, so the cited set is
-`keyViolationsB`/`statementViolationsB` by position. -/
+`keyViolationsB`/`statementViolationsB` by position. The `filterMap`
+over `indexed` ascends and cites each statement at most once, so this
+side meets the citation-order contract (`RVerdict`'s doc) by
+construction. -/
 def verdictOf (T : Theory) (W : RowInstance) : RVerdict :=
   match Txn.judgeB T W with
   | none => .accept

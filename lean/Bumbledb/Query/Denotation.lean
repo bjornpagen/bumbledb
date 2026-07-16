@@ -45,9 +45,10 @@ all measured against. Plus the EXECUTABLE half: `evalList`, a
 * **`PendingIntern` string literals are outside the modeled
   fragment.** Model literals carry `StrId`; the engine's raw-bytes
   string literal resolves per execution
-  (`ir/normalize/lower_literal.rs:5-21`), a dictionary miss becoming
-  the never-minted sentinel so `Eq` fails and `Ne` passes
-  (`exec/dispatch/key_probe_fact.rs:14-17, 52-55`). That coincides
+  (`ir/normalize/lower_literal.rs::lower_literal`), a dictionary miss
+  becoming the never-minted sentinel so `Eq` fails and `Ne` passes
+  (`exec/dispatch/key_probe_fact.rs::const_operand`,
+  `exec/dispatch/key_probe_fact.rs::const_bytes`). That coincides
   with this model's exclusion reading — an absent string equals no
   stored value — but no theorem covers the resolution step itself.
 

@@ -38,24 +38,28 @@ of the two it spends.
 
 ## Bridge notes (the exact Rust consumers)
 
-* **The sinks are where union lives** (`crates/bumbledb/src/exec/
-  sink.rs:6-18`): one sink hears every rule of a program, its seen-set
+* **The sinks are where union lives** (`exec/sink.rs`'s module doc;
+  the two consumers are `exec/sink.rs::ProjectionSink` and
+  `exec/sink.rs::AggregateSink`): one sink hears every rule of a
+  program, its seen-set
   spanning rules — no merge node, no concat-then-dedup pass exists.
   `seenfold_is_set_semantics` is that seen-set's spec: folding the
   emitted stream through first-occurrence filtering computes exactly
   PRD 04's `queryAnswers` set.
-* **`DistinctWitness`** (`plan/fj/provably_distinct.rs:11`) is the
-  only licence to construct an aggregate sink without a binding
+* **`DistinctWitness`** (`plan/fj/provably_distinct.rs::DistinctWitness`)
+  is the only licence to construct an aggregate sink without a binding
   seen-set: `AggregateSink::without_seen_set`
-  (`exec/sink/aggregate/new.rs:138`) requires the witness by value,
-  and the ordinary constructors cannot omit the set
-  (`exec/sink.rs:384-388`, the `seen: Option<WordMap<()>>` field).
+  (`exec/sink/aggregate/new.rs::without_seen_set`) requires the
+  witness by value, and the ordinary constructors cannot omit the set
+  (the `seen: Option<WordMap<()>>` field of
+  `exec/sink.rs::AggregateSink`).
   `BoundFieldsCoverKey` is the witness's premise;
   `distinct_witness_licence` is its theorem;
   `Countermodels.distinct_premise_load_bearing` is the double-count
   the premise forecloses.
-* **`DisjointWitness`** (`plan/fj/provably_disjoint.rs:11`): the
-  engine mints it (`provably_disjoint_rules`) and spends it
+* **`DisjointWitness`** (`plan/fj/provably_disjoint.rs::DisjointWitness`):
+  the engine mints it
+  (`plan/fj/provably_disjoint.rs::provably_disjoint_rules`) and spends it
   **diagnostically only** — plan introspection renders
   `disjoint_rules: proven (R.f)`, but execution always keeps the one
   spanning head-projection seen-set: the measured cross-rule elision
@@ -64,7 +68,7 @@ of the two it spends.
   cited here and deliberately not restated — performance, not
   semantics. `disjoint_witness_licence` proves what the witness COULD
   license; the docs record why the engine declines.
-* **`union_spans`** (`exec/sink.rs:390-398`): the multi-rule union
+* **`union_spans`** (`exec/sink.rs::union_spans`): the multi-rule union
   regime keys the **head projection** of the binding — per head
   position, the slot span the position reads from THIS rule's binding
   layout — never the rule's full slot array, because dedup keys must
@@ -72,29 +76,31 @@ of the two it spends.
   rules names two unrelated variables, so a full-binding key has no
   cross-rule meaning). `union_regime_head_projection` is the law. One
   vocabulary gap recorded: the nullary `Count` head position
-  contributes NO words to the union key (`union_span` maps
-  `over_slot: None` to absence, `new.rs:388-390`) — a keyless head
+  contributes NO words to the union key
+  (`exec/sink/aggregate/new.rs::union_span` maps `over_slot: None` to
+  absence) — a keyless head
   position is unrepresentable in the theorem's `VarId` finds; sound,
   since omitting a constant column never changes key equality.
 
 ## The `provably_distinct` reading (recorded; theorem 2's model)
 
-`plan/fj/provably_distinct.rs:32-69`: every participating occurrence's
-bound fields — variable-bound (`vars`, rs:42-45) or equality-pinned to
-one constant (the `Eq`-filter arm, rs:46-58, which admits words,
-bytes, intervals, params, and pending interns and EXCLUDES sets:
-"set-bound fields pin nothing", rs:28-31) — cover the projection of
-one of the relation's declared keys (rs:60-66). Negated occurrences
-bind nothing and grounding-eliminated occurrences contribute no facts,
-so only participating occurrences are quantified (rs:17-20; here the
-positive atom list `Rule.atoms` IS the participating set).
+`plan/fj/provably_distinct.rs::provably_distinct`: every
+participating occurrence's bound fields — variable-bound (the `vars`
+chain) or equality-pinned to one constant (the `Eq`-filter arm, which
+admits words, bytes, intervals, params, and pending interns and
+EXCLUDES sets: "set-bound fields pin nothing") — cover the projection
+of one of the relation's declared keys (the closing
+`keys().iter().any` screen). Negated occurrences bind nothing and
+grounding-eliminated occurrences contribute no facts, so only
+participating occurrences are quantified (the `participates` filter;
+here the positive atom list `Rule.atoms` IS the participating set).
 `Term.pins` mirrors the pinned-field screen exactly: `var`, `param`,
 and `lit` pin one value under a fixed `(σ, ρ)`; `paramSet` matches any
 element and pins nothing; `measure` never appears in a binding
 (`Rule.WellTyped`). One asymmetry recorded: the Rust `Eq`-pin arm
 admits `Word | Byte | Interval | Param | PendingIntern` and drops
 `Const::Words` — the multi-word `bytes<N>` literal, a genuine
-single-value pin — to the catch-all (rs:57), so it never counts
+single-value pin — to the catch-all arm, so it never counts
 toward key coverage; strictly conservative (fewer witness mints, the
 seen-set retained), while `Term.pins` marks every `lit` as pinning.
 `provably_different` on the disjointness side DOES compare
@@ -103,15 +109,17 @@ model's.
 
 ## The `provably_disjoint` reading (recorded; theorem 6's model)
 
-`plan/fj/provably_disjoint.rs:46-73` (`provably_disjoint_rules`): a
+`plan/fj/provably_disjoint.rs::provably_disjoint_rules`: a
 witness `(R, f)` such that EVERY rule pair has, in each rule, a
 positive occurrence of `R` whose filters `Eq`-pin `f` to provably
-different concrete literals (`pinned_fields`, rs:112-121;
-`provably_different`, rs:126-145 — params, sets, and mixed constant
-forms pin nothing, conservatively), AND some key of `R` value-bound in
-both occurrences with every key column flowing to a common head
-position (`key_flows_to_common_head`, rs:154-172; `head_reads`,
-rs:188-203 — projected variables and fold inputs enter the dedup key;
+different concrete literals (`plan/fj/provably_disjoint.rs::pinned_fields`;
+`plan/fj/provably_disjoint.rs::provably_different` — params, sets,
+and mixed constant forms pin nothing, conservatively), AND some key
+of `R` value-bound in both occurrences with every key column flowing
+to a common head position
+(`plan/fj/provably_disjoint.rs::key_flows_to_common_head`;
+`plan/fj/provably_disjoint.rs::head_reads` — projected variables and
+fold inputs enter the dedup key;
 the nullary `Count`, Arg terms, and the non-injective measure
 positions witness nothing). Equal head answers would force the two
 pinned facts to agree on the key — one fact whose `f` cannot equal two
@@ -124,8 +132,9 @@ key itself enters as a semantic `Functionality` hypothesis (PRD 03's
 judgment — the schema-declared key the checker consults, discharged
 on committed instances by `holds`). One quantifier gap recorded: the
 model fixes a single `K` program-wide, while `pair_disjoint` picks a
-declared key PER RULE PAIR (`key_flows_to_common_head`, rs:162,
-invoked per pair) — an acceptance discharged by heterogeneous keys
+declared key PER RULE PAIR (the `keys().iter().any` of
+`key_flows_to_common_head`, invoked per pair) — an acceptance
+discharged by heterogeneous keys
 across pairs is covered pair-by-pair by this theorem's statement but
 not by one instantiation of it; diagnostic-only stakes (the witness
 is never spent by execution). `syntactic_disjointness_sound` is the
@@ -176,7 +185,7 @@ def seenFoldAux {β : Type} [DecidableEq β] (seen : List β) :
 
 /-- **`seenFold`** — first-occurrence filtering: the seen-set as a
 fold, seeded empty (the sink's seen-set is reset once per execution,
-never per rule — `exec/sink.rs:6-18`). -/
+never per rule — `exec/sink.rs`'s module doc). -/
 def seenFold {β : Type} [DecidableEq β] (l : List β) : List β :=
   seenFoldAux [] l
 
@@ -301,10 +310,12 @@ theorem seenfold_is_set_semantics {C : Classify} {q : Query}
 
 /-- A term PINS its field: under a fixed `(σ, ρ)` it forces the
 field to exactly one value. The `provably_distinct` bound-field screen
-(`plan/fj/provably_distinct.rs:42-58`): variable-bound (`var`),
-equality-pinned to one constant (`lit`, and `param` — resolved at
-bind, one value per execution). `paramSet` matches any element of the
-slice and pins nothing (rs:28-31, "set-bound fields pin nothing");
+(the bound-field collection in
+`plan/fj/provably_distinct.rs::provably_distinct`): variable-bound
+(`var`), equality-pinned to one constant (`lit`, and `param` —
+resolved at bind, one value per execution). `paramSet` matches any
+element of the slice and pins nothing ("set-bound fields pin
+nothing");
 `measure` never appears in an accepted binding
 (`ValidationError::DurationInBinding`, `Rule.WellTyped`). -/
 def Term.pins : Term → Prop
@@ -344,7 +355,7 @@ that is a semantic key of the atom's relation extension
 (PRD 03's `Functionality` — the declared key's judgment on the
 instance) with every field of `K` pinned by one of the atom's
 bindings. The per-occurrence clause of
-`plan/fj/provably_distinct.rs:40-67`. -/
+`plan/fj/provably_distinct.rs::provably_distinct`. -/
 def CoversKey (I : Instance) (a : Atom) : Prop :=
   ∃ K : List FieldId, Functionality (I a.relation) K ∧
     ∀ i, i ∈ K → ∃ t, (i, t) ∈ a.bindings ∧ t.pins
@@ -353,9 +364,11 @@ def CoversKey (I : Instance) (a : Atom) : Prop :=
 premise: every participating occurrence's bound fields cover a key of
 its relation. Positive atoms only — negated occurrences bind nothing
 (they only reject: the anti-join `¬∃` of `derives`), exactly the
-participation screen of `provably_distinct.rs:37-39`. This is the
-statement `DistinctWitness` (`plan/fj/provably_distinct.rs:11`)
-carries as evidence. -/
+participation screen (the `participates` filter) of
+`plan/fj/provably_distinct.rs::provably_distinct`. This is the
+statement `DistinctWitness`
+(`plan/fj/provably_distinct.rs::DistinctWitness`) carries as
+evidence. -/
 def BoundFieldsCoverKey (r : Rule) (I : Instance) : Prop :=
   ∀ a, a ∈ r.atoms → CoversKey I a
 
@@ -400,7 +413,8 @@ theorem binding_determines_facts {r : Rule} {I : Instance}
 
 /-- The emitted key stream is duplicate-free under the witness: the
 key is the slot array (`slots.map (bind e)` — the single-rule regime
-keys the WHOLE slot array, `exec/sink.rs:384-388`), the events are
+keys the WHOLE slot array — the `seen` field of
+`exec/sink.rs::AggregateSink`), the events are
 the join's fact-tuple enumeration (each combination once), and equal
 keys would force equal fact tuples through
 `binding_determines_facts`. -/
@@ -438,9 +452,10 @@ seen-set computes the same aggregate as folding the distinct set:
 `fold stream = fold (dedup stream)` — the right side is the normative
 fold domain ("every aggregate folds the DISTINCT binding set",
 `agg_over_distinct_bindings`), the left side is the elided path.
-Bridge: `DistinctWitness` (`plan/fj/provably_distinct.rs:11` — the
-only mint is `provably_distinct`, rs:32);
-`AggregateSink::without_seen_set` (`exec/sink/aggregate/new.rs:138`)
+Bridge: `DistinctWitness` (`plan/fj/provably_distinct.rs::DistinctWitness`
+— the only mint is `plan/fj/provably_distinct.rs::provably_distinct`);
+`AggregateSink::without_seen_set`
+(`exec/sink/aggregate/new.rs::without_seen_set`)
 requires the witness by value — construction cannot enter the elided
 regime without this theorem's premise. Single-rule only: the
 multi-rule union keeps its spanning head-projection seen-set even
@@ -523,7 +538,8 @@ theorem disjoint_flatten {C : Classify} {I : Instance} {ρ : ParamEnv} :
 no-op: concatenating the rules' distinct answer streams is already
 duplicate-free, its set is exactly the query union, and the spanning
 seen-set filters nothing (`seenFold` is the identity on it).
-Bridge: `DisjointWitness` (`plan/fj/provably_disjoint.rs:11`). The
+Bridge: `DisjointWitness` (`plan/fj/provably_disjoint.rs::DisjointWitness`).
+The
 engine SPENDS this witness diagnostically only — plan introspection's
 `disjoint_rules: proven (R.f)` line — and keeps the spanning
 head-projection seen-set regardless: the measured cross-rule elision
@@ -556,7 +572,7 @@ rule's re-derivation absorbed like a within-rule duplicate. The key
 must be head-shaped for the spanning set to mean anything: a `VarId`
 is rule-scoped (two rules' slot arrays are incomparable), and
 `answer_identity_canonical` is why the head tuple is a COMPLETE key.
-Bridge: `union_spans` (`exec/sink.rs:390-398`) — per head position,
+Bridge: `union_spans` (`exec/sink.rs::union_spans`) — per head position,
 the slot span the position reads from THIS rule's binding layout; the
 extracted words are the head projection, rule-independent by
 construction ("aggregates read the head: the fold domain is the union
@@ -606,13 +622,15 @@ theorem map_eq_of_zip_mem {σ σ' : Assignment} {v v' : VarId} :
     · exact map_eq_of_zip_mem h2 hmem'
 
 /-- One rule pair under one witness `(R, fld, K)` — the model of
-`pair_disjoint` (`plan/fj/provably_disjoint.rs:78-90`): each rule has
+`pair_disjoint` (`plan/fj/provably_disjoint.rs::pair_disjoint`): each
+rule has
 a positive occurrence of `R` pinning `fld` to provably different
 literals (`lit` bindings, the model's `Eq`-pins — only concrete
 literals are representable as pins, so `provably_different` is plain
 `Value` disequality), and every field of the key `K` is variable-bound
 in both occurrences with the two variables at a common head position
-(the `zip` clause — `key_flows_to_common_head`, rs:154-172). -/
+(the `zip` clause —
+`plan/fj/provably_disjoint.rs::key_flows_to_common_head`). -/
 def ArmPin (R : RelId) (fld : FieldId) (K : List FieldId)
     (r r' : Rule) : Prop :=
   ∃ a, a ∈ r.atoms ∧ ∃ a', a' ∈ r'.atoms ∧
@@ -623,8 +641,8 @@ def ArmPin (R : RelId) (fld : FieldId) (K : List FieldId)
       (i, Term.var v') ∈ a'.bindings ∧ (v, v') ∈ r.finds.zip r'.finds
 
 /-- The check, program-level: one witness discharging every rule pair
-— `provably_disjoint_rules` (`plan/fj/provably_disjoint.rs:46-73`,
-"pairwise over all rules; one witness for every pair"). -/
+— `plan/fj/provably_disjoint.rs::provably_disjoint_rules`
+("pairwise over all rules; one witness for every pair"). -/
 def ProvablyDisjointRules (q : Query) (R : RelId) (fld : FieldId)
     (K : List FieldId) : Prop :=
   q.rules.Pairwise (ArmPin R fld K)
@@ -664,11 +682,13 @@ completeness is explicitly a non-goal: the checker may refuse truly
 disjoint programs (pins it cannot compare — params, mixed constant
 forms; keys that never reach a common head position), and its
 conservatism is the discipline that keeps `None` honest, never a
-defect to fix (`plan/fj/provably_disjoint.rs:26-44`, "conservative
-and sound"). Bridge: `provably_disjoint_rules` is the only mint of
-`DisjointWitness`; the semantic key premise is the schema-declared
-`Functionality` the check reads (`schema.relation(..).keys()`,
-rs:162), discharged on committed instances by PRD 03's `holds`. -/
+defect to fix (the doc of
+`plan/fj/provably_disjoint.rs::provably_disjoint_rules`,
+"conservative and sound"). Bridge: `provably_disjoint_rules` is the
+only mint of `DisjointWitness`; the semantic key premise is the
+schema-declared `Functionality` the check reads (the
+`keys().iter().any` of `key_flows_to_common_head`), discharged on
+committed instances by PRD 03's `holds`. -/
 theorem syntactic_disjointness_sound {C : Classify} {q : Query}
     {I : Instance} {ρ : ParamEnv} {R : RelId} {fld : FieldId}
     {K : List FieldId} (hkey : Functionality (I R) K)
@@ -684,7 +704,8 @@ suffice. The aggregate sink folds the distinct FULL-BINDING domain of
 each group fiber, and there set identity of answers is not enough —
 a dropped occurrence whose dead variable took two values per
 surviving binding would multiply the fold domain (Sum double-counts;
-`plan/ground.rs:44-51` is the engine's module-doc argument). The
+the aggregate-safety bullet of `plan/ground.rs`'s module doc is the
+engine's argument). The
 theorems below spend what the projection face never needed: the
 KEY-NESS of `Y` (condition 1's full-key demand — `join_covers_full_key`
 joins on a declared key of the target, entering here as the
@@ -969,7 +990,8 @@ theorem elimination_agg_fold_domain {C : Classify} {I : Instance}
 
 /-- **The keyed count transport — where the target key bites for the
 engine's own fold shape.** The engine's aggregate sink keys the
-ORIGINAL rule's full slot array (`exec/sink.rs:384-388`); fiber for
+ORIGINAL rule's full slot array (the `seen` field of
+`exec/sink.rs::AggregateSink`); fiber for
 fiber, that full-binding distinct domain and the dropped rule's
 surviving-slot domain carry the SAME counts — every floor and every
 ceiling transports both ways through `elimination_agg_fold_domain`'s
@@ -1095,7 +1117,7 @@ theorem elimination_agg_domain_counts {C : Classify} {I : Instance}
 /-- Aggregate answers with each fiber read through its distinct
 slot-tuple domain — `aggAnswers` with the group's carrier made the
 value-level seen-set key the sinks actually fold
-(`exec/sink.rs:384-388`, the slot-array key). -/
+(the slot-array `seen` key of `exec/sink.rs::AggregateSink`). -/
 def aggAnswersOn (C : Classify) (r : Rule) (I : Instance)
     (ρ : ParamEnv) (keys : List KeyTerm) (slots : List VarId)
     (fold : List (Option Value) → Set (List Value) → AnswerTuple) :
