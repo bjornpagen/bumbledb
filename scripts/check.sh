@@ -60,6 +60,16 @@ cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
 echo "==> fuzz crate: deterministic crashpoint sweeps (durable + ephemeral)"
 cargo test --manifest-path fuzz/Cargo.toml --test crash every_crashpoint_recovers
 
+# The WRITEMAP commit-window kill smoke (fuzz/tests/kill.rs): the
+# crashpoint sweeps cut everywhere EXCEPT inside mdb_txn_commit itself,
+# and inside that window is exactly where WRITEMAP changes the write
+# pattern — so ~30 random-timing SIGKILLs (durable control + ephemeral)
+# run per commit (~5-8s), each corpse autopsied for all-or-nothing
+# recovery. The statistical lane (>= 2,000 kills/kind) is the #[ignore]d
+# long variant, recorded in fuzz/SESSIONS.md.
+echo "==> fuzz crate: random-timing kill smoke (durable + ephemeral)"
+cargo test --manifest-path fuzz/Cargo.toml --test kill random_kills_recover_on_both_kinds_smoke
+
 # The bench crate must build and lint with the engine's observability on
 # (docs/architecture/60-validation.md); the harness tests run under both configs.
 echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"
