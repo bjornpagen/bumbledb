@@ -113,6 +113,43 @@ fn ephemeral_on_an_ephemeral_store_reopens_with_contents() {
     .expect("read back");
 }
 
+/// The capacity contract, enforced on SPARSE filesystems too
+/// (`docs/architecture/50-storage.md` § the ephemeral store kind: "the
+/// volume must hold map size + slack or open refuses with a typed
+/// `StorageFull`-carrying `Lmdb` error"): an ephemeral open allocates
+/// the data file's blocks up to the full 4 GiB map eagerly, so an
+/// undersized volume refuses AT OPEN — on a sparse filesystem (APFS)
+/// the `WRITEMAP` ftruncate alone allocates nothing, and without this
+/// allocation every commit past the volume's physical capacity would
+/// report `Ok` while its dirty pages can never be written back. The
+/// blocks assertion is the mechanism pin; the refusal itself follows
+/// from it exactly as on the non-sparse (HFS+) path.
+#[cfg(unix)]
+#[test]
+fn ephemeral_open_allocates_the_full_map_eagerly() {
+    use std::os::unix::fs::MetadataExt;
+    let dir = common::TempDir::new("ephemeral-prealloc");
+    let db = Db::ephemeral(dir.path(), Staging).expect("create ephemeral");
+    let allocated = std::fs::metadata(dir.path().join("data.mdb"))
+        .expect("data.mdb exists")
+        .blocks()
+        .saturating_mul(512);
+    assert!(
+        allocated >= 4 << 30,
+        "the full map's blocks are allocated at open, sparse filesystem or not \
+         (allocated {allocated} bytes)"
+    );
+    drop(db);
+    // The reopen requests nothing new and still holds the allocation.
+    let db = Db::ephemeral(dir.path(), Staging).expect("reopen ephemeral");
+    drop(db);
+    let reopened = std::fs::metadata(dir.path().join("data.mdb"))
+        .expect("data.mdb exists")
+        .blocks()
+        .saturating_mul(512);
+    assert!(reopened >= 4 << 30, "reopen keeps the allocation");
+}
+
 /// Matrix cell 3's non-mutation lock (`docs/architecture/70-api.md`:
 /// `Db::ephemeral` never destroys data — and never mutates on refusal):
 /// the refusal on a durable store leaves `data.mdb` byte-identical.
