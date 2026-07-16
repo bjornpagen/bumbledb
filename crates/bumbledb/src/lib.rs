@@ -136,6 +136,15 @@ pub use ir::normalize::with_fold_disabled;
 /// `rewrites` dual-pipeline differential enable.
 #[cfg(feature = "ground-off")]
 pub use plan::ground::with_grounding_disabled;
+/// The source-probe sort's off switch (`storage/commit/judgment.rs`):
+/// reachable only under the `trace` test-support feature — the probe-order
+/// pin harness (the bench crate's `judgment_probe_order` example, which
+/// needs the trace spans anyway) alternates key-sorted against
+/// arrival-order probes inside one process. Probe order is observably
+/// invisible (violations seal sorted by citation), so no runtime mode
+/// ships.
+#[cfg(feature = "trace")]
+pub use storage::commit::judgment::with_probe_sort_disabled;
 /// The crashpoint table (`storage/commit.rs`): the commit pipeline's
 /// named phase boundaries with their expected recovery sides, reachable
 /// only under the `crashpoint` fuzz-oracle feature. The detached fuzz

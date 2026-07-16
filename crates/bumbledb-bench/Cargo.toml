@@ -26,3 +26,10 @@ bumbledb = { path = "../bumbledb", features = ["ground-off"] }
 
 [lints]
 workspace = true
+
+# The T8 probe-order pin (the judgment source probes' key-sorted
+# worklist): interleaved A/B through the engine's `trace` test-support
+# switch, so it builds only with the instrumentation feature on.
+[[example]]
+name = "judgment_probe_order"
+required-features = ["obs"]
