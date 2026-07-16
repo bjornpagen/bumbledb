@@ -96,10 +96,12 @@ impl Executor {
                 // precedent): one predictable branch per pass (the same
                 // arm every pass of a given subatom) buys the unrolled,
                 // gather-fused hash for the key widths in use; exotic
-                // widths keep the dyn loop.
-                let ab_dyn = HASH_AB_DYN.load(core::sync::atomic::Ordering::Relaxed);
+                // widths keep the dyn loop. Measured (interleaved twin,
+                // per-draw arm medians): triangle 1.055x at S scale /
+                // 1.043x at M, chain 1.022x, spread 1.021x, skew 1.017x;
+                // non-probe families unchanged.
                 match sub_arity {
-                    1 if !ab_dyn => gather_hash_core::<1, C>(
+                    1 => gather_hash_core::<1, C>(
                         survivors,
                         parents,
                         entry_keys,
@@ -113,7 +115,7 @@ impl Executor {
                         sub_idx,
                         counters,
                     ),
-                    2 if !ab_dyn => gather_hash_core::<2, C>(
+                    2 => gather_hash_core::<2, C>(
                         survivors,
                         parents,
                         entry_keys,
@@ -127,7 +129,7 @@ impl Executor {
                         sub_idx,
                         counters,
                     ),
-                    3 if !ab_dyn => gather_hash_core::<3, C>(
+                    3 => gather_hash_core::<3, C>(
                         survivors,
                         parents,
                         entry_keys,
@@ -141,7 +143,7 @@ impl Executor {
                         sub_idx,
                         counters,
                     ),
-                    4 if !ab_dyn => gather_hash_core::<4, C>(
+                    4 => gather_hash_core::<4, C>(
                         survivors,
                         parents,
                         entry_keys,
@@ -577,12 +579,6 @@ impl Executor {
     }
 }
 
-/// TEMPORARY A/B switch (falsifier instrumentation, not for landing):
-/// `true` forces the runtime-arity hash loop — the interleaved twin's
-/// A arm. Stripped once the verdict is recorded.
-#[doc(hidden)]
-pub static HASH_AB_DYN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
 /// Phase-1 gather + hash with the key width fixed at K — the
 /// probe-pass twin of the wordmap's `hash_core` dispatch
 /// (`exec/swar.rs`): the per-word source match unrolls, the `k * K`
@@ -591,6 +587,12 @@ pub static HASH_AB_DYN: core::sync::atomic::AtomicBool = core::sync::atomic::Ato
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
+)]
+#[expect(
+    clippy::inline_always,
+    reason = "a monomorphized pure-ALU leaf of the probe hot loop — the \
+              swar module's contract (its `bl` would be the cost the \
+              dispatch exists to remove)"
 )]
 #[inline(always)]
 fn gather_hash_core<const K: usize, C: Counters>(
