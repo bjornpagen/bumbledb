@@ -277,9 +277,12 @@ pub(crate) mod testutil {
 
     impl TempDir {
         /// Creates (or wipes and recreates) a per-test directory. `tag` must
-        /// be distinct per test function so parallel tests never collide.
+        /// be distinct per test function so parallel tests never collide;
+        /// the pid suffix keeps concurrent suite runs (other worktrees,
+        /// co-tenant agents) from wiping each other's dirs.
         pub fn new(tag: &str) -> Self {
-            let path = std::env::temp_dir().join(format!("bumbledb-test-{tag}"));
+            let path =
+                std::env::temp_dir().join(format!("bumbledb-test-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).expect("create test dir");
             Self(path)

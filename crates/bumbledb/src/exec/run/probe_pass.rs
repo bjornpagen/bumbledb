@@ -99,7 +99,10 @@ impl Executor {
                 // widths keep the dyn loop. Measured (interleaved twin,
                 // per-draw arm medians): triangle 1.055x at S scale /
                 // 1.043x at M, chain 1.022x, spread 1.021x, skew 1.017x;
-                // non-probe families unchanged.
+                // non-probe families unchanged. The falsifier harness
+                // (both arms behind one switch + the ab_hash bin) lives
+                // in the stripped commit 564da7c6 — check it out to
+                // re-falsify.
                 match sub_arity {
                     1 => gather_hash_core::<1, C>(
                         survivors,
@@ -611,7 +614,12 @@ fn gather_hash_core<const K: usize, C: Counters>(
 ) {
     // The width is a dispatch invariant; the array view kills the
     // per-word bounds checks inside the loop.
-    let sources: &[Source; K] = sources.try_into().expect("dispatch matches width");
+    let sources: &[Source; K] = sources.try_into().unwrap_or_else(|_| {
+        panic!(
+            "hash dispatch width K={K} does not match sources.len()={}",
+            sources.len()
+        )
+    });
     for (k, &e) in survivors.iter().enumerate() {
         let element = usize::try_from(e).expect("batch fits usize");
         let parent = parents[element] as usize;
