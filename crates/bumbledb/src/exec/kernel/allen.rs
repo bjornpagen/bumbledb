@@ -77,8 +77,11 @@ fn classify_code(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> u8 {
 /// Endpoint words — strided (whole columns) or gathered (per-survivor
 /// scratch streams) — to 4-bit configuration codes: `codes[i]` is the
 /// [`crate::allen::Basic`] discriminant of pair `i` (its bit index in
-/// the mask coordinate system). `codes` is cleared and resized to the
-/// pair count (capacity retained — pooled batch state).
+/// the mask coordinate system). `codes` is resized to the pair count
+/// (capacity retained — pooled batch state); no `clear` first, so only
+/// growth past the previous batch's count zero-fills — every byte of
+/// the retained prefix is overwritten by the classify below (the full
+/// per-batch refill was pure `_platform_memset` on the profile).
 ///
 /// NOTE (bind-time mask simplification — a recorded lever, not
 /// shipped): the workload composites collapse (`INTERSECTS` =
@@ -102,7 +105,6 @@ pub fn allen_code_batch(
     debug_assert_eq!(a_ends.len(), n, "four equal-length endpoint streams");
     debug_assert_eq!(b_starts.len(), n, "four equal-length endpoint streams");
     debug_assert_eq!(b_ends.len(), n, "four equal-length endpoint streams");
-    codes.clear();
     codes.resize(n, 0);
     codes_into(a_starts, a_ends, b_starts, b_ends, codes);
 }
@@ -110,11 +112,12 @@ pub fn allen_code_batch(
 /// Configuration codes + the broadcast mask to keep bytes:
 /// `keep[i] = 1` iff `(1 << codes[i]) & mask != 0` — the membership
 /// test as a 16-byte `tbl` over the mask's per-code bit, broadcast once
-/// per batch (literal or param alike). `keep` is cleared and resized to
-/// the code count; survivors then feed the existing branchless
-/// cursor-write ([`super::compact_u32_by_mask`], 1.00 cy/item).
+/// per batch (literal or param alike). `keep` is resized to the code
+/// count — like `codes` above, no `clear`: the membership test below
+/// overwrites every retained byte, so only growth zero-fills;
+/// survivors then feed the existing branchless cursor-write
+/// ([`super::compact_u32_by_mask`], 1.00 cy/item).
 pub fn allen_filter_batch(codes: &[u8], mask: AllenMask, keep: &mut Vec<u8>) {
-    keep.clear();
     keep.resize(codes.len(), 0);
     keep_into(codes, mask, keep);
 }

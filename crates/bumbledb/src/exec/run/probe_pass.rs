@@ -79,8 +79,7 @@ impl Executor {
                 word += width;
             }
             let n = scratch.survivors.len();
-            scratch.hashes.clear();
-            scratch.hashes.resize(n, 0);
+            grow_scratch(&mut scratch.hashes, n);
             // One gather loop for every source shape (the
             // single-batch-word specialized twin measured < 2% at
             // family level post-bucket-layout and was deleted).
@@ -200,8 +199,7 @@ impl Executor {
                 }
             }
             counters.phase_start(node_idx, JoinPhase::Probe);
-            scratch.mask.clear();
-            scratch.mask.resize(n, 0);
+            grow_scratch(&mut scratch.mask, n);
             // The measured alias-hoist shape: reads
             // survivors/parents/pending_cursors/probe_keys/hashes,
             // writes sibling_children/mask — all hoisted to disjoint
@@ -234,7 +232,6 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             counters.phase_end(node_idx, JoinPhase::Probe);
-            scratch.hashes.clear();
         }
 
         // Residuals: per-parent Slot reads, word offsets via the cover's
@@ -245,8 +242,7 @@ impl Executor {
             let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
             let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
             let n = scratch.survivors.len();
-            scratch.mask.clear();
-            scratch.mask.resize(n, 0);
+            grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
@@ -276,8 +272,7 @@ impl Executor {
             };
             let (lhs_word, rhs_word) = (side(residual.lhs), side(residual.rhs));
             let n = scratch.survivors.len();
-            scratch.mask.clear();
-            scratch.mask.resize(n, 0);
+            grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
@@ -308,9 +303,8 @@ impl Executor {
             let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
             let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
             let n = scratch.survivors.len();
-            scratch.allen_gather.clear();
-            scratch.allen_gather.resize(4 * n, 0);
-            let (a_starts, rest) = scratch.allen_gather.split_at_mut(n);
+            grow_scratch(&mut scratch.allen_gather, 4 * n);
+            let (a_starts, rest) = scratch.allen_gather[..4 * n].split_at_mut(n);
             let (a_ends, rest) = rest.split_at_mut(n);
             let (b_starts, b_ends) = rest.split_at_mut(n);
             for k in 0..n {
@@ -333,7 +327,7 @@ impl Executor {
                 &mut scratch.allen_codes,
             );
             crate::exec::kernel::allen_filter_batch(&scratch.allen_codes, mask, &mut scratch.mask);
-            for &keep in &scratch.mask {
+            for &keep in &scratch.mask[..n] {
                 counters.residual(node_idx, keep != 0);
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
@@ -347,8 +341,11 @@ impl Executor {
                 super::word_base(cover_vars, residual.interval, |v| self.width_of(v));
             let scalar_word = super::word_base(cover_vars, residual.scalar, |v| self.width_of(v));
             let n = scratch.survivors.len();
-            scratch.mask.clear();
-            scratch.mask.resize(n, 0);
+            // The ray-poison break below leaves a mask tail unwritten —
+            // legal only because that path returns before the mask is
+            // read (the compaction is skipped); grow-only sizing keeps
+            // exactly that write-before-read truth.
+            grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
@@ -384,8 +381,7 @@ impl Executor {
         for spec in &self.point_probe_slots[node_idx] {
             let cover_vars = &node.subatoms[cover_sub].vars;
             let n = scratch.survivors.len();
-            scratch.mask.clear();
-            scratch.mask.resize(n, 0);
+            grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
@@ -593,6 +589,19 @@ impl Executor {
         if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
             self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
         }
+    }
+}
+
+/// Grow-only scratch sizing (the pooled high-water contract): the
+/// buffer zero-fills only above its high-water mark, never per pass —
+/// `clear` + `resize(n, 0)` re-memset the full window every pass
+/// (`_platform_memset`, 3.7% of `meets_chain`) though every element of
+/// `[..n]` is written before it is read. Callers confine reads to
+/// `[..n]` (the compaction kernel slices internally); the tail above
+/// `n` is stale by contract.
+fn grow_scratch<T: Copy + Default>(v: &mut Vec<T>, n: usize) {
+    if v.len() < n {
+        v.resize(n, T::default());
     }
 }
 
