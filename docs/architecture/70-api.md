@@ -832,24 +832,61 @@ errors are the portable half of the API.
 lifecycle (`create`/`open`/`ephemeral`), the unified `db.prepare`, the
 transaction closures with their point reads and the generation witness, the two
 bulk lanes, the scan exports, and the error taxonomy — is the v0 embedding API.
-Everything below is DEFERRED, each item with the **trigger** that reopens it;
-nothing on this list ships without its trigger firing, and nothing off this list
-ships without a new ruling.
+Everything below was DEFERRED at the freeze, each item with the **trigger**
+that reopens it. **The ledger is CLOSED (2026-07-17):** the Phase C census
+judged every row against the real consumer (graph-builder — the driver, ETL,
+prompts, and lean-bridge lenses) under the trigger law: reached-for FIRES,
+never-reached is DECLINED vocabulary (unfired speculative sugar would itself
+be debt). Each row below keeps its trigger as the record and carries its final
+state with the evidence that earned it; a FIRED row lands as its own
+engine-first change, and nothing re-enters without a new ruling.
 
 - **`tx.insert_all` batch sugar** (one call, many typed facts inside a write
   closure). Trigger: **dogfooding pain** — a real host import loop inside
   `db.write` where the per-fact `insert` call reads as noise or measures as
   overhead. Until then the `for` loop is the surface, and bulk import already
-  has `Db::bulk_load`.
+  has `Db::bulk_load`. **DECLINED (census 2026-07-17).** The motivating shape
+  — per-fact *transactions* in an import loop — never appears: every insert
+  loop in the consumer sits inside one write closure
+  (`driver/dispatch.ts :: settleEnrich`/`insertCartographPlan`/`settleAuthor`,
+  `driver/mint.ts :: seedSheets`/`mintTasks`), and the high-volume loops
+  consume each insert's minted id to build id maps — flat batch sugar cannot
+  serve them unless it returns minted ids positionally, which is the recorded
+  useful shape should the trigger ever truly fire. ETL's bulk writes go to
+  Postgres; its one store write is a single receipt row
+  (`etl/etl.ts :: writeReceipt`). No contortion sighted, only verbosity; the
+  `for` loop stays the surface.
 - **Multi-key typed `tx.get` disambiguation** — the typed signature when a
   relation carries several key FDs over the same newtype. Trigger: a **real
   schema** exhibiting the collision (the `_dyn` form is unambiguous today; the
-  typed sugar waits for the usage that names its shape).
+  typed sugar waits for the usage that names its shape). **FIRED (census
+  2026-07-17) — lands as its own engine-first change, not built here.** The
+  strongest row of the census: every declared `key()` FD in the consumer is
+  re-implemented host-side as `scan().find()` or a hand-built map — the
+  driver looks up program-by-grp, task-by-(kind, subject), objective-by-ref,
+  strandEdge-by-pair, and sheet-by-grade that way (`driver/dispatch.ts`,
+  `driver/mint.ts`, `driver/driver.ts`), and ETL shadows its declared key FDs
+  (`programGrpKey`, `scheduleCapsuleKey`, `receiptSheetKey`) with five host
+  maps in `etl/etl.ts :: buildIndexes` plus a scan-and-find in
+  `prompts/store-reads.ts :: programNeighbor`. Corroborating: the existing
+  primary-key typed get is itself unused — `prompts/store-reads.ts :: rowById`
+  re-implements it generically over scan, roughly ten more
+  `scan().find(byId)` sites ride along, and `Tx.get` is likewise untouched.
+  The shape the evidence names: keyed get must become the obvious spelling on
+  both the read scope and the write transaction.
 - **Answer sorting / `FromAnswers` derive** in `bumbledb-query` (the
   ordering/limit conveniences fold in here — host-side, on the bench-crate
   quarantine like the `query!` macro; answers are sets and the engine never
   orders). Trigger: **week-one dogfooding** — the first real host that sorts
-  and destructures `Answers` by hand tells us the derive's shape.
+  and destructures `Answers` by hand tells us the derive's shape. **SPLIT
+  (census 2026-07-17).** The sorting half **FIRED**: four hand-rolled bigint
+  comparators, every rank/pos consumer sorting host-side, and "answers are
+  sets; the host sorts" recurring as a consumer comment — the ordering/limit
+  conveniences land next, host-side in `bumbledb-query`, on the quarantine
+  already named here. The `FromAnswers` half is **DECLINED** vocabulary:
+  answers already decode to typed named records at the SDK boundary and zero
+  hand-destructuring was sighted — the derive has no consumer shape to learn
+  from.
 - **`write_from` retry helper.** REFUSED as engine surface — retry is host
   policy and **the host owns the loop** (the staleness-signal doctrine
   verbatim). The blessed host snippet, in full:
@@ -870,10 +907,16 @@ ships without a new ruling.
 
   (`crates/bumbledb-query/tests/cookbook.rs` recipe 27 pins the pattern,
   retries counted.) Nothing here can become engine surface without hiding
-  policy — the loop's shape IS the host's policy.
+  policy — the loop's shape IS the host's policy. **RE-CONFIRMED CLOSED
+  (census 2026-07-17):** the census found no retry contortion in the real
+  consumer; the refusal stands as written.
 - **Multi-process story** (closed as out-of-envelope for v0; the future item
   lives here). Trigger: a second process with a legitimate claim on one store —
-  today that is the ETL story's job.
+  today that is the ETL story's job. **CLOSED, trigger intact and unfired
+  (census 2026-07-17):** the one candidate second process (ETL) writes to
+  Postgres, not the store — its store contact is one receipt row inside the
+  same process. No second process claims a store; the trigger stays as
+  written.
 
 Resolved by ruling or implementation (recorded above): the `Answers` shape;
 the dynamic-fact ETL form; plan introspection's versioned surface

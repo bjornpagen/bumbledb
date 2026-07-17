@@ -6,15 +6,19 @@
 primer main (`44391aaf5`, the cutover whole in `c80828022` — SDK, run-store,
 driver, seats, the funeral), the rebirth branch and worktree are deleted, and
 the symlink survives only for successor worktrees (still stateless — the
-merge-back law holds; nothing foreign reached this repo). **PHASE B is 2/3
-done:** the rename landed on primer main (`2ce870698`,
-`@superbuilders/bumbledb → @bjornpagen/bumbledb` everywhere) and the
+merge-back law holds; nothing foreign reached this repo). **PHASE B IS CLOSED**
+(2026-07-17): the rename landed on primer main (`2ce870698`,
+`@superbuilders/bumbledb → @bjornpagen/bumbledb` everywhere), the
 post-merge verification is proven — primer main's napi crate `cargo check`s
-clean against this repo's refactored engine (2026-07-17; the facade held
-through A1/A2, witnessed by the real consumer). **Remaining: B step 3 (the
-two pins the SDK owes — TS-render ⇄ manifest-render golden, the cross-host
-fingerprint lock), then C → D → E.** Sections 3–6 below read as the
-completed record.
+clean against this repo's refactored engine (the facade held through A1/A2,
+witnessed by the real consumer) — and **both B3 pins are done** (the
+TS-render ⇄ manifest-render golden and the cross-host fingerprint lock).
+**PHASE C IS CLOSED** (2026-07-17, the re-upstream census — §8's close-out
+block carries the record; the OPEN ledger's final verdicts live in
+`70-api.md` § the freeze). **PHASE D IS PARKED** awaiting an idle machine
+and the owner (§9), and **PHASE E IS PUNTED by owner ruling** while the SDK
+is dogfooding (§10 — the owner's word remains the only trigger). Sections
+3–8 below read as the completed record.
 
 **The Phase A close-out ledger** (verdict → commit):
 
@@ -754,6 +758,10 @@ pattern (a heavy PRD re-read from scratch exhausts context — brief the
      fingerprint equality asserted across the FFI. The one test neither
      surface can fake.
 
+   **DONE (2026-07-17): both pins landed primer-side and hold** — the
+   TS-render ⇄ manifest-render golden and the cross-host fingerprint lock
+   are standing regression pins in the SDK's suite. Phase B is closed.
+
 ---
 
 ## 8. PHASE C — the re-upstream census (GATED on B)
@@ -778,6 +786,32 @@ freeze; current states verified):
 "Not built" is a correct *resolved* state under the owner's ratified trigger
 law — unfired speculative sugar would itself be debt.
 
+**CLOSED (2026-07-17).** The census ran against the real consumer across
+three lenses (the driver — dispatch/mint/driver/supervisor/steers; ETL +
+seats + prompts + lean-bridge; the store-read surface). Every engine-side
+finding landed engine-first through full gates and pushed; app-side defects
+were reported to the owner, never fixed from here (the graph-builder app is
+other sessions' ground). The ledger's final verdicts are recorded row-by-row
+in `70-api.md` § the freeze, evidence citations included:
+
+- **multi-key typed `tx.get` — FIRED** (the strongest row: every declared
+  `key()` FD re-implemented host-side as `scan().find()` or a hand map, and
+  the existing primary-key get itself unused). Lands as its own engine-first
+  change, next; the shape the evidence names is keyed get as the obvious
+  spelling on both the read scope and the write transaction.
+- **answer sorting — FIRED / `FromAnswers` — DECLINED** (the row split):
+  four hand-rolled bigint comparators and host-side sorting everywhere fire
+  the ordering/limit conveniences (host-side, `bumbledb-query`); answers
+  already decode to typed named records, so the derive is declined
+  vocabulary.
+- **`tx.insert_all` — DECLINED vocabulary:** every insert loop sits inside
+  one write closure and the high-volume ones consume per-insert minted ids —
+  flat sugar can't serve them; the useful shape (minted ids returned
+  positionally) is recorded should the trigger ever truly fire.
+- **`write_from` refusal — re-confirmed** against the consumer; closed.
+- **multi-process — closed, trigger intact:** the one candidate second
+  process (ETL) writes to Postgres, not the store.
+
 ---
 
 ## 9. PHASE D — 1.0.0 close (GATED on C)
@@ -792,6 +826,12 @@ law — unfired speculative sugar would itself be debt.
    annotated tag. **The owner pushes the tag** — the release ceremony is the
    owner's, and 1.0.0 is the owner's decision, not a gate's.
 
+**PARKED (2026-07-17).** Item 3 is already satisfied — the ledger's final
+states landed with Phase C. What remains — the bench re-true with all five
+charts (the machine is co-tenant; measurement law forbids it until idle),
+the exit-criterion grep, the version bump, and the tag — waits for an idle
+machine and the owner. Nothing here fires unattended; the owner reopens D.
+
 ---
 
 ## 10. PHASE E — npm, literally last (owner's explicit word only)
@@ -801,6 +841,10 @@ runs, and the name/scope/API have had their full window to change. Then: flip
 `private`, version pinned to the tagged engine, provenance on, publish
 `@bjornpagen/bumbledb`. Maximally reversible until this one step, which is why
 it goes last.
+
+**PUNTED (owner ruling, 2026-07-17):** npm stays punted while the SDK is
+dogfooding in graph-builder. The trigger is unchanged, only re-affirmed —
+nothing in this section fires without the owner's explicit word.
 
 ---
 
@@ -829,6 +873,11 @@ C (census) → D (1.0.0 close, owner tags) → E (npm, owner word)
 
 fuzz all-cores HUNT: after A's perf A/B sessions land (idle machine), before D.
 ```
+
+**The long-hunt ruling (owner order, 2026-07-17):** the dedicated all-cores
+long fuzz hunt is SKIPPED — the bounded 8m saturation-measured hunt
+(`56e6cbe7`, zero findings) stands as the record; a long hunt fires only on
+the owner's word, on an idle machine.
 
 Within any phase: gates before pushes; pushes immediate; rulings surfaced in
 conversation before code; adversarial review on every claimed win.
