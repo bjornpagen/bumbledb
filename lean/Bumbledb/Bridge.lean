@@ -92,18 +92,18 @@ def ledger : List Obligation := [
 
   .row @interval_nonempty `Bumbledb.interval_nonempty
     "Every representable interval denotes a nonempty point set — the invariant the constructor discharges by parsing, never validating."
-    "crate::Interval::new (crates/bumbledb/src/interval.rs)"
-    "new_parses_strict_start_before_end (crates/bumbledb/src/interval.rs); value_variants_accept_only_checked_intervals (crates/bumbledb/src/interval.rs)",
+    "crate::Interval::new (crates/bumbledb-theory/src/interval.rs)"
+    "new_parses_strict_start_before_end (crates/bumbledb-theory/src/interval.rs); value_variants_accept_only_checked_intervals (crates/bumbledb-theory/src/interval.rs)",
 
   .row @points_halfopen `Bumbledb.points_halfopen
     "Interval membership is exactly the half-open reading — inclusive at start, exclusive at end — the contract every consumer assumes."
-    "crate::Interval::start (crates/bumbledb/src/interval.rs); crate::allen::classify (crates/bumbledb/src/allen.rs)"
-    "accessors_return_the_parsed_bounds (crates/bumbledb/src/interval.rs); adjacency_continues_and_the_minimal_gap_breaks (crates/bumbledb/src/interval/sweep.rs)",
+    "crate::Interval::start (crates/bumbledb-theory/src/interval.rs); crate::allen::classify (crates/bumbledb/src/allen.rs)"
+    "accessors_return_the_parsed_bounds (crates/bumbledb-theory/src/interval.rs); adjacency_continues_and_the_minimal_gap_breaks (crates/bumbledb/src/interval/sweep.rs)",
 
   .row @ray_is_unbounded_tail `Bumbledb.ray_is_unbounded_tail
     "A ray is the interval whose end IS the domain ceiling — infinity is a value of the representation, never a sentinel."
-    "crate::Interval::ray (crates/bumbledb/src/interval.rs); crate::Interval::is_ray (crates/bumbledb/src/interval.rs)"
-    "ray_is_the_unbounded_denotation (crates/bumbledb/src/interval.rs)",
+    "crate::Interval::ray (crates/bumbledb-theory/src/interval.rs); crate::Interval::is_ray (crates/bumbledb-theory/src/interval.rs)"
+    "ray_is_the_unbounded_denotation (crates/bumbledb-theory/src/interval.rs)",
 
   .row @measure_ray_none `Bumbledb.measure_ray_none
     "A ray has no measure — the model reads none where the engine raises the typed error."
@@ -137,8 +137,8 @@ def ledger : List Obligation := [
 
   .row @FixedU64.not_ray `Bumbledb.FixedU64.not_ray
     "The Q2 bound of the fixed-width interval family: start plus width sits strictly below the ceiling, so a fixed-width value is never a ray and its one-word encoding re-derives the end without loss — the constructor discharges the bound by parsing."
-    "crate::Interval::fixed (crates/bumbledb/src/interval.rs); crate::schema::value_matches (crates/bumbledb/src/schema.rs); encoding/decode.rs::decode_fixed_interval_start (crates/bumbledb/src/encoding/decode.rs)"
-    "fixed_parses_the_q2_bound (crates/bumbledb/src/interval.rs); fixed_interval_round_trips_one_word (crates/bumbledb/src/encoding/tests.rs); fixed_interval_decode_rejects_a_start_at_the_q2_bound (crates/bumbledb/src/encoding/tests.rs)",
+    "crate::Interval::fixed (crates/bumbledb-theory/src/interval.rs); crate::schema::value_matches (crates/bumbledb-theory/src/schema.rs); encoding/decode.rs::decode_fixed_interval_start (crates/bumbledb/src/encoding/decode.rs)"
+    "fixed_parses_the_q2_bound (crates/bumbledb-theory/src/interval.rs); fixed_interval_round_trips_one_word (crates/bumbledb/src/encoding/tests.rs); fixed_interval_decode_rejects_a_start_at_the_q2_bound (crates/bumbledb/src/encoding/tests.rs)",
 
   /- ## PRD 03 — Schema and Dependencies -/
 
@@ -170,7 +170,7 @@ def ledger : List Obligation := [
   .row @Selection.singleton_satisfies_iff
     `Bumbledb.Selection.singleton_satisfies_iff
     "A singleton literal set is exactly the equality binding, so the disjunctive set form the engine accepts re-reads every previously accepted selection unchanged — the sets seal canonical and satisfaction is membership among them."
-    "LiteralSet (crates/bumbledb/src/schema.rs); schema/validate.rs::validate_side_shape (crates/bumbledb/src/schema/validate.rs); judgment.rs::FieldCheck (crates/bumbledb/src/storage/commit/judgment.rs)"
+    "LiteralSet (crates/bumbledb-theory/src/schema.rs); schema/validate.rs::validate_side_shape (crates/bumbledb/src/schema/validate.rs); judgment.rs::FieldCheck (crates/bumbledb/src/storage/commit/judgment.rs)"
     "a_literal_set_selection_seals_sorted (crates/bumbledb/src/schema/tests/valid.rs); a_literal_set_sigma_seals_and_judges_membership (crates/bumbledb/src/storage/commit/tests/sealed_checks.rs); rejects_a_singleton_spelled_as_a_set (crates/bumbledb/src/schema/tests/reject.rs)",
 
   .row @Oracle.cardinality_plan_decides
@@ -264,7 +264,7 @@ def ledger : List Obligation := [
 
   .row @Query.allen_mask_denotation `Bumbledb.Query.allen_mask_denotation
     "The Allen comparison denotes mask membership of the classification (i64 companion in-tree beside it)."
-    "crate::allen::AllenMask::contains (crates/bumbledb/src/allen.rs)"
+    "crate::allen::AllenMask::contains (crates/bumbledb-theory/src/allen.rs)"
     "composites_mean_their_point_set_definitions (crates/bumbledb/src/allen.rs)",
 
   .row @Query.dnf_preserves_denotation `Bumbledb.Query.dnf_preserves_denotation
@@ -336,8 +336,8 @@ def ledger : List Obligation := [
 
   .row @Query.allen_converse_involution `Bumbledb.Query.allen_converse_involution
     "Converse composed with converse is the identity on the basics — one bit-reversal in the palindromic mask order."
-    "crate::allen::AllenMask::converse (crates/bumbledb/src/allen.rs)"
-    "exhaustive_converse_involution_over_all_8192_masks (crates/bumbledb/src/allen.rs)",
+    "crate::allen::AllenMask::converse (crates/bumbledb-theory/src/allen.rs)"
+    "exhaustive_converse_involution_over_all_8192_masks (crates/bumbledb-theory/src/allen.rs)",
 
   .row @Query.classify_swap `Bumbledb.Query.classify_swap
     "Classification dualizes under operand swap — what frees the executor to orient its Allen filters."
@@ -465,6 +465,11 @@ def ledger : List Obligation := [
     "RangeSummary (crates/bumbledb/src/ir/normalize/fold.rs); fold.rs::narrow (crates/bumbledb/src/ir/normalize/fold.rs); fold.rs::emit (crates/bumbledb/src/ir/normalize/fold.rs)"
     "an_order_conjunction_folds_to_one_summary (crates/bumbledb/src/ir/normalize/fold/tests.rs); an_eq_pin_subsumes_its_folded_bounds (crates/bumbledb/src/ir/normalize/fold/tests.rs); fuzz/fuzz_targets/rewrites.rs",
 
+  .row @Query.filter_fold_transport `Bumbledb.Query.filter_fold_transport
+    "The fold's filter replacement transports from encoded words to slot values: through the two order-embedding encodings and the in-place splice that lands a slot's folded bounds at its first constituent's position, the rewritten filter list accepts exactly the typed rows the original accepted — the emitted-bounds arm and the Eq-pinned all-drop arm both."
+    "fold.rs::emit (crates/bumbledb/src/ir/normalize/fold.rs); fold.rs::constant_order_bound (crates/bumbledb/src/ir/normalize/fold.rs); crate::encoding::encode::encode_u64 (crates/bumbledb/src/encoding/encode.rs); crate::encoding::encode::encode_i64 (crates/bumbledb/src/encoding/encode.rs)"
+    "fuzz/fuzz_targets/rewrites.rs; an_eq_pin_subsumes_its_folded_bounds (crates/bumbledb/src/ir/normalize/fold/tests.rs)",
+
   /- ## PRD 09 — the lifecycle -/
 
   .row @Txn.final_state_judgment_order_free `Bumbledb.Txn.final_state_judgment_order_free
@@ -519,7 +524,7 @@ def ledger : List Obligation := [
   .row @Txn.Fresh.materialized_key_ordinary
     `Bumbledb.Txn.Fresh.materialized_key_ordinary
     "The auto-materialized key statement rides the ordinary final-state judgment — ids are writable-by-default, so the statement, never the generator, owns uniqueness."
-    "SchemaDescriptor::materialized_statements (crates/bumbledb/src/schema.rs)"
+    "SchemaDescriptor::materialized_statements (crates/bumbledb-theory/src/schema.rs)"
     "statement_ids_are_auto_fds_first_then_declared_order (crates/bumbledb/src/schema/tests/valid.rs); scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs)",
 
   /- ## The recursion cut (Exec/Fixpoint.lean; R1+R2 of the seam
@@ -575,7 +580,7 @@ def ledger : List Obligation := [
 
   .row @holdsB_iff_holds `Bumbledb.holdsB_iff_holds
     "On row-listed finite instances the whole-theory judgment is decided by the executable checker, statement by statement, under the closed-roster merge — the write-side third oracle's license."
-    "render_fixture (crates/bumbledb-bench/src/conformance/judgment.rs); SchemaDescriptor::materialized_statements (crates/bumbledb/src/schema.rs)"
+    "render_fixture (crates/bumbledb-bench/src/conformance/judgment.rs); SchemaDescriptor::materialized_statements (crates/bumbledb-theory/src/schema.rs)"
     "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs)",
 
   .row @Txn.judgeB_agrees `Bumbledb.Txn.judgeB_agrees
@@ -588,7 +593,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 92 := rfl
+theorem ledger_count : ledger.length = 93 := rfl
 
 end Bridge
 end Bumbledb

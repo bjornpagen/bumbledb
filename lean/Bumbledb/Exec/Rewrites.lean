@@ -215,15 +215,27 @@ the identity variable mapping.
   domain edges land as `mark_empty`, case for case) — and an Eq pin
   inside the summary implies every constituent
   (`range_pin_subsumes`, the `pinned` arm that drops them all; rule
-  (c) is exactly the in-range premise). What stays recorded rather
-  than proved is the TRANSPORT: the engine replaces `FilterPredicate`
-  lists over encoded words, and the bridge to values is the two
+  (c) is exactly the in-range premise). **The TRANSPORT is
+  DISCHARGED** (2026-07-16, Item 4c): `filter_fold_transport`
+  composes (1) the value↔word list semantics through the two
   order-preserving encodings (`encode_u64_order_embedding` /
-  `encode_i64_order_embedding`, PRD 02) plus the in-place splice
+  `encode_i64_order_embedding`, PRD 02), (2) the in-place splice
   discipline (`emit` lands the bounds at the first constituent's
-  position — the filter-order law); the fold-off dual-pipeline
-  differential (the rewrites fuzz target, feature `fold-off`) is that
-  plumbing's empirical arm.
+  position, later constituents vanish), and (3) the per-domain
+  u64/i64 transfer — with `emit`'s two arms, the at-most-two-bounds
+  replacement and the Eq-pinned all-drop, premise for premise. What
+  stays recorded: the untouched filter kinds (`PointIn`, Allen, sets,
+  `Ne`, params) ride the splice as OPAQUE predicates — sound because
+  the splice never moves or rewrites them, so the transport never
+  inspects their semantics; the pass's per-field replacement CHOICE
+  enters as a premise shaped exactly like `emit`'s decision (pinned →
+  drop-all, else the folded summary's bounds), not as recomputed Lean
+  code; and the raise-order half of the filter-order law
+  (`image/view.rs`, the measure guard) is mechanism below the
+  conjunction reading — order filters never raise, so landing them at
+  the first constituent's position unlocks nothing. The fold-off
+  dual-pipeline differential (the rewrites fuzz target, feature
+  `fold-off`) stays as the plumbing's empirical arm.
 -/
 
 namespace Bumbledb.Query
@@ -1583,7 +1595,7 @@ never changes which words pass. The word domain is `[0, max]` for an
 arbitrary ceiling (`u64::MAX` at the engine's width — the arithmetic
 is width-generic, and both integer encodings are order-preserving
 maps onto it, PRD 02). The transport to `FilterPredicate` lists is
-the recorded narrowing (module doc). -/
+Item 4c, the section after this one (`filter_fold_transport`). -/
 
 /-- One constant order bound over encoded words — exactly the shape
 `fold.rs::constant_order_bound` admits (`Ne` prunes nothing statically
@@ -1731,6 +1743,524 @@ theorem range_fold_empty {max : Nat} {bs : List WordBound} {w : Nat}
   have hmem := (WordRange.fold_mem hw).mpr h
   unfold WordRange.mem at hmem
   omega
+
+/-! ## Item 4c — the FilterPredicate transport (SPLIT B's narrowing, discharged)
+
+Item 4b's recorded narrowing, proved (2026-07-16): the engine
+replaces `FilterPredicate` lists over ENCODED WORDS, so the word-level
+theorems license the replacement only through three transports —
+(1) value-level filter semantics ↔ word-level bound semantics through
+the two order-embedding encodings (`valueBounds_encode`,
+`value_range_replacement`); (2) the in-place splice discipline
+(`fold.rs::emit`'s loop: the folded bounds land at the FIRST
+constituent's position and every later constituent vanishes —
+`splice`, `splice_replaces`); (3) the per-domain u64/i64 encoding
+transfer (`elemEncode_lt_iff` / `elemEncode_le_iff`, spending PRD 02's
+embeddings). `filter_fold_transport` composes all three: on every
+typed row, the spliced word-level filter list accepts exactly what the
+value-level list accepted — `emit`'s two arms, the at-most-two-bounds
+replacement and the Eq-pinned all-drop, premise for premise (the
+pinned arm's rule-(c) screen enters as the summary-membership
+premise, exactly what `fold_occurrence` checked before emitting).
+
+The modeled vocabulary mirrors what the fold TOUCHES: constant order
+compares (`constant_order_bound`'s shape — over values here, the
+`Const::Word` image at the word level), word-Eq pins (`emit`'s
+`pinned` screen), and everything else OPAQUE — `PointIn`, Allen,
+sets, `Ne`, params ride the splice untouched, so their denotation is
+a parameter (`den`) the transport never inspects. Filter lists denote
+conjunctively; the splice carries POSITIONS faithfully while the
+denotation reads the list as a set — the raise-order half of the
+filter-order law (`image/view.rs`, the measure guard) is mechanism
+below this level: order filters never raise, so landing them at the
+first constituent's position unlocks nothing. -/
+
+/-- The engine's word-domain ceiling: `u64::MAX`. Both integer
+encodings land at or below it (`elemEncode_le_wordMax`), so ONE
+bounded domain serves both — exactly `RangeSummary::new`'s `hi`. -/
+def wordMax : Nat := 2 ^ 64 - 1
+
+/-- An order slot's value domain per element tag — order operators are
+validated U64/I64-only (`ir/validate/context.rs::screen_order_operand`),
+so these two domains are the transport's whole universe. -/
+def elemDomain : Elem → Type
+  | .u64 => U64
+  | .i64 => I64
+
+instance elemDomainLT : (e : Elem) → LT (elemDomain e)
+  | .u64 => inferInstanceAs (LT U64)
+  | .i64 => inferInstanceAs (LT I64)
+
+instance elemDomainLE : (e : Elem) → LE (elemDomain e)
+  | .u64 => inferInstanceAs (LE U64)
+  | .i64 => inferInstanceAs (LE I64)
+
+/-- The slot's storage encoding per element tag (PRD 02's two
+embeddings, dispatched). -/
+def elemEncode : (e : Elem) → elemDomain e → Word
+  | .u64 => encodeU64
+  | .i64 => encodeI64
+
+/-- Step 3, strict face: each encoding transfers `<` exactly. -/
+theorem elemEncode_lt_iff : (e : Elem) → ∀ a b : elemDomain e,
+    elemEncode e a < elemEncode e b ↔ a < b
+  | .u64 => encodeU64_lt_iff
+  | .i64 => encodeI64_lt_iff
+
+/-- Step 3, non-strict face: each encoding transfers `≤` exactly —
+`encode_u64_order_embedding` / `encode_i64_order_embedding` spent. -/
+theorem elemEncode_le_iff : (e : Elem) → ∀ a b : elemDomain e,
+    elemEncode e a ≤ elemEncode e b ↔ a ≤ b
+  | .u64 => encodeU64_le_iff
+  | .i64 => fun a b => (encode_i64_order_embedding a b).symm
+
+/-- Step 3, equality face: each encoding is injective — the Eq pin's
+word form means the value pin. -/
+theorem elemEncode_eq_iff : (e : Elem) → ∀ a b : elemDomain e,
+    elemEncode e a = elemEncode e b ↔ a = b
+  | .u64 => encodeU64_eq_iff
+  | .i64 => encodeI64_eq_iff
+
+/-- Every encoded value sits in the bounded word domain — the `hw`
+premise of the word-level theorems, discharged once per domain. -/
+theorem elemEncode_le_wordMax : (e : Elem) → ∀ v : elemDomain e,
+    elemEncode e v ≤ wordMax
+  | .u64 => fun v => by
+    have h := v.property
+    show v.val ≤ wordMax
+    unfold wordMax
+    omega
+  | .i64 => fun v => by
+    have h := v.property
+    show (v.val + 2 ^ 63).toNat ≤ wordMax
+    unfold wordMax
+    omega
+
+/-- One constant order filter over a slot's VALUES — the
+`FilterPredicate::Compare` shape `constant_order_bound` admits, read
+at the domain's own order (what the rule's author wrote, before any
+encoding). -/
+inductive ValueBound (α : Type) where
+  | lt (c : α)
+  | le (c : α)
+  | gt (c : α)
+  | ge (c : α)
+
+/-- The value bound's denotation at one slot value. -/
+def ValueBound.holds {α : Type} [LT α] [LE α] (v : α) :
+    ValueBound α → Prop
+  | .lt c => v < c
+  | .le c => v ≤ c
+  | .gt c => c < v
+  | .ge c => c ≤ v
+
+/-- The bound's word image: the constant rides the slot's encoding —
+`Const::Word` is exactly this image (normalization encodes literals
+before the fold ever sees them). -/
+def ValueBound.encode {α : Type} (f : α → Word) :
+    ValueBound α → WordBound
+  | .lt c => .lt (f c)
+  | .le c => .le (f c)
+  | .gt c => .gt (f c)
+  | .ge c => .ge (f c)
+
+/-- **Step 3, one bound**: through any order embedding the word image
+means the value bound — the four operator shapes, each one transfer. -/
+theorem ValueBound.encode_holds {α : Type} [LT α] [LE α] {f : α → Word}
+    (hlt : ∀ a b : α, f a < f b ↔ a < b)
+    (hle : ∀ a b : α, f a ≤ f b ↔ a ≤ b) (v : α) :
+    ∀ b : ValueBound α, (b.encode f).holds (f v) ↔ b.holds v
+  | .lt c => hlt v c
+  | .le c => hle v c
+  | .gt c => hlt c v
+  | .ge c => hle c v
+
+/-- **Steps 1 + 3, one slot**: a slot's value-level order conjunction
+holds exactly when its folded summary's emitted bounds hold at the
+encoded slot value — `range_summary_replacement` transported through
+the slot's encoding. -/
+theorem value_range_replacement (e : Elem) (v : elemDomain e)
+    (bs : List (ValueBound (elemDomain e))) :
+    (∀ b, b ∈ bs → b.holds v) ↔
+      ∀ b, b ∈ (WordRange.fold wordMax
+          (bs.map (ValueBound.encode (elemEncode e)))).emit wordMax →
+        b.holds (elemEncode e v) := by
+  rw [← range_summary_replacement (elemEncode_le_wordMax e v)]
+  constructor
+  · intro h wb hwb
+    obtain ⟨b, hb, rfl⟩ := List.mem_map.mp hwb
+    exact (ValueBound.encode_holds (elemEncode_lt_iff e)
+      (elemEncode_le_iff e) v b).mpr (h b hb)
+  · intro h b hb
+    exact (ValueBound.encode_holds (elemEncode_lt_iff e)
+      (elemEncode_le_iff e) v b).mp
+      (h _ (List.mem_map.mpr ⟨b, hb, rfl⟩))
+
+/-- One filter of an occurrence's word-level list — the splice's
+vocabulary: a constant order bound on a slot (`constant_order_bound`'s
+accepted shape), a word-Eq pin on a slot (`emit`'s `pinned` screen),
+or anything else, OPAQUE (`PointIn`, Allen, sets, `Ne`, params — the
+splice never touches them, so their semantics is a parameter). -/
+inductive SlotFilter (π : Type) where
+  | bound (i : FieldId) (b : WordBound)
+  | eqw (i : FieldId) (c : Word)
+  | other (p : π)
+
+/-- One filter's denotation at an encoded row, the opaque filters
+through the oracle `den`. -/
+def SlotFilter.holds {π : Type} (f : FieldId → Word) (den : π → Prop) :
+    SlotFilter π → Prop
+  | .bound i b => b.holds (f i)
+  | .eqw i c => f i = c
+  | .other p => den p
+
+/-- The filter-conjunction reading: a row survives the list when every
+filter holds (`image/view.rs` — the view is the filters' survivors). -/
+def filtersHold {π : Type} (f : FieldId → Word) (den : π → Prop)
+    (fs : List (SlotFilter π)) : Prop :=
+  ∀ sf, sf ∈ fs → sf.holds f den
+
+theorem filtersHold_cons {π : Type} {f : FieldId → Word} {den : π → Prop}
+    {sf : SlotFilter π} {fs : List (SlotFilter π)} :
+    filtersHold f den (sf :: fs) ↔
+      sf.holds f den ∧ filtersHold f den fs := by
+  constructor
+  · intro h
+    exact ⟨h _ (List.mem_cons_self ..),
+      fun x hx => h x (List.mem_cons_of_mem _ hx)⟩
+  · rintro ⟨h1, h2⟩ x hx
+    rcases List.mem_cons.mp hx with rfl | hx'
+    · exact h1
+    · exact h2 x hx'
+
+theorem filtersHold_append {π : Type} {f : FieldId → Word}
+    {den : π → Prop} {fs gs : List (SlotFilter π)} :
+    filtersHold f den (fs ++ gs) ↔
+      filtersHold f den fs ∧ filtersHold f den gs := by
+  constructor
+  · intro h
+    exact ⟨fun x hx => h x (List.mem_append.mpr (Or.inl hx)),
+      fun x hx => h x (List.mem_append.mpr (Or.inr hx))⟩
+  · rintro ⟨h1, h2⟩ x hx
+    rcases List.mem_append.mp hx with hx' | hx'
+    · exact h1 x hx'
+    · exact h2 x hx'
+
+/-- The order-bound constituent one filter contributes to slot `i`, if
+any — `constant_order_bound`, restricted to the slot. -/
+def constituent? {π : Type} (i : FieldId) : SlotFilter π → Option WordBound
+  | .bound j b => if j = i then some b else none
+  | _ => none
+
+/-- Slot `i`'s constituents: the order bounds pass 2 folds
+(`fold_occurrence`'s per-slot `ranges` entry). -/
+def constituents {π : Type} (i : FieldId) (fs : List (SlotFilter π)) :
+    List WordBound :=
+  fs.filterMap (constituent? i)
+
+theorem mem_constituents {π : Type} {i : FieldId} {b : WordBound}
+    {fs : List (SlotFilter π)} :
+    b ∈ constituents i fs ↔ SlotFilter.bound i b ∈ fs := by
+  simp only [constituents, List.mem_filterMap]
+  constructor
+  · rintro ⟨sf, hsf, hmap⟩
+    cases sf with
+    | bound j b' =>
+      simp only [constituent?] at hmap
+      by_cases hj : j = i
+      · subst hj
+        rw [if_pos rfl] at hmap
+        cases hmap
+        exact hsf
+      · rw [if_neg hj] at hmap
+        cases hmap
+    | eqw j c => simp only [constituent?] at hmap; cases hmap
+    | other p => simp only [constituent?] at hmap; cases hmap
+  · intro h
+    refine ⟨SlotFilter.bound i b, h, ?_⟩
+    simp [constituent?]
+
+/-- Whether the splice keeps a filter verbatim: everything except an
+order bound on a replaced slot. -/
+def keeps {π : Type} (repl : FieldId → Option (List WordBound)) :
+    SlotFilter π → Prop
+  | .bound i _ => repl i = none
+  | .eqw _ _ => True
+  | .other _ => True
+
+/-- **The splice** — `fold.rs::emit`'s in-place loop, shape for shape:
+walking the filter list, a replaced slot's FIRST constituent becomes
+the slot's replacement bounds, its later constituents vanish (`done`
+is the loop's `emitted` vector), and every other filter passes through
+at its position. -/
+def splice {π : Type} (repl : FieldId → Option (List WordBound)) :
+    List (SlotFilter π) → List FieldId → List (SlotFilter π)
+  | [], _ => []
+  | .bound i b :: rest, done =>
+    match repl i with
+    | none => .bound i b :: splice repl rest done
+    | some ws =>
+      if i ∈ done then splice repl rest done
+      else ws.map (SlotFilter.bound i) ++ splice repl rest (i :: done)
+  | .eqw i c :: rest, done => .eqw i c :: splice repl rest done
+  | .other p :: rest, done => .other p :: splice repl rest done
+
+/-- What the spliced list means, structurally: the kept filters hold,
+and each replaced slot not yet emitted — provided it HAS a constituent
+to land on — contributes its replacement bounds. The dedup vector
+`done` is exactly the emitted-once discipline. -/
+theorem splice_characterization {π : Type} {f : FieldId → Word}
+    {den : π → Prop} (repl : FieldId → Option (List WordBound)) :
+    ∀ (fs : List (SlotFilter π)) (done : List FieldId),
+      filtersHold f den (splice repl fs done) ↔
+        ((∀ sf, sf ∈ fs → keeps repl sf → sf.holds f den) ∧
+          ∀ i ws, repl i = some ws → i ∉ done →
+            (∃ b, SlotFilter.bound i b ∈ fs) →
+            ∀ b, b ∈ ws → b.holds (f i))
+  | [], done => by simp [splice, filtersHold]
+  | .other p :: rest, done => by
+    simp only [splice]
+    rw [filtersHold_cons, splice_characterization repl rest done]
+    constructor
+    · rintro ⟨hp, hkeep, hemit⟩
+      refine ⟨fun sf hsf hk => ?_, fun j ws hws hd hex => ?_⟩
+      · rcases List.mem_cons.mp hsf with rfl | h
+        · exact hp
+        · exact hkeep sf h hk
+      · refine hemit j ws hws hd ?_
+        obtain ⟨b, hb⟩ := hex
+        rcases List.mem_cons.mp hb with heq | h
+        · exact nomatch heq
+        · exact ⟨b, h⟩
+    · rintro ⟨hkeep, hemit⟩
+      exact ⟨hkeep _ (List.mem_cons_self ..) True.intro,
+        fun sf hsf hk => hkeep sf (List.mem_cons_of_mem _ hsf) hk,
+        fun j ws hws hd hex => hemit j ws hws hd
+          (hex.imp fun b hb => List.mem_cons_of_mem _ hb)⟩
+  | .eqw i c :: rest, done => by
+    simp only [splice]
+    rw [filtersHold_cons, splice_characterization repl rest done]
+    constructor
+    · rintro ⟨hc, hkeep, hemit⟩
+      refine ⟨fun sf hsf hk => ?_, fun j ws hws hd hex => ?_⟩
+      · rcases List.mem_cons.mp hsf with rfl | h
+        · exact hc
+        · exact hkeep sf h hk
+      · refine hemit j ws hws hd ?_
+        obtain ⟨b, hb⟩ := hex
+        rcases List.mem_cons.mp hb with heq | h
+        · exact nomatch heq
+        · exact ⟨b, h⟩
+    · rintro ⟨hkeep, hemit⟩
+      exact ⟨hkeep _ (List.mem_cons_self ..) True.intro,
+        fun sf hsf hk => hkeep sf (List.mem_cons_of_mem _ hsf) hk,
+        fun j ws hws hd hex => hemit j ws hws hd
+          (hex.imp fun b hb => List.mem_cons_of_mem _ hb)⟩
+  | .bound i b :: rest, done => by
+    cases hrepl : repl i with
+    | none =>
+      simp only [splice, hrepl]
+      rw [filtersHold_cons, splice_characterization repl rest done]
+      constructor
+      · rintro ⟨hb, hkeep, hemit⟩
+        refine ⟨fun sf hsf hk => ?_, fun j ws hws hd hex => ?_⟩
+        · rcases List.mem_cons.mp hsf with rfl | h
+          · exact hb
+          · exact hkeep sf h hk
+        · refine hemit j ws hws hd ?_
+          obtain ⟨b', hb'⟩ := hex
+          rcases List.mem_cons.mp hb' with heq | h
+          · injection heq with hji _
+            subst hji
+            rw [hrepl] at hws
+            cases hws
+          · exact ⟨b', h⟩
+      · rintro ⟨hkeep, hemit⟩
+        exact ⟨hkeep _ (List.mem_cons_self ..) hrepl,
+          fun sf hsf hk => hkeep sf (List.mem_cons_of_mem _ hsf) hk,
+          fun j ws hws hd hex => hemit j ws hws hd
+            (hex.imp fun b' hb' => List.mem_cons_of_mem _ hb')⟩
+    | some ws =>
+      by_cases hdone : i ∈ done
+      · simp only [splice, hrepl]
+        rw [if_pos hdone, splice_characterization repl rest done]
+        constructor
+        · rintro ⟨hkeep, hemit⟩
+          refine ⟨fun sf hsf hk => ?_, fun j ws' hws' hd hex => ?_⟩
+          · rcases List.mem_cons.mp hsf with rfl | h
+            · simp [keeps, hrepl] at hk
+            · exact hkeep sf h hk
+          · obtain ⟨b', hb'⟩ := hex
+            rcases List.mem_cons.mp hb' with heq | h
+            · injection heq with hji _
+              subst hji
+              exact absurd hdone hd
+            · exact hemit j ws' hws' hd ⟨b', h⟩
+        · rintro ⟨hkeep, hemit⟩
+          exact ⟨fun sf hsf hk => hkeep sf (List.mem_cons_of_mem _ hsf) hk,
+            fun j ws' hws' hd hex => hemit j ws' hws' hd
+              (hex.imp fun b' hb' => List.mem_cons_of_mem _ hb')⟩
+      · simp only [splice, hrepl]
+        rw [if_neg hdone, filtersHold_append,
+          splice_characterization repl rest (i :: done)]
+        have hmap : filtersHold f den (ws.map (SlotFilter.bound i)) ↔
+            ∀ b', b' ∈ ws → b'.holds (f i) := by
+          constructor
+          · intro h b' hb'
+            exact h _ (List.mem_map.mpr ⟨b', hb', rfl⟩)
+          · intro h sf hsf
+            obtain ⟨b', hb', rfl⟩ := List.mem_map.mp hsf
+            exact h b' hb'
+        rw [hmap]
+        constructor
+        · rintro ⟨hws, hkeep, hemit⟩
+          refine ⟨fun sf hsf hk => ?_, fun j ws' hws' hd hex => ?_⟩
+          · rcases List.mem_cons.mp hsf with rfl | h
+            · simp [keeps, hrepl] at hk
+            · exact hkeep sf h hk
+          · by_cases hji : j = i
+            · subst hji
+              rw [hrepl] at hws'
+              injection hws' with hws'
+              subst hws'
+              exact hws
+            · refine hemit j ws' hws' (fun hmem => ?_) ?_
+              · rcases List.mem_cons.mp hmem with h | h
+                · exact hji h
+                · exact hd h
+              · obtain ⟨b', hb'⟩ := hex
+                rcases List.mem_cons.mp hb' with heq | h
+                · injection heq with h1 _
+                  exact absurd h1 hji
+                · exact ⟨b', h⟩
+        · rintro ⟨hkeep, hemit⟩
+          refine ⟨hemit i ws hrepl hdone ⟨b, List.mem_cons_self ..⟩,
+            fun sf hsf hk => hkeep sf (List.mem_cons_of_mem _ hsf) hk,
+            fun j ws' hws' hd hex => hemit j ws' hws'
+              (fun h => hd (List.mem_cons_of_mem _ h))
+              (hex.imp fun b' hb' => List.mem_cons_of_mem _ hb')⟩
+
+/-- **Step 2 — the splice replaces soundly.** Under `emit`'s two
+per-slot arms — the replacement is the folded summary's emitted
+bounds, or empty under a word-Eq pin the summary contains (rule (c)'s
+screen, checked before emission) — the spliced list accepts exactly
+the rows the original accepted. The `∃`-constituent premise is the
+`ranges` map's own domain discipline (a slot enters pass 2 only by
+contributing a bound). -/
+theorem splice_replaces {π : Type} {f : FieldId → Word} {den : π → Prop}
+    {repl : FieldId → Option (List WordBound)} {fs : List (SlotFilter π)}
+    (hf : ∀ i, f i ≤ wordMax)
+    (harm : ∀ i ws, repl i = some ws →
+      (∃ b, SlotFilter.bound i b ∈ fs) ∧
+        (ws = (WordRange.fold wordMax (constituents i fs)).emit wordMax ∨
+          (ws = [] ∧ ∃ c, SlotFilter.eqw i c ∈ fs ∧
+            (WordRange.fold wordMax (constituents i fs)).mem c))) :
+    filtersHold f den (splice repl fs []) ↔ filtersHold f den fs := by
+  rw [splice_characterization repl fs []]
+  constructor
+  · rintro ⟨hkeep, hemit⟩ sf hsf
+    cases sf with
+    | other p => exact hkeep _ hsf True.intro
+    | eqw j c => exact hkeep _ hsf True.intro
+    | bound j b =>
+      cases hrepl : repl j with
+      | none => exact hkeep _ hsf hrepl
+      | some ws =>
+        obtain ⟨hex, harms⟩ := harm j ws hrepl
+        have hall : ∀ b', b' ∈ constituents j fs → b'.holds (f j) := by
+          rcases harms with rfl | ⟨rfl, c, hc, hmem⟩
+          · exact (range_summary_replacement (hf j)).mpr
+              (hemit j _ hrepl (fun h => nomatch h) hex)
+          · have hfj : f j = c := hkeep _ hc True.intro
+            intro b' hb'
+            rw [hfj]
+            exact range_pin_subsumes (hfj ▸ hf j) hmem b' hb'
+        exact hall b (mem_constituents.mpr hsf)
+  · intro hacc
+    refine ⟨fun sf hsf _ => hacc sf hsf, fun j ws hws hd hex => ?_⟩
+    obtain ⟨-, harms⟩ := harm j ws hws
+    rcases harms with rfl | ⟨rfl, -⟩
+    · exact (range_summary_replacement (hf j)).mp
+        (fun b' hb' => hacc _ (mem_constituents.mp hb'))
+    · exact fun b' hb' => nomatch hb'
+
+/-- One filter of an occurrence's VALUE-level list: a constant order
+compare on a typed slot, an Eq pin against a slot constant, or the
+opaque rest — the vocabulary before encoding, each slot at its
+declared element domain (`dom`). -/
+inductive TypedFilter (dom : FieldId → Elem) (π : Type) where
+  | bound (i : FieldId) (b : ValueBound (elemDomain (dom i)))
+  | eqv (i : FieldId) (c : elemDomain (dom i))
+  | other (p : π)
+
+/-- The value-level denotation at a typed row. -/
+def TypedFilter.holds {dom : FieldId → Elem} {π : Type}
+    (v : (i : FieldId) → elemDomain (dom i)) (den : π → Prop) :
+    TypedFilter dom π → Prop
+  | .bound i b => b.holds (v i)
+  | .eqv i c => v i = c
+  | .other p => den p
+
+/-- The filter's word image: constants ride their slot's encoding —
+what normalization hands the fold (`Const::Word`). -/
+def TypedFilter.encode {dom : FieldId → Elem} {π : Type} :
+    TypedFilter dom π → SlotFilter π
+  | .bound i b => .bound i (b.encode (elemEncode (dom i)))
+  | .eqv i c => .eqw i (elemEncode (dom i) c)
+  | .other p => .other p
+
+/-- The encoded row: each slot's value through its slot's encoding —
+the words the filter kernels actually compare. -/
+def encodeRow {dom : FieldId → Elem}
+    (v : (i : FieldId) → elemDomain (dom i)) : FieldId → Word :=
+  fun i => elemEncode (dom i) (v i)
+
+/-- **Step 1, one filter**: the word image at the encoded row means
+the value filter at the typed row — bounds by the order transfer, pins
+by injectivity, the opaque rest verbatim. -/
+theorem TypedFilter.encode_holds {dom : FieldId → Elem} {π : Type}
+    {den : π → Prop} (v : (i : FieldId) → elemDomain (dom i)) :
+    ∀ tf : TypedFilter dom π,
+      SlotFilter.holds (encodeRow v) den tf.encode ↔ tf.holds v den
+  | .bound i b => ValueBound.encode_holds (elemEncode_lt_iff (dom i))
+      (elemEncode_le_iff (dom i)) (v i) b
+  | .eqv i c => elemEncode_eq_iff (dom i) (v i) c
+  | .other _ => Iff.rfl
+
+/-- **The transport theorem — Item 4b's narrowing, discharged.** The
+fold's in-place replacement of a `FilterPredicate` list is
+value-semantics-preserving: on every typed row, the spliced word-level
+list at the encoded row accepts exactly when every value-level filter
+holds at the row itself. The premise is `emit`'s per-slot decision,
+arm for arm (folded bounds, or the pinned all-drop under rule (c)'s
+in-summary screen); the conclusion composes the splice discipline
+(step 2), the list transfer (step 1), and the two order embeddings
+(step 3). Bridge: `fold.rs::emit`; the fold-off dual-pipeline
+differential (the rewrites fuzz target) is this statement's
+empirical arm. -/
+theorem filter_fold_transport {dom : FieldId → Elem} {π : Type}
+    {den : π → Prop} (v : (i : FieldId) → elemDomain (dom i))
+    (fs : List (TypedFilter dom π))
+    {repl : FieldId → Option (List WordBound)}
+    (harm : ∀ i ws, repl i = some ws →
+      (∃ b, SlotFilter.bound i b ∈ fs.map TypedFilter.encode) ∧
+        (ws = (WordRange.fold wordMax
+            (constituents i (fs.map TypedFilter.encode))).emit wordMax ∨
+          (ws = [] ∧ ∃ c, SlotFilter.eqw i c ∈ fs.map TypedFilter.encode ∧
+            (WordRange.fold wordMax
+              (constituents i (fs.map TypedFilter.encode))).mem c))) :
+    filtersHold (encodeRow v) den
+        (splice repl (fs.map TypedFilter.encode) []) ↔
+      ∀ tf, tf ∈ fs → tf.holds v den := by
+  rw [splice_replaces (f := encodeRow v)
+    (fun i => elemEncode_le_wordMax (dom i) (v i)) harm]
+  constructor
+  · intro h tf htf
+    exact (TypedFilter.encode_holds v tf).mp
+      (h _ (List.mem_map.mpr ⟨tf, htf, rfl⟩))
+  · intro h sf hsf
+    obtain ⟨tf, htf, rfl⟩ := List.mem_map.mp hsf
+    exact (TypedFilter.encode_holds v tf).mpr (h tf htf)
 
 /-! ## Item 5 — the rewrites compose
 
