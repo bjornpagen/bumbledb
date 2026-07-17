@@ -366,7 +366,7 @@ enum Operand<'a> {
 /// re-armed at both gate sites is decision-free past L2 by
 /// construction (the lanes' forced map is ~34 MiB, the tier always
 /// passes) and measured so — twin/width-only 1.025/0.985/0.977 on
-/// disp_probe/_d24/_d96 (mixed signs inside the lane's recorded
+/// `disp_probe`/`_d24`/`_d96` (mixed signs inside the lane's recorded
 /// cross-block wobble) and 0.999/0.998/1.015 on the probe-free
 /// stream ladder. NEUTRAL: no regime gives the tier's comparison
 /// anything to decide — width-only stays.
