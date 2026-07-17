@@ -2,8 +2,19 @@
 
 **Status:** PHASE A IS CLOSED (2026-07-17, the zero-known-issues campaign —
 31 agents, every verdict measured under the mutex, every commit pushed).
-Sections 3–5 below now read as the completed record; Phase R (§6) runs
-primer-side, and B→E (§7–10) remain gated exactly as written.
+**PHASE R IS CLOSED** (overnight, primer-side): the mega-merge landed on
+primer main (`44391aaf5`, the cutover whole in `c80828022` — SDK, run-store,
+driver, seats, the funeral), the rebirth branch and worktree are deleted, and
+the symlink survives only for successor worktrees (still stateless — the
+merge-back law holds; nothing foreign reached this repo). **PHASE B is 2/3
+done:** the rename landed on primer main (`2ce870698`,
+`@superbuilders/bumbledb → @bjornpagen/bumbledb` everywhere) and the
+post-merge verification is proven — primer main's napi crate `cargo check`s
+clean against this repo's refactored engine (2026-07-17; the facade held
+through A1/A2, witnessed by the real consumer). **Remaining: B step 3 (the
+two pins the SDK owes — TS-render ⇄ manifest-render golden, the cross-host
+fingerprint lock), then C → D → E.** Sections 3–6 below read as the
+completed record.
 
 **The Phase A close-out ledger** (verdict → commit):
 
