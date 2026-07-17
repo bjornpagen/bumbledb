@@ -272,6 +272,18 @@ const PAD_MIN_STRIDE: usize = 64 * 1024;
 /// on a synthetic tight kernel; the engine's widest real lockstep
 /// reader (the scalar filter conjunction) is retire-bound at ~22 ns/row
 /// and measures 1.00× against any of these layouts. 384 stays.
+///
+/// Re-run 2026-07-17 (T4's recorded re-open trigger: the T1-reshaped
+/// four-lane bitmask scan kernels, `exec/kernel/filter.rs`, now in
+/// tree): the band is unmoved. The 24-stream tight kernel at the 4 MiB
+/// pitch, DRAM tier — residue 128 → 1.60×, 256 → 1.49×, 384 → 1.44×,
+/// 512 → 1.34×, 768 → 1.22×, 1 KiB → 1.09×, 1.5 KiB → 1.10×, 2 KiB →
+/// 0.97× (still inverts); the 16 MiB pitch's 1 KiB residue costs 1.09×
+/// tight-kernel and 1.00× on the real filter surface (~28.7 ns/row,
+/// still retire-bound — FieldsCompare is not kernel-shaped, so the
+/// reshaped kernels never see a multi-stream stride). No residue the
+/// shipped rule passes reaches the 3× landing bar; the widening stays
+/// refuted and 384 stays.
 const PAD_TOLERANCE: usize = 384;
 
 #[cfg(test)]

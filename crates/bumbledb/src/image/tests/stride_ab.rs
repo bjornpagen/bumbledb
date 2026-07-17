@@ -15,6 +15,12 @@
 //! on the real filter surface, which is retire-bound) and padding a
 //! 2 KiB residue inverts (~0.9×). `PAD_TOLERANCE` stays 384; these
 //! tests are the permanent falsifier record.
+//!
+//! RE-RUN (2026-07-17, post-T1 — the recorded re-open trigger): the
+//! band is unmoved under the reshaped four-lane bitmask scan kernels
+//! (residues 384/512/768/1024/2048 → 1.44/1.34/1.22/1.09/0.97× on the
+//! 24-stream kernel at the 4 MiB pitch; the filter surface 1.00×).
+//! The refutation stands; the numbers live on `PAD_TOLERANCE`.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
