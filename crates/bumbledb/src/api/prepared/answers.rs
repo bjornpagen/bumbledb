@@ -1,9 +1,9 @@
 use super::{Answer, AnswerValue, Answers, Cell, ResolveMemo, ValueType};
 
 use crate::error::Result;
-use crate::interval::Interval;
-use crate::schema::IntervalElement;
 use crate::storage::env::ReadTxn;
+use bumbledb_theory::Interval;
+use bumbledb_theory::schema::IntervalElement;
 
 impl Answers {
     #[must_use]
@@ -78,8 +78,9 @@ impl Answers {
     }
 
     /// Converts a fixed-width word to its cell — infallible by schema
-    /// invariant (the all-words finalize path carries
-    /// no `Result` and no dictionary plumbing per cell).
+    /// invariant. The point fast lane's per-cell decode; the finalize
+    /// drains carry their decode arms inline (`finalize.rs`) — the
+    /// dispatch there runs per column, never re-matched per cell.
     pub(super) fn word_cell(ty: &ValueType, word: u64) -> Cell {
         match ty {
             ValueType::Bool => Cell::Bool(word != 0),
@@ -99,17 +100,25 @@ impl Answers {
 
     /// Materializes a `bytes<N>` find's padded slot words as one cell:
     /// the words' big-endian bytes, truncated to the declared N, copied
-    /// into the byte heap (inline values — no dictionary, ever).
-    pub(super) fn push_fixed_bytes(&mut self, len: u16, words: &[u64]) {
+    /// into the byte heap (inline values — no dictionary, ever). The
+    /// cell is returned, not pushed: the columnar fill writes strided
+    /// slots (`finalize.rs`).
+    pub(super) fn fixed_bytes_cell(&mut self, len: u16, words: &[u64]) -> Cell {
         let start = self.bytes.len();
         for word in words {
             self.bytes.extend_from_slice(&word.to_be_bytes());
         }
         self.bytes.truncate(start + usize::from(len));
-        self.cells.push(Cell::FixedBytes {
+        Cell::FixedBytes {
             start,
             len: usize::from(len),
-        });
+        }
+    }
+
+    /// [`Self::fixed_bytes_cell`], appended — the point fast lane's shape.
+    pub(super) fn push_fixed_bytes(&mut self, len: u16, words: &[u64]) {
+        let cell = self.fixed_bytes_cell(len, words);
+        self.cells.push(cell);
     }
 
     /// Materializes an interval find's two slot words as one cell,

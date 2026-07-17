@@ -18,7 +18,8 @@ use crate::exec::sink::{AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::validate::Predicate;
 use crate::plan::fj::ValidatedPlan;
-use crate::schema::{Schema, ValueType};
+use crate::schema::Schema;
+use bumbledb_theory::schema::ValueType;
 
 mod answers;
 mod bind;
@@ -66,7 +67,7 @@ pub enum BindValue<'a> {
     /// temporal relation as a bind-time argument (`crate::allen`). The
     /// vacuous ∅/full masks are rejected at bind with distinct typed
     /// errors, mirroring validation's literal-mask rules.
-    AllenMask(crate::allen::AllenMask),
+    AllenMask(bumbledb_theory::allen::AllenMask),
 }
 
 /// One positional execution argument (`docs/architecture/70-api.md`
@@ -95,8 +96,8 @@ pub enum AnswerValue<'a> {
     /// An interval find, rematerialized through the checked host type
     /// (the stored `start < end` invariant makes the re-parse
     /// infallible — the comment lives at the materialization site).
-    IntervalU64(crate::interval::Interval<u64>),
-    IntervalI64(crate::interval::Interval<i64>),
+    IntervalU64(bumbledb_theory::Interval<u64>),
+    IntervalI64(bumbledb_theory::Interval<i64>),
 }
 
 /// One stored cell: fixed-width values inline, String and `bytes<N>`
@@ -110,8 +111,8 @@ enum Cell {
     I64(i64),
     String { start: usize, len: usize },
     FixedBytes { start: usize, len: usize },
-    IntervalU64(crate::interval::Interval<u64>),
-    IntervalI64(crate::interval::Interval<i64>),
+    IntervalU64(bumbledb_theory::Interval<u64>),
+    IntervalI64(bumbledb_theory::Interval<i64>),
 }
 
 /// The caller-owned, reusable answer set: columns are the find terms in
@@ -351,7 +352,7 @@ struct KeyProbeRule {
     finds: Vec<FindSpec>,
     /// The direct point lane's find table. `Some` iff every find is a plain
     /// variable; aggregate and measure key-probe rules keep the shared sink.
-    key_probe_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
+    key_probe_finds: Option<Vec<(bumbledb_theory::schema::FieldId, ValueType)>>,
 }
 
 impl Program {

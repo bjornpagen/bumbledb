@@ -823,7 +823,7 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
         // whole column run (interval start/end pair, a bytes<N> field's
         // ⌈N/8⌉ words), and every field after one is shifted — spans,
         // never raw field indices.
-        let columns_of = |field: crate::schema::FieldId| -> Vec<usize> {
+        let columns_of = |field: bumbledb_theory::schema::FieldId| -> Vec<usize> {
             let span = occurrence.spans[usize::from(field.0)];
             let first = usize::from(span.first_column);
             (first..first + usize::from(span.width.column_count())).collect()
@@ -991,7 +991,7 @@ fn key_probe_find_table(
     key_probe: &crate::exec::dispatch::KeyProbePlan,
     finds: &[FindSpec],
     columns: &[crate::ir::validate::PredicateColumn],
-) -> Option<Vec<(crate::schema::FieldId, ValueType)>> {
+) -> Option<Vec<(bumbledb_theory::schema::FieldId, ValueType)>> {
     finds
         .iter()
         .zip(columns)
