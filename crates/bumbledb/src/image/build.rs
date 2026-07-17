@@ -6,11 +6,12 @@
 
 use std::sync::Arc;
 
-use crate::encoding::TypeDesc;
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{Relation, RelationId, Schema};
+use crate::schema::{Relation, Schema};
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
+use bumbledb_theory::TypeDesc;
+use bumbledb_theory::schema::RelationId;
 
 use super::decode::{decode_fact, decode_plan, fill_columns};
 use super::{
@@ -303,30 +304,92 @@ impl TransientImage {
         for lock in &mut image.distincts {
             *lock = std::sync::OnceLock::new();
         }
-        let RelationImage {
-            columns,
-            words,
-            bytes,
-            ..
-        } = image;
-        let mut filled = 0usize;
-        for (position, row) in rows.enumerate() {
-            debug_assert_eq!(
-                row.len(),
-                columns.len(),
-                "seen-set rows carry one word per image column"
-            );
-            for (column, &word) in columns.iter().zip(row) {
-                match *column {
-                    Column::Words { start } => words[start + position] = word,
-                    Column::Bytes { start } => bytes[start + position] = u8::from(word != 0),
-                }
-            }
-            filled = position + 1;
-        }
+        let filled = fill_encoded_rows(image, 0, rows);
         debug_assert_eq!(filled, row_count, "the caller counted its rows");
         Arc::clone(self.image.as_ref().expect("filled above"))
     }
+
+    /// The incremental sibling of [`Self::refill`] — the fixpoint
+    /// accumulator's append path. Rows `[0, filled)` already sit in this
+    /// slot from its previous call this execution, and a seen-set is
+    /// append-only within one, so writing the suffix `[filled,
+    /// row_count)` alone reproduces a full refill. When the in-place
+    /// precondition fails — a view still holds the `Arc`, or `row_count`
+    /// outgrew the framed capacity — the slot rebuilds whole from
+    /// `rows_since(0)`, framed with doubling headroom (monotone, never
+    /// below the retained high-water) so a growing accumulator
+    /// reallocates logarithmically often, never per round.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::refill`]: programmer-invariant violations only.
+    pub fn append<'r, I>(
+        &mut self,
+        field_types: &[TypeDesc],
+        filled: usize,
+        row_count: usize,
+        rows_since: impl FnOnce(usize) -> I,
+    ) -> Arc<RelationImage>
+    where
+        I: Iterator<Item = &'r [u64]>,
+    {
+        debug_assert!(filled <= row_count, "seen-sets never shrink");
+        let reusable = row_count <= self.capacity
+            && self
+                .image
+                .as_mut()
+                .is_some_and(|arc| Arc::get_mut(arc).is_some());
+        let base = if reusable { filled } else { 0 };
+        if !reusable {
+            let capacity = self.capacity.max(row_count.saturating_mul(2));
+            let frame = allocate(field_types, capacity)
+                .expect("seen-set row counts sit far below the checked slab ceiling");
+            self.image = Some(seal(row_count, frame));
+            self.capacity = capacity;
+        }
+        let image = Arc::get_mut(self.image.as_mut().expect("filled above"))
+            .expect("a non-reusable slot was just replaced by a unique Arc");
+        image.row_count = row_count;
+        for lock in &mut image.distincts {
+            *lock = std::sync::OnceLock::new();
+        }
+        let filled_to = fill_encoded_rows(image, base, rows_since(base));
+        debug_assert_eq!(filled_to, row_count, "the caller counted its rows");
+        Arc::clone(self.image.as_ref().expect("filled above"))
+    }
+}
+
+/// The shared transpose of both fill paths above: encoded word rows into
+/// consecutive positions from `base`; returns one past the last position
+/// written.
+fn fill_encoded_rows<'r>(
+    image: &mut RelationImage,
+    base: usize,
+    rows: impl Iterator<Item = &'r [u64]>,
+) -> usize {
+    let RelationImage {
+        columns,
+        words,
+        bytes,
+        ..
+    } = image;
+    let mut filled = base;
+    for (offset, row) in rows.enumerate() {
+        let position = base + offset;
+        debug_assert_eq!(
+            row.len(),
+            columns.len(),
+            "seen-set rows carry one word per image column"
+        );
+        for (column, &word) in columns.iter().zip(row) {
+            match *column {
+                Column::Words { start } => words[start + position] = word,
+                Column::Bytes { start } => bytes[start + position] = u8::from(word != 0),
+            }
+        }
+        filled = position + 1;
+    }
+    filled
 }
 
 /// Synthesizes a closed relation's image from its sealed extension — the

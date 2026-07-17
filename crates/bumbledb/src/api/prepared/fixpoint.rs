@@ -50,7 +50,6 @@ use std::sync::Arc;
 
 use super::run_join::run_join;
 use super::{Bindings, EitherSink, PreparedQuery, PreparedRule, Program, ProjectionSink};
-use crate::encoding::TypeDesc;
 use crate::error::{Error, Result};
 use crate::exec::run::Counters;
 use crate::image::cache::ImageCache;
@@ -60,6 +59,7 @@ use crate::ir::PredId;
 use crate::ir::normalize::OccId;
 use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
+use bumbledb_theory::TypeDesc;
 
 /// The default per-stratum round budget. Generous by the safety
 /// theorem's own measure: the fueled loop reaches the least fixpoint
@@ -139,8 +139,17 @@ pub(super) struct FixpointScratch {
     /// every half it will ever need, and repeats are allocation-silent
     /// (the high-water window's contract).
     delta: Vec<[TransientImage; 2]>,
-    /// Per predicate: the accumulated image ping-pong.
+    /// Per predicate: the accumulated image ping-pong. Unlike the delta
+    /// pool, each half is a standing image grown incrementally: a half
+    /// materializes the seen-set prefix `[0, acc_filled)` and each round
+    /// appends only the suffix it lags by (`TransientImage::append`) —
+    /// two writes per derived row across the whole fixpoint, never a
+    /// full rebuild per round.
     acc: Vec<[TransientImage; 2]>,
+    /// Per predicate, per accumulated half: rows the half already
+    /// materializes — the append floor. Reset per execution (a new
+    /// seen-set invalidates the halves' contents, never their capacity).
+    acc_filled: Vec<[usize; 2]>,
     /// Per predicate: which delta/acc half the next refill targets —
     /// reset per execution (the deterministic-assignment discipline).
     flip: Vec<bool>,
@@ -177,6 +186,8 @@ impl FixpointScratch {
     fn begin(&mut self, count: usize) {
         self.delta.resize_with(count, Default::default);
         self.acc.resize_with(count, Default::default);
+        self.acc_filled.clear();
+        self.acc_filled.resize(count, [0; 2]);
         self.flip.clear();
         self.flip.resize(count, false);
         self.finished_slot.resize_with(count, Default::default);
@@ -418,6 +429,12 @@ impl<S> PreparedQuery<'_, S> {
                 // seen-set's dense suffix transposed into pooled slots
                 // (never the cache, never the memo — the transient-image
                 // invariant: outside every generation-keyed mechanism).
+                // The delta refills whole (it IS a suffix); the
+                // accumulated half appends only the suffix past its own
+                // filled floor — two rounds' deltas, the half's lag —
+                // and the entry unbind plus round r−1's rebinds are what
+                // return this half's `Arc` to refcount 1 here, exactly
+                // the old full-refill's reuse precondition.
                 for &p in members {
                     let flip = usize::from(scratch.flip[p]);
                     let sink = seen_sink(&predicates[p], &self.sink);
@@ -432,11 +449,14 @@ impl<S> PreparedQuery<'_, S> {
                         len - since,
                         sink.answers_since(since),
                     ));
-                    scratch.round_acc[p] = Some(scratch.acc[p][flip].refill(
+                    let filled = scratch.acc_filled[p][flip];
+                    scratch.round_acc[p] = Some(scratch.acc[p][flip].append(
                         &predicates[p].field_types,
+                        filled,
                         len,
-                        sink.answers_since(0),
+                        |from| sink.answers_since(from),
                     ));
+                    scratch.acc_filled[p][flip] = len;
                     scratch.flip[p] = !scratch.flip[p];
                     scratch.watermark[p] = len;
                 }
