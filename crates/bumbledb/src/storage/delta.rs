@@ -19,8 +19,9 @@
 use std::collections::BTreeMap;
 
 use crate::arena::{Arena, ArenaSlice};
-use crate::schema::{FieldId, KeyId, RelationId, Schema};
+use crate::schema::{KeyId, Schema};
 use crate::storage::keys::DeterminantImage;
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 mod accessors;
 mod alloc;

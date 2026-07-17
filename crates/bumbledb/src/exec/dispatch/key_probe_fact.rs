@@ -20,7 +20,7 @@ use crate::storage::{dict, read};
 /// result), never an insert, never an error.
 fn const_bytes(
     txn: &ReadTxn<'_>,
-    desc: crate::encoding::TypeDesc,
+    desc: bumbledb_theory::TypeDesc,
     value: &Const,
     params: &[Const],
     out: &mut Vec<u8>,
@@ -39,7 +39,7 @@ fn const_bytes(
             out.extend_from_slice(&start.to_be_bytes());
             if !matches!(
                 desc,
-                crate::encoding::TypeDesc::Interval { width: Some(_), .. }
+                bumbledb_theory::TypeDesc::Interval { width: Some(_), .. }
             ) {
                 out.extend_from_slice(&end.to_be_bytes());
             }

@@ -2,8 +2,8 @@ use super::{Fact, Snapshot};
 use crate::api::prepared::{Answers, BindValue, ParamArg, PreparedQuery};
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
-use crate::schema::RelationId;
 use crate::storage::{dict, read};
+use bumbledb_theory::schema::RelationId;
 
 impl<S> Snapshot<'_, S> {
     /// Executes a prepared query with positional parameters into the
@@ -172,7 +172,7 @@ impl<S> Snapshot<'_, S> {
     pub fn get_dyn(
         &self,
         relation: RelationId,
-        key: crate::schema::StatementId,
+        key: bumbledb_theory::schema::StatementId,
         key_values: &[Value],
     ) -> Result<Option<Vec<Value>>> {
         let (_, statement) = super::get::key_statement_of(self.schema, relation, key)?;

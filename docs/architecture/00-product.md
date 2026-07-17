@@ -244,7 +244,12 @@ margin); it never floats and never moves implicitly.
 ## Dependencies (crates)
 
 The engine crates (`bumbledb`, `bumbledb-macros`) depend on exactly `heed` and
-`blake3` — nothing else, ever, without an owner decision. The benchmark/oracle
+`blake3` — nothing else, ever, without an owner decision. The theory member
+`bumbledb-theory` (the engine-free vocabulary: `Value`, `Interval`, the Allen
+masks, the descriptor/spec surface and its one lowering — `70-api.md` § the
+facade ruling) carries ZERO dependencies; `bumbledb` and `bumbledb-macros`
+both depend on it, hosts never name it (the `bumbledb` re-exports are the
+permanent public API). The benchmark/oracle
 member `bumbledb-bench` is the one quarantined exception: it may hold `rusqlite`
 (bundled — the system SQLite is irrelevant and the version pinned) and **nothing
 else**; argument parsing, JSON emission, statistics, and randomness are hand-rolled

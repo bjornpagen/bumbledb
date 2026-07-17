@@ -8,8 +8,8 @@
 use std::collections::BTreeSet;
 
 use crate::error::Result;
-use crate::schema::RelationId;
 use crate::storage::keys::{self, StatKind};
+use bumbledb_theory::schema::RelationId;
 
 use super::{StoreFinding, Sweep, namespace};
 

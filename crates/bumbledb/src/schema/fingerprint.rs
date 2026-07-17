@@ -20,7 +20,7 @@ use super::{
     StatementView, ValueType,
 };
 use crate::encoding::encode_literal;
-use crate::value::Value;
+use bumbledb_theory::Value;
 
 /// Bumped whenever the canonical encoding format itself changes. `v1`:
 /// the statement redesign. `v2`: closed relations — every relation gains a
@@ -242,7 +242,7 @@ fn element_tag(element: IntervalElement) -> u8 {
 /// per-database state, not schema identity. `FixedBytes` literals are
 /// self-encoding (their canonical bytes ARE the value, word-padded), so
 /// they take the shared encoder like every other literal.
-fn put_literal(out: &mut Vec<u8>, desc: crate::encoding::TypeDesc, literal: &Value) {
+fn put_literal(out: &mut Vec<u8>, desc: bumbledb_theory::TypeDesc, literal: &Value) {
     match literal {
         Value::String(bytes) => put_bytes(out, bytes),
         encoded => encode_literal(encoded, desc, out),
@@ -253,6 +253,7 @@ fn put_literal(out: &mut Vec<u8>, desc: crate::encoding::TypeDesc, literal: &Val
 mod tests {
     use super::super::{RelationDescriptor, SchemaDescriptor, StatementId};
     use super::*;
+    use crate::schema::ValidateDescriptor as _;
     use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
 
     fn schema_of(descriptor: SchemaDescriptor) -> Schema {

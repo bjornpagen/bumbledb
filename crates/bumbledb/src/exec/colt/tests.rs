@@ -1,14 +1,15 @@
 use super::*;
 use crate::encoding::{ValueRef, encode_fact};
 use crate::image::view::apply;
-use crate::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor, ValueType,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 

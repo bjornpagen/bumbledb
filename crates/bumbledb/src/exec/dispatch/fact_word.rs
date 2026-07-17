@@ -1,6 +1,7 @@
 use crate::encoding::{TypeDesc, field_bytes};
 use crate::error::CorruptionError;
-use crate::schema::{FieldId, RelationId, Schema};
+use crate::schema::Schema;
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 /// One field's value sliced straight out of canonical fact bytes, in
 /// column-word form: a scalar's byte-order-normalized word (1-byte columns

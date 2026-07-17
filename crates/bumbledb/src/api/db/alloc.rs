@@ -1,6 +1,7 @@
 use super::{Db, Fresh, WriteTx};
 use crate::error::{FactShapeError, Result};
-use crate::schema::{FieldId, FreshField, RelationId};
+use crate::schema::FreshField;
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 impl<S> Db<S> {
     /// Resolves `(relation, field)` to the schema-bound [`FreshField`]

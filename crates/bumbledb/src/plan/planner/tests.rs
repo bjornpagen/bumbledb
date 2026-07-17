@@ -4,8 +4,10 @@ use super::*;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::CmpOp as ViewCmp;
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
     SchemaDescriptor, StatementDescriptor, ValueType,
 };
 use std::collections::BTreeMap;

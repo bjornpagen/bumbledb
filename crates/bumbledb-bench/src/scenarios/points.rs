@@ -5,6 +5,7 @@
 //! either hold up or drown the win. String keys stress the interning
 //! dictionary on every lookup.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
     AggOp, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term,
     Value, VarId,

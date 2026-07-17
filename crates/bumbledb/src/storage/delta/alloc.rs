@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
-use crate::schema::{FieldId, RelationId};
 use crate::storage::env::ReadTxn;
 use crate::storage::keys;
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 use super::{FreshMark, WriteDelta};
 

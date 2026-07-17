@@ -3,9 +3,10 @@
 
 use crate::encoding::{TypeDesc, decode_bool};
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{RelationId, Schema};
+use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
+use bumbledb_theory::schema::RelationId;
 
 use super::{Column, ColumnSpan, ColumnWidth};
 

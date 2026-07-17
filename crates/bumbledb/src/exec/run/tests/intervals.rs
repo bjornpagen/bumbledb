@@ -6,11 +6,11 @@
 //! § normalization; 40-execution, § access paths).
 
 use super::*;
-use crate::allen::AllenMask;
 use crate::image::view::{FilterPredicate, ResolvedWordSource};
 use crate::ir::MaskTerm;
 use crate::ir::normalize::{IntervalWord, PlacedAllen, PlacedWordComparison, SlotWidth, VarWord};
-use crate::schema::ValueType;
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::ValueType;
 
 /// Two relations of shape R(tag u64, during Interval<u64>).
 fn tagged_interval_schema(relations: usize) -> Schema {
@@ -28,7 +28,7 @@ fn tagged_interval_schema(relations: usize) -> Schema {
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
-                            element: crate::schema::IntervalElement::U64,
+                            element: bumbledb_theory::schema::IntervalElement::U64,
                             width: None,
                         },
                         generation: Generation::None,
@@ -59,7 +59,8 @@ fn tagged_interval_views(
                 &[
                     ValueRef::U64(*tag),
                     ValueRef::IntervalU64(
-                        crate::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                        bumbledb_theory::Interval::<u64>::new(*start, *end)
+                            .expect("nonempty interval"),
                     ),
                 ],
                 schema.relation(rel_id).layout(),
@@ -238,7 +239,7 @@ fn intersects_mask_residual_keeps_exactly_the_nine_sharing_configurations() {
 /// tag map follows the [`ALLEN`] fixture's row order.
 #[test]
 fn each_singleton_mask_residual_keeps_exactly_its_configuration() {
-    use crate::allen::Basic;
+    use bumbledb_theory::allen::Basic;
     let expected_tag = [
         (Basic::Before, 1u64),
         (Basic::Meets, 2),
@@ -310,7 +311,7 @@ fn membership_schema() -> Schema {
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
-                            element: crate::schema::IntervalElement::U64,
+                            element: bumbledb_theory::schema::IntervalElement::U64,
                             width: None,
                         },
                         generation: Generation::None,
@@ -359,7 +360,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
             &[
                 ValueRef::U64(emp),
                 ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
                 ),
             ],
             schema.relation(RelationId(0)).layout(),
@@ -486,7 +487,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
-                            element: crate::schema::IntervalElement::U64,
+                            element: bumbledb_theory::schema::IntervalElement::U64,
                             width: None,
                         },
                         generation: Generation::None,
@@ -539,7 +540,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
             &[
                 ValueRef::U64(emp),
                 ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
                 ),
             ],
             schema.relation(RelationId(0)).layout(),
@@ -656,7 +657,7 @@ fn negated_membership_rejects_only_covered_events() {
             &[
                 ValueRef::U64(emp),
                 ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
                 ),
             ],
             schema.relation(RelationId(0)).layout(),
@@ -765,8 +766,8 @@ fn naive_allen_pairs(
         .iter()
         .flat_map(|&(ta, a_s, a_e)| {
             b_rows.iter().filter_map(move |&(tb, b_s, b_e)| {
-                let a = crate::interval::Interval::<u64>::new(a_s, a_e).expect("nonempty");
-                let b = crate::interval::Interval::<u64>::new(b_s, b_e).expect("nonempty");
+                let a = bumbledb_theory::Interval::<u64>::new(a_s, a_e).expect("nonempty");
+                let b = bumbledb_theory::Interval::<u64>::new(b_s, b_e).expect("nonempty");
                 mask.contains(crate::allen::classify(a, b))
                     .then_some((ta, tb))
             })
@@ -776,7 +777,7 @@ fn naive_allen_pairs(
 
 /// The 13 singletons, the workload composites, and 32 random masks.
 fn mask_suite(state: &mut u64) -> Vec<AllenMask> {
-    let mut masks: Vec<AllenMask> = crate::allen::Basic::ALL
+    let mut masks: Vec<AllenMask> = bumbledb_theory::allen::Basic::ALL
         .iter()
         .map(|basic| AllenMask::new(basic.bit()).expect("singleton"))
         .collect();

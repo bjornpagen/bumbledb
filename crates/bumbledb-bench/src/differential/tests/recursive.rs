@@ -11,6 +11,7 @@
 //! Lean side (`lean/Bumbledb/Exec/Fixpoint.lean: evalProgram`) over
 //! the Tiny worlds.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use std::collections::BTreeSet;
 
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, ValueType};

@@ -11,8 +11,8 @@ use super::PreparedQuery;
 use crate::api::db::Snapshot;
 use crate::error::Result;
 use crate::ir::normalize::OccId;
-use crate::schema::RelationId;
 use crate::storage::read;
+use bumbledb_theory::schema::RelationId;
 
 /// One occurrence's pinned prepare-time statistics — the pin record
 /// [`PreparedQuery::staleness`] compares and the stats surface renders

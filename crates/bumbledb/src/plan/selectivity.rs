@@ -14,9 +14,10 @@ use crate::ir::CmpOp;
 use crate::ir::normalize::Occurrence;
 use crate::plan::fj::split_filters;
 use crate::plan::planner::OccStats;
-use crate::schema::{FieldId, Schema};
+use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
+use bumbledb_theory::schema::FieldId;
 
 /// The distinct-count floor for an Eq selection on a field nothing else
 /// describes (a plain string/int column with no resident image): keep
@@ -259,7 +260,7 @@ fn occurrence_estimate(
 fn distinct_of(
     txn: &ReadTxn<'_>,
     schema: &Schema,
-    relation: crate::schema::RelationId,
+    relation: bumbledb_theory::schema::RelationId,
     field: FieldId,
     image: Option<&crate::image::RelationImage>,
     rows: u64,
@@ -306,7 +307,7 @@ fn distinct_of(
         return Ok(bound.min(rows).max(1));
     }
     Ok(match &descriptor.field(field).value_type {
-        crate::schema::ValueType::Bool => 2,
+        bumbledb_theory::schema::ValueType::Bool => 2,
         _ => DEFAULT_EQ_DISTINCT,
     })
 }
@@ -317,14 +318,15 @@ mod tests {
     use crate::encoding::{ValueRef, encode_fact};
     use crate::image::view::Const;
     use crate::ir::normalize::{OccId, Role};
-    use crate::schema::{
-        FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
-        StatementDescriptor, ValueType,
-    };
+    use crate::schema::ValidateDescriptor as _;
     use crate::storage::commit::commit;
     use crate::storage::delta::WriteDelta;
     use crate::storage::env::Environment;
     use crate::testutil::TempDir;
+    use bumbledb_theory::schema::{
+        FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+        StatementDescriptor, ValueType,
+    };
 
     /// R(id u64 fresh — auto-key, memo str, kind u64 over 4 values);
     /// S(id u64 fresh, r u64) with the containment S(r) <= R(id).
@@ -717,7 +719,7 @@ mod tests {
     const CYCLE_C: RelationId = RelationId(3);
 
     fn cyclic_schema() -> Schema {
-        use crate::schema::Row;
+        use bumbledb_theory::schema::Row;
 
         let field = |name: &str| FieldDescriptor {
             name: name.into(),

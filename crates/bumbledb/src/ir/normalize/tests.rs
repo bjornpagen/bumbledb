@@ -1,20 +1,21 @@
 use super::lower_literal::lower_literal;
 use super::*;
-use crate::allen::AllenMask;
 use crate::encoding::{ValueRef, encode_fact, encode_i64};
 use crate::image::view::{Const, MaskConst, ResolvedWordSource};
 use crate::ir::validate::validate;
 use crate::ir::{
     Atom, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term, Value,
 };
-use crate::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, Schema, SchemaDescriptor,
-    ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
+};
 
 /// R(id u64 fresh, a i64, b i64) + S(x u64, y i64)
 /// + P(emp u64, during interval<i64>, review interval<i64>, at i64)
@@ -240,13 +241,13 @@ fn interval_literals_lower_to_encoded_word_pairs() {
     // Each half is encoded exactly like the scalar of its element type.
     assert_eq!(
         lower_literal(&Value::IntervalU64(
-            crate::Interval::<u64>::new(3, 9).expect("nonempty interval")
+            bumbledb_theory::Interval::<u64>::new(3, 9).expect("nonempty interval")
         )),
         Const::Interval { start: 3, end: 9 }
     );
     assert_eq!(
         lower_literal(&Value::IntervalI64(
-            crate::Interval::<i64>::new(-5, 9).expect("nonempty interval")
+            bumbledb_theory::Interval::<i64>::new(-5, 9).expect("nonempty interval")
         )),
         Const::Interval {
             start: w(-5),
@@ -875,7 +876,7 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
 fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
     let iv = || {
         Term::Literal(Value::IntervalI64(
-            crate::Interval::<i64>::new(2, 9).expect("nonempty interval"),
+            bumbledb_theory::Interval::<i64>::new(2, 9).expect("nonempty interval"),
         ))
     };
     let iv_const = Const::Interval {

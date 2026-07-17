@@ -84,7 +84,8 @@ use std::collections::BTreeSet;
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, lower_literal};
 use crate::ir::{AggOp, AtomSource, CmpOp, FindTerm, VarId};
-use crate::schema::{Enforcement, FieldId, Schema, Side, StatementId};
+use crate::schema::{Enforcement, Schema};
+use bumbledb_theory::schema::{FieldId, Side, StatementId};
 
 pub(crate) mod evaluate;
 

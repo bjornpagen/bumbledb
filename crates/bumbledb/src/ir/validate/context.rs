@@ -1,16 +1,17 @@
 use super::{ClassifiedComparison, Context, DurationOperand, ParamKind, SealedConst, TypeSlot};
-use crate::allen::AllenMask;
 use crate::error::ValidationError;
 use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
 use crate::ir::{CmpOp, Comparison, MaskTerm, ParamId, Term, Value, VarId};
-use crate::schema::{FieldId, IntervalElement, Schema, ValueType};
+use crate::schema::Schema;
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 /// The structural type of a literal, for matching against a field or
 /// variable type — the shared [`crate::schema::value_matches`] check, so a
 /// non-UTF-8 `String` literal is a type mismatch here exactly as it is at
 /// bind time and on the dynamic write path.
-use crate::schema::{ValueMismatch as LiteralMismatch, value_matches as literal_matches};
+use bumbledb_theory::schema::{ValueMismatch as LiteralMismatch, value_matches as literal_matches};
 
 /// The scalar type of an interval's element domain.
 fn element_type(element: IntervalElement) -> ValueType {

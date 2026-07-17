@@ -8,6 +8,7 @@
 
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, Value, VarId};
 use bumbledb::schema::FieldId;
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{AnswerValue, Answers, BindValue, Db, Direction, Fact, StatementId, Theory};
 
 mod common;

@@ -6,16 +6,17 @@
 use crate::encoding::{ValueRef, encode_fact};
 use crate::error::{CorruptionError, Error};
 use crate::image::{ColumnWidth, build};
-use crate::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use crate::storage::read;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor, ValueType,
+};
 
 /// D(id u64, head bytes<9>, hash bytes<32>).
 fn schema() -> Schema {
@@ -84,9 +85,9 @@ fn fixed_bytes_fields_decode_into_padded_word_columns() {
 
     // Spans: bytes<9> = 2 word columns, bytes<32> = 4 — column indices
     // shift accordingly (the field→column map, never raw field indices).
-    let head = image.span(crate::schema::FieldId(1));
+    let head = image.span(bumbledb_theory::schema::FieldId(1));
     assert_eq!(head.width, ColumnWidth::Words { count: 2 });
-    let hash = image.span(crate::schema::FieldId(2));
+    let hash = image.span(bumbledb_theory::schema::FieldId(2));
     assert_eq!(hash.first_column, 3);
     assert_eq!(hash.width, ColumnWidth::Words { count: 4 });
 

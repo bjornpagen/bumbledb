@@ -480,6 +480,7 @@ pub fn interval_from_sql(
 mod tests {
     use super::*;
     use crate::fixture::{field, fresh};
+    use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor};
     use bumbledb::{FieldId, RelationId};
 

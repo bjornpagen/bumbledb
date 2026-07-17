@@ -7,6 +7,7 @@
 //! ranges, and interned-string points instead).
 
 use super::{Scenario, ScenarioQuery, mix};
+use bumbledb::schema::ValidateDescriptor as _;
 
 mod corpus;
 mod costars;

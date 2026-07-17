@@ -1,4 +1,5 @@
 use super::*;
+use crate::schema::ValidateDescriptor as _;
 
 use crate::encoding::{ValueRef, encode_fact};
 use crate::error::Error;
@@ -6,13 +7,13 @@ use crate::image::cache::ImageCache;
 use crate::ir::{
     Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value, VarId,
 };
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
-};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+};
 
 mod aggregates;
 mod answers;

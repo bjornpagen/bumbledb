@@ -8,7 +8,8 @@ use super::{
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::validate::{RuleWitness, ValidatedQuery};
 use crate::ir::{Atom, CmpOp, Term, Value, VarId};
-use crate::schema::{FieldId, Schema, ValueType};
+use crate::schema::Schema;
+use bumbledb_theory::schema::{FieldId, ValueType};
 
 /// Lowers the witness into paper form, rule by rule: one
 /// [`NormalizedQuery`] per rule, in rule order — the normalized artifact

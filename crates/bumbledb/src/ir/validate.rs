@@ -88,7 +88,7 @@ use crate::error::ValidationError;
 use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
 use crate::ir::{CmpOp, FindTerm, MaskTerm, ParamId, PredId, Value, VarId};
-use crate::schema::{FieldId, IntervalElement, ValueType};
+use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 mod context;
 mod finds;

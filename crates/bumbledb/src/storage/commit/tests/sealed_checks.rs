@@ -6,15 +6,17 @@
 
 use crate::encoding::ValueRef;
 use crate::error::{Direction, Error, Result, Violation};
-use crate::schema::{
-    CompiledCheck, ContainmentId, FieldId, KeyId, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
-};
+use crate::schema::ValidateDescriptor as _;
+use crate::schema::{CompiledCheck, ContainmentId, KeyId, Schema};
 use crate::storage::commit::judgment::{SelectionCheck, Selections};
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
-use crate::value::Value;
+use bumbledb_theory::Value;
+use bumbledb_theory::schema::{
+    FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, StatementId,
+    ValueType,
+};
 
 use super::{apply_delta, fact, field, selected, side};
 
@@ -218,7 +220,7 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
 /// field's value a MEMBER of the spelled set).
 #[test]
 fn a_literal_set_sigma_seals_and_judges_membership() {
-    use crate::schema::LiteralSet;
+    use bumbledb_theory::schema::LiteralSet;
 
     let schema: Schema = SchemaDescriptor {
         relations: vec![
@@ -242,7 +244,7 @@ fn a_literal_set_sigma_seals_and_judges_membership() {
                 projection: Box::new([FieldId(0)]),
             },
             StatementDescriptor::Containment {
-                source: crate::schema::Side {
+                source: bumbledb_theory::schema::Side {
                     relation: TRANSFER,
                     projection: Box::new([FieldId(0)]),
                     selection: Box::new([(

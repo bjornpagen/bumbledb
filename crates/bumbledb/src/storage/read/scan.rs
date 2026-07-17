@@ -1,7 +1,8 @@
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{Relation, RelationId, Schema};
+use crate::schema::{Relation, Schema};
 use crate::storage::env::ReadTxn;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use bumbledb_theory::schema::RelationId;
 
 use super::check_width::check_width;
 

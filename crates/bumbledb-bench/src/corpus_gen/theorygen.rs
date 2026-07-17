@@ -372,6 +372,7 @@ fn pick<'pool>(rng: &mut Rng, pool: &'pool [&'pool str]) -> &'pool str {
 mod tests {
     use super::random_descriptor;
     use crate::corpus_gen::Rng;
+    use bumbledb::schema::ValidateDescriptor as _;
 
     /// The arm is deterministic in its entropy: the same byte string
     /// yields the identical descriptor, and a different one steers away.

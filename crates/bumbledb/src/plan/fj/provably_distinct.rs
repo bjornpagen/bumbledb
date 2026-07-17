@@ -47,7 +47,7 @@ pub(crate) fn provably_distinct(
                 return false;
             };
             let relation = schema.relation(stored);
-            let bound_fields: BTreeSet<crate::schema::FieldId> = occurrence
+            let bound_fields: BTreeSet<bumbledb_theory::schema::FieldId> = occurrence
                 .vars
                 .iter()
                 .map(|(f, _)| *f)

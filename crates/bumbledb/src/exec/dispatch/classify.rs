@@ -2,7 +2,8 @@ use super::{KeyProbePlan, KeyProbeVar};
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::CmpOp;
 use crate::ir::normalize::NormalizedQuery;
-use crate::schema::{FieldId, Relation, Schema, StatementId};
+use crate::schema::{Relation, Schema};
+use bumbledb_theory::schema::{FieldId, StatementId};
 
 /// Classifies a normalized query: `Some(KeyProbePlan)` iff it is key-probe
 /// eligible — exactly one atom occurrence (positive, so no negated atoms

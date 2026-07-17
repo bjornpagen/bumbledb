@@ -5,15 +5,17 @@ use crate::exec::sink::{AggregateSink, FindSpec, FoldOp, ProjectionSink};
 use crate::image::view::ResolvedWordSource;
 use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, PlacedComparison, Role, SlotWidth};
 use crate::ir::{CmpOp, ParamId, VarId};
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::dict;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
+    SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
+};
 
 /// Account(id fresh u64, holder u64, name string): statement 0 is the
 /// fresh auto-key on `id`.
@@ -281,11 +283,11 @@ fn currency_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: Some(Box::new([
-                crate::schema::Row {
+                bumbledb_theory::schema::Row {
                     handle: "Usd".into(),
                     values: Box::new([crate::ir::Value::U64(2)]),
                 },
-                crate::schema::Row {
+                bumbledb_theory::schema::Row {
                     handle: "Eur".into(),
                     values: Box::new([crate::ir::Value::U64(0)]),
                 },
@@ -550,14 +552,14 @@ fn pointwise_key_probe_hit_is_byte_exact() {
             vec![
                 ValueRef::U64(1),
                 ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
                 ),
                 ValueRef::U64(100),
             ],
             vec![
                 ValueRef::U64(1),
                 ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(20, 30).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(20, 30).expect("nonempty interval"),
                 ),
                 ValueRef::U64(200),
             ],
@@ -611,7 +613,9 @@ fn full_fact_membership_lookup_with_an_interval_field() {
         &schema,
         &[vec![
             ValueRef::U64(2),
-            ValueRef::IntervalU64(crate::Interval::<u64>::new(5, 10).expect("nonempty interval")),
+            ValueRef::IntervalU64(
+                bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+            ),
         ]],
     );
     let exact = single(occurrence(
@@ -657,7 +661,9 @@ fn an_interval_variable_decodes_into_its_two_slot_span() {
         &schema,
         &[vec![
             ValueRef::U64(1),
-            ValueRef::IntervalU64(crate::Interval::<u64>::new(5, 10).expect("nonempty interval")),
+            ValueRef::IntervalU64(
+                bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+            ),
         ]],
     );
     // Q(span) :- Shift(id = 1, span) — span is a two-word variable.

@@ -6,9 +6,11 @@
 //! and must stay green, byte-identical, over the reified predicate.
 
 use crate::ir::{AggOp, Atom, FindTerm, Query, Rule, Term, VarId};
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, Schema,
-    SchemaDescriptor, ValueType,
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
+    ValueType,
 };
 
 /// R(id fresh u64, b bool, u u64, i i64, s string, x bytes<8>,
@@ -343,7 +345,7 @@ fn query_of(case: &Case) -> Query {
     Query::single(Rule {
         finds: case.finds.clone(),
         atoms: vec![Atom {
-            source: crate::ir::AtomSource::Edb(crate::schema::RelationId(0)),
+            source: crate::ir::AtomSource::Edb(bumbledb_theory::schema::RelationId(0)),
             bindings: case
                 .bindings
                 .iter()

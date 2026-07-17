@@ -948,7 +948,7 @@ fn rejects_a_ray_axiom() {
         of_element(
             IntervalElement::U64,
             Value::IntervalU64(
-                crate::Interval::<u64>::new(5, u64::MAX).expect("nonempty interval")
+                bumbledb_theory::Interval::<u64>::new(5, u64::MAX).expect("nonempty interval")
             )
         )
         .validate()
@@ -959,7 +959,7 @@ fn rejects_a_ray_axiom() {
         of_element(
             IntervalElement::I64,
             Value::IntervalI64(
-                crate::Interval::<i64>::new(5, i64::MAX).expect("nonempty interval")
+                bumbledb_theory::Interval::<i64>::new(5, i64::MAX).expect("nonempty interval")
             )
         )
         .validate()
@@ -1048,7 +1048,7 @@ fn closed_window() -> RelationDescriptor {
         vec![row(
             "Morning",
             vec![Value::IntervalU64(
-                crate::Interval::<u64>::new(6, 12).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(6, 12).expect("nonempty interval"),
             )],
         )],
     )
@@ -1272,13 +1272,13 @@ fn rejects_a_declared_pointwise_key_the_axioms_refute() {
                 row(
                     "Morning",
                     vec![Value::IntervalU64(
-                        crate::Interval::<u64>::new(6, 12).expect("nonempty interval"),
+                        bumbledb_theory::Interval::<u64>::new(6, 12).expect("nonempty interval"),
                     )],
                 ),
                 row(
                     "Brunch",
                     vec![Value::IntervalU64(
-                        crate::Interval::<u64>::new(10, 14).expect("nonempty interval"),
+                        bumbledb_theory::Interval::<u64>::new(10, 14).expect("nonempty interval"),
                     )],
                 ),
             ],

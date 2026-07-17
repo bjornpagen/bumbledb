@@ -432,6 +432,11 @@ the driver: it prepares as its output predicate's query, byte for byte
   (`image::TransientImage`, `image/build.rs`): a round's delta and accumulated
   images are columnar transposes of the seen-set's word rows — the
   `synthesize_closed` precedent with a cheaper source, no fact-bytes decode.
+  The accumulated image is **incremental**, never rebuilt per round: the
+  seen-set is append-only within an execution, so each half of the ping-pong
+  pair remembers its own filled floor and appends only the suffix it lags by
+  (`TransientImage::append`, `image/build.rs`); the delta image stays a
+  per-round transpose of the frontier suffix.
   A transient image is valid for one round of one execution, a lifetime the
   generation vocabulary cannot express, so it is **never** in the `ImageCache`
   generation map, never parked in the view memo (`Idb` occurrences bypass

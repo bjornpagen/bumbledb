@@ -48,7 +48,7 @@
 //!   else a flag µop leaked into the miss shadow — read the
 //!   disassembly.
 
-use crate::allen::AllenMask;
+use bumbledb_theory::allen::AllenMask;
 
 #[cfg(target_arch = "aarch64")]
 use super::neon;

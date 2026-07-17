@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use super::{CommitSeq, Db};
 use crate::error::Result;
 use crate::image::cache::ImageCache;
-use crate::schema::{Schema, Theory};
+use crate::schema::{Schema, Theory, ValidateDescriptor as _};
 use crate::storage::env::Environment;
 
 impl<S: Theory> Db<S> {

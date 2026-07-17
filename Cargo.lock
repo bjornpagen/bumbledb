@@ -55,6 +55,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "bumbledb-macros",
+ "bumbledb-theory",
  "heed",
  "libc",
 ]
@@ -70,6 +71,9 @@ dependencies = [
 [[package]]
 name = "bumbledb-macros"
 version = "0.1.0"
+dependencies = [
+ "bumbledb-theory",
+]
 
 [[package]]
 name = "bumbledb-query"
@@ -77,6 +81,10 @@ version = "0.1.0"
 dependencies = [
  "bumbledb",
 ]
+
+[[package]]
+name = "bumbledb-theory"
+version = "0.1.0"
 
 [[package]]
 name = "byteorder"

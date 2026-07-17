@@ -55,7 +55,8 @@
 //! the selected field's newtype to its closed relation's row id); interval
 //! literals are written `start..end`, half-open; a binding may carry a
 //! literal SET — `field == {A, B}`, read disjunctively (a one-element
-//! set is the bare literal — `{L}` and `{}` do not parse).
+//! set is the bare literal — `{L}` and `{}` are expansion errors naming
+//! the bare spelling).
 //!
 //! **Closed relations** declare their extension in the schema — rows are
 //! ground axioms, handle = declaration-order row id
@@ -90,41 +91,45 @@
 //! `bytes<N>` fields are `[u8; N]` — owned, `Copy`, lifetime-free (the
 //! fixed-width law) — so all-fixed-width structs stay lifetime-free.
 //!
-//! The macro validates only its own grammar plus name-to-id resolution
-//! (both are compile errors at the call site): expansion emits
-//! `SchemaDescriptor` construction directly, ids resolved at expansion
-//! time from declaration order. Everything semantic beyond names surfaces
-//! as the typed `SchemaError` from `Db::create`/`Db::open`, where the
-//! descriptor is validated.
+//! The macro judges its own grammar and literal typing (expansion
+//! errors at the call site; the token→`Value` conversion is where a
+//! literal that does not fit its field dies). Name→id resolution and the
+//! canonical-utterance ban table are NOT the macro's: the parse builds a
+//! [`bumbledb_theory::schema::spec::SchemaSpec`] plus a span table and
+//! runs the ONE shared lowering (`SchemaSpec::descriptor`) at expansion —
+//! the macro and the runtime spec path cannot drift — and every
+//! `SpecIssue` lands as a `compile_error!` at the offending token. The
+//! lowered `SchemaDescriptor` is then emitted as const construction.
+//! Everything semantic beyond names surfaces as the typed `SchemaError`
+//! from `Db::create`/`Db::open`, where the descriptor is validated.
 
-use proc_macro::{Delimiter, TokenStream, TokenTree};
+use bumbledb_theory::schema::spec::{
+    FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SchemaSpec, SideSpec,
+    SpecIssue, StatementSide, StatementSpec, WindowSpec,
+};
+use bumbledb_theory::schema::{
+    Generation, IntervalElement, LiteralSet, SchemaDescriptor, Side as SideDescriptor,
+    StatementDescriptor, ValueType,
+};
+use bumbledb_theory::{Interval, Value};
+use proc_macro::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::iter::Peekable;
 
-/// The element domain of an `interval<..>` field: closed to the two
-/// orderable scalars, mirroring the engine's `IntervalElement`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IntervalElement {
-    U64,
-    I64,
+/// The Rust scalar type an interval element ranges over.
+fn element_rust(element: IntervalElement) -> &'static str {
+    match element {
+        IntervalElement::U64 => "u64",
+        IntervalElement::I64 => "i64",
+    }
 }
 
-impl IntervalElement {
-    /// The Rust scalar type the interval ranges over.
-    fn rust(self) -> &'static str {
-        match self {
-            Self::U64 => "u64",
-            Self::I64 => "i64",
-        }
-    }
-
-    /// The engine-side variant-name suffix (`IntervalU64` / `IntervalI64`).
-    fn suffix(self) -> &'static str {
-        match self {
-            Self::U64 => "U64",
-            Self::I64 => "I64",
-        }
+/// The engine-side variant-name suffix (`IntervalU64` / `IntervalI64`).
+fn element_suffix(element: IntervalElement) -> &'static str {
+    match element {
+        IntervalElement::U64 => "U64",
+        IntervalElement::I64 => "I64",
     }
 }
 
@@ -158,8 +163,12 @@ struct Relation {
     /// (`id`, `u64 as Handle`) field is materialized at index 0 at parse,
     /// so statement field ids, id constants, and the newtype emission all
     /// see the sealed shape (`FieldId(0)` = the handle's row id). The
-    /// descriptor emission skips it — `validate()` prepends its own.
+    /// spec built for the lowering carries declared columns only —
+    /// `validate()` prepends its own synthetic field.
     fields: Vec<Field>,
+    /// The handle newtype token's span of a closed relation — where a
+    /// `DuplicateHandleNewtype` issue points.
+    newtype_span: Option<Span>,
     /// `Some` declares the relation **closed**: its extension is the row
     /// list, ground axioms in declaration order. The option is the kind,
     /// mirroring `RelationDescriptor.extension`.
@@ -182,9 +191,9 @@ struct ClosedRow {
 }
 
 /// A selection literal as written — classified by its own syntax, typed
-/// against the selected field's declaration at emission. Integer and
-/// string/byte-string token text is spliced verbatim into the generated
-/// `Value`, so rustc polices the value itself.
+/// against the selected field's declaration at the token→`Value` seam
+/// ([`typed_literal`]), where a literal that does not fit dies at
+/// expansion.
 #[derive(Debug, Clone)]
 enum Literal {
     Bool(bool),
@@ -194,8 +203,10 @@ enum Literal {
         text: String,
     },
     /// A bare ident: a closed relation's handle, resolved to its
-    /// declaration-order row id through the selected field's newtype.
-    Handle(String),
+    /// declaration-order row id through the selected field's newtype by
+    /// the shared lowering. The span is the ident's — where the
+    /// handle-shaped issues point.
+    Handle(String, Span),
     /// A string literal's raw token text, quotes included.
     Str(String),
     /// A byte-string literal's raw token text.
@@ -209,45 +220,61 @@ enum Literal {
 
 /// One σ binding's right side: a single literal (`f == L`, the equality
 /// spelling) or a braced literal set (`f == {A, B}`, the disjunctive
-/// spelling — `docs/architecture/30-dependencies.md`). By the
-/// canonical-utterance law both degenerate sets are expansion panics
-/// naming the canonical form: `{L}` (a one-element set is the bare
-/// literal) and `{}` (an empty set selects nothing; write no binding).
+/// spelling — `docs/architecture/30-dependencies.md`). The degenerate
+/// sets (`{L}`, `{}`) parse and are banned by the shared lowering
+/// (`DegenerateLiteralSet`), the error naming the canonical form.
 #[derive(Debug, Clone)]
 enum Literals {
     One(Literal),
     Many(Vec<Literal>),
 }
 
+/// One σ binding as written: the selected field, its ident's span, the
+/// right side, and — for the braced set spelling — the brace group's
+/// span (where a `DegenerateLiteralSet` issue points).
+#[derive(Debug, Clone)]
+struct Binding {
+    field: String,
+    field_span: Span,
+    literals: Literals,
+    set_span: Option<Span>,
+}
+
 /// One side of a dependency statement:
-/// `R(fields [ | field == literal-or-set, .. ])`.
+/// `R(fields [ | field == literal-or-set, .. ])`. Name spans ride along
+/// for the lowering's span table.
 #[derive(Debug, Clone)]
 struct Side {
     relation: String,
-    projection: Vec<String>,
-    selection: Vec<(String, Literals)>,
+    relation_span: Span,
+    projection: Vec<(String, Span)>,
+    selection: Vec<Binding>,
 }
 
-/// One parsed dependency statement. `==` never reaches here: it is lowered
-/// at parse into two adjacent `Containment`s, `A <= B` first.
+/// One parsed dependency statement, one per [`StatementSpec`] — `==` is
+/// the `bidirectional` containment spelling, lowered to the two adjacent
+/// descriptors (`A <= B` first) by the shared lowering, not here.
 #[derive(Debug, Clone)]
 enum Statement {
     Functionality {
         relation: String,
-        projection: Vec<String>,
+        relation_span: Span,
+        projection: Vec<(String, Span)>,
     },
     Containment {
         source: Side,
         target: Side,
+        bidirectional: bool,
     },
-    /// `B(Y | ψ) <={lo..hi} A(X | σ);` — B-family, target-left: the
+    /// `B(Y | ψ) <={window} A(X | σ);` — B-family, target-left: the
     /// LEFT side is the window's target (the per-group parent), the
-    /// right side the counted source. `hi` is `None` for the `{lo..*}`
-    /// floor spelling; the `{n}` exact spelling lands as `lo = hi = n`.
+    /// right side the counted source. The spelling survives as written —
+    /// the shared lowering owns the ban table — and the brace group's
+    /// span is where a banned spelling's error points.
     Cardinality {
         source: Side,
-        lo: u64,
-        hi: Option<u64>,
+        window: WindowSpec,
+        window_span: Span,
         target: Side,
     },
 }
@@ -264,8 +291,13 @@ struct SchemaAst {
 type Tokens = Peekable<proc_macro::token_stream::IntoIter>;
 
 fn expect_ident(tokens: &mut Tokens, what: &str) -> String {
+    spanned_ident(tokens, what).0
+}
+
+/// An expected ident plus its span — the span table's raw material.
+fn spanned_ident(tokens: &mut Tokens, what: &str) -> (String, Span) {
     match tokens.next() {
-        Some(TokenTree::Ident(ident)) => ident.to_string(),
+        Some(TokenTree::Ident(ident)) => (ident.to_string(), ident.span()),
         other => panic!("schema!: expected {what}, found {other:?}"),
     }
 }
@@ -319,6 +351,7 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
     let mut relation = Relation {
         name,
         fields: Vec::new(),
+        newtype_span: None,
         closed: None,
     };
     let mut tokens = body.into_iter().peekable();
@@ -472,7 +505,7 @@ fn parse_closed_relation(tokens: &mut Tokens) -> Relation {
          (docs/architecture/70-api.md)"
     );
     tokens.next();
-    let newtype = expect_ident(tokens, "the handle newtype's name");
+    let (newtype, newtype_span) = spanned_ident(tokens, "the handle newtype's name");
     let mut relation = if peek_brace(tokens) {
         let body = take_group(tokens, Delimiter::Brace, "a relation body");
         parse_relation(name, body)
@@ -480,9 +513,11 @@ fn parse_closed_relation(tokens: &mut Tokens) -> Relation {
         Relation {
             name,
             fields: Vec::new(),
+            newtype_span: None,
             closed: None,
         }
     };
+    relation.newtype_span = Some(newtype_span);
     for field in &relation.fields {
         assert_ne!(
             field.name, "id",
@@ -586,8 +621,9 @@ fn is_int_text(text: &str) -> bool {
     text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.')
 }
 
-/// Parses one `[-] int`, returning the sign and the raw token text (spliced
-/// verbatim into the generated code — rustc polices range and form).
+/// Parses one `[-] int`, returning the sign and the raw token text —
+/// range and radix are judged at the token→`Value` seam, against the
+/// field's declared type.
 fn parse_int(tokens: &mut Tokens, what: &str) -> (bool, String) {
     let negative = peek_punct(tokens, '-');
     if negative {
@@ -627,11 +663,11 @@ fn finish_int(tokens: &mut Tokens, negative: bool, text: String) -> Literal {
 fn parse_literal(tokens: &mut Tokens) -> Literal {
     match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
-            let word = expect_ident(tokens, "a literal");
+            let (word, span) = spanned_ident(tokens, "a literal");
             match word.as_str() {
                 "true" => Literal::Bool(true),
                 "false" => Literal::Bool(false),
-                _ => Literal::Handle(word),
+                _ => Literal::Handle(word, span),
             }
         }
         Some(TokenTree::Punct(p)) if p.as_char() == '-' => {
@@ -657,17 +693,19 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
 }
 
 /// Parses one binding's right side: a braced literal set (`{A, B}`) or a
-/// single literal. The degenerate sets are expansion panics naming the
-/// canonical form (the canonical-utterance law,
-/// `docs/architecture/70-api.md`): `{L}` — a one-element set is the bare
-/// literal `field == L` — and `{}` (an empty set selects nothing; write
-/// no binding).
-fn parse_literals(field: &str, tokens: &mut Tokens) -> Literals {
+/// single literal. The degenerate sets (`{L}`, `{}`) parse here and are
+/// banned by the shared lowering (the canonical-utterance law's
+/// `DegenerateLiteralSet`, its error naming the canonical form) — the
+/// returned span is the brace group's, where that error points.
+fn parse_literals(tokens: &mut Tokens) -> (Literals, Option<Span>) {
     if !peek_brace(tokens) {
-        return Literals::One(parse_literal(tokens));
+        return (Literals::One(parse_literal(tokens)), None);
     }
-    let body = take_group(tokens, Delimiter::Brace, "a literal set");
-    let mut set_tokens = body.into_iter().peekable();
+    let Some(TokenTree::Group(group)) = tokens.next() else {
+        unreachable!("peeked a brace group");
+    };
+    let span = group.span();
+    let mut set_tokens = group.stream().into_iter().peekable();
     let mut literals = Vec::new();
     while set_tokens.peek().is_some() {
         literals.push(parse_literal(&mut set_tokens));
@@ -675,26 +713,16 @@ fn parse_literals(field: &str, tokens: &mut Tokens) -> Literals {
             set_tokens.next();
         }
     }
-    match literals.len() {
-        0 => panic!(
-            "schema!: the literal set for `{field}` is empty — an empty set selects \
-             nothing; write no binding"
-        ),
-        1 => panic!(
-            "schema!: the literal set for `{field}` has one element — a one-element \
-             set is the bare literal: write `{field} == L`, no braces"
-        ),
-        _ => Literals::Many(literals),
-    }
+    (Literals::Many(literals), Some(span))
 }
 
 /// Parses `fields [ | field == literal-or-set, .. ]` out of one side's
 /// parens.
-fn parse_side(relation: String, group: TokenStream) -> Side {
+fn parse_side(relation: String, relation_span: Span, group: TokenStream) -> Side {
     let mut tokens = group.into_iter().peekable();
     let mut projection = Vec::new();
     while tokens.peek().is_some() && !peek_punct(&mut tokens, '|') {
-        projection.push(expect_ident(&mut tokens, "a field name"));
+        projection.push(spanned_ident(&mut tokens, "a field name"));
         if peek_punct(&mut tokens, ',') {
             tokens.next();
         }
@@ -703,11 +731,16 @@ fn parse_side(relation: String, group: TokenStream) -> Side {
     if peek_punct(&mut tokens, '|') {
         tokens.next();
         while tokens.peek().is_some() {
-            let field = expect_ident(&mut tokens, "a selected field name");
+            let (field, field_span) = spanned_ident(&mut tokens, "a selected field name");
             expect_punct(&mut tokens, '=');
             expect_punct(&mut tokens, '=');
-            let literals = parse_literals(&field, &mut tokens);
-            selection.push((field, literals));
+            let (literals, set_span) = parse_literals(&mut tokens);
+            selection.push(Binding {
+                field,
+                field_span,
+                literals,
+                set_span,
+            });
             if peek_punct(&mut tokens, ',') {
                 tokens.next();
             }
@@ -715,6 +748,7 @@ fn parse_side(relation: String, group: TokenStream) -> Side {
     }
     Side {
         relation,
+        relation_span,
         projection,
         selection,
     }
@@ -722,17 +756,24 @@ fn parse_side(relation: String, group: TokenStream) -> Side {
 
 /// Parses `Rel(...)` — the right-hand side of `<=` / `==`.
 fn parse_statement_side(tokens: &mut Tokens) -> Side {
-    let relation = expect_ident(tokens, "a relation name");
+    let (relation, relation_span) = spanned_ident(tokens, "a relation name");
     let group = take_group(tokens, Delimiter::Parenthesis, "a projection list");
-    parse_side(relation, group)
+    parse_side(relation, relation_span, group)
 }
 
-/// Parses one dependency statement, `relation` being its left relation name
-/// (already consumed). `==` lowers here to two adjacent `Containment`s,
-/// `A <= B` first (docs/architecture/30-dependencies.md).
-fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<Statement>) {
+/// Parses one dependency statement, `relation` being its left relation
+/// name (already consumed, its span in hand). `==` survives as the
+/// `bidirectional` containment spelling — the shared lowering lowers it
+/// to two adjacent `Containment`s, `A <= B` first
+/// (docs/architecture/30-dependencies.md).
+fn parse_statement(
+    relation: String,
+    relation_span: Span,
+    tokens: &mut Tokens,
+    statements: &mut Vec<Statement>,
+) {
     let group = take_group(tokens, Delimiter::Parenthesis, "a projection list");
-    let left = parse_side(relation, group);
+    let left = parse_side(relation, relation_span, group);
     match tokens.next() {
         // `->`: functionality. The right side is the side's own relation,
         // and the FD form takes no selection — the engine descriptor
@@ -752,6 +793,7 @@ fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<S
             );
             statements.push(Statement::Functionality {
                 relation: left.relation,
+                relation_span: left.relation_span,
                 projection: left.projection,
             });
         }
@@ -762,14 +804,16 @@ fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<S
         Some(TokenTree::Punct(p)) if p.as_char() == '<' => {
             expect_punct(tokens, '=');
             if peek_brace(tokens) {
-                let body = take_group(tokens, Delimiter::Brace, "the window bounds");
-                let spelling = parse_window(body);
+                let Some(TokenTree::Group(group)) = tokens.next() else {
+                    unreachable!("peeked a brace group");
+                };
+                let window_span = group.span();
+                let spelling = parse_window(group.stream());
                 let right = parse_statement_side(tokens);
-                let (lo, hi) = admit_window(spelling, &left.relation, &right.relation);
                 statements.push(Statement::Cardinality {
                     source: right,
-                    lo,
-                    hi,
+                    window: spelling,
+                    window_span,
                     target: left,
                 });
             } else {
@@ -777,20 +821,18 @@ fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<S
                 statements.push(Statement::Containment {
                     source: left,
                     target: right,
+                    bidirectional: false,
                 });
             }
         }
-        // `==`: set equality, lowered to the two containments.
+        // `==`: set equality — the bidirectional containment spelling.
         Some(TokenTree::Punct(p)) if p.as_char() == '=' => {
             expect_punct(tokens, '=');
             let right = parse_statement_side(tokens);
             statements.push(Statement::Containment {
-                source: left.clone(),
-                target: right.clone(),
-            });
-            statements.push(Statement::Containment {
-                source: right,
-                target: left,
+                source: left,
+                target: right,
+                bidirectional: true,
             });
         }
         // The deleted `in lo..hi per` window spelling never parses —
@@ -809,18 +851,6 @@ fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<S
     expect_punct(tokens, ';');
 }
 
-/// A window's bounds exactly as written — the spelling is judged by
-/// [`admit_window`] before it lowers to `(lo, hi)`.
-#[derive(Clone, Copy)]
-enum WindowSpelling {
-    /// `{n}` — THE exact-count spelling (`{0}` is the exclusion).
-    Exact(u64),
-    /// `{lo..hi}` — two explicit bounds.
-    Range(u64, u64),
-    /// `{lo..*}` — a floor, no ceiling.
-    Floor(u64),
-}
-
 /// One window bound out of the brace group: a non-negative integer,
 /// parsed here (not spliced) because the canonical-utterance law compares
 /// bounds at expansion.
@@ -835,10 +865,12 @@ fn parse_window_bound(tokens: &mut Tokens, what: &str) -> u64 {
         .unwrap_or_else(|_| panic!("schema!: malformed window bound `{text}`"))
 }
 
-/// Parses the `<={…}` brace group into the spelling as written. The open
-/// shorthands are never admitted — bounds are always explicit:
-/// `{..hi}` and `{lo..}` are expansion panics naming the explicit form.
-fn parse_window(body: TokenStream) -> WindowSpelling {
+/// Parses the `<={…}` brace group into the spelling as written — the
+/// shared lowering's [`WindowSpec`], judged by its ban table, never
+/// here. The open shorthands are not spellable in the spec vocabulary,
+/// so the grammar itself refuses them: `{..hi}` and `{lo..}` are
+/// expansion panics naming the explicit form.
+fn parse_window(body: TokenStream) -> WindowSpec {
     let mut tokens = body.into_iter().peekable();
     assert!(
         tokens.peek().is_some(),
@@ -851,7 +883,7 @@ fn parse_window(body: TokenStream) -> WindowSpelling {
     );
     let lo = parse_window_bound(&mut tokens, "the window's lower bound");
     if tokens.peek().is_none() {
-        return WindowSpelling::Exact(lo);
+        return WindowSpec::Exact(lo);
     }
     expect_punct(&mut tokens, '.');
     expect_punct(&mut tokens, '.');
@@ -862,50 +894,18 @@ fn parse_window(body: TokenStream) -> WindowSpelling {
     );
     let spelling = if peek_punct(&mut tokens, '*') {
         tokens.next();
-        WindowSpelling::Floor(lo)
+        WindowSpec::Floor(lo)
     } else {
-        WindowSpelling::Range(
+        WindowSpec::Range {
             lo,
-            parse_window_bound(&mut tokens, "the window's upper bound"),
-        )
+            hi: parse_window_bound(&mut tokens, "the window's upper bound"),
+        }
     };
     assert!(
         tokens.peek().is_none(),
         "schema!: trailing tokens after the window bounds"
     );
     spelling
-}
-
-/// The canonical-utterance law over the window vocabulary
-/// (`docs/architecture/70-api.md`): every banned spelling is an expansion
-/// panic NAMING the canonical form. Survivors — each otherwise
-/// unrepresentable — lower to the descriptor's `(lo, hi)`: `{n}` exact
-/// (`{0}` the exclusion), `{lo..hi}` with lo < hi, `{lo..*}` floors
-/// (lo ≥ 2), `{0..hi}` ceilings.
-fn admit_window(spelling: WindowSpelling, target: &str, source: &str) -> (u64, Option<u64>) {
-    match spelling {
-        WindowSpelling::Exact(n) => (n, Some(n)),
-        WindowSpelling::Range(lo, hi) if hi < lo => panic!(
-            "schema!: the window `{{{lo}..{hi}}}` is inverted — no count satisfies it; \
-             bounds are `{{lo..hi}}` with lo < hi (an exact count is `{{n}}`)"
-        ),
-        WindowSpelling::Range(0, 0) => {
-            panic!("schema!: `{{0..0}}` — the exclusion is written `{{0}}`")
-        }
-        WindowSpelling::Range(lo, hi) if lo == hi => {
-            panic!("schema!: `{{{lo}..{hi}}}` — an exact count is written `{{{lo}}}`")
-        }
-        WindowSpelling::Range(lo, hi) => (lo, Some(hi)),
-        WindowSpelling::Floor(0) => panic!(
-            "schema!: the `{{0..*}}` window is vacuous — it provably says nothing \
-             (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`); delete the statement"
-        ),
-        WindowSpelling::Floor(1) => panic!(
-            "schema!: `{{1..*}}` says only what the bare containment says — drop the \
-             annotation and write `{target}(…) <= {source}(…)`"
-        ),
-        WindowSpelling::Floor(lo) => (lo, None),
-    }
 }
 
 /// Parses the whole `schema!` body: the `pub Name;` header first, then
@@ -927,7 +927,8 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
         statements: Vec::new(),
     };
     while tokens.peek().is_some() {
-        let ident = expect_ident(&mut tokens, "`relation`, `closed relation`, or a statement");
+        let (ident, ident_span) =
+            spanned_ident(&mut tokens, "`relation`, `closed relation`, or a statement");
         if ident == "closed" {
             let keyword = expect_ident(&mut tokens, "`relation` after `closed`");
             assert_eq!(
@@ -951,7 +952,7 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
                  (docs/architecture/30-dependencies.md § refused: order marks)"
             );
         } else {
-            parse_statement(ident, &mut tokens, &mut schema.statements);
+            parse_statement(ident, ident_span, &mut tokens, &mut schema.statements);
         }
     }
     schema
@@ -960,22 +961,30 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
 /// The declarative schema surface: expands to the header's `Theory`
 /// unit struct, host-side newtypes and host enums, and one typed fact struct
 /// per relation with `encode_write`/`encode_delete`/`encode_read`/`decode`
-/// boundaries. The expansion constructs `SchemaDescriptor` directly — ids
-/// resolved here from declaration order — and semantic validation runs
-/// where the definition is consumed (`Db::create`/`Db::open`, as the
-/// typed `SchemaError`).
+/// boundaries. The expansion builds a `SchemaSpec` plus a span table, runs
+/// the ONE shared lowering (`SchemaSpec::descriptor` — name→id resolution
+/// and the canonical-utterance ban table, the same pass the runtime spec
+/// path runs), and emits the lowered `SchemaDescriptor` as const
+/// construction. Semantic validation beyond names runs where the
+/// definition is consumed (`Db::create`/`Db::open`, as the typed
+/// `SchemaError`).
 ///
 /// # Panics
 ///
-/// On malformed `schema!` grammar or an unresolvable relation/field/handle
-/// name — a compile error at the macro call site, reported with the
-/// offending token or name.
+/// On malformed `schema!` grammar or a literal that does not fit its
+/// field's declared type — a compile error at the macro call site.
+/// Lowering issues (unresolvable names, banned spellings) are not panics:
+/// each becomes a `compile_error!` at the offending token.
 #[proc_macro]
 pub fn schema(input: TokenStream) -> TokenStream {
     let schema = parse_schema(input);
-    let closed = closed_map(&schema.relations);
+    let (spec, spans) = lower_input(&schema);
+    let descriptor = match spec.descriptor() {
+        Ok(descriptor) => descriptor,
+        Err(error) => return spec_errors(error.issues(), &spec, &spans),
+    };
     let mut out = String::new();
-    emit_schema_def(&mut out, &schema, &closed);
+    emit_schema_def(&mut out, &schema.name, &descriptor);
     emit_id_constants(&mut out, &schema);
     emit_newtypes(&mut out, &schema.relations);
     emit_closed(&mut out, &schema.relations);
@@ -993,152 +1002,94 @@ pub fn schema(input: TokenStream) -> TokenStream {
     out.parse().expect("schema!: generated code parses")
 }
 
-/// The handle namespace: newtype name → its owning closed relation. A
-/// handle literal in a selection or row resolves through the referenced
-/// field's newtype, so each handle newtype must name exactly one closed
-/// relation — two claimants panic with both named.
-fn closed_map(relations: &[Relation]) -> BTreeMap<&str, &Relation> {
-    let mut map: BTreeMap<&str, &Relation> = BTreeMap::new();
-    for relation in relations {
-        if relation.closed.is_none() {
-            continue;
-        }
-        let newtype = relation.fields[0]
-            .newtype
-            .as_deref()
-            .expect("closed relations carry the handle newtype");
-        if let Some(existing) = map.insert(newtype, relation) {
-            panic!(
-                "schema!: handle newtype `{newtype}` is declared by two closed relations \
-                 (`{}` and `{}`) — a handle newtype names exactly one closed relation",
-                existing.name, relation.name
-            );
-        }
-    }
-    map
+/// The parse's span table: every issue the shared lowering can return
+/// maps through here to the offending token. Handle-shaped issues carry
+/// their own key — the structural [`LiteralAt`] address — and the
+/// duplicate-newtype issue carries relation indices; the name-keyed
+/// multimaps serve the rest, and every span under a matched key is
+/// offending (the key carries enough context that no innocent token
+/// shares it), so all are marked.
+#[derive(Default)]
+struct SpanTable {
+    /// (statement, relation name) → the relation ident's spans.
+    relations: BTreeMap<(usize, String), Vec<Span>>,
+    /// (statement, relation name, field name) → the field idents' spans,
+    /// projection and selection occurrences alike.
+    fields: BTreeMap<(usize, String, String), Vec<Span>>,
+    /// statement → its window brace group's span.
+    windows: BTreeMap<usize, Span>,
+    /// (statement, field name, set len) → literal-set brace spans.
+    sets: BTreeMap<(usize, String, usize), Vec<Span>>,
+    /// A handle literal's structural address → its ident's span.
+    literals: BTreeMap<LiteralAt, Span>,
+    /// relation index → its handle newtype ident's span (closed only).
+    newtypes: BTreeMap<usize, Span>,
 }
 
-/// Resolves a statement-named relation to its declaration index — the
-/// `RelationId`, by the declaration-order rule.
-fn relation_index(relations: &[Relation], name: &str) -> usize {
-    relations
+/// The typing seam's lookup: the declared type of `relation.field`, if
+/// both names resolve. Name→id RESOLUTION is the shared lowering's — this
+/// lookup only types literal tokens, and an unknown name yields `None`
+/// (the literal gets a placeholder and the lowering reports the name).
+/// Closed relations are searched in their sealed shape — the synthetic
+/// `id` field is in the AST's list, so `| id == 1` types as `u64`.
+fn declared_type<'ast>(
+    schema: &'ast SchemaAst,
+    relation: &str,
+    field: &str,
+) -> Option<&'ast FieldTy> {
+    schema
+        .relations
         .iter()
-        .position(|r| r.name == name)
-        .unwrap_or_else(|| panic!("schema!: relation `{name}` is not declared in this invocation"))
-}
-
-/// Resolves a statement-named field to its declaration index within its
-/// relation — the `FieldId`.
-fn field_index(declaration: &Relation, field: &str) -> usize {
-    declaration
+        .find(|r| r.name == relation)?
         .fields
         .iter()
-        .position(|f| f.name == field)
-        .unwrap_or_else(|| {
-            panic!(
-                "schema!: relation `{}` has no field `{field}`",
-                declaration.name
-            )
-        })
+        .find(|f| f.name == field)
+        .map(|f| &f.ty)
 }
 
-/// Renders one field's structural type as a `ValueType` expression.
-fn value_type_expr(ty: &FieldTy) -> String {
-    let value_type = "::bumbledb::schema::ValueType";
-    match ty {
-        FieldTy::Bool => format!("{value_type}::Bool"),
-        FieldTy::U64 => format!("{value_type}::U64"),
-        FieldTy::I64 => format!("{value_type}::I64"),
-        FieldTy::Str => format!("{value_type}::String"),
-        FieldTy::FixedBytes(len) => format!("{value_type}::FixedBytes {{ len: {len} }}"),
-        FieldTy::Interval(element, width) => {
-            let width = match width {
-                None => "::std::option::Option::None".to_owned(),
-                Some(w) => format!("::std::option::Option::Some({w}u64)"),
-            };
-            format!(
-                "{value_type}::Interval {{ element: ::bumbledb::schema::IntervalElement::{},                  width: {width} }}",
-                element.suffix()
-            )
-        }
-    }
-}
-
-/// Renders one signed integer bound.
-fn signed(bound: &(bool, String)) -> String {
-    let (negative, text) = bound;
-    if *negative {
-        format!("-{text}")
-    } else {
-        text.clone()
-    }
-}
-
-/// Renders one literal — a statement selection's or a closed row's — as a
-/// shared `Value` expression, typed against the field's declaration: one
-/// machine, same errors, both call sites. A bare handle resolves through
-/// the field's newtype to its owning closed relation's declaration-order
-/// row id. Integer and string/byte-string
-/// token text is spliced verbatim, so rustc polices the value itself.
-fn value_expr(
-    closed: &BTreeMap<&str, &Relation>,
-    declaration: &Relation,
+/// One selection literal into the spec: handles pass through by name
+/// (the lowering resolves them), everything else runs the token→`Value`
+/// seam against the field's declared type — or a placeholder when the
+/// name itself is unresolvable, which the lowering reports (a nonempty
+/// issue list fails the whole expansion, so placeholders never escape).
+fn typed_or_placeholder(
+    schema: &SchemaAst,
+    relation: &str,
     field: &str,
     literal: &Literal,
-) -> String {
-    let relation = &declaration.name;
-    let field_decl = &declaration.fields[field_index(declaration, field)];
-    let ty = &field_decl.ty;
-    let value = "::bumbledb::Value";
-    match (ty, literal) {
-        (FieldTy::Bool, Literal::Bool(v)) => format!("{value}::Bool({v})"),
+) -> LiteralSpec {
+    if let Literal::Handle(name, _) = literal {
+        return LiteralSpec::Handle(name.as_str().into());
+    }
+    match declared_type(schema, relation, field) {
+        Some(ty) => typed_literal(relation, field, ty, literal),
+        None => LiteralSpec::Value(Value::U64(0)),
+    }
+}
+
+/// The token→`Value` seam — the macro's half of the two-boundary split:
+/// literal TYPING stays an expansion error here (a literal that does not
+/// fit its field's declared type never degrades to a `Db::create`
+/// error), while name resolution and the ban table are the shared
+/// lowering's. One machine for statement selections and closed rows —
+/// same errors, both call sites.
+fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -> LiteralSpec {
+    let value = match (ty, literal) {
+        (_, Literal::Handle(name, _)) => return LiteralSpec::Handle(name.as_str().into()),
+        (FieldTy::Bool, Literal::Bool(v)) => Value::Bool(*v),
         (
             FieldTy::U64,
             Literal::Int {
                 negative: false,
                 text,
             },
-        ) => format!("{value}::U64({text})"),
-        (FieldTy::I64, Literal::Int { negative, text }) => {
-            format!("{value}::I64({})", signed(&(*negative, text.clone())))
-        }
-        // A bare handle: legal on a field whose newtype is a closed
-        // relation's handle newtype — the handle namespace is
-        // per-closed-relation, resolved through the reference. It compiles
-        // to the row's declaration-order id.
-        (_, Literal::Handle(name)) => {
-            let owner = field_decl
-                .newtype
-                .as_deref()
-                .and_then(|newtype| closed.get(newtype));
-            let Some(owner) = owner else {
-                panic!(
-                    "schema!: `{relation}.{field}` is not a closed-relation reference — \
-                     the handle literal `{name}` is legal only on a field whose newtype \
-                     is a closed relation's handle newtype"
-                );
-            };
-            let rows = &owner
-                .closed
-                .as_ref()
-                .expect("closed-map entries are closed")
-                .rows;
-            let id = rows
-                .iter()
-                .position(|row| row.handle == *name)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "schema!: closed relation `{}` has no handle `{name}`",
-                        owner.name
-                    )
-                });
-            format!("{value}::U64({id})")
-        }
-        (FieldTy::Str, Literal::Str(text)) => {
-            format!("{value}::String(::std::boxed::Box::from({text}.as_bytes()))")
-        }
+        ) => Value::U64(u64_text(text).unwrap_or_else(|| literal_mismatch(relation, field))),
+        (FieldTy::I64, Literal::Int { negative, text }) => Value::I64(
+            i64_text(*negative, text).unwrap_or_else(|| literal_mismatch(relation, field)),
+        ),
+        (FieldTy::Str, Literal::Str(text)) => Value::String(unescape_str(text).into()),
         (FieldTy::FixedBytes(_), Literal::Bytes(text)) => {
-            format!("{value}::FixedBytes(::std::boxed::Box::from(&{text}[..]))")
+            Value::FixedBytes(unescape_bytes(text).into())
         }
         (
             FieldTy::Interval(IntervalElement::U64, _),
@@ -1146,112 +1097,678 @@ fn value_expr(
                 start: (false, start),
                 end: (false, end),
             },
-        ) => format!(
-            "{value}::IntervalU64(::bumbledb::Interval::<u64>::new({start}, {end}).expect(\"schema! interval literals are nonempty\"))"
-        ),
+        ) => {
+            let start = u64_text(start).unwrap_or_else(|| literal_mismatch(relation, field));
+            let end = u64_text(end).unwrap_or_else(|| literal_mismatch(relation, field));
+            Value::IntervalU64(nonempty_interval(
+                relation,
+                field,
+                Interval::<u64>::new(start, end),
+            ))
+        }
         (FieldTy::Interval(IntervalElement::I64, _), Literal::Interval { start, end }) => {
+            let start =
+                i64_text(start.0, &start.1).unwrap_or_else(|| literal_mismatch(relation, field));
+            let end = i64_text(end.0, &end.1).unwrap_or_else(|| literal_mismatch(relation, field));
+            Value::IntervalI64(nonempty_interval(
+                relation,
+                field,
+                Interval::<i64>::new(start, end),
+            ))
+        }
+        _ => literal_mismatch(relation, field),
+    };
+    LiteralSpec::Value(value)
+}
+
+/// The typing seam's one refusal, shared by every arm.
+fn literal_mismatch(relation: &str, field: &str) -> ! {
+    panic!(
+        "schema!: the literal for `{relation}.{field}` does not fit \
+         the field's declared type"
+    )
+}
+
+/// Interval literals are nonempty by the width law — judged here at the
+/// seam (an empty literal is a typing error, not a `Db::create` one).
+fn nonempty_interval<T>(relation: &str, field: &str, interval: Option<T>) -> T {
+    interval.unwrap_or_else(|| {
+        panic!(
+            "schema!: the interval literal for `{relation}.{field}` is empty — \
+             `start..end` is half-open, start < end"
+        )
+    })
+}
+
+/// An integer literal's magnitude out of its token text: underscores
+/// dropped, the `0x`/`0o`/`0b` radix prefixes honored (the seam parses
+/// what rustc would have; type suffixes are not part of the grammar).
+fn int_magnitude(text: &str) -> Option<u128> {
+    let text = text.replace('_', "");
+    let (digits, radix) = match text.as_bytes() {
+        [b'0', b'x', ..] => (&text[2..], 16),
+        [b'0', b'o', ..] => (&text[2..], 8),
+        [b'0', b'b', ..] => (&text[2..], 2),
+        _ => (text.as_str(), 10),
+    };
+    u128::from_str_radix(digits, radix).ok()
+}
+
+/// A `u64` literal value, or `None` when the text is not one.
+fn u64_text(text: &str) -> Option<u64> {
+    u64::try_from(int_magnitude(text)?).ok()
+}
+
+/// An `i64` literal value from sign + magnitude, or `None`.
+fn i64_text(negative: bool, text: &str) -> Option<i64> {
+    let magnitude = i128::try_from(int_magnitude(text)?).ok()?;
+    i64::try_from(if negative { -magnitude } else { magnitude }).ok()
+}
+
+/// Decodes a cooked string literal's token text (quotes included) to its
+/// UTF-8 bytes.
+fn unescape_str(text: &str) -> Vec<u8> {
+    let body = text
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("rustc lexed the string literal");
+    unescape(body, true)
+}
+
+/// Decodes a cooked byte-string literal's token text (`b"…"`) to its
+/// bytes.
+fn unescape_bytes(text: &str) -> Vec<u8> {
+    let body = text
+        .strip_prefix("b\"")
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("rustc lexed the byte-string literal");
+    unescape(body, false)
+}
+
+/// The cooked-literal escape decoder — the seam's token→bytes half.
+/// `unicode` admits `\u{…}` (string literals only). Malformed escapes
+/// are unreachable: the token came out of rustc's lexer.
+fn unescape(body: &str, unicode: bool) -> Vec<u8> {
+    let lexed = "rustc lexed the literal";
+    let mut out = Vec::new();
+    let mut chars = body.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut utf8 = [0u8; 4];
+            out.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
+            continue;
+        }
+        match chars.next().expect(lexed) {
+            'n' => out.push(b'\n'),
+            'r' => out.push(b'\r'),
+            't' => out.push(b'\t'),
+            '\\' => out.push(b'\\'),
+            '\'' => out.push(b'\''),
+            '"' => out.push(b'"'),
+            '0' => out.push(0),
+            'x' => {
+                let high = chars.next().and_then(|c| c.to_digit(16)).expect(lexed);
+                let low = chars.next().and_then(|c| c.to_digit(16)).expect(lexed);
+                out.push(u8::try_from(high * 16 + low).expect("two hex digits fit a byte"));
+            }
+            'u' if unicode => {
+                assert_eq!(chars.next(), Some('{'), "{lexed}");
+                let mut code = 0u32;
+                loop {
+                    let c = chars.next().expect(lexed);
+                    if c == '}' {
+                        break;
+                    }
+                    code = code * 16 + c.to_digit(16).expect(lexed);
+                }
+                let mut utf8 = [0u8; 4];
+                let c = char::from_u32(code).expect(lexed);
+                out.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
+            }
+            // The line-continuation escape: a backslash before a newline
+            // swallows the newline and leading whitespace.
+            '\n' => {
+                while chars.peek().is_some_and(|c| c.is_whitespace()) {
+                    chars.next();
+                }
+            }
+            other => unreachable!("rustc lexed the literal; found escape `\\{other}`"),
+        }
+    }
+    out
+}
+
+/// One field's declared structural type as the shared [`ValueType`].
+fn field_value_type(relation: &str, field: &Field) -> ValueType {
+    match &field.ty {
+        FieldTy::Bool => ValueType::Bool,
+        FieldTy::U64 => ValueType::U64,
+        FieldTy::I64 => ValueType::I64,
+        FieldTy::Str => ValueType::String,
+        FieldTy::FixedBytes(len) => ValueType::FixedBytes {
+            len: u16::try_from(*len).unwrap_or_else(|_| {
+                // 65..=u16::MAX still flows to the validator's typed
+                // range error; only the unrepresentable dies here.
+                panic!(
+                    "schema!: field `{relation}.{}`: bytes<{len}> does not fit the \
+                     width's domain (1..=64 — docs/architecture/10-data-model.md)",
+                    field.name
+                )
+            }),
+        },
+        FieldTy::Interval(element, width) => ValueType::Interval {
+            element: *element,
+            width: *width,
+        },
+    }
+}
+
+/// The parse as the shared lowering's input: the [`SchemaSpec`] twin of
+/// the invocation (declared columns only — the AST's synthetic closed
+/// `id` field is the validator's to materialize) plus the span table
+/// every lowering issue maps through.
+fn lower_input(schema: &SchemaAst) -> (SchemaSpec, SpanTable) {
+    let mut spans = SpanTable::default();
+    let relations = lower_relations(schema, &mut spans);
+    let statements = lower_statements(schema, &mut spans);
+    (
+        SchemaSpec {
+            relations,
+            statements,
+        },
+        spans,
+    )
+}
+
+/// [`lower_input`]'s relation half: `RelationSpec`s in declaration
+/// order, closed extensions through the token→`Value` seam, handle and
+/// newtype spans recorded.
+fn lower_relations(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<RelationSpec> {
+    let mut relations = Vec::with_capacity(schema.relations.len());
+    for (rel_idx, relation) in schema.relations.iter().enumerate() {
+        let closed = relation.closed.is_some();
+        if let Some(span) = relation.newtype_span {
+            spans.newtypes.insert(rel_idx, span);
+        }
+        let declared = &relation.fields[usize::from(closed)..];
+        let extension = relation.closed.as_ref().map(|extension| {
+            extension
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(row_idx, row)| RowSpec {
+                    handle: row.handle.as_str().into(),
+                    values: row
+                        .values
+                        .iter()
+                        .enumerate()
+                        .map(|(column, (column_name, literal))| {
+                            if let Literal::Handle(_, span) = literal {
+                                let at = LiteralAt::Row {
+                                    relation: rel_idx,
+                                    row: row_idx,
+                                    column,
+                                };
+                                spans.literals.insert(at, *span);
+                            }
+                            typed_literal(
+                                &relation.name,
+                                column_name,
+                                &declared[column].ty,
+                                literal,
+                            )
+                        })
+                        .collect(),
+                })
+                .collect()
+        });
+        relations.push(RelationSpec {
+            name: relation.name.as_str().into(),
+            newtype: closed
+                .then(|| relation.fields[0].newtype.as_deref())
+                .flatten()
+                .map(Into::into),
+            fields: declared
+                .iter()
+                .map(|field| FieldSpec {
+                    name: field.name.as_str().into(),
+                    value_type: field_value_type(&relation.name, field),
+                    newtype: field.newtype.as_deref().map(Into::into),
+                    fresh: field.fresh,
+                })
+                .collect(),
+            extension,
+        });
+    }
+    relations
+}
+
+/// [`lower_input`]'s statement half, over the relations already lowered.
+fn lower_statements(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<StatementSpec> {
+    let mut statements = Vec::with_capacity(schema.statements.len());
+    for (index, statement) in schema.statements.iter().enumerate() {
+        match statement {
+            Statement::Functionality {
+                relation,
+                relation_span,
+                projection,
+            } => {
+                spans
+                    .relations
+                    .entry((index, relation.clone()))
+                    .or_default()
+                    .push(*relation_span);
+                for (field, span) in projection {
+                    spans
+                        .fields
+                        .entry((index, relation.clone(), field.clone()))
+                        .or_default()
+                        .push(*span);
+                }
+                statements.push(StatementSpec::Fd {
+                    relation: relation.as_str().into(),
+                    projection: projection
+                        .iter()
+                        .map(|(field, _)| field.as_str().into())
+                        .collect(),
+                });
+            }
+            Statement::Containment {
+                source,
+                target,
+                bidirectional,
+            } => {
+                statements.push(StatementSpec::Containment {
+                    source: lower_side(schema, index, StatementSide::Source, source, spans),
+                    target: lower_side(schema, index, StatementSide::Target, target, spans),
+                    bidirectional: *bidirectional,
+                });
+            }
+            Statement::Cardinality {
+                source,
+                window,
+                window_span,
+                target,
+            } => {
+                spans.windows.insert(index, *window_span);
+                statements.push(StatementSpec::Cardinality {
+                    target: lower_side(schema, index, StatementSide::Target, target, spans),
+                    window: *window,
+                    source: lower_side(schema, index, StatementSide::Source, source, spans),
+                });
+            }
+        }
+    }
+    statements
+}
+
+/// One parsed side into its [`SideSpec`], every name's span recorded
+/// under the keys the lowering's issues carry.
+fn lower_side(
+    schema: &SchemaAst,
+    statement: usize,
+    which: StatementSide,
+    side: &Side,
+    spans: &mut SpanTable,
+) -> SideSpec {
+    spans
+        .relations
+        .entry((statement, side.relation.clone()))
+        .or_default()
+        .push(side.relation_span);
+    let mut field_span = |field: &str, span: Span| {
+        spans
+            .fields
+            .entry((statement, side.relation.clone(), field.to_owned()))
+            .or_default()
+            .push(span);
+    };
+    let mut projection = Vec::with_capacity(side.projection.len());
+    for (field, span) in &side.projection {
+        field_span(field, *span);
+        projection.push(field.as_str().into());
+    }
+    let mut selection = Vec::with_capacity(side.selection.len());
+    for (binding_idx, binding) in side.selection.iter().enumerate() {
+        field_span(&binding.field, binding.field_span);
+        let mut handle_span = |literal_idx: usize, literal: &Literal| {
+            if let Literal::Handle(_, span) = literal {
+                let at = LiteralAt::Selection {
+                    statement,
+                    side: which,
+                    binding: binding_idx,
+                    literal: literal_idx,
+                };
+                spans.literals.insert(at, *span);
+            }
+        };
+        let typed = |literal: &Literal| {
+            typed_or_placeholder(schema, &side.relation, &binding.field, literal)
+        };
+        let literals = match &binding.literals {
+            Literals::One(literal) => {
+                handle_span(0, literal);
+                LiteralSetSpec::One(typed(literal))
+            }
+            Literals::Many(many) => {
+                if let Some(span) = binding.set_span {
+                    spans
+                        .sets
+                        .entry((statement, binding.field.clone(), many.len()))
+                        .or_default()
+                        .push(span);
+                }
+                LiteralSetSpec::Many(
+                    many.iter()
+                        .enumerate()
+                        .map(|(literal_idx, literal)| {
+                            handle_span(literal_idx, literal);
+                            typed(literal)
+                        })
+                        .collect(),
+                )
+            }
+        };
+        selection.push((binding.field.as_str().into(), literals));
+    }
+    SideSpec {
+        relation: side.relation.as_str().into(),
+        projection,
+        selection,
+    }
+}
+
+/// Every lowering issue as a `compile_error!` at its offending token —
+/// each message naming the canonical form, text unchanged from the
+/// macro's panic era. Identical issues collapse (one issue per
+/// occurrence is the lowering's contract; the span table's multimap
+/// already marks every occurrence under a key).
+fn spec_errors(issues: &[SpecIssue], spec: &SchemaSpec, spans: &SpanTable) -> TokenStream {
+    let mut out = TokenStream::new();
+    let mut seen: Vec<&SpecIssue> = Vec::new();
+    for issue in issues {
+        if seen.contains(&issue) {
+            continue;
+        }
+        seen.push(issue);
+        let message = issue_message(issue, spec);
+        for span in issue_spans(issue, spans) {
+            out.extend(compile_error_tokens(span, &message));
+        }
+    }
+    out
+}
+
+/// The spans one issue marks — through the issue's own structural key
+/// where it carries one, through the name-keyed multimaps otherwise.
+/// The call site is the (unreachable) fallback: every issue the lowering
+/// can raise names tokens the parse recorded.
+fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
+    let multi =
+        |found: Option<&Vec<Span>>| found.map_or_else(|| vec![Span::call_site()], Clone::clone);
+    let one = |found: Option<&Span>| vec![found.copied().unwrap_or_else(Span::call_site)];
+    match issue {
+        SpecIssue::UnknownRelation {
+            statement,
+            relation,
+        } => multi(spans.relations.get(&(*statement, relation.to_string()))),
+        SpecIssue::UnknownField {
+            statement,
+            relation,
+            field,
+        } => multi(
+            spans
+                .fields
+                .get(&(*statement, relation.to_string(), field.to_string())),
+        ),
+        SpecIssue::NotAHandleField { at, .. } | SpecIssue::UnknownHandle { at, .. } => {
+            one(spans.literals.get(at))
+        }
+        SpecIssue::DuplicateHandleNewtype {
+            second_relation, ..
+        } => one(spans.newtypes.get(second_relation)),
+        SpecIssue::WindowInverted { statement, .. }
+        | SpecIssue::WindowExactRespelled { statement, .. }
+        | SpecIssue::WindowExclusionRespelled { statement }
+        | SpecIssue::WindowVacuous { statement }
+        | SpecIssue::WindowContainmentRespelled { statement } => one(spans.windows.get(statement)),
+        SpecIssue::DegenerateLiteralSet {
+            statement,
+            field,
+            len,
+        } => multi(spans.sets.get(&(*statement, field.to_string(), *len))),
+    }
+}
+
+/// One issue's message — the macro's own dialect: the panic-era text,
+/// verbatim, each naming the canonical form (the ban table's law). The
+/// containment-respelled window composes the paste-back containment from
+/// the spec's own statement.
+fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
+    match issue {
+        SpecIssue::UnknownRelation { relation, .. } => {
+            format!("schema!: relation `{relation}` is not declared in this invocation")
+        }
+        SpecIssue::UnknownField {
+            relation, field, ..
+        } => format!("schema!: relation `{relation}` has no field `{field}`"),
+        SpecIssue::NotAHandleField {
+            relation,
+            field,
+            handle,
+            ..
+        } => format!(
+            "schema!: `{relation}.{field}` is not a closed-relation reference — \
+             the handle literal `{handle}` is legal only on a field whose newtype \
+             is a closed relation's handle newtype"
+        ),
+        SpecIssue::UnknownHandle { closed, handle, .. } => {
+            format!("schema!: closed relation `{closed}` has no handle `{handle}`")
+        }
+        SpecIssue::DuplicateHandleNewtype {
+            newtype,
+            first,
+            second,
+            ..
+        } => format!(
+            "schema!: handle newtype `{newtype}` is declared by two closed relations \
+             (`{first}` and `{second}`) — a handle newtype names exactly one closed relation"
+        ),
+        SpecIssue::WindowInverted { lo, hi, .. } => format!(
+            "schema!: the window `{{{lo}..{hi}}}` is inverted — no count satisfies it; \
+             bounds are `{{lo..hi}}` with lo < hi (an exact count is `{{n}}`)"
+        ),
+        SpecIssue::WindowExactRespelled { count, .. } => {
+            format!("schema!: `{{{count}..{count}}}` — an exact count is written `{{{count}}}`")
+        }
+        SpecIssue::WindowExclusionRespelled { .. } => {
+            "schema!: `{0..0}` — the exclusion is written `{0}`".to_owned()
+        }
+        SpecIssue::WindowVacuous { .. } => "schema!: the `{0..*}` window is vacuous — it \
+             provably says nothing (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`); \
+             delete the statement"
+            .to_owned(),
+        SpecIssue::WindowContainmentRespelled { statement } => {
+            let StatementSpec::Cardinality { target, source, .. } = &spec.statements[*statement]
+            else {
+                unreachable!("the containment-respelled window rides a cardinality statement");
+            };
             format!(
-                "{value}::IntervalI64(::bumbledb::Interval::<i64>::new({}, {}).expect(\"schema! interval literals are nonempty\"))",
-                signed(start),
-                signed(end)
+                "schema!: `{{1..*}}` says only what the bare containment says — drop the \
+                 annotation and write `{}(…) <= {}(…)`",
+                target.relation, source.relation
             )
         }
-        _ => panic!(
-            "schema!: the literal for `{relation}.{field}` does not fit \
-             the field's declared type"
+        SpecIssue::DegenerateLiteralSet { field, len: 0, .. } => format!(
+            "schema!: the literal set for `{field}` is empty — an empty set selects \
+             nothing; write no binding"
+        ),
+        SpecIssue::DegenerateLiteralSet { field, .. } => format!(
+            "schema!: the literal set for `{field}` has one element — a one-element \
+             set is the bare literal: write `{field} == L`, no braces"
         ),
     }
 }
 
-/// Renders `FieldId(i), ..` for a statement-named field list.
-fn field_id_list(declaration: &Relation, fields: &[String]) -> String {
-    fields
-        .iter()
-        .map(|f| {
-            format!(
-                "::bumbledb::schema::FieldId({})",
-                field_index(declaration, f)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+/// `::core::compile_error!{"…"}` with every token spanned at the
+/// offender — the diagnostic lands on the token itself, not the
+/// invocation.
+fn compile_error_tokens(span: Span, message: &str) -> TokenStream {
+    let mut literal = proc_macro::Literal::string(message);
+    literal.set_span(span);
+    let mut group = Group::new(
+        Delimiter::Brace,
+        TokenStream::from(TokenTree::Literal(literal)),
+    );
+    group.set_span(span);
+    [
+        TokenTree::Punct(Punct::new(':', Spacing::Joint)),
+        TokenTree::Punct(Punct::new(':', Spacing::Alone)),
+        TokenTree::Ident(Ident::new("core", span)),
+        TokenTree::Punct(Punct::new(':', Spacing::Joint)),
+        TokenTree::Punct(Punct::new(':', Spacing::Alone)),
+        TokenTree::Ident(Ident::new("compile_error", span)),
+        TokenTree::Punct(Punct::new('!', Spacing::Alone)),
+        TokenTree::Group(group),
+    ]
+    .into_iter()
+    .map(|mut tree| {
+        tree.set_span(span);
+        tree
+    })
+    .collect()
 }
 
-/// Renders one binding's literal set as a `LiteralSet` expression — the
-/// singleton spelling stays the `One` arm by construction.
-fn literals_expr(
-    closed: &BTreeMap<&str, &Relation>,
-    declaration: &Relation,
-    field: &str,
-    literals: &Literals,
-) -> String {
-    match literals {
-        Literals::One(literal) => format!(
-            "::bumbledb::schema::LiteralSet::One({})",
-            value_expr(closed, declaration, field, literal)
+/// Renders one structural type as its `ValueType` expression.
+fn value_type_tokens(value_type: &ValueType) -> String {
+    let path = "::bumbledb::schema::ValueType";
+    match value_type {
+        ValueType::Bool => format!("{path}::Bool"),
+        ValueType::U64 => format!("{path}::U64"),
+        ValueType::I64 => format!("{path}::I64"),
+        ValueType::String => format!("{path}::String"),
+        ValueType::FixedBytes { len } => format!("{path}::FixedBytes {{ len: {len} }}"),
+        ValueType::Interval { element, width } => {
+            let width = match width {
+                None => "::std::option::Option::None".to_owned(),
+                Some(w) => format!("::std::option::Option::Some({w}u64)"),
+            };
+            format!(
+                "{path}::Interval {{ element: ::bumbledb::schema::IntervalElement::{}, \
+                 width: {width} }}",
+                element_suffix(*element)
+            )
+        }
+    }
+}
+
+/// Renders one lowered literal as its `Value` expression. String and
+/// byte content re-escapes through std's escapers, so the emitted
+/// literal round-trips the seam's decoded bytes exactly.
+fn value_tokens(value: &Value) -> String {
+    let path = "::bumbledb::Value";
+    match value {
+        Value::Bool(v) => format!("{path}::Bool({v})"),
+        Value::U64(v) => format!("{path}::U64({v})"),
+        Value::I64(v) => format!("{path}::I64({v})"),
+        Value::String(bytes) => {
+            let text = std::str::from_utf8(bytes).expect("schema! string literals are UTF-8");
+            format!(
+                "{path}::String(::std::boxed::Box::from(\"{}\".as_bytes()))",
+                text.escape_default()
+            )
+        }
+        Value::FixedBytes(bytes) => format!(
+            "{path}::FixedBytes(::std::boxed::Box::from(&b\"{}\"[..]))",
+            bytes.escape_ascii()
         ),
-        Literals::Many(values) => {
+        Value::IntervalU64(interval) => {
+            let (start, end) = interval.bounds();
+            format!(
+                "{path}::IntervalU64(::bumbledb::Interval::<u64>::new({start}, {end})\
+                 .expect(\"schema! interval literals are nonempty\"))"
+            )
+        }
+        Value::IntervalI64(interval) => {
+            let (start, end) = interval.bounds();
+            format!(
+                "{path}::IntervalI64(::bumbledb::Interval::<i64>::new({start}, {end})\
+                 .expect(\"schema! interval literals are nonempty\"))"
+            )
+        }
+        Value::AllenMask(_) => unreachable!("schema! literals never carry an Allen mask"),
+    }
+}
+
+/// Renders one binding's lowered literal set as a `LiteralSet`
+/// expression.
+fn literal_set_tokens(set: &LiteralSet) -> String {
+    match set {
+        LiteralSet::One(value) => format!(
+            "::bumbledb::schema::LiteralSet::One({})",
+            value_tokens(value)
+        ),
+        LiteralSet::Many(values) => {
             let mut rendered = String::new();
-            for literal in values {
-                let _ = write!(
-                    rendered,
-                    "{},",
-                    value_expr(closed, declaration, field, literal)
-                );
+            for value in values {
+                let _ = write!(rendered, "{},", value_tokens(value));
             }
             format!("::bumbledb::schema::LiteralSet::Many(::std::boxed::Box::new([{rendered}]))")
         }
     }
 }
 
-/// Renders one side as a `Side` expression, ids pre-resolved.
-fn side_expr(relations: &[Relation], closed: &BTreeMap<&str, &Relation>, side: &Side) -> String {
-    let relation = relation_index(relations, &side.relation);
-    let declaration = &relations[relation];
+/// Renders one lowered side as a `Side` expression.
+fn side_tokens(side: &SideDescriptor) -> String {
+    let projection = side
+        .projection
+        .iter()
+        .map(|field| format!("::bumbledb::schema::FieldId({})", field.0))
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut selection = String::new();
-    for (field, literals) in &side.selection {
+    for (field, set) in &side.selection {
         let _ = write!(
             selection,
             "(::bumbledb::schema::FieldId({}), {}),",
-            field_index(declaration, field),
-            literals_expr(closed, declaration, field, literals)
+            field.0,
+            literal_set_tokens(set)
         );
     }
     format!(
         "::bumbledb::schema::Side {{ \
-             relation: ::bumbledb::schema::RelationId({relation}), \
-             projection: ::std::boxed::Box::new([{}]), \
+             relation: ::bumbledb::schema::RelationId({}), \
+             projection: ::std::boxed::Box::new([{projection}]), \
              selection: ::std::boxed::Box::new([{selection}]) }}",
-        field_id_list(declaration, &side.projection),
+        side.relation.0,
     )
 }
 
-/// Renders one parsed statement as its `StatementDescriptor` expression,
-/// ids resolved from declaration order.
-fn statement_expr(
-    schema: &SchemaAst,
-    closed: &BTreeMap<&str, &Relation>,
-    statement: &Statement,
-) -> String {
+/// Renders one lowered statement as its `StatementDescriptor` expression.
+fn statement_tokens(statement: &StatementDescriptor) -> String {
     match statement {
-        Statement::Functionality {
+        StatementDescriptor::Functionality {
             relation,
             projection,
         } => {
-            let index = relation_index(&schema.relations, relation);
+            let fields = projection
+                .iter()
+                .map(|field| format!("::bumbledb::schema::FieldId({})", field.0))
+                .collect::<Vec<_>>()
+                .join(", ");
             format!(
                 "::bumbledb::schema::StatementDescriptor::Functionality {{ \
-                     relation: ::bumbledb::schema::RelationId({index}), \
-                     projection: ::std::boxed::Box::new([{}]) }},",
-                field_id_list(&schema.relations[index], projection),
+                     relation: ::bumbledb::schema::RelationId({}), \
+                     projection: ::std::boxed::Box::new([{fields}]) }},",
+                relation.0,
             )
         }
-        Statement::Containment { source, target } => format!(
+        StatementDescriptor::Containment { source, target } => format!(
             "::bumbledb::schema::StatementDescriptor::Containment {{ source: {}, target: {} }},",
-            side_expr(&schema.relations, closed, source),
-            side_expr(&schema.relations, closed, target),
+            side_tokens(source),
+            side_tokens(target),
         ),
-        Statement::Cardinality {
+        StatementDescriptor::Cardinality {
             source,
             lo,
             hi,
@@ -1264,22 +1781,20 @@ fn statement_expr(
             format!(
                 "::bumbledb::schema::StatementDescriptor::Cardinality {{ \
                      source: {}, lo: {lo}u64, hi: {hi}, target: {} }},",
-                side_expr(&schema.relations, closed, source),
-                side_expr(&schema.relations, closed, target),
+                side_tokens(source),
+                side_tokens(target),
             )
         }
     }
 }
 
-fn emit_schema_def(out: &mut String, schema: &SchemaAst, closed: &BTreeMap<&str, &Relation>) {
+/// Renders the LOWERED descriptor as const construction — ids already
+/// minted by the shared lowering, nothing resolved here.
+fn descriptor_tokens(descriptor: &SchemaDescriptor) -> String {
     let mut relations = String::new();
-    for relation in &schema.relations {
+    for relation in &descriptor.relations {
         let mut fields = String::new();
-        // The descriptor carries declared columns only: the AST's
-        // synthetic (`id`, U64) field at index 0 of a closed relation is
-        // `validate()`'s to prepend — emitting it too would collide.
-        let declared = &relation.fields[usize::from(relation.closed.is_some())..];
-        for field in declared {
+        for field in &relation.fields {
             let _ = write!(
                 fields,
                 "::bumbledb::schema::FieldDescriptor {{ \
@@ -1287,31 +1802,31 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst, closed: &BTreeMap<&str,
                      value_type: {}, \
                      generation: ::bumbledb::schema::Generation::{} }},",
                 field.name,
-                value_type_expr(&field.ty),
-                if field.fresh { "Fresh" } else { "None" },
+                value_type_tokens(&field.value_type),
+                match field.generation {
+                    Generation::Fresh => "Fresh",
+                    Generation::None => "None",
+                },
             );
         }
-        // The extension: ground axioms as `Row` values in declaration
-        // order, literals through the same `value_expr` machine as
-        // statement selections.
-        let extension = match &relation.closed {
+        let extension = match &relation.extension {
             None => "::std::option::Option::None".to_owned(),
-            Some(extension) => {
-                let mut rows = String::new();
-                for row in &extension.rows {
+            Some(rows) => {
+                let mut rendered = String::new();
+                for row in rows {
                     let mut values = String::new();
-                    for (field, literal) in &row.values {
-                        let _ = write!(values, "{},", value_expr(closed, relation, field, literal));
+                    for value in &row.values {
+                        let _ = write!(values, "{},", value_tokens(value));
                     }
                     let _ = write!(
-                        rows,
+                        rendered,
                         "::bumbledb::schema::Row {{ \
                              handle: ::std::boxed::Box::from(\"{}\"), \
                              values: ::std::boxed::Box::new([{values}]) }},",
                         row.handle,
                     );
                 }
-                format!("::std::option::Option::Some(::std::boxed::Box::new([{rows}]))")
+                format!("::std::option::Option::Some(::std::boxed::Box::new([{rendered}]))")
             }
         };
         let _ = write!(
@@ -1324,10 +1839,18 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst, closed: &BTreeMap<&str,
         );
     }
     let mut statements = String::new();
-    for statement in &schema.statements {
-        let _ = write!(statements, "{}", statement_expr(schema, closed, statement));
+    for statement in &descriptor.statements {
+        let _ = write!(statements, "{}", statement_tokens(statement));
     }
-    let name = &schema.name;
+    format!(
+        "::bumbledb::schema::SchemaDescriptor {{\n\
+             relations: ::std::vec![{relations}],\n\
+             statements: ::std::vec![{statements}],\n\
+         }}"
+    )
+}
+
+fn emit_schema_def(out: &mut String, name: &str, descriptor: &SchemaDescriptor) {
     let _ = write!(
         out,
         "/// The `{name}` schema definition: the value `Db::create`/`Db::open` \
@@ -1337,12 +1860,10 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst, closed: &BTreeMap<&str,
          pub struct {name};\n\
          impl ::bumbledb::Theory for {name} {{\n\
              fn descriptor(self) -> ::bumbledb::schema::SchemaDescriptor {{\n\
-                 ::bumbledb::schema::SchemaDescriptor {{\n\
-                     relations: ::std::vec![{relations}],\n\
-                     statements: ::std::vec![{statements}],\n\
-                 }}\n\
+                 {}\n\
              }}\n\
          }}\n",
+        descriptor_tokens(descriptor),
     );
 }
 
@@ -1445,9 +1966,10 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
                 FieldTy::U64 => ("u64".to_owned(), false),
                 FieldTy::I64 => ("i64".to_owned(), false),
                 FieldTy::FixedBytes(len) => (format!("[u8; {len}]"), true),
-                FieldTy::Interval(element, _) => {
-                    (format!("::bumbledb::Interval<{}>", element.rust()), true)
-                }
+                FieldTy::Interval(element, _) => (
+                    format!("::bumbledb::Interval<{}>", element_rust(element)),
+                    true,
+                ),
                 _ => unreachable!("parser restricts `as` to u64/i64/bytes<N>/interval"),
             };
             if let Some(existing) = newtypes.get(name) {
@@ -1569,7 +2091,9 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::I64 => "i64".to_owned(),
         FieldTy::Str => "&'a str".to_owned(),
         FieldTy::FixedBytes(len) => format!("[u8; {len}]"),
-        FieldTy::Interval(element, _) => format!("::bumbledb::Interval<{}>", element.rust()),
+        FieldTy::Interval(element, _) => {
+            format!("::bumbledb::Interval<{}>", element_rust(*element))
+        }
     }
 }
 
@@ -1591,7 +2115,7 @@ fn encode_exprs(field: &Field, idx: usize) -> (String, String, String) {
         FieldTy::I64 => same(format!("::bumbledb::__private::ValueRef::I64({access})")),
         FieldTy::Interval(element, None) => same(format!(
             "::bumbledb::__private::ValueRef::Interval{}({access})",
-            element.suffix()
+            element_suffix(*element)
         )),
         // The fixed-width family: the host hands the same checked
         // `Interval<T>`; the boundary checks the declared width (a wide
@@ -1601,7 +2125,7 @@ fn encode_exprs(field: &Field, idx: usize) -> (String, String, String) {
             "::bumbledb::__private::fixed_interval_{}(\
              <Self as ::bumbledb::Fact<'a>>::RELATION, \
              ::bumbledb::schema::FieldId({idx}), {access}, {width}u64)?",
-            element.rust()
+            element_rust(*element)
         )),
         // Inline in every context: bytes<N> never touches the dictionary,
         // so write/delete/read share one self-encoding expression.
@@ -1660,13 +2184,13 @@ fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
         FieldTy::U64 => arm("U64(v)".to_owned(), wrap("v")),
         FieldTy::I64 => arm("I64(v)".to_owned(), wrap("v")),
         FieldTy::Interval(element, None) => arm(
-            format!("Interval{}(interval)", element.suffix()),
+            format!("Interval{}(interval)", element_suffix(*element)),
             wrap("interval"),
         ),
         // A fixed-width field decodes through its own ValueRef variant —
         // the end was re-derived from the type's width at decode.
         FieldTy::Interval(element, Some(_)) => arm(
-            format!("FixedInterval{}(interval)", element.suffix()),
+            format!("FixedInterval{}(interval)", element_suffix(*element)),
             wrap("interval"),
         ),
         FieldTy::Str => arm(

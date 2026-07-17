@@ -13,9 +13,10 @@
 //!   canonicity errors name the canonical spelling verbatim, mirroring
 //!   the macro's expansion errors.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::spec::{
-    FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SideSpec, SpecIssue,
-    StatementSpec, WindowSpec,
+    FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SideSpec, SpecIssue,
+    StatementSide, StatementSpec, WindowSpec,
 };
 use bumbledb::schema::{IntervalElement, ValueType, fingerprint::fingerprint};
 use bumbledb::{Interval, SchemaSpec, Theory, Value};
@@ -343,7 +344,13 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
     assert!(
         issues.contains(&SpecIssue::UnknownHandle {
             closed: "Status".into(),
-            handle: "Thawed".into()
+            handle: "Thawed".into(),
+            at: LiteralAt::Selection {
+                statement: 13,
+                side: StatementSide::Source,
+                binding: 0,
+                literal: 0
+            }
         }),
         "the unknown handle is cited: {issues:?}"
     );
@@ -364,7 +371,13 @@ fn a_handle_on_a_non_reference_field_is_typed() {
         [SpecIssue::NotAHandleField {
             relation: "Account".into(),
             field: "holder".into(),
-            handle: "Frozen".into()
+            handle: "Frozen".into(),
+            at: LiteralAt::Selection {
+                statement: 11,
+                side: StatementSide::Source,
+                binding: 0,
+                literal: 0
+            }
         }]
     );
 }

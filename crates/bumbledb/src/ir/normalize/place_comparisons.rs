@@ -5,7 +5,7 @@ use super::{
 use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
 use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
 use crate::ir::{CmpOp, MaskTerm, VarId};
-use crate::schema::FieldId;
+use bumbledb_theory::schema::FieldId;
 
 /// The lowered constant of a sealed comparison side. String stays a
 /// pending intern, `bytes<N>` self-encodes, intervals lower to their two

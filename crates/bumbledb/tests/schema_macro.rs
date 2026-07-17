@@ -8,6 +8,7 @@
 //! The example schema is `docs/architecture/30-dependencies.md`'s, minus
 //! its illustrative `Employment` line (that relation is not declared).
 
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
@@ -417,6 +418,7 @@ fn the_manifest_is_the_constants_runtime_twin() {
 }
 
 mod interval_newtype {
+    use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{FieldId, IntervalElement, ValueType};
     use bumbledb::{Fact, Interval};
 
@@ -471,6 +473,7 @@ mod interval_newtype {
 
 mod selection_literals {
     use bumbledb::Value;
+    use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{FieldId, StatementId, StatementView};
 
     bumbledb::schema! {
@@ -664,6 +667,7 @@ mod closed_relations {
     //! be forgotten for a new theory. No fact struct and no `Fact` impl
     //! exist for `Status`/`Kind` — closed relations are unwritable.
 
+    use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{FieldId, RelationId, Row, StatementId, StatementView};
     use bumbledb::{Db, Theory as _, Value};
 
@@ -1083,6 +1087,7 @@ mod keyed_equality {
 }
 
 mod redundant_superkey_warning {
+    use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{RelationId, SchemaWarning, StatementId};
     use bumbledb::{Db, Error, Interval, Theory as _, Violation};
 
@@ -1158,6 +1163,7 @@ mod extension_forms {
     //! floor, `{n}` the exact count)
     //! (`docs/architecture/30-dependencies.md`).
 
+    use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{LiteralSet, StatementDescriptor, StatementView};
     use bumbledb::{StatementId, Theory as _, Value};
 
@@ -1249,6 +1255,7 @@ mod fixed_width_intervals {
     use bumbledb::ir::{
         Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Query, Rule, Term, Value, VarId,
     };
+    use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{FieldId, ValueType};
     use bumbledb::{AllenMask, AnswerValue, Db, Fact, Interval, Theory as _};
 

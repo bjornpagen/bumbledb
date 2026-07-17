@@ -3,9 +3,11 @@ use crate::ir::normalize::{NormalizedQuery, OccId, normalize};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, Query, Rule, Term, Value};
 use crate::plan::planner::{OccStats, plan};
-use crate::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, StatementDescriptor, ValueType,
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
+    StatementDescriptor, ValueType,
 };
 
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
@@ -33,7 +35,12 @@ fn containment(
         projection: projection.iter().map(|f| FieldId(*f)).collect(),
         selection: selection
             .iter()
-            .map(|(f, v)| (FieldId(*f), crate::schema::LiteralSet::One(v.clone())))
+            .map(|(f, v)| {
+                (
+                    FieldId(*f),
+                    bumbledb_theory::schema::LiteralSet::One(v.clone()),
+                )
+            })
             .collect(),
     };
     StatementDescriptor::Containment {

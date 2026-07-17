@@ -1,15 +1,17 @@
 use super::*;
 use crate::encoding::{ValueRef, encode_fact, encode_u64};
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    StatementDescriptor, StatementId, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+    StatementDescriptor, StatementId, ValueType,
+};
 
 /// R(id fresh, amount i64) with a declared key on amount too:
 /// statement 0 is the fresh auto-key (materialized first), statement 1

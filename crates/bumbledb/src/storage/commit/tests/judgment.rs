@@ -9,14 +9,16 @@
 
 use crate::encoding::{ValueRef, encode_u64};
 use crate::error::{Direction, Error, Result, Violation};
-use crate::schema::{
-    FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementDescriptor,
-    StatementId, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::env::Environment;
 use crate::storage::keys;
 use crate::testutil::TempDir;
-use crate::value::Value;
+use bumbledb_theory::Value;
+use bumbledb_theory::schema::{
+    FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, StatementId,
+    ValueType,
+};
 
 use super::{apply_delta, committed_data, fact, field, interval, key, selected, side};
 
@@ -172,7 +174,7 @@ fn shift(schema: &Schema, worker: u64, start: u64, end: u64, rested: bool) -> Ve
         &[
             ValueRef::U64(worker),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
             ValueRef::Bool(rested),
         ],
@@ -186,7 +188,7 @@ fn session(schema: &Schema, worker: u64, start: u64, end: u64) -> Vec<u8> {
         &[
             ValueRef::U64(worker),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
         ],
     )
@@ -199,7 +201,7 @@ fn rest(schema: &Schema, worker: u64, start: u64, end: u64) -> Vec<u8> {
         &[
             ValueRef::U64(worker),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
         ],
     )

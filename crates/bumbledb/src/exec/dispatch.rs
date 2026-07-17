@@ -11,7 +11,7 @@
 
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::VarId;
-use crate::schema::{FieldId, RelationId, StatementId};
+use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 mod classify;
 mod execute_key_probe;

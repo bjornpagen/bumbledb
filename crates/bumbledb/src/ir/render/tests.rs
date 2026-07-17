@@ -7,15 +7,17 @@
 //! read side, with the out-of-range fallback visibly wrong).
 
 use super::render;
-use crate::allen::AllenMask;
 use crate::ir::validate::validate;
 use crate::ir::{
     AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term,
     Value, VarId,
 };
-use crate::schema::{
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Row,
-    Schema, SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 
 /// The calendar fixture: Busy(person, during, kind), Ooo(person, during),
@@ -149,7 +151,7 @@ fn selection_negation_and_literal_mask_golden() {
             },
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::IntervalU64(
-                crate::Interval::<u64>::new(100, 200).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(100, 200).expect("nonempty interval"),
             )),
         })],
     });
@@ -356,7 +358,7 @@ fn mask_union_spelling() {
             },
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::IntervalU64(
-                crate::Interval::<u64>::new(5, 9).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(5, 9).expect("nonempty interval"),
             )),
         })],
     });

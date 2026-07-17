@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::image::{ColumnView, ColumnWidth, RelationImage};
 use crate::ir::CmpOp;
-use crate::schema::FieldId;
+use bumbledb_theory::schema::FieldId;
 
 use super::{Const, FilterPredicate, MaskConst, ResolvedWordSource, View};
 
@@ -91,9 +91,9 @@ const fn point_in(start: u64, end: u64, point: u64) -> bool {
 /// param markers index the bind slice (a mask param resolves to its bits
 /// as a `Word`), with the pre-encoded mirror applied after resolution
 /// (`ConversedParam` — see [`MaskConst`]).
-pub(crate) fn mask_of(mask: MaskConst, params: &[Const]) -> crate::allen::AllenMask {
+pub(crate) fn mask_of(mask: MaskConst, params: &[Const]) -> bumbledb_theory::allen::AllenMask {
     let param_bits = |param: crate::ir::ParamId| match &params[usize::from(param.0)] {
-        Const::Word(word) => crate::allen::AllenMask::new(
+        Const::Word(word) => bumbledb_theory::allen::AllenMask::new(
             u16::try_from(*word).expect("bind stored 13-bit mask words"),
         )
         .expect("bind validated the mask"),

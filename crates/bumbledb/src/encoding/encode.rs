@@ -1,7 +1,7 @@
 //! The encode side: canonical per-type encoders and the fact encoder.
 
 use super::{FactLayout, I64_SIGN_BIT, TypeDesc, ValueRef, fixed_bytes_words};
-use crate::{Interval, value::Value};
+use bumbledb_theory::{Interval, Value};
 
 /// Encodes a Bool as its canonical single byte.
 #[must_use]

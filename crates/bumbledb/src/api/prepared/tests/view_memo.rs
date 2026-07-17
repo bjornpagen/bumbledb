@@ -354,11 +354,11 @@ fn closed_relation_views_stay_warm_across_generations() {
             },
             RelationDescriptor {
                 extension: Some(Box::new([
-                    crate::schema::Row {
+                    bumbledb_theory::schema::Row {
                         handle: "Usd".into(),
                         values: Box::new([Value::U64(2)]),
                     },
-                    crate::schema::Row {
+                    bumbledb_theory::schema::Row {
                         handle: "Eur".into(),
                         values: Box::new([Value::U64(0)]),
                     },

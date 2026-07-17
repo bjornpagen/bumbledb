@@ -9,14 +9,18 @@
 
 use std::fmt;
 
-use crate::schema::{Schema, SchemaDescriptor, StatementId, render};
+use crate::schema::{Schema, render};
+use bumbledb_theory::schema::{SchemaDescriptor, StatementId};
 
 use super::{
     CorruptionError, Direction, Error, FactShapeError, SchemaError, TargetKeyCandidate,
     ValidationError, Violation,
 };
 
-fn field_set(f: &mut fmt::Formatter<'_>, projection: &[crate::schema::FieldId]) -> fmt::Result {
+fn field_set(
+    f: &mut fmt::Formatter<'_>,
+    projection: &[bumbledb_theory::schema::FieldId],
+) -> fmt::Result {
     let mut fields = projection.to_vec();
     fields.sort_unstable();
     write!(f, "{{")?;
@@ -31,9 +35,9 @@ fn field_set(f: &mut fmt::Formatter<'_>, projection: &[crate::schema::FieldId]) 
 
 fn target_key_rejection(
     f: &mut fmt::Formatter<'_>,
-    statement: crate::schema::StatementId,
-    target: crate::schema::RelationId,
-    projection: &[crate::schema::FieldId],
+    statement: bumbledb_theory::schema::StatementId,
+    target: bumbledb_theory::schema::RelationId,
+    projection: &[bumbledb_theory::schema::FieldId],
     available: &[TargetKeyCandidate],
     pointwise: bool,
 ) -> fmt::Result {

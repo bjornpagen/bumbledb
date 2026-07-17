@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::error::Result;
 use crate::image::RelationImage;
-use crate::schema::RelationId;
 use crate::storage::env::ReadTxn;
+use bumbledb_theory::schema::RelationId;
 
 use super::ImageCache;
 

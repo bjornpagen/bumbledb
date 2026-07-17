@@ -56,10 +56,11 @@ use std::ops::Bound;
 
 use crate::Db;
 use crate::error::{Direction, Result};
-use crate::schema::{RelationId, Schema, StatementId};
+use crate::schema::Schema;
 use crate::storage::commit::judgment::Selections;
 use crate::storage::env::ReadTxn;
 use crate::storage::keys;
+use bumbledb_theory::schema::{RelationId, StatementId};
 
 mod counters;
 mod determinants;

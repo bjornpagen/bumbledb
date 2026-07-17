@@ -193,7 +193,7 @@ fn interval_schema() -> Schema {
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
-                            element: crate::schema::IntervalElement::U64,
+                            element: bumbledb_theory::schema::IntervalElement::U64,
                             width: None,
                         },
                         generation: Generation::None,
@@ -235,7 +235,7 @@ fn insert_interval_fixture(env: &Environment, schema: &Schema) {
             &[
                 crate::encoding::ValueRef::U64(emp),
                 crate::encoding::ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
                 ),
             ],
             schema.relation(PAYROLL).layout(),
@@ -384,7 +384,7 @@ fn ray_fixture(dir: &TempDir, schema: &Schema) -> Environment {
         &[
             crate::encoding::ValueRef::U64(1),
             crate::encoding::ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(10, u64::MAX).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(10, u64::MAX).expect("nonempty interval"),
             ),
         ],
         schema.relation(PAYROLL).layout(),

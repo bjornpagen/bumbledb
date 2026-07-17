@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::ir::AggOp;
-use crate::schema::IntervalElement;
+use bumbledb_theory::schema::IntervalElement;
 
 /// The shared fixture: account 3 holds ("a", 10), ("b", 10), ("a", 25);
 /// account 7 holds ("c", 25). Fresh ids 1..=4.
@@ -411,7 +411,7 @@ fn insert_payroll(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i
                 ValueRef::U64(*id),
                 ValueRef::U64(*emp),
                 ValueRef::IntervalI64(
-                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
                 ),
             ],
             schema.relation(PAYROLL).layout(),

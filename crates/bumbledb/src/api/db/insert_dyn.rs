@@ -1,7 +1,7 @@
 use super::{InternMode, WriteTx};
 use crate::error::Result;
 use crate::ir::Value;
-use crate::schema::RelationId;
+use bumbledb_theory::schema::RelationId;
 
 impl<S> WriteTx<'_, S> {
     /// Records a dynamic insert (the ETL form): one [`Value`] per field in

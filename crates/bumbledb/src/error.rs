@@ -10,8 +10,9 @@ mod convert;
 mod display;
 
 use crate::ir::{ParamId, PredId, VarId};
+use crate::schema::KeyId;
 use crate::schema::fingerprint::SchemaFingerprint;
-use crate::schema::{FieldId, KeyId, RelationId, StatementId, ValueType};
+use bumbledb_theory::schema::{FieldId, RelationId, StatementId, ValueType};
 
 /// One declared key offered as owned evidence in a target-key rejection.
 /// The diagnostic may outlive the descriptor, so it carries no schema
@@ -1008,7 +1009,7 @@ pub struct CitedFact {
     /// about sources), the TARGET (parent) relation for a window.
     pub relation: RelationId,
     /// One decoded [`Value`] per sealed field, in declaration order.
-    pub values: Box<[crate::value::Value]>,
+    pub values: Box<[bumbledb_theory::Value]>,
 }
 
 /// The complete violation set of one rejected commit — sealed: nonempty,

@@ -6,11 +6,11 @@
 //! set-preservation rides the folded/unfolded differential below.
 
 use super::*;
-use crate::allen::AllenMask;
 use crate::encoding::ValueRef;
 use crate::ir::normalize::with_fold_disabled;
 use crate::ir::{HeadTerm, MaskTerm, ParamId};
-use crate::schema::{IntervalElement, SchemaDescriptor};
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::{IntervalElement, SchemaDescriptor};
 
 /// Event(id u64 fresh, kind u64, during interval<i64>, score i64) — the
 /// interval field feeds the mask-param leg; kind splits the rules.
@@ -63,7 +63,7 @@ fn insert_events(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
                 ValueRef::U64(*id),
                 ValueRef::U64(*kind),
                 ValueRef::IntervalI64(
-                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
                 ),
                 ValueRef::I64(*score),
             ],
@@ -222,7 +222,7 @@ fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
         },
         lhs: Term::Var(VarId(1)),
         rhs: Term::Literal(Value::IntervalI64(
-            crate::Interval::<i64>::new(7, 9).expect("nonempty interval"),
+            bumbledb_theory::Interval::<i64>::new(7, 9).expect("nonempty interval"),
         )),
     });
     let mut rule1 = by_kind_rule(7, masked);

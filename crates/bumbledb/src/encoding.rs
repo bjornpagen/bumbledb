@@ -33,68 +33,21 @@ pub(crate) use encode::encode_fixed_bytes;
 pub(crate) use encode::encode_interval_u64;
 pub use fact_hash::fact_hash;
 
-use crate::{Interval, schema::IntervalElement};
+// The encoding-level type description is theory vocabulary (a type IS its
+// encoding), re-exported here so the codec's callers keep addressing it as
+// `crate::encoding::TypeDesc`; the codec itself — everything below — stays
+// engine-side.
+pub use bumbledb_theory::TypeDesc;
+
+// `IntervalElement` rides along for the codec submodules (`decode`
+// addresses it as `super::IntervalElement`).
+use bumbledb_theory::{Interval, schema::IntervalElement};
 
 /// The `bytes<N>` width ceiling: 64 bytes = 8 words = two cache lines of
 /// key material — digests in the wild are 16/20/32/64
 /// (`docs/architecture/10-data-model.md`). Schema validation rejects
 /// widths outside `1..=MAX_FIXED_BYTES` with a typed `SchemaError`.
 pub const MAX_FIXED_BYTES: usize = 64;
-
-/// Encoding-level description of a field's type: exactly what is needed to
-/// size, encode, and corruption-check its bytes. No names anywhere — a type
-/// is an encoding and nothing else (`docs/architecture/10-data-model.md`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TypeDesc {
-    /// 1 byte, strictly `0x00` or `0x01`.
-    Bool,
-    /// 8 bytes, big-endian (order-preserving).
-    U64,
-    /// 8 bytes, sign-flipped big-endian (order-preserving).
-    I64,
-    /// 8 bytes in facts: the interned dictionary id, big-endian.
-    String,
-    /// `⌈len/8⌉ × 8` bytes in facts: the `len` raw bytes themselves,
-    /// zero-padded to the word boundary — the pad is encoding, not data
-    /// (a nonzero trailing pad byte is corruption). Identity = bytes; no
-    /// dictionary indirection ever (`docs/architecture/10-data-model.md`).
-    FixedBytes {
-        /// Declared width in bytes, `1..=MAX_FIXED_BYTES`.
-        len: u16,
-    },
-    /// The interval family. General (`width: None`): 16 bytes,
-    /// `start ‖ end`, each half in the element's order-preserving
-    /// encoding, strictly `start < end`. Fixed (`width: Some(w)`,
-    /// `interval<E, w>`): 8 bytes — the START half only; the width is
-    /// the type's, so the end derives as `start + w` at decode, and a
-    /// stored start at or past the Q2 bound (`start + w < MAX_END`) is
-    /// corruption ([`crate::error::CorruptionError::InvalidFixedIntervalStart`]).
-    Interval {
-        /// The element domain: one of the two orderable scalars.
-        element: IntervalElement,
-        /// `Some(w)`: the fixed width — the encoding is one word.
-        width: Option<u64>,
-    },
-}
-
-impl TypeDesc {
-    /// Encoded width in bytes: 1 for `Bool`, 16 for a general
-    /// `Interval` and 8 for a fixed-width one (the width halving — the
-    /// end is the type's to derive, so storing it would be
-    /// transcription), the word-padded `⌈len/8⌉ × 8` for `FixedBytes`,
-    /// 8 for everything else.
-    #[must_use]
-    pub const fn width(self) -> usize {
-        match self {
-            Self::Bool => 1,
-            // A fixed-width interval is one word — the start; the end
-            // is the type's to derive (the width halving).
-            Self::U64 | Self::I64 | Self::String | Self::Interval { width: Some(_), .. } => 8,
-            Self::FixedBytes { len } => (len as usize).div_ceil(8) * 8,
-            Self::Interval { width: None, .. } => 16,
-        }
-    }
-}
 
 /// The word count of a `bytes<len>` value's padded encoding: `⌈len/8⌉`.
 #[must_use]

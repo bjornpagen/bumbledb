@@ -7,13 +7,13 @@
 use super::*;
 use crate::encoding::{ValueRef, encode_fact, encode_interval_u64, encode_u64, fact_hash};
 use crate::error::Direction;
-use crate::schema::{
+use crate::storage::keys::{StatKind, key};
+use crate::testutil::TempDir;
+use bumbledb_theory::Value;
+use bumbledb_theory::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
     Side, StatementDescriptor, ValueType,
 };
-use crate::storage::keys::{StatKind, key};
-use crate::testutil::TempDir;
-use crate::value::Value;
 
 const HOLDER: RelationId = RelationId(0);
 const BOOKING: RelationId = RelationId(1);
@@ -120,7 +120,7 @@ fn schema() -> SchemaDescriptor {
                     projection: Box::new([FieldId(0)]),
                     selection: Box::new([(
                         FieldId(1),
-                        crate::schema::LiteralSet::One(Value::U64(0)),
+                        bumbledb_theory::schema::LiteralSet::One(Value::U64(0)),
                     )]),
                 },
                 target: Side {
@@ -167,14 +167,18 @@ fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
             BOOKING,
             vec![
                 Value::U64(7),
-                Value::IntervalU64(crate::Interval::<u64>::new(0, 10).expect("nonempty interval")),
+                Value::IntervalU64(
+                    bumbledb_theory::Interval::<u64>::new(0, 10).expect("nonempty interval"),
+                ),
             ],
         ),
         (
             BOOKING,
             vec![
                 Value::U64(7),
-                Value::IntervalU64(crate::Interval::<u64>::new(20, 30).expect("nonempty interval")),
+                Value::IntervalU64(
+                    bumbledb_theory::Interval::<u64>::new(20, 30).expect("nonempty interval"),
+                ),
             ],
         ),
         (ACCOUNT, vec![Value::U64(1), Value::U64(0)]),
@@ -183,7 +187,9 @@ fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
             CLAIM,
             vec![
                 Value::U64(7),
-                Value::IntervalU64(crate::Interval::<u64>::new(2, 8).expect("nonempty interval")),
+                Value::IntervalU64(
+                    bumbledb_theory::Interval::<u64>::new(2, 8).expect("nonempty interval"),
+                ),
             ],
         ),
     ];
@@ -258,7 +264,9 @@ fn canonical_field_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
             &[
                 Value::Bool(true),
                 Value::FixedBytes(vec![1, 2, 3, 4, 5].into_boxed_slice()),
-                Value::IntervalU64(crate::Interval::<u64>::new(10, 20).expect("nonempty interval")),
+                Value::IntervalU64(
+                    bumbledb_theory::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+                ),
             ],
         )
         .map(|_| ())
@@ -321,7 +329,7 @@ fn booking_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> 
         &[
             ValueRef::U64(room),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
         ],
         db.schema().relation(BOOKING).layout(),
@@ -335,7 +343,7 @@ fn booking_determinant(room: u64, start: u64, end: u64) -> Vec<u8> {
     let mut determinant = Vec::new();
     determinant.extend_from_slice(&encode_u64(room));
     determinant.extend_from_slice(&encode_interval_u64(
-        crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+        bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
     ));
     determinant
 }
@@ -356,7 +364,7 @@ fn claim_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> Ve
         &[
             ValueRef::U64(room),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
         ],
         db.schema().relation(CLAIM).layout(),
@@ -1040,7 +1048,7 @@ fn a_stored_row_for_a_closed_relation_is_the_finding() {
     let dir = TempDir::new("verify-closed");
     let decl = SchemaDescriptor {
         relations: vec![RelationDescriptor {
-            extension: Some(Box::new([crate::schema::Row {
+            extension: Some(Box::new([bumbledb_theory::schema::Row {
                 handle: "Usd".into(),
                 values: Box::new([Value::U64(2)]),
             }])),
@@ -1077,7 +1085,7 @@ fn a_stored_row_for_a_closed_relation_is_the_finding() {
 fn membership_and_determinant_entries_for_a_closed_relation_are_findings() {
     let decl = SchemaDescriptor {
         relations: vec![RelationDescriptor {
-            extension: Some(Box::new([crate::schema::Row {
+            extension: Some(Box::new([bumbledb_theory::schema::Row {
                 handle: "Usd".into(),
                 values: Box::new([Value::U64(2)]),
             }])),
@@ -1138,15 +1146,15 @@ fn closed_subset_schema() -> SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: Some(Box::new([
-                    crate::schema::Row {
+                    bumbledb_theory::schema::Row {
                         handle: "Low".into(),
                         values: Box::new([Value::Bool(false)]),
                     },
-                    crate::schema::Row {
+                    bumbledb_theory::schema::Row {
                         handle: "Med".into(),
                         values: Box::new([Value::Bool(true)]),
                     },
-                    crate::schema::Row {
+                    bumbledb_theory::schema::Row {
                         handle: "High".into(),
                         values: Box::new([Value::Bool(true)]),
                     },
@@ -1356,7 +1364,7 @@ fn marks_schema() -> SchemaDescriptor {
                     projection: Box::new([FieldId(0)]),
                     selection: Box::new([(
                         FieldId(1),
-                        crate::schema::LiteralSet::One(Value::U64(1)),
+                        bumbledb_theory::schema::LiteralSet::One(Value::U64(1)),
                     )]),
                 },
                 lo: 1,
@@ -1486,7 +1494,7 @@ fn fixed_lane_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
             RelationId(0),
             &[
                 Value::Bool(true),
-                Value::IntervalU64(crate::Interval::<u64>::new(10, 15).expect("width 5")),
+                Value::IntervalU64(bumbledb_theory::Interval::<u64>::new(10, 15).expect("width 5")),
             ],
         )
         .map(|_| ())

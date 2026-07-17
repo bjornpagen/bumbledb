@@ -1,3 +1,4 @@
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{Db, Theory as _, Value};
 
 use crate::differential::{self, Op};

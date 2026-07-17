@@ -7,13 +7,15 @@
 
 use crate::encoding::ValueRef;
 use crate::error::{Direction, Error, Result, Violation};
-use crate::schema::{
-    FieldId, LiteralSet, RelationDescriptor, RelationId, Schema, SchemaDescriptor, Side,
-    StatementDescriptor, StatementId, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
-use crate::value::Value;
+use bumbledb_theory::Value;
+use bumbledb_theory::schema::{
+    FieldId, LiteralSet, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+    StatementDescriptor, StatementId, ValueType,
+};
 
 use super::{apply_delta, committed_data, fact, field, side};
 

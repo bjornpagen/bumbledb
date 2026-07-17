@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use crate::image::view::FilterPredicate;
 use crate::ir::{CmpOp, VarId};
-use crate::schema::{FieldId, RelationId, StatementId, ValueType};
+use bumbledb_theory::schema::{FieldId, RelationId, StatementId, ValueType};
 
 mod dnf;
 mod fold;

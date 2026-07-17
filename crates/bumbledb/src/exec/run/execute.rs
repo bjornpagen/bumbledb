@@ -12,7 +12,7 @@ use super::{
 fn point_parts(
     plan: &ValidatedPlan,
     occ: usize,
-    filters: &[(crate::schema::FieldId, crate::ir::VarId)],
+    filters: &[(bumbledb_theory::schema::FieldId, crate::ir::VarId)],
 ) -> Vec<(usize, usize, crate::ir::VarId, usize)> {
     let occurrence = &plan.occurrences()[occ];
     filters
@@ -199,7 +199,7 @@ impl Executor {
                     .collect()
             })
             .collect();
-        let allen_masks: Vec<Vec<crate::allen::AllenMask>> = allen_residual_slots
+        let allen_masks: Vec<Vec<bumbledb_theory::allen::AllenMask>> = allen_residual_slots
             .iter()
             .map(|slots| {
                 slots
@@ -208,7 +208,7 @@ impl Executor {
                         crate::ir::MaskTerm::Literal(mask) => mask,
                         // Placeholder until the first bind — every
                         // execution entry rewrites param masks first.
-                        crate::ir::MaskTerm::Param(_) => crate::allen::AllenMask::EMPTY,
+                        crate::ir::MaskTerm::Param(_) => bumbledb_theory::allen::AllenMask::EMPTY,
                     })
                     .collect()
             })
@@ -331,10 +331,12 @@ impl Executor {
                 *mask = match residual.mask {
                     crate::ir::MaskTerm::Literal(literal) => literal,
                     crate::ir::MaskTerm::Param(param) => match &params[usize::from(param.0)] {
-                        crate::image::view::Const::Word(word) => crate::allen::AllenMask::new(
-                            u16::try_from(*word).expect("bind stored 13-bit mask words"),
-                        )
-                        .expect("bind validated the mask"),
+                        crate::image::view::Const::Word(word) => {
+                            bumbledb_theory::allen::AllenMask::new(
+                                u16::try_from(*word).expect("bind stored 13-bit mask words"),
+                            )
+                            .expect("bind validated the mask")
+                        }
                         _ => unreachable!("validated: a mask param resolves to a word"),
                     },
                 };

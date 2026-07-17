@@ -1,8 +1,10 @@
 use super::*;
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role};
 use crate::plan::planner::JoinOrder;
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, Schema, SchemaDescriptor, ValueType,
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
 };
 use std::collections::BTreeMap;
 

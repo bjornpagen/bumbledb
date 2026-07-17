@@ -1,8 +1,8 @@
 use crate::encoding::fact_hash;
 use crate::error::Result;
-use crate::schema::RelationId;
 use crate::storage::env::ReadTxn;
 use crate::storage::keys;
+use bumbledb_theory::schema::RelationId;
 
 use super::row_id_value::row_id_value;
 

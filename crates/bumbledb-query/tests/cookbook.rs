@@ -10,6 +10,7 @@
 //! aside — the token stream never carries them): editing either copy
 //! without the other fails `doc_blocks_match_the_compiled_copies`.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use std::collections::BTreeSet;
 
 use bumbledb::ir::Value;
@@ -34,6 +35,7 @@ macro_rules! recipe {
             pub const SOURCE: &str = stringify!($($t)*);
             pub fn validate() -> Result<bumbledb::Schema, bumbledb::error::SchemaError> {
                 use bumbledb::Theory as _;
+                use bumbledb::schema::ValidateDescriptor as _;
                 $theory.descriptor().validate()
             }
         }

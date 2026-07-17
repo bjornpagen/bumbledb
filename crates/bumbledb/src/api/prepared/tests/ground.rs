@@ -8,7 +8,7 @@ use super::*;
 use crate::ir::AggOp;
 use crate::ir::normalize::Role;
 use crate::plan::ground::with_grounding_disabled;
-use crate::schema::{RelationDescriptor, Side, StatementDescriptor};
+use bumbledb_theory::schema::{RelationDescriptor, Side, StatementDescriptor};
 
 /// Posting(id fresh, account u64, amount i64); Account(id fresh,
 /// name str); Posting(account) <= Account(id) — statement 2 after the
@@ -164,7 +164,12 @@ fn du_schema() -> Schema {
         projection: Box::new([FieldId(field)]),
         selection: selection
             .iter()
-            .map(|(f, v)| (FieldId(*f), crate::schema::LiteralSet::One(v.clone())))
+            .map(|(f, v)| {
+                (
+                    FieldId(*f),
+                    bumbledb_theory::schema::LiteralSet::One(v.clone()),
+                )
+            })
             .collect(),
     };
     SchemaDescriptor {
@@ -299,7 +304,7 @@ fn the_du_fixture_introspection_pins_the_eliminated_line() {
         vec![crate::api::stats::EliminatedOccurrence {
             occurrence: 1,
             relation: "Grading".into(),
-            statement: crate::schema::StatementId(3),
+            statement: bumbledb_theory::schema::StatementId(3),
             rendered: "Grading(id | kind == 0) == Det(grading)".into(),
         }],
         "the structured stats carry the mark as data"
@@ -347,7 +352,7 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
             plan_roles(&grounded, 0),
             vec![
                 Role::Positive,
-                Role::Eliminated(crate::schema::StatementId(2))
+                Role::Eliminated(bumbledb_theory::schema::StatementId(2))
             ],
             "the walk shape eliminates the Account occurrence"
         );
@@ -418,7 +423,7 @@ fn per_rule_elimination_marks_one_rule_only() {
         plan_roles(&prepared, 0),
         vec![
             Role::Positive,
-            Role::Eliminated(crate::schema::StatementId(2))
+            Role::Eliminated(bumbledb_theory::schema::StatementId(2))
         ],
         "the unfiltered walk eliminates its Account occurrence"
     );
@@ -507,7 +512,7 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
         plan_roles(&prepared, 0),
         vec![
             Role::Positive,
-            Role::Eliminated(crate::schema::StatementId(3))
+            Role::Eliminated(bumbledb_theory::schema::StatementId(3))
         ],
         "the survivor still carries its own elimination mark"
     );

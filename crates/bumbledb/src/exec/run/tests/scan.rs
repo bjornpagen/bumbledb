@@ -20,7 +20,7 @@ fn wide_schema(fields: usize) -> Schema {
             fields: (0..fields)
                 .map(|f| FieldDescriptor {
                     name: format!("f{f}").into(),
-                    value_type: crate::schema::ValueType::U64,
+                    value_type: bumbledb_theory::schema::ValueType::U64,
                     generation: Generation::None,
                 })
                 .collect(),

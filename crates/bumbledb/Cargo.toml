@@ -33,6 +33,11 @@ crashpoint = []
 [dependencies]
 blake3 = "1"
 bumbledb-macros = { path = "../bumbledb-macros" }
+# The theory vocabulary (values, intervals, the Allen mask algebra, schema
+# descriptors, the SchemaSpec lowering) — re-exported wholesale: hosts
+# depend on this one crate, never on bumbledb-theory directly
+# (docs/architecture/70-api.md § the SchemaSpec bindings contract).
+bumbledb-theory = { path = "../bumbledb-theory" }
 heed = { version = "0.22", default-features = false } # no serde codecs: the engine reads raw bytes; the dependency law's serde grep stays empty
 # The ephemeral kind's open-time block allocation (storage/env/open_env.rs:
 # fcntl(F_PREALLOCATE) / posix_fallocate) — the capacity contract enforced

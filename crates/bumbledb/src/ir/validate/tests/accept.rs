@@ -178,7 +178,8 @@ fn accepts_a_ray_literal_and_the_last_point() {
                 (
                     VALIDITY,
                     Term::Literal(Value::IntervalU64(
-                        crate::Interval::<u64>::new(5, u64::MAX).expect("nonempty interval"),
+                        bumbledb_theory::Interval::<u64>::new(5, u64::MAX)
+                            .expect("nonempty interval"),
                     )),
                 ),
             ],
@@ -226,7 +227,7 @@ fn accepts_allen_between_interval_variables_from_different_atoms() {
     // no shared point variable — both vars stay bivalent and resolve to
     // intervals. Both mask forms are exercised: literal and param.
     let masks = [
-        MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+        MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
         MaskTerm::Param(ParamId(0)),
     ];
     for mask in masks {
@@ -532,7 +533,7 @@ fn accepts_a_mixed_width_allen_pair_of_one_element_domain() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
             },
             lhs: var(1), // interval<u64>
             rhs: var(2), // interval<u64, 5>
@@ -552,11 +553,11 @@ fn accepts_a_general_interval_literal_allen_against_a_fixed_width_var() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
             },
             lhs: var(1), // interval<u64, 5>
             rhs: Term::Literal(Value::IntervalU64(
-                crate::Interval::<u64>::new(3, 40).expect("nonempty"),
+                bumbledb_theory::Interval::<u64>::new(3, 40).expect("nonempty"),
             )),
         })],
     });

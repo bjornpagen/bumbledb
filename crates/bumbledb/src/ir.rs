@@ -10,11 +10,11 @@ pub(crate) mod normalize;
 pub mod render;
 pub mod validate;
 
-use crate::schema::{FieldId, RelationId};
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 /// The one literal-value sum, shared with statement selections — the
 /// normative IR block in `docs/architecture/20-query-ir.md` names it here.
-pub use crate::value::Value;
+pub use bumbledb_theory::Value;
 
 /// The DNF distribution — the declared decomposition of the input
 /// condition grammar ([`ConditionTree`]) into Or-free rules; validation
@@ -325,7 +325,7 @@ pub enum HeadTerm {
 /// errors — validation for literals, bind for params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaskTerm {
-    Literal(crate::allen::AllenMask),
+    Literal(bumbledb_theory::allen::AllenMask),
     Param(ParamId),
 }
 
@@ -580,7 +580,7 @@ impl<'p> From<&'p Program> for ProgramRef<'p> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interval::Interval;
+    use bumbledb_theory::Interval;
 
     // These constructions double as documentation of the doc's example
     // query shapes over the ledger schema (Account, Posting, ...).
@@ -727,14 +727,15 @@ mod tests {
             Value::String(Box::from(&b"text"[..])),
             Value::FixedBytes(Box::from(&[0xDEu8, 0xAD][..])),
             Value::IntervalU64(
-                crate::Interval::<u64>::new(0, u64::MAX).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(0, u64::MAX).expect("nonempty interval"),
             ),
             Value::IntervalI64(
-                crate::Interval::<i64>::new(i64::MIN, i64::MAX).expect("nonempty interval"),
+                bumbledb_theory::Interval::<i64>::new(i64::MIN, i64::MAX)
+                    .expect("nonempty interval"),
             ),
             // Plus the one non-field value shape: the Allen mask (a
             // param's bind-time payload, never a stored type).
-            Value::AllenMask(crate::allen::AllenMask::DISJOINT),
+            Value::AllenMask(bumbledb_theory::allen::AllenMask::DISJOINT),
         ];
         assert_eq!(values.len(), 8);
     }
@@ -746,12 +747,16 @@ mod tests {
         let iv = Interval::<i64>::new(-5, 9).expect("valid bounds");
         assert_eq!(
             Value::from(iv),
-            Value::IntervalI64(crate::Interval::<i64>::new(-5, 9).expect("nonempty interval"))
+            Value::IntervalI64(
+                bumbledb_theory::Interval::<i64>::new(-5, 9).expect("nonempty interval")
+            )
         );
         let iv = Interval::<u64>::new(3, 7).expect("valid bounds");
         assert_eq!(
             Value::from(iv),
-            Value::IntervalU64(crate::Interval::<u64>::new(3, 7).expect("nonempty interval"))
+            Value::IntervalU64(
+                bumbledb_theory::Interval::<u64>::new(3, 7).expect("nonempty interval")
+            )
         );
     }
 }

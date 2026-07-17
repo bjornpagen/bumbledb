@@ -2,7 +2,8 @@
 //! corruption-checked field decoder.
 
 use super::{FactLayout, FixedBytesValue, I64_SIGN_BIT, IntervalElement, TypeDesc, ValueRef};
-use crate::{Interval, error::CorruptionError};
+use crate::error::CorruptionError;
+use bumbledb_theory::Interval;
 
 /// Decodes a canonical Bool byte.
 ///
@@ -235,8 +236,8 @@ pub(crate) fn decode_values(
     fact: &[u8],
     layout: &FactLayout,
     mut resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
-) -> crate::error::Result<Vec<crate::value::Value>> {
-    use crate::value::Value;
+) -> crate::error::Result<Vec<bumbledb_theory::Value>> {
+    use bumbledb_theory::Value;
     (0..layout.field_count())
         .map(|idx| {
             Ok(match decode_field(fact, layout, idx)? {

@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::image::RelationImage;
-use crate::schema::RelationId;
 use crate::storage::env::GenerationId;
+use bumbledb_theory::schema::RelationId;
 
 mod evict_older_than;
 mod get_or_build;

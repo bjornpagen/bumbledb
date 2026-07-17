@@ -2,7 +2,7 @@ use super::decode::{decode_fixed_bytes, decode_i64, decode_interval_i64, decode_
 use super::encode::{encode_interval_i64, encode_interval_u64};
 use super::*;
 use crate::error::CorruptionError;
-use crate::schema::IntervalElement;
+use bumbledb_theory::schema::IntervalElement;
 
 /// A deterministic LCG so the property sweeps are reproducible.
 struct Lcg(u64);
@@ -142,9 +142,11 @@ fn mixed_values() -> Vec<ValueRef> {
         ValueRef::I64(i64::MIN),
         ValueRef::String(7),
         ValueRef::fixed_bytes(&[0xAA; 12]),
-        ValueRef::IntervalU64(crate::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval")),
+        ValueRef::IntervalU64(
+            bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"),
+        ),
         ValueRef::IntervalI64(
-            crate::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"),
+            bumbledb_theory::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"),
         ),
     ]
 }
@@ -164,10 +166,10 @@ fn encode_fact_matches_independent_field_encodings() {
     expected.extend_from_slice(&[0xAA; 12]);
     expected.extend_from_slice(&[0x00; 4]);
     expected.extend_from_slice(&encode_interval_u64(
-        crate::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"),
+        bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"),
     ));
     expected.extend_from_slice(&encode_interval_i64(
-        crate::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"),
+        bumbledb_theory::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"),
     ));
     assert_eq!(fact, expected);
 }
@@ -188,11 +190,15 @@ fn field_bytes_slices_equal_independent_encodings() {
     assert_eq!(field_bytes(&fact, &layout, 5), padded);
     assert_eq!(
         field_bytes(&fact, &layout, 6),
-        encode_interval_u64(crate::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"))
+        encode_interval_u64(
+            bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval")
+        )
     );
     assert_eq!(
         field_bytes(&fact, &layout, 7),
-        encode_interval_i64(crate::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"))
+        encode_interval_i64(
+            bumbledb_theory::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval")
+        )
     );
 }
 
@@ -326,7 +332,7 @@ fn interval_round_trip_edges_and_random_pairs() {
     ] {
         assert_eq!(
             decode_interval_i64(encode_interval_i64(
-                crate::Interval::<i64>::new(start, end).expect("nonempty interval")
+                bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval")
             )),
             Ok((start, end))
         );
@@ -334,7 +340,7 @@ fn interval_round_trip_edges_and_random_pairs() {
     for (start, end) in [(0, u64::MAX), (0, 1), (u64::MAX - 1, u64::MAX)] {
         assert_eq!(
             decode_interval_u64(encode_interval_u64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval")
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval")
             )),
             Ok((start, end))
         );
@@ -345,7 +351,7 @@ fn interval_round_trip_edges_and_random_pairs() {
         let (start, end) = rand_interval_u64(&mut rng);
         assert_eq!(
             decode_interval_u64(encode_interval_u64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval")
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval")
             )),
             Ok((start, end))
         );
@@ -355,7 +361,7 @@ fn interval_round_trip_edges_and_random_pairs() {
         );
         assert_eq!(
             decode_interval_i64(encode_interval_i64(
-                crate::Interval::<i64>::new(start, end).expect("nonempty interval")
+                bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval")
             )),
             Ok((start, end))
         );
@@ -377,10 +383,12 @@ fn interval_encoding_orders_by_start_then_end() {
             rand_interval_u64_from(&mut rng, x.0)
         };
         assert_eq!(
-            encode_interval_u64(crate::Interval::<u64>::new(x.0, x.1).expect("nonempty interval"))
-                .cmp(&encode_interval_u64(
-                    crate::Interval::<u64>::new(y.0, y.1).expect("nonempty interval")
-                )),
+            encode_interval_u64(
+                bumbledb_theory::Interval::<u64>::new(x.0, x.1).expect("nonempty interval")
+            )
+            .cmp(&encode_interval_u64(
+                bumbledb_theory::Interval::<u64>::new(y.0, y.1).expect("nonempty interval")
+            )),
             x.cmp(&y),
             "u64 encoding order diverges from tuple order for {x:?} vs {y:?}"
         );
@@ -394,10 +402,10 @@ fn interval_encoding_orders_by_start_then_end() {
         if xi.0 < xi.1 && yi.0 < yi.1 {
             assert_eq!(
                 encode_interval_i64(
-                    crate::Interval::<i64>::new(xi.0, xi.1).expect("nonempty interval")
+                    bumbledb_theory::Interval::<i64>::new(xi.0, xi.1).expect("nonempty interval")
                 )
                 .cmp(&encode_interval_i64(
-                    crate::Interval::<i64>::new(yi.0, yi.1).expect("nonempty interval")
+                    bumbledb_theory::Interval::<i64>::new(yi.0, yi.1).expect("nonempty interval")
                 )),
                 xi.cmp(&yi),
                 "i64 encoding order diverges from tuple order for {xi:?} vs {yi:?}"
@@ -630,10 +638,10 @@ fn exhaustive_interval_encoding_orders_by_endpoint_pair_on_the_grid() {
         for &y in &u64_intervals {
             assert_eq!(
                 encode_interval_u64(
-                    crate::Interval::<u64>::new(x.0, x.1).expect("nonempty interval")
+                    bumbledb_theory::Interval::<u64>::new(x.0, x.1).expect("nonempty interval")
                 )
                 .cmp(&encode_interval_u64(
-                    crate::Interval::<u64>::new(y.0, y.1).expect("nonempty interval")
+                    bumbledb_theory::Interval::<u64>::new(y.0, y.1).expect("nonempty interval")
                 )),
                 x.cmp(&y),
                 "u64 {x:?} vs {y:?}"
@@ -655,10 +663,10 @@ fn exhaustive_interval_encoding_orders_by_endpoint_pair_on_the_grid() {
         for &y in &i64_intervals {
             assert_eq!(
                 encode_interval_i64(
-                    crate::Interval::<i64>::new(x.0, x.1).expect("nonempty interval")
+                    bumbledb_theory::Interval::<i64>::new(x.0, x.1).expect("nonempty interval")
                 )
                 .cmp(&encode_interval_i64(
-                    crate::Interval::<i64>::new(y.0, y.1).expect("nonempty interval")
+                    bumbledb_theory::Interval::<i64>::new(y.0, y.1).expect("nonempty interval")
                 )),
                 x.cmp(&y),
                 "i64 {x:?} vs {y:?}"
@@ -713,7 +721,8 @@ fn fixed_interval_round_trips_one_word() {
     for (start, width) in [(0u64, 1u64), (3, 5), (1 << 40, 1 << 20), (u64::MAX - 3, 1)] {
         let layout = fixed_layout(IntervalElement::U64, width);
         assert_eq!(layout.fact_width(), 16, "8-byte scalar + 8-byte start");
-        let interval = crate::Interval::<u64>::fixed(start, width).expect("in-domain fixed value");
+        let interval =
+            bumbledb_theory::Interval::<u64>::fixed(start, width).expect("in-domain fixed value");
         let mut fact = Vec::new();
         encode_fact(
             &[ValueRef::U64(9), ValueRef::FixedIntervalU64(interval)],
@@ -728,7 +737,8 @@ fn fixed_interval_round_trips_one_word() {
     }
     for (start, width) in [(i64::MIN, 7u64), (-1, 2), (0, 1), (i64::MAX - 3, 1)] {
         let layout = fixed_layout(IntervalElement::I64, width);
-        let interval = crate::Interval::<i64>::fixed(start, width).expect("in-domain fixed value");
+        let interval =
+            bumbledb_theory::Interval::<i64>::fixed(start, width).expect("in-domain fixed value");
         let mut fact = Vec::new();
         encode_fact(
             &[ValueRef::U64(9), ValueRef::FixedIntervalI64(interval)],
@@ -777,7 +787,7 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
         assert_eq!(
             decode_field(&fact, &layout, 1),
             Ok(ValueRef::FixedIntervalU64(
-                crate::Interval::<u64>::fixed(inside, width).expect("inside the bound")
+                bumbledb_theory::Interval::<u64>::fixed(inside, width).expect("inside the bound")
             ))
         );
     }
@@ -817,7 +827,7 @@ fn exhaustive_fixed_interval_start_word_preserves_start_order() {
         let mut encoded = Vec::new();
         for &start in &starts {
             let interval =
-                crate::Interval::<u64>::fixed(start, width).expect("inside the Q2 bound");
+                bumbledb_theory::Interval::<u64>::fixed(start, width).expect("inside the Q2 bound");
             assert_eq!(interval.end(), start + width, "the derived end is exact");
             let mut fact = Vec::new();
             encode_fact(
@@ -843,7 +853,8 @@ fn exhaustive_fixed_interval_start_word_preserves_start_order() {
     let encoded: Vec<Vec<u8>> = starts
         .iter()
         .map(|&start| {
-            let interval = crate::Interval::<i64>::fixed(start, 3).expect("inside the Q2 bound");
+            let interval =
+                bumbledb_theory::Interval::<i64>::fixed(start, 3).expect("inside the Q2 bound");
             assert_eq!(interval.end(), start + 3, "the derived end is exact");
             let mut fact = Vec::new();
             encode_fact(

@@ -3,9 +3,9 @@ use std::sync::PoisonError;
 use super::{BULK_CHUNK, BulkLoadError, CommitSeq, Db, Fact, Snapshot, WriteTx, WriterThreadReset};
 use crate::error::{Error, Result};
 use crate::ir::Value;
-use crate::schema::RelationId;
 use crate::storage::commit::{commit, crashpoint};
 use crate::storage::delta::WriteDelta;
+use bumbledb_theory::schema::RelationId;
 
 /// A per-thread key, distinct process-wide (never 0). `ThreadId`
 /// itself has no stable integer form, so each thread mints one from a

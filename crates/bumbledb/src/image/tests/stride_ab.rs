@@ -19,13 +19,13 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::encoding::TypeDesc;
 use crate::image::build::image_with_tolerance;
 use crate::image::view::{FilterPredicate, apply};
 use crate::image::{Column, RelationImage, SET_STRIDE};
 use crate::ir::CmpOp;
-use crate::schema::FieldId;
-use crate::schema::IntervalElement;
+use bumbledb_theory::TypeDesc;
+use bumbledb_theory::schema::FieldId;
+use bumbledb_theory::schema::IntervalElement;
 
 /// The shipped rule (production `PAD_TOLERANCE`).
 const SHIPPED: usize = 384;

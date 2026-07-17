@@ -13,7 +13,7 @@ use crate::ir::normalize::{
     AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison, Role,
     SlotWidth,
 };
-use crate::schema::{FieldId, RelationId};
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 mod binary2fj;
 mod check_occurrence_coverage;

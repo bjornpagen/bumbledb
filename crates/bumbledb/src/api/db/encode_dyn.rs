@@ -2,7 +2,7 @@ use super::{InternMode, WriteTx};
 use crate::encoding::{ValueRef, encode_fact};
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
-use crate::schema::{FieldDescriptor, FieldId, RelationId};
+use bumbledb_theory::schema::{FieldDescriptor, FieldId, RelationId};
 
 /// The one [`crate::schema::ValueMismatch`] → [`FactShapeError`] translation,
 /// shared by every dynamic write/read surface (`insert_dyn`/`delete_dyn`/
@@ -10,14 +10,14 @@ use crate::schema::{FieldDescriptor, FieldId, RelationId};
 pub(super) fn shape_mismatch(
     rel: RelationId,
     field: FieldId,
-    mismatch: crate::schema::ValueMismatch,
+    mismatch: bumbledb_theory::schema::ValueMismatch,
 ) -> FactShapeError {
     match mismatch {
-        crate::schema::ValueMismatch::Type => FactShapeError::TypeMismatch {
+        bumbledb_theory::schema::ValueMismatch::Type => FactShapeError::TypeMismatch {
             relation: rel,
             field,
         },
-        crate::schema::ValueMismatch::Utf8 => FactShapeError::InvalidUtf8 {
+        bumbledb_theory::schema::ValueMismatch::Utf8 => FactShapeError::InvalidUtf8 {
             relation: rel,
             field,
         },
@@ -49,7 +49,7 @@ pub(super) fn dyn_value_refs(
     }
     for (idx, (value, field)) in values.iter().zip(fields).enumerate() {
         let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
-        if let Err(mismatch) = crate::schema::value_matches(value, &field.value_type) {
+        if let Err(mismatch) = bumbledb_theory::schema::value_matches(value, &field.value_type) {
             return Err(shape_mismatch(rel, field_id, mismatch).into());
         }
         let value_ref = match value {
@@ -64,13 +64,13 @@ pub(super) fn dyn_value_refs(
             // type's exact width and Q2 bound, so the fixed ref just
             // marks the one-word encoding.
             Value::IntervalU64(interval) => match field.value_type {
-                crate::schema::ValueType::Interval { width: Some(_), .. } => {
+                bumbledb_theory::schema::ValueType::Interval { width: Some(_), .. } => {
                     ValueRef::FixedIntervalU64(*interval)
                 }
                 _ => ValueRef::IntervalU64(*interval),
             },
             Value::IntervalI64(interval) => match field.value_type {
-                crate::schema::ValueType::Interval { width: Some(_), .. } => {
+                bumbledb_theory::schema::ValueType::Interval { width: Some(_), .. } => {
                     ValueRef::FixedIntervalI64(*interval)
                 }
                 _ => ValueRef::IntervalI64(*interval),

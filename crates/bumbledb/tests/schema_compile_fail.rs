@@ -2,9 +2,11 @@
 //! dependency law; `bumbledb-query`'s runner is the precedent): each
 //! fixture under `tests/schema-compile-fail/` must **fail** to compile,
 //! and its `//@ error: <substring>` directives (repeatable) pin the
-//! diagnostic. The macro's grammar checks are expansion panics spanned at
-//! the invocation, and the schema-bound-witness fixture is an ordinary
-//! type mismatch — either way, no `//@ line` directives.
+//! diagnostic. The macro's grammar and literal-typing checks are
+//! expansion panics spanned at the invocation; the shared lowering's
+//! issues (names, the ban table) are `compile_error!`s at the offending
+//! token; and the schema-bound-witness fixture is an ordinary type
+//! mismatch — any way, no `//@ line` directives.
 //!
 //! The runner drives `rustc` directly against the workspace's own build
 //! artifacts: this integration test lives in `target/…/deps`, so its

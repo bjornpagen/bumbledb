@@ -1,53 +1,18 @@
-//! The one literal-value sum (`docs/architecture/30-dependencies.md`:
-//! dependencies and queries share one representation).
-//!
-//! Query literals ([`crate::ir::Term::Literal`]) and statement selection
-//! literals ([`crate::schema::Side::selection`]) are the same type — this
-//! module is the zero-dependency home both `ir` and `schema` import, so
-//! neither layer owes the other anything.
-//!
-//! `Value` is dumb data except where a malformed value would erase its own
-//! denotation: interval variants carry the checked [`crate::Interval`] type,
-//! so every encodable interval is nonempty by construction. UTF-8 remains a
-//! boundary rule owned by IR/schema validation. Encoding lives in `encoding`,
-//! rendering in `schema::render`; nothing a consumer owns lives here.
+//! The one literal-value sum — the definition lives in `bumbledb-theory`
+//! (`docs/architecture/30-dependencies.md`: dependencies and queries share
+//! one representation). This module is the facade half of the split: the
+//! public path `bumbledb::value::Value` stays valid forever, while internal
+//! engine code imports `bumbledb_theory::Value` directly (the facade is
+//! API, never an internal crutch — `docs/architecture/70-api.md`).
+//! Hosts depend on this crate alone; the theory crate is not API.
 
-/// A literal value. Exactly one variant per data-model type — no universal
-/// integer (U64 and I64 literals are exact-typed; out-of-range is
-/// unrepresentable rather than truncated), and the fixed-bytes variant
-/// exists by construction (the v5 hole, post-mortem §13).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Value {
-    Bool(bool),
-    U64(u64),
-    I64(i64),
-    /// Raw UTF-8 bytes; interning is the engine's job (resolved to an
-    /// intern id per execution — a dictionary miss means empty result).
-    String(Box<[u8]>),
-    /// A `bytes<N>` value: exactly N raw bytes, self-encoding — the
-    /// length is the type (`ValueType::FixedBytes`), so a length mismatch
-    /// is a type mismatch. Never interned: identity-shaped values live
-    /// inline in the fact (*intern what repeats; inline what
-    /// identifies* — `docs/architecture/10-data-model.md`).
-    FixedBytes(Box<[u8]>),
-    /// A nonempty half-open `[start, end)` over U64
-    /// (`docs/architecture/20-query-ir.md`). Raw bounds do not typecheck:
-    ///
-    /// ```compile_fail
-    /// use bumbledb::Value;
-    /// let _ = Value::IntervalU64(7, 7);
-    /// ```
-    IntervalU64(crate::Interval<u64>),
-    /// A nonempty half-open `[start, end)` over I64. Construction follows
-    /// [`Value::IntervalU64`].
-    IntervalI64(crate::Interval<i64>),
-    /// An Allen mask — the interval-pair relation as a value
-    /// (`docs/architecture/10-data-model.md` § the mask value shape).
-    /// Not a field type: it anchors nothing but the `Allen` comparison's
-    /// mask position, and exists so the temporal relation is a bind-time
-    /// argument like any other param. Carried as the checked
-    /// [`crate::AllenMask`] (bits above the low 13 are unrepresentable);
-    /// the vacuous ∅/full masks are query-boundary rules, exactly like
-    /// `start < end`.
-    AllenMask(crate::allen::AllenMask),
-}
+// Dormant by design: after the internal import sweep nothing in-crate
+// resolves through this path (internal code names the theory crate), but
+// the path itself is pinned — deleting it would silently break any
+// referrer the next refactor adds expecting the facade contract.
+#[expect(
+    unused_imports,
+    reason = "the facade path is contract, not plumbing — kept compiling \
+              with zero internal users"
+)]
+pub use bumbledb_theory::Value;

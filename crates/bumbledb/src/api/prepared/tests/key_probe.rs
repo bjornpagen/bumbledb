@@ -1,8 +1,8 @@
 use super::*;
 
 use crate::ir::{AggOp, ParamId};
-use crate::schema::{IntervalElement, StatementDescriptor};
 use crate::storage::dict;
+use bumbledb_theory::schema::{IntervalElement, StatementDescriptor};
 
 /// The key-probe fast lane — hit, miss, and a
 /// param-type error, with an interned find exercising the resolving
@@ -208,7 +208,7 @@ fn insert_bookings(env: &Environment, schema: &Schema, rows: &[(u64, (u64, u64),
             &[
                 ValueRef::U64(*room),
                 ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
                 ),
                 ValueRef::U64(*label),
             ],
@@ -255,7 +255,7 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
     let query = booking_query(Term::Literal(Value::IntervalU64(
-        crate::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+        bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
     )));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(matches!(
@@ -284,7 +284,7 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
         Some(crate::api::stats::KeyProbeStats { hit: true })
     );
     let near = booking_query(Term::Literal(Value::IntervalU64(
-        crate::Interval::<u64>::new(5, 11).expect("nonempty interval"),
+        bumbledb_theory::Interval::<u64>::new(5, 11).expect("nonempty interval"),
     )));
     let mut near = prepare(&txn, &cache, &schema, &near).expect("prepare");
     let (answers, stats) = near.profile(&txn, &cache, &[]).expect("profile");
@@ -386,7 +386,9 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     encode_fact(
         &[
             ValueRef::U64(2),
-            ValueRef::IntervalU64(crate::Interval::<u64>::new(5, 10).expect("nonempty interval")),
+            ValueRef::IntervalU64(
+                bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+            ),
         ],
         schema.relation(RelationId(0)).layout(),
         &mut bytes,
@@ -411,7 +413,8 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
                     (
                         FieldId(1),
                         Term::Literal(Value::IntervalU64(
-                            crate::Interval::<u64>::new(span.0, span.1).expect("nonempty interval"),
+                            bumbledb_theory::Interval::<u64>::new(span.0, span.1)
+                                .expect("nonempty interval"),
                         )),
                     ),
                 ],
@@ -590,7 +593,7 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
             &[
                 ValueRef::U64(1),
                 ValueRef::FixedIntervalU64(
-                    crate::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
                 ),
                 ValueRef::U64(100),
             ],

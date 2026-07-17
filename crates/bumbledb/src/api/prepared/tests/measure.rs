@@ -8,9 +8,9 @@
 //! → u64 boundary as the existing typed overflow error.
 
 use super::*;
-use crate::allen::AllenMask;
 use crate::ir::{AggOp, MaskTerm, ParamId};
-use crate::schema::{Generation, IntervalElement};
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::{Generation, IntervalElement};
 
 /// Session(id fresh u64, tag u64, cap u64, span interval<u64>);
 /// Shift(id fresh u64, tag u64, span interval<i64>);
@@ -90,7 +90,7 @@ fn insert_sessions(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64, (
                 ValueRef::U64(*tag),
                 ValueRef::U64(*cap),
                 ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
                 ),
             ],
             schema.relation(SESSION).layout(),
@@ -112,7 +112,7 @@ fn insert_shifts(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
                 ValueRef::U64(*id),
                 ValueRef::U64(*tag),
                 ValueRef::IntervalI64(
-                    crate::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
                 ),
             ],
             schema.relation(SHIFT).layout(),
@@ -402,7 +402,8 @@ fn ray_filter() -> ConditionTree {
         },
         lhs: Term::Var(VarId(1)),
         rhs: Term::Literal(Value::IntervalU64(
-            crate::Interval::<u64>::new(u64::MAX - 1, u64::MAX).expect("nonempty interval"),
+            bumbledb_theory::Interval::<u64>::new(u64::MAX - 1, u64::MAX)
+                .expect("nonempty interval"),
         )),
     })
 }
@@ -508,7 +509,7 @@ fn a_ray_reaching_duration_raises_and_a_filtered_query_succeeds() {
         },
         lhs: Term::Var(VarId(1)),
         rhs: Term::Literal(Value::IntervalU64(
-            crate::Interval::<u64>::new(0, 100).expect("nonempty interval"),
+            bumbledb_theory::Interval::<u64>::new(0, 100).expect("nonempty interval"),
         )),
     }));
     let query = Query::single(bounded);

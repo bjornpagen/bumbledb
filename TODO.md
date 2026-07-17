@@ -405,6 +405,11 @@ anchors are symbols; grep for them.
   differential property tests). Or gravestone if LLVM won't cooperate.
 - **Done:** kernel µop reduction shown in disassembly + A/B; or the recorded
   refutation.
+- **Assembler note (2026-07-16):** landed for `fold_sum_u64_dense` (expected
+  ~4 fewer vector µops per 8-word iteration); the disasm HALF-REFUTES the
+  premise for `fold_min_max_u64_dense` — its `mov.16b`s are init-only, the
+  loop was already copy-free. Formal disasm gate + A/B stays with the
+  measured stage.
 
 ### W6 — stride-padder re-run post-T1 (a recorded re-open trigger, now DUE)
 - **Site:** `image.rs :: StridePadder` / `PAD_TOLERANCE` (384; the constant's
@@ -464,6 +469,14 @@ anchors are symbols; grep for them.
   whole.
 - **Done:** the sweep exists; landed-if-wins or the gravestone gains its
   measured curve.
+- **Assembler note (2026-07-16):** the sweep lane exists —
+  `bumbledb-bench sweep-commit` (`crates/bumbledb-bench/src/sweep.rs`,
+  `driver/sweep_commit.rs`), and witness stability is pinned by
+  `crates/bumbledb/tests/witness_stability.rs` (its header documents the
+  one assertion a landed source-side sort must flip, plus the
+  `pin_hash_model` twin in sweep.rs). The verdict run is the measured
+  stage's: `scripts/measure.sh cargo run --release -p bumbledb-bench
+  --features obs -- sweep-commit`.
 
 ### W9 — bimodality mechanism hunt (no unexplained behavior ships)
 - **Symptom:** `slot_booking_overlap` and `postings_without_tag` flip between
@@ -501,10 +514,16 @@ anchors are symbols; grep for them.
   re-entrant. Storage is not on the unsafe allowlist; fixes stay safe Rust.
 - **Done:** the census harness (`tests/alloc_census.rs`, the `CENSUS |` and
   `SITE` rows) shows the reduction; correctness untouched.
+- **Assembler note (2026-07-16):** landed; one premise correction —
+  `plan.inserts` is in `(relation, fact_hash)` order, NOT byte order, so
+  the `check_target` fix adds a byte-sorted index on the plan (one exact
+  allocation per commit) rather than binary-searching `inserts` directly.
+  `delta.rs :: record_determinants` became allocation-free as a side
+  effect of the `DeterminantImage` small buffer.
 
 ### W11 — lean proof: the FilterPredicate transport (range-summary narrowing)
 - **Site:** `lean/Bumbledb/Exec/Rewrites.lean`, § the range-summary fold.
-- **Exact state (verified):** the word-level development is COMPLETE — 
+- **Exact state (verified):** the word-level development is COMPLETE —
   `WordRange.narrow_mem`, `fold_mem`, `emit_mem`, the headline
   `range_summary_replacement`, and its two faces `range_pin_subsumes` /
   `range_fold_empty` are proved theorems, case-for-case with
@@ -524,6 +543,12 @@ anchors are symbols; grep for them.
   *earned* by a real attempt, not assumed.
 - **Done:** `lake build` green, batteries green; theorem or recorded goal
   state.
+- **DONE (2026-07-16):** the transport is a completed theorem —
+  `filter_fold_transport` (`lean/Bumbledb/Exec/Rewrites.lean`), Bridge
+  ledger row 93, census green. The one honest gap the module doc records:
+  the engine-side `fold_occurrence` premise shape (computing the
+  replacement from the filter list) is mirrored as data, not executable
+  Lean.
 
 ### Hygiene (fold into A3, concrete as of 2026-07-16)
 - Delete the 23 stale `worktree-wf_*` branches and the 3 `codex/*` branches

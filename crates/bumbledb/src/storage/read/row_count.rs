@@ -1,8 +1,8 @@
 use crate::error::Result;
-use crate::schema::RelationId;
 use crate::storage::env::ReadTxn;
 use crate::storage::keys::{self, StatKind};
 use crate::storage::stored_u64;
+use bumbledb_theory::schema::RelationId;
 
 /// `S` get: the relation's exact row count — the planner's statistic.
 /// Missing means no state-changing commit ever touched the relation: 0.

@@ -1,7 +1,8 @@
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::{NormalizedQuery, Occurrence};
 use crate::ir::{AggOp, CmpOp, FindTerm, VarId};
-use crate::schema::{FieldId, RelationId, Schema};
+use crate::schema::Schema;
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 /// The rule-disjointness proof's witness (docs/architecture/40-execution.md
 /// § set semantics): the relation and field whose differing pinned

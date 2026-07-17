@@ -1,3 +1,4 @@
+use bumbledb::schema::ValidateDescriptor as _;
 use std::sync::OnceLock;
 
 use super::*;

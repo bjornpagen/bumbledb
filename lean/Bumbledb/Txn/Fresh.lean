@@ -320,7 +320,7 @@ holds by ONE `holds` projection — the materialized-statement doctrine
 the invariant). NOT generator injectivity: ids are writable-by-
 default, so no generator law could carry the FD (module doc — why
 primer's route is not ours). Bridge:
-`SchemaDescriptor::materialized_statements (crates/bumbledb/src/schema.rs)`
+`SchemaDescriptor::materialized_statements (crates/bumbledb-theory/src/schema.rs)`
 — one auto-Functionality per fresh field, first in materialized
 statement order, targetable like any declared key. -/
 theorem materialized_key_ordinary {T : Theory} (s : State T)

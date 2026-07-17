@@ -1,5 +1,6 @@
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{RelationId, Schema};
+use crate::schema::Schema;
+use bumbledb_theory::schema::RelationId;
 
 pub(super) fn check_width(
     schema: &Schema,

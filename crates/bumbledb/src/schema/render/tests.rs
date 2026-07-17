@@ -3,8 +3,10 @@
 //! from either id, and an interval selection literal.
 
 use super::*;
+use crate::schema::ContainmentId;
+use crate::schema::ValidateDescriptor as _;
 use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
-use crate::schema::{ContainmentId, IntervalElement, RelationDescriptor};
+use bumbledb_theory::schema::{IntervalElement, LiteralSet, RelationDescriptor};
 
 /// The `docs/architecture/30-dependencies.md` example schema plus an
 /// interval-selected containment (Shift/Roster). Materialized ids: 0/1
@@ -93,7 +95,8 @@ fn example() -> SchemaDescriptor {
                     vec![(
                         FieldId(1),
                         Value::IntervalU64(
-                            crate::Interval::<u64>::new(0, 86_400).expect("nonempty interval"),
+                            bumbledb_theory::Interval::<u64>::new(0, 86_400)
+                                .expect("nonempty interval"),
                         ),
                     )],
                 ),
@@ -240,11 +243,11 @@ fn closed_reference_selections_render_handles() {
         relations: vec![
             RelationDescriptor {
                 extension: Some(Box::new([
-                    crate::schema::Row {
+                    bumbledb_theory::schema::Row {
                         handle: "Open".into(),
                         values: Box::new([]),
                     },
-                    crate::schema::Row {
+                    bumbledb_theory::schema::Row {
                         handle: "Frozen".into(),
                         values: Box::new([]),
                     },
@@ -335,7 +338,7 @@ fn unresolvable_names_fall_back_to_id_placeholders() {
 #[test]
 fn extension_forms_render_in_the_grammar() {
     use crate::schema::tests::{cardinality, side_where_sets};
-    use crate::schema::{LiteralSet, StatementView, WindowId};
+    use crate::schema::{StatementView, WindowId};
 
     let decl = SchemaDescriptor {
         relations: vec![

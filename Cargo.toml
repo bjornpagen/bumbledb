@@ -5,6 +5,7 @@ members = [
     "crates/bumbledb-bench",
     "crates/bumbledb-macros",
     "crates/bumbledb-query",
+    "crates/bumbledb-theory",
 ]
 
 [workspace.lints.rust]

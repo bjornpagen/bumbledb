@@ -25,9 +25,9 @@ use heed::types::Bytes;
 use heed::{AnyTls, Database, RoTxn};
 
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::RelationId;
 use crate::storage::env::{GenerationId, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use bumbledb_theory::schema::RelationId;
 
 mod applier;
 mod apply;

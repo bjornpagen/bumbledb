@@ -1308,7 +1308,8 @@ fn zero_warm_allocation_gate() {
 
         // The recursive family, steady state (docs/architecture/
         // 40-execution.md § the fixpoint driver): rotating edge caps —
-        // per-round delta/accumulated transient refills, the interior
+        // per-round delta transient refills, the accumulated halves'
+        // suffix appends (`TransientImage::append`), the interior
         // seen-set, the finished-image slot, and the frontier watermark
         // all inside the measured window, at their (parameter envelope,
         // iteration shape) high-water after warmup.

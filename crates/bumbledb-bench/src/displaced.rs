@@ -74,6 +74,7 @@
 //! samples suffice and 256 would take minutes; `--samples` still
 //! overrides), and `Kind::Report` rows: measurement, not gate claims.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 
 use bumbledb::{

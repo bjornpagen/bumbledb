@@ -1,13 +1,15 @@
 use super::R;
 use crate::encoding::{ValueRef, encode_fact};
 use crate::image::build;
-use crate::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, Schema, SchemaDescriptor, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+};
 
 /// The image-build profile split (ignored: timing evidence, run by hand):
 /// the LMDB cursor walk alone vs the full build, on a Posting-shaped

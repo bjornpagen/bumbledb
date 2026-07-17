@@ -19,6 +19,7 @@
 //! the measured window). Families are `Kind::Report`: measurement, not
 //! gate claims.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 
 use bumbledb::{

@@ -1,6 +1,7 @@
 use crate::arena::ArenaSlice;
-use crate::schema::{KeyId, RelationId};
+use crate::schema::KeyId;
 use crate::storage::keys;
+use bumbledb_theory::schema::RelationId;
 
 use super::{DeterminantDisposition, DeterminantOverlay, Disposition, WriteDelta};
 

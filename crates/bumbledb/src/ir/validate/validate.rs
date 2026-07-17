@@ -8,7 +8,8 @@ use crate::ir::{
     AggOp, FindTerm, MAX_CONDITION_DEPTH, MAX_PREDICATES, MAX_RULES, ParamId, PredId, Program,
     Query, VarId,
 };
-use crate::schema::{Schema, ValueType};
+use crate::schema::Schema;
+use bumbledb_theory::schema::ValueType;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Validates a query against the schema, yielding the sealed witness.

@@ -7,7 +7,7 @@
 //! plan.
 
 use super::*;
-use crate::schema::Row;
+use bumbledb_theory::schema::Row;
 
 /// Reading(id fresh, kind u64, value i64) referencing the closed
 /// Kind(rank u64; ranks 10/20/20/30) through Reading(kind) <= Kind(id).
@@ -62,13 +62,13 @@ pub(super) fn closed_schema() -> Schema {
                 }],
             },
         ],
-        statements: vec![crate::schema::StatementDescriptor::Containment {
-            source: crate::schema::Side {
+        statements: vec![bumbledb_theory::schema::StatementDescriptor::Containment {
+            source: bumbledb_theory::schema::Side {
                 relation: RelationId(0),
                 projection: Box::new([FieldId(1)]),
                 selection: Box::new([]),
             },
-            target: crate::schema::Side {
+            target: bumbledb_theory::schema::Side {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),
                 selection: Box::new([]),

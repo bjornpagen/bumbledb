@@ -1,12 +1,14 @@
 use super::*;
 use crate::encoding::{ValueRef, encode_fact};
-use crate::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, Schema, SchemaDescriptor, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, GenerationId};
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+};
 
 fn schema() -> Schema {
     SchemaDescriptor {
@@ -181,11 +183,11 @@ fn closed_schema() -> Schema {
             },
             RelationDescriptor {
                 extension: Some(Box::new([
-                    crate::schema::Row {
+                    bumbledb_theory::schema::Row {
                         handle: "Usd".into(),
                         values: Box::new([crate::ir::Value::U64(2)]),
                     },
-                    crate::schema::Row {
+                    bumbledb_theory::schema::Row {
                         handle: "Eur".into(),
                         values: Box::new([crate::ir::Value::U64(0)]),
                     },

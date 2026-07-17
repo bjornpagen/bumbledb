@@ -471,7 +471,7 @@ fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
             op: CmpOp::Lt,
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(
-                crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(1, 5).expect("nonempty interval"),
             )),
         })],
     });
@@ -830,11 +830,11 @@ fn rejects_the_empty_allen_mask() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(crate::allen::AllenMask::EMPTY),
+                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::EMPTY),
             },
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(
-                crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(1, 5).expect("nonempty interval"),
             )),
         })],
     });
@@ -857,7 +857,7 @@ fn rejects_the_full_allen_mask() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(crate::allen::AllenMask::FULL),
+                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::FULL),
             },
             lhs: var(1),
             rhs: var(3),
@@ -879,7 +879,7 @@ fn rejects_allen_over_non_interval_sides() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
             },
             lhs: var(1),
             rhs: Term::Literal(Value::I64(5)),
@@ -921,7 +921,7 @@ fn rejects_point_in_between_two_intervals() {
             op: CmpOp::PointIn,
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(
-                crate::Interval::<u64>::new(1, 5).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(1, 5).expect("nonempty interval"),
             )),
         })],
     });
@@ -1340,7 +1340,7 @@ fn rejects_an_allen_pair_across_element_domains_whatever_the_widths() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(crate::allen::AllenMask::INTERSECTS),
+                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
             },
             lhs: var(1), // interval<u64, 5>
             rhs: var(2), // interval<i64>
@@ -1368,7 +1368,7 @@ fn rejects_a_wrong_width_interval_literal_at_a_fixed_width_field() {
                 (
                     1, // ulane: interval<u64, 5>
                     Term::Literal(Value::IntervalU64(
-                        crate::Interval::<u64>::new(3, 7).expect("nonempty"), // width 4
+                        bumbledb_theory::Interval::<u64>::new(3, 7).expect("nonempty"), // width 4
                     )),
                 ),
             ],
@@ -1397,7 +1397,7 @@ fn rejects_a_width_matched_ray_literal_at_a_fixed_width_field() {
                 (
                     1, // ulane: interval<u64, 5>
                     Term::Literal(Value::IntervalU64(
-                        crate::Interval::<u64>::new(u64::MAX - 5, u64::MAX)
+                        bumbledb_theory::Interval::<u64>::new(u64::MAX - 5, u64::MAX)
                             .expect("a legal general ray"), // width 5 — and a ray
                     )),
                 ),

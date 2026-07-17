@@ -7,7 +7,7 @@ use super::{AggKind, Context, Predicate, PredicateColumn, RuleTyping};
 use crate::error::ValidationError;
 use crate::ir::normalize::LoweredRule;
 use crate::ir::{AggOp, FindTerm, VarId};
-use crate::schema::ValueType;
+use bumbledb_theory::schema::ValueType;
 use std::collections::BTreeSet;
 
 impl Predicate {

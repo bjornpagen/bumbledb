@@ -12,6 +12,7 @@
 //! travel as text), plus a compact Tax-shaped fixture.
 
 use bumbledb::ir::render::render;
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{Db, Query, Schema, Theory};
 use bumbledb_query::query;
 

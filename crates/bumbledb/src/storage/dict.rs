@@ -164,9 +164,11 @@ pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: u64) -> Result<&'txn [u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{Schema, SchemaDescriptor};
+    use crate::schema::Schema;
+    use crate::schema::ValidateDescriptor as _;
     use crate::storage::env::Environment;
     use crate::testutil::TempDir;
+    use bumbledb_theory::schema::SchemaDescriptor;
 
     fn empty_schema() -> Schema {
         SchemaDescriptor {

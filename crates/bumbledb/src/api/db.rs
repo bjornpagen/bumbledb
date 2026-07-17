@@ -32,9 +32,10 @@ use std::sync::Mutex;
 use crate::encoding::ValueRef;
 use crate::error::Result;
 use crate::image::cache::ImageCache;
-use crate::schema::{FieldId, RelationId, Schema};
+use crate::schema::Schema;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, ReadTxn};
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 mod alloc;
 mod delete;

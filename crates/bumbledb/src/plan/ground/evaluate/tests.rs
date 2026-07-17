@@ -4,15 +4,17 @@
 //! condition's refusal shape is easier to pin in isolation.
 
 use super::*;
-use crate::allen::AllenMask;
 use crate::ir::normalize::{NormalizedQuery, normalize};
 use crate::ir::validate::validate;
 use crate::ir::{
     Atom, Comparison, ConditionTree, FindTerm, HeadTerm, MaskTerm, Query, Rule, Term, Value,
 };
 use crate::plan::ground::{ground, with_grounding_disabled};
-use crate::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, Row, Schema, SchemaDescriptor, Side,
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, Row, SchemaDescriptor, Side,
     StatementDescriptor,
 };
 
@@ -93,13 +95,13 @@ fn theory() -> Schema {
                     Row {
                         handle: "X".into(),
                         values: Box::new([Value::IntervalU64(
-                            crate::Interval::<u64>::new(2, 5).expect("nonempty interval"),
+                            bumbledb_theory::Interval::<u64>::new(2, 5).expect("nonempty interval"),
                         )]),
                     },
                     Row {
                         handle: "Y".into(),
                         values: Box::new([Value::IntervalU64(
-                            crate::Interval::<u64>::new(5, 9).expect("nonempty interval"),
+                            bumbledb_theory::Interval::<u64>::new(5, 9).expect("nonempty interval"),
                         )]),
                     },
                 ])),
@@ -899,7 +901,7 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
             },
             lhs: var(2),
             rhs: Term::Literal(Value::IntervalU64(
-                crate::Interval::<u64>::new(6, 8).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(6, 8).expect("nonempty interval"),
             )),
         })],
     });

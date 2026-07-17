@@ -15,8 +15,8 @@ use crate::storage::dict;
 /// declared `width` or its end is the domain ceiling (a ray).
 pub fn fixed_interval_u64(
     relation: RelationId,
-    field: crate::schema::FieldId,
-    interval: crate::Interval<u64>,
+    field: bumbledb_theory::schema::FieldId,
+    interval: bumbledb_theory::Interval<u64>,
     width: u64,
 ) -> Result<ValueRef> {
     if interval.end() - interval.start() == width && !interval.is_ray() {
@@ -33,8 +33,8 @@ pub fn fixed_interval_u64(
 /// As [`fixed_interval_u64`].
 pub fn fixed_interval_i64(
     relation: RelationId,
-    field: crate::schema::FieldId,
-    interval: crate::Interval<i64>,
+    field: bumbledb_theory::schema::FieldId,
+    interval: bumbledb_theory::Interval<i64>,
     width: u64,
 ) -> Result<ValueRef> {
     if interval.end().abs_diff(interval.start()) == width && !interval.is_ray() {

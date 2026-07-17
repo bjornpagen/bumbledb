@@ -1,4 +1,5 @@
 use bumbledb::Theory as _;
+use bumbledb::schema::ValidateDescriptor as _;
 
 use crate::corpus_gen::{GenConfig, Scale};
 use crate::harness::{self, Modes, Protocol};

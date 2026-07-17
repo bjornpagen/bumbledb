@@ -5,6 +5,7 @@
 //! keep; `SQLite` runs the same conjunctive SQL through nested-loop +
 //! B-tree plans.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
     AggOp, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term,
     Value, VarId,

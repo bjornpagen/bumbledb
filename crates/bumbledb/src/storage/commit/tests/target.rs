@@ -13,13 +13,15 @@
 
 use crate::encoding::ValueRef;
 use crate::error::{Direction, Error, Result, Violation};
-use crate::schema::{
-    FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementDescriptor,
-    StatementId, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
-use crate::value::Value;
+use bumbledb_theory::Value;
+use bumbledb_theory::schema::{
+    FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, StatementId,
+    ValueType,
+};
 
 use super::{apply_delta, committed_data, fact, field, interval, selected, side};
 
@@ -200,7 +202,7 @@ fn span_fact(schema: &Schema, rel: RelationId, worker: u64, start: u64, end: u64
         &[
             ValueRef::U64(worker),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
         ],
     )
@@ -225,7 +227,7 @@ fn roster_fact(schema: &Schema, worker: u64, start: u64, end: u64, rested: bool)
         &[
             ValueRef::U64(worker),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
             ValueRef::Bool(rested),
         ],

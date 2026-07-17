@@ -1,9 +1,11 @@
 use super::*;
 use crate::error::Error;
-use crate::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, Schema, SchemaDescriptor, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+};
 
 fn schema() -> Schema {
     SchemaDescriptor {

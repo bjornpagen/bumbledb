@@ -23,16 +23,22 @@ use super::{
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{SchemaError, TargetKeyCandidate};
 use crate::storage::keys::MAX_DETERMINANT_WIDTH;
-use crate::value::Value;
+use bumbledb_theory::Value;
 
-impl SchemaDescriptor {
+/// The admission boundary as an extension trait: [`SchemaDescriptor`] is
+/// theory data (hosted in `bumbledb-theory`), so the engine-side sealing
+/// pass hangs off it here rather than as an inherent method.
+pub trait ValidateDescriptor: Sized {
     /// Validates the declaration into the sealed [`Schema`] witness.
     ///
     /// # Errors
     ///
     /// A distinct [`SchemaError`] per illegal shape — the field checks and
     /// the full statement roster; see the variant list.
-    ///
+    fn validate(self) -> Result<Schema, SchemaError>;
+}
+
+impl ValidateDescriptor for SchemaDescriptor {
     /// # Panics
     ///
     /// Only on one programmer-invariant violation: more than 2³²
@@ -47,7 +53,7 @@ impl SchemaDescriptor {
         reason = "the one materialized-order sealing pass — one arm per \
                   statement form, clearer kept together"
     )]
-    pub fn validate(self) -> Result<Schema, SchemaError> {
+    fn validate(self) -> Result<Schema, SchemaError> {
         // The derived-column cap runs FIRST — before
         // `materialized_statements` or the field loop mints any u16 id
         // from a field index (a fresh field's auto-key carries its
@@ -897,7 +903,7 @@ fn validate_cardinality(
 
 /// One encodable literal's sealed canonical bytes, at its field's
 /// encoding (a fixed-width interval binding seals its one-word start).
-fn encoded_literal(literal: &Value, desc: crate::encoding::TypeDesc) -> Box<[u8]> {
+fn encoded_literal(literal: &Value, desc: bumbledb_theory::TypeDesc) -> Box<[u8]> {
     let mut bytes = Vec::with_capacity(16);
     crate::encoding::encode_literal(literal, desc, &mut bytes);
     bytes.into()

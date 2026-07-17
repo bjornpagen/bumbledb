@@ -125,7 +125,7 @@ fn deleting_a_fact_with_a_scrubbed_interval_determinant_is_corruption() {
         let mut determinant = Vec::new();
         determinant.extend_from_slice(&encode_u64(1));
         determinant.extend_from_slice(&encode_interval_u64(
-            crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+            bumbledb_theory::Interval::<u64>::new(10, 20).expect("nonempty interval"),
         ));
         let mut wtxn = env.write_txn().expect("wtxn");
         let mut key: KeyBuf = [0; MAX_KEY];
@@ -435,7 +435,7 @@ fn rederived_determinant_keys_match_independent_computation() {
     let mut booking_determinant = Vec::new();
     booking_determinant.extend_from_slice(&encode_u64(3));
     booking_determinant.extend_from_slice(&encode_interval_u64(
-        crate::Interval::<u64>::new(100, 200).expect("nonempty interval"),
+        bumbledb_theory::Interval::<u64>::new(100, 200).expect("nonempty interval"),
     ));
     assert!(keys_present.contains(&key(|b| keys::determinant_key(
         b,

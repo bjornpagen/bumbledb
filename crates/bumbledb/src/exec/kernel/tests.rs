@@ -1073,8 +1073,8 @@ fn allen_code_batch_matches_reference_and_classify_bit_for_bit() {
         super::reference::allen_codes(&a_s, &a_e, &b_s, &b_e, &mut reference);
         assert_eq!(kernel, reference, "codes len {len}");
         for i in 0..len {
-            let a = crate::interval::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
-            let b = crate::interval::Interval::<u64>::new(b_s[i], b_e[i]).expect("nonempty");
+            let a = bumbledb_theory::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
+            let b = bumbledb_theory::Interval::<u64>::new(b_s[i], b_e[i]).expect("nonempty");
             assert_eq!(
                 kernel[i],
                 crate::allen::classify(a, b) as u8,
@@ -1087,11 +1087,11 @@ fn allen_code_batch_matches_reference_and_classify_bit_for_bit() {
         // dispatch reader is the non-aarch64 build; here it is oracle-
         // checked on every target).
         let (c_s, c_e) = (3u64, 9u64);
-        let c = crate::interval::Interval::<u64>::new(c_s, c_e).expect("nonempty");
+        let c = bumbledb_theory::Interval::<u64>::new(c_s, c_e).expect("nonempty");
         let mut reference_const = vec![0u8; len];
         super::reference::allen_codes_const(&a_s, &a_e, c_s, c_e, &mut reference_const);
         for i in 0..len {
-            let a = crate::interval::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
+            let a = bumbledb_theory::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
             assert_eq!(reference_const[i], crate::allen::classify(a, c) as u8);
         }
     }
@@ -1103,7 +1103,7 @@ fn allen_code_batch_matches_reference_and_classify_bit_for_bit() {
 /// `mask.contains(classify(...))` per pair.
 #[test]
 fn allen_filter_batch_matches_reference_across_masks() {
-    use crate::allen::{AllenMask, Basic};
+    use bumbledb_theory::allen::{AllenMask, Basic};
     let mut rng = Lcg(0x13F1);
     let mut masks: Vec<AllenMask> = Basic::ALL
         .iter()
@@ -1135,8 +1135,8 @@ fn allen_filter_batch_matches_reference_across_masks() {
                 mask.bits()
             );
             for i in 0..len {
-                let a = crate::interval::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
-                let b = crate::interval::Interval::<u64>::new(b_s[i], b_e[i]).expect("nonempty");
+                let a = bumbledb_theory::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
+                let b = bumbledb_theory::Interval::<u64>::new(b_s[i], b_e[i]).expect("nonempty");
                 assert_eq!(
                     kernel[i] != 0,
                     mask.contains(crate::allen::classify(a, b)),
@@ -1155,7 +1155,7 @@ fn allen_filter_batch_matches_reference_across_masks() {
 /// stack chunk width.
 #[test]
 fn allen_filter_columns_match_the_scalar_survivors_bit_for_bit() {
-    use crate::allen::AllenMask;
+    use bumbledb_theory::allen::AllenMask;
     let mut rng = Lcg(0xC01);
     let masks = [
         AllenMask::INTERSECTS,
@@ -1169,8 +1169,8 @@ fn allen_filter_columns_match_the_scalar_survivors_bit_for_bit() {
         for &mask in &masks {
             let naive = |x_s: u64, x_e: u64, y_s: u64, y_e: u64| {
                 mask.contains(crate::allen::classify(
-                    crate::interval::Interval::<u64>::new(x_s, x_e).expect("nonempty"),
-                    crate::interval::Interval::<u64>::new(y_s, y_e).expect("nonempty"),
+                    bumbledb_theory::Interval::<u64>::new(x_s, x_e).expect("nonempty"),
+                    bumbledb_theory::Interval::<u64>::new(y_s, y_e).expect("nonempty"),
                 ))
             };
             let mut kernel = Vec::new();
@@ -1229,8 +1229,8 @@ fn interval_pairs_over(points: &[u64]) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64
 fn scalar_codes(a_s: &[u64], a_e: &[u64], b_s: &[u64], b_e: &[u64]) -> Vec<u8> {
     (0..a_s.len())
         .map(|i| {
-            let a = crate::interval::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
-            let b = crate::interval::Interval::<u64>::new(b_s[i], b_e[i]).expect("nonempty");
+            let a = bumbledb_theory::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
+            let b = bumbledb_theory::Interval::<u64>::new(b_s[i], b_e[i]).expect("nonempty");
             crate::allen::classify(a, b) as u8
         })
         .collect()
@@ -1254,7 +1254,7 @@ fn scalar_codes(a_s: &[u64], a_e: &[u64], b_s: &[u64], b_e: &[u64]) -> Vec<u8> {
 /// Cells: 8,192 × 784 = 6,422,528, every one checked.
 #[test]
 fn exhaustive_all_8192_masks_times_all_configuration_classes() {
-    use crate::allen::AllenMask;
+    use bumbledb_theory::allen::AllenMask;
     const MAX: u64 = u64::MAX;
     let points = [0u64, 1, 2, 3, 4, MAX - 2, MAX - 1, MAX];
     let (a_s, a_e, b_s, b_e) = interval_pairs_over(&points);
@@ -1266,7 +1266,7 @@ fn exhaustive_all_8192_masks_times_all_configuration_classes() {
     let scalar = scalar_codes(&a_s, &a_e, &b_s, &b_e);
     assert_eq!(codes, scalar, "configuration codes match the classifier");
     // Every configuration class is present in the corpus.
-    for basic in crate::allen::Basic::ALL {
+    for basic in bumbledb_theory::allen::Basic::ALL {
         assert!(
             scalar.contains(&(basic as u8)),
             "class {basic:?} missing from the corpus"
@@ -1297,7 +1297,7 @@ fn exhaustive_all_8192_masks_times_all_configuration_classes() {
 /// scalar/portable twins under Miri; the NEON path natively).
 #[test]
 fn allen_representative_masks_agree_with_the_scalar_classifier() {
-    use crate::allen::{AllenMask, Basic};
+    use bumbledb_theory::allen::{AllenMask, Basic};
     let points = [0u64, 1, 3, u64::MAX];
     let (a_s, a_e, b_s, b_e) = interval_pairs_over(&points);
     assert_eq!(a_s.len(), 36);

@@ -49,12 +49,13 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::allen::AllenMask;
 use crate::ir::{
     AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term,
     Value, VarId,
 };
-use crate::schema::{Enforcement, FieldDescriptor, FieldId, Relation, RelationId, Schema};
+use crate::schema::{Enforcement, Relation, Schema};
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::{FieldDescriptor, FieldId, RelationId};
 
 /// The closed-reference position table, built once at renderer
 /// construction: `(relation, field)` → the closed relation whose row ids

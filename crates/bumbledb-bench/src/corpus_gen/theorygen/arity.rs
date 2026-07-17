@@ -414,6 +414,7 @@ fn field_id(index: usize) -> FieldId {
 #[cfg(test)]
 mod tests {
     use bumbledb::error::SchemaError;
+    use bumbledb::schema::ValidateDescriptor as _;
 
     use super::{
         ARITY_WIDTH_BOUND, ArityExpectation, MAX_MIXED_ARITY, SelectionPlacement, arity_descriptor,

@@ -98,8 +98,8 @@ pub struct ColumnSpan {
 /// field its `⌈N/8⌉` word columns (one plain word column for N ≤ 8),
 /// every other field one column of its width.
 #[must_use]
-pub fn column_spans(field_types: &[crate::encoding::TypeDesc]) -> Box<[ColumnSpan]> {
-    use crate::encoding::TypeDesc;
+pub fn column_spans(field_types: &[bumbledb_theory::TypeDesc]) -> Box<[ColumnSpan]> {
+    use bumbledb_theory::TypeDesc;
     let mut next_column = 0u16;
     field_types
         .iter()
@@ -178,7 +178,7 @@ impl RelationImage {
     /// The field→column span of field `field` (the per-relation map's
     /// lookup; every field→column translation goes through here).
     #[must_use]
-    pub fn span(&self, field: crate::schema::FieldId) -> ColumnSpan {
+    pub fn span(&self, field: bumbledb_theory::schema::FieldId) -> ColumnSpan {
         self.spans[usize::from(field.0)]
     }
 

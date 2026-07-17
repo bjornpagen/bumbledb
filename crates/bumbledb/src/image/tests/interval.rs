@@ -5,16 +5,18 @@
 use crate::encoding::{ValueRef, encode_fact, encode_i64};
 use crate::error::{CorruptionError, Error};
 use crate::image::{ColumnSpan, ColumnWidth, build};
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use crate::storage::read;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
+    SchemaDescriptor, ValueType,
+};
 
 /// T(id u64, during interval<i64>, kind bool).
 fn schema() -> Schema {
@@ -62,7 +64,7 @@ fn fact(schema: &Schema, id: u64, start: i64, end: i64, kind: bool) -> Vec<u8> {
         &[
             ValueRef::U64(id),
             ValueRef::IntervalI64(
-                crate::Interval::<i64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval"),
             ),
             ValueRef::Bool(kind),
         ],

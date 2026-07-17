@@ -97,7 +97,8 @@ use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, VarId};
-use crate::schema::{FieldId, IntervalElement, Relation, RelationId, Schema, ValueType};
+use crate::schema::{Relation, Schema};
+use bumbledb_theory::schema::{FieldId, IntervalElement, RelationId, ValueType};
 
 use super::var_is_dead;
 
@@ -357,13 +358,13 @@ pub(crate) enum ResolvableFilter {
     FieldsAllen {
         left: FieldId,
         right: FieldId,
-        mask: crate::allen::AllenMask,
+        mask: bumbledb_theory::allen::AllenMask,
     },
     /// Literal-mask Allen between the column and a constant interval.
     Allen {
         field: FieldId,
         other: (u64, u64),
-        mask: crate::allen::AllenMask,
+        mask: bumbledb_theory::allen::AllenMask,
     },
 }
 

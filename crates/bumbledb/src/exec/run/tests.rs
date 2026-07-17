@@ -7,13 +7,15 @@ use crate::ir::normalize::{
 use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -77,12 +79,12 @@ fn schema(relations: usize) -> Schema {
                 fields: vec![
                     FieldDescriptor {
                         name: "a".into(),
-                        value_type: crate::schema::ValueType::U64,
+                        value_type: bumbledb_theory::schema::ValueType::U64,
                         generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "b".into(),
-                        value_type: crate::schema::ValueType::U64,
+                        value_type: bumbledb_theory::schema::ValueType::U64,
                         generation: Generation::None,
                     },
                 ],

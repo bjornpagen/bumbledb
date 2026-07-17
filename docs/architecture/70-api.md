@@ -120,13 +120,15 @@ bumbledb::schema! {
   expansion errors naming the canonical form); literals are
   closed-relation handles, integer literals, `true`/`false`, string/byte literals, and
   `start..end` interval literals (half-open). The macro emits descriptors directly —
-  relation/field names resolve to declaration-order ids at expansion time, so an
-  unresolvable name is a compile error naming the relation and field — and
-  performs no semantic validation beyond parse shape, name-to-id resolution, and
-  the canonical-utterance law's ban table (each a compile-time error at the call
-  site): the schema validation boundary (`30-dependencies.md` roster) is the
-  judge, and everything semantic beyond names is a normal typed error with the
-  statement rendered back.
+  it parses tokens into a `SchemaSpec` plus a span table and runs THE shared
+  lowering (`SchemaSpec::descriptor`, § the SchemaSpec bindings contract:
+  name-to-id resolution in declaration order and the canonical-utterance ban
+  table live once, in `bumbledb-theory`), so an unresolvable name or banned
+  spelling is a `compile_error!` at the offending token, every issue
+  enumerated in one pass — and performs no semantic validation beyond parse
+  shape, literal typing, and that lowering: the schema validation boundary
+  (`30-dependencies.md` roster) is the judge, and everything semantic beyond
+  names is a normal typed error with the statement rendered back.
 
 **The canonical-utterance law** (owner-ruled 2026-07-15, the freeze's statement
 surface): **any single statement with two grammatical spellings is an expansion
@@ -229,6 +231,25 @@ strings, vectors, integers, and the shared `Value` sum; no serde, no wire
 format (a bindings crate marshals it however it likes; the engine never learns
 the encoding). The shape mirrors the grammar one-for-one:
 
+**Where the contract lives (the facade ruling).** The theory vocabulary —
+`Value`, `Interval`, the Allen mask algebra, the id types, `ValueType`,
+`SchemaDescriptor` and its descriptor family, `SchemaSpec` + `SpecIssue` +
+the one lowering, and the encoding-level `TypeDesc` — is DEFINED in
+`crates/bumbledb-theory` (zero dependencies, zero LMDB/exec reach) and
+re-exported by `bumbledb` as its own surface. The re-exports are the
+**permanent public API**, not a shim: hosts depend on the one `bumbledb`
+crate and never name the theory crate; every established path
+(`bumbledb::Value`, `bumbledb::schema::SchemaDescriptor`,
+`bumbledb::schema::spec::SchemaSpec`, `bumbledb::ir::Value`, …) keeps
+resolving forever. The debt-side of the same coin is grep-enforced: internal
+engine code imports `bumbledb_theory::` directly — zero internal use of the
+facade for moved types survives, so the re-exports carry API weight and
+nothing else. Engine-side judgment stays engine-side and hangs off the
+theory data as extension traits where an inherent impl would be illegal on
+the now-foreign types: `schema::ValidateDescriptor` (`.validate()` — the
+admission boundary) and `schema::ManifestDescriptor` (`.manifest()`), both
+re-exported from `schema`.
+
 - **Relations** (`RelationSpec`): name, fields (`FieldSpec`: name, structural
   `ValueType`, optional host-newtype name, `fresh` mark), and an optional
   extension (`RowSpec` ground axioms — the option is the closedness, both
@@ -245,16 +266,28 @@ the encoding). The shape mirrors the grammar one-for-one:
   `Value`s or closed-relation handles by name, resolved through the selected
   field's newtype exactly as the macro resolves bare handles.
 
-`SchemaSpec::descriptor()` lowers to the `SchemaDescriptor` and does exactly
-what macro EXPANSION does — name→id resolution (declaration order mints every
-id) and the canonical-utterance ban table over window spellings and literal
-sets — returning the typed `SchemaSpecError`, which enumerates EVERY
-unresolvable name (relation, field, handle) and banned spelling in one pass
-(a foreign host repairs its whole spec in one round trip), each window error
-naming the canonical form verbatim as the ban table does. Everything semantic
-beyond names stays where the macro defers it: `SchemaDescriptor::validate`
-inside `Db::create`/`Db::open`, the typed `SchemaError` — the same
-two-boundary split.
+`SchemaSpec::descriptor()` lowers to the `SchemaDescriptor` and IS what macro
+EXPANSION runs — the `schema!` macro parses tokens into a `SchemaSpec` plus a
+span table and calls this one lowering, so the two surfaces cannot drift —
+name→id resolution (declaration order mints every id) and the
+canonical-utterance ban table over window spellings and literal sets —
+returning the typed `SchemaSpecError`, which enumerates EVERY unresolvable
+name (relation, field, handle) and banned spelling in one pass (a foreign
+host repairs its whole spec in one round trip; the macro renders the same
+issues as `compile_error!`s, each at the offending token), each window error
+naming the canonical form verbatim as the ban table does. For that span
+mapping every `SpecIssue` carries structural indices: statement-indexed
+variants directly, and the literal-shaped variants (`NotAHandleField`,
+`UnknownHandle`) a `LiteralAt` provenance — `Selection { statement, side
+(StatementSide), binding, literal }` or `Row { relation, row, column }` —
+so a foreign host can point at the offending datum exactly as the macro
+points at the offending token. Everything semantic beyond names stays where
+the macro defers it: `.validate()` (`ValidateDescriptor`) inside
+`Db::create`/`Db::open`, the typed `SchemaError` — the same two-boundary
+split. The one deliberate exception keeps literal TYPING at the macro's
+seam: token literals become typed `Value`s at expansion, so a literal-type
+mismatch (and an empty interval literal, and an out-of-range `bytes<N>`
+width) is a compile error there, never degraded to a `Db::create` error.
 
 **Macro and spec produce indistinguishable descriptors**: the same theory
 built through either surface validates to the same sealed schema and carries

@@ -2,14 +2,16 @@ use super::plan::CommitPlan;
 use super::*;
 use crate::encoding::{ValueRef, encode_fact};
 use crate::error::Result;
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys::key;
-use crate::value::Value;
+use bumbledb_theory::Value;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
+    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
+};
 
 use std::collections::BTreeSet;
 
@@ -61,7 +63,12 @@ fn selected(relation: RelationId, projection: &[u16], selection: &[(u16, Value)]
         projection: projection.iter().map(|&f| FieldId(f)).collect(),
         selection: selection
             .iter()
-            .map(|(f, literal)| (FieldId(*f), crate::schema::LiteralSet::One(literal.clone())))
+            .map(|(f, literal)| {
+                (
+                    FieldId(*f),
+                    bumbledb_theory::schema::LiteralSet::One(literal.clone()),
+                )
+            })
             .collect(),
     }
 }
@@ -191,7 +198,7 @@ fn booking_fact(schema: &Schema, room: u64, start: u64, end: u64, tag: u64) -> V
         &[
             ValueRef::U64(room),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
             ValueRef::U64(tag),
         ],

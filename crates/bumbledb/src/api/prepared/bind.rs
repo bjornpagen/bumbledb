@@ -7,9 +7,9 @@ use crate::error::{Error, Result};
 use crate::image::view::{MaskConst, ResolvedWordSource};
 use crate::ir::{CmpOp, ParamId, Value};
 use crate::obs;
-use crate::schema::IntervalElement;
 use crate::storage::dict;
 use crate::storage::env::ReadTxn;
+use bumbledb_theory::schema::IntervalElement;
 
 impl<S> PreparedQuery<'_, S> {
     /// Rebuilds the executor scratch at a different batch size — the
@@ -696,7 +696,7 @@ fn resolve_filter_into(
 /// it separately).
 fn write_compare(
     dst: &mut FilterPredicate,
-    field: crate::schema::FieldId,
+    field: bumbledb_theory::schema::FieldId,
     op: CmpOp,
     value: Option<Const>,
 ) {
@@ -798,7 +798,9 @@ fn convert_scalar(
                 width,
             },
         ) if start < end
-            && width.is_none_or(|w| end - start == w && end < crate::Interval::<u64>::MAX_END) =>
+            && width.is_none_or(|w| {
+                end - start == w && end < bumbledb_theory::Interval::<u64>::MAX_END
+            }) =>
         {
             Const::Interval { start, end }
         }
@@ -810,7 +812,7 @@ fn convert_scalar(
             },
         ) if start < end
             && width.is_none_or(|w| {
-                end.abs_diff(start) == w && end < crate::Interval::<i64>::MAX_END
+                end.abs_diff(start) == w && end < bumbledb_theory::Interval::<i64>::MAX_END
             }) =>
         {
             Const::Interval {

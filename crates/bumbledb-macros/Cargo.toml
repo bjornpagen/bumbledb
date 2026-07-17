@@ -7,5 +7,13 @@ publish = false
 [lib]
 proc-macro = true
 
+# The one dependency: the shared lowering (docs/architecture/70-api.md
+# § the SchemaSpec bindings contract) — the macro and the runtime spec
+# path run the SAME `SchemaSpec::descriptor`, so they cannot drift.
+# bumbledb-theory is dependency-free by law, keeping this proc macro
+# leaf-light; no cycle (theory has no macro dep).
+[dependencies]
+bumbledb-theory = { path = "../bumbledb-theory" }
+
 [lints]
 workspace = true

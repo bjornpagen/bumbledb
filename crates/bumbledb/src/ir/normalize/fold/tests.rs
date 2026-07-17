@@ -5,10 +5,11 @@ use crate::ir::validate::validate;
 use crate::ir::{
     Atom, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term, VarId,
 };
-use crate::schema::{
+use crate::schema::ValidateDescriptor as _;
+use crate::storage::dict::SENTINEL_ID;
+use bumbledb_theory::schema::{
     FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
 };
-use crate::storage::dict::SENTINEL_ID;
 
 /// R(id u64 fresh, a i64, k u64) + P(emp u64, during interval<i64>,
 /// review interval<i64>, at i64) — the normalize fixture family, trimmed
@@ -338,7 +339,7 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
                 op: CmpOp::Eq,
                 lhs: Term::Var(VarId(0)),
                 rhs: Term::Literal(Value::IntervalI64(
-                    crate::Interval::<i64>::new(2, 5).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<i64>::new(2, 5).expect("nonempty interval"),
                 )),
             }),
             ConditionTree::Leaf(Comparison {
@@ -347,7 +348,7 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
                 },
                 lhs: Term::Var(VarId(0)),
                 rhs: Term::Literal(Value::IntervalI64(
-                    crate::Interval::<i64>::new(7, 9).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<i64>::new(7, 9).expect("nonempty interval"),
                 )),
             }),
         ],
@@ -369,7 +370,7 @@ fn a_pinned_point_outside_a_constant_interval_kills_the_rule() {
             Comparison {
                 op: CmpOp::PointIn,
                 lhs: Term::Literal(Value::IntervalI64(
-                    crate::Interval::<i64>::new(2, 5).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<i64>::new(2, 5).expect("nonempty interval"),
                 )),
                 rhs: Term::Var(VarId(0)),
             },

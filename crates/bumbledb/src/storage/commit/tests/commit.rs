@@ -1,12 +1,12 @@
 use super::*;
 
 use crate::error::{Error, Violation};
-use crate::schema::{FieldId, RelationId};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 // ---------- 50-storage § Write path: full commit ----------
 

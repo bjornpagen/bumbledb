@@ -1,11 +1,11 @@
 use super::*;
 use crate::error::{Error, FactShapeError};
 use crate::ir::Value;
-use crate::schema::{
+use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
     FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, StatementDescriptor,
     StatementId, ValueType,
 };
-use crate::testutil::TempDir;
 
 /// Named(name str) — a string-carrying relation for dictionary tests.
 fn named_schema() -> SchemaDescriptor {
@@ -530,11 +530,11 @@ fn closed_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: Some(Box::new([
-                crate::schema::Row {
+                bumbledb_theory::schema::Row {
                     handle: "Usd".into(),
                     values: Box::new([Value::U64(2)]),
                 },
-                crate::schema::Row {
+                bumbledb_theory::schema::Row {
                     handle: "Eur".into(),
                     values: Box::new([Value::U64(2)]),
                 },

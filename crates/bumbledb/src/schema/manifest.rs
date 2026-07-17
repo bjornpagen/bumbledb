@@ -8,7 +8,7 @@
 //! likes; the engine never learns the wire format).
 
 use super::{FieldId, RelationId, SchemaDescriptor, StatementId, StatementKind, ValueType};
-use crate::value::Value;
+use bumbledb_theory::Value;
 
 /// Every name → id pairing of one theory, in declaration order — named
 /// data, not ergonomics. A closed relation's handles ride as its
@@ -72,16 +72,21 @@ pub struct FieldManifest {
     pub value_type: ValueType,
 }
 
-impl SchemaDescriptor {
+/// The manifest rendering as an extension trait: [`SchemaDescriptor`] is
+/// theory data (hosted in `bumbledb-theory`), and the manifest needs the
+/// engine-side renderer, so the method hangs off it here.
+pub trait ManifestDescriptor {
     /// Renders the manifest off the descriptor — the ids are the
     /// declaration-order indices, made explicit.
-    ///
+    fn manifest(&self) -> Manifest;
+}
+
+impl ManifestDescriptor for SchemaDescriptor {
     /// # Panics
     ///
     /// When a relation or field ordinal exceeds the id space (`u32`/`u16`)
     /// — impossible for a descriptor the declaration boundary admits.
-    #[must_use]
-    pub fn manifest(&self) -> Manifest {
+    fn manifest(&self) -> Manifest {
         Manifest {
             statements: self
                 .materialized_statements()

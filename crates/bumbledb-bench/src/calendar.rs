@@ -42,6 +42,7 @@
 //! schema re-baselined every corpus digest and verify stamp — a
 //! deliberate act.
 
+use bumbledb::schema::ValidateDescriptor as _;
 pub mod corpus;
 pub mod corpus_gen;
 pub mod families;

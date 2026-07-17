@@ -10,14 +10,16 @@ use crate::ir::normalize::{AntiProbe, NormalizedQuery, OccId, Occurrence, Role, 
 use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+    ValueType,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 

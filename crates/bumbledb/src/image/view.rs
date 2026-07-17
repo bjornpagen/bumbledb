@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::image::RelationImage;
 use crate::ir::CmpOp;
-use crate::schema::FieldId;
+use bumbledb_theory::schema::FieldId;
 
 mod apply;
 
@@ -103,7 +103,7 @@ pub enum ResolvedWordSource {
 /// evaluation never carries an operand-order flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaskConst {
-    Mask(crate::allen::AllenMask),
+    Mask(bumbledb_theory::allen::AllenMask),
     /// Bind-time mask param; the evaluator indexes the param slice.
     Param(crate::ir::ParamId),
     /// Bind-time mask param whose comparison was written with the field

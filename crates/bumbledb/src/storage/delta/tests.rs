@@ -1,12 +1,14 @@
 use super::*;
 use crate::encoding::{ValueRef, encode_fact, encode_u64};
 use crate::error::Error;
-use crate::schema::{
-    FieldDescriptor, Generation, KeyId, RelationDescriptor, SchemaDescriptor, ValueType,
-};
+use crate::schema::KeyId;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::env::Environment;
 use crate::storage::keys;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+};
 
 /// R(id fresh, amount i64).
 fn schema() -> Schema {

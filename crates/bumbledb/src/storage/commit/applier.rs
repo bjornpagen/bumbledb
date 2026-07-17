@@ -1,6 +1,6 @@
 use crate::error::{CorruptionError, Error, Result, Violation};
-use crate::schema::{RelationId, StatementId};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
+use bumbledb_theory::schema::{RelationId, StatementId};
 
 use super::plan::FactOp;
 use super::{Applier, crashpoint, decode_row_id, fact_by_row};

@@ -149,7 +149,7 @@ fn mandate_schema() -> Schema {
                 FieldDescriptor {
                     name: "active".into(),
                     value_type: ValueType::Interval {
-                        element: crate::schema::IntervalElement::U64,
+                        element: bumbledb_theory::schema::IntervalElement::U64,
                         width: None,
                     },
                     generation: Generation::None,
@@ -171,7 +171,7 @@ fn insert_mandates(env: &Environment, schema: &Schema, rows: &[(u64, u64, u64)])
             &[
                 ValueRef::U64(*account),
                 ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
                 ),
             ],
             schema.relation(RelationId(0)).layout(),
@@ -200,8 +200,8 @@ fn accounts_of(buffer: &Answers) -> Vec<u64> {
 /// rejections (`docs/architecture/20-query-ir.md`, § the Allen operator).
 #[test]
 fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
-    use crate::allen::AllenMask;
     use crate::ir::MaskTerm;
+    use bumbledb_theory::allen::AllenMask;
 
     let dir = TempDir::new("prepared-mask-param");
     let schema = mandate_schema();
@@ -232,7 +232,7 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
             },
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::IntervalU64(
-                crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(10, 20).expect("nonempty interval"),
             )),
         })],
     });
@@ -280,8 +280,8 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
 /// under `INTERSECTS` and non-sharing pairs under `DISJOINT`.
 #[test]
 fn a_cross_atom_mask_param_resolves_into_the_executors_residual() {
-    use crate::allen::AllenMask;
     use crate::ir::MaskTerm;
+    use bumbledb_theory::allen::AllenMask;
 
     let dir = TempDir::new("prepared-mask-param-residual");
     let schema = mandate_schema();

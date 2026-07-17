@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use crate::error::{CorruptionError, Error, Result, Violations};
 use crate::obs;
-use crate::schema::RelationId;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
+use bumbledb_theory::schema::RelationId;
 
 use super::plan::plan_commit;
 use super::{Applied, CommitReport, apply, crashpoint, judgment};

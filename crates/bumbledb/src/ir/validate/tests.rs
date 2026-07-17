@@ -1,8 +1,10 @@
 use super::*;
 use crate::error::ValidationError;
 use crate::ir::{ConditionTree, FindTerm, Query, Rule, Term};
-use crate::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
+use bumbledb_theory::schema::{
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
 };
 
 mod accept;

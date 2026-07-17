@@ -1,7 +1,7 @@
 use crate::error::Result;
-use crate::schema::{RelationId, StatementId};
 use crate::storage::env::ReadTxn;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use bumbledb_theory::schema::{RelationId, StatementId};
 
 use super::row_id_value::row_id_value;
 

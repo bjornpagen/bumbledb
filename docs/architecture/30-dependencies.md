@@ -272,7 +272,13 @@ everything relational is a statement. A closed relation likewise auto-materializ
 **materialized order is: every fresh auto-key (relation-then-field declaration
 order), then every closed auto-key (relation declaration order), then the declared
 statements in declaration order** — the order is a fingerprint input, pinned once
-and never revisited. Statements are anonymous; their identity is
+and never revisited. The materialization judgment is pure theory and lives
+engine-free with the descriptor vocabulary
+(`SchemaDescriptor::materialized_statements` in
+`crates/bumbledb-theory/src/schema.rs` — the zero-dependency theory crate,
+`00-product.md` § Dependencies (crates), reached only through the `bumbledb`
+re-exports per `70-api.md`'s facade ruling); the admission boundary
+(`SchemaDescriptor::validate`) stays engine-side. Statements are anonymous; their identity is
 their materialized-order id, pinned by the fingerprint, and errors cite the
 statement rendered back in this notation.
 **Decision: raw statements only.** **Alternative:** blessed sugar keywords lowering

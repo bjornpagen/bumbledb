@@ -6,7 +6,8 @@ use super::{
 use crate::image::view::{FilterPredicate, ResolvedWordSource};
 use crate::ir::VarId;
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
-use crate::schema::{FieldId, Schema};
+use crate::schema::Schema;
+use bumbledb_theory::schema::FieldId;
 use std::collections::BTreeSet;
 
 /// The var-sourced membership filters of one lowered occurrence — the
@@ -104,7 +105,7 @@ fn build_occurrences(
             // positional reading `lean/Bumbledb/Exec/Fixpoint.lean:
             // tupleFact` promises; the transient image is built with
             // exactly these types, so the spans agree by construction).
-            let field_types: Vec<crate::encoding::TypeDesc> = match occurrence.source {
+            let field_types: Vec<bumbledb_theory::TypeDesc> = match occurrence.source {
                 crate::ir::AtomSource::Edb(relation) => {
                     let layout = schema.relation(relation).layout();
                     (0..layout.field_count())

@@ -164,7 +164,7 @@ pub struct EliminatedOccurrence {
     /// The eliminated occurrence's relation name.
     pub relation: String,
     /// The containment statement licensing the elimination.
-    pub statement: crate::schema::StatementId,
+    pub statement: bumbledb_theory::schema::StatementId,
     /// The statement rendered in the `schema!` algebra notation
     /// (`schema/render.rs`), e.g. `Posting(account) <= Account(id)`.
     pub rendered: String,

@@ -24,7 +24,7 @@ original one.
 
 The extension form this module reads — the cardinality window — is
 ACCEPTED by the engine at declaration (2026-07-14:
-`StatementDescriptor::Cardinality`, `crates/bumbledb/src/schema.rs`;
+`StatementDescriptor::Cardinality`, `crates/bumbledb-theory/src/schema.rs`;
 the gate arm in `schema/validate.rs` implements the acceptance rules
 named above) and JUDGED per commit
 (`storage/commit/judgment.rs::check_windows`). The discharge record

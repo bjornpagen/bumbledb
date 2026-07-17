@@ -1,0 +1,15 @@
+# The theory crate: bumbledb's engine-free vocabulary — values, intervals,
+# the Allen mask algebra, schema descriptors, and the SchemaSpec lowering.
+# Zero dependencies by law (docs/architecture/70-api.md § the SchemaSpec
+# bindings contract): the `schema!` macro and the engine share this one
+# lowering, and a proc-macro dependency graph must stay leaf-light.
+[package]
+name = "bumbledb-theory"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -29,6 +29,7 @@
 //! ψ-sub-vocabulary `Currency(id | minor_units == 0)` — the three
 //! write-scenario classes and the closed query shapes draw from here.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use std::sync::OnceLock;
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, Row, SchemaDescriptor, ValueType};

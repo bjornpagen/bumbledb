@@ -42,12 +42,13 @@
 use std::collections::BTreeMap;
 
 use super::Occurrence;
-use crate::allen::AllenMask;
 use crate::encoding::decode_i64;
 use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
 use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, Value};
-use crate::schema::{FieldId, IntervalElement, Relation, Schema, ValueType};
+use crate::schema::{Relation, Schema};
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 #[cfg(any(test, feature = "fold-off"))]
 thread_local! {
@@ -502,14 +503,15 @@ pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Valu
             element: IntervalElement::I64,
             ..
         } => Value::IntervalI64(
-            crate::Interval::<i64>::new(
+            bumbledb_theory::Interval::<i64>::new(
                 decode_i64(pair.0.to_be_bytes()),
                 decode_i64(pair.1.to_be_bytes()),
             )
             .expect("validated interval constant"),
         ),
         _ => Value::IntervalU64(
-            crate::Interval::<u64>::new(pair.0, pair.1).expect("validated interval constant"),
+            bumbledb_theory::Interval::<u64>::new(pair.0, pair.1)
+                .expect("validated interval constant"),
         ),
     }
 }

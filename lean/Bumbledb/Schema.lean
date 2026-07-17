@@ -17,7 +17,7 @@ relations as instance-independent sealed constants.
   disjunction over its spelled set — no richer predicate is writable
   at this level. The ENGINE's accepted σ fragment is this same
   representation: `Side.selection` carries (field, literal-set)
-  bindings (`LiteralSet` in `crates/bumbledb/src/schema.rs`; the
+  bindings (`LiteralSet` in `crates/bumbledb-theory/src/schema.rs`; the
   macro's `parse_side` parses `f == L` and `f == {A, B}`). A
   singleton set is exactly the equality binding
   (`Selection.singleton_satisfies_iff`) and stays the engine's
@@ -42,7 +42,7 @@ relations as instance-independent sealed constants.
 * **Discharged (2026-07-14): the literal-SET σ form.** The engine's
   accepted σ fragment is the (field, literal-set) disjunctive form —
   `Side.selection` is `Box<[(FieldId, LiteralSet)]>`
-  (`crates/bumbledb/src/schema.rs`), the sealed `CompiledCheck`
+  (`crates/bumbledb-theory/src/schema.rs`), the sealed `CompiledCheck`
   set arms judge membership among the sealed encodings, and the
   canonical form is sorted and duplicate-free (validation rejects
   the degenerate spellings). The singleton `One` arm is
@@ -179,7 +179,7 @@ def sameFields (X Y : List FieldId) : Prop :=
 the DISJUNCTION over its spelled set (the field's value is a MEMBER).
 Membership-to-literal-set BY REPRESENTATION: no richer predicate is
 writable. The engine's accepted σ is this same fragment
-(`LiteralSet` in `crates/bumbledb/src/schema.rs`;
+(`LiteralSet` in `crates/bumbledb-theory/src/schema.rs`;
 `validate_side_selection` and the sealed `CompiledCheck` arms consume
 it), and `Selection.singleton_satisfies_iff` proves the singleton
 reading is exactly the equality binding — the engine's zero-cost

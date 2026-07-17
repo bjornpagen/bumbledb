@@ -11,15 +11,17 @@
 //! target key's order.
 
 use crate::encoding::{ValueRef, encode_interval_u64, encode_u64};
-use crate::schema::{
-    ContainmentId, Enforcement, FieldId, KeyId, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
-};
+use crate::schema::ValidateDescriptor as _;
+use crate::schema::{ContainmentId, Enforcement, KeyId, Schema};
 use crate::storage::commit::plan::{CommitPlan, DeterminantOp, EdgeOp, FactOp};
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
-use crate::value::Value;
+use bumbledb_theory::Value;
+use bumbledb_theory::schema::{
+    FieldId, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, StatementId,
+    ValueType,
+};
 
 use super::{apply_delta, fact, field, interval, plan_for, selected, side};
 
@@ -203,7 +205,7 @@ fn room(schema: &Schema, room: u64, start: u64, end: u64, tag: u64) -> Vec<u8> {
         &[
             ValueRef::U64(room),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
             ValueRef::U64(tag),
         ],
@@ -217,7 +219,7 @@ fn stay(schema: &Schema, room: u64, start: u64, end: u64) -> Vec<u8> {
         &[
             ValueRef::U64(room),
             ValueRef::IntervalU64(
-                crate::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
             ),
         ],
     )
@@ -324,7 +326,7 @@ fn scalar_and_pointwise_determinants_carry_exact_bytes() {
     let mut room_determinant = Vec::new();
     room_determinant.extend_from_slice(&encode_u64(3));
     room_determinant.extend_from_slice(&encode_interval_u64(
-        crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+        bumbledb_theory::Interval::<u64>::new(10, 20).expect("nonempty interval"),
     ));
     let [determinant] = &*room_op.determinants else {
         panic!("one key statement");
@@ -415,7 +417,7 @@ fn interval_edges_are_marked_for_the_coverage_walk() {
     let mut expected = Vec::new();
     expected.extend_from_slice(&encode_u64(3));
     expected.extend_from_slice(&encode_interval_u64(
-        crate::Interval::<u64>::new(12, 15).expect("nonempty interval"),
+        bumbledb_theory::Interval::<u64>::new(12, 15).expect("nonempty interval"),
     ));
     let [edge] = &*op_for(&plan.inserts, STAY, &s).edges else {
         panic!("one outgoing statement");
@@ -532,7 +534,7 @@ fn pointwise_tuple_keeps_its_interval_tail_and_coverage_evidence() {
     let mut determinant = Vec::new();
     determinant.extend_from_slice(&encode_u64(3));
     determinant.extend_from_slice(&encode_interval_u64(
-        crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+        bumbledb_theory::Interval::<u64>::new(10, 20).expect("nonempty interval"),
     ));
     assert_eq!(&*check.determinant, determinant.as_slice());
     let [dependent] = &*check.dependents else {

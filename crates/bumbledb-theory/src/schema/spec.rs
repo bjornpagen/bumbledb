@@ -16,8 +16,8 @@
 //!   which enumerates ALL unresolvable names and banned spellings rather
 //!   than stopping at the first (a foreign host gets one round trip).
 //! - Everything semantic beyond names stays where the macro defers it:
-//!   [`SchemaDescriptor::validate`] inside [`crate::Db::create`] /
-//!   [`crate::Db::open`], as the typed [`crate::error::SchemaError`].
+//!   the engine's `SchemaDescriptor::validate` inside `Db::create` /
+//!   `Db::open`, as the typed `SchemaError`.
 //!
 //! No serde, no wire format: the spec is owned Rust data
 //! (`String`/`Vec`/integers); a bindings crate marshals it however it
@@ -80,8 +80,8 @@ pub struct FieldSpec {
     /// newtype names lower to identical descriptors, exactly as two
     /// `schema!` invocations differing only in `as` names do.
     pub newtype: Option<Box<str>>,
-    /// `fresh` — the mint mark, legal on `u64` (validated at
-    /// [`SchemaDescriptor::validate`], as the macro defers it).
+    /// `fresh` — the mint mark, legal on `u64` (validated at the
+    /// engine's `SchemaDescriptor::validate`, as the macro defers it).
     pub fresh: bool,
 }
 
@@ -173,11 +173,47 @@ pub enum StatementSpec {
     },
 }
 
+/// Which side of a containment or window a selection binding rides —
+/// half of [`LiteralAt::Selection`]'s address. FDs carry no selection
+/// (the shape is unrepresentable), so two sides name every binding site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StatementSide {
+    Source,
+    Target,
+}
+
+/// The structural address of one literal in a [`SchemaSpec`] — the two
+/// provenances a literal can have (a statement side's σ binding, a
+/// closed relation's extension row), with no third. Carried by the
+/// handle-shaped issues so a holder of the spec's source tokens (the
+/// `schema!` macro's span table) can mark the offending token itself,
+/// never the whole invocation. `Ord` because it is a map key there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LiteralAt {
+    /// `statements[statement]`, the `side` side's `selection[binding]`,
+    /// literal `literal` within the binding's set (`0` for the bare
+    /// [`LiteralSetSpec::One`] spelling).
+    Selection {
+        statement: usize,
+        side: StatementSide,
+        binding: usize,
+        literal: usize,
+    },
+    /// `relations[relation].extension[row].values[column]` — the column
+    /// in declared-intrinsic order (the synthetic `id` is no column).
+    Row {
+        relation: usize,
+        row: usize,
+        column: usize,
+    },
+}
+
 /// One resolution failure of [`SchemaSpec::descriptor`] — a name the spec
 /// used that its own declarations never introduce, or a banned spelling
 /// of the canonical-utterance law. `statement` payloads index
 /// [`SchemaSpec::statements`] (the spec's own order, before `==`
-/// lowering); extension-row payloads name the relation and row.
+/// lowering); handle-shaped payloads carry [`LiteralAt`], the literal's
+/// structural address, alongside the names `Display` speaks.
 ///
 /// Every window and literal-set variant's `Display` names the canonical
 /// form verbatim as the ban table does (`docs/architecture/70-api.md`
@@ -201,16 +237,28 @@ pub enum SpecIssue {
     /// relation — the handle namespace is per-closed-relation, entered
     /// only through a referencing field's newtype (the macro's rule).
     NotAHandleField {
+        /// The offending literal's structural address.
+        at: LiteralAt,
         relation: Box<str>,
         field: Box<str>,
         handle: Box<str>,
     },
     /// A handle the named closed relation's extension never declares.
-    UnknownHandle { closed: Box<str>, handle: Box<str> },
+    UnknownHandle {
+        /// The offending literal's structural address.
+        at: LiteralAt,
+        closed: Box<str>,
+        handle: Box<str>,
+    },
     /// Two closed relations claim one handle newtype — a handle newtype
     /// names exactly one closed relation.
     DuplicateHandleNewtype {
         newtype: Box<str>,
+        /// The claimants' declaration indices into
+        /// [`SchemaSpec::relations`]; `second_relation` is the later
+        /// claimant — the declaration a caller marks.
+        first_relation: usize,
+        second_relation: usize,
         first: Box<str>,
         second: Box<str>,
     },
@@ -255,19 +303,21 @@ impl std::fmt::Display for SpecIssue {
                 relation,
                 field,
                 handle,
+                ..
             } => write!(
                 f,
                 "`{relation}.{field}` is not a closed-relation reference — the handle \
                  literal `{handle}` is legal only on a field whose newtype is a closed \
                  relation's handle newtype"
             ),
-            Self::UnknownHandle { closed, handle } => {
+            Self::UnknownHandle { closed, handle, .. } => {
                 write!(f, "closed relation `{closed}` has no handle `{handle}`")
             }
             Self::DuplicateHandleNewtype {
                 newtype,
                 first,
                 second,
+                ..
             } => write!(
                 f,
                 "handle newtype `{newtype}` is declared by two closed relations \
@@ -322,9 +372,9 @@ impl std::fmt::Display for SpecIssue {
 
 /// [`SchemaSpec::descriptor`]'s typed failure: the COMPLETE issue list —
 /// every unresolvable name and every banned spelling, in spec order —
-/// never the first offender alone (the [`crate::error::Violations`]
-/// precedent: a foreign host repairs its whole spec in one round trip).
-/// Sealed nonempty by the one construction site.
+/// never the first offender alone (the engine `Violations` precedent: a
+/// foreign host repairs its whole spec in one round trip). Sealed
+/// nonempty by the one construction site.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaSpecError(Box<[SpecIssue]>);
 
@@ -411,10 +461,18 @@ impl<'spec> Resolver<'spec> {
 
     /// One literal at its field position — a [`LiteralSpec::Handle`]
     /// resolves through the field's newtype to its closed relation's
-    /// declaration-order row id, the macro's own resolution. On an issue
-    /// the placeholder `Value::U64(0)` stands in; placeholders never
-    /// escape (a nonempty issue list fails the whole construction).
-    fn literal(&mut self, rel_idx: usize, field: &str, literal: &LiteralSpec) -> Value {
+    /// declaration-order row id, the macro's own resolution. `at` is the
+    /// literal's structural address, carried by the handle-shaped issues.
+    /// On an issue the placeholder `Value::U64(0)` stands in;
+    /// placeholders never escape (a nonempty issue list fails the whole
+    /// construction).
+    fn literal(
+        &mut self,
+        at: LiteralAt,
+        rel_idx: usize,
+        field: &str,
+        literal: &LiteralSpec,
+    ) -> Value {
         match literal {
             LiteralSpec::Value(value) => value.clone(),
             LiteralSpec::Handle(handle) => {
@@ -423,6 +481,7 @@ impl<'spec> Resolver<'spec> {
                     .and_then(|newtype| self.handles.get(newtype).copied());
                 let Some(owner) = owner else {
                     self.issues.push(SpecIssue::NotAHandleField {
+                        at,
                         relation: self.spec.relations[rel_idx].name.clone(),
                         field: field.into(),
                         handle: handle.clone(),
@@ -435,6 +494,7 @@ impl<'spec> Resolver<'spec> {
                     .expect("the handle namespace holds closed relations only");
                 let Some(row) = rows.iter().position(|row| row.handle == *handle) else {
                     self.issues.push(SpecIssue::UnknownHandle {
+                        at,
                         closed: self.spec.relations[owner].name.clone(),
                         handle: handle.clone(),
                     });
@@ -448,7 +508,8 @@ impl<'spec> Resolver<'spec> {
     /// One side lowered: names to ids, literal sets through the
     /// degenerate-set ban (the canonical-utterance law — `{L}` is the
     /// bare literal, `{}` is no binding), handles through the namespace.
-    fn side(&mut self, statement: usize, side: &SideSpec) -> Option<Side> {
+    /// `which` tags the side for the handle-shaped issues' addresses.
+    fn side(&mut self, statement: usize, which: StatementSide, side: &SideSpec) -> Option<Side> {
         let rel_idx = self.relation(statement, &side.relation)?;
         let mut projection = Vec::with_capacity(side.projection.len());
         for field in &side.projection {
@@ -457,13 +518,19 @@ impl<'spec> Resolver<'spec> {
             }
         }
         let mut selection = Vec::with_capacity(side.selection.len());
-        for (field, literals) in &side.selection {
+        for (binding, (field, literals)) in side.selection.iter().enumerate() {
             let Some(field_id) = self.field(statement, rel_idx, field) else {
                 continue;
             };
+            let at = |literal: usize| LiteralAt::Selection {
+                statement,
+                side: which,
+                binding,
+                literal,
+            };
             let set = match literals {
                 LiteralSetSpec::One(literal) => {
-                    LiteralSet::One(self.literal(rel_idx, field, literal))
+                    LiteralSet::One(self.literal(at(0), rel_idx, field, literal))
                 }
                 LiteralSetSpec::Many(many) if many.len() < 2 => {
                     self.issues.push(SpecIssue::DegenerateLiteralSet {
@@ -475,7 +542,8 @@ impl<'spec> Resolver<'spec> {
                 }
                 LiteralSetSpec::Many(many) => LiteralSet::Many(
                     many.iter()
-                        .map(|literal| self.literal(rel_idx, field, literal))
+                        .enumerate()
+                        .map(|(index, literal)| self.literal(at(index), rel_idx, field, literal))
                         .collect(),
                 ),
             };
@@ -534,10 +602,10 @@ impl SchemaSpec {
     /// field newtypes, `==` lowering to two adjacent containments
     /// (`source <= target` first), and the canonical-utterance ban table
     /// over window spellings and literal sets. Nothing else is judged
-    /// here: semantic validation stays at [`SchemaDescriptor::validate`]
-    /// inside [`crate::Db::create`] / [`crate::Db::open`] (the typed
-    /// [`crate::error::SchemaError`]), the same two-boundary split the
-    /// macro observes.
+    /// here: semantic validation stays at the engine's
+    /// `SchemaDescriptor::validate` inside `Db::create` / `Db::open`
+    /// (the typed `SchemaError`), the same two-boundary split the macro
+    /// observes.
     ///
     /// # Errors
     ///
@@ -548,10 +616,10 @@ impl SchemaSpec {
     ///
     /// When a relation or field ordinal exceeds the id space
     /// (`u32`/`u16`) — the [`SchemaDescriptor::materialized_statements`]
-    /// precedent; the declaration boundary
-    /// ([`crate::error::SchemaError::RelationTooManyColumns`] /
-    /// [`crate::error::SchemaError::TooManyStatements`]) is where such
-    /// counts are rejected typed.
+    /// precedent; the declaration boundary (the engine's
+    /// `SchemaError::RelationTooManyColumns` /
+    /// `SchemaError::TooManyStatements`) is where such counts are
+    /// rejected typed.
     #[expect(
         clippy::too_many_lines,
         reason = "the one lowering pass — one arm per statement form, \
@@ -573,6 +641,8 @@ impl SchemaSpec {
             if let Some(first) = resolver.handles.insert(newtype, idx) {
                 resolver.issues.push(SpecIssue::DuplicateHandleNewtype {
                     newtype: newtype.into(),
+                    first_relation: first,
+                    second_relation: idx,
                     first: self.relations[first].name.clone(),
                     second: relation.name.clone(),
                 });
@@ -600,14 +670,21 @@ impl SchemaSpec {
                     .collect(),
                 extension: relation.extension.as_ref().map(|rows| {
                     rows.iter()
-                        .map(|row| Row {
+                        .enumerate()
+                        .map(|(row_idx, row)| Row {
                             handle: row.handle.clone(),
                             values: row
                                 .values
                                 .iter()
                                 .zip(&relation.fields)
-                                .map(|(literal, field)| {
-                                    resolver.literal(rel_idx, &field.name, literal)
+                                .enumerate()
+                                .map(|(column, (literal, field))| {
+                                    let at = LiteralAt::Row {
+                                        relation: rel_idx,
+                                        row: row_idx,
+                                        column,
+                                    };
+                                    resolver.literal(at, rel_idx, &field.name, literal)
                                 })
                                 .collect(),
                         })
@@ -644,8 +721,8 @@ impl SchemaSpec {
                     target,
                     bidirectional,
                 } => {
-                    let source_side = resolver.side(index, source);
-                    let target_side = resolver.side(index, target);
+                    let source_side = resolver.side(index, StatementSide::Source, source);
+                    let target_side = resolver.side(index, StatementSide::Target, target);
                     let (Some(source), Some(target)) = (source_side, target_side) else {
                         continue;
                     };
@@ -668,8 +745,8 @@ impl SchemaSpec {
                     source,
                 } => {
                     let (lo, hi) = resolver.window(index, *window);
-                    let source_side = resolver.side(index, source);
-                    let target_side = resolver.side(index, target);
+                    let source_side = resolver.side(index, StatementSide::Source, source);
+                    let target_side = resolver.side(index, StatementSide::Target, target);
                     let (Some(source), Some(target)) = (source_side, target_side) else {
                         continue;
                     };

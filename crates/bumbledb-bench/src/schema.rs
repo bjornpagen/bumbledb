@@ -11,6 +11,7 @@
 //! corpus digest and every published report (the golden fingerprint test
 //! is the tripwire).
 
+use bumbledb::schema::ValidateDescriptor as _;
 bumbledb::schema! {
     pub Ledger;
 

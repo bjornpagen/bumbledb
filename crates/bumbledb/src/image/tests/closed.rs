@@ -6,7 +6,7 @@
 use crate::encoding::{encode_bool, encode_interval_u64, encode_u64};
 use crate::image::{ColumnWidth, synthesize_closed};
 use crate::ir::Value;
-use crate::schema::{IntervalElement, Row};
+use bumbledb_theory::schema::{IntervalElement, Row};
 
 use super::*;
 
@@ -46,7 +46,8 @@ fn theory() -> Schema {
                         handle: "Winter".into(),
                         values: Box::new([
                             Value::IntervalU64(
-                                crate::Interval::<u64>::new(1, 90).expect("nonempty interval"),
+                                bumbledb_theory::Interval::<u64>::new(1, 90)
+                                    .expect("nonempty interval"),
                             ),
                             Value::Bool(false),
                             Value::U64(10),
@@ -56,7 +57,8 @@ fn theory() -> Schema {
                         handle: "Summer".into(),
                         values: Box::new([
                             Value::IntervalU64(
-                                crate::Interval::<u64>::new(172, 265).expect("nonempty interval"),
+                                bumbledb_theory::Interval::<u64>::new(172, 265)
+                                    .expect("nonempty interval"),
                             ),
                             Value::Bool(true),
                             Value::U64(30),
@@ -66,7 +68,8 @@ fn theory() -> Schema {
                         handle: "Autumn".into(),
                         values: Box::new([
                             Value::IntervalU64(
-                                crate::Interval::<u64>::new(265, 355).expect("nonempty interval"),
+                                bumbledb_theory::Interval::<u64>::new(265, 355)
+                                    .expect("nonempty interval"),
                             ),
                             Value::Bool(false),
                             Value::U64(20),
@@ -117,7 +120,7 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
 
     // rows == extension len; the implicit id column (FieldId 0) is 0..n.
     assert_eq!(image.row_count(), 3);
-    let id_span = image.span(crate::schema::FieldId(0));
+    let id_span = image.span(bumbledb_theory::schema::FieldId(0));
     assert_eq!(id_span.width, ColumnWidth::Word);
     assert_eq!(
         image.column_words(usize::from(id_span.first_column)),
@@ -127,13 +130,15 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
     // The interval field: two word columns, each half the canonical
     // encoding from validate — compared against `encoding::encode`
     // directly.
-    let span = image.span(crate::schema::FieldId(1));
+    let span = image.span(bumbledb_theory::schema::FieldId(1));
     assert_eq!(span.width, ColumnWidth::WordPair);
     let spans = [(1u64, 90u64), (172, 265), (265, 355)];
     let encoded: Vec<[u8; 16]> = spans
         .iter()
         .map(|(s, e)| {
-            encode_interval_u64(crate::Interval::<u64>::new(*s, *e).expect("nonempty interval"))
+            encode_interval_u64(
+                bumbledb_theory::Interval::<u64>::new(*s, *e).expect("nonempty interval"),
+            )
         })
         .collect();
     let expected_starts: Vec<u64> = encoded
@@ -154,7 +159,7 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
     );
 
     // The bool field: one byte column of validated encodings.
-    let sunny = image.span(crate::schema::FieldId(2));
+    let sunny = image.span(bumbledb_theory::schema::FieldId(2));
     assert_eq!(sunny.width, ColumnWidth::Byte);
     assert_eq!(
         image.column_bytes(usize::from(sunny.first_column)),
@@ -162,7 +167,7 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
     );
 
     // The u64 field: canonical `encode_u64` words.
-    let rank = image.span(crate::schema::FieldId(3));
+    let rank = image.span(bumbledb_theory::schema::FieldId(3));
     assert_eq!(rank.width, ColumnWidth::Word);
     assert_eq!(
         image.column_words(usize::from(rank.first_column)),
@@ -183,7 +188,7 @@ fn a_columnless_vocabulary_synthesizes_to_its_id_column_alone() {
     let schema = theory();
     let image = synthesize_closed(STATUS, schema.relation(STATUS));
     assert_eq!(image.row_count(), 2);
-    let id_span = image.span(crate::schema::FieldId(0));
+    let id_span = image.span(bumbledb_theory::schema::FieldId(0));
     assert_eq!(
         image.column_words(usize::from(id_span.first_column)),
         &[0, 1]

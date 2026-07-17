@@ -230,7 +230,7 @@ instance [DecidableLT α] [DecidableLE α] (x : α) (iv : Interval α) :
 
 /-- **Theorem 1.** Every representable interval denotes a nonempty
 point set — the premise the Rust constructor discharges.
-Bridge: `crate::Interval::new` (`crates/bumbledb/src/interval.rs`). -/
+Bridge: `crate::Interval::new` (`crates/bumbledb-theory/src/interval.rs`). -/
 theorem interval_nonempty (iv : Interval α) : iv.points.Nonempty :=
   ⟨iv.start, PointDomain.le_refl iv.start, iv.h⟩
 

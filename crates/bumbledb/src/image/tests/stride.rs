@@ -1,11 +1,14 @@
 use super::R;
 use crate::encoding::{ValueRef, encode_fact};
 use crate::image::{ColumnView, LINE, PAD_MIN_STRIDE, PAD_TOLERANCE, SET_STRIDE, build};
-use crate::schema::{FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType};
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+};
 
 #[test]
 fn twelve_column_bases_are_aligned_and_stride_padded() {

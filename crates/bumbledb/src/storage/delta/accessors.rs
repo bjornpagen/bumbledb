@@ -1,7 +1,7 @@
 use crate::encoding::fact_hash;
 use crate::error::Result;
-use crate::schema::{FieldId, RelationId};
 use crate::storage::env::ReadTxn;
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 use super::{Disposition, WriteDelta};
 

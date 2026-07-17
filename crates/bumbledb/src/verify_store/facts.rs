@@ -10,9 +10,10 @@
 
 use crate::encoding::{TypeDesc, decode_field, fact_hash, field_word_bytes};
 use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
-use crate::schema::{AxiomIndex, Enforcement, RelationId};
+use crate::schema::{AxiomIndex, Enforcement};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, DeterminantImage, KeyBuf, MAX_KEY};
+use bumbledb_theory::schema::RelationId;
 
 use super::{StoreFinding, Sweep, namespace};
 

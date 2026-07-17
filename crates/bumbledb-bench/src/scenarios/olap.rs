@@ -5,6 +5,7 @@
 //! bindings, so every fact row carries its fresh id into the binding
 //! set (the true-rollup pattern the ledger's balance family pins).
 
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
     AggOp, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query, Rule, Term,
     Value, VarId,

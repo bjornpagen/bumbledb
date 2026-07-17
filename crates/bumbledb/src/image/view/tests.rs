@@ -1,18 +1,20 @@
 use super::*;
-use crate::allen::AllenMask;
 use crate::encoding::{ValueRef, decode_field, encode_fact, encode_i64, encode_u64};
 use crate::error::Result as DbResult;
 use crate::image::build;
 use crate::ir::ParamId;
-use crate::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, ValueType,
-};
+use crate::schema::Schema;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::read;
 use crate::testutil::TempDir;
+use bumbledb_theory::allen::AllenMask;
+use bumbledb_theory::schema::{
+    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
+    ValueType,
+};
 
 /// R(id u64, flag bool, a i64, b i64).
 fn schema() -> Schema {
@@ -311,10 +313,12 @@ fn interval_image(dir: &TempDir) -> std::sync::Arc<crate::image::RelationImage> 
             &[
                 ValueRef::U64(id),
                 ValueRef::IntervalI64(
-                    crate::Interval::<i64>::new(during.0, during.1).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<i64>::new(during.0, during.1)
+                        .expect("nonempty interval"),
                 ),
                 ValueRef::IntervalI64(
-                    crate::Interval::<i64>::new(review.0, review.1).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<i64>::new(review.0, review.1)
+                        .expect("nonempty interval"),
                 ),
                 ValueRef::I64(at),
             ],

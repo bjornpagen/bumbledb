@@ -10,11 +10,10 @@ use super::{Fact, Fresh, FreshKeyed, InternMode, WriteTx, plumbing};
 use crate::encoding::encode_u64;
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
-use crate::schema::{
-    FieldId, KeyId, KeyStatement, Relation, RelationId, Schema, StatementId, StatementView,
-};
+use crate::schema::{KeyId, KeyStatement, Relation, Schema, StatementView};
 use crate::storage::delta::DeterminantOverlay;
 use crate::storage::read;
+use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 /// Resolves a data-supplied `(relation, key statement)` pair to the
 /// sealed key — the shared shape gate of both point-read surfaces
@@ -71,7 +70,9 @@ pub(super) fn encode_determinant_with(
         .into());
     }
     for (value, &field) in key_values.iter().zip(projection) {
-        if let Err(mismatch) = crate::schema::value_matches(value, &rel.field(field).value_type) {
+        if let Err(mismatch) =
+            bumbledb_theory::schema::value_matches(value, &rel.field(field).value_type)
+        {
             return Err(shape_mismatch(relation, field, mismatch).into());
         }
         match value {
