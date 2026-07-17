@@ -197,6 +197,7 @@ fn judge(db: &Db<target::Target>, program: ProgramRef<'_>) -> Verdict {
         }
         Err(
             other @ (Error::Schema(_)
+            | Error::DescriptorMissing
             | Error::FormatMismatch { .. }
             | Error::SchemaMismatch { .. }
             | Error::AlreadyInitialized

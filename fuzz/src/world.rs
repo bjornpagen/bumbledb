@@ -237,6 +237,7 @@ fn runtime_refusal(err: Error) -> Answers {
         // parity divergence).
         Error::FixpointBudgetExceeded { .. } => Answers::FixpointBudget,
         other @ (Error::Schema(_)
+        | Error::DescriptorMissing
         | Error::FormatMismatch { .. }
         | Error::SchemaMismatch { .. }
         | Error::AlreadyInitialized

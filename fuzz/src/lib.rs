@@ -398,6 +398,7 @@ fn engine_write(db: &Db<target::Target>, delta: &Delta) -> WriteVerdict {
         }
         Err(
             other @ (Error::Schema(_)
+            | Error::DescriptorMissing
             | Error::FormatMismatch { .. }
             | Error::SchemaMismatch { .. }
             | Error::AlreadyInitialized
@@ -471,6 +472,7 @@ fn query_refusal(err: Error) -> Answers {
         // parity divergence).
         Error::FixpointBudgetExceeded { .. } => Answers::FixpointBudget,
         other @ (Error::Schema(_)
+        | Error::DescriptorMissing
         | Error::FormatMismatch { .. }
         | Error::SchemaMismatch { .. }
         | Error::AlreadyInitialized
@@ -730,7 +732,8 @@ fn judge(descriptor: &SchemaDescriptor, dir: &Path) -> Verdict {
 fn schema_rejection(err: Error) -> (&'static str, SchemaError) {
     match err {
         Error::Schema(rejection) => (schema_variant(&rejection), rejection),
-        other @ (Error::FormatMismatch { .. }
+        other @ (Error::DescriptorMissing
+        | Error::FormatMismatch { .. }
         | Error::SchemaMismatch { .. }
         | Error::AlreadyInitialized
         | Error::EnvironmentLocked
