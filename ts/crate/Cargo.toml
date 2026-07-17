@@ -1,0 +1,29 @@
+# The napi bridge crate for @bjornpagen/bumbledb. Built exclusively by the
+# package's scripts/build.ts (plain `cargo build --release`, no napi CLI, no
+# build.rs — napi v3's default `dyn-symbols` feature resolves Node-API symbols
+# at load time, so the cdylib links with no platform link-arg ceremony).
+[package]
+name = "bumbledb-node"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# This crate is a standalone leaf, never a member of any enclosing cargo
+# workspace. It now lives INSIDE the bumbledb repo (at ts/crate), so the root
+# Cargo.toml [workspace] excludes ts/crate to keep the engine workspace
+# heed+blake3-pure; the empty workspace table below is the belt-and-suspenders
+# pin that also stops any future enclosing workspace from auto-adopting it.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Path dependency on the in-repo engine crate: ts/crate/../../crates/bumbledb.
+# ORDERING LAW: version discipline here is PRD sequencing, not a version pin —
+# the engine is consumed at whatever the working tree holds, and any engine
+# change lands BEFORE the SDK/bridge change that consumes it
+# (docs/graph-builder-rebirth/00-README.md, frozen ruling 10).
+bumbledb = { path = "../../crates/bumbledb" }
+napi = { version = "3", default-features = true, features = ["napi8"] }
+napi-derive = "3"

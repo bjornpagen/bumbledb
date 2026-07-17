@@ -1,0 +1,68 @@
+{
+	"name": "@bjornpagen/bumbledb",
+	"version": "0.1.0",
+	"description": "Type-theoretic TypeScript SDK for the bumbledb embedded relational engine",
+	"module": "dist/index.js",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"imports": {
+		"#test/*.ts": "./test/*.ts",
+		"#*.ts": {
+			"types": "./src/*.ts",
+			"default": "./dist/*.js"
+		}
+	},
+	"files": [
+		"dist",
+		"src"
+	],
+	"scripts": {
+		"build": "node scripts/build.ts",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"test": "pnpm run build && node --test test/**/*.test.ts",
+		"prepublishOnly": "pnpm run build"
+	},
+	"keywords": [
+		"database",
+		"relational",
+		"datalog",
+		"embedded",
+		"type-safe",
+		"typescript"
+	],
+	"author": "Bjorn Pagen",
+	"license": "0BSD",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/bjornpagen/bumbledb.git",
+		"directory": "ts"
+	},
+	"homepage": "https://github.com/bjornpagen/bumbledb#readme",
+	"dependencies": {
+		"@superbuilders/errors": "^4.0.2"
+	},
+	"optionalDependencies": {
+		"@bjornpagen/bumbledb-darwin-arm64": "0.1.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.0.0-beta.5",
+		"@types/node": "^26.1.0",
+		"typescript": "^7.0.2"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"packageManager": "pnpm@11.9.0",
+	"publishConfig": {
+		"access": "public"
+	},
+	"private": false
+}

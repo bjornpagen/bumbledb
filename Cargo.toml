@@ -7,6 +7,12 @@ members = [
     "crates/bumbledb-query",
     "crates/bumbledb-theory",
 ]
+# The napi bridge crate at ts/crate is NOT a member: the engine workspace stays
+# heed+blake3-pure (no napi). ts/crate carries its own empty [workspace] table;
+# this exclude is the explicit belt-and-suspenders pin against auto-discovery.
+exclude = [
+    "ts/crate",
+]
 
 [workspace.lints.rust]
 unsafe_code = "deny"

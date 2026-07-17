@@ -1,0 +1,4 @@
+node_modules/
+dist/
+crate/target/
+npm/darwin-arm64/bumbledb.node

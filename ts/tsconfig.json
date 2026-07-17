@@ -1,0 +1,33 @@
+{
+	"compilerOptions": {
+		"allowImportingTsExtensions": true,
+		"erasableSyntaxOnly": true,
+		"allowJs": false,
+		"types": ["node"],
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"paths": {
+			"@bjornpagen/bumbledb/*": ["./src/*"]
+		},
+		"lib": ["ESNext"],
+		"target": "esnext",
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"moduleDetection": "force",
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"strict": true,
+		"noEmit": true,
+		"declaration": true,
+		"resolveJsonModule": true,
+		"resolvePackageJsonImports": true,
+		"resolvePackageJsonExports": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noFallthroughCasesInSwitch": true,
+		"noUncheckedIndexedAccess": true,
+		"noImplicitOverride": true
+	},
+	"include": ["src", "scripts", "test"],
+	"exclude": ["dist", "node_modules", "crate"]
+}

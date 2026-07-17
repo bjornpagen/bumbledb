@@ -1,0 +1,28 @@
+{
+	"name": "@bjornpagen/bumbledb-darwin-arm64",
+	"version": "0.1.0",
+	"description": "Prebuilt darwin-arm64 native binary for @bjornpagen/bumbledb",
+	"os": [
+		"darwin"
+	],
+	"cpu": [
+		"arm64"
+	],
+	"main": "bumbledb.node",
+	"files": [
+		"bumbledb.node"
+	],
+	"author": "Bjorn Pagen",
+	"license": "0BSD",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/bjornpagen/bumbledb.git",
+		"directory": "ts/npm/darwin-arm64"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}
