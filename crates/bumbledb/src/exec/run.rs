@@ -360,6 +360,16 @@ enum Operand<'a> {
 /// level (every family within ±2%, spread −2.9%) —
 /// covering an at-floor map costs ~nothing at today's 5.7 ns/probe,
 /// and the gate's comparison was the last of its complexity.
+/// Re-ablated on the displaced lanes (2026-07-17, twin-binary
+/// interleaved A/B, min-of-3 DVFS-normalized p50s, ephemeral) once
+/// they made the DRAM/displaced regime measurable: the 256 KiB tier
+/// re-armed at both gate sites is decision-free past L2 by
+/// construction (the lanes' forced map is ~34 MiB, the tier always
+/// passes) and measured so — twin/width-only 1.025/0.985/0.977 on
+/// disp_probe/_d24/_d96 (mixed signs inside the lane's recorded
+/// cross-block wobble) and 0.999/0.998/1.015 on the probe-free
+/// stream ladder. NEUTRAL: no regime gives the tier's comparison
+/// anything to decide — width-only stays.
 const PREFETCH_WIDTH_FLOOR: usize = 4;
 
 /// Per-node reusable scratch: each node's frame is active at most once in
