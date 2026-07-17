@@ -508,6 +508,19 @@ fn entries_for_account_set_params(cfg: &GenConfig) -> Vec<Draw> {
 /// family: one account's untagged postings (the generator tags even
 /// posting ids only, so roughly half of any account's postings
 /// survive the anti-join).
+///
+/// **The cross-process p50 bimodality is the rotation-boundary
+/// tail-max, not an engine mode (mechanism hunt, 2026-07-17).** The
+/// two cold-account draws (≈ 2.6 µs each) fill ranks 0–127 of the
+/// 256-sample rotation exactly, with the miss at ≈ 11.5 µs and the
+/// hot account at ≈ 1.05 ms above them — so the nearest-rank p50
+/// (`sorted[127]`) is the MAX of 128 cold samples, an extreme order
+/// statistic that swung 2.75–9.54 µs across 30 fresh processes while
+/// every draw median held within ±0.5% (colds 2500–2625 ns). Same
+/// evidence and refutations as `slot_booking_overlap`
+/// (calendar/families.rs): same binary + same store still flips,
+/// byte-identical regenerated stores flip identically, a relinked
+/// binary moves nothing — the flip is the statistic, not the engine.
 fn postings_without_tag_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],

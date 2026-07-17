@@ -193,6 +193,13 @@ def chart_tails(reads, out):
     ], loc="lower right", facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=9)
     ax.set_title("tail behavior · p50 → p95 → p99 per read family, both engines",
                  fontsize=12, loc="left", pad=14, family="monospace")
+    # The p50 dots for slot_booking_overlap and postings_without_tag are
+    # rotation-boundary tail-maxima: their two fastest param populations
+    # fill ranks 0-127 of the 256-sample rotation exactly, so nearest-rank
+    # p50 = sorted[127] = the max of the fast mass — a per-process tail
+    # draw (0.34-2.01 pair ratios on identical binaries), not an engine
+    # mode. Mechanism + falsification evidence: the family doc comments
+    # (crates/bumbledb-bench/src/{calendar/families.rs,families/read.rs}).
     fig.text(0.01, 0.005, "bimodal families (containment_walk, balance, skew, chain) show their true tails — gated on p95, published anyway",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()

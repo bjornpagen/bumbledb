@@ -418,6 +418,28 @@ fn slot_scan_params(cfg: &GenConfig) -> Vec<Draw> {
 /// (the width is the type; the join is over values, so the pair is
 /// legal by the shared element domain). `Q(s, v) :- Slot(room = ?0,
 /// span = s), Booking(room = ?0, span = v), Allen(s, v, INTERSECTS)`.
+///
+/// **The cross-process p50 bimodality is the rotation-boundary
+/// tail-max, not an engine mode (mechanism hunt, 2026-07-17).** With
+/// 256 samples rotated round-robin over these 4 draws (64 each), the
+/// nearest-rank p50 is `sorted[127]` — and this family's two fastest
+/// draw populations (the pre-epoch miss ≈ 208 ns, the `rooms/2` room
+/// ≈ 18.8 µs) fill ranks 0–127 exactly, with the next population at
+/// ≈ 280 µs. The reported p50 is therefore the MAX of the 64 `rooms/2`
+/// samples: an extreme order statistic that swung 19.2–40.0 µs across
+/// 30 fresh processes while every draw median held within ±0.5%
+/// (d2 18792–18980 ns). One number per process ⇒ whole-process
+/// "modes"; two independent tail-max draws ⇒ the observed 0.34–2.01
+/// per-pair A/B ratios on identical binaries. Falsified alternatives:
+/// same binary + same store still flips (10 processes); regenerated
+/// stores are byte-identical (same blake3 across 8 regens) and flip
+/// identically; a relinked binary (~8k text symbols moved) leaves
+/// every draw median unchanged and flips within-arm — store
+/// page-state and the code-placement relink lottery are both refuted.
+/// Min-of-3 keeps the low tail symmetrically, so gates are unaffected;
+/// the statistic itself is frozen with the published protocol.
+/// `postings_without_tag` (families/read.rs) is the same mechanism at
+/// the same rank.
 fn slot_booking_overlap_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
