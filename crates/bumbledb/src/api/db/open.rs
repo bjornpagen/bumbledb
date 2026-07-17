@@ -72,7 +72,9 @@ impl<S: Theory> Db<S> {
         ))
     }
 
-    fn assemble(env: Environment, schema: Schema) -> Self {
+    /// The one handle-construction site (readers: the three constructors
+    /// above and the exhume entry, `super::exhume`).
+    pub(super) fn assemble(env: Environment, schema: Schema) -> Self {
         Self {
             env,
             cache: ImageCache::new(&schema),

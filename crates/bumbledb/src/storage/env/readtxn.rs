@@ -1,7 +1,7 @@
 use crate::error::Result;
 
-use super::read_meta::{read_dict_next_id, read_u64};
-use super::{GenerationId, META_TX_ID, ReadTxn};
+use super::read_meta::{read_dict_next_id, read_fingerprint, read_u64};
+use super::{GenerationId, META_SCHEMA_DESCRIPTOR, META_TX_ID, ReadTxn};
 
 impl ReadTxn<'_> {
     /// The reader's generation: the storage tx id read from `_meta` *inside
@@ -25,5 +25,20 @@ impl ReadTxn<'_> {
     /// ([`read_dict_next_id`]).
     pub(crate) fn dict_next_id(&self) -> Result<u64> {
         read_dict_next_id(&self.env.meta, &self.txn)
+    }
+
+    /// The stored `_meta` schema fingerprint, raw (reader:
+    /// `Db::verify_store`'s descriptor pass — the hash the persisted
+    /// descriptor bytes must reproduce).
+    pub(crate) fn stored_fingerprint(&self) -> Result<[u8; 32]> {
+        read_fingerprint(&self.env.meta, &self.txn)
+    }
+
+    /// The persisted canonical schema-descriptor bytes as of this
+    /// snapshot, `None` on a store not yet adopted (reader:
+    /// `Db::verify_store`'s descriptor pass;
+    /// `docs/architecture/50-storage.md` § the `_meta` block).
+    pub(crate) fn schema_descriptor(&self) -> Result<Option<&[u8]>> {
+        Ok(self.env.meta.get(&self.txn, META_SCHEMA_DESCRIPTOR)?)
     }
 }

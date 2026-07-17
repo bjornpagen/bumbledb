@@ -43,15 +43,34 @@ U | relation_id | statement | key   -> row_id         FD determinants         (r
                                                       key-probe lookups, WriteTx key reads, coverage walks)
 R | statement | key | source_rel | source_row -> ()   statement-scoped edges  (readers: target-side containment checks on delete/shrink;
                                                       the window judgment's child-group count walk)
-Q | relation_id | field_id          -> next_u64       fresh sequences  (reader: alloc)
+Q | relation_id | field_id          -> next_u64       fresh sequences  (reader: alloc; the ratchet law:
+                                                      an EXPLICIT fresh-field value advances the
+                                                      high-water past itself — at op time in memory,
+                                                      flushed at commit — so a copied id can never
+                                                      collide with a later mint; a correctness law of
+                                                      fresh semantics, not an import special case)
 S | relation_id | stat              -> u64            counters: stat 0 = row count (readers: the planner,
                                                       and image build's cross-check against the F scan);
                                                       stat 1 = row_id high-water (reader: commit's row-id assignment)
 ```
 
-Plus `_meta` (format version, store kind, schema fingerprint, storage tx id, and the
+Plus `_meta` (format version, store kind, schema fingerprint, storage tx id, the
 dictionary next-id counter — the delta's pending-intern design mints provisional ids
-against it from read snapshots) and `_dict` (**str-only** — `bytes<N>` values are inline in
+against it from read snapshots — and the **schema descriptor**: the canonical
+schema-encoding bytes the fingerprint hashes, persisted whole so the store is
+**self-describing**; readers: `exhume` — the read-only, theory-less open,
+`70-api.md` § exhume — and `Db::verify_store`, whose descriptor pass convicts a
+store whose descriptor does not hash to the stored fingerprint. Written at
+creation; **back-filled by any successful fingerprint-matching open**: the
+verified fingerprint proves the caller's theory is the creating theory, so open
+writes the theory's canonical bytes in its own committed transaction — the
+adoption path for every pre-descriptor store, one open under the true schema and
+the store is self-describing forever. The storage tx id does not advance (the
+descriptor is not query-visible state). Descriptor presence is ADDITIVE — no
+format-version bump: the version-bump law targets keys open *decodes*, where
+absence would be a silent default; the ordinary open path never reads this key,
+and `exhume` refuses its absence with the typed `DescriptorMissing` naming the
+remedy — absence is a stated condition, never a default) and `_dict` (**str-only** — `bytes<N>` values are inline in
 facts, never interned, so the key hash carries no type tag: forward
 `blake3(bytes) → id`, reverse `id → bytes`; collision axiom in
 `10-data-model.md`). Key components are big-endian

@@ -32,7 +32,7 @@ use bumbledb_theory::Value;
 /// window) and 3 (order mark). `v4`: the order purge — the statement
 /// spine sum shrank (tag 3 no longer exists), so the label bumps
 /// (the version-bump law; nothing deployed carries an order statement).
-const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v4";
+pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v4";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
@@ -125,12 +125,34 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
     }
 }
 
+/// The canonical schema-descriptor byte string — the fingerprint's exact
+/// preimage, materialized. These are THE bytes a store persists beside its
+/// fingerprint (`docs/architecture/50-storage.md` § the `_meta` block):
+/// one canonical encoding exists, and persisting anything else would mint
+/// a second one. Readers: store creation and the open-time back-fill
+/// (`storage/env`), `Db::verify_store`'s descriptor pass, and the exhume
+/// round-trip pin ([`crate::exhume`]).
+#[must_use]
+pub(crate) fn canonical_descriptor(schema: &Schema) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    canonical_bytes(schema, &mut bytes);
+    bytes
+}
+
+/// Blake3 of a canonical descriptor byte string — the one hash the
+/// fingerprint IS. Split from [`fingerprint`] so the store paths that
+/// already hold the persisted bytes (`verify_store`'s descriptor pass, the
+/// exhume verification) hash exactly what they read instead of
+/// re-encoding.
+#[must_use]
+pub(crate) fn fingerprint_of_descriptor(bytes: &[u8]) -> SchemaFingerprint {
+    SchemaFingerprint(*blake3::hash(bytes).as_bytes())
+}
+
 /// Computes the schema fingerprint: blake3 of [`canonical_bytes`].
 #[must_use]
 pub fn fingerprint(schema: &Schema) -> SchemaFingerprint {
-    let mut bytes = Vec::new();
-    canonical_bytes(schema, &mut bytes);
-    SchemaFingerprint(*blake3::hash(&bytes).as_bytes())
+    fingerprint_of_descriptor(&canonical_descriptor(schema))
 }
 
 fn put_len(out: &mut Vec<u8>, len: usize) {

@@ -60,7 +60,8 @@ fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
         | StoreFinding::RowIdHighWaterLow { .. }
         | StoreFinding::InternBeyondNextId { .. }
         | StoreFinding::ClosedRelationEntry { .. }
-        | StoreFinding::Malformed { .. } => None,
+        | StoreFinding::Malformed { .. }
+        | StoreFinding::DescriptorFingerprintDesync { .. } => None,
     }
 }
 

@@ -62,10 +62,7 @@ pub(super) fn check_fingerprint(
     rtxn: &RoTxn<'_, AnyTls>,
     schema: &Schema,
 ) -> Result<()> {
-    let stored: [u8; 32] = meta
-        .get(rtxn, super::META_FINGERPRINT)?
-        .and_then(|b| b.try_into().ok())
-        .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
+    let stored = read_fingerprint(meta, rtxn)?;
     let expected = fingerprint(schema);
     if stored != expected.0 {
         return Err(Error::SchemaMismatch {
@@ -74,6 +71,20 @@ pub(super) fn check_fingerprint(
         });
     }
     Ok(())
+}
+
+/// The stored schema fingerprint, raw — the theory-less read
+/// [`check_fingerprint`] compares through (readers: the exhume entry,
+/// which holds no schema to compare against, and `Db::verify_store`'s
+/// descriptor pass). A missing or mis-sized key is
+/// [`CorruptionError::MetaMissing`].
+pub(super) fn read_fingerprint(
+    meta: &Database<Bytes, Bytes>,
+    rtxn: &RoTxn<'_, AnyTls>,
+) -> Result<[u8; 32]> {
+    meta.get(rtxn, super::META_FINGERPRINT)?
+        .and_then(|b| b.try_into().ok())
+        .ok_or(Error::Corruption(CorruptionError::MetaMissing))
 }
 
 /// The dictionary next-id counter, sentinel-checked once for every

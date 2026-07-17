@@ -6,13 +6,13 @@ use heed::types::Bytes;
 
 use crate::error::{Error, Result};
 use crate::schema::Schema;
-use crate::schema::fingerprint::fingerprint;
+use crate::schema::fingerprint::{canonical_descriptor, fingerprint_of_descriptor};
 
 use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;
 use super::{
     Environment, FORMAT_VERSION, META_DICT_NEXT_ID, META_FINGERPRINT, META_FORMAT_VERSION,
-    META_STORE_KIND, META_TX_ID, NEXT_INSTANCE, StoreKind,
+    META_SCHEMA_DESCRIPTOR, META_STORE_KIND, META_TX_ID, NEXT_INSTANCE, StoreKind,
 };
 
 impl Environment {
@@ -75,11 +75,18 @@ impl Environment {
             FORMAT_VERSION.to_le_bytes().as_slice(),
         )?;
         meta.put(&mut wtxn, META_STORE_KIND, [kind.meta_byte()].as_slice())?;
+        // The fingerprint and the descriptor are one value twice: the
+        // canonical bytes are hashed for the fingerprint and persisted
+        // whole beside it, so the store is self-describing from birth
+        // (readers: `Environment::exhume`, `Db::verify_store` —
+        // `docs/architecture/50-storage.md` § the `_meta` block).
+        let descriptor = canonical_descriptor(schema);
         meta.put(
             &mut wtxn,
             META_FINGERPRINT,
-            fingerprint(schema).0.as_slice(),
+            fingerprint_of_descriptor(&descriptor).0.as_slice(),
         )?;
+        meta.put(&mut wtxn, META_SCHEMA_DESCRIPTOR, descriptor.as_slice())?;
         meta.put(&mut wtxn, META_TX_ID, 0u64.to_le_bytes().as_slice())?;
         meta.put(&mut wtxn, META_DICT_NEXT_ID, 0u64.to_le_bytes().as_slice())?;
         wtxn.commit()?;

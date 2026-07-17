@@ -10,6 +10,7 @@ mod acquire_lock;
 mod create;
 mod debug;
 mod ephemeral;
+pub(crate) mod exhume;
 mod maintenance;
 mod open;
 mod open_env;
@@ -167,6 +168,17 @@ const META_FINGERPRINT: &[u8] = &[1];
 const META_TX_ID: &[u8] = &[2];
 const META_DICT_NEXT_ID: &[u8] = &[3];
 const META_STORE_KIND: &[u8] = &[4];
+/// The canonical schema-descriptor bytes — the fingerprint's exact
+/// preimage, persisted so the store is self-describing
+/// (`docs/architecture/50-storage.md` § the `_meta` block). Written at
+/// creation, back-filled by any successful fingerprint-matching open.
+/// Readers: [`Environment::exhume`] and `Db::verify_store`'s descriptor
+/// pass. Deliberately NOT consulted by the ordinary open path, so its
+/// absence on a pre-descriptor store is the typed "not yet adopted"
+/// state — never a silent default — and no format-version bump applies
+/// (the version-bump law targets keys open DECODES; open only writes
+/// this one).
+const META_SCHEMA_DESCRIPTOR: &[u8] = &[5];
 
 /// The LMDB substrate: environment plus the three named databases.
 ///
@@ -190,6 +202,47 @@ pub struct Environment {
     /// The exclusive advisory lock on `<dir>/bumbledb.lock`, held for the
     /// environment's lifetime. Dropping the handle releases it.
     _lock: std::fs::File,
+}
+
+/// Test-only `_meta` fixture surgery: the pre-descriptor-store,
+/// desynced-descriptor, and version-mismatch fixtures the exhume and
+/// `verify_store` tests build by mutating a real store's meta block —
+/// mirroring on-disk states no current production path can produce.
+#[cfg(test)]
+impl Environment {
+    /// Deletes the persisted schema descriptor — the exact on-disk shape
+    /// of a store created before descriptors were persisted.
+    pub(crate) fn strip_schema_descriptor_for_tests(&self) -> crate::error::Result<()> {
+        let mut wtxn = self.env.write_txn()?;
+        self.meta.delete(&mut wtxn, META_SCHEMA_DESCRIPTOR)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Overwrites the persisted schema descriptor with arbitrary bytes —
+    /// the descriptor/fingerprint-desync fixture.
+    pub(crate) fn overwrite_schema_descriptor_for_tests(
+        &self,
+        bytes: &[u8],
+    ) -> crate::error::Result<()> {
+        let mut wtxn = self.env.write_txn()?;
+        self.meta.put(&mut wtxn, META_SCHEMA_DESCRIPTOR, bytes)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Overwrites the stored format version — the version-mismatch
+    /// fixture.
+    pub(crate) fn force_format_version_for_tests(&self, version: u32) -> crate::error::Result<()> {
+        let mut wtxn = self.env.write_txn()?;
+        self.meta.put(
+            &mut wtxn,
+            META_FORMAT_VERSION,
+            version.to_le_bytes().as_slice(),
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
 }
 
 impl Environment {

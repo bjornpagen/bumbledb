@@ -101,6 +101,20 @@ pub enum CorruptionError {
     /// as corrupt as a non-0/1 Bool byte. Carries the offending trailing
     /// word's 8 bytes.
     NonzeroFixedBytesPad([u8; 8]),
+    /// The persisted schema-descriptor bytes hash to something other
+    /// than the stored fingerprint. The two are one value twice (the
+    /// fingerprint IS blake3 of the descriptor bytes,
+    /// `docs/architecture/50-storage.md` § the `_meta` block), so a
+    /// disagreement means one of them was altered after creation —
+    /// corrupt data, exactly as a mis-shaped `F` key is. Distinct from
+    /// [`crate::error::Error::DescriptorMissing`], which is the legal
+    /// not-yet-adopted state.
+    DescriptorFingerprintDesync {
+        /// The stored `_meta` fingerprint.
+        fingerprint: [u8; 32],
+        /// Blake3 of the stored descriptor bytes.
+        descriptor_hash: [u8; 32],
+    },
 }
 
 /// A schema declaration error (the validation boundary,
@@ -1192,6 +1206,13 @@ pub enum Error {
         found: crate::storage::env::StoreKind,
         expected: crate::storage::env::StoreKind,
     },
+    /// `exhume` found no persisted schema descriptor: the store predates
+    /// self-describing stores and has not been adopted. Absence is a
+    /// legal, typed state — never corruption — and the remedy is one
+    /// successful `Db::open` under the creating schema, whose
+    /// fingerprint-verified back-fill makes the store self-describing
+    /// forever (`docs/architecture/50-storage.md` § the `_meta` block).
+    DescriptorMissing,
     Io(std::io::Error),
     Lmdb(heed::Error),
 

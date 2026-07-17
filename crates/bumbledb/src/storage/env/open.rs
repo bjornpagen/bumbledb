@@ -51,19 +51,20 @@ impl Environment {
         // Database handles opened inside a transaction are private to it
         // until that transaction commits (LMDB dbi semantics): a read txn
         // would invalidate them on drop, so registration goes through a
-        // write transaction that commits without writing anything.
-        let rtxn = env.write_txn()?;
+        // write transaction — which normally commits without writing
+        // anything, except for the one descriptor back-fill below.
+        let mut wtxn = env.write_txn()?;
         let meta: Database<Bytes, Bytes> = env
-            .open_database(&rtxn, Some("_meta"))?
+            .open_database(&wtxn, Some("_meta"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        let found_version = read_u32(&meta, &rtxn, META_FORMAT_VERSION)?;
+        let found_version = read_u32(&meta, &wtxn, META_FORMAT_VERSION)?;
         if found_version != FORMAT_VERSION {
             return Err(Error::FormatMismatch {
                 found: found_version,
                 expected: FORMAT_VERSION,
             });
         }
-        let found_kind = read_store_kind(&meta, &rtxn)?;
+        let found_kind = read_store_kind(&meta, &wtxn)?;
         if found_kind != expected_kind {
             return Err(Error::StoreKindMismatch {
                 found: found_kind,
@@ -71,13 +72,31 @@ impl Environment {
             });
         }
         let data: Database<Bytes, Bytes> = env
-            .open_database(&rtxn, Some("_data"))?
+            .open_database(&wtxn, Some("_data"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
         let dict: Database<Bytes, Bytes> = env
-            .open_database(&rtxn, Some("_dict"))?
+            .open_database(&wtxn, Some("_dict"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        check_fingerprint(&meta, &rtxn, schema)?;
-        rtxn.commit()?;
+        check_fingerprint(&meta, &wtxn, schema)?;
+        // The descriptor back-fill — the adoption path for every store
+        // created before descriptors were persisted
+        // (`docs/architecture/50-storage.md` § the `_meta` block): the
+        // fingerprint just verified proves the caller's theory IS the
+        // creating theory, so its canonical bytes are the store's own
+        // descriptor, written here in this open's committed transaction.
+        // Absence is the only trigger — a present descriptor is never
+        // rewritten (`Db::verify_store` convicts a desynced one; open
+        // stays lean). The storage tx id is untouched: the descriptor is
+        // not query-visible state, so images and witnesses stay valid.
+        if meta.get(&wtxn, super::META_SCHEMA_DESCRIPTOR)?.is_none() {
+            let descriptor = crate::schema::fingerprint::canonical_descriptor(schema);
+            meta.put(
+                &mut wtxn,
+                super::META_SCHEMA_DESCRIPTOR,
+                descriptor.as_slice(),
+            )?;
+        }
+        wtxn.commit()?;
         Ok(Self {
             env,
             meta,

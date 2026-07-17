@@ -19,6 +19,9 @@
 //!                   containment and window edges alike
 //! marks             the closed-parent window roster
 //! S  counters       row count and high-water against the F tallies
+//! _meta descriptor  blake3 of the persisted schema descriptor against the
+//!                   stored fingerprint (the self-description bond; absence
+//!                   = not yet adopted, never a finding)
 //! _dict             dangling-id statistic (the accepted leak)
 //! ```
 //!
@@ -208,6 +211,20 @@ pub enum StoreFinding {
     ///
     /// [`CorruptionError::MalformedValue`]: crate::error::CorruptionError::MalformedValue
     Malformed { key: Box<[u8]>, what: &'static str },
+    /// The persisted schema-descriptor bytes hash to something other than
+    /// the stored fingerprint. The fingerprint IS blake3 of the
+    /// descriptor bytes (`docs/architecture/50-storage.md` § the `_meta`
+    /// block), so a store carrying a descriptor its fingerprint disowns
+    /// was altered after creation — the conviction the exhume entry's
+    /// integrity gate raises as a hard error, here as a finding. A store
+    /// carrying NO descriptor is not convicted: absence is the legal
+    /// not-yet-adopted state.
+    DescriptorFingerprintDesync {
+        /// The stored `_meta` fingerprint.
+        fingerprint: [u8; 32],
+        /// Blake3 of the stored descriptor bytes.
+        descriptor_hash: [u8; 32],
+    },
 }
 
 impl<S> Db<S> {
@@ -245,6 +262,22 @@ impl<S> Db<S> {
         reverse::sweep(&mut sweep)?;
         marks::sweep(&mut sweep)?;
         counters::sweep(&mut sweep)?;
+        // The descriptor pass: a persisted schema descriptor must hash to
+        // the stored fingerprint — they are one value twice
+        // (`docs/architecture/50-storage.md` § the `_meta` block). An
+        // absent descriptor is the legal not-yet-adopted state, never a
+        // finding.
+        if let Some(descriptor) = txn.schema_descriptor()? {
+            let fingerprint = txn.stored_fingerprint()?;
+            let descriptor_hash =
+                crate::schema::fingerprint::fingerprint_of_descriptor(descriptor).0;
+            if descriptor_hash != fingerprint {
+                sweep.push(StoreFinding::DescriptorFingerprintDesync {
+                    fingerprint,
+                    descriptor_hash,
+                });
+            }
+        }
         let dangling_intern_ids = dict_stat::dangling(&mut sweep)?;
         Ok(StoreReport {
             findings: sweep.findings,

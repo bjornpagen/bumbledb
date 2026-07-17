@@ -651,3 +651,49 @@ fn closed_point_reads_resolve_against_the_extension() {
     })
     .expect("write");
 }
+
+/// The `Q` ratchet law at the public surface, across commits
+/// (`docs/architecture/50-storage.md` § Key layout, the `Q` row): an
+/// explicit-id insert advances the fresh high-water past the supplied
+/// value AND the advance persists, so a later transaction's mint is
+/// strictly greater — a copied id (the rebirth pattern: explicit-id
+/// inserts of another store's rows) can never collide with a
+/// subsequent fresh mint.
+#[test]
+fn an_explicit_id_insert_ratchets_the_persisted_fresh_high_water() {
+    let dir = TempDir::new("db-fresh-ratchet");
+    let db = Db::create(dir.path(), fresh_schema()).expect("create");
+    let rel = RelationId(0);
+    let field = bumbledb_theory::schema::FieldId(0);
+
+    // Commit 1: an explicit id well past anything ever minted.
+    db.write(|tx| {
+        tx.insert_dyn(rel, &[Value::U64(41), Value::U64(1)])
+            .map(|_| ())
+    })
+    .expect("explicit-id write");
+
+    // Commit 2: the next mint is strictly greater — never a collision.
+    let witness = db.fresh_field(rel, field).expect("fresh field");
+    let minted = db
+        .write(|tx| {
+            let id = tx.alloc_at(witness)?;
+            tx.insert_dyn(rel, &[Value::U64(id), Value::U64(2)])?;
+            Ok(id)
+        })
+        .expect("minting write");
+    assert!(minted > 41, "minted {minted} must exceed the copied id 41");
+
+    // And the ratchet survives a reopen: the mark was flushed to `Q`,
+    // not just held in memory.
+    drop(db);
+    let db = Db::open(dir.path(), fresh_schema()).expect("reopen");
+    let witness = db.fresh_field(rel, field).expect("fresh field");
+    let after_reopen = db
+        .write(|tx| tx.alloc_at(witness))
+        .expect("mint after reopen");
+    assert!(
+        after_reopen > minted,
+        "post-reopen mint {after_reopen} must exceed {minted}"
+    );
+}

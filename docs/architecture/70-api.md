@@ -298,7 +298,8 @@ spelling — both ways and asserts fingerprint equality). The bindings roster
 is reachable from the crate root: `Db`, `Snapshot`/`WriteTx`, `Theory`,
 `SchemaDescriptor`, `SchemaSpec` + `SchemaSpecError`, `Value`, the `ir`
 module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
-`Violation`/`Violations`, and `SchemaFingerprint`.
+`Violation`/`Violations`, `SchemaFingerprint`, and `exhume`/`Exhumed`
+(§ exhume).
 
 ## Environment lifecycle
 
@@ -357,6 +358,60 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   foreign LMDB environment, a stale or forged store — leaves `data.mdb`
   byte-identical (pinned by the byte-identity tests in
   `crates/bumbledb/tests/ephemeral.rs` and `storage/env/tests.rs`).
+
+## Exhume — the read-only, theory-less open
+
+`bumbledb::exhume(path) -> Exhumed` opens a store FROM ITS OWN PERSISTED
+DESCRIPTION (`50-storage.md` § the `_meta` block) — no caller-supplied theory
+anywhere. A crate-root function, not a `Db` constructor: `Db<S>`'s typestate IS
+a theory, and this entry's whole point is having none. The sighting it exists
+for: a run store whose creating schema has since evolved — the record outlives
+the schema, and exhume is how the record is read back (the rebirth pattern:
+exhume the old store, create the successor under the new theory, copy, re-derive).
+
+The open sequence: format version, then the store-kind marker — read and
+validated but never compared against an expectation (exhume takes no
+durability decision and reads BOTH kinds; the kind is reported on the handle).
+Then the persisted descriptor, behind two integrity gates: blake3 of the stored
+bytes must equal the stored fingerprint (the fingerprint IS that hash — one
+value twice), and the decoded declaration must validate and re-encode to the
+exact stored bytes (the self-verifying round trip: decoder drift can never
+silently misread a store).
+
+The handle exposes exactly:
+
+- **The descriptor** — the schema as declared (`SchemaDescriptor`): relation
+  names, field names and types, `fresh` marks, closed-relation rosters (each
+  ground axiom's handle and values, so callers can render handles — the store
+  itself holds zero vocabulary bytes, `50-storage.md` § virtual relations) —
+  plus the verified fingerprint and the store kind.
+- **The read surface** — `exhumed.read(|snap| ...)` over one consistent
+  snapshot: `scan` (the `F`-namespace row-major walk, decoding per the
+  descriptor — str resolved through `_dict`, numerics/bytes/bool/intervals
+  inline; closed relations scan their sealed rosters), `contains_dyn`,
+  `get_dyn`. Rows come back as `Value`s in field declaration order; the
+  descriptor's field-name list at the same positions is the name-keyed
+  reading. `exhumed.relation(name)` resolves a relation NAME to its id
+  (declaration order mints every id).
+
+No write surface exists on the type, no prepare entry, and no statement is
+ever judged — the record is read verbatim. An exhumed handle never takes the
+writer path (readers-don't-block, `50-storage.md`); it does hold the same
+exclusive advisory lock as every constructor (one handle per path — the record
+being read stays still).
+
+**Refusals, all typed:** `Io` on a nonexistent path; `EnvironmentLocked`;
+`FormatMismatch` on any other version (no migration path, as everywhere);
+`DescriptorMissing` on a store not yet adopted — the remedy in the error: open
+it once under its creating schema and the back-fill (`50-storage.md`) makes it
+self-describing; `Corruption(DescriptorFingerprintDesync)` when the stored
+descriptor hashes to something other than the stored fingerprint (the same
+disagreement `Db::verify_store` convicts as a finding);
+`Corruption(MalformedValue)` on undecodable descriptor bytes.
+
+(Admitted past the v0 freeze by the course-serialization packet's engine
+ruling — additive public API, docs in the same change; the store rebirth tool
+is the consumer that names its shape.)
 
 ## Transactions
 
@@ -627,7 +682,8 @@ proposition the commit checks in one integer compare.
 - **Open errors:** `FormatMismatch`, `StoreKindMismatch { found, expected }` (the
   kind marker read after the version, before the fingerprint — the cross-open
   matrix, § environment lifecycle), `SchemaMismatch`, `AlreadyInitialized`,
-  `EnvironmentLocked`, `Io`, `Lmdb`.
+  `EnvironmentLocked`, `DescriptorMissing` (exhume only, § exhume — the
+  not-yet-adopted store, remedy in the error), `Io`, `Lmdb`.
 - **Schema errors** (declaration boundary, `30-dependencies.md` roster included):
   typed, enumerated, returned from `Db::create`/`Db::open` — where the definition's
   descriptor is validated — before any environment exists.

@@ -18,6 +18,7 @@ pub mod fingerprint;
 pub mod manifest;
 pub mod render;
 
+pub(crate) mod descriptor_codec;
 mod relation;
 #[cfg(test)]
 mod tests;

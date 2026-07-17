@@ -111,7 +111,7 @@ mod value;
 mod verify_store;
 
 pub use allen::{AllenMask, Basic, classify};
-pub use api::db::{BulkLoadError, Db, Fact, Fresh, FreshKeyed, Snapshot, WriteTx};
+pub use api::db::{BulkLoadError, Db, Exhumed, Fact, Fresh, FreshKeyed, Snapshot, WriteTx, exhume};
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindValue, OccurrenceDrift, ParamArg, PreparedQuery, Staleness,
 };

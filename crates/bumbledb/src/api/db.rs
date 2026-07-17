@@ -41,6 +41,7 @@ mod alloc;
 mod delete;
 mod delete_dyn;
 mod encode_dyn;
+mod exhume;
 mod get;
 mod insert;
 mod insert_dyn;
@@ -50,6 +51,8 @@ mod prepare;
 mod read;
 mod snapshot;
 mod write;
+
+pub use exhume::{Exhumed, exhume};
 
 /// Facts per write transaction in [`Db::bulk_load`] /
 /// [`Db::bulk_load_dyn`] — the documented chunking convenience

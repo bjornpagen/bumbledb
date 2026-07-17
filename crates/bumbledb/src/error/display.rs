@@ -210,6 +210,10 @@ impl fmt::Display for CorruptionError {
                 f,
                 "bytes<N> trailing word {tail:02x?}: nonzero pad byte — the pad is encoding, not data"
             ),
+            Self::DescriptorFingerprintDesync { .. } => write!(
+                f,
+                "the persisted schema descriptor hashes to something other than the stored fingerprint"
+            ),
         }
     }
 }
@@ -833,6 +837,13 @@ impl fmt::Display for Error {
                 write!(
                     f,
                     "the store on disk is {found}, this constructor opens {expected} stores"
+                )
+            }
+            Self::DescriptorMissing => {
+                write!(
+                    f,
+                    "the store carries no schema descriptor (not yet adopted): \
+                     open it once under its creating schema and the descriptor back-fills"
                 )
             }
             Self::Io(err) => write!(f, "io: {err}"),
