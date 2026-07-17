@@ -79,8 +79,36 @@ pub enum Cmd {
     Trace { corpus: CorpusArgs, family: String },
     /// The scenario suites: non-ledger worlds, oracle-gated then timed.
     Scenarios(ScenarioArgs),
+    /// The T8 commit-size sweep: judgment spans by touched-parent count
+    /// over ephemeral windowed twins, delta-order vs key-sorted probes.
+    SweepCommit(SweepArgs),
     /// Merge N run directories' `report.json` into a min-of-runs table.
     Merge { dirs: Vec<PathBuf> },
+}
+
+/// `sweep-commit`'s knobs. No scale flag: the sweep owns its ambient
+/// mass (a fixed tree; the swept parameter is the commit size).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SweepArgs {
+    /// Touched-parent counts; `None` = the default ladder
+    /// ([`crate::sweep::DEFAULT_SIZES`]).
+    pub sizes: Option<Vec<u64>>,
+    /// Sample commits per (size, order) cell; `None` = the lane default.
+    pub samples: Option<u32>,
+    pub seed: u64,
+    /// Scratch root for the ephemeral twin stores.
+    pub dir: PathBuf,
+}
+
+impl Default for SweepArgs {
+    fn default() -> Self {
+        Self {
+            sizes: None,
+            samples: None,
+            seed: 1,
+            dir: PathBuf::from("bench-data"),
+        }
+    }
 }
 
 /// `scenarios`' knobs. Scenarios own their sizes (no scale flag): the

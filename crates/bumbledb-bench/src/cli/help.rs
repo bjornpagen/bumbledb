@@ -19,6 +19,9 @@ pub fn help() -> String {
          \x20 bench    the timing run (requires a fresh verify stamp)\n\
          \x20 trace    one traced warm+cold pair for one family\n\
          \x20 scenarios non-ledger worlds (joins/graph/olap/points), gated then timed\n\
+         \x20 sweep-commit  the T8 commit-size sweep: judgment spans by\n\
+         \x20          touched-parent count, delta vs key-sorted probe order\n\
+         \x20          (ephemeral windowed twins; needs --features obs)\n\
          \x20 merge    min-of-runs table from N run dirs' report.json\n\
          \x20 queries  print the versioned query list (QUERIES.md)\n\
          \x20 help     print this text\n\
@@ -54,6 +57,12 @@ pub fn help() -> String {
          \x20 --only a,b      run only these scenarios (joins graph olap points)\n\
          \x20 --samples N     measured samples/query   (default 64)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-scenarios)\n\
+         \n\
+         SWEEP-COMMIT:\n\
+         \x20 --sizes a,b,c   touched-parent counts (default 4,16,64,256,1024,4096)\n\
+         \x20 --samples N     commits per (size, order) cell (default 8, max 48)\n\
+         \x20 --seed N        draw seed                (default 1)\n\
+         \x20 --dir PATH      scratch root             (default bench-data)\n\
          \n\
          EXIT CODES: 0 ok / gate won; 1 verify mismatch, store findings, or\n\
          gate loss; 2 usage.\n",

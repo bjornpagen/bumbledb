@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::corpus_gen::Scale;
 use crate::verify::DEFAULT_RANDOM_CASES;
 
-use super::{BenchArgs, Cmd, CorpusArgs, ScenarioArgs};
+use super::{BenchArgs, Cmd, CorpusArgs, ScenarioArgs, SweepArgs};
 
 struct Tokens<'a> {
     args: &'a [String],
@@ -175,6 +175,29 @@ fn parse_scenarios(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Scenarios(args))
 }
 
+fn parse_sweep_commit(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    let mut args = SweepArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        match flag.as_str() {
+            "--sizes" => {
+                args.sizes = Some(
+                    tokens
+                        .value(&flag)?
+                        .split(',')
+                        .map(|raw| parse_u64(&flag, raw))
+                        .collect::<Result<_, _>>()?,
+                );
+            }
+            "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
+            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
+            _ => return Err(unknown("sweep-commit", &flag)),
+        }
+    }
+    Ok(Cmd::SweepCommit(args))
+}
+
 /// Parses one invocation.
 ///
 /// # Errors
@@ -200,6 +223,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "bench" => parse_bench(&mut tokens),
         "trace" => parse_trace(&mut tokens),
         "scenarios" => parse_scenarios(&mut tokens),
+        "sweep-commit" => parse_sweep_commit(&mut tokens),
         "merge" => {
             let mut dirs = Vec::new();
             while let Some(token) = tokens.next() {

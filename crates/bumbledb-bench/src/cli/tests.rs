@@ -117,6 +117,37 @@ fn trace_requires_a_family() {
 }
 
 #[test]
+fn sweep_commit_parses_its_knobs() {
+    let cmd = parse(&argv(&["sweep-commit"])).expect("parses bare");
+    assert_eq!(cmd, Cmd::SweepCommit(SweepArgs::default()));
+    let cmd = parse(&argv(&[
+        "sweep-commit",
+        "--sizes",
+        "4,64",
+        "--samples",
+        "3",
+        "--seed",
+        "9",
+        "--dir",
+        "/tmp/z",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::SweepCommit(SweepArgs {
+            sizes: Some(vec![4, 64]),
+            samples: Some(3),
+            seed: 9,
+            dir: PathBuf::from("/tmp/z"),
+        })
+    );
+    let err = parse(&argv(&["sweep-commit", "--sizes", "4,x"])).unwrap_err();
+    assert!(err.contains("--sizes"), "{err}");
+    let err = parse(&argv(&["sweep-commit", "--scale", "S"])).unwrap_err();
+    assert!(err.contains("--scale"), "{err}");
+}
+
+#[test]
 fn garbage_names_the_offending_token() {
     let err = parse(&argv(&["frobnicate"])).unwrap_err();
     assert!(err.contains("frobnicate"), "{err}");
@@ -129,7 +160,15 @@ fn help_text_names_the_binary_and_version() {
     let text = help();
     assert!(text.contains("bumbledb-bench"));
     assert!(text.contains(env!("CARGO_PKG_VERSION")));
-    for command in ["gen", "verify", "verify-store", "bench", "trace", "queries"] {
+    for command in [
+        "gen",
+        "verify",
+        "verify-store",
+        "bench",
+        "trace",
+        "sweep-commit",
+        "queries",
+    ] {
         assert!(text.contains(command), "{command}");
     }
 }

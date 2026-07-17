@@ -20,6 +20,7 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Bench(args) => driver::cmd_bench(args),
         cli::Cmd::Trace { corpus, family } => driver::cmd_trace(corpus, family).map(|()| 0),
         cli::Cmd::Scenarios(args) => driver::cmd_scenarios(args),
+        cli::Cmd::SweepCommit(args) => driver::cmd_sweep_commit(args).map(|()| 0),
         cli::Cmd::Merge { dirs } => driver::cmd_merge(dirs),
     }
 }

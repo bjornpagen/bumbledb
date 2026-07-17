@@ -19,6 +19,7 @@ mod corpus_gen;
 mod merge;
 mod read_family;
 mod scenarios;
+mod sweep_commit;
 #[cfg(test)]
 mod tests;
 mod trace;
@@ -32,6 +33,7 @@ pub use corpus::{corpus_paths, ensure_corpus, ensure_corpus_with};
 pub use corpus_gen::{cmd_gen, cmd_verify};
 pub use merge::cmd_merge;
 pub use scenarios::cmd_scenarios;
+pub use sweep_commit::cmd_sweep_commit;
 pub use trace::cmd_trace;
 pub use verify_store::cmd_verify_store;
 
