@@ -45,6 +45,19 @@ heed = { version = "0.22", default-features = false } # no serde codecs: the eng
 # lmdb-master-sys; this adds no node.
 libc = "0.2"
 
+# On Apple platforms LMDB's default lock implementation is SysV semaphores,
+# keyed by ftok(lock.mdb) — 16 bits of inode — so ANY other LMDB environment
+# on the volume whose lockfile inode collides mod 2^16 shares the set, and
+# removes it at close (semctl IPC_RMID): the open environment's next lock
+# acquisition returns EINVAL (struck the production store twice, 2026-07-17;
+# regression: tests/sysv_sem_rmid.rs). POSIX named semaphores are keyed by a
+# full 64-bit (dev, ino) hash and survive sem_unlink in-process; their known
+# cost — no robust-owner recovery when a lock holder dies — is void here:
+# bumbledb.lock enforces one process per store, so after a crash the next
+# opener always wins LMDB's exclusive lock and recreates the semaphores.
+[target.'cfg(target_os = "macos")'.dependencies]
+heed = { version = "0.22", default-features = false, features = ["posix-sem"] }
+
 # The phase-R measurement harness (tests/ramdisk_phase_r.rs) opens scratch
 # heed environments with the flags the engine forbids, to price them. The
 # crate is already in the dependency set above — this adds no node to the
