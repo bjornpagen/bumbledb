@@ -35,6 +35,32 @@ growth, findings — the honest zero is a recorded result). The launcher
 REFUSES to start while `artifacts/` holds any file: untriaged findings
 block new sessions.
 
+## Generation tiers, dictionaries, and seeds
+
+The two structurally-free generators (`theory`'s descriptor arm and
+`query`'s hostile arm) carry a **well-formed-but-adversarial tier**
+under a drawn knob (`fuzz/src/theorygen.rs`, `fuzz/src/irgen.rs`;
+TODO.md § PHASE A-FUZZ): resolvable ids, matching keys, schema-typed
+terms — hostile values inside accepted shapes, so executions reach the
+sealing pass, the planner, and the strata judge behind the validators.
+The hostile arm also draws **program-shaped IR** (`Idb` atoms, the
+canonical closure with coin-flip strata refusals, the `MAX_PREDICATES`
+fence). The fully-hostile tiers are kept at slot zero of each knob, so
+the entropy tail's constant stream still lands on them — and `theory`'s
+knob PEEKS a cloned cursor, so the legacy arm's byte→descriptor mapping
+(and with it every pinned trophy's recorded scenario) is preserved word
+for word. No tier owns validity logic — the engine judges, always.
+
+`corpus/theory.dict` and `corpus/query.dict` are per-target
+dictionaries (8-byte little-endian words — the harness's one entropy
+unit — of encoding boundaries, caps, and sentinels), wired per
+libFuzzer convention: `cargo fuzz run <t> -- -dict=fuzz/corpus/<t>.dict`.
+`corpus/{theory,query}/seed-*` are deterministic converter output
+(`fuzz/src/seeds.rs`): word recipes pinning each generation tier and
+cycling the boundary vocabulary the conformance suite
+(`lean/conformance/cases/`) exercises; regenerate with
+`BUMBLEDB_FUZZ_SEED_DIR=fuzz/corpus cargo test seeds`.
+
 ## Corpus policy and the trophy pipeline
 
 `corpus/<target>/` is the checked-in seed corpus, kept lean by the

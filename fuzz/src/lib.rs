@@ -1,18 +1,22 @@
 //! The shared fuzz harness (docs/architecture/60-validation.md § the
 //! fuzzing charter): fuzzer bytes → [`Rng::from_bytes`] → generation in
-//! `bumbledb-bench`'s `corpus_gen` → a scenario runner returning typed
-//! verdicts. Each target in `fuzz_targets/` is one thin `fuzz_target!`
-//! call into one runner here; the harness owns no logic worth fuzzing
-//! (refusal: we do not fuzz the harness).
+//! `bumbledb-bench`'s `corpus_gen` (plus the local adversarial tiers,
+//! `crate::theorygen`/`crate::irgen`) → a scenario runner returning
+//! typed verdicts. Each target in `fuzz_targets/` is one thin
+//! `fuzz_target!` call into one runner here; the harness owns no logic
+//! worth fuzzing (refusal: we do not fuzz the harness).
 //!
 //! Error matches in this crate are TOTAL — zero catch-all arms over
 //! engine error enums, so a future variant addition is a compile error
 //! here: the matcher is itself a census instrument.
 
 pub mod crash;
+pub mod irgen;
 pub mod kill;
 pub mod query;
 pub mod rewrites;
+pub mod seeds;
+pub mod theorygen;
 pub(crate) mod world;
 
 use std::collections::BTreeSet;
@@ -22,14 +26,14 @@ use std::sync::{Mutex, OnceLock};
 
 use bumbledb::error::SchemaError;
 use bumbledb::schema::SchemaDescriptor;
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::fingerprint::{self, SchemaFingerprint};
 use bumbledb::{
-    AnswerValue, Db, Direction, Error, PreparedQuery, Query, RelationId, StatementId,
-    StoreFinding, Value,
+    AnswerValue, Db, Direction, Error, PreparedQuery, Query, RelationId, StatementId, StoreFinding,
+    Value,
 };
 use bumbledb_bench::corpus_gen::Rng;
 use bumbledb_bench::corpus_gen::opgen::{self, FuzzOp, OpScenario};
-use bumbledb_bench::corpus_gen::theorygen;
 use bumbledb_bench::differential::{self, Answers, Op, Verdict as WriteVerdict};
 use bumbledb_bench::families;
 use bumbledb_bench::naive::query::QueryError;
@@ -43,7 +47,20 @@ use bumbledb_bench::querygen::target;
 /// panic below — engine or harness assert — is a finding by definition.
 pub fn theory(data: &[u8]) {
     let mut rng = Rng::from_bytes(data);
-    let descriptor = theorygen::random_descriptor(&mut rng);
+    // The tier knob (TODO.md § PHASE A-FUZZ): one first-word residue in
+    // four lands the well-formed-but-adversarial tier
+    // (`crate::theorygen`); everything else — the zero tail and the
+    // pinned theory trophy's recorded bytes included — is the
+    // structurally-free arm, KEPT, and read through the UNTOUCHED
+    // cursor: the knob peeks a clone, so the legacy byte→descriptor
+    // mapping is preserved word for word and every checked-in artifact
+    // replays its recorded scenario exactly.
+    let mut probe = rng.clone();
+    let descriptor = if probe.u64() % 4 == 3 {
+        theorygen::adversarial_descriptor(&mut probe)
+    } else {
+        theorygen::random_descriptor(&mut rng)
+    };
 
     theory_oracles(&descriptor);
 
@@ -152,8 +169,11 @@ fn genesis_debt_statements(descriptor: &SchemaDescriptor) -> BTreeSet<StatementI
             })
         })
     };
-    let ordinary =
-        |relation: RelationId| descriptor.relations[relation.0 as usize].extension.is_none();
+    let ordinary = |relation: RelationId| {
+        descriptor.relations[relation.0 as usize]
+            .extension
+            .is_none()
+    };
 
     descriptor
         .materialized_statements()

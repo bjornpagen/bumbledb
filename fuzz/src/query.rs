@@ -4,9 +4,10 @@
 //! engine, the naive model, and — where the shape is expressible — the
 //! `SQLite` lane (the differential's ψ-subset mapping; inexpressible
 //! shapes drop to two-way, counted and logged, never silently). The
-//! hostile arm draws structurally-free IR (`corpus_gen::irgen`) for the
-//! validation-totality oracle: typed rejection, no panic, deterministic
-//! verdicts.
+//! hostile arm draws hostile IR (`crate::irgen`: the structurally-free
+//! tier, the well-formed-but-adversarial tier, and the program-shaped
+//! tier, one drawn knob) for the validation-totality oracle: typed
+//! rejection, no panic, deterministic verdicts.
 //!
 //! Oracles: result-set equality across all lanes; prepare/execute
 //! determinism (the same query × draw twice → identical rows); the
@@ -16,10 +17,12 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bumbledb::error::ValidationError;
-use bumbledb::{Db, Error, Query};
+use bumbledb::{Db, Error, ProgramRef};
 use bumbledb_bench::compare;
-use bumbledb_bench::corpus_gen::{Rng, irgen};
+use bumbledb_bench::corpus_gen::Rng;
 use bumbledb_bench::querygen;
+
+use crate::irgen;
 use bumbledb_bench::querygen::target;
 use bumbledb_bench::translate::{LaneCase, sqlite_expressible, translate};
 
@@ -131,17 +134,41 @@ fn log_ratio() {
     }
 }
 
-/// The hostile arm: structurally-free IR against `Db::prepare` — the
+/// The hostile arm: hostile IR against `Db::prepare` — the
 /// validation-totality oracle. Any panic is a finding by definition;
-/// the verdict must be deterministic across two prepares.
+/// the verdict must be deterministic across two prepares. Three tiers
+/// under one drawn knob (TODO.md § PHASE A-FUZZ): the structurally-free
+/// arm — kept, at half weight and at slot zero so the entropy tail's
+/// constant stream still lands on it — beside the
+/// well-formed-but-adversarial tier and the program-shaped tier
+/// (`crate::irgen`), which reach the planner and the strata judge
+/// behind the validator.
 fn hostile(rng: &mut Rng) {
-    let query = irgen::random_query(rng);
+    match rng.range(4) {
+        2 => {
+            let query = irgen::adversarial_query(rng);
+            determinism(ProgramRef::Query(&query));
+        }
+        3 => {
+            let program = irgen::random_program(rng);
+            determinism(ProgramRef::Program(&program));
+        }
+        _ => {
+            let query = irgen::random_query(rng);
+            determinism(ProgramRef::Query(&query));
+        }
+    }
+}
+
+/// The determinism oracle over one hostile artifact, query- or
+/// program-shaped.
+fn determinism(program: ProgramRef<'_>) {
     with_world(0, |world| {
-        let first = judge(&world.db, &query);
-        let second = judge(&world.db, &query);
+        let first = judge(&world.db, program);
+        let second = judge(&world.db, program);
         assert_eq!(
             first, second,
-            "prepare-verdict determinism (hostile arm): {query:#?}"
+            "prepare-verdict determinism (hostile arm): {program:#?}"
         );
     });
 }
@@ -159,8 +186,8 @@ enum Verdict {
 /// One prepare through the REAL public API. The boundary: hostile IR
 /// rejects through `Error::Validation` and nothing else — every other
 /// variant is named, never a catch-all, and is a finding on this path.
-fn judge(db: &Db<target::Target>, query: &Query) -> Verdict {
-    match db.prepare(query) {
+fn judge(db: &Db<target::Target>, program: ProgramRef<'_>) -> Verdict {
+    match db.prepare(program) {
         Ok(prepared) => {
             drop(prepared);
             Verdict::Accepted
@@ -202,7 +229,7 @@ fn judge(db: &Db<target::Target>, query: &Query) -> Verdict {
             | Error::ResultBytesOverflow
             | Error::Corruption(_)),
         ) => {
-            panic!("non-validation error from prepare: {other:?}\n{query:#?}")
+            panic!("non-validation error from prepare: {other:?}\n{program:#?}")
         }
     }
 }
