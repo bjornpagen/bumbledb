@@ -58,6 +58,16 @@ then and are dashed where unknown.
   the same process-level-accounting class as the PRD 15 ASAN oom
   disposition. Environmental, deleted.
 
+- **2026-07-17, the bounded hunt (8m x 12 workers, all five targets):**
+  twenty `slow-unit` artifacts — eight `rewrites`, twelve `crash` —
+  every one replaying to exit 0 in under a second of wall time
+  (0.4–0.7 s including process startup) on the quiet machine. The
+  rewrites units were flagged under full 12-core saturation (1.33%
+  idle during the slice); the crash units under child-spawn kernel
+  contention (63% idle but 27% sys — fork/exec serializing across
+  twelve spawning workers), the same machine-load class as the
+  2026-07-13 morning-session disposition. Not slow inputs, deleted.
+
 ## Trophies (cross-reference: the ledger in fuzz/README.md)
 
 - 2026-07-13 `ops` — multi-violation citation tie: ruled (oracle 1
@@ -105,6 +115,40 @@ then and are dashed where unknown.
 | 2026-07-15 | rewrites | none | 12m x 8 workers | 1038630 | 1861/s | 12323 | 3380 -> 3563 | 1 |
 | 2026-07-15 | crash | none | 12m x 8 workers | 310918 | 430/s | 3151 | 441 -> 614 | 0 |
 | 2026-07-15 | query | address | 10m x 8 workers | 5614 | 6/s | 20897 | 2708 -> 2725 | 1 |
+| 2026-07-17 | theory | none | 4m x 12 workers (the default-workers verification) | 23572 | 82/s | 2403 | 413 -> 377 | 0 |
+| 2026-07-17 | theory | none | 8m x 12 workers | 53615 | 110/s | 2414 | 378 -> 395 | 0 |
+| 2026-07-17 | ops | none | 8m x 12 workers | 15805 | 32/s | 13151 | 3508 -> 3499 | 0 |
+| 2026-07-17 | query | none | 8m x 12 workers | 50 | 0/s | 14355 | 2738 -> 2455 | 0 |
+| 2026-07-17 | rewrites | none | 8m x 12 workers | 61653 | 93/s | 12592 | 3563 -> 3583 | 8 (slow-units, environmental, triaged above) |
+| 2026-07-17 | crash | none | 8m x 12 workers | 685 | 1/s | 3348 | 614 -> 608 | 12 (slow-units, environmental, triaged above) |
+
+## Saturation (2026-07-17 — the A-FUZZ default-workers verification)
+
+The 2026-07-17 sessions ran the launcher's REAL default (no
+`FUZZ_WORKERS` export, `-fork=12`), sampled with `top -l 2` and
+per-process `ps` sums during each slice. What the machine showed:
+
+- **rewrites saturates**: 1040% summed process CPU, 1.33% idle —
+  ~1200% is real where the workload is CPU-bound. The 12-worker
+  default fills the machine when the target lets it.
+- **theory does not, by workload shape**: 138–226% summed, ~60% idle,
+  sys-heavy (~25%) — each exec that reaches acceptance runs a full
+  per-schema store lifecycle (create, reopen, `verify_store`), so the
+  target is syscall-bound per exec, not merge-bound; more workers buy
+  syscall contention, not execs. The adversarial tier (git 1a7bc157)
+  raised acceptance reachability on purpose, which deepens this.
+- **the merge floor is visible at the 8m budget**, as recorded in
+  TODO.md § PHASE A-FUZZ: query spent its whole slice in fork-mode's
+  initial serial merge (50 execs over 8m on a 2.7k corpus); ops ran at
+  32/s against 813/s at 12m x 8 on 07-15. The ≥30m-slice rule for the
+  long hunt stands.
+- **crash collapsed to 1/s** (685 execs; 430/s at 12m x 8 on 07-15)
+  with the machine 63% idle and 27% sys — per-exec child spawns
+  serializing in the kernel across twelve workers, consistent with the
+  twelve replay-clean slow-units. Nothing in the target or the engine
+  changed (git log over `fuzz/` and `storage/` since 07-15). The long
+  hunt should A/B `FUZZ_WORKERS=8` vs 12 on crash before committing
+  the worker count.
 
 ## Kill sessions (the WRITEMAP commit-window sweep, `fuzz/tests/kill.rs`)
 
