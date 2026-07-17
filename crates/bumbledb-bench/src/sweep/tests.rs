@@ -9,13 +9,15 @@ use super::{
 use crate::corpus_gen::Rng;
 
 /// The grading's foundation, pinned against the live engine: the
-/// canonical child encoding and the identity hash the sweep models are
-/// exactly the ones the delta orders by — observable because
-/// `Violations::seal`'s stable sort keeps the first-discovered witness,
-/// and the source-side scan discovers in `plan.inserts` (delta hash)
-/// order. If this fails, [`super::run`] refuses at every store setup
+/// canonical child encoding the sweep models is exactly the engine's —
+/// observable because `Violations::seal`'s stable sort keeps the
+/// first-discovered witness, and the source-side scan discovers in
+/// target-key order since the W8 sort landed (the pin's expected
+/// witness is the key-least probe; its hash-least sibling is a
+/// checked-different fact, so a revert to delta-order discovery trips
+/// it too). If this fails, [`super::run`] refuses at every store setup
 /// with the same message; the fixture keeps the pin in the plain test
-/// suite where an encoding change trips it immediately.
+/// suite where an encoding or order change trips it immediately.
 #[test]
 fn the_hash_model_matches_the_engine() {
     let dir = TempDir::new("sweep-pin");

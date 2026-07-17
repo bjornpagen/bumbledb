@@ -15,14 +15,31 @@
 //! IS the engineered probe order. The engine-side sort lands later only
 //! if this curve says it pays.
 //!
+//! THE CURVE, MEASURED — and the sort landed on it (2026-07-17, the W8
+//! verdict run: three fresh seeds, 8 samples/cell, ambient 16384×8
+//! ephemeral twins, this lane under `scripts/measure.sh`; store
+//! DRAM-resident, upper pages cache-warm). Pure probe-order effect,
+//! sorted/delta src p50: noise at k ≤ 64 (sign flips seed to seed),
+//! 0.91–0.95 at 256, 0.81–0.86 at 1024, 0.75 at 4096 seed-stable —
+//! ascending keys share B-tree upper pages across descents, and the
+//! effect grows with the touched fraction of the tree. The source-side
+//! sort now lives in `judgment.rs :: check_source`, so the engine sorts
+//! BOTH arms' probes and this lane survives as the standing falsifier:
+//! the printed ratio should sit at ~1.0 (the arms differ only in the
+//! sort's input order), and a drift back toward the old curve at the
+//! ladder's top means the sort quietly died. The witness pin below
+//! moved with the sort — key-least, no longer hash-least.
+//!
 //! The hash model the grading assumes — canonical fact bytes are the
 //! concatenated big-endian field words ([`child_fact_bytes`]); fact
 //! identity is the full 32-byte blake3 ([`model_fact_hash`]) — is
 //! pinned against the engine at every store's setup
 //! ([`pin_hash_model`]): a deliberately rejected commit's surviving
-//! witness must be the model's hash-least violator (the delta iteration
-//! order made observable through `Violations::seal`'s stable sort), or
-//! the lane refuses to print numbers rather than mislabel its arms. The
+//! witness must be the model's KEY-least violator (the landed sort's
+//! discovery order made observable through `Violations::seal`'s stable
+//! sort; the model's hash-least probe is a checked-different fact, so a
+//! revert to delta-order discovery trips the same pin), or the lane
+//! refuses to print numbers rather than mislabel its arms. The
 //! twin determinism obligation — the sealed citation LIST is
 //! probe-order-invariant; the witness choice is explicitly
 //! non-normative — is asserted engine-side in
@@ -77,11 +94,14 @@ const ID_BASE: u64 = 1 << 32;
 /// Which probe order a cell engineers through its rank assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeOrder {
-    /// Today's engine order: source probes in delta hash order —
-    /// engineered as a seeded random rank permutation, so both arms pay
-    /// identical grading and differ ONLY in the parent-visit order.
+    /// The delta's hash order as the sort's INPUT — engineered as a
+    /// seeded random rank permutation, so both arms pay identical
+    /// grading. Before the W8 sort landed this WAS the probe order;
+    /// now `check_source` erases it inside the span, and the arm
+    /// carries the sort's random-input cost.
     Delta,
-    /// The candidate engine sort: probes in ascending target-key order.
+    /// Ascending target-key order as the sort's input — the engine's
+    /// probe order either way; the sort sees a pre-sorted worklist.
     KeySorted,
 }
 
@@ -180,14 +200,16 @@ fn draw_parents(k: u64, pool: u64, rng: &mut Rng) -> Vec<u64> {
     set.into_iter().collect()
 }
 
-/// The hash-model pin: a deliberately rejected commit — children under
-/// missing parents — whose surviving witness must be the model's
-/// hash-least violator. `Violations::seal` stable-sorts by citation, so
-/// the surviving witness of the one source-side citation IS the first
-/// insert op in delta order: if the engine's fact encoding or identity
-/// hash ever drifts from [`child_fact_bytes`] / [`model_fact_hash`],
-/// this refuses before a single mislabeled number prints. The rejected
-/// commit aborts; the store is untouched.
+/// The encoding-and-order pin: a deliberately rejected commit —
+/// children under missing parents — whose surviving witness must be the
+/// KEY-least violator (the landed W8 source sort's discovery order;
+/// `Violations::seal` stable-sorts by citation, keeping the
+/// first-discovered witness). The model's hash-least probe is checked
+/// to be a DIFFERENT fact, so this refuses both drifts before a single
+/// mislabeled number prints: the fact encoding leaving
+/// [`child_fact_bytes`] / [`model_fact_hash`], and the source-side sort
+/// silently reverting to delta hash order. The rejected commit aborts;
+/// the store is untouched.
 ///
 /// # Errors
 ///
@@ -204,17 +226,21 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
     let probe: Vec<(u64, u64)> = (0..8)
         .map(|i| (ID_BASE - 64 + i, MISSING_BASE + i))
         .collect();
-    let expected = probe
+    // Key-least = least parent key: the probes' parents ascend with i.
+    let expected = probe[0];
+    let hash_least = probe
         .iter()
-        .map(|&(id, parent)| {
-            (
-                model_fact_hash(&child_fact_bytes(id, parent, 0)),
-                id,
-                parent,
-            )
-        })
-        .min()
+        .copied()
+        .min_by_key(|&(id, parent)| model_fact_hash(&child_fact_bytes(id, parent, 0)))
         .expect("nonempty probe");
+    if hash_least == expected {
+        return Err(
+            "hash-model pin: the probe constants stopped discriminating — the model's \
+             hash-least violator coincides with the key-least one, so a revert to \
+             delta-order discovery would be invisible; re-pick the probe ids"
+                .to_owned(),
+        );
+    }
     let outcome = db.write(|tx| {
         for &(id, parent) in &probe {
             tx.insert(&world::WChild {
@@ -242,13 +268,14 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
             "hash-model pin: expected exactly one source-side containment citation, got {violations:?}"
         ));
     };
-    let (_, id, parent) = expected;
+    let (id, parent) = expected;
     if fact.as_ref() != child_fact_bytes(id, parent, 0).as_slice() {
         return Err(
-            "hash-model pin: the surviving witness is not the model's hash-least violator — \
-             the canonical fact encoding or identity hash drifted from the sweep's model \
-             (bumbledb encoding/encode.rs, encoding/fact_hash.rs); re-derive child_fact_bytes/\
-             model_fact_hash before trusting any sweep number"
+            "hash-model pin: the surviving witness is not the model's key-least violator — \
+             either the canonical fact encoding drifted from the sweep's model (bumbledb \
+             encoding/encode.rs; re-derive child_fact_bytes/model_fact_hash) or the \
+             source-side sort (judgment.rs::check_source) reverted to delta order; \
+             resolve before trusting any sweep number"
                 .to_owned(),
         );
     }

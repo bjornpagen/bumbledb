@@ -38,7 +38,7 @@ use std::ops::Bound;
 
 use heed::{AnyTls, RoTxn};
 
-use super::plan::CommitPlan;
+use super::plan::{CommitPlan, EdgeOp};
 use super::{decode_row_id, fact_by_row};
 use crate::encoding::{FactLayout, encode_u64, field_bytes};
 use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
@@ -279,7 +279,9 @@ fn collect(outcome: Result<()>, violations: &mut Vec<Violation>) -> Result<()> {
 /// probe nothing: the compiled member set answers in one AND and one
 /// test, and an out-of-range word is simply a miss
 /// (`docs/architecture/30-dependencies.md`). Violations accumulate into
-/// `violations`; the caller seals the complete set.
+/// `violations`; the caller seals the complete set. Probes run
+/// key-sorted, not in delta order — the measured license and the
+/// witness consequence are at the sort below.
 pub(super) fn check_source(
     view: &FinalStateView<'_, '_, '_>,
     violations: &mut Vec<Violation>,
@@ -288,35 +290,55 @@ pub(super) fn check_source(
     let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
     let mut probes = 0u64;
     let mut span = obs::span(obs::names::JUDGMENT_SOURCE, obs::Category::Commit);
-    for op in &plan.inserts {
-        for edge in &op.edges {
-            probes += 1;
-            let statement = schema.containment(edge.containment);
-            let probe = Probe {
-                statement: statement.id,
-                target_relation: statement.target.relation,
-                target_key: match &statement.enforcement {
-                    Enforcement::ScalarProbe { target_key, .. }
-                    | Enforcement::IntervalCoverage { target_key, .. } => *target_key,
-                    Enforcement::Closed { .. } => {
-                        unreachable!("closed-target containments produce memberships, not edges")
-                    }
-                },
-                target_check: &plan.selections.containment(edge.containment).target,
-                key_bytes: &edge.key_bytes,
-                fact_bytes: op.fact,
-                direction: Direction::SourceUnsatisfied,
-                source_tail: schema.source_tail(statement),
-            };
-            let outcome = match &statement.enforcement {
-                Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
-                Enforcement::IntervalCoverage { disjoint, .. } => {
-                    checker.check_coverage(*disjoint, &probe)
+    // Probes run in target-key order, not the delta's hash order: the T8
+    // commit-size sweep (`bumbledb-bench sweep-commit`) measured
+    // hash-order probes paying 1.20–1.33x over key-sorted from ~256
+    // touched parents up (0.75x span at 4096, neutral below 64) —
+    // ascending keys share B-tree upper pages across descents. One exact
+    // allocation per commit; the (containment, key, fact) triple is a
+    // total order (facts are set-distinct per relation), so the probe
+    // order — and the surviving witness, now the KEY-LEAST violator per
+    // citation (`tests/witness_stability.rs`, the licensed flip) — is
+    // deterministic whatever the sort algorithm does with equal keys.
+    let edge_count = plan.inserts.iter().map(|op| op.edges.len()).sum();
+    let mut worklist: Vec<(&EdgeOp, &[u8])> = Vec::with_capacity(edge_count);
+    worklist.extend(
+        plan.inserts
+            .iter()
+            .flat_map(|op| op.edges.iter().map(|edge| (edge, op.fact))),
+    );
+    worklist.sort_unstable_by(|(a, a_fact), (b, b_fact)| {
+        (a.containment, &a.key_bytes, *a_fact).cmp(&(b.containment, &b.key_bytes, *b_fact))
+    });
+    for (edge, fact_bytes) in worklist {
+        probes += 1;
+        let statement = schema.containment(edge.containment);
+        let probe = Probe {
+            statement: statement.id,
+            target_relation: statement.target.relation,
+            target_key: match &statement.enforcement {
+                Enforcement::ScalarProbe { target_key, .. }
+                | Enforcement::IntervalCoverage { target_key, .. } => *target_key,
+                Enforcement::Closed { .. } => {
+                    unreachable!("closed-target containments produce memberships, not edges")
                 }
-                Enforcement::Closed { .. } => unreachable!("classified above"),
-            };
-            collect(outcome, violations)?;
-        }
+            },
+            target_check: &plan.selections.containment(edge.containment).target,
+            key_bytes: &edge.key_bytes,
+            fact_bytes,
+            direction: Direction::SourceUnsatisfied,
+            source_tail: schema.source_tail(statement),
+        };
+        let outcome = match &statement.enforcement {
+            Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
+            Enforcement::IntervalCoverage { disjoint, .. } => {
+                checker.check_coverage(*disjoint, &probe)
+            }
+            Enforcement::Closed { .. } => unreachable!("classified above"),
+        };
+        collect(outcome, violations)?;
+    }
+    for op in &plan.inserts {
         for membership in &op.memberships {
             let statement = schema.containment(membership.containment);
             let Enforcement::Closed { members } = &statement.enforcement else {

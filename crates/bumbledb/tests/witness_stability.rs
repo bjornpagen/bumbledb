@@ -22,13 +22,15 @@
 //!   semantics before any probe runs.
 //! - NON-NORMATIVE, pinned so a change is loud (the remaining tests):
 //!   WHICH violating fact survives as the witness is an artifact of
-//!   each check list's scan order — delta `(relation, fact_hash)` order
-//!   on the source side, B-tree key order on the window and target
-//!   sides. An engine-side probe re-order (the W8 source sort, if the
-//!   sweep says it pays) is LICENSED to flip the source-side witness
-//!   pin below — update that one assertion with the sort, citing this
-//!   header — but must never touch the citation-list assertions, and a
-//!   flip must arrive as a deliberate commit, never a surprise.
+//!   each check list's scan order — since the W8 source sort landed
+//!   (`judgment.rs :: check_source`, licensed by the commit-size
+//!   sweep's measured curve), target-KEY order on all three sides: the
+//!   source side sorts its probe worklist by (containment, key bytes,
+//!   fact bytes); the window and target check lists were B-tree-sorted
+//!   already. The source-side pin below is the licensed flip this
+//!   header used to promise — hash-least became key-least with the
+//!   sort, as a deliberate commit. Any further re-order must again flip
+//!   only that assertion, never the citation-list ones.
 
 use bumbledb::{Db, Direction, Error, Violation, Violations};
 
@@ -216,16 +218,15 @@ fn the_rejection_is_reproducible_across_stores() {
     );
 }
 
-/// NON-NORMATIVE PIN, source side — the one assertion the W8 sort is
-/// licensed to flip (see the header). Today `check_source` discovers in
-/// the delta's `(relation, fact_hash)` order, so the surviving witness
-/// of a multi-violation source citation is the HASH-LEAST violator —
-/// computed here independently (blake3 over the canonical bytes, the
-/// engine's `encoding/fact_hash.rs` identity). A key-sorted probe order
-/// would instead surface the parent-key-least violator, which this
-/// fixture deliberately makes a DIFFERENT fact: silence is impossible.
+/// NON-NORMATIVE PIN, source side — the licensed flip, flipped (see the
+/// header): `check_source` sorts its probe worklist by target key, so
+/// the surviving witness of a multi-violation source citation is the
+/// KEY-LEAST violator — the least parent key here. The fixture keeps
+/// the delta's hash-least candidate a DIFFERENT fact (blake3 over the
+/// canonical bytes, the engine's `encoding/fact_hash.rs` identity), so
+/// a silent revert to delta-order discovery is impossible.
 #[test]
-fn the_source_witness_is_the_delta_hash_least_violator() {
+fn the_source_witness_is_the_key_least_violator() {
     // Parents descend with call order, so first-called, hash-least, and
     // key-least are all distinct candidates unless the pin says so.
     let kids: [(u64, u64); 6] = [
@@ -236,7 +237,8 @@ fn the_source_witness_is_the_delta_hash_least_violator() {
         (9005, 500),
         (9006, 450),
     ];
-    let expected = kids
+    let expected = *kids.last().expect("nonempty");
+    let hash_least = kids
         .iter()
         .copied()
         .min_by_key(|&(id, parent)| *blake3::hash(&child_bytes(id, parent, 0)).as_bytes())
@@ -244,11 +246,11 @@ fn the_source_witness_is_the_delta_hash_least_violator() {
     // The fixture's discrimination preconditions: if an encoding change
     // re-rolls the hashes into a coincidence, re-pick the ids above.
     assert_ne!(
-        expected.1, 450,
+        hash_least.1, 450,
         "re-pick fixture ids: the hash-least violator must differ from the key-least one"
     );
     assert_ne!(
-        expected, kids[0],
+        hash_least, kids[0],
         "re-pick fixture ids: the hash-least violator must differ from the first-called one"
     );
 
@@ -270,8 +272,8 @@ fn the_source_witness_is_the_delta_hash_least_violator() {
             Ok(())
         }))
     };
-    let violations = run("witness-hash-least-fwd", false);
-    assert_eq!(violations, run("witness-hash-least-rev", true));
+    let violations = run("witness-key-least-fwd", false);
+    assert_eq!(violations, run("witness-key-least-rev", true));
     let [
         Violation::Containment {
             direction: Direction::SourceUnsatisfied,
@@ -286,7 +288,7 @@ fn the_source_witness_is_the_delta_hash_least_violator() {
     assert_eq!(
         fact.as_ref(),
         child_bytes(id, parent, 0).as_slice(),
-        "the surviving source witness is the hash-least violator (non-normative; header)"
+        "the surviving source witness is the key-least violator (non-normative; header)"
     );
 }
 
