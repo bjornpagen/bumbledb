@@ -288,6 +288,334 @@ fn everything_spec() -> SchemaSpec {
     }
 }
 
+// The seam roster: every literal construct the token→`Value` seam can
+// emit rides a SELECTION at least once (bool, u64, negative i64, str,
+// bytes<N>, general u64/i64 intervals, a width-matched fixed interval,
+// a handle, a non-string literal set), the fixed family covers the i64
+// element, closed rows carry i64/interval/bytes/u64 values, and an FD
+// takes a multi-field determinant — the constructs `Everything` misses.
+bumbledb::schema! {
+    pub Seam;
+
+    closed relation Grade as GradeId {
+        points: i64,
+        window: interval<i64>,
+        tag: bytes<2>,
+        code: u64,
+    } = {
+        Low  { points: -3, window: -5..-2, tag: b"lo", code: 7 },
+        High { points: 9,  window: 2..4,   tag: b"hi", code: 8 },
+    };
+
+    relation Item {
+        id: u64 as ItemId, fresh,
+        flag: bool,
+        count: u64,
+        delta: i64,
+        label: str,
+        mark: bytes<2>,
+        span_u: interval<u64>,
+        span_i: interval<i64>,
+        lease: interval<i64, 3> as LeaseI,
+        grade: u64 as GradeId,
+    }
+
+    Item(id, flag) -> Item;
+    Item(id | flag == true) <= Item(id);
+    Item(id | count == 5) <= Item(id);
+    Item(id | delta == -7) <= Item(id);
+    Item(id | label == "alpha") <= Item(id);
+    Item(id | mark == b"ok") <= Item(id);
+    Item(id | span_u == 1..3) <= Item(id);
+    Item(id | span_i == -4..-1) <= Item(id);
+    Item(id | lease == 1..4) <= Item(id);
+    Item(id | grade == Low) <= Item(id);
+    Item(id | count == {2, 4}) <= Item(id);
+    Item(id | label == "a\"b\n\u{1F41D}") <= Item(id);
+    Item(id | mark == b"\xFF\x00") <= Item(id);
+    Item(id | span_u == 5..18446744073709551615) <= Item(id);
+    Item(id | delta == {-9223372036854775808, 3}) <= Item(id);
+}
+
+/// A side with one `field == literal` (plain-value) selection.
+fn side_valued(relation: &str, projection: &[&str], field: &str, literal: Value) -> SideSpec {
+    SideSpec {
+        selection: vec![(
+            field.into(),
+            LiteralSetSpec::One(LiteralSpec::Value(literal)),
+        )],
+        ..side(relation, projection)
+    }
+}
+
+/// The spec twin of the `Seam` schema above.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one construct-complete theory, clearer kept together"
+)]
+fn seam_spec() -> SchemaSpec {
+    let contain = |source: SideSpec| StatementSpec::Containment {
+        source,
+        target: side("Item", &["id"]),
+        bidirectional: false,
+    };
+    SchemaSpec {
+        relations: vec![
+            RelationSpec {
+                name: "Grade".into(),
+                newtype: Some("GradeId".into()),
+                fields: vec![
+                    field("points", ValueType::I64),
+                    field(
+                        "window",
+                        ValueType::Interval {
+                            element: IntervalElement::I64,
+                            width: None,
+                        },
+                    ),
+                    field("tag", ValueType::FixedBytes { len: 2 }),
+                    field("code", ValueType::U64),
+                ],
+                extension: Some(vec![
+                    RowSpec {
+                        handle: "Low".into(),
+                        values: vec![
+                            LiteralSpec::Value(Value::I64(-3)),
+                            LiteralSpec::Value(Value::IntervalI64(
+                                Interval::<i64>::new(-5, -2).expect("nonempty"),
+                            )),
+                            LiteralSpec::Value(Value::FixedBytes(Box::from(&b"lo"[..]))),
+                            LiteralSpec::Value(Value::U64(7)),
+                        ],
+                    },
+                    RowSpec {
+                        handle: "High".into(),
+                        values: vec![
+                            LiteralSpec::Value(Value::I64(9)),
+                            LiteralSpec::Value(Value::IntervalI64(
+                                Interval::<i64>::new(2, 4).expect("nonempty"),
+                            )),
+                            LiteralSpec::Value(Value::FixedBytes(Box::from(&b"hi"[..]))),
+                            LiteralSpec::Value(Value::U64(8)),
+                        ],
+                    },
+                ]),
+            },
+            RelationSpec {
+                name: "Item".into(),
+                newtype: None,
+                fields: vec![
+                    FieldSpec {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                        newtype: Some("ItemId".into()),
+                        fresh: true,
+                    },
+                    field("flag", ValueType::Bool),
+                    field("count", ValueType::U64),
+                    field("delta", ValueType::I64),
+                    field("label", ValueType::String),
+                    field("mark", ValueType::FixedBytes { len: 2 }),
+                    field(
+                        "span_u",
+                        ValueType::Interval {
+                            element: IntervalElement::U64,
+                            width: None,
+                        },
+                    ),
+                    field(
+                        "span_i",
+                        ValueType::Interval {
+                            element: IntervalElement::I64,
+                            width: None,
+                        },
+                    ),
+                    FieldSpec {
+                        newtype: Some("LeaseI".into()),
+                        ..field(
+                            "lease",
+                            ValueType::Interval {
+                                element: IntervalElement::I64,
+                                width: Some(3),
+                            },
+                        )
+                    },
+                    FieldSpec {
+                        newtype: Some("GradeId".into()),
+                        ..field("grade", ValueType::U64)
+                    },
+                ],
+                extension: None,
+            },
+        ],
+        statements: vec![
+            StatementSpec::Fd {
+                relation: "Item".into(),
+                projection: vec!["id".into(), "flag".into()],
+            },
+            contain(side_valued("Item", &["id"], "flag", Value::Bool(true))),
+            contain(side_valued("Item", &["id"], "count", Value::U64(5))),
+            contain(side_valued("Item", &["id"], "delta", Value::I64(-7))),
+            contain(side_valued(
+                "Item",
+                &["id"],
+                "label",
+                Value::String(Box::from("alpha".as_bytes())),
+            )),
+            contain(side_valued(
+                "Item",
+                &["id"],
+                "mark",
+                Value::FixedBytes(Box::from(&b"ok"[..])),
+            )),
+            contain(side_valued(
+                "Item",
+                &["id"],
+                "span_u",
+                Value::IntervalU64(Interval::<u64>::new(1, 3).expect("nonempty")),
+            )),
+            contain(side_valued(
+                "Item",
+                &["id"],
+                "span_i",
+                Value::IntervalI64(Interval::<i64>::new(-4, -1).expect("nonempty")),
+            )),
+            contain(side_valued(
+                "Item",
+                &["id"],
+                "lease",
+                Value::IntervalI64(Interval::<i64>::new(1, 4).expect("nonempty")),
+            )),
+            contain(side_selected("Item", &["id"], "grade", "Low")),
+            contain(SideSpec {
+                selection: vec![(
+                    "count".into(),
+                    LiteralSetSpec::Many(vec![
+                        LiteralSpec::Value(Value::U64(2)),
+                        LiteralSpec::Value(Value::U64(4)),
+                    ]),
+                )],
+                ..side("Item", &["id"])
+            }),
+            contain(side_valued(
+                "Item",
+                &["id"],
+                "label",
+                Value::String(Box::from("a\"b\n\u{1F41D}".as_bytes())),
+            )),
+            contain(side_valued(
+                "Item",
+                &["id"],
+                "mark",
+                Value::FixedBytes(Box::from(&[0xFF, 0x00][..])),
+            )),
+            contain(side_valued(
+                "Item",
+                &["id"],
+                "span_u",
+                Value::IntervalU64(Interval::<u64>::new(5, u64::MAX).expect("the ray")),
+            )),
+            contain(SideSpec {
+                selection: vec![(
+                    "delta".into(),
+                    LiteralSetSpec::Many(vec![
+                        LiteralSpec::Value(Value::I64(i64::MIN)),
+                        LiteralSpec::Value(Value::I64(3)),
+                    ]),
+                )],
+                ..side("Item", &["id"])
+            }),
+        ],
+    }
+}
+
+#[test]
+fn the_seam_roster_spec_and_macro_produce_one_fingerprint() {
+    let macro_descriptor = Seam.descriptor();
+    let spec_descriptor = seam_spec().descriptor().expect("the twin spec resolves");
+    assert_eq!(
+        spec_descriptor, macro_descriptor,
+        "spec lowering and macro expansion emit the same descriptor"
+    );
+    let macro_schema = macro_descriptor.validate().expect("the theory seals");
+    let spec_schema = spec_descriptor.validate().expect("the twin seals");
+    assert_eq!(
+        fingerprint(&spec_schema),
+        fingerprint(&macro_schema),
+        "one theory, one fingerprint — whichever surface built it"
+    );
+}
+
+#[test]
+fn an_empty_spec_lowers_and_seals() {
+    let spec = SchemaSpec {
+        relations: Vec::new(),
+        statements: Vec::new(),
+    };
+    let descriptor = spec.descriptor().expect("nothing to resolve");
+    descriptor.validate().expect("the empty theory seals");
+}
+
+#[test]
+fn the_extension_row_cap_is_the_validators_not_the_lowerings() {
+    let closed = |rows: usize| SchemaSpec {
+        relations: vec![RelationSpec {
+            name: "Status".into(),
+            newtype: Some("StatusId".into()),
+            fields: Vec::new(),
+            extension: Some(
+                (0..rows)
+                    .map(|idx| RowSpec {
+                        handle: format!("H{idx}").into(),
+                        values: Vec::new(),
+                    })
+                    .collect(),
+            ),
+        }],
+        statements: Vec::new(),
+    };
+    // 256 rows: at the cap, lowers and seals.
+    closed(256)
+        .descriptor()
+        .expect("resolves")
+        .validate()
+        .expect("at the cap the theory seals");
+    // 257 rows: lowers (the cap is semantic), sealed rejection is typed.
+    let over = closed(257).descriptor().expect("names still resolve");
+    assert!(
+        over.validate().is_err(),
+        "beyond the cap the validator rejects"
+    );
+}
+
+#[test]
+fn a_row_with_extra_values_is_rejected_not_silently_truncated() {
+    let mut spec = everything_spec();
+    let rows = spec.relations[1]
+        .extension
+        .as_mut()
+        .expect("Kind is closed");
+    // Kind declares two columns; this row now supplies three literals.
+    rows[0].values.push(LiteralSpec::Value(Value::Bool(false)));
+    // The lowering must not silently drop the third literal: the column
+    // zip cannot represent it, so the spec is rejected typed (the
+    // short-row case stays the engine validator's arity check).
+    let error = spec
+        .descriptor()
+        .expect_err("an over-wide row never lowers");
+    assert_eq!(
+        error.issues(),
+        [SpecIssue::RowArityExcess {
+            relation: 1,
+            row: 0,
+            name: "Kind".into(),
+            declared: 2,
+            supplied: 3,
+        }],
+        "the rejection names the offending row and both arities"
+    );
+}
+
 #[test]
 fn the_spec_and_the_macro_produce_one_fingerprint() {
     let macro_descriptor = Everything.descriptor();

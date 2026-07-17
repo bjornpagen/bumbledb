@@ -250,6 +250,21 @@ pub enum SpecIssue {
         closed: Box<str>,
         handle: Box<str>,
     },
+    /// An extension row supplies more values than its relation declares
+    /// columns — the excess is unrepresentable in the descriptor (the
+    /// column zip has nowhere to put it), so the lowering rejects here
+    /// rather than truncate silently. The fewer-values case survives
+    /// lowering intact and stays the engine's
+    /// `SchemaError::ExtensionArityMismatch` (the two-boundary split).
+    RowArityExcess {
+        /// The offending row's declaration indices into
+        /// [`SchemaSpec::relations`] and its extension.
+        relation: usize,
+        row: usize,
+        name: Box<str>,
+        declared: usize,
+        supplied: usize,
+    },
     /// Two closed relations claim one handle newtype — a handle newtype
     /// names exactly one closed relation.
     DuplicateHandleNewtype {
@@ -313,6 +328,17 @@ impl std::fmt::Display for SpecIssue {
             Self::UnknownHandle { closed, handle, .. } => {
                 write!(f, "closed relation `{closed}` has no handle `{handle}`")
             }
+            Self::RowArityExcess {
+                row,
+                name,
+                declared,
+                supplied,
+                ..
+            } => write!(
+                f,
+                "closed relation `{name}`, row {row}: {supplied} values for {declared} \
+                 declared columns — the extra literals have no column to lower into"
+            ),
             Self::DuplicateHandleNewtype {
                 newtype,
                 first,
@@ -609,8 +635,10 @@ impl SchemaSpec {
     ///
     /// # Errors
     ///
-    /// [`SchemaSpecError`] carrying EVERY unresolvable name and banned
-    /// spelling, in spec order — never just the first.
+    /// [`SchemaSpecError`] carrying EVERY unresolvable name, banned
+    /// spelling, and over-wide extension row (the one shape lowering
+    /// cannot represent — see [`SpecIssue::RowArityExcess`]), in spec
+    /// order — never just the first.
     ///
     /// # Panics
     ///
@@ -671,22 +699,38 @@ impl SchemaSpec {
                 extension: relation.extension.as_ref().map(|rows| {
                     rows.iter()
                         .enumerate()
-                        .map(|(row_idx, row)| Row {
-                            handle: row.handle.clone(),
-                            values: row
-                                .values
-                                .iter()
-                                .zip(&relation.fields)
-                                .enumerate()
-                                .map(|(column, (literal, field))| {
-                                    let at = LiteralAt::Row {
-                                        relation: rel_idx,
-                                        row: row_idx,
-                                        column,
-                                    };
-                                    resolver.literal(at, rel_idx, &field.name, literal)
-                                })
-                                .collect(),
+                        .map(|(row_idx, row)| {
+                            // The zip below drops any literal past the
+                            // declared columns — unrepresentable, so it
+                            // is an issue, not a truncation (the
+                            // short-row case survives lowering and is
+                            // the engine validator's arity check).
+                            if row.values.len() > relation.fields.len() {
+                                resolver.issues.push(SpecIssue::RowArityExcess {
+                                    relation: rel_idx,
+                                    row: row_idx,
+                                    name: relation.name.clone(),
+                                    declared: relation.fields.len(),
+                                    supplied: row.values.len(),
+                                });
+                            }
+                            Row {
+                                handle: row.handle.clone(),
+                                values: row
+                                    .values
+                                    .iter()
+                                    .zip(&relation.fields)
+                                    .enumerate()
+                                    .map(|(column, (literal, field))| {
+                                        let at = LiteralAt::Row {
+                                            relation: rel_idx,
+                                            row: row_idx,
+                                            column,
+                                        };
+                                        resolver.literal(at, rel_idx, &field.name, literal)
+                                    })
+                                    .collect(),
+                            }
                         })
                         .collect()
                 }),

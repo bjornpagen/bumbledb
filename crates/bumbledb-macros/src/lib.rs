@@ -1088,11 +1088,18 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
             i64_text(*negative, text).unwrap_or_else(|| literal_mismatch(relation, field)),
         ),
         (FieldTy::Str, Literal::Str(text)) => Value::String(unescape_str(text).into()),
-        (FieldTy::FixedBytes(_), Literal::Bytes(text)) => {
-            Value::FixedBytes(unescape_bytes(text).into())
+        // The width is the type: a `bytes<N>` literal of any other
+        // length is a typing mismatch, judged here (the theory's
+        // judgment, `bumbledb-theory/src/schema.rs: value_inhabits`).
+        (FieldTy::FixedBytes(len), Literal::Bytes(text)) => {
+            let bytes = unescape_bytes(text);
+            if u64::try_from(bytes.len()) != Ok(*len) {
+                literal_mismatch(relation, field);
+            }
+            Value::FixedBytes(bytes.into())
         }
         (
-            FieldTy::Interval(IntervalElement::U64, _),
+            FieldTy::Interval(IntervalElement::U64, width),
             Literal::Interval {
                 start: (false, start),
                 end: (false, end),
@@ -1100,21 +1107,27 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
         ) => {
             let start = u64_text(start).unwrap_or_else(|| literal_mismatch(relation, field));
             let end = u64_text(end).unwrap_or_else(|| literal_mismatch(relation, field));
-            Value::IntervalU64(nonempty_interval(
-                relation,
-                field,
-                Interval::<u64>::new(start, end),
-            ))
+            let interval = nonempty_interval(relation, field, Interval::<u64>::new(start, end));
+            // `interval<E, w>`: the spelled width must be exactly `w`
+            // and never the unbounded ray — the theory's judgment.
+            if let Some(w) = width
+                && (interval.end() - interval.start() != *w || interval.is_ray())
+            {
+                literal_mismatch(relation, field);
+            }
+            Value::IntervalU64(interval)
         }
-        (FieldTy::Interval(IntervalElement::I64, _), Literal::Interval { start, end }) => {
+        (FieldTy::Interval(IntervalElement::I64, width), Literal::Interval { start, end }) => {
             let start =
                 i64_text(start.0, &start.1).unwrap_or_else(|| literal_mismatch(relation, field));
             let end = i64_text(end.0, &end.1).unwrap_or_else(|| literal_mismatch(relation, field));
-            Value::IntervalI64(nonempty_interval(
-                relation,
-                field,
-                Interval::<i64>::new(start, end),
-            ))
+            let interval = nonempty_interval(relation, field, Interval::<i64>::new(start, end));
+            if let Some(w) = width
+                && (interval.end().abs_diff(interval.start()) != *w || interval.is_ray())
+            {
+                literal_mismatch(relation, field);
+            }
+            Value::IntervalI64(interval)
         }
         _ => literal_mismatch(relation, field),
     };
@@ -1524,6 +1537,10 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
         SpecIssue::NotAHandleField { at, .. } | SpecIssue::UnknownHandle { at, .. } => {
             one(spans.literals.get(at))
         }
+        // `parse_extension` enforces exact column coverage, so an
+        // over-wide row never reaches lowering from the macro — the
+        // `SchemaSpec` bindings surface is this issue's only producer.
+        SpecIssue::RowArityExcess { .. } => vec![Span::call_site()],
         SpecIssue::DuplicateHandleNewtype {
             second_relation, ..
         } => one(spans.newtypes.get(second_relation)),
@@ -1565,6 +1582,16 @@ fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
         SpecIssue::UnknownHandle { closed, handle, .. } => {
             format!("schema!: closed relation `{closed}` has no handle `{handle}`")
         }
+        SpecIssue::RowArityExcess {
+            row,
+            name,
+            declared,
+            supplied,
+            ..
+        } => format!(
+            "schema!: closed relation `{name}`, row {row}: {supplied} values for \
+             {declared} declared columns"
+        ),
         SpecIssue::DuplicateHandleNewtype {
             newtype,
             first,

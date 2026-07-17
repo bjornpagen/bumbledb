@@ -128,16 +128,18 @@ fn schema_compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's twenty-two cases (docs/architecture/70-api.md — the
+    // The suite's twenty-four cases (docs/architecture/70-api.md — the
     // emission's roster, the funerals, the width grammar, the
     // canonical-utterance law's ban table, and the schema-bound
     // witness): duplicate handle; missing column; extra column;
-    // type-mismatched literal; `closed relation` without `as`; handle
-    // literal on a non-closed field; the deleted inline `enum` type
-    // diagnosing its replacement; the deleted `order` statement form
-    // diagnosing its derivations (the grammar lock of
-    // `docs/architecture/30-dependencies.md` § refused: order marks);
-    // `interval<E, 0>` (denotes nothing) and the widthless
+    // type-mismatched literal; the width-mismatched `bytes<N>` and
+    // `interval<E, w>` selection literals (the width is the type — the
+    // token→`Value` seam judges it, never `Db::create`); `closed
+    // relation` without `as`; handle literal on a non-closed field; the
+    // deleted inline `enum` type diagnosing its replacement; the deleted
+    // `order` statement form diagnosing its derivations (the grammar
+    // lock of `docs/architecture/30-dependencies.md` § refused: order
+    // marks); `interval<E, 0>` (denotes nothing) and the widthless
     // `interval<E, >` (names no width), each naming the field; and the
     // window/selection ban table, each error naming the canonical form —
     // the deleted `in lo..hi per` spelling, `{1..*}` (the containment
@@ -150,7 +152,7 @@ fn schema_compile_fail_fixtures() {
     // witness (the schema-bound witness law — the binding typestate
     // makes a foreign witness a type mismatch).
     assert_eq!(
-        seen, 22,
-        "the schema compile-fail roster has twenty-two fixtures"
+        seen, 24,
+        "the schema compile-fail roster has twenty-four fixtures"
     );
 }
