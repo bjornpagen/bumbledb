@@ -106,6 +106,17 @@ pub fn fold_min_max_u64(values: &[u64], stride: usize, offset: usize, count: usi
 /// exact, and bit-identical to any-association i128/u128 folding. Flag
 /// ports untouched — the scalar exact loop's `adds/adcs` are confined
 /// to 3 of 6 ALUs, which was the whole wall (the port-topology law).
+///
+/// Refuted (2026-07-16, interleaved A/B at 937abc33): the copy-free
+/// twin — carry compare `v.simd_gt(new)`, the same overflow truth
+/// (`new < old` iff `new < v`) — deletes all four of this loop's
+/// `mov.16b` accumulator copies (21→17 insns, vector ALU µops 16→12
+/// per 8-word iteration, sinks bit-identical) yet measured NEUTRAL:
+/// the L2-tier kernel falsifier read 1.009 twin/base, inside the ±2%
+/// band, and no family moved. The kernel already saturates its
+/// ~7.9–8.0 rows/ns ceiling at L2; the copies are L1-relevance only,
+/// and no L1-resident fold lane exists to see them — re-open with one
+/// first. The W5 gravestone commit carries the full protocol.
 fn fold_sum_u64_dense(values: &[u64]) -> u128 {
     let mut lows = [Simd::<u64, 2>::splat(0); 4];
     let mut carries = [Simd::<u64, 2>::splat(0); 4];
