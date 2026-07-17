@@ -43,6 +43,7 @@ mod tests;
 
 pub use apply::apply;
 pub use write::commit;
+pub(crate) use write::flush_escaped_fresh_ids;
 
 /// A crashpoint's expected recovery side (the crucible packet (git ecec1dc3)):
 /// which committed state a store killed at that point must reopen to.

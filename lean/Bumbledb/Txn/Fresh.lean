@@ -5,15 +5,17 @@ import Bumbledb.Txn
 
 The fresh generator as a state machine: one monotone high-water mark
 per (relation, field). `alloc` returns the mark and advances it; an
-explicit-value write advances the mark past the supplied value; an
-ABORTED transaction's run vanishes whole (nothing it minted was
-observably returned); a SUCCESSFUL commit persists the final mark.
-The model is bumbledb-authored: ids are ORDINARY WRITABLE VALUES that
-happen to have a generator, so everything identity-shaped is enforced
-by the ordinary final-state judgment, and the mint's own laws are
-exactly the observability laws proved here — never-reissue-observable
+explicit-value write advances the mark past the supplied value; EVERY
+transaction persists its final mark — committed, no-op, or aborted
+alike, because `alloc` hands the id to the host before the commit's
+fate is known, so re-issue would break observability whatever became
+of the data. The model is bumbledb-authored: ids are ORDINARY WRITABLE
+VALUES that happen to have a generator, so everything identity-shaped
+is enforced by the ordinary final-state judgment, and the mint's own
+laws are exactly the observability laws proved here —
+never-reissue-observable
 (`never_reissue_observable`: the generator never re-issues ANY id a
-committed transaction made observable, explicitly-supplied ids
+transaction of any fate made observable, explicitly-supplied ids
 included; `never_reissue_observed` is its generator-returns
 projection), legal re-supply (`resupply_legal_monotone`), and the
 materialized key riding plain `holds`
@@ -70,10 +72,12 @@ the two concerns never meet.
   never-reissue needs no delete cases.
 * **The lazy committed-mark read and the dirty-mark flush are
   mechanism** (`storage/delta/alloc.rs::fresh_mark` reads once per
-  transaction; commit writes only advanced marks, no-op commits
-  included). The model's `Mint.run` / `Reachable.commit` keep their
-  semantic content: in-transaction visibility of a transaction's own
-  allocations, and persistence of exactly the final mark.
+  transaction; every transaction writes only its advanced marks —
+  no-op commits and aborts included, via
+  `storage/commit/write.rs::flush_escaped_fresh_ids`). The model's
+  `Mint.run` / `Reachable.txn` keep their semantic content:
+  in-transaction visibility of a transaction's own allocations, and
+  persistence of exactly the final mark whatever the commit's fate.
 -/
 
 namespace Bumbledb
@@ -220,44 +224,45 @@ theorem observed_lt_final {m : Mint} {es : List Event} {i : Nat}
 
 /-! ## The committed lifecycle -/
 
-/-- The committed mint lifecycle. A SUCCESSFUL commit persists its
-run's final mark; an ABORTED transaction's run is consumed and
-discarded whole — the constructor takes the events and moves nothing,
-which is the law "an aborted transaction's allocations vanish;
-nothing it minted was observably returned" as a transition shape.
-Bridge: `storage/delta/accessors.rs::dirty_fresh_marks` (commit
-flushes advanced marks); aborted write transactions drop the delta
-whole. -/
+/-- The persisted mint lifecycle. EVERY transaction persists its run's
+final mark — committed, no-op, or aborted alike: the fate that gates
+the DATA never gates the sequence, because a transaction that ran
+`alloc` already handed its ids to the host (a rejection returns the
+offending facts as data), so re-issue would break observability
+whatever became of the commit. There is one transition, not two: the
+commit/abort split simply does not exist for the mint. Bridge:
+`storage/delta/accessors.rs::dirty_fresh_marks` (every commit flushes
+advanced marks); `storage/commit/write.rs::flush_escaped_fresh_ids`
+(the abort paths flush the same marks); the counters-only commit moves
+no data and no generation. -/
 inductive Reachable : Mint → Mint → Prop where
   /-- The trivial chain. -/
   | refl (m : Mint) : Reachable m m
-  /-- One more SUCCESSFUL transaction: its final mark persists — even
-  when no facts changed (the escaped ids survive a no-op commit). -/
-  | commit {m₀ m₁ : Mint} (es : List Event) :
+  /-- One more transaction, its fate irrelevant: its final mark
+  persists — a committed mint, a no-op commit's escaped ids, and an
+  aborted attempt's escaped ids are the one same transition. -/
+  | txn {m₀ m₁ : Mint} (es : List Event) :
       Reachable m₀ m₁ → Reachable m₀ (m₁.run es)
-  /-- One ABORTED transaction: its whole run is discarded. -/
-  | abort {m₀ m₁ : Mint} (es : List Event) :
-      Reachable m₀ m₁ → Reachable m₀ m₁
 
-/-- The committed mark never retreats across the lifecycle. -/
+/-- The persisted mark never retreats across the lifecycle. -/
 theorem reachable_monotone {m m' : Mint} (h : Reachable m m') :
     m.next ≤ m'.next := by
   induction h with
   | refl => exact Nat.le_refl _
-  | commit es _ ih => exact Nat.le_trans ih (run_monotone _ es)
-  | abort _ _ ih => exact ih
+  | txn es _ ih => exact Nat.le_trans ih (run_monotone _ es)
 
 /-! ## (a) Never-reissue-observable -/
 
-/-- **Never-reissue-observable — the strengthened law.** ANY id a
-committed transaction made observable — generator-returned OR
-explicitly supplied (an id can enter a committed state's fresh field
+/-- **Never-reissue-observable — the unconditional law.** ANY id a
+transaction of any fate (committed or aborted) made observable — generator-returned OR
+explicitly supplied (an id can enter the host's hands
 only through the two events) — is never returned by any transaction
 minting from any later reachable mark: every observable id sits below
 the persisted mark (`observed_lt_final`), the mark never retreats
 (`reachable_monotone`), and every later return sits at or above its
-own entry mark (`returned_ge_start`). This is the doc sentence "never
-re-issuing any value observable in a committed state" made a theorem
+own entry mark (`returned_ge_start`). The mark never retreats across
+the one `txn` transition, abort included. This is the doc sentence "a
+fresh id, once issued, is never issued again" made a theorem
 whole (`docs/architecture/10-data-model.md` § fields);
 `never_reissue_observed` is its generator-returns projection. Bridge:
 `WriteDelta::alloc (crates/bumbledb/src/storage/delta/alloc.rs)` +
@@ -273,12 +278,14 @@ theorem never_reissue_observable {m : Mint} {es : List Event} {i : Nat}
 
 /-- **Never-reissue-observed** — the generator-returns projection of
 `never_reissue_observable`: an id the generator returned inside a
-COMMITTED transaction is never returned again from any later reachable
-mark. Aborted transactions are exempt by construction —
-`Reachable.abort` discards its run, and nothing it returned was
-observable. Bridge: `WriteDelta::alloc
-(crates/bumbledb/src/storage/delta/alloc.rs)` — "aborted transactions
-never touch the committed sequence". -/
+transaction of ANY fate is never returned again from any later
+reachable mint. Aborts are NOT exempt — the one `txn` transition
+persists an aborted run's mark exactly like a committed one, because
+`alloc` handed the id to the host before the commit's fate was known.
+Bridge: `WriteDelta::alloc
+(crates/bumbledb/src/storage/delta/alloc.rs)` +
+`flush_escaped_fresh_ids (crates/bumbledb/src/storage/commit/write.rs)`
+— the abort paths burn the escaped high-water. -/
 theorem never_reissue_observed {m : Mint} {es : List Event} {i : Nat}
     (h : i ∈ m.returned es) {m' : Mint}
     (hr : Reachable (m.run es) m') (es' : List Event) :

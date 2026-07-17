@@ -325,33 +325,46 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
 }
 
 #[test]
-fn fresh_ids_allocated_in_an_aborted_txn_are_reissued() {
-    let dir = TempDir::new("commit-fresh-abort");
+fn fresh_ids_allocated_in_a_rejected_txn_are_burned() {
+    // The never-reissue law is unconditional: an id `alloc` handed the
+    // host is burned even when the commit is REJECTED — `alloc` returns it
+    // before the commit's fate is known, and a rejection carries the
+    // offending facts back as data, so re-issue would break observability
+    // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`;
+    // `commit`'s escaped-flush on the reject exit). The other abort path,
+    // a failing `Db::write` closure, burns through `Db::write`'s own flush.
+    let dir = TempDir::new("commit-fresh-reject");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&schema);
-        assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 0);
-        assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 1);
-        // Abort: drop the delta without committing.
-    }
-    // The committed sequence is untouched: the next transaction
-    // re-issues the same values.
+
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
+    // Mint a fresh TARGET id and use it...
     let id = delta.alloc(&view, TARGET, FieldId(0)).expect("alloc");
     assert_eq!(id, 0);
     delta
         .insert(&view, TARGET, &target_fact(&schema, id))
         .expect("insert");
+    // ...while staging a KEYED functionality conflict so the commit aborts.
+    delta
+        .insert(&view, KEYED, &keyed_fact(&schema, 1, 10))
+        .expect("insert");
+    delta
+        .insert(&view, KEYED, &keyed_fact(&schema, 1, 20))
+        .expect("insert");
     drop(view);
-    commit(delta, &env).expect("commit");
+    let err = commit(delta, &env).unwrap_err();
+    assert!(matches!(err, Error::CommitRejected { .. }), "{err:?}");
 
-    // After a *committed* allocation, the sequence advances past it.
+    // The rejected commit rolled back every fact — but it burned the id it
+    // handed out: the next transaction mints past 0, never re-issuing it.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 1);
+    assert_eq!(
+        delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"),
+        1,
+        "0 was handed to the host and is gone forever, the abort notwithstanding"
+    );
 }
 
 // ---------- 50-storage § Write path, phase 5: the durability boundary ----------

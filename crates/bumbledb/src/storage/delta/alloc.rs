@@ -8,7 +8,12 @@ use super::{FreshMark, WriteDelta};
 impl WriteDelta<'_> {
     /// Mints the next fresh value for a `Fresh`-generation field: reads
     /// `Q` once per `(relation, field)` per transaction, then increments in
-    /// memory. Aborted transactions never touch the committed sequence.
+    /// memory. A minted value that escapes to the host is burned even when
+    /// the transaction aborts (the escaped high-water flushes on every
+    /// abort path — `commit`'s reject/infra exits and `Db::write`'s
+    /// failing-closure exit): the generator never re-issues an id it
+    /// handed out, the transaction's fate irrelevant. Only the abort's
+    /// data and generation stay untouched, never the sequence.
     ///
     /// # Errors
     ///

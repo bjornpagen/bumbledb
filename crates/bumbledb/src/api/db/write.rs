@@ -3,7 +3,7 @@ use std::sync::PoisonError;
 use super::{BULK_CHUNK, BulkLoadError, CommitSeq, Db, Fact, Snapshot, WriteTx, WriterThreadReset};
 use crate::error::{Error, Result};
 use crate::ir::Value;
-use crate::storage::commit::{commit, crashpoint};
+use crate::storage::commit::{commit, crashpoint, flush_escaped_fresh_ids};
 use crate::storage::delta::WriteDelta;
 use bumbledb_theory::schema::RelationId;
 
@@ -149,9 +149,23 @@ impl<S> Db<S> {
             refs: Vec::new(),
             marker: std::marker::PhantomData,
         };
-        let out = f(&mut tx)?;
+        let closure = f(&mut tx);
         let WriteTx { view, delta, .. } = tx;
         drop(view);
+        // A failing closure aborts before commit, but `alloc` may already
+        // have handed the host fresh ids — burn the escaped high-water so
+        // the generator never re-issues them (the never-reissue law binds
+        // every id issued, the transaction's fate irrelevant:
+        // `lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`). The
+        // commit path burns its own aborts; this covers the one path that
+        // never reaches it. Best-effort — the closure's error dominates.
+        let out = match closure {
+            Ok(out) => out,
+            Err(closure_err) => {
+                let _ = flush_escaped_fresh_ids(&self.env, &delta);
+                return Err(closure_err);
+            }
+        };
         let report = commit(delta, &self.env)?;
         txn_span.set_args(1, 0);
         txn_span.end();

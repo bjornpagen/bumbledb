@@ -263,9 +263,10 @@ for this was the last
 SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
 
 - A `Fresh` field must be `U64`. The database mints its values: monotonic per
-  (relation, field), never re-issuing any value observable in a committed state
-  (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable` — explicit supplies
-  and aborted runs are that model's own cases).
+  (relation, field), never re-issuing any value it ever handed out — the
+  transaction's fate is irrelevant, an aborted mint is burned exactly like a
+  committed one (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable` — explicit
+  supplies and aborted runs are that model's own cases).
 - **The usage pattern this exists for** — insert a new fact without ever reading a max:
 
   ```rust
@@ -288,14 +289,19 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
   chosen value ≤ or > the high-water mark succeeds and advances the mark past it. This
   is load-bearing: correcting a fresh-keyed fact is `delete(old); insert(new with the
   same id)`. "Never reused" constrains the *generator* only — it never re-issues a
-  value that was ever committed; explicit re-supply of a deleted value is legal
+  value it ever handed out; explicit re-supply of a deleted value is legal
   (`lean/Bumbledb/Txn/Fresh.lean: resupply_legal_monotone`). Mixed
   explicit/generated allocation within one transaction tracks the running maximum.
-  A *successful* commit persists every fresh value it issued, even when no facts
-  changed — the closure may have returned those ids to the host, and an observed id is
-  never re-issued (the counters-only commit writes exactly the dirty `Q` marks: no
-  generation bump, no cache eviction). Aborted transactions (`Err`/panic) still drop
-  their allocations; nothing they minted was observably returned.
+  **Every** transaction persists the fresh values it issued — a committed commit, a
+  no-op commit, and an *aborted* transaction (`Err`/panic, or a rejected commit
+  whose violations carry the offending facts back as data) alike: `alloc` hands the
+  id to the host before the commit's fate is known, so re-issue would break
+  observability whatever became of the data. The escaped high-water flushes through a
+  counters-only commit that writes exactly the dirty `Q` marks — no generation bump,
+  no cache eviction — so an abort leaves query-visible state (facts and generation)
+  untouched but never recycles an id it issued. Interns are the one thing an abort
+  still drops: intern ids never escape (hosts see values, not words), so recycling an
+  unflushed provisional intern is invisible.
 - **A Fresh field auto-materializes a functional dependency** — the statement
   `R(field) -> R`, first in the relation's materialized statement order, ordinary in
   every way and targetable by inclusions like any declared key. Two Accounts sharing

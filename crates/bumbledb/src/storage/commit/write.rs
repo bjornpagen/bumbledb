@@ -87,12 +87,15 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // The empty delta is the *only* no-op commit shape — net dispositions
     // make every recorded entry a genuine state change. It commits without
     // touching query-visible state: the tx id does not advance and no
-    // cached image is invalidated. But a *successful* commit persists
-    // every fresh value it issued — the closure may have returned those
-    // ids to the host — so dirty `Q` marks flush even here
-    // (`flush_escaped_fresh_ids`). Pending interns are still dropped: intern
-    // ids never escape (hosts see values, not words), and re-issuing an
-    // unflushed provisional id is the established abort semantics.
+    // cached image is invalidated. But every commit persists the fresh
+    // values it issued — the closure may have returned those ids to the
+    // host — so dirty `Q` marks flush even here (`flush_escaped_fresh_ids`),
+    // exactly as an aborted commit now burns its escaped ids: a fresh
+    // value, once issued, is never re-issued, the transaction's fate
+    // irrelevant (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
+    // Pending interns are still dropped — intern ids never escape (hosts
+    // see values, not words), so recycling an unflushed provisional intern
+    // id is invisible.
     if delta.is_empty() {
         obs::event(obs::names::COMMIT_NOOP, obs::Category::Commit, 0, 0);
         let generation = {
@@ -165,12 +168,25 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             new_generation,
         })
     });
+    // The never-reissue law spans the abort: every aborted attempt still
+    // handed the host its mints — the closure returned them from `alloc`,
+    // and a rejection carries the offending facts back as data — so the
+    // escaped `Q` high-water burns regardless of the abort's shape
+    // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`; the
+    // counters-only commit writes exactly the dirty marks — no generation
+    // bump, no cache eviction). Best-effort: a flush failure must never
+    // mask the error the caller has to see.
+    if outcome.is_err() {
+        let _ = flush_escaped_fresh_ids(env, &delta);
+    }
     // The one rejection exit: every `CommitRejected` — phase 2's key
     // set, phase 3's containment/window set — passes here, so the cited
     // facts decode here, ONCE, while the delta's provisional intern ids
-    // are still resolvable (the aborted transaction flushed nothing; a
-    // later decode would misread a novel `str` field as a dangling id —
-    // `docs/architecture/30-dependencies.md` § rendering the rejection).
+    // are still resolvable: the abort burned its escaped *fresh* ids but
+    // never its interns (intern ids never escape — hosts see values, not
+    // words), so a later decode would still misread a novel `str` field
+    // as a dangling id (`docs/architecture/30-dependencies.md` §
+    // rendering the rejection).
     let report = match outcome {
         Err(Error::CommitRejected { violations }) => {
             let view = env.read_txn()?;
@@ -269,7 +285,7 @@ fn decode_cited_facts(
 /// With no dirty marks no transaction begins — LMDB sees nothing. The
 /// same [`commit_bounded`] durability boundary as the full commit: one
 /// mechanism, two callers.
-fn flush_escaped_fresh_ids(env: &Environment, delta: &WriteDelta<'_>) -> Result<()> {
+pub(crate) fn flush_escaped_fresh_ids(env: &Environment, delta: &WriteDelta<'_>) -> Result<()> {
     if delta.dirty_fresh_marks().next().is_none() {
         return Ok(());
     }

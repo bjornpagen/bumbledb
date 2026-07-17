@@ -513,7 +513,7 @@ def ledger : List Obligation := [
     `Bumbledb.Txn.Fresh.never_reissue_observable
     "The mint is a monotone high-water mark per relation and field: any id a committed transaction made observable — generator-returned or explicitly supplied — sits below the persisted mark and is never returned again; an aborted transaction's run is discarded whole, so nothing it minted was observable."
     "WriteDelta::alloc (crates/bumbledb/src/storage/delta/alloc.rs); advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs); dirty_fresh_marks (crates/bumbledb/src/storage/delta/accessors.rs)"
-    "alloc_is_strictly_increasing_and_reads_q_once (crates/bumbledb/src/storage/delta/tests.rs); fresh_ids_allocated_in_an_aborted_txn_are_reissued (crates/bumbledb/src/storage/commit/tests/commit.rs); escaped_fresh_ids_survive_noop_commits (crates/bumbledb/tests/api.rs)",
+    "alloc_is_strictly_increasing_and_reads_q_once (crates/bumbledb/src/storage/delta/tests.rs); fresh_ids_allocated_in_a_rejected_txn_are_burned (crates/bumbledb/src/storage/commit/tests/commit.rs); escaped_fresh_ids_survive_noop_commits (crates/bumbledb/tests/api.rs)",
 
   .row @Txn.Fresh.resupply_legal_monotone
     `Bumbledb.Txn.Fresh.resupply_legal_monotone
