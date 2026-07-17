@@ -1,6 +1,30 @@
 # TODO — the road to 1.0.0 (handoff PRD)
 
-**Status:** this is a handoff. Nothing below is done yet. It captures the entire
+**Status:** PHASE A IS CLOSED (2026-07-17, the zero-known-issues campaign —
+31 agents, every verdict measured under the mutex, every commit pushed).
+Sections 3–5 below now read as the completed record; Phase R (§6) runs
+primer-side, and B→E (§7–10) remain gated exactly as written.
+
+**The Phase A close-out ledger** (verdict → commit):
+
+| Item | Verdict | Commit |
+|---|---|---|
+| A1/A2 + facade + census sweep | landed, gates green zero fixes; ALL-WIN sanity re-earned 33/33 | `841f4711` |
+| W1 fixpoint accumulator | **WIN 13×** deep closures (p90 13.8 ms → 1.06 ms), fanout neutral | `b48dcd51` |
+| W2 leaf batching | **gravestone** — refuted at parity, 5 interleaved pairs; descend copies stay | `fb752619` |
+| W3 finalize dispatch | **WIN** containment_walk −23%, range −15%, rsvp_union −9%; free_busy honest-neutral | `ef3fadad` |
+| W4 zero-fill retirement | **WIN** — allen fills gone from the profile, memset 5.1%→3.6% of meets_chain, families neutral+ | `cfa480ce` |
+| W5 dense-fold copies | **gravestone** — disasm premise confirmed (4 copies, twin −25% µops) but kernel 1.009 at the L2 ceiling: bandwidth-bounded, refuted | `69498d19` |
+| W6 stride band re-run | **refutation re-earned** — band unmoved post-T1, 384 stays | `bf5dd459` |
+| W7 prefetch tier gate | **recorded** — decision-free past L2 on the displaced lanes, width-only stays | `545cdd53` |
+| W8 commit-size sweep | **WIN above the crossover** (~128–256 parents): sort lands, 6.3–6.9% at k=4096, neutral below; witness stability pinned | `e32f6538` + `0c3557aa` |
+| W9 bimodality | **named: the rotation-boundary tail-max** — a harness order statistic (p50 = rank 127 on a draw-population boundary); engine holds ±0.5%; pinned | `1248027c` |
+| W10 census hoistables | landed — small-buffer determinants, exact collects, borrowed target check | `379c1d48` |
+| W11 transport theorem | **PROVED** — `filter_fold_transport`; the narrowing is discharged, not kept | `ee528c06` |
+| A-FUZZ generation | landed — adversarial tier, program-shaped hostile IR, dictionaries, conformance seeds; bounded hunt zero findings | `1a7bc157` + `56e6cbe7` |
+| Hygiene | done — 23 wf + 3 codex branches (local+remote), stale worktree, /tmp debris | — |
+
+This document remains the handoff for what's left: it captures the entire
 agreed plan to drive bumbledb to a zero-known-issues state so the owner can
 release 1.0.0 at will.
 
