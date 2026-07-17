@@ -448,6 +448,20 @@ impl Executor {
         // Survivor routing. Origins: the absorb node mints one
         // fresh origin per routed survivor — the cancellation unit is
         // exactly "one absorb-element's subtree"; deeper nodes inherit.
+        // Refuted (2026-07-16, interleaved A/B at b48dcd51): batching
+        // this loop — one `load_row` per run of same-parent survivors
+        // on the leaf arm, `extend_from_within` duplication instead of
+        // the full-row copy on the middle arm — measured NEUTRAL,
+        // min-of-5 over 5 cross-process pairs at L2-resident scale S:
+        // spread 0.988, skew 0.997, triangle 0.987, chain mean 0.997,
+        // busy_scan 0.985; the 10–25% bar decisively unmet, no family
+        // robustly worse either. Same-parent survivor runs are too
+        // short in these corpora to amortize the run cache — the added
+        // per-survivor parent compare offsets the saved copies. That
+        // twin armed only THIS loop; run_node's line-parallel mirror
+        // kept full copies — arm both (and confront the extraction
+        // refusal) before judging the descend bucket untouchable. The
+        // W2 gravestone commit carries the full protocol.
         counters.phase_start(node_idx, JoinPhase::Descend);
         let leaf = node_idx + 2 == n_nodes;
         let child_carried = &tables.carried[node_idx + 1];
