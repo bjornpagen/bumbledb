@@ -21,7 +21,7 @@ use std::borrow::Borrow;
 use std::ops::Deref;
 
 use crate::encoding::{FactLayout, field_bytes};
-use crate::schema::{FieldId, RelationId, StatementId};
+use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 /// LMDB's default key-size ceiling; every encoded key fits.
 pub const MAX_KEY: usize = 511;
@@ -29,30 +29,134 @@ pub const MAX_KEY: usize = 511;
 /// Fixed scratch buffer for key writers.
 pub type KeyBuf = [u8; MAX_KEY];
 
+/// Inline capacity of a [`DeterminantImage`]: one 8-byte scalar word
+/// beside a whole 16-byte interval tail — the widest common determinant
+/// shape — stays off the heap. Wider determinants (schema-bounded at
+/// [`MAX_DETERMINANT_WIDTH`]) spill to an owned heap buffer.
+const DETERMINANT_INLINE: usize = 24;
+
 /// Owned canonical bytes of one functionality determinant.
 ///
 /// The inner buffer is deliberately private: determinant images originate
 /// only in this codec, while callers may retain, compare, and borrow the
 /// resulting bytes without laundering arbitrary byte vectors into the type.
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct DeterminantImage(Vec<u8>);
+/// Identity is the byte string alone — `Eq`/`Ord` compare [`Self::as_bytes`]
+/// whatever the representation (the `Borrow<[u8]>` consistency contract) —
+/// and `Clone` re-inlines anything that fits, so retaining a typical
+/// determinant never allocates.
+#[derive(Debug)]
+pub(crate) struct DeterminantImage(Image);
+
+/// The two representations: a filled prefix of the fixed inline buffer,
+/// or the spilled heap buffer. `clear` keeps a spilled buffer's capacity
+/// (monotone high-water), so a wide-determinant scratch spills once, not
+/// per fact.
+#[derive(Debug)]
+enum Image {
+    Inline {
+        len: u8,
+        buf: [u8; DETERMINANT_INLINE],
+    },
+    Spilled(Vec<u8>),
+}
 
 impl DeterminantImage {
     /// Empty reusable output for the two determinant encoders below.
     #[must_use]
     pub(crate) fn scratch() -> Self {
-        Self(Vec::new())
+        Self(Image::Inline {
+            len: 0,
+            buf: [0; DETERMINANT_INLINE],
+        })
     }
 
     /// Empty reusable output with an expected determinant width.
     #[must_use]
     pub(crate) fn scratch_with_capacity(capacity: usize) -> Self {
-        Self(Vec::with_capacity(capacity))
+        if capacity <= DETERMINANT_INLINE {
+            Self::scratch()
+        } else {
+            Self(Image::Spilled(Vec::with_capacity(capacity)))
+        }
     }
 
     #[must_use]
     pub(crate) fn as_bytes(&self) -> &[u8] {
-        &self.0
+        match &self.0 {
+            Image::Inline { len, buf } => &buf[..usize::from(*len)],
+            Image::Spilled(bytes) => bytes,
+        }
+    }
+
+    /// Codec-private: the two encoders below reset their output in place.
+    fn clear(&mut self) {
+        match &mut self.0 {
+            Image::Inline { len, .. } => *len = 0,
+            Image::Spilled(bytes) => bytes.clear(),
+        }
+    }
+
+    /// Codec-private: appends canonical field bytes, spilling once past
+    /// the inline capacity.
+    fn extend(&mut self, bytes: &[u8]) {
+        match &mut self.0 {
+            Image::Inline { len, buf } => {
+                let start = usize::from(*len);
+                let end = start + bytes.len();
+                if end <= DETERMINANT_INLINE {
+                    buf[start..end].copy_from_slice(bytes);
+                    *len = u8::try_from(end).expect("inline length fits u8");
+                } else {
+                    let mut spilled = Vec::with_capacity(end);
+                    spilled.extend_from_slice(&buf[..start]);
+                    spilled.extend_from_slice(bytes);
+                    self.0 = Image::Spilled(spilled);
+                }
+            }
+            Image::Spilled(spilled) => spilled.extend_from_slice(bytes),
+        }
+    }
+}
+
+impl Clone for DeterminantImage {
+    fn clone(&self) -> Self {
+        let bytes = self.as_bytes();
+        if bytes.len() <= DETERMINANT_INLINE {
+            let mut buf = [0; DETERMINANT_INLINE];
+            buf[..bytes.len()].copy_from_slice(bytes);
+            Self(Image::Inline {
+                len: u8::try_from(bytes.len()).expect("inline length fits u8"),
+                buf,
+            })
+        } else {
+            Self(Image::Spilled(bytes.to_vec()))
+        }
+    }
+}
+
+impl Default for DeterminantImage {
+    fn default() -> Self {
+        Self::scratch()
+    }
+}
+
+impl PartialEq for DeterminantImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl Eq for DeterminantImage {}
+
+impl PartialOrd for DeterminantImage {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DeterminantImage {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_bytes().cmp(other.as_bytes())
     }
 }
 
@@ -355,10 +459,9 @@ pub fn determinant_image<'a>(
     fact_bytes: &[u8],
     out: &'a mut DeterminantImage,
 ) -> &'a DeterminantImage {
-    out.0.clear();
+    out.clear();
     for &field in projection {
-        out.0
-            .extend_from_slice(field_bytes(fact_bytes, layout, usize::from(field.0)));
+        out.extend(field_bytes(fact_bytes, layout, usize::from(field.0)));
     }
     out
 }
@@ -378,13 +481,13 @@ pub fn permuted_determinant_image<'a>(
     out: &'a mut DeterminantImage,
 ) -> &'a DeterminantImage {
     debug_assert_eq!(projection.len(), key_permutation.len());
-    out.0.clear();
+    out.clear();
     for determinant_pos in 0..key_permutation.len() {
         let source_pos = key_permutation
             .iter()
             .position(|&p| usize::from(p) == determinant_pos)
             .expect("key permutation contains every determinant position");
-        out.0.extend_from_slice(field_bytes(
+        out.extend(field_bytes(
             fact_bytes,
             layout,
             usize::from(projection[source_pos].0),
@@ -397,7 +500,7 @@ pub fn permuted_determinant_image<'a>(
 mod tests {
     use super::*;
     use crate::encoding::{TypeDesc, ValueRef, encode_fact, encode_interval_u64, encode_u64};
-    use crate::schema::IntervalElement;
+    use bumbledb_theory::schema::IntervalElement;
 
     #[test]
     fn fact_key_round_trips_components() {
@@ -441,7 +544,7 @@ mod tests {
         let mut determinant = Vec::new();
         determinant.extend_from_slice(&encode_u64(0xAAAA_BBBB_CCCC_DDDD));
         determinant.extend_from_slice(&encode_interval_u64(
-            crate::Interval::<u64>::new(10, 20).expect("nonempty interval"),
+            bumbledb_theory::Interval::<u64>::new(10, 20).expect("nonempty interval"),
         ));
         assert_eq!(determinant.len(), 24);
 
@@ -450,7 +553,9 @@ mod tests {
         // The interval's 16 bytes sit unsplit at the determinant's tail.
         assert_eq!(
             &k[7 + 8..],
-            encode_interval_u64(crate::Interval::<u64>::new(10, 20).expect("nonempty interval"))
+            encode_interval_u64(
+                bumbledb_theory::Interval::<u64>::new(10, 20).expect("nonempty interval")
+            )
         );
         assert_eq!(&k[7..], &determinant[..]);
     }
@@ -475,7 +580,7 @@ mod tests {
         let mut key_bytes = Vec::new();
         key_bytes.extend_from_slice(&encode_u64(4));
         key_bytes.extend_from_slice(&encode_interval_u64(
-            crate::Interval::<u64>::new(100, 200).expect("nonempty interval"),
+            bumbledb_theory::Interval::<u64>::new(100, 200).expect("nonempty interval"),
         ));
 
         let r = key(|b| reverse_key(b, StatementId(2), &key_bytes, RelationId(6), 77));
@@ -513,7 +618,7 @@ mod tests {
             &[
                 ValueRef::U64(0x1111_1111_1111_1111),
                 ValueRef::IntervalU64(
-                    crate::Interval::<u64>::new(3, 9).expect("nonempty interval"),
+                    bumbledb_theory::Interval::<u64>::new(3, 9).expect("nonempty interval"),
                 ),
                 ValueRef::U64(0x2222_2222_2222_2222),
             ],
@@ -534,7 +639,7 @@ mod tests {
         let mut expected = Vec::new();
         expected.extend_from_slice(&encode_u64(0x2222_2222_2222_2222));
         expected.extend_from_slice(&encode_interval_u64(
-            crate::Interval::<u64>::new(3, 9).expect("nonempty interval"),
+            bumbledb_theory::Interval::<u64>::new(3, 9).expect("nonempty interval"),
         ));
         assert_eq!(determinant.as_bytes(), expected);
     }
@@ -561,7 +666,7 @@ mod tests {
         expected.extend_from_slice(&encode_u64(0x1111_1111_1111_1111)); // f0
         expected.extend_from_slice(&encode_u64(0x2222_2222_2222_2222)); // f2
         expected.extend_from_slice(&encode_interval_u64(
-            crate::Interval::<u64>::new(3, 9).expect("nonempty interval"),
+            bumbledb_theory::Interval::<u64>::new(3, 9).expect("nonempty interval"),
         )); // f1, whole
         assert_eq!(key_bytes.as_bytes(), expected);
 
@@ -608,6 +713,38 @@ mod tests {
         let mut sorted = ordered.clone();
         sorted.sort();
         assert_eq!(ordered, sorted);
+    }
+
+    #[test]
+    fn determinant_image_identity_is_bytes_across_representations() {
+        // A once-spilled scratch cleared back to a small determinant must
+        // equal (and order with) the inline form carrying the same bytes,
+        // and Borrow<[u8]> must agree — the BTreeMap-lookup contract.
+        let wide = vec![0xCD; DETERMINANT_INLINE + 8];
+        let mut spilled = DeterminantImage::scratch();
+        spilled.extend(&wide);
+        assert_eq!(spilled.as_bytes(), &wide[..]);
+        spilled.clear();
+        spilled.extend(&[1, 2, 3]);
+        let mut inline = DeterminantImage::scratch();
+        inline.extend(&[1, 2, 3]);
+        assert_eq!(spilled, inline);
+        assert_eq!(spilled.cmp(&inline), std::cmp::Ordering::Equal);
+        assert_eq!(
+            <DeterminantImage as std::borrow::Borrow<[u8]>>::borrow(&spilled),
+            &[1, 2, 3]
+        );
+        // Cross-boundary spill mid-extend keeps the whole byte string.
+        let mut crossing = DeterminantImage::scratch_with_capacity(8);
+        crossing.extend(&[9; DETERMINANT_INLINE - 1]);
+        crossing.extend(&[7, 7]);
+        let mut expected = vec![9u8; DETERMINANT_INLINE - 1];
+        expected.extend_from_slice(&[7, 7]);
+        assert_eq!(crossing.as_bytes(), &expected[..]);
+        // The clone of anything that fits inline compares equal and
+        // round-trips its bytes (re-inlined; no heap retained).
+        assert_eq!(spilled.clone(), spilled);
+        assert_eq!(crossing.clone().as_bytes(), crossing.as_bytes());
     }
 
     #[test]

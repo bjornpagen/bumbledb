@@ -46,12 +46,12 @@ use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
     AxiomIndex, CardinalityStatement, CompiledCheck, ContainmentId, DisjointDeterminantProof,
-    Enforcement, FieldId, IntervalTail, KeyId, RelationId, Schema, StatementId, StatementView,
-    WindowId,
+    Enforcement, IntervalTail, KeyId, Schema, StatementView, WindowId,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
 use crate::storage::keys::{self, DeterminantImage, KeyBuf, MAX_KEY};
+use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 /// The one state dependency judgment may inspect. Phases 1–2 have
 /// already applied the plan to this LMDB write transaction, whose
@@ -380,20 +380,18 @@ pub(super) fn check_target(
     let mut span = obs::span(obs::names::JUDGMENT_TARGET, obs::Category::Commit);
     let mut scanned = 0u64;
     let mut key: KeyBuf = [0; MAX_KEY];
-    // Sources inserted this commit, by canonical bytes (identity =
-    // bytes, `10-data-model.md`) — the survivor partition's membership
-    // test.
-    let inserted: BTreeSet<(RelationId, &[u8])> = plan
-        .inserts
-        .iter()
-        .map(|op| (op.relation, op.fact))
-        .collect();
+    // The survivor partition's membership test — sources inserted this
+    // commit, by canonical bytes (identity = bytes, `10-data-model.md`)
+    // — is the plan's byte-sorted insert index (`CommitPlan::
+    // inserts_fact`): no per-judgment set is built.
+    //
     // Affected sources of interval statements, deduped before any walk:
     // the element is the full surviving `R` key — statement ‖ prefix
     // group ‖ source interval ‖ source identity — so several
     // disestablished segments of one (statement, prefix-group) collapse
-    // to one coverage walk per source.
-    let mut affected: BTreeSet<(ContainmentId, Vec<u8>)> = BTreeSet::new();
+    // to one coverage walk per source. The key bytes stay borrowed from
+    // the transaction (the judgment writes nothing, so the pages hold).
+    let mut affected: BTreeSet<(ContainmentId, &[u8])> = BTreeSet::new();
     for check in &plan.target_checks {
         let determinant = check.determinant.as_bytes();
         let key_statement = schema.key(check.key);
@@ -475,7 +473,7 @@ pub(super) fn check_target(
                             "R key interval tail",
                         )))?;
                     if ss < te && ts < se {
-                        affected.insert((dependent.containment, k.to_vec()));
+                        affected.insert((dependent.containment, k));
                     }
                 }
             } else if schema.relation(statement.source.relation).is_closed() {
@@ -514,7 +512,7 @@ pub(super) fn check_target(
                         Error::Corruption(CorruptionError::MalformedValue("R key shape")),
                     )?;
                     let fact = fact_by_row(data, txn.raw(), source_rel, source_row)?;
-                    if inserted.contains(&(source_rel, fact)) {
+                    if plan.inserts_fact(source_rel, fact) {
                         continue;
                     }
                     violations.push(Violation::Containment {
@@ -529,7 +527,7 @@ pub(super) fn check_target(
     }
     // The deduped walks, each against the final `U` state.
     let mut checker = Checker::new(txn.raw(), data, schema);
-    for (containment_id, r_key) in &affected {
+    for &(containment_id, r_key) in &affected {
         let Some((sid, key_bytes, source_rel, source_row)) = keys::parse_reverse_key(r_key) else {
             return Err(Error::Corruption(CorruptionError::MalformedValue(
                 "R key shape",
@@ -542,8 +540,8 @@ pub(super) fn check_target(
                 "R key statement",
             )));
         };
-        let statement = schema.containment(*containment_id);
-        if stored_id != *containment_id || stored_statement.id != statement.id {
+        let statement = schema.containment(containment_id);
+        if stored_id != containment_id || stored_statement.id != statement.id {
             return Err(Error::Corruption(CorruptionError::MalformedValue(
                 "R key statement",
             )));
@@ -559,7 +557,7 @@ pub(super) fn check_target(
             )));
         };
         let fact_bytes = fact_by_row(data, txn.raw(), source_rel, source_row)?;
-        if inserted.contains(&(source_rel, fact_bytes)) {
+        if plan.inserts_fact(source_rel, fact_bytes) {
             // The survivor partition again: an inserted source's
             // coverage demand is the source side's probe, not a
             // target-side conviction.
@@ -569,7 +567,7 @@ pub(super) fn check_target(
             statement: sid,
             target_relation: statement.target.relation,
             target_key: *target_key,
-            target_check: &plan.selections.containment(*containment_id).target,
+            target_check: &plan.selections.containment(containment_id).target,
             key_bytes,
             fact_bytes,
             direction: Direction::TargetRequired,

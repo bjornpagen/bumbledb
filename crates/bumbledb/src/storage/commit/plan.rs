@@ -20,11 +20,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AxiomIndex, ContainmentId, Enforcement, IntervalTail, KeyId, RelationId, Schema, StatementId,
-    WindowId,
+    AxiomIndex, ContainmentId, Enforcement, IntervalTail, KeyId, Schema, WindowId,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::keys::{self, DeterminantImage};
+use bumbledb_theory::schema::{RelationId, StatementId};
 
 use super::judgment::{SelectionCheck, Selections, satisfies, window_child_image};
 
@@ -39,6 +39,11 @@ pub(crate) struct CommitPlan<'d> {
     pub(crate) deletes: Box<[FactOp<'d>]>,
     /// Phase-2 ops, same order.
     pub(crate) inserts: Box<[FactOp<'d>]>,
+    /// The insert set re-sorted by `(relation, fact bytes)` — the
+    /// target-side judgment's survivor-partition membership test
+    /// ([`Self::inserts_fact`]). Its own index because the ops sit in
+    /// `(relation, fact_hash)` order, which is NOT byte order.
+    inserted: Box<[(RelationId, &'d [u8])]>,
     /// Phase-3 target-side check set: one entry per key tuple this commit
     /// disestablishes for at least one dependent statement.
     pub(crate) target_checks: Box<[DeterminantCheck]>,
@@ -47,6 +52,18 @@ pub(crate) struct CommitPlan<'d> {
     /// entry per (window, parent key tuple) this delta may have moved,
     /// deduplicated, in scan order.
     pub(crate) window_checks: Box<[WindowCheck]>,
+}
+
+impl CommitPlan<'_> {
+    /// Whether this commit inserts `fact` into `relation` — canonical
+    /// bytes, identity = bytes (`10-data-model.md`). Binary search over
+    /// the byte-sorted insert index: no per-judgment set is built, and
+    /// the plan stays immutable for `commit_bounded`'s re-runs.
+    pub(crate) fn inserts_fact(&self, relation: RelationId, fact: &[u8]) -> bool {
+        self.inserted
+            .binary_search_by(|&(rel, bytes)| (rel, bytes).cmp(&(relation, fact)))
+            .is_ok()
+    }
 }
 
 /// One touched parent of one window statement — the judgment phase probes
@@ -179,56 +196,71 @@ pub(crate) fn plan_commit<'d>(
     // parents (`touchedParents`) — a set by construction, deduplicated
     // here.
     let mut touched_parents: BTreeMap<WindowId, BTreeSet<DeterminantImage>> = BTreeMap::new();
-    let mut scratch = DeterminantImage::scratch();
-    let deletes = delta
-        .deletes()
-        .map(|(rel, fact)| {
-            fact_op(
-                schema,
-                &selections,
-                rel,
-                fact,
-                &mut deleted_determinants,
-                &mut touched_parents,
-                &mut scratch,
-            )
-        })
-        .collect();
-    let inserts = delta
-        .inserts()
-        .map(|(rel, fact)| {
-            fact_op(
-                schema,
-                &selections,
-                rel,
-                fact,
-                &mut inserted_determinants,
-                &mut touched_parents,
-                &mut scratch,
-            )
-        })
-        .collect();
+    let mut scratch = FactScratch::default();
+    // The delta's disposition iterators filter, so their size hints are
+    // inexact: each op list is counted first and collected at exact
+    // capacity (`into_boxed_slice` at len == capacity never reallocates).
+    let mut deletes = Vec::with_capacity(delta.deletes().count());
+    deletes.extend(delta.deletes().map(|(rel, fact)| {
+        fact_op(
+            schema,
+            &selections,
+            rel,
+            fact,
+            &mut deleted_determinants,
+            &mut touched_parents,
+            &mut scratch,
+        )
+    }));
+    let deletes = deletes.into_boxed_slice();
+    let mut inserts = Vec::with_capacity(delta.inserts().count());
+    inserts.extend(delta.inserts().map(|(rel, fact)| {
+        fact_op(
+            schema,
+            &selections,
+            rel,
+            fact,
+            &mut inserted_determinants,
+            &mut touched_parents,
+            &mut scratch,
+        )
+    }));
+    let inserts = inserts.into_boxed_slice();
+    let mut inserted: Vec<(RelationId, &[u8])> = Vec::with_capacity(inserts.len());
+    inserted.extend(inserts.iter().map(|op| (op.relation, op.fact)));
+    inserted.sort_unstable();
     let target_checks = target_checks(
         schema,
         &selections,
         deleted_determinants,
         &inserted_determinants,
     );
-    let window_checks = touched_parents
-        .into_iter()
-        .flat_map(|(window, parents)| {
-            parents
-                .into_iter()
-                .map(move |parent| WindowCheck { window, parent })
-        })
-        .collect();
+    let mut window_checks =
+        Vec::with_capacity(touched_parents.values().map(BTreeSet::len).sum::<usize>());
+    window_checks.extend(touched_parents.into_iter().flat_map(|(window, parents)| {
+        parents
+            .into_iter()
+            .map(move |parent| WindowCheck { window, parent })
+    }));
     CommitPlan {
         selections,
         deletes,
         inserts,
+        inserted: inserted.into_boxed_slice(),
         target_checks,
-        window_checks,
+        window_checks: window_checks.into_boxed_slice(),
     }
+}
+
+/// Per-fact derivation scratch, hoisted to the commit ([`plan_commit`]):
+/// the staging Vecs grow to the commit's high-water once and drain into
+/// each op's exact-size boxes — no per-fact growth or shrink reallocs.
+#[derive(Default)]
+struct FactScratch {
+    image: DeterminantImage,
+    edges: Vec<EdgeOp>,
+    memberships: Vec<MembershipOp>,
+    window_edges: Vec<MarkEdgeOp>,
 }
 
 /// Derives one fact's op: determinant bytes per key statement, reverse-edge key
@@ -242,7 +274,7 @@ fn fact_op<'d>(
     fact: &'d [u8],
     dependent_determinants: &mut BTreeSet<(KeyId, DeterminantImage)>,
     touched_parents: &mut BTreeMap<WindowId, BTreeSet<DeterminantImage>>,
-    scratch: &mut DeterminantImage,
+    scratch: &mut FactScratch,
 ) -> FactOp<'d> {
     // Every F/M/U/R key byte originates from this derivation — the
     // refusal-hardening chokepoint (`keys::debug_assert_ordinary`).
@@ -257,8 +289,8 @@ fn fact_op<'d>(
             // Determinant keys derived by slicing projected fields out of
             // fact_bytes — never a scan; interval fields slice as their
             // whole 16 bytes.
-            keys::determinant_image(layout, &statement.projection, fact, scratch);
-            let determinant = scratch.clone();
+            keys::determinant_image(layout, &statement.projection, fact, &mut scratch.image);
+            let determinant = scratch.image.clone();
             if !schema.dependents(key_id).is_empty() {
                 dependent_determinants.insert((key_id, determinant.clone()));
             }
@@ -281,8 +313,6 @@ fn fact_op<'d>(
     // closed-target containment derives no key material at all: the
     // referencing word is already in hand, and the compiled member set is
     // its entire enforcement plan.
-    let mut edges = Vec::new();
-    let mut memberships = Vec::new();
     for &containment_id in relation.outgoing() {
         let statement = schema.containment(containment_id);
         if !satisfies(&selections.containment(containment_id).source, layout, fact) {
@@ -300,12 +330,12 @@ fn fact_op<'d>(
                     &statement.source.projection,
                     key_permutation,
                     fact,
-                    scratch,
+                    &mut scratch.image,
                 );
-                edges.push(EdgeOp {
+                scratch.edges.push(EdgeOp {
                     containment: containment_id,
                     statement: statement.id,
-                    key_bytes: scratch.clone(),
+                    key_bytes: scratch.image.clone(),
                 });
             }
             Enforcement::Closed { .. } => {
@@ -314,7 +344,7 @@ fn fact_op<'d>(
                     layout,
                     usize::from(statement.source.projection[0].0),
                 );
-                memberships.push(MembershipOp {
+                scratch.memberships.push(MembershipOp {
                     containment: containment_id,
                     axiom: AxiomIndex::try_from(u64::from_be_bytes(word)).ok(),
                 });
@@ -326,8 +356,8 @@ fn fact_op<'d>(
         relation: rel,
         fact,
         determinants,
-        edges: edges.into_boxed_slice(),
-        memberships: memberships.into_boxed_slice(),
+        edges: scratch.edges.drain(..).collect(),
+        memberships: scratch.memberships.drain(..).collect(),
         window_edges,
     }
 }
@@ -341,7 +371,7 @@ fn mark_ops(
     relation: &crate::schema::Relation,
     fact: &[u8],
     touched_parents: &mut BTreeMap<WindowId, BTreeSet<DeterminantImage>>,
-    scratch: &mut DeterminantImage,
+    scratch: &mut FactScratch,
 ) -> Box<[MarkEdgeOp]> {
     let layout = relation.layout();
     // Window edges and touched parents (`touchedParents`' two halves).
@@ -350,18 +380,17 @@ fn mark_ops(
     // non-φ fact never changes a child group; wider touched only
     // re-checks more). The edge itself is φ-gated exactly as a
     // containment's, so the child-group walk counts σφ members only.
-    let mut window_edges = Vec::new();
     for &window_id in relation.window_sources() {
         let statement = schema.window(window_id);
-        window_child_image(statement, layout, fact, scratch);
+        window_child_image(statement, layout, fact, &mut scratch.image);
         touched_parents
             .entry(window_id)
             .or_default()
-            .insert(scratch.clone());
+            .insert(scratch.image.clone());
         if satisfies(&selections.window(window_id).source, layout, fact) {
-            window_edges.push(MarkEdgeOp {
+            scratch.window_edges.push(MarkEdgeOp {
                 statement: statement.id,
-                key_bytes: scratch.clone(),
+                key_bytes: scratch.image.clone(),
             });
         }
     }
@@ -374,14 +403,14 @@ fn mark_ops(
             && satisfies(&selections.window(window_id).target, layout, fact)
         {
             let key_statement = schema.key(*target_key);
-            keys::determinant_image(layout, &key_statement.projection, fact, scratch);
+            keys::determinant_image(layout, &key_statement.projection, fact, &mut scratch.image);
             touched_parents
                 .entry(window_id)
                 .or_default()
-                .insert(scratch.clone());
+                .insert(scratch.image.clone());
         }
     }
-    window_edges.into_boxed_slice()
+    scratch.window_edges.drain(..).collect()
 }
 
 /// The target-side check set: every deleted determinant tuple, expanded per
@@ -398,42 +427,42 @@ fn target_checks(
     deleted_determinants: BTreeSet<(KeyId, DeterminantImage)>,
     inserted_determinants: &BTreeSet<(KeyId, DeterminantImage)>,
 ) -> Box<[DeterminantCheck]> {
-    deleted_determinants
-        .into_iter()
-        .filter_map(|entry| {
-            let reestablished = inserted_determinants.contains(&entry);
-            let (key, determinant) = entry;
-            let dependents: Box<[DependentCheck]> = schema
-                .dependents(key)
-                .iter()
-                .filter_map(|&containment_id| {
-                    let statement = schema.containment(containment_id);
-                    if matches!(statement.enforcement, Enforcement::Closed { .. }) {
-                        return None;
-                    }
-                    let psi_qualified = if reestablished {
-                        match &selections.containment(containment_id).target {
-                            SelectionCheck::Empty => return None,
-                            SelectionCheck::Never => false,
-                            SelectionCheck::Compare(_) => true,
-                        }
-                    } else {
-                        false
-                    };
-                    Some(DependentCheck {
-                        containment: containment_id,
-                        psi_qualified,
-                    })
-                })
-                .collect();
-            if dependents.is_empty() {
-                return None;
+    // Exact-capacity staging: the outer Vec never grows (every deleted
+    // tuple is a candidate; `into_boxed_slice` shrinks at most once,
+    // when a tuple drops whole), and the dependents scratch grows to the
+    // widest dependent list once, draining into each check's exact box.
+    let mut checks = Vec::with_capacity(deleted_determinants.len());
+    let mut dependents: Vec<DependentCheck> = Vec::new();
+    for entry in deleted_determinants {
+        let reestablished = inserted_determinants.contains(&entry);
+        let (key, determinant) = entry;
+        for &containment_id in schema.dependents(key) {
+            let statement = schema.containment(containment_id);
+            if matches!(statement.enforcement, Enforcement::Closed { .. }) {
+                continue;
             }
-            Some(DeterminantCheck {
-                key,
-                determinant,
-                dependents,
-            })
-        })
-        .collect()
+            let psi_qualified = if reestablished {
+                match &selections.containment(containment_id).target {
+                    SelectionCheck::Empty => continue,
+                    SelectionCheck::Never => false,
+                    SelectionCheck::Compare(_) => true,
+                }
+            } else {
+                false
+            };
+            dependents.push(DependentCheck {
+                containment: containment_id,
+                psi_qualified,
+            });
+        }
+        if dependents.is_empty() {
+            continue;
+        }
+        checks.push(DeterminantCheck {
+            key,
+            determinant,
+            dependents: dependents.drain(..).collect(),
+        });
+    }
+    checks.into_boxed_slice()
 }
