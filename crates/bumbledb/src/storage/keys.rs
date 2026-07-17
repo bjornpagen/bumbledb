@@ -747,6 +747,123 @@ mod tests {
         assert_eq!(crossing.clone().as_bytes(), crossing.as_bytes());
     }
 
+    /// The exact spill boundary: 24 bytes (one u64 scalar beside one
+    /// whole 16-byte interval tail — the constant's stated shape) stays
+    /// inline; the 25th byte spills, whether it arrives alone or inside
+    /// a 16-byte interval-tail extend that crosses the boundary
+    /// mid-piece. Identity (Eq/Ord/Borrow) is bytes on both sides of
+    /// the boundary.
+    #[test]
+    fn determinant_image_spill_boundary_is_exactly_inline_capacity() {
+        // 8 + 16 = exactly DETERMINANT_INLINE: the widest inline shape.
+        let mut at_cap = DeterminantImage::scratch();
+        at_cap.extend(&encode_u64(0xDEAD_BEEF_0000_0001));
+        at_cap.extend(&encode_interval_u64(
+            bumbledb_theory::Interval::<u64>::new(5, 6).expect("nonempty interval"),
+        ));
+        assert_eq!(at_cap.as_bytes().len(), DETERMINANT_INLINE);
+        assert!(
+            matches!(at_cap.0, Image::Inline { .. }),
+            "24 bytes must not spill"
+        );
+        // A 16-byte interval tail landing on a 9-byte prefix crosses the
+        // boundary INSIDE one extend: bytes must survive the spill copy.
+        let mut crossing = DeterminantImage::scratch();
+        crossing.extend(&[0xAB; 9]);
+        crossing.extend(&encode_interval_u64(
+            bumbledb_theory::Interval::<u64>::new(7, 9).expect("nonempty interval"),
+        ));
+        assert_eq!(crossing.as_bytes().len(), 25);
+        assert!(matches!(crossing.0, Image::Spilled(_)), "25 bytes spill");
+        let mut expected = vec![0xABu8; 9];
+        expected.extend_from_slice(&encode_interval_u64(
+            bumbledb_theory::Interval::<u64>::new(7, 9).expect("nonempty interval"),
+        ));
+        assert_eq!(crossing.as_bytes(), &expected[..]);
+        // A single byte past capacity also spills (the off-by-one twin).
+        let mut plus_one = DeterminantImage::scratch();
+        plus_one.extend(&[0x11; DETERMINANT_INLINE]);
+        assert!(matches!(plus_one.0, Image::Inline { .. }));
+        plus_one.extend(&[0x22]);
+        assert!(matches!(plus_one.0, Image::Spilled(_)));
+        let mut expected = vec![0x11u8; DETERMINANT_INLINE];
+        expected.push(0x22);
+        assert_eq!(plus_one.as_bytes(), &expected[..]);
+        // Clone canonicalizes: at-capacity re-inlines, past-capacity stays
+        // spilled, and both compare equal to their originals.
+        assert!(matches!(at_cap.clone().0, Image::Inline { .. }));
+        assert!(matches!(plus_one.clone().0, Image::Spilled(_)));
+        assert_eq!(at_cap.clone(), at_cap);
+        assert_eq!(plus_one.clone(), plus_one);
+    }
+
+    /// `Ord` is the byte order whatever the representation: a sorted
+    /// mixed-representation set must land in exactly the order of its
+    /// byte strings — including the prefix rule ACROSS the spill
+    /// boundary (a 24-byte inline value against its own 25-byte spilled
+    /// extension), where a representation-tag or length-first compare
+    /// would diverge from LMDB's byte order.
+    #[test]
+    fn determinant_image_order_is_byte_order_across_representations() {
+        let of = |bytes: &[u8]| {
+            let mut image = DeterminantImage::scratch();
+            image.extend(bytes);
+            image
+        };
+        // Same small bytes, forced into the SPILLED representation via a
+        // once-wide scratch cleared back down.
+        let spilled_of = |bytes: &[u8]| {
+            let mut image = DeterminantImage::scratch();
+            image.extend(&[0u8; DETERMINANT_INLINE + 1]);
+            image.clear();
+            image.extend(bytes);
+            assert!(matches!(image.0, Image::Spilled(_)));
+            image
+        };
+        let prefix24 = vec![0x7Fu8; DETERMINANT_INLINE];
+        let mut extended25 = prefix24.clone();
+        extended25.push(0x00);
+        let corpus: Vec<Vec<u8>> = vec![
+            vec![],
+            vec![0x00],
+            vec![0x00, 0xFF],
+            vec![0x01],
+            prefix24.clone(),
+            extended25.clone(),
+            vec![0x80; DETERMINANT_INLINE + 8],
+            vec![0xFF],
+        ];
+        let mut images: Vec<DeterminantImage> = Vec::new();
+        for bytes in &corpus {
+            images.push(of(bytes));
+            if bytes.len() <= DETERMINANT_INLINE {
+                images.push(spilled_of(bytes));
+            }
+        }
+        let mut sorted_images = images;
+        sorted_images.sort();
+        let sorted_bytes: Vec<Vec<u8>> = sorted_images
+            .iter()
+            .map(|i| i.as_bytes().to_vec())
+            .collect();
+        let mut expected = sorted_bytes.clone();
+        expected.sort();
+        assert_eq!(sorted_bytes, expected, "Ord must equal byte order");
+        // The 24-inline value orders strictly below its 25-byte spilled
+        // extension (the prefix rule across the boundary).
+        assert!(of(&prefix24) < of(&extended25));
+        // Eq agrees with Ord's Equal across representations at the
+        // boundary width itself, and Borrow<[u8]> sees the same bytes.
+        assert_eq!(
+            of(&prefix24).cmp(&spilled_of(&prefix24)),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            <DeterminantImage as Borrow<[u8]>>::borrow(&spilled_of(&prefix24)),
+            &prefix24[..]
+        );
+    }
+
     #[test]
     fn determinant_width_bound_matches_reverse_overhead() {
         // MAX_KEY − (tag + statement + source_rel + source_row) = 511 − 15.

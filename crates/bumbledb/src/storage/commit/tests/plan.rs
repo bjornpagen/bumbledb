@@ -516,6 +516,79 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
     assert!(dependent.psi_qualified);
 }
 
+/// The byte-sorted insert index (`CommitPlan::inserts_fact`, the W10
+/// hoist that replaced the judgment's per-call `BTreeSet`): membership
+/// must be exact under the adversarial orderings the binary search can
+/// get wrong — ops arrive in `(relation, fact_hash)` order (NOT byte
+/// order), facts of different relations share identical bytes, and a
+/// probe with a byte-prefix or byte-extension of an inserted fact must
+/// miss.
+#[test]
+fn inserts_fact_is_exact_over_the_byte_sorted_index() {
+    let dir = TempDir::new("plan-inserts-fact");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    // Byte-descending ids so byte order disagrees with insertion order,
+    // and (relation, hash) order disagrees with both with overwhelming
+    // probability across nine facts.
+    let parents: Vec<Vec<u8>> = [9u64, 5, 1]
+        .iter()
+        .map(|&v| u64_fact(&schema, PARENT, v))
+        .collect();
+    // CHILD facts byte-identical to PARENT facts: the relation column
+    // must discriminate.
+    let children: Vec<Vec<u8>> = [9u64, 5]
+        .iter()
+        .map(|&v| u64_fact(&schema, CHILD, v))
+        .collect();
+    let combos: Vec<Vec<u8>> = [(9u64, 5u64), (5, 9)]
+        .iter()
+        .map(|&(x, y)| fact(&schema, COMBO, &[ValueRef::U64(x), ValueRef::U64(y)]))
+        .collect();
+    let mut inserts: Vec<(RelationId, Vec<u8>)> = Vec::new();
+    inserts.extend(parents.iter().map(|f| (PARENT, f.clone())));
+    inserts.extend(children.iter().map(|f| (CHILD, f.clone())));
+    inserts.extend(combos.iter().map(|f| (COMBO, f.clone())));
+    let mut delta = WriteDelta::new(&schema);
+    let plan = plan_of(&env, &mut delta, &[], &inserts);
+    // Every inserted (relation, bytes) is found.
+    for (rel, fact_bytes) in &inserts {
+        assert!(
+            plan.inserts_fact(*rel, fact_bytes),
+            "inserted fact must be found: rel {rel:?}"
+        );
+    }
+    // Same bytes, wrong relation: PARENT id 1 was inserted, CHILD 1 not.
+    assert!(plan.inserts_fact(PARENT, &u64_fact(&schema, PARENT, 1)));
+    assert!(!plan.inserts_fact(CHILD, &u64_fact(&schema, PARENT, 1)));
+    // A byte-prefix and a byte-extension of an inserted fact both miss.
+    let full = u64_fact(&schema, PARENT, 9);
+    assert!(!plan.inserts_fact(PARENT, &full[..7]));
+    let mut extended = full.clone();
+    extended.push(0);
+    assert!(!plan.inserts_fact(PARENT, &extended));
+    // A fact never inserted anywhere misses in every relation.
+    assert!(!plan.inserts_fact(PARENT, &u64_fact(&schema, PARENT, 7)));
+    assert!(!plan.inserts_fact(COMBO, &u64_fact(&schema, PARENT, 7)));
+    // Deletes never populate the insert index (the `==` pair lands and
+    // leaves whole so the base and delete commits stay judgeable).
+    let base_parent = u64_fact(&schema, PARENT, 42);
+    let base_child = u64_fact(&schema, CHILD, 42);
+    commit_base(
+        &env,
+        &schema,
+        &[(PARENT, base_parent.clone()), (CHILD, base_child.clone())],
+    );
+    let mut delta2 = WriteDelta::new(&schema);
+    let plan2 = plan_of(
+        &env,
+        &mut delta2,
+        &[(PARENT, base_parent.clone()), (CHILD, base_child)],
+        &[],
+    );
+    assert!(!plan2.inserts_fact(PARENT, &base_parent));
+}
+
 #[test]
 fn pointwise_tuple_keeps_its_interval_tail_and_coverage_evidence() {
     let dir = TempDir::new("plan-check-interval");

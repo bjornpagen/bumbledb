@@ -1328,6 +1328,64 @@ fn allen_representative_masks_agree_with_the_scalar_classifier() {
     }
 }
 
+/// The pooled-reuse contract the retired zero-fills lean on
+/// (`allen_code_batch`/`allen_filter_batch` resize without `clear`):
+/// one codes/keep pair reused across batches whose lengths shrink and
+/// regrow across BOTH NEON window widths (8 for codes, 16 for keep)
+/// must stay bit-identical to fresh vectors — a stale retained byte
+/// surviving into a shorter batch's window, or a tail the overlapped
+/// last window missed, shows up as a divergence here. The existing
+/// bit-identity sweeps allocate fresh outputs per call and never see
+/// the retained-prefix path.
+#[test]
+fn allen_pooled_reuse_is_bit_identical_to_fresh_outputs() {
+    use bumbledb_theory::allen::AllenMask;
+    // Descend from far past the high-water into every fallback regime,
+    // then regrow: each transition exercises resize-truncate (stale
+    // capacity above n) and resize-grow (zero-fill delta) in turn.
+    const REUSE_LADDER: &[usize] = &[257, 33, 17, 16, 15, 9, 8, 7, 3, 1, 0, 2, 12, 20, 100];
+    let mut rng = Lcg(0x5EED_A11E);
+    let mut pooled_codes = Vec::new();
+    let mut pooled_keep = Vec::new();
+    // Poison the pools' first high-water fill so any byte NOT overwritten
+    // by the classify/membership pass is loud (0xEE is neither a valid
+    // code nor a keep byte).
+    pooled_codes.resize(300, 0xEE);
+    pooled_keep.resize(300, 0xEE);
+    let masks = [
+        AllenMask::INTERSECTS,
+        AllenMask::COVERS,
+        AllenMask::DISJOINT,
+        AllenMask::FULL,
+    ];
+    for (round, &len) in REUSE_LADDER.iter().enumerate() {
+        let (a_s, a_e, b_s, b_e) = allen_corpus(len, &mut rng);
+        allen_code_batch(&a_s, &a_e, &b_s, &b_e, &mut pooled_codes);
+        let mut fresh_codes = Vec::new();
+        allen_code_batch(&a_s, &a_e, &b_s, &b_e, &mut fresh_codes);
+        assert_eq!(
+            pooled_codes, fresh_codes,
+            "codes diverge at round {round} len {len}"
+        );
+        assert_eq!(pooled_codes.len(), len, "codes resize to the pair count");
+        let mask = masks[round % masks.len()];
+        allen_filter_batch(&pooled_codes, mask, &mut pooled_keep);
+        let mut fresh_keep = Vec::new();
+        allen_filter_batch(&fresh_codes, mask, &mut fresh_keep);
+        assert_eq!(
+            pooled_keep,
+            fresh_keep,
+            "keep diverges at round {round} len {len} mask {:#06x}",
+            mask.bits()
+        );
+        assert_eq!(pooled_keep.len(), len, "keep resizes to the code count");
+        // Every retained byte is a real 0/1 keep or a real 4-bit code —
+        // the compaction kernel's debug contract over the read window.
+        assert!(pooled_keep.iter().all(|&k| k <= 1));
+        assert!(pooled_codes.iter().all(|&c| c < 13));
+    }
+}
+
 #[test]
 fn compaction_keeps_exactly_the_masked_items_in_order() {
     // Empty and full survivor sets, plus a mixed mask.
