@@ -11,9 +11,12 @@ applies here unchanged.
 Every schema below compiles and validates verbatim against the current SDK
 and engine — `ts/test/cookbook.test.ts` constructs each one through the
 public surface, admits it on a real store (the engine's schema validation is
-the acceptance judgment), asserts its fingerprint stable across a reopen, and
-lowers every query snippet through `db.prepare` (the engine's own IR
-validation). A recipe that stops compiling against the SDK fails the build.
+the acceptance judgment), asserts its fingerprint stable across a reopen AND
+equal to the per-recipe cross-host golden the Rust cookbook suite also pins
+(`test/fixtures/cookbook-fingerprints.txt` — the two cookbooks teach one
+theory per recipe number, provably), and lowers every query snippet through
+`db.prepare` (the engine's own IR validation). A recipe that stops compiling
+against the SDK fails the build.
 
 Guarantee labels that name Lean results cite the checked spec in the engine
 repo's `lean/` by theorem name, exactly as the engine cookbook does
@@ -27,26 +30,57 @@ import {
 	ALLEN,
 	Db,
 	abandon,
+	allen,
 	bool,
 	bytes,
 	closed,
 	contained,
+	eq,
 	i64,
 	interval,
 	key,
+	lt,
 	mirrors,
-	none,
+	not,
 	on,
-	oneOf,
+	pointIn,
 	program,
 	query,
 	relation,
 	schema,
 	str,
-	u64,
-	window
+	u64
 } from "@bjornpagen/bumbledb"
 ```
+
+## The class laws — the statements type the columns
+
+Relation declarations are pure structure — `kind`, `width`, `element`,
+`fresh`, nothing else. Domains are never declared: `schema()` computes every
+field's equivalence class FROM the statement list, by union-find across every
+paired face (containment, `mirrors`, window targets, ψ-selected faces
+included). Three laws govern the classes:
+
+1. **A fresh field is a generator** and names its class by its declaration
+   coordinate (`"Attempt.id"`); a closed relation's id is a generator named
+   the same way (`"Kind.id"`).
+2. **A generator-less class** is named by its least member coordinate in
+   relation-declaration × field-declaration order (recipe 5's
+   `"Document.payload"`), deterministic and pinned forever.
+3. **A field in no law is bare, and bare pairs only with bare** in queries —
+   a deliberate sum-domain pointer stays legal because you simply write no
+   law over it.
+
+The wall: at most ONE generator per class — a statement list that unifies two
+fresh coordinates is a contradiction (two mints cannot share a carrier), a
+schema-level compile error with a construction-time runtime twin. The
+dividend is that the statements you already write ARE the typing: a query
+variable first bound in one class refuses to join a field of another (compile
+error, with the same refusal thrown at construction), and no label, link, or
+domain declaration exists anywhere on the surface. When a recipe below says a
+statement "types" a column, this machinery is what it means. Classes never
+touch the fingerprint — identity hashes canonical descriptor bytes, never the
+law-computed names.
 
 ## Foundations
 
@@ -60,38 +94,45 @@ pointwise_key_disjoint`); checked intervals supply nonempty values
 One fact per outage window; the pointwise key is the whole temporal design.
 
 ```ts
-const ServiceId = u64.as("ServiceId")
-
-const Service = relation("Service", { id: ServiceId.fresh, name: str })
+const Service = relation("Service", { id: u64.fresh, name: str })
 // The window is one value, not a (start, end) column pair: the denotation
 // (a set of points, half-open) is what the judgments below read through.
-const Outage = relation("Outage", { service: ServiceId, window: interval(i64) })
+// The containment below is what types `service` — the class laws.
+const Outage = relation("Outage", { service: u64, window: interval(i64) })
 
 const Uptime = schema("Uptime", { Service, Outage }, [
 	contained(on(Outage, "service"), on(Service, "id")),
 	// The pointwise key: per service, no two outages share a point — every
 	// pair satisfies DISJOINT. SQL:2011's WITHOUT OVERLAPS, as a theorem.
+	// `key(R, [...])` is the host flavor of the canonical arrow — this one
+	// renders `Outage(service, window) -> Outage`: the key projection
+	// determines the tuple, and the arrow closing over its own relation is
+	// what makes a key a key (the compile-pin asserts the render).
 	key(Outage, ["service", "window"])
 ])
 
-// down at instant t (point membership is a typing rule):
-const downAt = query(Uptime).rule((r) =>
-	r
-		.match(Outage, { service: r.var("service"), window: r.var("w") })
-		.where(r.pointIn(r.param("t"), r.var("w")))
+// down at instant t — `r.vars` mints the rule's whole variable scope at
+// once, and shorthand punning binds same-named columns:
+const downAt = query(Uptime).rule((r) => {
+	const { service, window } = r.vars("service", "window")
+	return r
+		.match(Outage, { service, window })
+		.where(pointIn(r.param("t"), window))
 		.select("service")
-)
+})
 // overlapping an incident window (one Allen mask, no operator zoo):
-const overlapping = query(Uptime).rule((r) =>
-	r
-		.match(Outage, { service: r.var("service"), window: r.var("w") })
-		.where(r.allen(r.var("w"), ALLEN.intersects, r.param("incident")))
-		.select("service", "w")
-)
+const overlapping = query(Uptime).rule((r) => {
+	const { service, window } = r.vars("service", "window")
+	return r
+		.match(Outage, { service, window })
+		.where(allen(window, ALLEN.intersects, r.param("incident")))
+		.select("service", "window")
+})
 // total downtime per service (the denotation's one arithmetic):
-const downtime = query(Uptime).rule((r) =>
-	r.match(Outage, { service: r.var("service"), window: r.var("w") }).select("service", r.sum(r.duration("w")))
-)
+const downtime = query(Uptime).rule((r) => {
+	const { service, window } = r.vars("service", "window")
+	return r.match(Outage, { service, window }).select("service", r.sum(r.duration("window")))
+})
 ```
 
 ## 2. Discriminated unions
@@ -104,15 +145,13 @@ Sum-typed entities: a closed-relation discriminator plus per-arm child
 relations, glued by bidirectional conditional containments.
 
 ```ts
-const TaskId = u64.as("TaskId")
-
 // The discriminator vocabulary is a closed relation: its ground axioms are
 // axioms, and the handle constants (`Kind.Deterministic`, bare bigints) are
 // the literals on every surface.
 const Kind = closed("Kind", ["Deterministic", "CustomOperator"])
-const Task = relation("Task", { id: TaskId.fresh, kind: Kind.id })
-const DeterministicGrading = relation("DeterministicGrading", { task: TaskId, tolerance: i64 })
-const CustomOperatorGrading = relation("CustomOperatorGrading", { task: TaskId, operator: str })
+const Task = relation("Task", { id: u64.fresh, kind: Kind.id })
+const DeterministicGrading = relation("DeterministicGrading", { task: u64, tolerance: i64 })
+const CustomOperatorGrading = relation("CustomOperatorGrading", { task: u64, operator: str })
 
 const Grading = schema("Grading", { Kind, Task, DeterministicGrading, CustomOperatorGrading }, [
 	contained(on(Task, "kind"), on(Kind, "id")), // the discriminator resolves
@@ -120,13 +159,24 @@ const Grading = schema("Grading", { Kind, Task, DeterministicGrading, CustomOper
 	key(CustomOperatorGrading, ["task"]),
 	// Totality (==, left to right): a Deterministic task HAS its arm fact —
 	// same commit, always. Arm validity (right to left): an arm fact's parent
-	// exists WITH that kind — composite-FK-plus-CHECK, one statement.
+	// exists WITH that kind — composite-FK-plus-CHECK, one statement. These
+	// mirrors are also what type `task` on both arms: each lands in the
+	// "Task.id" generator class.
 	mirrors(on(Task.where({ kind: Kind.Deterministic }), "id"), on(DeterministicGrading, "task")),
 	mirrors(on(Task.where({ kind: Kind.CustomOperator }), "id"), on(CustomOperatorGrading, "task"))
 	// Exclusivity is a theorem, not a statement: one id in two arms would
 	// force `kind` to equal two handles against the fresh key on id.
 	// The executor spends the same theorem again — recipe 22's free lunch.
 ])
+
+// Host dispatch over the discriminator is `match` — exhaustive over the
+// sealed roster by construction (a missing arm is a compile error; an
+// out-of-roster id throws, never misdispatches):
+const gradedBy = (kind: bigint) =>
+	Kind.match(kind, {
+		Deterministic: () => "tolerance",
+		CustomOperator: () => "operator"
+	})
 ```
 
 ## 3. 0..1 optional attributes
@@ -140,10 +190,8 @@ No nulls, anywhere. Optional data is an absent fact in a child relation; the
 child's key plus a one-way containment *is* "nullable column", done honestly.
 
 ```ts
-const BusinessId = u64.as("BusinessId")
-
-const Business = relation("Business", { id: BusinessId.fresh, name: str })
-const MailingAddress = relation("MailingAddress", { business: BusinessId, line: str, city: str })
+const Business = relation("Business", { id: u64.fresh, name: str })
+const MailingAddress = relation("MailingAddress", { business: u64, line: str, city: str })
 
 const Optionality = schema("Optionality", { Business, MailingAddress }, [
 	key(MailingAddress, ["business"]), // at most one address...
@@ -154,12 +202,13 @@ const Optionality = schema("Optionality", { Business, MailingAddress }, [
 ])
 
 // Negation is plain anti-join (no null branch exists in any operator):
-const unaddressed = query(Optionality).rule((r) =>
-	r
-		.match(Business, { id: r.var("b") })
-		.where(r.not(MailingAddress, { business: r.var("b") }))
+const unaddressed = query(Optionality).rule((r) => {
+	const { b } = r.vars("b")
+	return r
+		.match(Business, { id: b })
+		.where(not(MailingAddress, { business: b }))
 		.select("b")
-)
+})
 ```
 
 ## 4. Money
@@ -167,25 +216,21 @@ const unaddressed = query(Optionality).rule((r) =>
 Guarantee: host discipline + validator premises — fixed-point scale and
 currency grouping live in host domains; containments only resolve references.
 
-Fixed-point i64 minor units; the domain label owns scale and currency intent.
-Floats are permanently refused (the ledger); proration and FX are host
-arithmetic.
+Fixed-point i64 minor units. Floats are permanently refused (the ledger);
+proration and FX are host arithmetic. `minor` sits in no law — bare, and bare
+pairs only with bare (the class laws), so a stray join against some other
+i64 column refuses unless a statement puts them in one class. Scale and
+currency intent are host discipline; the closed `currency` reference is what
+the schema CAN say, and says.
 
 ```ts
-const AccountId = u64.as("AccountId")
-const PostingId = u64.as("PostingId")
-// Minor units in i64 (±92 quadrillion cents); `.as("Minor")` is the domain
-// label — the schema type polices cross-domain confusion, not the engine
-// (hard structural typing, 10-data-model.md).
-const Minor = i64.as("Minor")
-
 const Currency = closed("Currency", ["Usd", "Eur", "Gbp"])
-const Account = relation("Account", { id: AccountId.fresh, name: str })
+const Account = relation("Account", { id: u64.fresh, name: str })
 const Posting = relation("Posting", {
-	id: PostingId.fresh,
-	account: AccountId,
+	id: u64.fresh,
+	account: u64,
 	currency: Currency.id,
-	minor: Minor
+	minor: i64
 })
 
 const Money = schema("Money", { Currency, Account, Posting }, [
@@ -197,16 +242,10 @@ const Money = schema("Money", { Currency, Account, Posting }, [
 // Sum folds wide with one final range check, so totals cannot wrap
 // silently. Bind the fresh id: set semantics would collapse two equal
 // (account, currency, minor) postings without it.
-const totals = query(Money).rule((r) =>
-	r
-		.match(Posting, {
-			id: r.var("id"),
-			account: r.var("account"),
-			currency: r.var("currency"),
-			minor: r.var("minor")
-		})
-		.select("account", "currency", r.sum("minor"))
-)
+const totals = query(Money).rule((r) => {
+	const { id, account, currency, minor } = r.vars("id", "account", "currency", "minor")
+	return r.match(Posting, { id, account, currency, minor }).select("account", "currency", r.sum("minor"))
+})
 ```
 
 ## 5. Content addressing
@@ -218,19 +257,19 @@ The decision rule for byte-shaped data: **intern what repeats (`str`); inline
 what identifies (`bytes(n)`)**.
 
 ```ts
-const DocumentId = u64.as("DocumentId")
-const PayloadHash = bytes(32).as("PayloadHash")
-
 const Region = closed("Region", ["Us", "Eu"])
 const Document = relation("Document", {
-	id: DocumentId.fresh,
+	id: u64.fresh,
 	name: str, // repeats: interned, id-equality
-	payload: PayloadHash // identifies: the blake3 of the external blob — inline, never interned
+	payload: bytes(32) // identifies: the blake3 of the external blob — inline, never interned
 })
-const Replica = relation("Replica", { payload: PayloadHash, region: Region.id })
+const Replica = relation("Replica", { payload: bytes(32), region: Region.id })
 
 const Content = schema("Content", { Region, Document, Replica }, [
 	key(Document, ["payload"]), // content-addressed: one doc per digest
+	// This containment is the digest columns' typing: neither is fresh, so
+	// the pair is a generator-less class named by its least member
+	// coordinate — "Document.payload" (the class laws' second rule).
 	contained(on(Replica, "payload"), on(Document, "payload")),
 	contained(on(Replica, "region"), on(Region, "id"))
 	// bytes(n) is identity-only (Eq/Ne, membership): a digest's lexicographic
@@ -240,7 +279,10 @@ const Content = schema("Content", { Region, Document, Replica }, [
 ])
 
 // a bytes param self-encodes (Uint8Array by inference):
-const byDigest = query(Content).rule((r) => r.match(Document, { id: r.var("id"), payload: r.param("digest") }).select("id"))
+const byDigest = query(Content).rule((r) => {
+	const { id } = r.vars("id")
+	return r.match(Document, { id, payload: r.param("digest") }).select("id")
+})
 ```
 
 ## Vocabularies
@@ -258,19 +300,19 @@ validate, frozen by the fingerprint, virtual in storage. The store holds zero
 vocabulary bytes, and handles are the literals on every surface.
 
 ```ts
-const TicketId = u64.as("TicketId")
-
 // Tier 1: handles only. `closed()` mints one bare-bigint constant per handle
 // (ids = declaration order) — an emission, not a type: the engine's
-// vocabulary stays relational; the host matches on `Priority.Urgent`.
+// vocabulary stays relational; the host matches on `Priority.Urgent`, or
+// dispatches exhaustively with `Priority.match` (recipe 2).
 const Priority = closed("Priority", ["Low", "Normal", "Urgent"])
 
-const Ticket = relation("Ticket", { id: TicketId.fresh, priority: Priority.id, opened_at: i64 })
+const Ticket = relation("Ticket", { id: u64.fresh, priority: Priority.id, opened_at: i64 })
 
 const Tickets = schema("Tickets", { Priority, Ticket }, [
-	// A closed reference is an ordinary u64 under the handle domain plus one
-	// containment; the judgment compiles at validate to a member-set test —
-	// one AND, one bit test, no probe (30-dependencies.md).
+	// A closed reference is an ordinary u64 under one containment (which also
+	// types `priority` into the "Priority.id" generator class); the judgment
+	// compiles at validate to a member-set test — one AND, one bit test, no
+	// probe (30-dependencies.md).
 	contained(on(Ticket, "priority"), on(Priority, "id"))
 ])
 
@@ -279,103 +321,118 @@ const Tickets = schema("Tickets", { Priority, Ticket }, [
 // law: intrinsic meaning goes here (changing it is a new theory); policy
 // that drifts without a rebuild is an ordinary relation — a vocabulary is
 // never written, only declared.
-const urgent = query(Tickets).rule((r) => r.match(Ticket, { id: r.var("t"), priority: Priority.Urgent }).select("t"))
+const urgent = query(Tickets).rule((r) => {
+	const { t } = r.vars("t")
+	return r.match(Ticket, { id: t, priority: Priority.Urgent }).select("t")
+})
 ```
 
 ## 7. The classification
 
-Guarantee: validator/runtime premise — closed payload facts and the compiled
-member-set restriction confine certificates to mastered handles.
+Guarantee: validator/runtime premise — closed payload facts and the
+ψ-selected containment restrict certificates to the compiled
+mastered-handle set.
 
 The fused form: the vocabulary carries its intrinsic facts as **payload
-columns** — one ground axiom per handle, values sealed with the schema.
-Axioms are declared, never written.
-
-> **SDK surface note.** The engine spells the restriction as a ψ-selected
-> containment over the vocabulary itself — `Certificate(kind) <= Kind(id |
-> mastered == true)` — and its reads walk the payload in the query (`Kind(id:
-> k, mastered == true)`). Neither face is writable in this SDK today: a
-> `closed()` value carries no `.where`, and query atoms match ordinary
-> relations only (a reported surface finding). Both spellings below are
-> engine-equivalent **because the roster is sealed**: the host folds the
-> payload over the sealed axioms at schema-build time — the same member set
-> the engine's ψ would compile, {DirectPass, JudgedPass} against complement
-> {Failed} — and the exclusion window enforces the identical commit judgment.
+columns** — one ground axiom per handle, values sealed with the schema, read
+by ψ-selections. Axioms are declared, never written.
 
 ```ts
-const AttemptId = u64.as("AttemptId")
-
 // Tier 2: payload columns state what each word MEANS, next to the word.
 // A rubric change is a new theory — exactly right for meaning.
-const Kind = closed("Kind", { mastered: bool, rank: u64 })({
-	DirectPass: { mastered: true, rank: 30n },
-	JudgedPass: { mastered: true, rank: 20n },
-	Failed: { mastered: false, rank: 10n }
-})
-const Attempt = relation("Attempt", { id: AttemptId.fresh, kind: Kind.id })
-const Certificate = relation("Certificate", { attempt: AttemptId, kind: Kind.id })
+const Kind = closed(
+	"Kind",
+	{ mastered: bool, rank: u64 },
+	{
+		DirectPass: { mastered: true, rank: 30n },
+		JudgedPass: { mastered: true, rank: 20n },
+		Failed: { mastered: false, rank: 10n }
+	}
+)
+const Attempt = relation("Attempt", { id: u64.fresh, kind: Kind.id })
+const Certificate = relation("Certificate", { attempt: u64, kind: Kind.id })
 
 const Review = schema("Review", { Kind, Attempt, Certificate }, [
 	contained(on(Attempt, "kind"), on(Kind, "id")),
 	key(Certificate, ["attempt"]),
 	contained(on(Certificate, "attempt"), on(Attempt, "id")),
-	contained(on(Certificate, "kind"), on(Kind, "id")),
-	// Certificates carry mastered kinds only, spelled over the sealed
-	// roster's complement: per attempt, ZERO certificates at a non-mastered
-	// kind — O(1) at commit, judged on every touching commit.
-	window(on(Attempt, "id"), none, on(Certificate.where({ kind: Kind.Failed }), "attempt"))
+	// ψ reads the payload: certificates carry mastered kinds only — the
+	// member set {DirectPass, JudgedPass} compiles at validate and the
+	// judgment is O(1) at commit (recipe 8 is this statement's own recipe).
+	contained(on(Certificate, "kind"), on(Kind.where({ mastered: true }), "id"))
 ])
 
-// The classification read duplicates no flag onto Attempt — the payload is
-// read off the sealed axioms (`Kind.axioms.DirectPass.mastered`), and the
-// member set is spelled as a rule union (recipe 22's shape; rules selecting
-// different handles are provably disjoint — the free lunch):
-const masteredAttempts = query(Review)
-	.rule((r) => r.match(Attempt, { id: r.var("a"), kind: Kind.DirectPass }).select("a"))
-	.rule((r) => r.match(Attempt, { id: r.var("a"), kind: Kind.JudgedPass }).select("a"))
+// The classification read duplicates no flag onto Attempt — ψ walks the
+// vocabulary's payload in the query too: a closed relation is matchable
+// exactly like an ordinary one, and the atom folds at prepare into a
+// plan-constant handle set on its sibling.
+const masteredAttempts = query(Review).rule((r) => {
+	const { a, k } = r.vars("a", "k")
+	return r
+		.match(Attempt, { id: a, kind: k })
+		.match(Kind, { id: k, mastered: true })
+		.select("a")
+})
+
+// Host dispatch on the payload tier hands each arm its sealed axiom row:
+const label = (k: bigint) =>
+	Kind.match(k, {
+		DirectPass: (row) => `mastered, rank ${row.rank}`,
+		JudgedPass: (row) => `mastered, rank ${row.rank}`,
+		Failed: () => "not mastered"
+	})
 ```
+
+Two honest boundaries. The fold has limits: payload escaping to the head and
+param-bearing filters don't fold at prepare — the engine falls back to a
+virtual-image join over the sealed extension, and the semantics are identical
+either way. And for an ALREADY-DEPLOYED store, moving from the old
+complement-window workaround to these ψ spellings is a NEW theory — a
+different fingerprint — which is recipe 28's ETL territory: humans own that
+migration.
 
 ## 8. The sub-vocabulary
 
-Guarantee: validator/runtime premise — the member set compiled from the
-sealed extension confines escalations to paging severities; a nonmember
-write is commit-rejected.
+Guarantee: validator/runtime premise — ψ over the sealed extension compiles
+the exact paging member set; a nonmember write is commit-rejected.
 
-A reference constrained to the facts of a vocabulary that satisfy a payload
-selection. Because the target is closed and sealed, the enforcement plan is
-not a probe strategy — it is **the answer set itself**, fixed when the schema
-is built. (The engine's direct ψ spelling — `Escalation(severity) <=
-Severity(id | pages == true)` — is not yet writable here; see recipe 7's
-surface note. The complement exclusion below compiles to the same commit
-judgment over the same sealed roster.)
+The ψ-selected containment: a reference constrained to the facts of a
+vocabulary that satisfy a payload selection. Because the target is closed and
+sealed, the enforcement plan is not a probe strategy — it is **the answer set
+itself**, fixed when the schema is built.
 
 ```ts
-const IncidentId = u64.as("IncidentId")
-
-const Severity = closed("Severity", { pages: bool })({
-	Info: { pages: false },
-	Warning: { pages: false },
-	Critical: { pages: true },
-	Fatal: { pages: true }
-})
-const Incident = relation("Incident", { id: IncidentId.fresh, severity: Severity.id })
-const Escalation = relation("Escalation", { incident: IncidentId, severity: Severity.id, at: i64 })
+const Severity = closed(
+	"Severity",
+	{ pages: bool },
+	{
+		Info: { pages: false },
+		Warning: { pages: false },
+		Critical: { pages: true },
+		Fatal: { pages: true }
+	}
+)
+const Incident = relation("Incident", { id: u64.fresh, severity: Severity.id })
+const Escalation = relation("Escalation", { incident: u64, severity: Severity.id, at: i64 })
 
 const Oncall = schema("Oncall", { Severity, Incident, Escalation }, [
 	contained(on(Incident, "severity"), on(Severity, "id")),
 	contained(on(Escalation, "incident"), on(Incident, "id")),
-	contained(on(Escalation, "severity"), on(Severity, "id")),
 	// The sub-vocabulary: an escalation carries a PAGING severity, by
-	// statement — per incident, ZERO escalations at a non-paging severity
-	// (every escalation resolves its incident, so every escalation is
-	// judged). An escalation at Severity.Info aborts the commit.
-	window(on(Incident, "id"), none, on(Escalation.where({ severity: oneOf(Severity.Info, Severity.Warning) }), "incident"))
+	// statement. ψ over the sealed extension compiles to the member set
+	// {Critical, Fatal}; the judgment is one bit test per touched fact,
+	// and an escalation at Severity.Info aborts the commit.
+	contained(on(Escalation, "severity"), on(Severity.where({ pages: true }), "id"))
 ])
 
-// who is being paged (the same member set, on the read side):
-const paged = query(Oncall)
-	.rule((r) => r.match(Escalation, { incident: r.var("i"), severity: Severity.Critical }).select("i"))
-	.rule((r) => r.match(Escalation, { incident: r.var("i"), severity: Severity.Fatal }).select("i"))
+// who is being paged — the same ψ, on the read side:
+const paged = query(Oncall).rule((r) => {
+	const { i, s } = r.vars("i", "s")
+	return r
+		.match(Escalation, { incident: i, severity: s })
+		.match(Severity, { id: s, pages: true })
+		.select("i")
+})
 ```
 
 ## Structure
@@ -397,14 +454,12 @@ nonemptiness), and the unit-slot sidecar (`interval(u64, 1n)` — the width is
 the type: a wrong-width value is unrepresentable).
 
 ```ts
-const PlaylistId = u64.as("PlaylistId")
-
-const Playlist = relation("Playlist", { id: PlaylistId.fresh, name: str })
+const Playlist = relation("Playlist", { id: u64.fresh, name: str })
 // The extent: a 0..1 child, because empty playlists exist and empty
 // intervals do not — presence of the child IS nonemptiness.
-const Extent = relation("Extent", { playlist: PlaylistId, span: interval(u64) })
+const Extent = relation("Extent", { playlist: u64, span: interval(u64) })
 // The unit slot: position p occupies [p, p+1) — the width is the type.
-const Slot = relation("Slot", { playlist: PlaylistId, slot: interval(u64, 1n), track: str })
+const Slot = relation("Slot", { playlist: u64, slot: interval(u64, 1n), track: str })
 
 const Playlists = schema("Playlists", { Playlist, Extent, Slot }, [
 	contained(on(Extent, "playlist"), on(Playlist, "id")),
@@ -416,12 +471,13 @@ const Playlists = schema("Playlists", { Playlist, Extent, Slot }, [
 ])
 
 // Positional access is membership — "what plays at position ?pos":
-const playingAt = query(Playlists).rule((r) =>
-	r
-		.match(Slot, { playlist: r.param("list"), slot: r.var("s"), track: r.var("track") })
-		.where(r.pointIn(r.param("pos"), r.var("s")))
+const playingAt = query(Playlists).rule((r) => {
+	const { slot, track } = r.vars("slot", "track")
+	return r
+		.match(Slot, { playlist: r.param("list"), slot, track })
+		.where(pointIn(r.param("pos"), slot))
 		.select("track")
-)
+})
 ```
 
 Middle insert is honest about its cost: making room at position `k` shifts
@@ -441,13 +497,11 @@ Node header + per-kind arms (recipe 2's pattern); every edge resolves; the
 shape theorems come from keys on the edge relations.
 
 ```ts
-const NodeId = u64.as("NodeId")
-
 const Kind = closed("Kind", ["Lit", "Add"])
-const Node = relation("Node", { id: NodeId.fresh, kind: Kind.id })
-const Lit = relation("Lit", { node: NodeId, value: i64 })
-const Add = relation("Add", { node: NodeId, lhs: NodeId, rhs: NodeId })
-const Parent = relation("Parent", { child: NodeId, parent: NodeId })
+const Node = relation("Node", { id: u64.fresh, kind: Kind.id })
+const Lit = relation("Lit", { node: u64, value: i64 })
+const Add = relation("Add", { node: u64, lhs: u64, rhs: u64 })
+const Parent = relation("Parent", { child: u64, parent: u64 })
 
 const Ast = schema("Ast", { Kind, Node, Lit, Add, Parent }, [
 	contained(on(Node, "kind"), on(Kind, "id")),
@@ -456,7 +510,9 @@ const Ast = schema("Ast", { Kind, Node, Lit, Add, Parent }, [
 	// Every node's arm is total, valid, and exclusive (recipe 2's theorems):
 	mirrors(on(Node.where({ kind: Kind.Lit }), "id"), on(Lit, "node")),
 	mirrors(on(Node.where({ kind: Kind.Add }), "id"), on(Add, "node")),
-	// Every child edge resolves — no dangling subtrees, judged at commit:
+	// Every child edge resolves — no dangling subtrees, judged at commit
+	// (these containments also put lhs/rhs in the "Node.id" class, which is
+	// exactly what lets the query below join lhs against Lit.node):
 	contained(on(Add, "lhs"), on(Node, "id")),
 	contained(on(Add, "rhs"), on(Node, "id")),
 	// Functional parent (one parent per child) ⇒ the reachable shape is
@@ -467,12 +523,13 @@ const Ast = schema("Ast", { Kind, Node, Lit, Add, Parent }, [
 	contained(on(Parent, "parent"), on(Node, "id"))
 ])
 
-const lhsLiteral = query(Ast).rule((r) =>
-	r
-		.match(Add, { node: r.param("n"), lhs: r.var("l") })
-		.match(Lit, { node: r.var("l"), value: r.var("v") })
+const lhsLiteral = query(Ast).rule((r) => {
+	const { l, v } = r.vars("l", "v")
+	return r
+		.match(Add, { node: r.param("n"), lhs: l })
+		.match(Lit, { node: l, value: v })
 		.select("v")
-)
+})
 ```
 
 ## 11. Typed graphs
@@ -484,13 +541,10 @@ One relation per edge kind: endpoint containments pin which node kinds each
 edge may touch.
 
 ```ts
-const PersonId = u64.as("PersonId")
-const RepoId = u64.as("RepoId")
-
-const Person = relation("Person", { id: PersonId.fresh, name: str })
-const Repo = relation("Repo", { id: RepoId.fresh, name: str })
-const Follows = relation("Follows", { follower: PersonId, followee: PersonId })
-const Maintains = relation("Maintains", { person: PersonId, repo: RepoId })
+const Person = relation("Person", { id: u64.fresh, name: str })
+const Repo = relation("Repo", { id: u64.fresh, name: str })
+const Follows = relation("Follows", { follower: u64, followee: u64 })
+const Maintains = relation("Maintains", { person: u64, repo: u64 })
 
 const Graph = schema("Graph", { Person, Repo, Follows, Maintains }, [
 	contained(on(Follows, "follower"), on(Person, "id")), // a Person→Person edge, by statement —
@@ -501,15 +555,17 @@ const Graph = schema("Graph", { Person, Repo, Follows, Maintains }, [
 	key(Maintains, ["person", "repo"])
 ])
 
-// Mutual follows — joins are explicit var reuse on both ends; `lt` keeps
-// each pair once:
-const mutual = query(Graph).rule((r) =>
-	r
-		.match(Follows, { follower: r.var("a"), followee: r.var("b") })
-		.match(Follows, { follower: r.var("b"), followee: r.var("a") })
-		.where(r.lt(r.var("a"), r.var("b")))
+// Mutual follows — joins are explicit var reuse on both ends (both columns
+// live in the "Person.id" class, so the reuse is lawful); `lt` keeps each
+// pair once:
+const mutual = query(Graph).rule((r) => {
+	const { a, b } = r.vars("a", "b")
+	return r
+		.match(Follows, { follower: a, followee: b })
+		.match(Follows, { follower: b, followee: a })
+		.where(lt(a, b))
 		.select("a", "b")
-)
+})
 ```
 
 ## 12. Entity-component
@@ -522,12 +578,10 @@ entity has a component iff the fact exists; a new component kind is a new
 relation, not a wider fact.
 
 ```ts
-const EntityId = u64.as("EntityId")
-
-const Entity = relation("Entity", { id: EntityId.fresh, name: str })
-const Transform = relation("Transform", { entity: EntityId, x: i64, y: i64 })
-const Velocity = relation("Velocity", { entity: EntityId, dx: i64, dy: i64 })
-const Renderable = relation("Renderable", { entity: EntityId, mesh: str })
+const Entity = relation("Entity", { id: u64.fresh, name: str })
+const Transform = relation("Transform", { entity: u64, x: i64, y: i64 })
+const Velocity = relation("Velocity", { entity: u64, dx: i64, dy: i64 })
+const Renderable = relation("Renderable", { entity: u64, mesh: str })
 
 const Ecs = schema("Ecs", { Entity, Transform, Velocity, Renderable }, [
 	key(Transform, ["entity"]), // each component 0..1 per entity
@@ -536,17 +590,19 @@ const Ecs = schema("Ecs", { Entity, Transform, Velocity, Renderable }, [
 	contained(on(Velocity, "entity"), on(Entity, "id")),
 	key(Renderable, ["entity"]),
 	// An archetype rule is one containment: every Renderable has a Transform
-	// (and, through it, an Entity — containment composes).
+	// (and, through it, an Entity — containment composes, and the class
+	// composes with it: every `entity` column lands in "Entity.id").
 	contained(on(Renderable, "entity"), on(Transform, "entity"))
 ])
 
 // The physics join is the component intersection:
-const physics = query(Ecs).rule((r) =>
-	r
-		.match(Transform, { entity: r.var("e"), x: r.var("x"), y: r.var("y") })
-		.match(Velocity, { entity: r.var("e"), dx: r.var("dx"), dy: r.var("dy") })
-		.select("e", "x", "y", "dx", "dy")
-)
+const physics = query(Ecs).rule((r) => {
+	const { entity, x, y, dx, dy } = r.vars("entity", "x", "y", "dx", "dy")
+	return r
+		.match(Transform, { entity, x, y })
+		.match(Velocity, { entity, dx, dy })
+		.select("entity", "x", "y", "dx", "dy")
+})
 ```
 
 ## 13. State machines
@@ -560,12 +616,10 @@ conditional reference target — a reference to "an order *that is shipped*" —
 is one selected statement, the statement SQL cannot write.
 
 ```ts
-const OrderId = u64.as("OrderId")
-
 const State = closed("State", ["Cart", "Placed", "Shipped"])
-const Order = relation("Order", { id: OrderId.fresh, state: State.id })
-const Placement = relation("Placement", { order: OrderId, at: i64 })
-const Shipment = relation("Shipment", { order: OrderId, carrier: str, at: i64 })
+const Order = relation("Order", { id: u64.fresh, state: State.id })
+const Placement = relation("Placement", { order: u64, at: i64 })
+const Shipment = relation("Shipment", { order: u64, carrier: str, at: i64 })
 
 const Orders = schema("Orders", { State, Order, Placement, Shipment }, [
 	contained(on(Order, "state"), on(State, "id")),
@@ -582,12 +636,13 @@ const Orders = schema("Orders", { State, Order, Placement, Shipment }, [
 	// generation witness — recipe 20; the schema pins the states, not the paths.
 ])
 
-const shipped = query(Orders).rule((r) =>
-	r
-		.match(Order, { id: r.var("id"), state: State.Shipped })
-		.match(Shipment, { order: r.var("id"), carrier: r.var("carrier") })
+const shipped = query(Orders).rule((r) => {
+	const { id, carrier } = r.vars("id", "carrier")
+	return r
+		.match(Order, { id, state: State.Shipped })
+		.match(Shipment, { order: id, carrier })
 		.select("id", "carrier")
-)
+})
 ```
 
 ## Time and coverage
@@ -600,40 +655,33 @@ keyed_eq_unique_correspondence`), while pointwise keys/coverage enforce only
 declared hard policy.
 
 Policy as schema: hard rules are pointwise keys, soft rules are the statements
-you decline to write.
-
-> **SDK surface note.** `Claim.source` carries the accepted attendance's id,
-> so it is labeled `.as("AttendanceId")` here: the SDK's domain wall pairs
-> faces by label, where the engine cookbook's bare `source: u64` relied on
-> host discipline. The label lives in the schema type only — it never touches
-> the value or the fingerprint.
+you decline to write. `Claim.source` carries the accepted attendance's id and
+declares nothing about it — the selected `mirrors` law below is what TYPES
+it: pairing `source` with `Attendance.id` puts it in the `"Attendance.id"`
+generator class. The class flows from the statement; no link declaration
+exists or is needed.
 
 ```ts
-const PersonId = u64.as("PersonId")
-const RoomId = u64.as("RoomId")
-const EventId = u64.as("EventId")
-const AttendanceId = u64.as("AttendanceId")
-
 const Rsvp = closed("Rsvp", ["Accepted", "Tentative", "Declined"])
 const Arm = closed("Arm", ["Busy", "Ooo"])
 
-const Person = relation("Person", { id: PersonId.fresh, name: str })
-const Room = relation("Room", { id: RoomId.fresh, name: str })
-const Event = relation("Event", { id: EventId.fresh, span: interval(i64) })
+const Person = relation("Person", { id: u64.fresh, name: str })
+const Room = relation("Room", { id: u64.fresh, name: str })
+const Event = relation("Event", { id: u64.fresh, span: interval(i64) })
 const Attendance = relation("Attendance", {
-	id: AttendanceId.fresh,
-	event: EventId,
-	person: PersonId,
+	id: u64.fresh,
+	event: u64,
+	person: u64,
 	rsvp: Rsvp.id
 })
 const Claim = relation("Claim", {
-	source: u64.as("AttendanceId"),
-	person: PersonId,
+	source: u64,
+	person: u64,
 	arm: Arm.id,
 	span: interval(i64)
 })
-const Booking = relation("Booking", { room: RoomId, event: EventId, span: interval(i64) })
-const WorkHours = relation("WorkHours", { person: PersonId, hours: interval(i64) })
+const Booking = relation("Booking", { room: u64, event: u64, span: interval(i64) })
+const WorkHours = relation("WorkHours", { person: u64, hours: interval(i64) })
 
 const Calendar = schema("Calendar", { Rsvp, Arm, Person, Room, Event, Attendance, Claim, Booking, WorkHours }, [
 	contained(on(Attendance, "event"), on(Event, "id")),
@@ -647,7 +695,8 @@ const Calendar = schema("Calendar", { Rsvp, Arm, Person, Room, Event, Attendance
 	key(Booking, ["room", "span"]),
 	// SOFT: people CAN double-book — key(Claim, ["person", "span"]) is simply
 	// not declared. Policy is the presence or absence of one statement.
-	// Accepting an invitation IS claiming the time (totality + validity):
+	// Accepting an invitation IS claiming the time (totality + validity) —
+	// and this is the statement that types Claim.source:
 	mirrors(on(Attendance.where({ rsvp: Rsvp.Accepted }), "id"), on(Claim.where({ arm: Arm.Busy }), "source")),
 	// Busy time lies inside working hours, pointwise — coverage rides the
 	// target's own key (disjoint + ordered is a theorem, not a request):
@@ -657,18 +706,20 @@ const Calendar = schema("Calendar", { Rsvp, Arm, Person, Room, Event, Attendance
 	contained(on(Booking, "event"), on(Event, "id"))
 ])
 
-const roomConflicts = query(Calendar).rule((r) =>
-	r
-		.match(Booking, { room: r.var("room"), span: r.var("s") })
-		.where(r.allen(r.var("s"), ALLEN.intersects, r.param("want")))
-		.select("room", "s")
-)
-const personLoad = query(Calendar).rule((r) =>
-	r
-		.match(Claim, { person: r.var("person"), span: r.var("s") })
-		.where(r.allen(r.var("s"), ALLEN.intersects, r.param("window")))
-		.select("person", "s")
-)
+const roomConflicts = query(Calendar).rule((r) => {
+	const { room, span } = r.vars("room", "span")
+	return r
+		.match(Booking, { room, span })
+		.where(allen(span, ALLEN.intersects, r.param("want")))
+		.select("room", "span")
+})
+const personLoad = query(Calendar).rule((r) => {
+	const { person, span } = r.vars("person", "span")
+	return r
+		.match(Claim, { person, span })
+		.where(allen(span, ALLEN.intersects, r.param("window")))
+		.select("person", "span")
+})
 ```
 
 ## 15. Effective-dated configuration
@@ -684,10 +735,8 @@ lifetime (one-way coverage; version overhang remains legal), and "in force on
 date t" is one membership probe.
 
 ```ts
-const PolicyId = u64.as("PolicyId")
-
-const Policy = relation("Policy", { id: PolicyId.fresh, live: interval(i64) })
-const Version = relation("Version", { policy: PolicyId, rate_bps: i64, valid: interval(i64) })
+const Policy = relation("Policy", { id: u64.fresh, live: interval(i64) })
+const Version = relation("Version", { policy: u64, rate_bps: i64, valid: interval(i64) })
 
 const Pricing = schema("Pricing", { Policy, Version }, [
 	contained(on(Version, "policy"), on(Policy, "id")),
@@ -700,20 +749,22 @@ const Pricing = schema("Pricing", { Policy, Version }, [
 ])
 
 // in force on date t — one membership probe:
-const inForce = query(Pricing).rule((r) =>
-	r
-		.match(Version, { policy: r.param("p"), rate_bps: r.var("rate_bps"), valid: r.var("v") })
-		.where(r.pointIn(r.param("t"), r.var("v")))
+const inForce = query(Pricing).rule((r) => {
+	const { rate_bps, valid } = r.vars("rate_bps", "valid")
+	return r
+		.match(Version, { policy: r.param("p"), rate_bps, valid })
+		.where(pointIn(r.param("t"), valid))
 		.select("rate_bps")
-)
+})
 // clean successions (half-open makes MEETS exact, no ±1 fudge):
-const successions = query(Pricing).rule((r) =>
-	r
-		.match(Version, { policy: r.var("p"), valid: r.var("a") })
-		.match(Version, { policy: r.var("p"), valid: r.var("b") })
-		.where(r.allen(r.var("a"), ALLEN.meets, r.var("b")))
+const successions = query(Pricing).rule((r) => {
+	const { p, a, b } = r.vars("p", "a", "b")
+	return r
+		.match(Version, { policy: p, valid: a })
+		.match(Version, { policy: p, valid: b })
+		.where(allen(a, ALLEN.meets, b))
 		.select("a", "b")
-)
+})
 ```
 
 ## 16. Disjoint covers
@@ -728,10 +779,8 @@ coverage is a **disjoint cover** — no overlaps among pay periods and no holes
 in the fiscal year's source span. Pay periods may extend beyond that span.
 
 ```ts
-const FiscalYearId = u64.as("FiscalYearId")
-
-const FiscalYear = relation("FiscalYear", { id: FiscalYearId.fresh, span: interval(i64) })
-const PayPeriod = relation("PayPeriod", { year: FiscalYearId, seq: u64, span: interval(i64) })
+const FiscalYear = relation("FiscalYear", { id: u64.fresh, span: interval(i64) })
+const PayPeriod = relation("PayPeriod", { year: u64, seq: u64, span: interval(i64) })
 
 const Payroll = schema("Payroll", { FiscalYear, PayPeriod }, [
 	contained(on(PayPeriod, "year"), on(FiscalYear, "id")),
@@ -742,12 +791,13 @@ const Payroll = schema("Payroll", { FiscalYear, PayPeriod }, [
 ])
 
 // the period holding date t:
-const holding = query(Payroll).rule((r) =>
-	r
-		.match(PayPeriod, { year: r.param("y"), seq: r.var("seq"), span: r.var("s") })
-		.where(r.pointIn(r.param("t"), r.var("s")))
+const holding = query(Payroll).rule((r) => {
+	const { seq, span } = r.vars("seq", "span")
+	return r
+		.match(PayPeriod, { year: r.param("y"), seq, span })
+		.where(pointIn(r.param("t"), span))
 		.select("seq")
-)
+})
 ```
 
 ## 17. Federal income tax
@@ -759,16 +809,14 @@ Brackets are intervals over money; the top bracket is a ray; regimes key on
 (year, status); and proration happens at write time, never at query time.
 
 ```ts
-const RegimeId = u64.as("RegimeId")
-
 const Status = closed("Status", ["Single", "MarriedJoint", "HeadOfHousehold"])
-const Regime = relation("Regime", { id: RegimeId.fresh, year: i64, status: Status.id })
-const Bracket = relation("Bracket", { regime: RegimeId, income: interval(i64), rate_bps: i64 })
+const Regime = relation("Regime", { id: u64.fresh, year: i64, status: Status.id })
+const Bracket = relation("Bracket", { regime: u64, income: interval(i64), rate_bps: i64 })
 const Residency = relation("Residency", { person: u64, span: interval(i64) })
 // Split at write: an Earned fact never spans a year boundary — writers
 // split (prorate) at the boundary, so no reader ever clips. The
 // representation move that deletes clip-at-query (gravestone, recipe 23).
-const Earned = relation("Earned", { person: u64, regime: RegimeId, span: interval(i64), minor: i64 })
+const Earned = relation("Earned", { person: u64, regime: u64, span: interval(i64), minor: i64 })
 
 const Tax = schema("Tax", { Status, Regime, Bracket, Residency, Earned }, [
 	contained(on(Regime, "status"), on(Status, "id")),
@@ -782,20 +830,23 @@ const Tax = schema("Tax", { Status, Regime, Bracket, Residency, Earned }, [
 	contained(on(Earned, "regime"), on(Regime, "id")),
 	key(Residency, ["person", "span"]),
 	// Residency exclusion: income counts only where earned inside a residency
-	// period — pointwise coverage, the same judgment as recipe 15's.
+	// period — pointwise coverage, the same judgment as recipe 15's. This
+	// pair statement is also what puts the two bare `person` columns in one
+	// (generator-less) class: "Residency.person", by least coordinate.
 	contained(on(Earned, ["person", "span"]), on(Residency, ["person", "span"]))
 ])
 
 // the marginal bracket (membership probes the disjoint bracket set). Tax
 // owed is host arithmetic over the bracket walk — arithmetic beyond the
 // measure is refused (the ledger).
-const marginal = query(Tax).rule((r) =>
-	r
-		.match(Regime, { id: r.var("reg"), year: r.param("y"), status: r.param("s") })
-		.match(Bracket, { regime: r.var("reg"), income: r.var("b"), rate_bps: r.var("rate_bps") })
-		.where(r.pointIn(r.param("taxable"), r.var("b")))
+const marginal = query(Tax).rule((r) => {
+	const { reg, b, rate_bps } = r.vars("reg", "b", "rate_bps")
+	return r
+		.match(Regime, { id: reg, year: r.param("y"), status: r.param("s") })
+		.match(Bracket, { regime: reg, income: b, rate_bps })
+		.where(pointIn(r.param("taxable"), b))
 		.select("rate_bps")
-)
+})
 ```
 
 ## 18. Free time and coalescing
@@ -810,10 +861,8 @@ group, one answer per (group, segment). Coalescing is never a write rule: the
 engine stores the claims it was given.
 
 ```ts
-const PersonId = u64.as("PersonId")
-
-const Person = relation("Person", { id: PersonId.fresh, name: str })
-const Claim = relation("Claim", { person: PersonId, span: interval(i64) })
+const Person = relation("Person", { id: u64.fresh, name: str })
+const Claim = relation("Claim", { person: u64, span: interval(i64) })
 
 const FreeTime = schema("FreeTime", { Person, Claim }, [
 	contained(on(Claim, "person"), on(Person, "id"))
@@ -822,13 +871,15 @@ const FreeTime = schema("FreeTime", { Person, Claim }, [
 ])
 
 // busy time, coalesced (adjacent segments merge — the half-open law):
-const busy = query(FreeTime).rule((r) =>
-	r.match(Claim, { person: r.var("person"), span: r.var("span") }).select("person", r.pack("span"))
-)
+const busy = query(FreeTime).rule((r) => {
+	const { person, span } = r.vars("person", "span")
+	return r.match(Claim, { person, span }).select("person", r.pack("span"))
+})
 // raw claimed time (overlaps double-count — often the wrong question):
-const claimed = query(FreeTime).rule((r) =>
-	r.match(Claim, { person: r.var("person"), span: r.var("span") }).select("person", r.sum(r.duration("span")))
-)
+const claimed = query(FreeTime).rule((r) => {
+	const { person, span } = r.vars("person", "span")
+	return r.match(Claim, { person, span }).select("person", r.sum(r.duration("span")))
+})
 // Coalesced totals = the two-query composition (pack, then a host fold) —
 // aggregates never nest; free time (gaps) is the two-line host walk over
 // sorted packed answers — both refusals recorded in the ledger.
@@ -845,16 +896,12 @@ for double entry — statements resolve posting references, not arithmetic agree
 The census workload. Balance is a query, never a column.
 
 ```ts
-const AccountId = u64.as("AccountId")
-const JournalEntryId = u64.as("JournalEntryId")
-const PostingId = u64.as("PostingId")
-
-const Account = relation("Account", { id: AccountId.fresh, name: str })
-const JournalEntry = relation("JournalEntry", { id: JournalEntryId.fresh, at: i64, memo: str })
+const Account = relation("Account", { id: u64.fresh, name: str })
+const JournalEntry = relation("JournalEntry", { id: u64.fresh, at: i64, memo: str })
 const Posting = relation("Posting", {
-	id: PostingId.fresh,
-	entry: JournalEntryId,
-	account: AccountId,
+	id: u64.fresh,
+	entry: u64,
+	account: u64,
 	minor: i64
 })
 
@@ -868,17 +915,15 @@ const Ledger = schema("Ledger", { Account, JournalEntry, Posting }, [
 ])
 
 // balances (bind the fresh id — set semantics collapses duplicates):
-const balances = query(Ledger).rule((r) =>
-	r
-		.match(Posting, { id: r.var("id"), account: r.var("account"), minor: r.var("minor") })
-		.select("account", r.sum("minor"))
-)
+const balances = query(Ledger).rule((r) => {
+	const { id, account, minor } = r.vars("id", "account", "minor")
+	return r.match(Posting, { id, account, minor }).select("account", r.sum("minor"))
+})
 // double-entry audit (host asserts every total is 0 — discipline, not schema):
-const doubleEntry = query(Ledger).rule((r) =>
-	r
-		.match(Posting, { id: r.var("id"), entry: r.var("entry"), minor: r.var("minor") })
-		.select("entry", r.sum("minor"))
-)
+const doubleEntry = query(Ledger).rule((r) => {
+	const { id, entry, minor } = r.vars("id", "entry", "minor")
+	return r.match(Posting, { id, entry, minor }).select("entry", r.sum("minor"))
+})
 ```
 
 ## 20. Conditional writes
@@ -895,11 +940,9 @@ the host's own interleaved writes), and `abandon(payload)` declines to commit
 without issuing anything.
 
 ```ts
-const JobId = u64.as("JobId")
-
 const State = closed("State", ["Queued", "Running", "Done"])
-const Job = relation("Job", { id: JobId.fresh, state: State.id, payload: str })
-const Lease = relation("Lease", { job: JobId, worker: u64, until: i64 })
+const Job = relation("Job", { id: u64.fresh, state: State.id, payload: str })
+const Lease = relation("Lease", { job: u64, worker: u64, until: i64 })
 
 const Jobs = schema("Jobs", { State, Job, Lease }, [
 	contained(on(Job, "state"), on(State, "id")),
@@ -910,9 +953,10 @@ const Jobs = schema("Jobs", { State, Job, Lease }, [
 ])
 
 // update-where's premise — "still Queued" is the witness:
-const stillQueued = query(Jobs).rule((r) =>
-	r.match(Job, { id: r.var("id"), state: State.Queued, payload: r.var("payload") }).select("id", "payload")
-)
+const stillQueued = query(Jobs).rule((r) => {
+	const { id, payload } = r.vars("id", "payload")
+	return r.match(Job, { id, state: State.Queued, payload }).select("id", "payload")
+})
 
 // The witnessed loop: premise reads via `snap`, the delta via `tx`; on a
 // moved generation the WHOLE callback reruns on a fresh snapshot. The other
@@ -963,9 +1007,10 @@ const Rollup = schema("Rollup", { Arm, Claim, BusySpan }, [
 // query on a snapshot, diff, commit witnessed — the rollup cannot commit
 // against sources it didn't actually read. The deriving query (pack IS the
 // coalesce):
-const deriving = query(Rollup).rule((r) =>
-	r.match(Claim, { person: r.var("person"), span: r.var("span"), arm: Arm.Busy }).select("person", r.pack("span"))
-)
+const deriving = query(Rollup).rule((r) => {
+	const { person, span } = r.vars("person", "span")
+	return r.match(Claim, { person, span, arm: Arm.Busy }).select("person", r.pack("span"))
+})
 ```
 
 ## 22. Union reads
@@ -979,12 +1024,10 @@ The whole-DU read is a set of rules: one head, one rule per arm — disjunction
 is data at the top, never an execution node.
 
 ```ts
-const PaymentId = u64.as("PaymentId")
-
 const Kind = closed("Kind", ["Card", "Ach"])
-const Payment = relation("Payment", { id: PaymentId.fresh, kind: Kind.id })
-const Card = relation("Card", { payment: PaymentId, last4: u64 })
-const Ach = relation("Ach", { payment: PaymentId, routing: u64 })
+const Payment = relation("Payment", { id: u64.fresh, kind: Kind.id })
+const Card = relation("Card", { payment: u64, last4: u64 })
+const Ach = relation("Ach", { payment: u64, routing: u64 })
 
 const Payments = schema("Payments", { Kind, Payment, Card, Ach }, [
 	contained(on(Payment, "kind"), on(Kind, "id")),
@@ -998,18 +1041,20 @@ const Payments = schema("Payments", { Kind, Payment, Card, Ach }, [
 // spent a third time here: rules selecting different `kind` handles are
 // provably disjoint, so the executor elides cross-rule dedup — the free lunch.
 const wholeDu = query(Payments)
-	.rule((r) =>
-		r
-			.match(Payment, { id: r.var("id"), kind: Kind.Card })
-			.match(Card, { payment: r.var("id"), last4: r.var("n") })
+	.rule((r) => {
+		const { id, n } = r.vars("id", "n")
+		return r
+			.match(Payment, { id, kind: Kind.Card })
+			.match(Card, { payment: id, last4: n })
 			.select("id", "n")
-	)
-	.rule((r) =>
-		r
-			.match(Payment, { id: r.var("id"), kind: Kind.Ach })
-			.match(Ach, { payment: r.var("id"), routing: r.var("n") })
+	})
+	.rule((r) => {
+		const { id, n } = r.vars("id", "n")
+		return r
+			.match(Payment, { id, kind: Kind.Ach })
+			.match(Ach, { payment: id, routing: n })
 			.select("id", "n")
-	)
+	})
 ```
 
 ## 23. The anti-recipes: five gravestones
@@ -1021,8 +1066,6 @@ What not to model. Each gravestone cites its replacement; the block's
 relations are the replacements, compiled.
 
 ```ts
-const GravestoneEventId = u64.as("GravestoneEventId")
-
 // GRAVESTONE: successor pointers (a `next` column). A linked list inside a
 // relation is control flow smuggled into data. REPLACEMENT: the ordering
 // triple (recipe 9).
@@ -1039,7 +1082,7 @@ const ActiveRun = relation("ActiveRun", { student: u64, run: u64 })
 const Usage = relation("Usage", { meter: u64, period: u64, used: interval(i64) })
 // GRAVESTONE: uuid keys. uuidv7 is identity + clash-avoidance + clock in
 // one lie. REPLACEMENT: fresh (minted identity) + an explicit i64 time column.
-const Event = relation("Event", { id: GravestoneEventId.fresh, at: i64 })
+const Event = relation("Event", { id: u64.fresh, at: i64 })
 
 const Gravestones = schema("Gravestones", { Step, Score, ActiveRun, Usage, Event }, [
 	key(Step, ["flow", "pos"]),
@@ -1065,12 +1108,10 @@ semi-naive evaluation's Δ, spent where a loop is a loop: the host. The
 engine-native form is the same closure as one stratified `program()`.
 
 ```ts
-const NodeId = u64.as("NodeId")
-
-const Node = relation("Node", { id: NodeId.fresh, name: str })
+const Node = relation("Node", { id: u64.fresh, name: str })
 // One parent per child — a forest (recipe 10's edge shape); a root is a
 // node whose Parent fact is absent (recipe 3's honest 0..1).
-const Parent = relation("Parent", { child: NodeId, parent: NodeId })
+const Parent = relation("Parent", { child: u64, parent: u64 })
 
 const Closure = schema("Closure", { Node, Parent }, [
 	key(Parent, ["child"]),
@@ -1079,7 +1120,10 @@ const Closure = schema("Closure", { Node, Parent }, [
 ])
 
 // The loop's one query — the frontier's children, one ∈-set probe:
-const step = query(Closure).rule((r) => r.match(Parent, { child: r.var("c"), parent: r.inSet("frontier") }).select("c"))
+const step = query(Closure).rule((r) => {
+	const { c } = r.vars("c")
+	return r.match(Parent, { child: c, parent: r.inSet("frontier") }).select("c")
+})
 ```
 
 The loop (the compiled, driven copy is in `test/cookbook.test.ts`, over a
@@ -1116,19 +1160,24 @@ position, so the head rides the `Node` atom):
 const reach = program(Closure, (p) => {
 	const rec = p.rec("reach")
 	const seeded = rec
-		.rule((r) =>
-			r
-				.match(Node, { id: r.var("c") })
-				.where(r.eq(r.var("c"), r.param("root")))
+		.rule((r) => {
+			const { c } = r.vars("c")
+			return r
+				.match(Node, { id: c })
+				.where(eq(c, r.param("root")))
 				.select("c")
-		)
-		.rule((r) =>
-			r
-				.match(Parent, { child: r.var("c"), parent: r.var("m") })
-				.idb(rec, r.var("m"))
+		})
+		.rule((r) => {
+			const { c, parent } = r.vars("c", "parent")
+			return r
+				.match(Parent, { child: c, parent })
+				.idb(rec, parent)
 				.select("c")
-		)
-	return p.output((r) => r.match(Node, { id: r.var("c") }).idb(seeded, r.var("c")).select("c"))
+		})
+	return p.output((r) => {
+		const { c } = r.vars("c")
+		return r.match(Node, { id: c }).idb(seeded, c).select("c")
+	})
 })
 const reachPrepared = db.prepare(reach)
 ```
@@ -1155,12 +1204,9 @@ aggregation *through* a cycle is refused, but a fold over a recursive
 predicate from a **higher stratum** reads a finished set and is ordinary.
 
 ```ts
-const AccountId = u64.as("AccountId")
-const PostingId = u64.as("PostingId")
-
-const Account = relation("Account", { id: AccountId.fresh, name: str })
-const AccountParent = relation("AccountParent", { child: AccountId, parent: AccountId })
-const Posting = relation("Posting", { id: PostingId.fresh, account: AccountId, minor: i64 })
+const Account = relation("Account", { id: u64.fresh, name: str })
+const AccountParent = relation("AccountParent", { child: u64, parent: u64 })
+const Posting = relation("Posting", { id: u64.fresh, account: u64, minor: i64 })
 
 const Accounts = schema("Accounts", { Account, AccountParent, Posting }, [
 	key(AccountParent, ["child"]), // one parent per account
@@ -1171,37 +1217,42 @@ const Accounts = schema("Accounts", { Account, AccountParent, Posting }, [
 
 // The two queries the host rollup composes:
 //   the frontier step (recipe 24's loop, verbatim):
-const frontierStep = query(Accounts).rule((r) =>
-	r.match(AccountParent, { child: r.var("c"), parent: r.inSet("frontier") }).select("c")
-)
+const frontierStep = query(Accounts).rule((r) => {
+	const { c } = r.vars("c")
+	return r.match(AccountParent, { child: c, parent: r.inSet("frontier") }).select("c")
+})
 //   the rollup over the accumulated subtree (bind the fresh id — recipe
 //   19's discipline, spent again; equal postings to one account both count):
-const subtreeRollup = query(Accounts).rule((r) =>
-	r.match(Posting, { id: r.var("id"), account: r.inSet("subtree"), minor: r.var("minor") }).select(r.sum("minor"))
-)
+const subtreeRollup = query(Accounts).rule((r) => {
+	const { id, minor } = r.vars("id", "minor")
+	return r.match(Posting, { id, account: r.inSet("subtree"), minor }).select(r.sum("minor"))
+})
 // The engine-native form: the closure stratum converges first, then the
 // output's fold runs once over the finished subtree.
 const nativeRollup = program(Accounts, (p) => {
 	const sub = p.rec("sub")
 	const seeded = sub
-		.rule((r) =>
-			r
-				.match(Account, { id: r.var("a") })
-				.where(r.eq(r.var("a"), r.param("root")))
+		.rule((r) => {
+			const { a } = r.vars("a")
+			return r
+				.match(Account, { id: a })
+				.where(eq(a, r.param("root")))
 				.select("a")
-		)
-		.rule((r) =>
-			r
-				.match(AccountParent, { child: r.var("a"), parent: r.var("p") })
-				.idb(sub, r.var("p"))
+		})
+		.rule((r) => {
+			const { a, parent } = r.vars("a", "parent")
+			return r
+				.match(AccountParent, { child: a, parent })
+				.idb(sub, parent)
 				.select("a")
-		)
-	return p.output((r) =>
-		r
-			.match(Posting, { id: r.var("id"), account: r.var("a"), minor: r.var("minor") })
-			.idb(seeded, r.var("a"))
+		})
+	return p.output((r) => {
+		const { id, a, minor } = r.vars("id", "a", "minor")
+		return r
+			.match(Posting, { id, account: a, minor })
+			.idb(seeded, a)
 			.select(r.sum("minor"))
-	)
+	})
 })
 ```
 
@@ -1221,10 +1272,8 @@ targets resolve by their exact projected field set, so the fresh `{id}` key
 cannot serve the `{id, live}` target and the engine infers no key closure.
 
 ```ts
-const PolicyId = u64.as("PolicyId")
-
-const Policy = relation("Policy", { id: PolicyId.fresh, live: interval(i64) })
-const Version = relation("Version", { policy: PolicyId, valid: interval(i64) })
+const Policy = relation("Policy", { id: u64.fresh, live: interval(i64) })
+const Version = relation("Version", { policy: u64, valid: interval(i64) })
 
 const ExactPartition = schema("ExactPartition", { Policy, Version }, [
 	contained(on(Version, "policy"), on(Policy, "id")), // reference intent
@@ -1267,11 +1316,10 @@ const MaintainedRollup = schema("MaintainedRollup", { Arm, Claim, BusySpan }, [
 ])
 
 // Derive the desired rollup on the maintenance snapshot:
-const deriving = query(MaintainedRollup).rule((r) =>
-	r
-		.match(Claim, { source: r.var("source"), person: r.var("person"), arm: Arm.Busy, span: r.var("span") })
-		.select("person", r.pack("span"))
-)
+const deriving = query(MaintainedRollup).rule((r) => {
+	const { source, person, span } = r.vars("source", "person", "span")
+	return r.match(Claim, { source, person, arm: Arm.Busy, span }).select("person", r.pack("span"))
+})
 ```
 
 The host loop is `db.writeWitnessed`: derive on the attempt's snapshot, diff,
@@ -1306,31 +1354,30 @@ as an interval with a pointwise key: one salary per employee per instant. The
 transform supplies the missing dimension (a ray from the migration epoch).
 
 ```ts
-const EmployeeId = u64.as("EmployeeId")
-
 // The old theory, judged and fingerprinted:
-const EmployeeV1 = relation("Employee", { id: EmployeeId.fresh, name: str })
-const SalaryV1 = relation("Salary", { employee: EmployeeId, amount: i64 })
+const EmployeeV1 = relation("Employee", { id: u64.fresh, name: str })
+const SalaryV1 = relation("Salary", { employee: u64, amount: i64 })
 const PayrollV1 = schema("PayrollV1", { Employee: EmployeeV1, Salary: SalaryV1 }, [
 	contained(on(SalaryV1, "employee"), on(EmployeeV1, "id"))
 ])
 
 // The new theory adds what v1 never recorded:
-const Employee = relation("Employee", { id: EmployeeId.fresh, name: str })
-const Salary = relation("Salary", { employee: EmployeeId, amount: i64, applies: interval(i64) })
+const Employee = relation("Employee", { id: u64.fresh, name: str })
+const Salary = relation("Salary", { employee: u64, amount: i64, applies: interval(i64) })
 const Payroll = schema("Payroll", { Employee, Salary }, [
 	contained(on(Salary, "employee"), on(Employee, "id")),
 	key(Salary, ["employee", "applies"]) // one salary per instant
 ])
 
 // The post-migration read — salaries in force at an instant:
-const inForceAt = query(Payroll).rule((r) =>
-	r
-		.match(Employee, { id: r.var("e"), name: r.var("name") })
-		.match(Salary, { employee: r.var("e"), amount: r.var("amount"), applies: r.var("w") })
-		.where(r.pointIn(r.param("at"), r.var("w")))
+const inForceAt = query(Payroll).rule((r) => {
+	const { e, name, amount, w } = r.vars("e", "name", "amount", "w")
+	return r
+		.match(Employee, { id: e, name })
+		.match(Salary, { employee: e, amount, applies: w })
+		.where(pointIn(r.param("at"), w))
 		.select("name", "amount")
-)
+})
 ```
 
 The engine's compiled test drives the whole loop (export under one snapshot,
@@ -1363,15 +1410,13 @@ widths are enforced **by type**: a `UnitSlot` value is width 1 or does not
 exist — no runtime width check, nothing to enforce at commit.
 
 ```ts
-const LedgerId = u64.as("LedgerId")
-
 const Kind = closed("Kind", ["Unit", "Pair"])
-const Ledger = relation("Ledger", { id: LedgerId.fresh, name: str })
+const Ledger = relation("Ledger", { id: u64.fresh, name: str })
 // The witness: every zone of the ledger, kind-discriminated; its one
 // pointwise key is the cross-sidecar disjointness proof.
-const Zone = relation("Zone", { ledger: LedgerId, kind: Kind.id, at: interval(u64) })
-const UnitSlot = relation("UnitSlot", { ledger: LedgerId, at: interval(u64, 1n), entry: u64 })
-const PairSlot = relation("PairSlot", { ledger: LedgerId, at: interval(u64, 2n), entry: u64 })
+const Zone = relation("Zone", { ledger: u64, kind: Kind.id, at: interval(u64) })
+const UnitSlot = relation("UnitSlot", { ledger: u64, at: interval(u64, 1n), entry: u64 })
+const PairSlot = relation("PairSlot", { ledger: u64, at: interval(u64, 2n), entry: u64 })
 
 const ZoneLedger = schema("ZoneLedger", { Kind, Ledger, Zone, UnitSlot, PairSlot }, [
 	contained(on(Zone, "ledger"), on(Ledger, "id")),

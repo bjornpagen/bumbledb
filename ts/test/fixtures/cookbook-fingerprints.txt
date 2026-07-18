@@ -1,0 +1,44 @@
+# ts/test/fixtures/cookbook-fingerprints.txt — the per-recipe cross-host
+# fingerprint goldens: one line per engine-cookbook recipe, `rNN <64-hex>`,
+# sorted by recipe number.
+#
+# Each value is the recipe theory's engine-computed schema fingerprint —
+# blake3 over the canonical descriptor bytes (label `bumbledb-schema-v4`),
+# never syntax, never spellings. BOTH cookbook suites read this ONE file:
+#   ts/test/cookbook.test.ts                 (SDK constructions, hashed across the FFI)
+#   crates/bumbledb-query/tests/cookbook.rs  (schema! constructions, hashed in-process)
+# so the same theory drifting on either side fails the suite that moved.
+#
+# Regeneration (the TS side ONLY — the Rust side never writes this file):
+#   cd ts && REGEN_FINGERPRINTS=1 node --test test/cookbook.test.ts
+# Two consecutive regenerations are byte-identical. K7 (the cookbook
+# rewrite) owns regenerating the values for the recipes it rewrites.
+r01 e33ac9ece2c94662f64e146514190651e49354b5b022914bb57651beea06f7da
+r02 1fb35099d87f4f8ef1d008f809f356cbb37166958376da5daa3ea7f3b6a1feba
+r03 eacee8d50e7596a67d4ef31ea0a49ce9ec5d9d78cb85609316c8f6390b086822
+r04 e1ed1e4977bc5114e116a4d97e0279dec95a9e2e2d48d10d66c208fbece9ef07
+r05 9f51769ed97aaea0608fad7f575f4aea0fc1b58193695f9ef7a71ab5d9aef377
+r06 fa1e347b23e626ffcd0455e3d74e655118aced0496fc1a39ff6ce420fd67fdb5
+r07 e28b01add4d48939d1c6b8cb44b9a4d64f6dfaa2f9d8c539a77b0542b961db89
+r08 71fe973fa752be488aeb6c015dea2800364187893f17855510f22b0c80767e81
+r09 01322a9aa00702f822ca1dd143c7c394d4bdd7d1a5bc8a483106143e64e8f14f
+r10 90101365ee15bf5552a72e643213ab7315afe11daa3128fc7c439b32710dbfde
+r11 ee4fc37cc979d8dc213b526a8bfbe589e85fd163c8553a1142953195e897022b
+r12 b942a48b79f26c7ad505d3ff546c61226bc58b131639b5ebf7210461b63cc580
+r13 7c7aefeb2b63901af75a72b3768900bcf81b2b9125f306108e73f6cc11c9d843
+r14 970a4ed4d396590b07bf799416897b836fcafa44700fefc4e1744fc57f911230
+r15 b17272d5673c47e919822be9b63cd1f5b2de8bea44c3ecc60beabe5dd52799cc
+r16 56540b485253352161b679338a3fcd2a0eb71537db055f5e9d4fa213448a7108
+r17 365278ed849c63218d2e7dbf9eeeb91a1109e10a58e2667afe1bf8c6b7db0757
+r18 a42309ae06ee792cef08ccf7a1cbaab9f504fab09d0f908d9d04ff9440e8b806
+r19 6c4ef20bb16e03c774582e0a12d79f8ba3e4c4e7e3587df1f9299a2994bfe709
+r20 a97526d773bba5f8d2d75832780e2dfc1ae9fea6c7f403b2294ef51b025431a9
+r21 69f79da54033ad5f8e92ce52f5430ad1d0a80c41ddf323b984f0d62f42ca260d
+r22 12deda2947ab38b245fdf3e8c60eb0cfda1f09b9c4ca5970a9477f0d1cbb4bd7
+r23 312e940f88166d184fd3d140d124424f9bf4a7f068eb77ecdd17f7650412b1e7
+r24 e8c3150b4a1d99ec077de7fdb65a02e2516a5a306123292b5bbdb975ba6f7dbd
+r25 07d30481f5c76428637e54f655455852776c4b8e9d235e5f05fb763c2e76d12b
+r26 b7059b7873215b536cc1604135483bd5b83c2fefcd9dcd6413617988eb956fa0
+r27 69f79da54033ad5f8e92ce52f5430ad1d0a80c41ddf323b984f0d62f42ca260d
+r28 80a246d2d845adcebc4811e1d074180ede72b93868904e61d9eaab79c90d1ce4
+r29 5b2c581eed7a660fdc8bee72fb78842d44ec70cc982bc333b7902ee260671978

@@ -1,10 +1,13 @@
 //! The cross-host fingerprint lock (bumbledb TODO.md §7, the pin the SDK
 //! owes): ONE theory exercising every schema construct — fresh keys, `str`,
 //! `bytes<N>`, general and fixed-width intervals INCLUDING a ray literal,
-//! both closed tiers, containment with σ on both faces, `==` mirrors, and
-//! every legal window spelling — declared here through the engine's
-//! `schema!` macro and, in `test/fingerprint.test.ts`, through the SDK's
-//! constructors. Each side independently asserts its engine-computed
+//! both closed tiers, containment with σ on both faces, a ψ-selected CLOSED
+//! target (`Kind(id | mastered == true)` — the member set folds at
+//! validate), `==` mirrors including a generator-less pair (`SavingsTerms ==
+//! AuditTrail` over columns no mint touches — the TS side's law-computed
+//! class names never leak into the hash), and every legal window spelling —
+//! declared here through the engine's `schema!` macro and, in
+//! `test/fingerprint.test.ts`, through the SDK's constructors. Each side independently asserts its engine-computed
 //! fingerprint equals the ONE pinned constant [`PIN`], so `cargo test` and
 //! `node --test` each run standalone while jointly proving the cross-host
 //! bond: identical fingerprints mean `Db::open` on either side admits the
@@ -55,6 +58,7 @@ bumbledb::schema! {
     }
 
     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
+    relation AuditTrail { account: u64 as AccountId, rate_bps: i64 }
 
     SavingsTerms(account) -> SavingsTerms;
     Account(holder) <= Holder(id);
@@ -69,6 +73,15 @@ bumbledb::schema! {
     Holder(id) <={1} Account(holder | status == Open);
     Holder(id) <={0} Account(holder | kind == Failed);
     Holder(id) <={1..4} Account(holder | kind == DirectPass);
+    // PRD-K7's lock extension, statement for statement the SDK twin's tail:
+    // the ψ-on-closed containment (the member set {DirectPass} folds at
+    // validate) and the generator-less `==` pair — no fresh field touches
+    // `rate_bps`, so the TS side's class laws name that class by least
+    // coordinate while the hash below proves they contribute zero bytes.
+    Account(kind) <= Kind(id | mastered == true);
+    SavingsTerms(account, rate_bps) -> SavingsTerms;
+    AuditTrail(account, rate_bps) -> AuditTrail;
+    SavingsTerms(account, rate_bps) == AuditTrail(account, rate_bps);
 }
 
 /// The pinned cross-host fingerprint of the `CrossHost` theory. The SAME
@@ -77,7 +90,7 @@ bumbledb::schema! {
 /// exists to catch. `18446744073709551615` above is `u64::MAX` — the `at`
 /// selection literal is the unbounded ray `[5, ∞)`
 /// (`docs/architecture/10-data-model.md`).
-const PIN: &str = "6120cb184faaacec8f4e146f7d43b5b9c59053f7b560d037754d7cad41401508";
+const PIN: &str = "b330d46f8cf6c91d8e24a6d2c3f9cbde65c2c37f1b90eaffdc3e49a8ae346b0c";
 
 /// The 64-char lowercase hex the JS side receives from `dbFingerprint`.
 fn hex_of(bytes: &[u8; 32]) -> String {

@@ -132,13 +132,18 @@ type FaceFields<S extends FaceSource> = S extends AnySelected
 
 /**
  * One descriptor's structural comparand: the kind/width/element triple —
- * exactly the structure the minimal kernel carries (`width` on bytes and
- * intervals, `element` on intervals, `undefined` where a kind has no such
- * label).
+ * exactly the structure the minimal kernel carries, compared exactly as the
+ * engine's Q1 law pairs positions (`schema/validate.rs`): a `bytes` width is
+ * bound (bytes<16> vs bytes<32> mismatch), while an INTERVAL width is FREE —
+ * the pointwise judgments quantify over points, which carry an element
+ * domain and not a width, so `interval(u64)` pairs with `interval(u64, 1n)`
+ * (recipe 9's extent/slot mirrors, recipe 29's mixed-width zones) and the
+ * width slot reads `undefined` for every interval. Elements stay bound:
+ * u64-vs-i64 interval pairs still mismatch.
  */
 type ShapeOf<F extends AnyField> = readonly [
 	F["kind"],
-	F extends { readonly width: infer W } ? W : undefined,
+	F extends { readonly element: unknown } ? undefined : F extends { readonly width: infer W } ? W : undefined,
 	F extends { readonly element: infer E } ? E : undefined
 ]
 

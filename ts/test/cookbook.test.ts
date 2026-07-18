@@ -1,12 +1,15 @@
 /**
- * The SDK cookbook's compile-and-run pin (PRD-S5). `ts/COOKBOOK.md` carries
- * the engine cookbook's 29 recipes (`bumbledb/docs/cookbook.md`) translated
- * to the structural API, and THIS file is what keeps them true: every
- * recipe's schema is constructed here through the public surface (so it
- * compiles, cast-free), admitted by the REAL engine (`dbCreate` — schema
- * validation is the engine's judgment, never re-implemented), its
- * fingerprint asserted stable across a reopen (the theory's identity is a
- * pure function of the schema), and every query snippet lowered through
+ * The SDK cookbook's compile-and-run pin (PRD-S5, rewritten to the 0.3.0
+ * idioms by PRD-K7). `ts/COOKBOOK.md` carries the engine cookbook's 29
+ * recipes (`bumbledb/docs/cookbook.md`) translated to the structural API,
+ * and THIS file is what keeps them true: every recipe's schema is
+ * constructed here through the public surface (so it compiles, cast-free),
+ * admitted by the REAL engine (`dbCreate` — schema validation is the
+ * engine's judgment, never re-implemented), its fingerprint asserted stable
+ * across a reopen (the theory's identity is a pure function of the schema)
+ * AND pinned to the per-recipe cross-host goldens
+ * (`fixtures/cookbook-fingerprints.txt` — the file the Rust cookbook suite
+ * also asserts against, PRD-T5), and every query snippet lowered through
  * `db.prepare` (the engine's own IR validation accepts the lowering). A
  * recipe that stops compiling against the SDK fails the build — the
  * cookbook can never drift from the surface. Recipes whose GUARANTEES the
@@ -22,32 +25,36 @@ import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import process from "node:process"
 import { after, describe, test } from "node:test"
 
 import type { Schema, SchemaRelations } from "#index.ts"
 import {
 	ALLEN,
 	abandon,
+	allen,
 	bool,
 	bytes,
 	closed,
 	contained,
 	Db,
+	eq,
 	i64,
 	interval,
 	key,
 	lower,
+	lt,
 	mirrors,
-	none,
+	not,
 	on,
-	oneOf,
+	pointIn,
 	program,
 	query,
 	relation,
+	renderStatement,
 	schema,
 	str,
-	u64,
-	window
+	u64
 } from "#index.ts"
 import { native } from "#native.ts"
 
@@ -56,6 +63,102 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-cookbook-"))
 after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
+
+/**
+ * The per-recipe cross-host goldens (PRD-T5):
+ * `fixtures/cookbook-fingerprints.txt` pins every recipe's engine-computed
+ * fingerprint, and the Rust cookbook suite
+ * (`crates/bumbledb-query/tests/cookbook.rs`) reads the SAME file — so drift
+ * anywhere upstream of the hasher (a recipe schema edited on one side, the
+ * lowering, the duplicated name→id resolution) fails the suite on the side
+ * that moved. `REGEN_FINGERPRINTS=1 node --test test/cookbook.test.ts`
+ * rewrites the fixture from this suite's fingerprints; the Rust side never
+ * writes it.
+ */
+const goldensPath = path.join(import.meta.dirname, "fixtures", "cookbook-fingerprints.txt")
+const regenerating = process.env.REGEN_FINGERPRINTS === "1"
+
+/** The pinned goldens — absent while regenerating (the values are in flux). */
+const goldens = regenerating ? undefined : readGoldens()
+
+/** Every admitted pinned fingerprint, recipe id → hex — the regen source. */
+const witnessed = new Map<string, string>()
+
+/** The header the regeneration writes back verbatim, above the sorted lines. */
+const GOLDENS_HEADER = `# ts/test/fixtures/cookbook-fingerprints.txt — the per-recipe cross-host
+# fingerprint goldens: one line per engine-cookbook recipe, \`rNN <64-hex>\`,
+# sorted by recipe number.
+#
+# Each value is the recipe theory's engine-computed schema fingerprint —
+# blake3 over the canonical descriptor bytes (label \`bumbledb-schema-v4\`),
+# never syntax, never spellings. BOTH cookbook suites read this ONE file:
+#   ts/test/cookbook.test.ts                 (SDK constructions, hashed across the FFI)
+#   crates/bumbledb-query/tests/cookbook.rs  (schema! constructions, hashed in-process)
+# so the same theory drifting on either side fails the suite that moved.
+#
+# Regeneration (the TS side ONLY — the Rust side never writes this file):
+#   cd ts && REGEN_FINGERPRINTS=1 node --test test/cookbook.test.ts
+# Two consecutive regenerations are byte-identical. K7 (the cookbook
+# rewrite) owns regenerating the values for the recipes it rewrites.`
+
+after(function writeGoldens() {
+	if (!regenerating) {
+		return
+	}
+	const entries = [...witnessed.entries()].sort(function byRecipe(a, b) {
+		if (a[0] < b[0]) {
+			return -1
+		}
+		if (a[0] > b[0]) {
+			return 1
+		}
+		return 0
+	})
+	const lines = entries.map(function line([recipe, hex]) {
+		return `${recipe} ${hex}`
+	})
+	fs.writeFileSync(goldensPath, `${GOLDENS_HEADER}\n${lines.join("\n")}\n`)
+})
+
+/** Reads the goldens fixture: `rNN <64-hex>` lines; `#` comments and blanks skipped. */
+function readGoldens(): ReadonlyMap<string, string> {
+	const pinned = new Map<string, string>()
+	for (const raw of fs.readFileSync(goldensPath, "utf8").split("\n")) {
+		const line = raw.trim()
+		if (line === "" || line.startsWith("#")) {
+			continue
+		}
+		const [recipe, hex, ...rest] = line.split(" ")
+		assert.ok(
+			recipe !== undefined && hex !== undefined && rest.length === 0,
+			`a goldens line is \`rNN <64-hex>\`: ${line}`
+		)
+		assert.match(recipe, /^r\d\d$/, `a goldens recipe id is rNN: ${line}`)
+		assert.match(hex, /^[0-9a-f]{64}$/, `a golden is 64 lowercase hex chars: ${line}`)
+		assert.ok(!pinned.has(recipe), `one goldens line per recipe: ${recipe}`)
+		pinned.set(recipe, hex)
+	}
+	return pinned
+}
+
+/**
+ * Recipe 28's v1 theory is the migration SOURCE the recipe exports from —
+ * prose in the engine cookbook, not the recipe's pinned schema block — so
+ * its store admits unpinned: the test body asserts its fingerprint differs
+ * from the pinned v2 target, and the Rust roster carries only the target.
+ */
+const unpinnedStores: ReadonlySet<string> = new Set(["r28-payroll-v1"])
+
+/** The recipe id a store name carries (`rNN-…`), or undefined when unpinned. */
+function recipeIdOf(name: string): string | undefined {
+	if (unpinnedStores.has(name)) {
+		return undefined
+	}
+	const id = name.slice(0, 3)
+	assert.match(id, /^r\d\d$/, `a recipe store name leads with its recipe id: ${name}`)
+	assert.equal(name.charAt(3), "-", `a recipe store name leads with its recipe id: ${name}`)
+	return id
+}
 
 /** One admitted recipe store: the open `Db` and the theory's engine-computed fingerprint. */
 interface Admitted<Rels extends SchemaRelations> {
@@ -66,9 +169,11 @@ interface Admitted<Rels extends SchemaRelations> {
 /**
  * Admits one recipe's theory against the real engine and pins its identity:
  * create (the engine's schema validation is the acceptance judgment), read
- * the fingerprint, close, reopen under the identical theory (the
- * fingerprint gate passes and reads the same hex back — stability), then
- * open through the public `Db` surface for the recipe's query lowering.
+ * the fingerprint, assert it equals the recipe's cross-host golden (the
+ * same line the Rust cookbook suite asserts), close, reopen under the
+ * identical theory (the fingerprint gate passes and reads the same hex back
+ * — stability), then open through the public `Db` surface for the recipe's
+ * query lowering.
  */
 async function admit<Rels extends SchemaRelations>(name: string, theory: Schema<Rels>): Promise<Admitted<Rels>> {
 	const dir = path.join(tmpRoot, name)
@@ -77,6 +182,15 @@ async function admit<Rels extends SchemaRelations>(name: string, theory: Schema<
 	assert.ok(created.ok, `${name}: the engine admits the theory`)
 	const fingerprint = native.dbFingerprint(created.db)
 	native.dbClose(created.db)
+	const recipe = recipeIdOf(name)
+	if (recipe !== undefined) {
+		witnessed.set(recipe, fingerprint)
+		if (goldens !== undefined) {
+			const pinned = goldens.get(recipe)
+			assert.ok(pinned !== undefined, `${name}: the goldens fixture pins ${recipe}`)
+			assert.equal(fingerprint, pinned, `${name}: the fingerprint matches the cross-host golden (${recipe})`)
+		}
+	}
 	const reopened = native.dbOpen(dir, spec)
 	assert.ok(reopened.ok, `${name}: the identical theory reopens the store`)
 	assert.equal(native.dbFingerprint(reopened.db), fingerprint, `${name}: the fingerprint is stable across reopen`)
@@ -106,31 +220,40 @@ function sorted(values: readonly bigint[]): bigint[] {
 
 describe("the SDK cookbook — every recipe compiles, admits, and lowers", function suite() {
 	test("1. the minimal interval schema", async function r01() {
-		const ServiceId = u64.as("ServiceId")
-
-		const Service = relation("Service", { id: ServiceId.fresh, name: str })
-		const Outage = relation("Outage", { service: ServiceId, window: interval(i64) })
+		const Service = relation("Service", { id: u64.fresh, name: str })
+		const Outage = relation("Outage", { service: u64, window: interval(i64) })
 
 		const Uptime = schema("Uptime", { Service, Outage }, [
 			contained(on(Outage, "service"), on(Service, "id")),
 			key(Outage, ["service", "window"])
 		])
 
-		const downAt = query(Uptime).rule((r) =>
-			r
-				.match(Outage, { service: r.var("service"), window: r.var("w") })
-				.where(r.pointIn(r.param("t"), r.var("w")))
+		// The M1 ruling, pinned through the renderer (never by hand): the key
+		// is the dependency-theoretic arrow closing over its own relation.
+		assert.equal(
+			renderStatement(key(Outage, ["service", "window"])),
+			"Outage(service, window) -> Outage",
+			"the key renders as the FD arrow — the canonical spelling, never respelled"
+		)
+
+		const downAt = query(Uptime).rule((r) => {
+			const { service, window } = r.vars("service", "window")
+			return r
+				.match(Outage, { service, window })
+				.where(pointIn(r.param("t"), window))
 				.select("service")
-		)
-		const overlapping = query(Uptime).rule((r) =>
-			r
-				.match(Outage, { service: r.var("service"), window: r.var("w") })
-				.where(r.allen(r.var("w"), ALLEN.intersects, r.param("incident")))
-				.select("service", "w")
-		)
-		const downtime = query(Uptime).rule((r) =>
-			r.match(Outage, { service: r.var("service"), window: r.var("w") }).select("service", r.sum(r.duration("w")))
-		)
+		})
+		const overlapping = query(Uptime).rule((r) => {
+			const { service, window } = r.vars("service", "window")
+			return r
+				.match(Outage, { service, window })
+				.where(allen(window, ALLEN.intersects, r.param("incident")))
+				.select("service", "window")
+		})
+		const downtime = query(Uptime).rule((r) => {
+			const { service, window } = r.vars("service", "window")
+			return r.match(Outage, { service, window }).select("service", r.sum(r.duration("window")))
+		})
 
 		const { db } = await admit("r01-uptime", Uptime)
 		assert.ok(db.prepare(downAt))
@@ -139,12 +262,10 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("2. discriminated unions", async function r02() {
-		const TaskId = u64.as("TaskId")
-
 		const Kind = closed("Kind", ["Deterministic", "CustomOperator"])
-		const Task = relation("Task", { id: TaskId.fresh, kind: Kind.id })
-		const DeterministicGrading = relation("DeterministicGrading", { task: TaskId, tolerance: i64 })
-		const CustomOperatorGrading = relation("CustomOperatorGrading", { task: TaskId, operator: str })
+		const Task = relation("Task", { id: u64.fresh, kind: Kind.id })
+		const DeterministicGrading = relation("DeterministicGrading", { task: u64, tolerance: i64 })
+		const CustomOperatorGrading = relation("CustomOperatorGrading", { task: u64, operator: str })
 
 		const Grading = schema("Grading", { Kind, Task, DeterministicGrading, CustomOperatorGrading }, [
 			contained(on(Task, "kind"), on(Kind, "id")),
@@ -154,43 +275,48 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			mirrors(on(Task.where({ kind: Kind.CustomOperator }), "id"), on(CustomOperatorGrading, "task"))
 		])
 
+		// Host dispatch over the discriminator: exhaustive over the sealed
+		// roster by construction (the cookbook's `gradedBy`).
+		const gradedBy = (kind: bigint) =>
+			Kind.match(kind, {
+				Deterministic: () => "tolerance",
+				CustomOperator: () => "operator"
+			})
+		assert.equal(gradedBy(Kind.Deterministic), "tolerance")
+		assert.equal(gradedBy(Kind.CustomOperator), "operator")
+
 		await admit("r02-grading", Grading)
 	})
 
 	test("3. 0..1 optional attributes", async function r03() {
-		const BusinessId = u64.as("BusinessId")
-
-		const Business = relation("Business", { id: BusinessId.fresh, name: str })
-		const MailingAddress = relation("MailingAddress", { business: BusinessId, line: str, city: str })
+		const Business = relation("Business", { id: u64.fresh, name: str })
+		const MailingAddress = relation("MailingAddress", { business: u64, line: str, city: str })
 
 		const Optionality = schema("Optionality", { Business, MailingAddress }, [
 			key(MailingAddress, ["business"]),
 			contained(on(MailingAddress, "business"), on(Business, "id"))
 		])
 
-		const unaddressed = query(Optionality).rule((r) =>
-			r
-				.match(Business, { id: r.var("b") })
-				.where(r.not(MailingAddress, { business: r.var("b") }))
+		const unaddressed = query(Optionality).rule((r) => {
+			const { b } = r.vars("b")
+			return r
+				.match(Business, { id: b })
+				.where(not(MailingAddress, { business: b }))
 				.select("b")
-		)
+		})
 
 		const { db } = await admit("r03-optionality", Optionality)
 		assert.ok(db.prepare(unaddressed))
 	})
 
 	test("4. money", async function r04() {
-		const AccountId = u64.as("AccountId")
-		const PostingId = u64.as("PostingId")
-		const Minor = i64.as("Minor")
-
 		const Currency = closed("Currency", ["Usd", "Eur", "Gbp"])
-		const Account = relation("Account", { id: AccountId.fresh, name: str })
+		const Account = relation("Account", { id: u64.fresh, name: str })
 		const Posting = relation("Posting", {
-			id: PostingId.fresh,
-			account: AccountId,
+			id: u64.fresh,
+			account: u64,
 			currency: Currency.id,
-			minor: Minor
+			minor: i64
 		})
 
 		const Money = schema("Money", { Currency, Account, Posting }, [
@@ -198,28 +324,19 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Posting, "currency"), on(Currency, "id"))
 		])
 
-		const totals = query(Money).rule((r) =>
-			r
-				.match(Posting, {
-					id: r.var("id"),
-					account: r.var("account"),
-					currency: r.var("currency"),
-					minor: r.var("minor")
-				})
-				.select("account", "currency", r.sum("minor"))
-		)
+		const totals = query(Money).rule((r) => {
+			const { id, account, currency, minor } = r.vars("id", "account", "currency", "minor")
+			return r.match(Posting, { id, account, currency, minor }).select("account", "currency", r.sum("minor"))
+		})
 
 		const { db } = await admit("r04-money", Money)
 		assert.ok(db.prepare(totals))
 	})
 
 	test("5. content addressing", async function r05() {
-		const DocumentId = u64.as("DocumentId")
-		const PayloadHash = bytes(32).as("PayloadHash")
-
 		const Region = closed("Region", ["Us", "Eu"])
-		const Document = relation("Document", { id: DocumentId.fresh, name: str, payload: PayloadHash })
-		const Replica = relation("Replica", { payload: PayloadHash, region: Region.id })
+		const Document = relation("Document", { id: u64.fresh, name: str, payload: bytes(32) })
+		const Replica = relation("Replica", { payload: bytes(32), region: Region.id })
 
 		const Content = schema("Content", { Region, Document, Replica }, [
 			key(Document, ["payload"]),
@@ -227,94 +344,104 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Replica, "region"), on(Region, "id"))
 		])
 
-		const byDigest = query(Content).rule((r) =>
-			r.match(Document, { id: r.var("id"), payload: r.param("digest") }).select("id")
-		)
+		const byDigest = query(Content).rule((r) => {
+			const { id } = r.vars("id")
+			return r.match(Document, { id, payload: r.param("digest") }).select("id")
+		})
 
 		const { db } = await admit("r05-content", Content)
 		assert.ok(db.prepare(byDigest))
 	})
 
 	test("6. the vocabulary", async function r06() {
-		const TicketId = u64.as("TicketId")
-
 		const Priority = closed("Priority", ["Low", "Normal", "Urgent"])
-		const Ticket = relation("Ticket", { id: TicketId.fresh, priority: Priority.id, opened_at: i64 })
+		const Ticket = relation("Ticket", { id: u64.fresh, priority: Priority.id, opened_at: i64 })
 
 		const Tickets = schema("Tickets", { Priority, Ticket }, [contained(on(Ticket, "priority"), on(Priority, "id"))])
 
-		const urgent = query(Tickets).rule((r) =>
-			r.match(Ticket, { id: r.var("t"), priority: Priority.Urgent }).select("t")
-		)
+		const urgent = query(Tickets).rule((r) => {
+			const { t } = r.vars("t")
+			return r.match(Ticket, { id: t, priority: Priority.Urgent }).select("t")
+		})
 
 		const { db } = await admit("r06-tickets", Tickets)
 		assert.ok(db.prepare(urgent))
 	})
 
 	test("7. the classification", async function r07() {
-		const AttemptId = u64.as("AttemptId")
-
-		const Kind = closed("Kind", { mastered: bool, rank: u64 })({
-			DirectPass: { mastered: true, rank: 30n },
-			JudgedPass: { mastered: true, rank: 20n },
-			Failed: { mastered: false, rank: 10n }
-		})
-		const Attempt = relation("Attempt", { id: AttemptId.fresh, kind: Kind.id })
-		const Certificate = relation("Certificate", { attempt: AttemptId, kind: Kind.id })
+		const Kind = closed(
+			"Kind",
+			{ mastered: bool, rank: u64 },
+			{
+				DirectPass: { mastered: true, rank: 30n },
+				JudgedPass: { mastered: true, rank: 20n },
+				Failed: { mastered: false, rank: 10n }
+			}
+		)
+		const Attempt = relation("Attempt", { id: u64.fresh, kind: Kind.id })
+		const Certificate = relation("Certificate", { attempt: u64, kind: Kind.id })
 
 		const Review = schema("Review", { Kind, Attempt, Certificate }, [
 			contained(on(Attempt, "kind"), on(Kind, "id")),
 			key(Certificate, ["attempt"]),
 			contained(on(Certificate, "attempt"), on(Attempt, "id")),
-			contained(on(Certificate, "kind"), on(Kind, "id")),
-			window(on(Attempt, "id"), none, on(Certificate.where({ kind: Kind.Failed }), "attempt"))
+			contained(on(Certificate, "kind"), on(Kind.where({ mastered: true }), "id"))
 		])
 
-		const masteredAttempts = query(Review)
-			.rule((r) => r.match(Attempt, { id: r.var("a"), kind: Kind.DirectPass }).select("a"))
-			.rule((r) => r.match(Attempt, { id: r.var("a"), kind: Kind.JudgedPass }).select("a"))
+		// ψ on the read side: the closed atom is matchable like any relation.
+		const masteredAttempts = query(Review).rule((r) => {
+			const { a, k } = r.vars("a", "k")
+			return r.match(Attempt, { id: a, kind: k }).match(Kind, { id: k, mastered: true }).select("a")
+		})
+
+		// The payload tier's host dispatch hands each arm its sealed axiom row.
+		const label = (k: bigint) =>
+			Kind.match(k, {
+				DirectPass: (row) => `mastered, rank ${row.rank}`,
+				JudgedPass: (row) => `mastered, rank ${row.rank}`,
+				Failed: () => "not mastered"
+			})
+		assert.equal(label(Kind.DirectPass), "mastered, rank 30")
+		assert.equal(label(Kind.JudgedPass), "mastered, rank 20")
+		assert.equal(label(Kind.Failed), "not mastered")
 
 		const { db } = await admit("r07-review", Review)
 		assert.ok(db.prepare(masteredAttempts))
 	})
 
 	test("8. the sub-vocabulary", async function r08() {
-		const IncidentId = u64.as("IncidentId")
-
-		const Severity = closed("Severity", { pages: bool })({
-			Info: { pages: false },
-			Warning: { pages: false },
-			Critical: { pages: true },
-			Fatal: { pages: true }
-		})
-		const Incident = relation("Incident", { id: IncidentId.fresh, severity: Severity.id })
-		const Escalation = relation("Escalation", { incident: IncidentId, severity: Severity.id, at: i64 })
+		const Severity = closed(
+			"Severity",
+			{ pages: bool },
+			{
+				Info: { pages: false },
+				Warning: { pages: false },
+				Critical: { pages: true },
+				Fatal: { pages: true }
+			}
+		)
+		const Incident = relation("Incident", { id: u64.fresh, severity: Severity.id })
+		const Escalation = relation("Escalation", { incident: u64, severity: Severity.id, at: i64 })
 
 		const Oncall = schema("Oncall", { Severity, Incident, Escalation }, [
 			contained(on(Incident, "severity"), on(Severity, "id")),
 			contained(on(Escalation, "incident"), on(Incident, "id")),
-			contained(on(Escalation, "severity"), on(Severity, "id")),
-			window(
-				on(Incident, "id"),
-				none,
-				on(Escalation.where({ severity: oneOf(Severity.Info, Severity.Warning) }), "incident")
-			)
+			contained(on(Escalation, "severity"), on(Severity.where({ pages: true }), "id"))
 		])
 
-		const paged = query(Oncall)
-			.rule((r) => r.match(Escalation, { incident: r.var("i"), severity: Severity.Critical }).select("i"))
-			.rule((r) => r.match(Escalation, { incident: r.var("i"), severity: Severity.Fatal }).select("i"))
+		const paged = query(Oncall).rule((r) => {
+			const { i, s } = r.vars("i", "s")
+			return r.match(Escalation, { incident: i, severity: s }).match(Severity, { id: s, pages: true }).select("i")
+		})
 
 		const { db } = await admit("r08-oncall", Oncall)
 		assert.ok(db.prepare(paged))
 	})
 
 	test("9. ordered collections", async function r09() {
-		const PlaylistId = u64.as("PlaylistId")
-
-		const Playlist = relation("Playlist", { id: PlaylistId.fresh, name: str })
-		const Extent = relation("Extent", { playlist: PlaylistId, span: interval(u64) })
-		const Slot = relation("Slot", { playlist: PlaylistId, slot: interval(u64, 1n), track: str })
+		const Playlist = relation("Playlist", { id: u64.fresh, name: str })
+		const Extent = relation("Extent", { playlist: u64, span: interval(u64) })
+		const Slot = relation("Slot", { playlist: u64, slot: interval(u64, 1n), track: str })
 
 		const Playlists = schema("Playlists", { Playlist, Extent, Slot }, [
 			contained(on(Extent, "playlist"), on(Playlist, "id")),
@@ -325,25 +452,24 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			mirrors(on(Extent, ["playlist", "span"]), on(Slot, ["playlist", "slot"]))
 		])
 
-		const playingAt = query(Playlists).rule((r) =>
-			r
-				.match(Slot, { playlist: r.param("list"), slot: r.var("s"), track: r.var("track") })
-				.where(r.pointIn(r.param("pos"), r.var("s")))
+		const playingAt = query(Playlists).rule((r) => {
+			const { slot, track } = r.vars("slot", "track")
+			return r
+				.match(Slot, { playlist: r.param("list"), slot, track })
+				.where(pointIn(r.param("pos"), slot))
 				.select("track")
-		)
+		})
 
 		const { db } = await admit("r09-playlists", Playlists)
 		assert.ok(db.prepare(playingAt))
 	})
 
 	test("10. trees and ASTs", async function r10() {
-		const NodeId = u64.as("NodeId")
-
 		const Kind = closed("Kind", ["Lit", "Add"])
-		const Node = relation("Node", { id: NodeId.fresh, kind: Kind.id })
-		const Lit = relation("Lit", { node: NodeId, value: i64 })
-		const Add = relation("Add", { node: NodeId, lhs: NodeId, rhs: NodeId })
-		const Parent = relation("Parent", { child: NodeId, parent: NodeId })
+		const Node = relation("Node", { id: u64.fresh, kind: Kind.id })
+		const Lit = relation("Lit", { node: u64, value: i64 })
+		const Add = relation("Add", { node: u64, lhs: u64, rhs: u64 })
+		const Parent = relation("Parent", { child: u64, parent: u64 })
 
 		const Ast = schema("Ast", { Kind, Node, Lit, Add, Parent }, [
 			contained(on(Node, "kind"), on(Kind, "id")),
@@ -358,25 +484,23 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Parent, "parent"), on(Node, "id"))
 		])
 
-		const lhsLiteral = query(Ast).rule((r) =>
-			r
-				.match(Add, { node: r.param("n"), lhs: r.var("l") })
-				.match(Lit, { node: r.var("l"), value: r.var("v") })
+		const lhsLiteral = query(Ast).rule((r) => {
+			const { l, v } = r.vars("l", "v")
+			return r
+				.match(Add, { node: r.param("n"), lhs: l })
+				.match(Lit, { node: l, value: v })
 				.select("v")
-		)
+		})
 
 		const { db } = await admit("r10-ast", Ast)
 		assert.ok(db.prepare(lhsLiteral))
 	})
 
 	test("11. typed graphs", async function r11() {
-		const PersonId = u64.as("PersonId")
-		const RepoId = u64.as("RepoId")
-
-		const Person = relation("Person", { id: PersonId.fresh, name: str })
-		const Repo = relation("Repo", { id: RepoId.fresh, name: str })
-		const Follows = relation("Follows", { follower: PersonId, followee: PersonId })
-		const Maintains = relation("Maintains", { person: PersonId, repo: RepoId })
+		const Person = relation("Person", { id: u64.fresh, name: str })
+		const Repo = relation("Repo", { id: u64.fresh, name: str })
+		const Follows = relation("Follows", { follower: u64, followee: u64 })
+		const Maintains = relation("Maintains", { person: u64, repo: u64 })
 
 		const Graph = schema("Graph", { Person, Repo, Follows, Maintains }, [
 			contained(on(Follows, "follower"), on(Person, "id")),
@@ -387,25 +511,24 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			key(Maintains, ["person", "repo"])
 		])
 
-		const mutual = query(Graph).rule((r) =>
-			r
-				.match(Follows, { follower: r.var("a"), followee: r.var("b") })
-				.match(Follows, { follower: r.var("b"), followee: r.var("a") })
-				.where(r.lt(r.var("a"), r.var("b")))
+		const mutual = query(Graph).rule((r) => {
+			const { a, b } = r.vars("a", "b")
+			return r
+				.match(Follows, { follower: a, followee: b })
+				.match(Follows, { follower: b, followee: a })
+				.where(lt(a, b))
 				.select("a", "b")
-		)
+		})
 
 		const { db } = await admit("r11-graph", Graph)
 		assert.ok(db.prepare(mutual))
 	})
 
 	test("12. entity-component", async function r12() {
-		const EntityId = u64.as("EntityId")
-
-		const Entity = relation("Entity", { id: EntityId.fresh, name: str })
-		const Transform = relation("Transform", { entity: EntityId, x: i64, y: i64 })
-		const Velocity = relation("Velocity", { entity: EntityId, dx: i64, dy: i64 })
-		const Renderable = relation("Renderable", { entity: EntityId, mesh: str })
+		const Entity = relation("Entity", { id: u64.fresh, name: str })
+		const Transform = relation("Transform", { entity: u64, x: i64, y: i64 })
+		const Velocity = relation("Velocity", { entity: u64, dx: i64, dy: i64 })
+		const Renderable = relation("Renderable", { entity: u64, mesh: str })
 
 		const Ecs = schema("Ecs", { Entity, Transform, Velocity, Renderable }, [
 			key(Transform, ["entity"]),
@@ -416,24 +539,23 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Renderable, "entity"), on(Transform, "entity"))
 		])
 
-		const physics = query(Ecs).rule((r) =>
-			r
-				.match(Transform, { entity: r.var("e"), x: r.var("x"), y: r.var("y") })
-				.match(Velocity, { entity: r.var("e"), dx: r.var("dx"), dy: r.var("dy") })
-				.select("e", "x", "y", "dx", "dy")
-		)
+		const physics = query(Ecs).rule((r) => {
+			const { entity, x, y, dx, dy } = r.vars("entity", "x", "y", "dx", "dy")
+			return r
+				.match(Transform, { entity, x, y })
+				.match(Velocity, { entity, dx, dy })
+				.select("entity", "x", "y", "dx", "dy")
+		})
 
 		const { db } = await admit("r12-ecs", Ecs)
 		assert.ok(db.prepare(physics))
 	})
 
 	test("13. state machines", async function r13() {
-		const OrderId = u64.as("OrderId")
-
 		const State = closed("State", ["Cart", "Placed", "Shipped"])
-		const Order = relation("Order", { id: OrderId.fresh, state: State.id })
-		const Placement = relation("Placement", { order: OrderId, at: i64 })
-		const Shipment = relation("Shipment", { order: OrderId, carrier: str, at: i64 })
+		const Order = relation("Order", { id: u64.fresh, state: State.id })
+		const Placement = relation("Placement", { order: u64, at: i64 })
+		const Shipment = relation("Shipment", { order: u64, carrier: str, at: i64 })
 
 		const Orders = schema("Orders", { State, Order, Placement, Shipment }, [
 			contained(on(Order, "state"), on(State, "id")),
@@ -443,43 +565,39 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			mirrors(on(Shipment, "order"), on(Order.where({ state: State.Shipped }), "id"))
 		])
 
-		const shipped = query(Orders).rule((r) =>
-			r
-				.match(Order, { id: r.var("id"), state: State.Shipped })
-				.match(Shipment, { order: r.var("id"), carrier: r.var("carrier") })
+		const shipped = query(Orders).rule((r) => {
+			const { id, carrier } = r.vars("id", "carrier")
+			return r
+				.match(Order, { id, state: State.Shipped })
+				.match(Shipment, { order: id, carrier })
 				.select("id", "carrier")
-		)
+		})
 
 		const { db } = await admit("r13-orders", Orders)
 		assert.ok(db.prepare(shipped))
 	})
 
 	test("14. the calendar core", async function r14() {
-		const PersonId = u64.as("PersonId")
-		const RoomId = u64.as("RoomId")
-		const EventId = u64.as("EventId")
-		const AttendanceId = u64.as("AttendanceId")
-
 		const Rsvp = closed("Rsvp", ["Accepted", "Tentative", "Declined"])
 		const Arm = closed("Arm", ["Busy", "Ooo"])
 
-		const Person = relation("Person", { id: PersonId.fresh, name: str })
-		const Room = relation("Room", { id: RoomId.fresh, name: str })
-		const Event = relation("Event", { id: EventId.fresh, span: interval(i64) })
+		const Person = relation("Person", { id: u64.fresh, name: str })
+		const Room = relation("Room", { id: u64.fresh, name: str })
+		const Event = relation("Event", { id: u64.fresh, span: interval(i64) })
 		const Attendance = relation("Attendance", {
-			id: AttendanceId.fresh,
-			event: EventId,
-			person: PersonId,
+			id: u64.fresh,
+			event: u64,
+			person: u64,
 			rsvp: Rsvp.id
 		})
 		const Claim = relation("Claim", {
-			source: u64.as("AttendanceId"),
-			person: PersonId,
+			source: u64,
+			person: u64,
 			arm: Arm.id,
 			span: interval(i64)
 		})
-		const Booking = relation("Booking", { room: RoomId, event: EventId, span: interval(i64) })
-		const WorkHours = relation("WorkHours", { person: PersonId, hours: interval(i64) })
+		const Booking = relation("Booking", { room: u64, event: u64, span: interval(i64) })
+		const WorkHours = relation("WorkHours", { person: u64, hours: interval(i64) })
 
 		const Calendar = schema("Calendar", { Rsvp, Arm, Person, Room, Event, Attendance, Claim, Booking, WorkHours }, [
 			contained(on(Attendance, "event"), on(Event, "id")),
@@ -490,6 +608,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Claim, "person"), on(Person, "id")),
 			contained(on(Claim, "arm"), on(Arm, "id")),
 			key(Booking, ["room", "span"]),
+			// The statement that TYPES Claim.source into "Attendance.id":
 			mirrors(on(Attendance.where({ rsvp: Rsvp.Accepted }), "id"), on(Claim.where({ arm: Arm.Busy }), "source")),
 			key(WorkHours, ["person", "hours"]),
 			contained(on(Claim.where({ arm: Arm.Busy }), ["person", "span"]), on(WorkHours, ["person", "hours"])),
@@ -497,18 +616,20 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Booking, "event"), on(Event, "id"))
 		])
 
-		const roomConflicts = query(Calendar).rule((r) =>
-			r
-				.match(Booking, { room: r.var("room"), span: r.var("s") })
-				.where(r.allen(r.var("s"), ALLEN.intersects, r.param("want")))
-				.select("room", "s")
-		)
-		const personLoad = query(Calendar).rule((r) =>
-			r
-				.match(Claim, { person: r.var("person"), span: r.var("s") })
-				.where(r.allen(r.var("s"), ALLEN.intersects, r.param("window")))
-				.select("person", "s")
-		)
+		const roomConflicts = query(Calendar).rule((r) => {
+			const { room, span } = r.vars("room", "span")
+			return r
+				.match(Booking, { room, span })
+				.where(allen(span, ALLEN.intersects, r.param("want")))
+				.select("room", "span")
+		})
+		const personLoad = query(Calendar).rule((r) => {
+			const { person, span } = r.vars("person", "span")
+			return r
+				.match(Claim, { person, span })
+				.where(allen(span, ALLEN.intersects, r.param("window")))
+				.select("person", "span")
+		})
 
 		const { db } = await admit("r14-calendar", Calendar)
 		assert.ok(db.prepare(roomConflicts))
@@ -516,10 +637,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("15. effective-dated configuration", async function r15() {
-		const PolicyId = u64.as("PolicyId")
-
-		const Policy = relation("Policy", { id: PolicyId.fresh, live: interval(i64) })
-		const Version = relation("Version", { policy: PolicyId, rate_bps: i64, valid: interval(i64) })
+		const Policy = relation("Policy", { id: u64.fresh, live: interval(i64) })
+		const Version = relation("Version", { policy: u64, rate_bps: i64, valid: interval(i64) })
 
 		const Pricing = schema("Pricing", { Policy, Version }, [
 			contained(on(Version, "policy"), on(Policy, "id")),
@@ -527,19 +646,21 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Policy, ["id", "live"]), on(Version, ["policy", "valid"]))
 		])
 
-		const inForce = query(Pricing).rule((r) =>
-			r
-				.match(Version, { policy: r.param("p"), rate_bps: r.var("rate_bps"), valid: r.var("v") })
-				.where(r.pointIn(r.param("t"), r.var("v")))
+		const inForce = query(Pricing).rule((r) => {
+			const { rate_bps, valid } = r.vars("rate_bps", "valid")
+			return r
+				.match(Version, { policy: r.param("p"), rate_bps, valid })
+				.where(pointIn(r.param("t"), valid))
 				.select("rate_bps")
-		)
-		const successions = query(Pricing).rule((r) =>
-			r
-				.match(Version, { policy: r.var("p"), valid: r.var("a") })
-				.match(Version, { policy: r.var("p"), valid: r.var("b") })
-				.where(r.allen(r.var("a"), ALLEN.meets, r.var("b")))
+		})
+		const successions = query(Pricing).rule((r) => {
+			const { p, a, b } = r.vars("p", "a", "b")
+			return r
+				.match(Version, { policy: p, valid: a })
+				.match(Version, { policy: p, valid: b })
+				.where(allen(a, ALLEN.meets, b))
 				.select("a", "b")
-		)
+		})
 
 		const { db } = await admit("r15-pricing", Pricing)
 		assert.ok(db.prepare(inForce))
@@ -547,10 +668,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("16. disjoint covers", async function r16() {
-		const FiscalYearId = u64.as("FiscalYearId")
-
-		const FiscalYear = relation("FiscalYear", { id: FiscalYearId.fresh, span: interval(i64) })
-		const PayPeriod = relation("PayPeriod", { year: FiscalYearId, seq: u64, span: interval(i64) })
+		const FiscalYear = relation("FiscalYear", { id: u64.fresh, span: interval(i64) })
+		const PayPeriod = relation("PayPeriod", { year: u64, seq: u64, span: interval(i64) })
 
 		const Payroll = schema("Payroll", { FiscalYear, PayPeriod }, [
 			contained(on(PayPeriod, "year"), on(FiscalYear, "id")),
@@ -559,25 +678,24 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(FiscalYear, ["id", "span"]), on(PayPeriod, ["year", "span"]))
 		])
 
-		const holding = query(Payroll).rule((r) =>
-			r
-				.match(PayPeriod, { year: r.param("y"), seq: r.var("seq"), span: r.var("s") })
-				.where(r.pointIn(r.param("t"), r.var("s")))
+		const holding = query(Payroll).rule((r) => {
+			const { seq, span } = r.vars("seq", "span")
+			return r
+				.match(PayPeriod, { year: r.param("y"), seq, span })
+				.where(pointIn(r.param("t"), span))
 				.select("seq")
-		)
+		})
 
 		const { db } = await admit("r16-payroll", Payroll)
 		assert.ok(db.prepare(holding))
 	})
 
 	test("17. federal income tax", async function r17() {
-		const RegimeId = u64.as("RegimeId")
-
 		const Status = closed("Status", ["Single", "MarriedJoint", "HeadOfHousehold"])
-		const Regime = relation("Regime", { id: RegimeId.fresh, year: i64, status: Status.id })
-		const Bracket = relation("Bracket", { regime: RegimeId, income: interval(i64), rate_bps: i64 })
+		const Regime = relation("Regime", { id: u64.fresh, year: i64, status: Status.id })
+		const Bracket = relation("Bracket", { regime: u64, income: interval(i64), rate_bps: i64 })
 		const Residency = relation("Residency", { person: u64, span: interval(i64) })
-		const Earned = relation("Earned", { person: u64, regime: RegimeId, span: interval(i64), minor: i64 })
+		const Earned = relation("Earned", { person: u64, regime: u64, span: interval(i64), minor: i64 })
 
 		const Tax = schema("Tax", { Status, Regime, Bracket, Residency, Earned }, [
 			contained(on(Regime, "status"), on(Status, "id")),
@@ -589,32 +707,33 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Earned, ["person", "span"]), on(Residency, ["person", "span"]))
 		])
 
-		const marginal = query(Tax).rule((r) =>
-			r
-				.match(Regime, { id: r.var("reg"), year: r.param("y"), status: r.param("s") })
-				.match(Bracket, { regime: r.var("reg"), income: r.var("b"), rate_bps: r.var("rate_bps") })
-				.where(r.pointIn(r.param("taxable"), r.var("b")))
+		const marginal = query(Tax).rule((r) => {
+			const { reg, b, rate_bps } = r.vars("reg", "b", "rate_bps")
+			return r
+				.match(Regime, { id: reg, year: r.param("y"), status: r.param("s") })
+				.match(Bracket, { regime: reg, income: b, rate_bps })
+				.where(pointIn(r.param("taxable"), b))
 				.select("rate_bps")
-		)
+		})
 
 		const { db } = await admit("r17-tax", Tax)
 		assert.ok(db.prepare(marginal))
 	})
 
 	test("18. free time and coalescing", async function r18() {
-		const PersonId = u64.as("PersonId")
-
-		const Person = relation("Person", { id: PersonId.fresh, name: str })
-		const Claim = relation("Claim", { person: PersonId, span: interval(i64) })
+		const Person = relation("Person", { id: u64.fresh, name: str })
+		const Claim = relation("Claim", { person: u64, span: interval(i64) })
 
 		const FreeTime = schema("FreeTime", { Person, Claim }, [contained(on(Claim, "person"), on(Person, "id"))])
 
-		const busy = query(FreeTime).rule((r) =>
-			r.match(Claim, { person: r.var("person"), span: r.var("span") }).select("person", r.pack("span"))
-		)
-		const claimed = query(FreeTime).rule((r) =>
-			r.match(Claim, { person: r.var("person"), span: r.var("span") }).select("person", r.sum(r.duration("span")))
-		)
+		const busy = query(FreeTime).rule((r) => {
+			const { person, span } = r.vars("person", "span")
+			return r.match(Claim, { person, span }).select("person", r.pack("span"))
+		})
+		const claimed = query(FreeTime).rule((r) => {
+			const { person, span } = r.vars("person", "span")
+			return r.match(Claim, { person, span }).select("person", r.sum(r.duration("span")))
+		})
 
 		const { db } = await admit("r18-freetime", FreeTime)
 		assert.ok(db.prepare(busy))
@@ -622,16 +741,12 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("19. the ledger", async function r19() {
-		const AccountId = u64.as("AccountId")
-		const JournalEntryId = u64.as("JournalEntryId")
-		const PostingId = u64.as("PostingId")
-
-		const Account = relation("Account", { id: AccountId.fresh, name: str })
-		const JournalEntry = relation("JournalEntry", { id: JournalEntryId.fresh, at: i64, memo: str })
+		const Account = relation("Account", { id: u64.fresh, name: str })
+		const JournalEntry = relation("JournalEntry", { id: u64.fresh, at: i64, memo: str })
 		const Posting = relation("Posting", {
-			id: PostingId.fresh,
-			entry: JournalEntryId,
-			account: AccountId,
+			id: u64.fresh,
+			entry: u64,
+			account: u64,
 			minor: i64
 		})
 
@@ -640,16 +755,14 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Posting, "account"), on(Account, "id"))
 		])
 
-		const balances = query(Ledger).rule((r) =>
-			r
-				.match(Posting, { id: r.var("id"), account: r.var("account"), minor: r.var("minor") })
-				.select("account", r.sum("minor"))
-		)
-		const doubleEntry = query(Ledger).rule((r) =>
-			r
-				.match(Posting, { id: r.var("id"), entry: r.var("entry"), minor: r.var("minor") })
-				.select("entry", r.sum("minor"))
-		)
+		const balances = query(Ledger).rule((r) => {
+			const { id, account, minor } = r.vars("id", "account", "minor")
+			return r.match(Posting, { id, account, minor }).select("account", r.sum("minor"))
+		})
+		const doubleEntry = query(Ledger).rule((r) => {
+			const { id, entry, minor } = r.vars("id", "entry", "minor")
+			return r.match(Posting, { id, entry, minor }).select("entry", r.sum("minor"))
+		})
 
 		const { db } = await admit("r19-ledger", Ledger)
 		assert.ok(db.prepare(balances))
@@ -657,11 +770,9 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("20. conditional writes — the witnessed update-where runs", async function r20() {
-		const JobId = u64.as("JobId")
-
 		const State = closed("State", ["Queued", "Running", "Done"])
-		const Job = relation("Job", { id: JobId.fresh, state: State.id, payload: str })
-		const Lease = relation("Lease", { job: JobId, worker: u64, until: i64 })
+		const Job = relation("Job", { id: u64.fresh, state: State.id, payload: str })
+		const Lease = relation("Lease", { job: u64, worker: u64, until: i64 })
 
 		const Jobs = schema("Jobs", { State, Job, Lease }, [
 			contained(on(Job, "state"), on(State, "id")),
@@ -669,9 +780,10 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			mirrors(on(Lease, "job"), on(Job.where({ state: State.Running }), "id"))
 		])
 
-		const stillQueued = query(Jobs).rule((r) =>
-			r.match(Job, { id: r.var("id"), state: State.Queued, payload: r.var("payload") }).select("id", "payload")
-		)
+		const stillQueued = query(Jobs).rule((r) => {
+			const { id, payload } = r.vars("id", "payload")
+			return r.match(Job, { id, state: State.Queued, payload }).select("id", "payload")
+		})
 
 		const { db } = await admit("r20-jobs", Jobs)
 		const prepared = db.prepare(stillQueued)
@@ -708,21 +820,20 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: Arm.Busy }), ["person", "span"]))
 		])
 
-		const deriving = query(Rollup).rule((r) =>
-			r.match(Claim, { person: r.var("person"), span: r.var("span"), arm: Arm.Busy }).select("person", r.pack("span"))
-		)
+		const deriving = query(Rollup).rule((r) => {
+			const { person, span } = r.vars("person", "span")
+			return r.match(Claim, { person, span, arm: Arm.Busy }).select("person", r.pack("span"))
+		})
 
 		const { db } = await admit("r21-rollup", Rollup)
 		assert.ok(db.prepare(deriving))
 	})
 
 	test("22. union reads", async function r22() {
-		const PaymentId = u64.as("PaymentId")
-
 		const Kind = closed("Kind", ["Card", "Ach"])
-		const Payment = relation("Payment", { id: PaymentId.fresh, kind: Kind.id })
-		const Card = relation("Card", { payment: PaymentId, last4: u64 })
-		const Ach = relation("Ach", { payment: PaymentId, routing: u64 })
+		const Payment = relation("Payment", { id: u64.fresh, kind: Kind.id })
+		const Card = relation("Card", { payment: u64, last4: u64 })
+		const Ach = relation("Ach", { payment: u64, routing: u64 })
 
 		const Payments = schema("Payments", { Kind, Payment, Card, Ach }, [
 			contained(on(Payment, "kind"), on(Kind, "id")),
@@ -733,31 +844,25 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const wholeDu = query(Payments)
-			.rule((r) =>
-				r
-					.match(Payment, { id: r.var("id"), kind: Kind.Card })
-					.match(Card, { payment: r.var("id"), last4: r.var("n") })
-					.select("id", "n")
-			)
-			.rule((r) =>
-				r
-					.match(Payment, { id: r.var("id"), kind: Kind.Ach })
-					.match(Ach, { payment: r.var("id"), routing: r.var("n") })
-					.select("id", "n")
-			)
+			.rule((r) => {
+				const { id, n } = r.vars("id", "n")
+				return r.match(Payment, { id, kind: Kind.Card }).match(Card, { payment: id, last4: n }).select("id", "n")
+			})
+			.rule((r) => {
+				const { id, n } = r.vars("id", "n")
+				return r.match(Payment, { id, kind: Kind.Ach }).match(Ach, { payment: id, routing: n }).select("id", "n")
+			})
 
 		const { db } = await admit("r22-payments", Payments)
 		assert.ok(db.prepare(wholeDu))
 	})
 
 	test("23. the anti-recipes: five gravestones", async function r23() {
-		const GravestoneEventId = u64.as("GravestoneEventId")
-
 		const Step = relation("Step", { flow: u64, pos: u64, action: str })
 		const Score = relation("Score", { subject: u64, bps: i64 })
 		const ActiveRun = relation("ActiveRun", { student: u64, run: u64 })
 		const Usage = relation("Usage", { meter: u64, period: u64, used: interval(i64) })
-		const Event = relation("Event", { id: GravestoneEventId.fresh, at: i64 })
+		const Event = relation("Event", { id: u64.fresh, at: i64 })
 
 		const Gravestones = schema("Gravestones", { Step, Score, ActiveRun, Usage, Event }, [
 			key(Step, ["flow", "pos"]),
@@ -770,10 +875,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("24. the closure idiom — both dialects agree, root for root", async function r24() {
-		const NodeId = u64.as("NodeId")
-
-		const Node = relation("Node", { id: NodeId.fresh, name: str })
-		const Parent = relation("Parent", { child: NodeId, parent: NodeId })
+		const Node = relation("Node", { id: u64.fresh, name: str })
+		const Parent = relation("Parent", { child: u64, parent: u64 })
 
 		const Closure = schema("Closure", { Node, Parent }, [
 			key(Parent, ["child"]),
@@ -782,9 +885,10 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		// The loop's one query — the frontier's children, one ∈-set probe:
-		const step = query(Closure).rule((r) =>
-			r.match(Parent, { child: r.var("c"), parent: r.inSet("frontier") }).select("c")
-		)
+		const step = query(Closure).rule((r) => {
+			const { c } = r.vars("c")
+			return r.match(Parent, { child: c, parent: r.inSet("frontier") }).select("c")
+		})
 		// The same closure, one stratified program under the fixpoint driver
 		// (?root seeds the predicate; the output joins the finished set back
 		// through the theory's own domain relation — an idb atom is a join
@@ -792,24 +896,21 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		const reach = program(Closure, (p) => {
 			const rec = p.rec("reach")
 			const seeded = rec
-				.rule((r) =>
-					r
-						.match(Node, { id: r.var("c") })
-						.where(r.eq(r.var("c"), r.param("root")))
+				.rule((r) => {
+					const { c } = r.vars("c")
+					return r
+						.match(Node, { id: c })
+						.where(eq(c, r.param("root")))
 						.select("c")
-				)
-				.rule((r) =>
-					r
-						.match(Parent, { child: r.var("c"), parent: r.var("m") })
-						.idb(rec, r.var("m"))
-						.select("c")
-				)
-			return p.output((r) =>
-				r
-					.match(Node, { id: r.var("c") })
-					.idb(seeded, r.var("c"))
-					.select("c")
-			)
+				})
+				.rule((r) => {
+					const { c, parent } = r.vars("c", "parent")
+					return r.match(Parent, { child: c, parent }).idb(rec, parent).select("c")
+				})
+			return p.output((r) => {
+				const { c } = r.vars("c")
+				return r.match(Node, { id: c }).idb(seeded, c).select("c")
+			})
 		})
 
 		const { db } = await admit("r24-closure", Closure)
@@ -853,12 +954,9 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("25. the chart of accounts", async function r25() {
-		const AccountId = u64.as("AccountId")
-		const PostingId = u64.as("PostingId")
-
-		const Account = relation("Account", { id: AccountId.fresh, name: str })
-		const AccountParent = relation("AccountParent", { child: AccountId, parent: AccountId })
-		const Posting = relation("Posting", { id: PostingId.fresh, account: AccountId, minor: i64 })
+		const Account = relation("Account", { id: u64.fresh, name: str })
+		const AccountParent = relation("AccountParent", { child: u64, parent: u64 })
+		const Posting = relation("Posting", { id: u64.fresh, account: u64, minor: i64 })
 
 		const Accounts = schema("Accounts", { Account, AccountParent, Posting }, [
 			key(AccountParent, ["child"]),
@@ -868,35 +966,34 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		// The host composition's two queries (recipe 24's loop runs between them):
-		const frontierStep = query(Accounts).rule((r) =>
-			r.match(AccountParent, { child: r.var("c"), parent: r.inSet("frontier") }).select("c")
-		)
-		const subtreeRollup = query(Accounts).rule((r) =>
-			r.match(Posting, { id: r.var("id"), account: r.inSet("subtree"), minor: r.var("minor") }).select(r.sum("minor"))
-		)
+		const frontierStep = query(Accounts).rule((r) => {
+			const { c } = r.vars("c")
+			return r.match(AccountParent, { child: c, parent: r.inSet("frontier") }).select("c")
+		})
+		const subtreeRollup = query(Accounts).rule((r) => {
+			const { id, minor } = r.vars("id", "minor")
+			return r.match(Posting, { id, account: r.inSet("subtree"), minor }).select(r.sum("minor"))
+		})
 		// The engine-native form: the closure stratum converges first, then the
 		// output's fold runs once over the finished subtree.
 		const nativeRollup = program(Accounts, (p) => {
 			const sub = p.rec("sub")
 			const seeded = sub
-				.rule((r) =>
-					r
-						.match(Account, { id: r.var("a") })
-						.where(r.eq(r.var("a"), r.param("root")))
+				.rule((r) => {
+					const { a } = r.vars("a")
+					return r
+						.match(Account, { id: a })
+						.where(eq(a, r.param("root")))
 						.select("a")
-				)
-				.rule((r) =>
-					r
-						.match(AccountParent, { child: r.var("a"), parent: r.var("p") })
-						.idb(sub, r.var("p"))
-						.select("a")
-				)
-			return p.output((r) =>
-				r
-					.match(Posting, { id: r.var("id"), account: r.var("a"), minor: r.var("minor") })
-					.idb(seeded, r.var("a"))
-					.select(r.sum("minor"))
-			)
+				})
+				.rule((r) => {
+					const { a, parent } = r.vars("a", "parent")
+					return r.match(AccountParent, { child: a, parent }).idb(sub, parent).select("a")
+				})
+			return p.output((r) => {
+				const { id, a, minor } = r.vars("id", "a", "minor")
+				return r.match(Posting, { id, account: a, minor }).idb(seeded, a).select(r.sum("minor"))
+			})
 		})
 
 		const { db } = await admit("r25-accounts", Accounts)
@@ -906,10 +1003,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("26. exact partition", async function r26() {
-		const PolicyId = u64.as("PolicyId")
-
-		const Policy = relation("Policy", { id: PolicyId.fresh, live: interval(i64) })
-		const Version = relation("Version", { policy: PolicyId, valid: interval(i64) })
+		const Policy = relation("Policy", { id: u64.fresh, live: interval(i64) })
+		const Version = relation("Version", { policy: u64, valid: interval(i64) })
 
 		const ExactPartition = schema("ExactPartition", { Policy, Version }, [
 			contained(on(Version, "policy"), on(Policy, "id")),
@@ -935,41 +1030,39 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: Arm.Busy }), ["person", "span"]))
 		])
 
-		const deriving = query(MaintainedRollup).rule((r) =>
-			r
-				.match(Claim, { source: r.var("source"), person: r.var("person"), arm: Arm.Busy, span: r.var("span") })
-				.select("person", r.pack("span"))
-		)
+		const deriving = query(MaintainedRollup).rule((r) => {
+			const { source, person, span } = r.vars("source", "person", "span")
+			return r.match(Claim, { source, person, arm: Arm.Busy, span }).select("person", r.pack("span"))
+		})
 
 		const { db } = await admit("r27-maintained-rollup", MaintainedRollup)
 		assert.ok(db.prepare(deriving))
 	})
 
 	test("28. migration is ETL — two theories, two fingerprints", async function r28() {
-		const EmployeeId = u64.as("EmployeeId")
-
 		// The old theory, judged and fingerprinted:
-		const EmployeeV1 = relation("Employee", { id: EmployeeId.fresh, name: str })
-		const SalaryV1 = relation("Salary", { employee: EmployeeId, amount: i64 })
+		const EmployeeV1 = relation("Employee", { id: u64.fresh, name: str })
+		const SalaryV1 = relation("Salary", { employee: u64, amount: i64 })
 		const PayrollV1 = schema("PayrollV1", { Employee: EmployeeV1, Salary: SalaryV1 }, [
 			contained(on(SalaryV1, "employee"), on(EmployeeV1, "id"))
 		])
 
 		// The new theory adds what v1 never recorded — WHEN a salary applied:
-		const Employee = relation("Employee", { id: EmployeeId.fresh, name: str })
-		const Salary = relation("Salary", { employee: EmployeeId, amount: i64, applies: interval(i64) })
+		const Employee = relation("Employee", { id: u64.fresh, name: str })
+		const Salary = relation("Salary", { employee: u64, amount: i64, applies: interval(i64) })
 		const Payroll = schema("Payroll", { Employee, Salary }, [
 			contained(on(Salary, "employee"), on(Employee, "id")),
 			key(Salary, ["employee", "applies"])
 		])
 
-		const inForceAt = query(Payroll).rule((r) =>
-			r
-				.match(Employee, { id: r.var("e"), name: r.var("name") })
-				.match(Salary, { employee: r.var("e"), amount: r.var("amount"), applies: r.var("w") })
-				.where(r.pointIn(r.param("at"), r.var("w")))
+		const inForceAt = query(Payroll).rule((r) => {
+			const { e, name, amount, w } = r.vars("e", "name", "amount", "w")
+			return r
+				.match(Employee, { id: e, name })
+				.match(Salary, { employee: e, amount, applies: w })
+				.where(pointIn(r.param("at"), w))
 				.select("name", "amount")
-		)
+		})
 
 		const v1 = await admit("r28-payroll-v1", PayrollV1)
 		const v2 = await admit("r28-payroll", Payroll)
@@ -978,13 +1071,11 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	})
 
 	test("29. the zone ledger", async function r29() {
-		const LedgerId = u64.as("LedgerId")
-
 		const Kind = closed("Kind", ["Unit", "Pair"])
-		const Ledger = relation("Ledger", { id: LedgerId.fresh, name: str })
-		const Zone = relation("Zone", { ledger: LedgerId, kind: Kind.id, at: interval(u64) })
-		const UnitSlot = relation("UnitSlot", { ledger: LedgerId, at: interval(u64, 1n), entry: u64 })
-		const PairSlot = relation("PairSlot", { ledger: LedgerId, at: interval(u64, 2n), entry: u64 })
+		const Ledger = relation("Ledger", { id: u64.fresh, name: str })
+		const Zone = relation("Zone", { ledger: u64, kind: Kind.id, at: interval(u64) })
+		const UnitSlot = relation("UnitSlot", { ledger: u64, at: interval(u64, 1n), entry: u64 })
+		const PairSlot = relation("PairSlot", { ledger: u64, at: interval(u64, 2n), entry: u64 })
 
 		const ZoneLedger = schema("ZoneLedger", { Kind, Ledger, Zone, UnitSlot, PairSlot }, [
 			contained(on(Zone, "ledger"), on(Ledger, "id")),
@@ -997,5 +1088,16 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		await admit("r29-zone-ledger", ZoneLedger)
+	})
+
+	test("the goldens fixture pins exactly the 29 recipes, one line each", function goldensShape() {
+		const expected: string[] = []
+		for (let recipe = 1; recipe <= 29; recipe += 1) {
+			expected.push(`r${String(recipe).padStart(2, "0")}`)
+		}
+		assert.deepEqual([...witnessed.keys()].sort(), expected, "every recipe admitted exactly one pinned theory")
+		if (goldens !== undefined) {
+			assert.deepEqual([...goldens.keys()].sort(), expected, "the fixture carries exactly one line per recipe")
+		}
 	})
 })
