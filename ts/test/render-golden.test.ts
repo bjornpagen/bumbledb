@@ -22,45 +22,25 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import {
-	type AnySchema,
-	atLeast,
-	atMost,
-	between,
-	bool,
-	bytes,
-	closed,
-	contained,
-	exactly,
-	i64,
-	interval,
-	key,
-	lower,
-	mirrors,
-	none,
-	on,
-	oneOf,
-	relation,
-	renderStatement,
-	type Statement,
-	type StatementKindTag,
-	schema,
-	span,
-	str,
-	u64,
-	window
-} from "#index.ts"
-import type { DbHandle, Manifest } from "#native.ts"
+import { closed } from "#closed.ts"
+import { atLeast, atMost, between, exactly, none } from "#count.ts"
+import { on, oneOf } from "#face.ts"
+import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
+import { lower } from "#lower.ts"
+import type { DbHandle, Manifest, StatementKindTag } from "#native.ts"
 import { native } from "#native.ts"
+import { relation } from "#relation.ts"
+import { type AnySchema, schema } from "#schema.ts"
+import { contained, key, mirrors, renderStatement, type Statement, window } from "#statements.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-render-golden-"))
 const storeDir = path.join(tmpRoot, "store")
 
-const HolderId = u64.newtype("HolderId")
-const AccountId = u64.newtype("AccountId")
-const RoomId = u64.newtype("RoomId")
-const ActiveDuring = interval(i64).newtype("ActiveDuring")
-const BookedDuring = interval(u64).newtype("BookedDuring")
+const HolderId = u64.as("HolderId")
+const AccountId = u64.as("AccountId")
+const RoomId = u64.as("RoomId")
+const ActiveDuring = interval(i64).as("ActiveDuring")
+const BookedDuring = interval(u64).as("BookedDuring")
 
 const Status = closed("Status", ["Active", "Frozen"])
 const Kind = closed("Kind", ["Checking", "Savings", "Brokerage"])
@@ -102,7 +82,7 @@ const pointwiseKey = key(Booking, ["room", "during"])
 const plainContainment = contained(on(Account, "holder"), on(Holder, "id"))
 const kindClosedTarget = contained(on(Account, "kind"), on(Kind, "id"))
 const statusClosedTarget = contained(on(Account, "status"), on(Status, "id"))
-const pointwiseContainment = contained(on(Slot, "room", "during"), on(Booking, "room", "during"))
+const pointwiseContainment = contained(on(Slot, ["room", "during"]), on(Booking, ["room", "during"]))
 const sigmaContainment = contained(on(Account.where({ kind: Kind.Savings }), "holder"), on(Holder, "id"))
 const psiContainment = contained(on(SavingsTerms, "account"), on(Account.where({ status: Status.Active }), "id"))
 const bijection = mirrors(on(Account.where({ kind: Kind.Savings }), "id"), on(SavingsTerms, "account"))
@@ -179,7 +159,7 @@ function expectedSlots(theory: AnySchema): Slot[] {
 			continue
 		}
 		for (const declared of member.data.fields) {
-			if (declared.field.minted) {
+			if ("fresh" in declared.field && declared.field.fresh === true) {
 				slots.push({
 					kind: "functionality",
 					spelling: `${member.name}(${declared.name}) -> ${member.name}`

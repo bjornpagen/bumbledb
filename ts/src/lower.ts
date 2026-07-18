@@ -10,9 +10,18 @@
 
 import type { AnyClosed } from "#closed.ts"
 import type { FaceData } from "#face.ts"
+import type { AnyField } from "#fields.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { AnySchema, SchemaRelation } from "#schema.ts"
-import type { FieldSpec, RelationSpec, SchemaSpec, SideSpec, StatementSpec } from "#spec.ts"
+import type {
+	FieldSpec,
+	LiteralSetSpec,
+	RelationSpec,
+	SchemaSpec,
+	SideSpec,
+	StatementSpec,
+	ValueTypeSpec
+} from "#spec.ts"
 import type { Statement } from "#statements.ts"
 
 /**
@@ -23,13 +32,53 @@ function isClosedMember(member: SchemaRelation): member is AnyClosed {
 	return "handles" in member.data
 }
 
+/**
+ * Lowers one field descriptor's structural type to the wire
+ * {@link ValueTypeSpec}: the S1 kind tags map 1:1 onto the `ValueType`
+ * vocabulary (`str` spells `string`, `bytes` spells `fixedBytes` with its
+ * width label as `len`; intervals carry element and width labels through).
+ */
+function valueTypeOf(field: AnyField): ValueTypeSpec {
+	switch (field.kind) {
+		case "bool":
+			return { kind: "bool" }
+		case "u64":
+			return { kind: "u64" }
+		case "i64":
+			return { kind: "i64" }
+		case "str":
+			return { kind: "string" }
+		case "bytes":
+			return { kind: "fixedBytes", len: field.width }
+		case "interval":
+			return { kind: "interval", element: field.element, width: field.width }
+	}
+}
+
+/**
+ * Lowers one field descriptor to its {@link FieldSpec}: the structural
+ * type, the DOMAIN label as the wire's `newtype` (the macro's `as NewType`
+ * name — carried for engine handle resolution, dropped at descriptor
+ * lowering, never fingerprinted), and the structural fresh mark (`fresh`
+ * is the literal `true` exactly on a fresh-marked u64 — on an unmarked one
+ * the property holds the marked descriptor, never `true`).
+ */
+function lowerField(name: string, field: AnyField): FieldSpec {
+	return {
+		name,
+		valueType: valueTypeOf(field),
+		newtype: field.domain,
+		fresh: "fresh" in field && field.fresh === true
+	}
+}
+
 /** Lowers one face to a `SideSpec`: names only, σ as (field, set) pairs. */
 function lowerFace(face: FaceData): SideSpec {
 	return {
 		relation: face.owner.name,
 		projection: [...face.projection],
-		selection: face.selection.map(function lowerBinding(binding) {
-			return [binding.field, binding.set] as const
+		selection: face.selection.map(function lowerBinding(binding): readonly [string, LiteralSetSpec] {
+			return [binding.field, binding.set]
 		})
 	}
 }
@@ -67,13 +116,8 @@ function lowerStatement(statement: Statement): StatementSpec {
  * declaration order, `extension: undefined` (the option is the kind).
  */
 function lowerRelation(relation: AnyRelation): RelationSpec {
-	const fields: FieldSpec[] = relation.data.fields.map(function lowerField(declared) {
-		return {
-			name: declared.name,
-			valueType: declared.field.type,
-			newtype: declared.field.newtype,
-			fresh: declared.field.minted
-		}
+	const fields: FieldSpec[] = relation.data.fields.map(function lowerDeclared(declared) {
+		return lowerField(declared.name, declared.field)
 	})
 	return { name: relation.name, newtype: undefined, fields, extension: undefined }
 }
@@ -81,23 +125,21 @@ function lowerRelation(relation: AnyRelation): RelationSpec {
 /**
  * Lowers one closed relation to its `RelationSpec` fragment: declared
  * intrinsic columns only (the engine materializes the synthetic `id`),
- * the relation's own name as its handle newtype, and the ground axioms in
- * declaration order (row id = index) — the literals were already lowered
- * at `closed()` construction.
+ * the HANDLE DOMAIN as its handle newtype — the `id` descriptor's own
+ * `` `${name}Id` `` label (Rust's `closed relation Kind as KindId`), the
+ * same string every referencing field carries, which is exactly how the
+ * engine resolves a handle literal back to its roster — and the ground
+ * axioms in declaration order (row id = index); the literals were already
+ * lowered at `closed()` construction.
  */
 function lowerClosed(member: AnyClosed): RelationSpec {
 	const fields: FieldSpec[] = member.data.columns.map(function lowerColumn(column) {
-		return {
-			name: column.name,
-			valueType: column.field.type,
-			newtype: column.field.newtype,
-			fresh: false
-		}
+		return lowerField(column.name, column.field)
 	})
 	const extension = member.data.rows.map(function lowerRow(row) {
 		return { handle: row.handle, values: row.values }
 	})
-	return { name: member.name, newtype: member.name, fields, extension }
+	return { name: member.name, newtype: member.id.domain, fields, extension }
 }
 
 /**

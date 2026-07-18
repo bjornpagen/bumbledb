@@ -12,7 +12,7 @@
 import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import type { FaceData } from "#face.ts"
-import { assertDeclarationOrderKey, type FieldData } from "#fields.ts"
+import { type AnyField, assertDeclarationOrderKey, type ClosedRoster } from "#fields.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
 import { renderStatement, type Statement } from "#statements.ts"
@@ -38,7 +38,7 @@ function collectImplied(name: string, relations: SchemaRelations): Set<string> {
 			continue
 		}
 		for (const declared of member.data.fields) {
-			if (declared.field.minted) {
+			if ("fresh" in declared.field && declared.field.fresh === true) {
 				implied.add(`${member.name}(${declared.name}) -> ${member.name}`)
 			}
 		}
@@ -74,8 +74,8 @@ function verifyMembership(name: string, relations: SchemaRelations, statement: S
 	}
 }
 
-/** Finds a face's field description by name, across both relation kinds. */
-function faceField(face: FaceData, fieldName: string): FieldData | undefined {
+/** Finds a face's field descriptor by name, across both relation kinds. */
+function faceField(face: FaceData, fieldName: string): AnyField | undefined {
 	const data = face.owner.data
 	if ("handles" in data) {
 		const column = data.columns.find(function byName(candidate) {
@@ -87,6 +87,18 @@ function faceField(face: FaceData, fieldName: string): FieldData | undefined {
 		return candidate.name === fieldName
 	})
 	return declared?.field
+}
+
+/**
+ * The roster a field resolves handles through: present exactly on a closed
+ * reference descriptor (the structural `closed` property — S1's
+ * `ClosedIdField`), absent on every other field kind.
+ */
+function rosterOf(field: AnyField | undefined): ClosedRoster | undefined {
+	if (field !== undefined && "closed" in field) {
+		return field.closed
+	}
+	return undefined
 }
 
 /** Flattens one binding's literal set into its literals. */
@@ -109,20 +121,18 @@ function verifyBindingHandles(
 	binding: { readonly field: string; readonly set: LiteralSetSpec },
 	rendered: string
 ): void {
-	const field = faceField(face, binding.field)
+	const roster = rosterOf(faceField(face, binding.field))
 	for (const literal of bindingLiterals(binding.set)) {
 		if (literal.kind !== "handle") {
 			continue
 		}
-		if (field?.closed === undefined) {
+		if (roster === undefined) {
 			throw errors.new(
-				`schema ${name}: ${face.owner.name}.${binding.field} is not a closed-relation reference — the handle literal ${literal.handle} is legal only on a field whose newtype is a closed relation's handle newtype — ${rendered}`
+				`schema ${name}: ${face.owner.name}.${binding.field} is not a closed-relation reference — the handle literal ${literal.handle} is legal only on a field whose domain is a closed relation's handle domain — ${rendered}`
 			)
 		}
-		if (!field.closed.handles.includes(literal.handle)) {
-			throw errors.new(
-				`schema ${name}: closed relation ${field.closed.name} has no handle ${literal.handle} — ${rendered}`
-			)
+		if (!roster.handles.includes(literal.handle)) {
+			throw errors.new(`schema ${name}: closed relation ${roster.name} has no handle ${literal.handle} — ${rendered}`)
 		}
 	}
 }
@@ -216,7 +226,7 @@ function verifyClosedReferenceBinding(
 	if (!spellsHandle) {
 		return
 	}
-	const roster = faceField(face, binding.field)?.closed
+	const roster = rosterOf(faceField(face, binding.field))
 	if (roster === undefined) {
 		return
 	}
