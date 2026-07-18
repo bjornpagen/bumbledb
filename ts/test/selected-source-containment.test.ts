@@ -18,7 +18,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import type { Brand, Db as DbValue } from "#index.ts"
+import type { Db as DbValue } from "#index.ts"
 import { closed, contained, Db, on, relation, renderStatement, schema, str, u64 } from "#index.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-cind-"))
@@ -28,12 +28,18 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const GrpId = u64.newtype("GrpId")
-const TaskId = u64.newtype("TaskId")
+const GrpId = u64.as("GrpId")
+const TaskId = u64.as("TaskId")
 
 const TaskKind = closed("TaskKind", ["Author", "Enrich"])
 const Grp = relation("Grp", { id: GrpId.fresh, label: str })
-const Task = relation("Task", { id: TaskId.fresh, kind: TaskKind.id, subject: u64 })
+/**
+ * `subject` carries the GrpId domain LABEL (the structural link the
+ * containment's positionwise domain check reads); the VALUE stays a bare
+ * bigint, so a non-Author task's subject is still free to be any number —
+ * the kind-scoped law below is the engine's judgment, never the label's.
+ */
+const Task = relation("Task", { id: TaskId.fresh, kind: TaskKind.id, subject: GrpId })
 
 /** The exact statement C-07 claims cannot be written. */
 const authorSubjectIsGrp = contained(on(Task.where({ kind: TaskKind.Author }), "subject"), on(Grp, "id"))
@@ -57,7 +63,7 @@ function must<T>(value: T | undefined): T {
 
 describe("C-07 refutation: the selected-source containment is statable and enforced", function suite() {
 	let db: DbValue<(typeof Ledger)["relations"]>
-	let grpId: Brand<bigint, "GrpId">
+	let grpId: bigint
 
 	test("Db.create admits Task(subject | kind == Author) <= Grp(id)", async function create() {
 		db = await Db.create(storeDir, Ledger)

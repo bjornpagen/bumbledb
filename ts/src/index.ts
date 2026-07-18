@@ -12,9 +12,8 @@
  * conditions, aggregates, and stratified recursion via `program()`/`rec` —
  * `db.prepare` as a plain value), and the exhume surface
  * (`Db.exhume` — the one schema-independent read path: the store's
- * self-described shapes and raw facts by name, deliberately untyped —
- * course-serialization PRD-02). The raw native bridge is not exported (the
- * PRD-03 stub died here as scheduled).
+ * self-described shapes and raw facts by name, typed at bare structural
+ * values, deliberately schema-free). The raw native bridge is not exported.
  */
 
 export type {
@@ -64,11 +63,14 @@ export type {
 	Face,
 	FaceArityMismatch,
 	FaceData,
+	FaceDomainMismatch,
+	FaceDomains,
 	FaceFields,
 	FaceOwner,
 	FaceSource,
 	OneOf,
-	SameArity
+	SameArity,
+	SameDomains
 } from "#face.ts"
 export { on, oneOf } from "#face.ts"
 export type {
@@ -170,5 +172,5 @@ export type {
 	WindowSpec
 } from "#spec.ts"
 export { renderLiteral, renderLiteralSet, renderWindow } from "#spec.ts"
-export type { KeyStatement, Statement, StatementData } from "#statements.ts"
+export type { KeyData, KeyStatement, Statement, StatementData } from "#statements.ts"
 export { contained, key, mirrors, renderStatement, window } from "#statements.ts"

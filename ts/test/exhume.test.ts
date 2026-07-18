@@ -2,7 +2,7 @@
  * The exhume surface's semantic pins (course-serialization PRD-02), against
  * REAL temp stores:
  *
- * - a store declaring every field type (u64 newtype fresh, i64, str,
+ * - a store declaring every field type (domain-labeled u64 fresh, i64, str,
  *   bytes<8>, bool, u64/i64 intervals, closed id with a payload roster) is
  *   created and seeded under its true schema, its directory copied to a
  *   process-fresh path (never opened, never cached, never locked in this
@@ -59,9 +59,9 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const SpecimenId = u64.newtype("SpecimenId")
+const SpecimenId = u64.as("SpecimenId")
 
-const Grade = closed("Grade", ["Pass", "Fail"], { points: u64 }, { Pass: { points: 10n }, Fail: { points: 0n } })
+const Grade = closed("Grade", { points: u64 })({ Pass: { points: 10n }, Fail: { points: 0n } })
 const Specimen = relation("Specimen", {
 	id: SpecimenId.fresh,
 	label: str,

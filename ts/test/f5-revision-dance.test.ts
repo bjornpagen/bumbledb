@@ -26,7 +26,7 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const AttemptId = u64.newtype("F5AttemptId")
+const AttemptId = u64.as("F5AttemptId")
 const Attempt = relation("F5Attempt", { id: AttemptId.fresh, n: u64 })
 const AttemptText = relation("F5AttemptText", { attempt: AttemptId, prompt: str, output: str })
 const attemptTextKey = key(AttemptText, ["attempt"])

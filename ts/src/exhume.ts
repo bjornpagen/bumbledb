@@ -8,13 +8,14 @@
  * is read back for rebirth (exhume the old store, create the successor
  * under the new theory, copy by NAME, re-derive).
  *
- * DELIBERATELY UNTYPED: no branded type appears anywhere on this surface.
- * The caller's schema is the wrong theory for an exhumed store BY
+ * DELIBERATELY SCHEMA-FREE: no schema type appears anywhere on this
+ * surface. The caller's schema is the wrong theory for an exhumed store BY
  * DEFINITION (a store the current theory could open would never need
- * exhuming), so every value crosses as its plain natural JS form and every
- * fact is keyed by field NAME. The SDK never reconstructs a `Schema` value
- * from the descriptor — that inverse mapping is deliberately out of scope;
- * the rebirth tool keys by name.
+ * exhuming), so every value crosses TYPED at its bare structural form
+ * ({@link FactValue} — bigint/string/boolean/bytes/interval, never
+ * `unknown`) and every fact is keyed by field NAME. The SDK never
+ * reconstructs a `Schema` value from the descriptor — that inverse mapping
+ * is deliberately out of scope; the rebirth tool keys by name.
  *
  * ZERO CLOSABLES: no value here carries a close, dispose, or release
  * spelling. The engine-side handle (and the store's exclusive advisory
@@ -57,9 +58,9 @@ const ErrExhumeFormatMismatch = errors.new(
 const ErrExhumeCorruption = errors.new("bumbledb exhume: the persisted schema descriptor fails its integrity gates")
 
 /**
- * One exhumed fact as a plain name-keyed record of natural JS values —
- * deliberately untyped (module doc): `bigint` for u64/i64, `string` for
- * str, `boolean` for bool, `Uint8Array` for bytes<N>, a `{ start, end }`
+ * One exhumed fact as a plain name-keyed record of bare structural values
+ * — deliberately schema-free (module doc): `bigint` for u64/i64, `string`
+ * for str, `boolean` for bool, `Uint8Array` for bytes<N>, a `{ start, end }`
  * bigint pair for intervals. Closed-relation rows open with the synthetic
  * `id` field, exactly as the descriptor's sealed field list declares.
  */
@@ -105,8 +106,8 @@ interface ExhumedRelation {
  * persisted descriptor: relations in engine-id order (declaration order
  * mints every id), each with its ordered field descriptions and closed
  * roster — enough for a caller to key facts by name and re-insert them
- * into a differently-fingerprinted successor store. No branded type
- * appears here (module doc: exhumed data is deliberately untyped).
+ * into a differently-fingerprinted successor store. No schema type appears
+ * here (module doc: the surface is schema-free; rows are typed bare).
  */
 interface ExhumedDescriptor {
 	readonly relations: readonly ExhumedRelation[]
