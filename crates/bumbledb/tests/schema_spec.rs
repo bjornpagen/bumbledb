@@ -15,8 +15,8 @@
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::spec::{
-    FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SideSpec, SpecIssue,
-    StatementSide, StatementSpec, WindowSpec,
+    FaceNewtype, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec,
+    SideSpec, SpecIssue, StatementSide, StatementSpec, WindowSpec,
 };
 use bumbledb::schema::{IntervalElement, ValueType, fingerprint::fingerprint};
 use bumbledb::{Interval, SchemaSpec, Theory, Value};
@@ -647,9 +647,11 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
         target: side("Holder", &["id"]),
         bidirectional: false,
     });
+    // The target pairs AccountId with AccountId — coherent on purpose,
+    // so the unknown handle is the statement's ONE issue.
     spec.statements.push(StatementSpec::Containment {
         source: side_selected("Account", &["id"], "status", "Thawed"),
-        target: side("Holder", &["id"]),
+        target: side("SavingsTerms", &["account"]),
         bidirectional: false,
     });
     let error = spec.descriptor().expect_err("three unresolvable names");
@@ -688,9 +690,11 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
 #[test]
 fn a_handle_on_a_non_reference_field_is_typed() {
     let mut spec = everything_spec();
+    // The target pairs AccountId with AccountId — coherent on purpose,
+    // so the mis-aimed handle is the statement's ONE issue.
     spec.statements.push(StatementSpec::Containment {
         source: side_selected("Account", &["id"], "holder", "Frozen"),
-        target: side("Holder", &["id"]),
+        target: side("SavingsTerms", &["account"]),
         bidirectional: false,
     });
     let error = spec.descriptor().expect_err("HolderId names no vocabulary");
@@ -707,6 +711,135 @@ fn a_handle_on_a_non_reference_field_is_typed() {
                 literal: 0
             }
         }]
+    );
+}
+
+// The coherence check through the spec path — the TS SDK's entry
+// (`docs/architecture/30-dependencies.md` § the taxonomy is checked):
+// the same three-case rule the macro's compile-fail twins pin, judged by
+// the ONE shared lowering.
+
+#[test]
+fn paired_faces_with_disagreeing_newtypes_are_rejected_typed() {
+    let mut spec = everything_spec();
+    // Account.holder is HolderId; Kind's synthetic id is KindId.
+    spec.statements.push(StatementSpec::Containment {
+        source: side("Account", &["holder"]),
+        target: side("Kind", &["id"]),
+        bidirectional: false,
+    });
+    let error = spec.descriptor().expect_err("two labels disagree");
+    assert_eq!(
+        error.issues(),
+        [SpecIssue::StatementNewtypeMismatch {
+            statement: 11,
+            position: 0,
+            source: FaceNewtype {
+                relation: "Account".into(),
+                field: "holder".into(),
+                newtype: Some("HolderId".into()),
+            },
+            target: FaceNewtype {
+                relation: "Kind".into(),
+                field: "id".into(),
+                newtype: Some("KindId".into()),
+            },
+        }],
+        "the rejection cites both faces with their labels"
+    );
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("`Account.holder` (`HolderId`)")
+            && rendered.contains("`Kind.id` (`KindId`)"),
+        "the error names both faces: {rendered}"
+    );
+}
+
+#[test]
+fn a_labeled_face_never_pairs_with_a_bare_one() {
+    let mut spec = everything_spec();
+    // SavingsTerms.account is AccountId; SavingsTerms.rate_bps is bare.
+    spec.statements.push(StatementSpec::Containment {
+        source: side("SavingsTerms", &["account"]),
+        target: side("SavingsTerms", &["rate_bps"]),
+        bidirectional: false,
+    });
+    let error = spec
+        .descriptor()
+        .expect_err("labeled↔bare is the mismatch too");
+    assert_eq!(
+        error.issues(),
+        [SpecIssue::StatementNewtypeMismatch {
+            statement: 11,
+            position: 0,
+            source: FaceNewtype {
+                relation: "SavingsTerms".into(),
+                field: "account".into(),
+                newtype: Some("AccountId".into()),
+            },
+            target: FaceNewtype {
+                relation: "SavingsTerms".into(),
+                field: "rate_bps".into(),
+                newtype: None,
+            },
+        }],
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("`SavingsTerms.rate_bps` (no newtype)"),
+        "the bare face is cited as bare: {error}"
+    );
+}
+
+#[test]
+fn bare_faces_pair_with_bare_faces() {
+    let mut spec = everything_spec();
+    // Holder.name is bare on both faces — the check passes and the
+    // spec lowers (a deliberately-bare pairing stays legal).
+    spec.statements.push(StatementSpec::Containment {
+        source: side("Holder", &["name"]),
+        target: side("Holder", &["name"]),
+        bidirectional: false,
+    });
+    spec.descriptor().expect("bare pairs with bare");
+}
+
+#[test]
+fn a_psi_selected_target_never_bypasses_the_coherence_check() {
+    let mut spec = everything_spec();
+    // The ψ-selected window target: selection never changes the field
+    // pairing — Holder.id (HolderId) still pairs Kind's id (KindId).
+    spec.statements.push(StatementSpec::Cardinality {
+        target: SideSpec {
+            selection: vec![(
+                "mastered".into(),
+                LiteralSetSpec::One(LiteralSpec::Value(Value::Bool(true))),
+            )],
+            ..side("Kind", &["id"])
+        },
+        window: WindowSpec::Exact(1),
+        source: side("Account", &["holder"]),
+    });
+    let error = spec
+        .descriptor()
+        .expect_err("the ψ-selected target's projection is still judged");
+    assert_eq!(
+        error.issues(),
+        [SpecIssue::StatementNewtypeMismatch {
+            statement: 11,
+            position: 0,
+            source: FaceNewtype {
+                relation: "Account".into(),
+                field: "holder".into(),
+                newtype: Some("HolderId".into()),
+            },
+            target: FaceNewtype {
+                relation: "Kind".into(),
+                field: "id".into(),
+                newtype: Some("KindId".into()),
+            },
+        }],
     );
 }
 

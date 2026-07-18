@@ -1420,15 +1420,30 @@ process.once("exit", function closeCachedStores() {
 })
 
 /**
+ * The engine twin of the schema-level class wall, as a matchable value
+ * (`errors.is`): the shared lowering rejected a spec whose statement pairs
+ * faces with disagreeing newtype labels — the faces of a dependency agree
+ * on their newtype, or neither carries one. UNREACHABLE through the typed
+ * builder (the SDK computes every label from the laws, so its lowered
+ * specs cohere by construction); a raw spec handed to the bridge is the
+ * one road here, and the runtime referee that proves the engine judges
+ * what the types claim.
+ */
+const ErrNewtypeMismatch = errors.new(
+	"bumbledb newtypeMismatch: a statement pairs faces whose newtypes disagree — the faces of a dependency agree on their newtype, or neither carries one"
+)
+
+/**
  * The one admission path both verbs share: canonical-path cache lookup
  * first (a hit returns the SAME `Db` value for the identical theory, a
  * typed fingerprint error for a different one, and a typed refusal for
  * `create` — the store a cache entry proves initialized is exactly what
  * create refuses). On a miss: lower the theory, run one bridge call, and
- * wrap the two domain refusals — `schemaError` (spec resolution + schema
- * validation, every issue in one message) and `fingerprintMismatch` (a
- * different theory cannot open the store) — into typed errors carrying the
- * engine's message intact.
+ * wrap the domain refusals — `schemaError` (spec resolution + schema
+ * validation, every issue in one message), `newtypeMismatch` (the
+ * coherence wall, {@link ErrNewtypeMismatch}), and `fingerprintMismatch`
+ * (a different theory cannot open the store) — into typed errors carrying
+ * the engine's message intact.
  */
 function admit<Rels extends SchemaRelations>(
 	verb: "create" | "open",
@@ -1458,6 +1473,9 @@ function admit<Rels extends SchemaRelations>(
 		return native.dbOpen(canonical, spec)
 	})
 	if (!opened.ok) {
+		if (opened.kind === "newtypeMismatch") {
+			throw errors.wrap(ErrNewtypeMismatch, `${verb} ${canonical}: ${opened.message}`)
+		}
 		throw errors.new(`bumbledb ${opened.kind} (${verb} ${canonical}): ${opened.message}`)
 	}
 	const manifest = bridged("fetch bumbledb manifest", function fetchManifest() {
@@ -1526,4 +1544,4 @@ export type {
 	WitnessedWriteResult,
 	WriteResult
 }
-export { abandon, Db }
+export { abandon, Db, ErrNewtypeMismatch }

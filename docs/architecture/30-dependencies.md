@@ -50,6 +50,28 @@ rather than merely asserting it: a right side naming a foreign relation is
 a spanned compile error
 (`crates/bumbledb/tests/schema-compile-fail/key_arrow_foreign_relation.rs`).
 
+**The taxonomy is checked — owner ruling 2026-07-18 ("option 1").** The
+macro's notation stays exactly as written (`as NewType`, `fresh`, every
+statement form — macro-side `ref`, projection sorts, and signature blocks
+were all rejected); what changed is that the hand taxonomy stopped being an
+unchecked claim. The ONE shared lowering (`SchemaSpec::descriptor`, the
+macro's own expansion path) verifies newtype coherence across every
+statement's paired faces, positionwise over the two projections —
+containment, `==`, and cardinality-window target pairs alike, ψ-selected
+faces included (selection never changes the pairing). The rule's three
+cases: labeled pairs only with the SAME label; bare pairs only with bare
+(so a deliberately-bare pointer in no paired-face statement stays legal);
+a labeled↔bare pairing is an error too — the same strictness the TS SDK's
+computed classes enforce, so the two hosts judge identically from opposite
+directions (Rust declares sorts and checks them against the laws; TS
+declares nothing and computes the sorts FROM the laws). Surfaced per host
+idiom: a `compile_error!` spanned at both offending faces
+(`tests/schema-compile-fail/statement_newtype_mismatch.rs`,
+`statement_newtype_half_labeled.rs`) and the typed
+`SpecIssue::StatementNewtypeMismatch` on the spec path (the SDK's
+`newtypeMismatch` rejection). Authoring-time only: newtypes are dropped at
+lowering, so descriptors, fingerprints, and stores never carry this law.
+
 **Containment (IND).** `A(X | φ) <= B(Y | ψ)`: subset inclusion of the selected
 projected views (`lean/Bumbledb/Dependencies.lean: Containment`,
 `contains_iff_view_subset`). |X| = |Y| with positional type equality — exact

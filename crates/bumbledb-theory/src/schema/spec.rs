@@ -10,9 +10,12 @@
 //! The division of labor mirrors the macro's exactly:
 //!
 //! - [`SchemaSpec::descriptor`] does what macro EXPANSION does — name→id
-//!   resolution (relations, fields, closed-relation handles) and the
+//!   resolution (relations, fields, closed-relation handles), the
 //!   canonical-utterance ban table over window spellings and literal
-//!   sets — surfacing every failure as the typed [`SchemaSpecError`],
+//!   sets, and the newtype-coherence check over every statement's paired
+//!   faces (`docs/architecture/30-dependencies.md` § the taxonomy is
+//!   checked; authoring-time only — newtypes never reach the descriptor)
+//!   — surfacing every failure as the typed [`SchemaSpecError`],
 //!   which enumerates ALL unresolvable names and banned spellings rather
 //!   than stopping at the first (a foreign host gets one round trip).
 //! - Everything semantic beyond names stays where the macro defers it:
@@ -208,6 +211,30 @@ pub enum LiteralAt {
     },
 }
 
+/// One face of a paired-face statement as the coherence check cites it:
+/// the relation and field the projection names at the offending position,
+/// plus the newtype label that column carries — a closed relation's
+/// synthetic `id` carries the handle newtype; `None` is the bare column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FaceNewtype {
+    pub relation: Box<str>,
+    pub field: Box<str>,
+    pub newtype: Option<Box<str>>,
+}
+
+impl FaceNewtype {
+    /// The face as an error names it: `` `Rel.field` (`NewType`) `` or
+    /// `` `Rel.field` (no newtype) `` — public so the macro's teaching
+    /// message and the spec path's `Display` speak one citation.
+    #[must_use]
+    pub fn cite(&self) -> String {
+        match &self.newtype {
+            Some(newtype) => format!("`{}.{}` (`{newtype}`)", self.relation, self.field),
+            None => format!("`{}.{}` (no newtype)", self.relation, self.field),
+        }
+    }
+}
+
 /// One resolution failure of [`SchemaSpec::descriptor`] — a name the spec
 /// used that its own declarations never introduce, or a banned spelling
 /// of the canonical-utterance law. `statement` payloads index
@@ -294,9 +321,31 @@ pub enum SpecIssue {
         field: Box<str>,
         len: usize,
     },
+    /// A paired-face statement (containment, `==`, or a cardinality
+    /// window) puts two columns whose newtype labels disagree at one
+    /// projection position — the coherence check
+    /// (`docs/architecture/30-dependencies.md` § the taxonomy is
+    /// checked): the faces of a dependency agree on their newtype, or
+    /// neither carries one (labeled pairs only with the SAME label,
+    /// bare pairs only with bare — the TS wall's own law, adopted so
+    /// the two hosts judge identically). Authoring-time only: newtypes
+    /// are dropped at lowering, so descriptors, fingerprints, and
+    /// stores never see this law.
+    StatementNewtypeMismatch {
+        statement: usize,
+        /// The projection position (0-based) where the faces disagree.
+        position: usize,
+        source: FaceNewtype,
+        target: FaceNewtype,
+    },
 }
 
 impl std::fmt::Display for SpecIssue {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per issue, each a paste-back instruction — \
+                  clearer kept together (the `descriptor` precedent)"
+    )]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownRelation {
@@ -392,6 +441,18 @@ impl std::fmt::Display for SpecIssue {
                  — a one-element set is the bare literal: write `{field} == L`, no \
                  braces"
             ),
+            Self::StatementNewtypeMismatch {
+                statement,
+                position,
+                source,
+                target,
+            } => write!(
+                f,
+                "statement {statement}: position {position} pairs {} with {} — the \
+                 faces of a dependency agree on their newtype, or neither carries one",
+                source.cite(),
+                target.cite()
+            ),
         }
     }
 }
@@ -483,6 +544,64 @@ impl<'spec> Resolver<'spec> {
             .iter()
             .find(|f| &*f.name == name)
             .and_then(|f| f.newtype.as_deref())
+    }
+
+    /// Whether relation `rel_idx`'s SEALED shape declares `name` — the
+    /// silent twin of [`Resolver::field`], for the checks that run
+    /// where resolution already reports the unknown name.
+    fn declares(&self, rel_idx: usize, name: &str) -> bool {
+        let relation = &self.spec.relations[rel_idx];
+        (relation.extension.is_some() && name == "id")
+            || relation.fields.iter().any(|f| &*f.name == name)
+    }
+
+    /// The coherence check — the newtype law over one statement's
+    /// paired faces (`docs/architecture/30-dependencies.md` § the
+    /// taxonomy is checked): positionwise over the two projections, the
+    /// paired columns' newtype labels must agree — labeled with the
+    /// SAME label, bare with bare; a labeled↔bare pairing is the
+    /// mismatch too. σ selections never change the pairing (a
+    /// ψ-selected face pairs by its projection exactly as a bare one),
+    /// and a column in no paired-face statement is untouched — a
+    /// deliberately-bare pointer stays legal. Runs on the spec's names,
+    /// BEFORE newtype-dropping (authoring-time only — descriptors and
+    /// fingerprints carry no newtypes); unresolvable names are skipped
+    /// (resolution reports them), and unequal projection arities pair
+    /// the common prefix (the engine's `ContainmentArityMismatch` owns
+    /// the rest).
+    fn coherent(&mut self, statement: usize, source: &SideSpec, target: &SideSpec) {
+        let position_of = |name: &str| self.spec.relations.iter().position(|r| &*r.name == name);
+        let (Some(source_rel), Some(target_rel)) =
+            (position_of(&source.relation), position_of(&target.relation))
+        else {
+            return;
+        };
+        for (position, (source_field, target_field)) in
+            source.projection.iter().zip(&target.projection).enumerate()
+        {
+            if !(self.declares(source_rel, source_field) && self.declares(target_rel, target_field))
+            {
+                continue;
+            }
+            let source_newtype = self.field_newtype(source_rel, source_field);
+            let target_newtype = self.field_newtype(target_rel, target_field);
+            if source_newtype == target_newtype {
+                continue;
+            }
+            let face = |rel_idx: usize, field: &str, newtype: Option<&str>| FaceNewtype {
+                relation: self.spec.relations[rel_idx].name.clone(),
+                field: field.into(),
+                newtype: newtype.map(Into::into),
+            };
+            let source_face = face(source_rel, source_field, source_newtype);
+            let target_face = face(target_rel, target_field, target_newtype);
+            self.issues.push(SpecIssue::StatementNewtypeMismatch {
+                statement,
+                position,
+                source: source_face,
+                target: target_face,
+            });
+        }
     }
 
     /// One literal at its field position — a [`LiteralSpec::Handle`]
@@ -765,6 +884,7 @@ impl SchemaSpec {
                     target,
                     bidirectional,
                 } => {
+                    resolver.coherent(index, source, target);
                     let source_side = resolver.side(index, StatementSide::Source, source);
                     let target_side = resolver.side(index, StatementSide::Target, target);
                     let (Some(source), Some(target)) = (source_side, target_side) else {
@@ -788,6 +908,7 @@ impl SchemaSpec {
                     window,
                     source,
                 } => {
+                    resolver.coherent(index, source, target);
                     let (lo, hi) = resolver.window(index, *window);
                     let source_side = resolver.side(index, StatementSide::Source, source);
                     let target_side = resolver.side(index, StatementSide::Target, target);

@@ -1589,7 +1589,7 @@ mod element_domain_typing {
 
         relation Slot {
             playlist: u64 as PlaylistId,
-            slot: interval<u64, 1> as SlotPos,
+            slot: interval<u64, 1> as PlaylistSpan,
             track: u64,
         }
 
@@ -1598,8 +1598,8 @@ mod element_domain_typing {
         Slot(playlist, slot) == Playlist(id, span);
     }
 
-    fn unit(at: u64) -> SlotPos {
-        SlotPos(Interval::<u64>::fixed(at, 1).expect("in-domain unit slot"))
+    fn unit(at: u64) -> PlaylistSpan {
+        PlaylistSpan(Interval::<u64>::fixed(at, 1).expect("in-domain unit slot"))
     }
 
     /// The tiling delta: one playlist over `[0, 3)` and the three unit
@@ -1816,5 +1816,31 @@ mod element_domain_typing {
             "every unit slot intersects its span"
         );
         assert_eq!(answers(AllenMask::AFTER), Vec::<u64>::new());
+    }
+}
+
+/// The coherence check's PASSING arm, pinned beside its two compile-fail
+/// twins (`tests/schema-compile-fail/statement_newtype_mismatch.rs`,
+/// `statement_newtype_half_labeled.rs`): bare pairs with bare — a
+/// paired-face statement over two UNLABELED columns expands and the
+/// theory seals (`docs/architecture/30-dependencies.md` § the taxonomy
+/// is checked).
+mod newtype_coherence_pass {
+    bumbledb::schema! {
+        pub BareFaces;
+
+        relation Node { id: u64 }
+        relation Edge { from: u64, to: u64 }
+
+        Node(id) -> Node;
+        Edge(from) <= Node(id);
+        Edge(to)   <= Node(id);
+    }
+
+    #[test]
+    fn bare_pairs_with_bare_and_the_theory_seals() {
+        let dir = crate::common::TempDir::new("m5-bare-faces");
+        bumbledb::Db::create(dir.path(), BareFaces)
+            .expect("bare faces pair with bare faces — the coherence check passes");
     }
 }

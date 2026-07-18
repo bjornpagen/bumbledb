@@ -1595,6 +1595,29 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
             field,
             len,
         } => multi(spans.sets.get(&(*statement, field.to_string(), *len))),
+        // The coherence check cites both faces — each disagrees with the
+        // other, so both field idents are offending and both are marked.
+        SpecIssue::StatementNewtypeMismatch {
+            statement,
+            source,
+            target,
+            ..
+        } => {
+            let face = |relation: &str, field: &str| {
+                spans
+                    .fields
+                    .get(&(*statement, relation.to_owned(), field.to_owned()))
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            let mut marked = face(&source.relation, &source.field);
+            marked.extend(face(&target.relation, &target.field));
+            if marked.is_empty() {
+                vec![Span::call_site()]
+            } else {
+                marked
+            }
+        }
     }
 }
 
@@ -1602,6 +1625,11 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
 /// verbatim, each naming the canonical form (the ban table's law). The
 /// containment-respelled window composes the paste-back containment from
 /// the spec's own statement.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per issue, each a teaching message — \
+              clearer kept together (the `descriptor` precedent)"
+)]
 fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
     match issue {
         SpecIssue::UnknownRelation { relation, .. } => {
@@ -1675,6 +1703,35 @@ fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
             "schema!: the literal set for `{field}` has one element — a one-element \
              set is the bare literal: write `{field} == L`, no braces"
         ),
+        SpecIssue::StatementNewtypeMismatch {
+            statement,
+            source,
+            target,
+            ..
+        } => {
+            let form = match &spec.statements[*statement] {
+                StatementSpec::Containment {
+                    bidirectional: false,
+                    ..
+                } => "containment",
+                StatementSpec::Containment {
+                    bidirectional: true,
+                    ..
+                } => "set equality",
+                StatementSpec::Cardinality { .. } => "window",
+                StatementSpec::Fd { .. } => {
+                    unreachable!(
+                        "an FD has no paired faces — the arrow closes over its own relation"
+                    )
+                }
+            };
+            format!(
+                "schema!: the {form} pairs {} with {} — the faces of a dependency \
+                 agree on their newtype, or neither carries one",
+                source.cite(),
+                target.cite()
+            )
+        }
     }
 }
 

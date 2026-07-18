@@ -85,7 +85,12 @@ const spec: SchemaSpec = {
 			name: "Edge",
 			newtype: undefined,
 			fields: [
-				{ name: "from", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
+				// `from` pairs `Person.id` in the containment and the window
+				// below, so the coherence wall requires the shared label
+				// (M5: the faces of a dependency agree on their newtype, or
+				// neither carries one); `to` sits in no paired-face
+				// statement and stays deliberately bare.
+				{ name: "from", valueType: { kind: "u64" }, newtype: "PersonId", fresh: false },
 				{ name: "to", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
 				{ name: "weight", valueType: { kind: "u64" }, newtype: undefined, fresh: false }
 			],

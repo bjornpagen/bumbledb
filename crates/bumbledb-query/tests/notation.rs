@@ -123,7 +123,7 @@ mod calendar {
             rsvp: u64 as RsvpId,
         }
         relation Claim {
-            source: u64,
+            source: u64 as AttendanceId,
             person: u64 as CalPersonId,
             arm: u64 as ClaimKindId,
             span: interval<i64>,
