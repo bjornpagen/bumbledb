@@ -21,7 +21,8 @@
 	},
 	"files": [
 		"dist",
-		"src"
+		"src",
+		"COOKBOOK.md"
 	],
 	"scripts": {
 		"build": "node scripts/build.ts",

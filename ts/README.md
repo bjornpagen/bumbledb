@@ -73,6 +73,10 @@ const rows = db.execute(prepared, { holder: adaId }) // rows: { acct: AccountId 
 - The query surface — Datalog as values: scoped vars/params, atoms, negation, conditions, aggregates, engine recursion via predicates, `db.prepare`.
 - The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name.
 
+## Cookbook
+
+The engine cookbook's 29 modeling recipes, translated to this SDK's structural API: [COOKBOOK.md](./COOKBOOK.md). Every recipe is compile-pinned by `test/cookbook.test.ts` — each schema is admitted by the real engine and every query snippet lowers through `db.prepare` — so the cookbook can never drift from the surface.
+
 ## Architecture
 
 The SDK is a typed surface over the native engine; the model (relations,
