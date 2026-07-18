@@ -83,10 +83,12 @@ every write judged identically by an independent naive model — across a
 
 ![read families vs SQLite](assets/bench-vs-sqlite.svg)
 
-The same data as multiples — twenty-four read families across two theories:
-the ledger (point lookups through negation, interval probes, and the triangle
-join) and the calendar (Allen-mask scans, the RSVP-arm union, conflict pairs,
-`Pack` free-busy, `Sum(Duration)` accounting):
+The same data as multiples — twenty-two gated read families across two
+theories, the ledger (point lookups through negation, interval probes, and
+the triangle join) and the calendar (Allen-mask scans, the RSVP-arm union,
+conflict pairs, `Pack` free-busy, `Sum(Duration)` accounting). Geomean:
+**21×** over SQLite p50, min-of-3 both sides; the ephemeral-store runs land
+at 20.9× — reads are mmap-warm either way:
 
 ![speedup over SQLite](assets/bench-speedup.svg)
 
@@ -98,7 +100,7 @@ of magnitude inside SQLite's:
 
 Beyond the ledger, the suite runs four non-ledger scenario worlds —
 JOB-shaped joins, a social graph, an OLAP star, and point-lookup surfaces —
-22 queries, each oracle-gated before timing. Geomean across all 22: **16×**:
+22 queries, each oracle-gated before timing. Geomean across all 22: **17×**:
 
 ![scenario worlds](assets/bench-scenarios.svg)
 
@@ -107,7 +109,7 @@ engines, and bulk load favors SQLite's write path; we publish it anyway:
 
 ![writes and cold](assets/bench-writes.svg)
 
-**Context that keeps these numbers honest:** S-scale corpora (a 10⁵-fact-
+**Context that keeps these numbers honest:** S-scale corpora (a 10⁵-fact
 fact-table ledger and a calendar world of interval claims, RSVP arms, and
 ray horizons), Apple M2 Max, engine-favorable workload class (point lookups
 through multi-way joins, interval algebra, and aggregates — exactly what a
