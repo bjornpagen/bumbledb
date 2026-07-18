@@ -4,7 +4,10 @@
  * position, `on(Booking, ["room", "during"])` the composite/pointwise
  * position (one spelling, arity-generic), `on(Account.where({ kind:
  * Kind.Savings }), "id")` the σ-carrying source, `on(Kind, "id")` a closed
- * relation's sealed shape opened through its synthetic `id`. Projection is
+ * relation's sealed shape opened through its synthetic `id`,
+ * `on(Kind.where({ mastered: true }), "id")` the ψ-selected closed source
+ * (the selection lowered as-is — the ENGINE folds it against the sealed
+ * extension at validate, never the SDK). Projection is
  * positional: tuple order is preserved in the type, and the statement
  * constructors pair the two sides' tuples by arity ({@link SameArity}) AND
  * by structural shape ({@link SameShapes}) — every projected field's
@@ -15,7 +18,7 @@
  * where they aggregate and get judged (the one-generator-per-class wall).
  */
 
-import type { AnyClosed, PayloadField } from "#closed.ts"
+import type { AnyClosed, AnySelectedClosed, PayloadField } from "#closed.ts"
 import type { AnyField } from "#fields.ts"
 import type { AnyRelation, AnySelected, FieldsShape, RelationFields, SelectionBinding } from "#relation.ts"
 import { renderLiteralSet } from "#spec.ts"
@@ -24,10 +27,11 @@ import { renderLiteralSet } from "#spec.ts"
 const emptySelection: readonly SelectionBinding[] = Object.freeze([])
 
 /**
- * Splits a face source into its owner and σ: a selected relation carries
- * its own bindings (`relation` is the discriminant — the property exists on
- * no relation or closed value, and `closed()` reserves the name against
- * handle collisions); a bare relation or closed relation carries none.
+ * Splits a face source into its owner and σ: a selected relation — ordinary
+ * σ or closed ψ, one shape — carries its own bindings (`relation` is the
+ * discriminant — the property exists on no relation or closed value, and
+ * `closed()` reserves the name against handle collisions); a bare relation
+ * or closed relation carries none.
  */
 function faceParts(source: FaceSource): {
 	readonly owner: FaceOwner
@@ -86,23 +90,25 @@ interface Face<S extends FaceSource, P extends readonly string[]> {
 /** Any face value, whatever its source and projection. */
 type AnyFace = Face<FaceSource, readonly string[]>
 
-/** What `on()` accepts: a relation, a selected relation, or a closed relation. */
-type FaceSource = AnyRelation | AnyClosed | AnySelected
+/** What `on()` accepts: a relation, a closed relation, or either with a selection applied. */
+type FaceSource = AnyRelation | AnyClosed | AnySelected | AnySelectedClosed
 
 /**
  * The field names a face over `S` may project: a relation's declared
  * fields; a selected relation's underlying fields; a closed relation's
- * SEALED shape — the synthetic `id` plus its declared payload columns
- * (`docs/architecture/70-api.md`: statement field names address the sealed
- * shape).
+ * SEALED shape — the synthetic `id` plus its declared payload columns,
+ * bare or ψ-selected alike (`docs/architecture/70-api.md`: statement field
+ * names address the sealed shape).
  */
 type FaceFields<S extends FaceSource> = S extends AnySelected
 	? keyof S["relation"]["fields"] & string
-	: S extends AnyRelation
-		? keyof S["fields"] & string
-		: S extends { readonly axioms: Readonly<Record<string, infer Row>> }
-			? "id" | (keyof Row & string)
-			: never
+	: S extends AnySelectedClosed
+		? "id" | (keyof S["relation"]["columns"] & string)
+		: S extends AnyRelation
+			? keyof S["fields"] & string
+			: S extends { readonly axioms: Readonly<Record<string, infer Row>> }
+				? "id" | (keyof Row & string)
+				: never
 
 /**
  * One descriptor's structural comparand: the kind/width/element triple —
@@ -122,24 +128,28 @@ type ShapeIn<Fields extends FieldsShape, K extends string> = K extends keyof Fie
 /**
  * The structural SHAPE of one projected field, read off the source's
  * schema type — an ordinary or selected relation's field contributes its
- * descriptor's triple; a closed relation's synthetic `id` is a u64, and
- * its payload columns contribute their declared descriptors' triples
- * through the closed value's typed `columns` carrier (whose runtime twin
- * is the frozen `columns` record the mint carries). The engine stays the
- * final authority at `Db.create`/`Db.open`.
+ * descriptor's triple; a closed relation (bare or ψ-selected) contributes
+ * its synthetic `id` as a u64 and its payload columns' declared
+ * descriptors' triples through the closed value's typed `columns` carrier
+ * (whose runtime twin is the frozen `columns` record the mint carries).
+ * The engine stays the final authority at `Db.create`/`Db.open`.
  */
 type ProjectedShape<S extends FaceSource, K extends string> = S extends AnySelected
 	? ShapeIn<RelationFields<S["relation"]>, K>
-	: S extends AnyRelation
-		? ShapeIn<RelationFields<S>, K>
-		: S extends {
-					readonly id: infer Id extends AnyField
-					readonly columns: infer Cols extends Record<string, PayloadField>
-				}
-			? K extends "id"
-				? ShapeOf<Id>
-				: ShapeIn<Cols, K>
-			: undefined
+	: S extends AnySelectedClosed
+		? K extends "id"
+			? ShapeOf<S["relation"]["id"]>
+			: ShapeIn<S["relation"]["columns"], K>
+		: S extends AnyRelation
+			? ShapeIn<RelationFields<S>, K>
+			: S extends {
+						readonly id: infer Id extends AnyField
+						readonly columns: infer Cols extends Record<string, PayloadField>
+					}
+				? K extends "id"
+					? ShapeOf<Id>
+					: ShapeIn<Cols, K>
+				: undefined
 
 /** The positionwise structural-shape tuple of a projection over `S`. */
 type ShapesOf<S extends FaceSource, P extends readonly string[]> = {

@@ -21,6 +21,7 @@
 
 export type {
 	AnyClosed,
+	AnySelectedClosed,
 	AxiomRow,
 	Axioms,
 	Closed,
@@ -28,7 +29,9 @@ export type {
 	ClosedCore,
 	ClosedData,
 	ClosedRow,
-	PayloadField
+	ClosedSelectionInput,
+	PayloadField,
+	SelectedClosed
 } from "#closed.ts"
 export { closed } from "#closed.ts"
 export type { Count } from "#count.ts"

@@ -13,7 +13,11 @@
  * the golden also pins the implied-key spellings the SDK never utters.
  * Selection literals lean adversarial on purpose: the `char::escape_debug`
  * and `u8::escape_ascii` mirrors are exactly where the two renderers could
- * drift silently.
+ * drift silently. The ψ-on-closed golden (PRD-K1) runs against its own
+ * store: `Grade.where({ mastered: true })` as a statement face — created,
+ * manifest-pinned, folded by the ENGINE at validate, and rejected with the
+ * violation's canonical string equal to the manifest spelling byte for
+ * byte.
  */
 
 import assert from "node:assert/strict"
@@ -24,6 +28,7 @@ import { after, describe, test } from "node:test"
 
 import { closed } from "#closed.ts"
 import { atLeast, atMost, between, exactly, none } from "#count.ts"
+import { Db } from "#db.ts"
 import { on, oneOf } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
@@ -35,19 +40,15 @@ import { contained, key, mirrors, renderStatement, type Statement, window } from
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-render-golden-"))
 const storeDir = path.join(tmpRoot, "store")
-
-const HolderId = u64.as("HolderId")
-const AccountId = u64.as("AccountId")
-const RoomId = u64.as("RoomId")
-const ActiveDuring = interval(i64).as("ActiveDuring")
-const BookedDuring = interval(u64).as("BookedDuring")
+const psiStoreDir = path.join(tmpRoot, "psi-store")
+const psiDbDir = path.join(tmpRoot, "psi-db-store")
 
 const Status = closed("Status", ["Active", "Frozen"])
 const Kind = closed("Kind", ["Checking", "Savings", "Brokerage"])
-const Holder = relation("Holder", { id: HolderId.fresh, name: str })
+const Holder = relation("Holder", { id: u64.fresh, name: str })
 const Account = relation("Account", {
-	id: AccountId.fresh,
-	holder: HolderId,
+	id: u64.fresh,
+	holder: u64,
 	kind: Kind.id,
 	status: Status.id,
 	score: i64,
@@ -55,11 +56,11 @@ const Account = relation("Account", {
 	label: str,
 	flag: bool,
 	tag: bytes(4),
-	active: ActiveDuring
+	active: interval(i64)
 })
-const Booking = relation("Booking", { room: RoomId, during: BookedDuring })
-const Slot = relation("Slot", { room: RoomId, during: BookedDuring })
-const SavingsTerms = relation("SavingsTerms", { account: AccountId })
+const Booking = relation("Booking", { room: u64, during: interval(u64) })
+const Slot = relation("Slot", { room: u64, during: interval(u64) })
+const SavingsTerms = relation("SavingsTerms", { account: u64 })
 
 /**
  * The escape gauntlet: a single quote, escaped double quotes, a tab, a
@@ -123,6 +124,23 @@ const statements = [
 
 const Golden = schema("Golden", { Status, Kind, Holder, Account, Booking, Slot, SavingsTerms }, statements)
 
+/**
+ * The ψ-on-closed fixtures (PRD-K1): a payload-tier closed vocabulary
+ * ψ-selected by its own column as a statement face — one containment and
+ * one window over `Grade(id | mastered == true)`, and NO handle literal
+ * anywhere (a handle literal resolves through the law-computed newtype,
+ * which lands in K4; the ψ selection itself is a plain bool literal and
+ * resolves against the sealed columns today).
+ */
+const Grade = closed("Grade", { mastered: bool })({
+	Failed: { mastered: false },
+	DirectPass: { mastered: true }
+})
+const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
+const closedPsiContainment = contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id"))
+const closedPsiWindow = window(on(Grade.where({ mastered: true }), "id"), atMost(1n), on(Certificate, "grade"))
+const Mastery = schema("Mastery", { Grade, Certificate }, [closedPsiContainment, closedPsiWindow])
+
 /** One expected materialized slot: the form tag and the canonical spelling. */
 interface Slot {
 	readonly kind: StatementKindTag
@@ -183,10 +201,14 @@ function expectedSlots(theory: AnySchema): Slot[] {
 }
 
 let db: DbHandle | undefined
+let psiDb: DbHandle | undefined
 
 after(function cleanup() {
 	if (db !== undefined) {
 		native.dbClose(db)
+	}
+	if (psiDb !== undefined) {
+		native.dbClose(psiDb)
 	}
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
@@ -237,5 +259,75 @@ describe("the TS-render ⇄ manifest-render golden", function suite() {
 				`slot ${index}: the manifest's engine spelling equals the SDK's canonical render`
 			)
 		})
+	})
+})
+
+describe("the ψ-on-closed golden: manifest spelling, engine folding, violation paste-back", function psiSuite() {
+	test("every Mastery slot's manifest spelling equals the SDK render", function psiGolden() {
+		const created = native.dbCreate(psiStoreDir, lower(Mastery))
+		if (!created.ok) {
+			assert.fail(`dbCreate refused the Mastery theory (${created.kind}): ${created.message}`)
+		}
+		psiDb = created.db
+		const manifest: Manifest = native.dbManifest(psiDb)
+		const expected = expectedSlots(Mastery)
+		assert.equal(
+			manifest.statements.length,
+			expected.length,
+			"the SDK mirror and the engine agree on the materialized statement count"
+		)
+		manifest.statements.forEach(function verifyPsiSlot(statement, index) {
+			const slot = expected[index]
+			assert.ok(slot, `expected slot ${index} exists`)
+			assert.equal(statement.kind, slot.kind, `slot ${index} form tag`)
+			assert.equal(
+				statement.spelling,
+				slot.spelling,
+				`slot ${index}: the manifest's engine spelling equals the SDK's canonical render`
+			)
+		})
+	})
+
+	test("the ENGINE folds ψ at validate: a member commit lands, a non-member commit pastes the manifest spelling back", function psiCommit() {
+		const handle = psiDb
+		assert.ok(handle !== undefined, "the ψ store is open")
+		const manifest = native.dbManifest(handle)
+		const certificate = manifest.relations.find(function byName(candidate) {
+			return candidate.name === "Certificate"
+		})
+		assert.ok(certificate, "the manifest names Certificate")
+
+		const passing = native.dbWriteBegin(handle)
+		assert.equal(native.txInsert(passing, certificate.id, [1n, Grade.DirectPass]), true)
+		const landed = native.txCommit(passing)
+		assert.ok(landed.ok, "a certificate over a ψ-member grade commits")
+
+		const violating = native.dbWriteBegin(handle)
+		assert.equal(native.txInsert(violating, certificate.id, [2n, Grade.Failed]), true)
+		const rejected = native.txCommit(violating)
+		assert.ok(!rejected.ok, "a certificate over a non-member grade is rejected")
+		assert.equal(rejected.violations.length, 1, "exactly the ψ containment is violated")
+		const violation = rejected.violations[0]
+		assert.ok(violation, "the violation is present")
+		assert.equal(violation.kind, "containment")
+		assert.equal(violation.canonical, renderStatement(closedPsiContainment))
+		assert.equal(violation.canonical, "Certificate(grade) <= Grade(id | mastered == true)")
+		const manifestSlot = manifest.statements.find(function bySpelling(statement) {
+			return statement.spelling === violation.canonical
+		})
+		assert.ok(manifestSlot, "the violation's canonical string IS a manifest spelling, byte for byte")
+	})
+
+	test("Db.create accepts the ψ theory and the violation IS the statement value", async function psiDbRuntime() {
+		const masteryDb = await Db.create(psiDbDir, Mastery)
+		const rejected = masteryDb.write(function violate(tx) {
+			tx.insert(Certificate, { grade: Grade.Failed })
+		})
+		assert.ok(!rejected.ok, "the ψ containment rejects the non-member grade")
+		assert.equal(rejected.violations.length, 1)
+		const violation = rejected.violations[0]
+		assert.ok(violation, "the violation is present")
+		assert.strictEqual(violation.statement, closedPsiContainment)
+		assert.equal(violation.canonical, renderStatement(closedPsiContainment))
 	})
 })

@@ -10,8 +10,10 @@
  * existence AND structural shape (positionwise kind/width/element, read
  * off the schema type; the DOMAIN wall lives at `schema()` and is K4's,
  * not construction's); `schema()` enforces its expansion-boundary checks
- * including the handle-selection paste-back law; and `renderStatement`
- * emits the canonical `70-api.md` spellings exactly.
+ * including the handle-selection paste-back law; ψ-selection over closed
+ * relations (`Grade.where({ mastered: true })` as a face source) is typed,
+ * rendered, and lowered PASS-THROUGH (the engine folds at validate); and
+ * `renderStatement` emits the canonical `70-api.md` spellings exactly.
  */
 
 import assert from "node:assert/strict"
@@ -21,7 +23,7 @@ import { closed } from "#closed.ts"
 import * as countModule from "#count.ts"
 import { atLeast, atMost, between, exactly, none } from "#count.ts"
 import { on, oneOf } from "#face.ts"
-import { bytes, i64, interval, span, str, u64 } from "#fields.ts"
+import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
@@ -58,6 +60,26 @@ function buildCalendar() {
 	]
 	const Calendar = schema("Calendar", { Booking, Slot }, statements)
 	return { Booking, Slot, statements, Calendar }
+}
+
+/**
+ * The ψ fixtures: a payload-tier closed vocabulary selected by its own
+ * columns (`Grade.where({ mastered: true })`) as a face source — Hole A of
+ * ψ-selection closed. The selection is lowered AS-IS (pass-through — the
+ * engine folds against the sealed extension at validate), so the two ψ
+ * statement forms here are the exact shapes the macro's
+ * `Grade(id | mastered == true)` lowers to.
+ */
+function buildMastery() {
+	const Grade = closed("Grade", { mastered: bool, score: u64 })({
+		Failed: { mastered: false, score: 0n },
+		DirectPass: { mastered: true, score: 2n }
+	})
+	const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
+	const psiContainment = contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id"))
+	const psiWindow = window(on(Grade.where({ mastered: true }), "id"), atMost(1n), on(Certificate, "grade"))
+	const Mastery = schema("Mastery", { Grade, Certificate }, [psiContainment, psiWindow])
+	return { Grade, Certificate, psiContainment, psiWindow, Mastery }
 }
 
 /**
@@ -386,6 +408,84 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 	})
 })
 
+describe("ψ statements over closed relations — closed().where() as a face source", function describePsi() {
+	test("a ψ-selected closed face renders canonically and schema() admits both forms", function probePsiCanonical() {
+		const { psiContainment, psiWindow, Mastery } = buildMastery()
+		assert.equal(renderStatement(psiContainment), "Certificate(grade) <= Grade(id | mastered == true)")
+		assert.equal(renderStatement(psiWindow), "Grade(id | mastered == true) <={0..1} Certificate(grade)")
+		assert.equal(Mastery.statements.length, 2)
+	})
+
+	test("ψ lowers PASS-THROUGH — the selection rides the SideSpec, never pre-folded into ids", function probePsiLowering() {
+		const { Mastery } = buildMastery()
+		const psiTarget = {
+			relation: "Grade",
+			projection: ["id"],
+			selection: [["mastered", { kind: "one", literal: { kind: "value", value: { kind: "bool", value: true } } }]]
+		}
+		assert.deepStrictEqual(lower(Mastery).statements, [
+			{
+				kind: "containment",
+				source: { relation: "Certificate", projection: ["grade"], selection: [] },
+				target: psiTarget,
+				bidirectional: false
+			},
+			{
+				kind: "cardinality",
+				target: psiTarget,
+				window: { kind: "range", lo: 0n, hi: 1n },
+				source: { relation: "Certificate", projection: ["grade"], selection: [] }
+			}
+		])
+	})
+
+	test("the closed where() speaks the ordinary selection vocabulary — literal sets and written order", function probePsiVocabulary() {
+		const { Grade, Certificate } = buildMastery()
+		assert.equal(
+			renderStatement(contained(on(Certificate, "grade"), on(Grade.where({ score: oneOf(0n, 2n) }), "id"))),
+			"Certificate(grade) <= Grade(id | score == {0, 2})"
+		)
+		assert.deepStrictEqual(
+			Grade.where({ score: 2n, mastered: true }).selection.map(function fieldOf(binding) {
+				return binding.field
+			}),
+			["score", "mastered"]
+		)
+	})
+
+	test("the empty ψ is the bare closed relation respelled and rejected (canonical utterance)", function probeEmptyPsi() {
+		const { Grade } = buildMastery()
+		assert.throws(function emptySelection() {
+			Grade.where({})
+		}, /an empty selection is the bare relation respelled/)
+	})
+
+	test("the compile walls carry runtime twins through the one selection machine", function probePsiRuntimeTwins() {
+		const { Grade } = buildMastery()
+		assert.throws(function unknownColumn() {
+			// @ts-expect-error — Grade has no column `nope` (the runtime twin of the compile wall)
+			Grade.where({ nope: true })
+		}, /relation Grade has no field nope/)
+		assert.throws(function idExcluded() {
+			// @ts-expect-error — the synthetic id is not selectable through where() (handle literals on the referencing side are the spelling)
+			Grade.where({ id: 0n })
+		}, /relation Grade has no field id/)
+		assert.throws(function wrongLiteral() {
+			// @ts-expect-error — mastered is a bool column: a bigint literal is out of shape
+			Grade.where({ mastered: 1n })
+		}, /expected boolean/)
+	})
+
+	test("a handle named `where` collides with the ψ surface — a construction error, both tiers", function probeReservedWhere() {
+		assert.throws(function bareTier() {
+			closed("Bad", ["where"])
+		}, /handle where collides with the closed value's own surface/)
+		assert.throws(function payloadTier() {
+			closed("Bad", { pages: bool })({ where: { pages: true } })
+		}, /handle where collides with the closed value's own surface/)
+	})
+})
+
 // ————————————————————————————————————————————————————————————————————————
 // The construction compile probes: field references are checked in the
 // TYPE — existence (names autocomplete, unknown field = type error) and
@@ -477,10 +577,57 @@ function selectionsAreTyped(): unknown[] {
 	]
 }
 
+/**
+ * The closed `where()` is typed exactly like the ordinary one — payload
+ * columns only (the synthetic `id` is excluded: an id selection is spelled
+ * only as handle literals on the referencing side), the same literal/one-of
+ * vocabulary — and it exists ONLY on the payload tier: the bare tier has no
+ * payload, so `.where` is a type-level ABSENCE there, not an uncallable
+ * method.
+ */
+function closedSelectionsAreTyped(): unknown[] {
+	const { Kind } = buildLedger()
+	const { Grade } = buildMastery()
+	return [
+		Grade.where({ mastered: true }),
+		Grade.where({ score: oneOf(0n, 2n) }),
+		// @ts-expect-error — the bare tier has no payload columns: `.where` does not exist there
+		Kind.where({}),
+		// @ts-expect-error — Grade has no column `nope`
+		Grade.where({ nope: true }),
+		// @ts-expect-error — mastered is a bool column: a bigint literal is out of shape
+		Grade.where({ mastered: 1n }),
+		// @ts-expect-error — the synthetic id is not selectable through where(): spell handle literals on the referencing side
+		Grade.where({ id: 0n })
+	]
+}
+
+/**
+ * A ψ-selected closed face pairs by STRUCTURE exactly as a bare closed
+ * face — the selection changes nothing about the projected shapes: the
+ * synthetic `id` contributes the u64 triple, payload columns their
+ * declared descriptors' triples through the typed `columns` carrier.
+ */
+function psiFacesArePairedStructurally(): unknown[] {
+	const { Grade, Certificate } = buildMastery()
+	return [
+		// the legal pairs compile — same-label ψ pairing and the ψ window target
+		contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id")),
+		window(on(Grade.where({ mastered: true }), "id"), atMost(1n), on(Certificate, "grade")),
+		contained(on(Grade.where({ mastered: true }), "score"), on(Certificate, "id")),
+		// @ts-expect-error — a ψ face's projected shapes still hold the wall: bool never pairs u64
+		contained(on(Grade.where({ score: 2n }), "mastered"), on(Certificate, "grade")),
+		// @ts-expect-error — an unknown field is not projectable through a ψ-selected closed source
+		on(Grade.where({ mastered: true }), "nope")
+	]
+}
+
 export {
 	banTableIsUnwritable,
 	closedPayloadColumnsPairStructurally,
+	closedSelectionsAreTyped,
 	facesArePairedStructurally,
 	fieldReferencesAreTypeChecked,
+	psiFacesArePairedStructurally,
 	selectionsAreTyped
 }
