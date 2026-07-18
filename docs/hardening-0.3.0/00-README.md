@@ -11,21 +11,29 @@ DELETED once shipped.
 1. **Nominal refs are dead on mechanics, not taste.** TypeScript cannot mint
    per-call `unique symbol` identity (calls unify — prototyped). Domains stay
    STRINGS in descriptor types; values stay bare. No brands anywhere, ever.
-2. **Domains are DERIVED, not declared, where a declaration exists.**
-   `relation()` mints the coordinate label `` `${Name}.${field}` `` for **fresh
-   fields only** (B-min). `ref(R, "f")` copies the target descriptor + domain and
-   marks the reference; `cites(R, "f")` is the same link with NO derived
-   statement (mandated by the Calendar recipe, where the only lawful link is a
-   selected `mirrors`). `.as` survives for shared value domains with no owning
-   declaration (`"Minor"`, `"Digest"`) and is **dot-banned** (type-level and
-   runtime) so coordinates are unforgeable through public constructors.
-   B-max (coordinates on all unlabeled fields) is explicitly NOT in this packet.
-3. **Derived containments yield to hand-written twins** (dedupe by rendered
-   string; the hand copy stays). This deliberately diverges from the
-   fresh-implied-key law ("redundant — rejected") because statement ORDER is
-   fingerprint-hashed and the yield rule is what keeps migrated stores stable.
-   Genuinely new derived statements TAIL-APPEND in relation-declaration ×
-   field-declaration order. Both choices are pinned forever once shipped.
+2. **THE LAWS TYPE THE COLUMNS — OWNER RULING 2026-07-18 ("option 2, zero
+   debate").** Domains are not declared anywhere: `.as` is DELETED from the
+   surface (not banned — gone), and `ref`/`cites`/`dom` never ship. Relation
+   declarations are pure structure (`kind`/`width`/`element`/`fresh`);
+   `schema()` computes every field's domain FROM the statement list — the
+   dependencies are the typing. Statements are sacred in BOTH hosts: nothing
+   is ever synthesized; the manifest equals the source.
+3. **The three class laws.** A schema's statements induce equivalence classes
+   over field slots (union-find across every paired face — containment,
+   mirrors, pointwise `==`, window targets, ψ-selected faces included):
+   (a) a **fresh field is a generator** and names its class by its
+   declaration coordinate (`"Attempt.id"`; a closed relation's id is a
+   generator named `"Kind.id"`); (b) a **generator-less class** is named by
+   its least member coordinate in relation-declaration × field-declaration
+   order — deterministic, pinned forever; (c) a **field in no law is bare,
+   and bare pairs only with bare** in queries (this is what keeps a
+   deliberate sum-domain pointer like primer's `task.subject` legal).
+   **The wall: at most ONE generator per class** — two fresh coordinates
+   unified by the laws is a contradiction (two mints cannot share a carrier)
+   and is a schema-level compile error with a construction-time runtime twin.
+   Dividend: classes are law-born, so EVERY kind can carry a domain — `str`
+   included (primer's `capability` custody spelling becomes class-typed by
+   its own composite containments).
 4. **ψ-selection is pure SDK.** The engine folds selections against sealed
    extensions at validate (`compile_member_set`); the macro already accepts
    `Kind(id | mastered == true)`; the napi marshal passes selections through.
@@ -62,11 +70,13 @@ DELETED once shipped.
    the owner's dependency-theoretic canon. What lands instead is M5: the
    taxonomy becomes CHECKED — newtype coherence across every statement's
    paired faces, one check in the shared lowering, surfaced as a spanned
-   macro error and as the engine twin of TS's `SameDomains` wall. TS keeps
-   K3/K4 derivation as host sugar over ordinary statements; labels never
-   reach the store, so twins fingerprint identically when
-   names/types/statements agree — and twin COOKBOOK recipes follow the tail
-   convention for statement order so T5's per-recipe equality holds.
+   macro error and as the engine twin of the TS schema-level class wall.
+   The two hosts thus meet in the middle from opposite directions: Rust
+   declares sorts and checks them against the laws; TS declares nothing and
+   COMPUTES the sorts from the laws. One semantics; each host's strongest
+   idiom. Since neither host synthesizes statements, twin recipes' statement
+   lists match line for line and T5's per-recipe fingerprint equality needs
+   no ordering convention.
 10. **No 1.0.0 anywhere in this packet.** The owner has explicitly deferred it.
    No agent bumps to 1.0.0, tags, or publishes; 0.3.0 staging is agent work,
    the publish itself is owner ceremony.
@@ -91,12 +101,12 @@ DELETED once shipped.
 PARALLEL START
   T2 readme-truth   T4 todo-collapse   T5 fingerprint-goldens   T6 ci-lane
   M1 key-arrow-ratified  M2 idb-heads  M5 coherence-check
-  K1 psi-statements      K3 coordinate-kernel
+  K1 psi-statements      K3 minimal-kernel
 THEN
   M3 cookbook-queries-compiled   (after M2 — queries written in the final notation)
   M4 notation-corpus             (after M2 — pins the final notation)
   K2 psi-query-atoms             (after K1)
-  K4 derived-statements          (after K3)
+  K4 law-typing                  (after K3 + K1)
   K5 vars-and-comparisons  K6 closed-ergonomics   (independent; anytime)
 THEN
   K7 cookbook-and-lock   (after K1 K2 K3 K4 K5 K6)
@@ -123,8 +133,8 @@ V1 release-staging: last; owner publishes.
 | M5 | The coherence check — newtype agreement across statement faces | — |
 | K1 | ψ statements: `closed().where()` + the face arms | — |
 | K2 | ψ query atoms: `.match`/`not` over closed relations | K1 |
-| K3 | The coordinate kernel: derived domains, `ref`, `cites`, the dot-ban | — |
-| K4 | Derived statements: synthesis, dedupe, tail order, closed refs | K3 |
+| K3 | The minimal kernel: fields are pure structure, `.as` dies | — |
+| K4 | The law-typing engine: `schema()` computes domains from statements | K3, K1 |
 | K5 | `vars()` + free comparison exports | — |
 | K6 | Closed ergonomics: `Kind.match` + the 3-arg `closed` | — |
 | K7 | The SDK cookbook rewritten + the cross-host lock extended | K1–K6 |

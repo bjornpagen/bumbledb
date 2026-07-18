@@ -22,10 +22,11 @@ correct. Only the TS surface refuses.
      `AnyRelation | AnyClosed`.
    - Add `MatchFields<R>`: for a closed relation,
      `{ id: ClosedIdField } & Cols` (the payload columns from the typed
-     `columns` carrier). `ClosedIdField` already carries domain
-     `` `${Name}Id` `` — the same descriptor referencing fields carry — so
-     var domain-typing, `JoinOk`, literal tagging (`taggedHandleId`), and
-     result decoding flow with NO changes to those layers.
+     `columns` carrier). Under option 2 the closed id's domain is the
+     K4-computed class `` `${Name}.id` `` read off the SCHEMA type — var
+     domain-typing, `JoinOk`, literal tagging (`taggedHandleId`), and result
+     decoding flow through the class map with no further changes to those
+     layers.
    - `lowerAtom` (~line 1351): one closed-owner branch — `id` → ordinal 0,
      payload column → declared index + 1 (the sealed shift, mirroring
      `spec.rs`'s resolver). Widen `AtomData.relation` accordingly.
@@ -37,8 +38,8 @@ correct. Only the TS surface refuses.
      bound to a var whose domain joins another atom's same-domain field;
      negated closed atom; handle literal in the id position.
    - compile-FAIL (real): unknown payload column; payload var joining a
-     different-domain field; a closed atom var reused cross-domain
-     (the existing two-tier join wall must hold here identically).
+     different-CLASS field (per K4's class map); a closed atom var reused
+     cross-class (the two-tier join wall must hold here identically).
    - lowering golden: a `lowerQuery` output pin showing ordinal 0 for id and
      +1-shifted ordinals for payload columns, for both positive and negated
      atoms.

@@ -27,14 +27,15 @@ BOTH sides of the FFI.
    engine falls back to a virtual-image join — semantics identical), (b) for
    an ALREADY-DEPLOYED store, moving from the workaround to ψ is a NEW theory
    (different fingerprint) — recipe-28 ETL territory; humans own that.
-2. **`ref`/`cites`/coordinates across the set**: every recipe whose simple
-   containments are derivable (56 of 67 at last count) adopts `ref` and drops
-   the hand statement (recipes are NEW-store teaching text — fingerprint
-   motion is fine and invisible here); the Calendar recipe adopts
-   `cites(Attendance, "id")` beside its selected `mirrors` and gains one
-   sentence explaining WHY (`ref` would derive a statement the theory
-   deliberately refuses). Remaining `.as` uses are exactly the legitimate
-   shared-value-domain cases; each keeps a half-line justification.
+2. **Option-2 spellings across the set**: every recipe's relation
+   declarations go pure-structure (`.as` no longer exists — delete every
+   label), and every statement stays hand-written and visible — the
+   statement lists do not shrink; they now carry the typing. The Calendar
+   recipe gains one sentence noting that its selected `mirrors` law is what
+   TYPES `Claim.source` (the class flows from the statement — no link
+   declaration exists or is needed). Where a recipe's prose described
+   declared domains, rewrite it to the class laws (generators, least
+   coordinate, bare-pairs-bare).
 3. **Ergonomics sweep**: `vars()` destructuring + shorthand punning wherever a
    rule binds ≥2 vars; free comparisons in `.where`; `Kind.match` where a
    recipe dispatches on handles; the 3-arg `closed` everywhere (the curried
@@ -56,10 +57,11 @@ BOTH sides of the FFI.
    the two cookbooks teach one theory and T5 stays green.
 7. **The CrossHost lock**: extend the composite theory in BOTH
    `ts/crate/src/fingerprint_lock.rs` (macro side) and
-   `ts/test/fingerprint.test.ts` (SDK side) with a ψ-on-closed statement and a
-   ref-derived containment; compute the new fingerprint once, update the
-   pinned constant to the SAME hex in both files, and keep the cross-admission
-   + twisted-twin assertions green.
+   `ts/test/fingerprint.test.ts` (SDK side) with a ψ-on-closed statement and
+   a generator-less class (a mirrors-paired column pair with no fresh member
+   — proving the class laws don't leak into the fingerprint); compute the
+   new fingerprint once, update the pinned constant to the SAME hex in both
+   files, and keep the cross-admission + twisted-twin assertions green.
 
 ## Technical direction
 
@@ -70,27 +72,27 @@ BOTH sides of the FFI.
 - Never let the two cookbooks (engine `docs/cookbook.md`, SDK `ts/COOKBOOK.md`)
   teach different theories for the same recipe number — T5 is the referee;
   keep it green rather than editing around it.
-- **The tail convention is cross-host**: where a TS recipe derives its
-  reference containments (K4 tail-appends them in relation×field order), the
-  Rust twin's HAND-WRITTEN statement list must place those same containments
-  in the same tail positions, or the twins' fingerprints diverge (statement
-  order is hashed). Reordering `docs/cookbook.md` statement lists to the tail
-  convention is in scope here, coordinated with M3's compiled twins; the
-  Rust notation itself is untouched (owner ruling — statements stay
-  hand-written, only their ORDER in the recipes moves).
+- **Statement lists match line for line across hosts**: under option 2
+  neither host synthesizes statements, so a TS recipe's statement array and
+  its Rust twin's statement block must be the SAME statements in the SAME
+  order — T5's per-recipe fingerprint equality enforces it with no ordering
+  convention needed. If a rewrite here changes a TS recipe's statement
+  order, the Rust twin moves identically (coordinated with M3's compiled
+  twins).
 - Guarantee lines citing lean theorem names are load-bearing — do not touch
   the citations except where `scripts/spec-census.sh` proves a rename.
 
 ## Passing criteria
 
-- Zero old idioms in `ts/COOKBOOK.md` (grep set: the complement-window
-  workaround comment, `r.var("` where a `vars()` destructure binds multiple,
-  the curried `closed(`…`)(`, hand containments that a `ref` in the same
-  recipe derives, "surface finding" notes in 7/8).
+- Zero old idioms in `ts/COOKBOOK.md` (grep set: `.as(` anywhere, the
+  complement-window workaround comment, `r.var("` where a `vars()`
+  destructure binds multiple, the curried `closed(`…`)(`, "surface finding"
+  notes in 7/8).
 - `cookbook.test.ts` green against the rewritten text; the T5 fixture
   regenerated and BOTH sides green (TS + the Rust cookbook fingerprint test).
 - The CrossHost lock: new constant identical in both files; both suites green;
   cross-admission both directions still passes.
-- Every remaining `.as` in the COOKBOOK carries its justification sentence.
+- The class-law prose is taught once (a short cookbook preamble section) and
+  referenced, not repeated per recipe.
 - `pnpm exec biome check .` clean on touched files. Push per the wave's
   commit discipline.

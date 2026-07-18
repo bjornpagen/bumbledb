@@ -1,100 +1,77 @@
-# PRD-P1 — Primer: the store schema goes derived
+# PRD-P1 — Primer: the store schema goes law-typed
 
 Wave P · Repo: **primer** (`/Users/bjorn/Documents/primer`) · depends on: K8
-(the final SDK surface, locally linked) · hard break
+(the final SDK surface, locally linked) · hard break · NOTE: option 2 made
+this PRD radically smaller than its earlier drafts — read the consequences.
 
 ## Objective
 
-Primer's graph-builder store schema
+Cut primer's graph-builder store schema
 (`src/tools/graph-builder/store/schema.ts` — audited 2026-07-18: 22 `.as(`
-sites, 57 `contained(` statements of which 55 are derivable — 43 single-field
-refs + 12 closed-vocab refs; keeps: 2 composite containments, 3 `mirrors`, 31
-keys, 32 windows) is the first real consumer of the coordinate kernel. Cut it
-to the 0.3.0 idioms fully: derived coordinates, `ref`/`cites`, no hand
-statement that a `ref` derives. The audit's bin map is the plan of record:
-all 22 owner `.as` constants become derived fresh coordinates (each is a K3
-construction error if left); ~40 reference fields become `ref`; the three
-assumption-DU arms (`assumptionFromMember.assumption`,
-`assumptionFromEdge.assumption`, `assumptionPreCourse.assumption`,
-schema.ts ~773–796) are the mandated `cites` sites — their only lawful link is
-the selected `mirrors` glue; bin-4 (`.as` kept for shared value domains) is
-EMPTY at HEAD. Record in the map (a comment at the site): `capability: str`
-is the custody spelling joined across four relations and `str` is outside the
-labelable kinds — deliberately unlabeled, policed by the composite
-containments; `task.subject: u64` is a nine-way sum-domain pointer and stays
-deliberately bare (B-min working as designed — do NOT ref or label it).
+sites, 57 `contained(`, 31 keys, 3 `mirrors`, 32 windows, 10 bare-tier closed
+vocabularies) to the option-2 surface: relation declarations go pure
+structure, EVERY statement stays exactly where it is, and `schema()` law-types
+the columns.
 
-## Context / constraints
+## The option-2 consequences (why this PRD shrank)
 
-- Primer is dev-only through the bun TUI; its stores are rebuildable
-  artifacts. The schema rewrite WILL move the store fingerprint (derivation
-  reorders/replaces statements). That is accepted: humans rebuild dev stores;
-  no migration work in this PRD, and the commit body must SAY the fingerprint
-  moved.
-- Work against the LOCALLY LINKED SDK build (the 0.2.0-train procedure:
-  `pnpm install` while the manifest still points at the published version,
-  then symlink `node_modules/@bjornpagen/bumbledb` → the bumbledb worktree's
-  `ts/` and the darwin-arm64 package → `ts/npm/darwin-arm64`; never run
-  install after the link). P2 owns the version pin; this PRD may develop
-  linked without touching `package.json`.
-- Other agents work in primer — stay inside the graph-builder store cluster
-  and its tests; ignore unrelated dirt.
+- **No statement changes at all.** Statements are sacred and now do the
+  typing; the 57 containments, 3 mirrors, 31 keys, 32 windows stay
+  line-for-line. The earlier drafts' plan to delete 55 derivable containments
+  is DEAD — deletion would now UN-TYPE the columns.
+- **Fingerprint provably unchanged.** The only edits are `.as` deletions —
+  labels lower to the wire `newtype`, which the engine drops before hashing;
+  names, structural types, generation flags, and statements are untouched.
+  Assert it: fingerprint the schema before and after in a scratch check and
+  put the equal hex in the commit body. No store rebuild, no migration note.
+- **Statement identity never moves** — nothing is synthesized, so
+  `store/diag-map.ts`'s identity-keyed `Map`, `driver/dispatch.ts`'s
+  `buildStaticHints` walk, and `schema-ledger.test.ts`'s `===` comparisons
+  all keep working UNTOUCHED. The earlier re-key work item is dissolved; do
+  NOT touch those files.
 
 ## Work
 
-1. Read the whole schema file first and MAP it: every `.as` label → is it an
-   owned declaration (→ derived coordinate / `ref`), a reference to a fresh
-   id (→ `ref`), a deliberate statement-free link (→ `cites`), or a genuinely
-   shared value domain (→ keep `.as`, justify in a comment only if
-   non-obvious)? Every `contained` → derivable by a `ref` (→ delete the hand
-   statement) or composite/selected/ψ-shaped (→ keep, in the new spellings)?
-2. Rewrite the schema: fresh fields drop their `.as` (K3 derives the
-   coordinate; keeping the label is now a construction error); references
-   become `ref(...)`; deliberate-weak links become `cites(...)`; derivable
-   hand containments are DELETED (recipes' dedupe-keeps-hand rule is for
-   fingerprint-stable migrations — primer accepts the motion, so go full
-   derivation: the schema file is the representation, the statements the
-   derivation).
-3. ψ adoption: **expect ZERO sites** (audited) — all 10 primer vocabularies
-   are bare-tier, and the complement idioms in the schema are open-relation
-   face families ψ cannot compress. Do not force it. Record in the map: a
-   future "mintable pins only" law would require reshaping `Pin`/`Outcome`/
-   `SteerKind` to payload-tier — a design decision out of this packet's scope.
-4. **Statement identity — the real work item.** K4-derived statements are
-   minted inside `schema()`; primer holds no object references to them, and
-   three consumers key by identity today:
-   - `store/diag-map.ts` (~lines 43–51): a `Map<Statement, RepairMapping>`
-     built from `laws.X` references that THROWS at load on any unmapped
-     statement — re-key by the K4-blessed identity, the `renderStatement`
-     string, so all 55 derived statements resolve;
-   - `driver/dispatch.ts` (~lines 190–203): `buildStaticHints` walks EVERY
-     `runStoreSchema.statements` entry through `diagForStatement` at module
-     load — dies at import unless diag-map covers the derived tail;
-   - `store/schema-ledger.test.ts` (~lines 75–80): `violation.statement ===
-     statement` identity comparisons — move to canonical-string comparison or
-     look derived statements up from `runStoreSchema.statements`; four of its
-     pinned laws are hand statements this PRD deletes in favor of derivation
-     (`candidateVerdictAssumptionRef`, `confusableBRef`, `grpConfusableBRef`,
-     `programEdgeDependentEdgeRef`) — re-pin them against the derived copies.
-   `schema.test.ts` statement-count/shape assertions follow the 68-written +
-   55-derived split and the pinned tail order.
-5. Ergonomics adoption in the store cluster (`gates.ts` 30 queries,
-   `derive.ts` 9, `observe.ts` 4 — 238 `r.var(` sites) is THIS PRD's to do or
-   decline, not P2's: `r.var`/method comparisons remain compiled surface (K5
-   adds, deletes nothing), so adoption is style. Where `vars()` is adopted,
-   rename variables that collide with primer's imported relation identifiers
-   (`program`, `member`, `capsule`, … — the destructured var would SHADOW the
-   relation value inside the rule closure); never shadow.
+1. Delete the 22 domain-label constants and every `.as(` call in
+   `schema.ts`; fields become bare structural descriptors (`u64.fresh`,
+   `u64`, `interval(i64)`, …). The class map now computes: fresh generators
+   name their classes (`"sheet.id"`-style coordinates), the containments
+   propagate them, `capability: str` becomes class-typed by its own composite
+   containments (the audit's wished-for custody wall — verify it landed:
+   the class map on the schema value shows the capability slots sharing one
+   class), and `task.subject` stays bare (in no law — verify it shows
+   `undefined` in the class map).
+2. Verify the one-generator wall passes over the whole schema (it should —
+   the statements were already coherent; if it FIRES, that is a real found
+   bug in primer's theory: report it, do not "fix" the schema silently).
+3. `store/schema.test.ts` / `rebirth.test.ts`: update only what the kernel
+   break forces — `.as` mentions and any type-level assertions on descriptor
+   domains move to class-map assertions. Statement-count/order assertions are
+   UNCHANGED (nothing moved).
+4. Ergonomics adoption in the store cluster (`gates.ts` 30 queries,
+   `derive.ts` 9, `observe.ts` 4 — 238 `r.var(` sites) is THIS PRD's to do
+   or decline, not P2's: `r.var`/method comparisons remain compiled surface
+   (K5 adds, deletes nothing), so adoption is style. Where `vars()` is
+   adopted, rename variables that collide with primer's imported relation
+   identifiers (`program`, `member`, `capsule`, … — the destructured var
+   would SHADOW the relation value inside the rule closure); never shadow.
+5. Query domain-typing now flows from the class map — re-run the cluster's
+   tests; any query that previously joined via matching HAND labels across
+   fields that NO law connects will now refuse (bare-pairs-bare or
+   cross-class). Each such refusal is a finding: either the theory was
+   missing a law (report it — statements are the owner's) or the query was
+   wrong (fix it, say so).
 
 ## Passing criteria
 
-- `pnpm exec tsc --noEmit -p tsconfig.json` shows ZERO errors in the store
-  cluster's files (the wider repo may be red only from OTHER agents' in-flight
-  files — list any such file in the report and prove it's not yours by paths).
-- The store cluster's test files pass under the repo's own test invocation.
-- Grep the schema file: no `.as(` site remains that the map in step 1
-  classified derivable; no `contained(` remains whose exact statement a `ref`
-  in the same file derives; every `cites` has the selected/deliberate
-  statement it defers to nearby.
-- The commit body names the fingerprint motion and the rebuild consequence.
+- Zero `.as(` in primer (grep repo-wide; the two `rebirth.test.ts`
+  mini-schemas are P2's, coordinate with it).
+- The before/after fingerprint hexes are EQUAL (in the commit body).
+- `diag-map.ts`, `dispatch.ts`, `schema-ledger.test.ts` untouched
+  (`git diff` proves it).
+- The class-map spot checks pass: capability slots share a class;
+  `task.subject` is bare; every fresh id names its own class.
+- `pnpm exec tsc --noEmit -p tsconfig.json`: zero errors in the store
+  cluster's files (foreign in-flight files listed with proof of
+  non-ownership); the cluster's tests pass under the repo's own invocation.
 - Commit with `--no-verify` in primer's voice; push the branch.

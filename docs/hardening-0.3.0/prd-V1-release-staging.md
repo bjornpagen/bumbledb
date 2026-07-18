@@ -36,10 +36,11 @@ owner's.
    with the platform tarball satisfying the exact optional-dep pin (pnpm 11
    ignores `package.json#pnpm.overrides` — use the `pnpm-workspace.yaml`
    override mechanism the 0.2.0 smoke proved); run a script exercising the
-   NEW surface end to end: `relation` with a derived coordinate + `ref`,
-   a ψ statement, `Db.create`, an insert, a closed-atom query through
-   `prepare`/`execute`, a `Kind.match` dispatch — assert real values, print
-   an unambiguous success line.
+   NEW surface end to end: a law-typed schema (pure-structure fields; the
+   class map computed from the statements — read it off the schema value and
+   assert one class name), a ψ statement, `Db.create`, an insert, a
+   closed-atom query through `prepare`/`execute`, a `Kind.match` dispatch —
+   assert real values, print an unambiguous success line.
 5. **The runbook**: update `ts/PUBLISHING.md` — the "one-liner" section reads
    0.3.0, platform first then main, `--access public --no-git-checks`,
    the interactive-OTP note, `pnpm view` verification lines, and the
@@ -54,9 +55,9 @@ owner's.
 - Both manifests + the pin at exactly `0.3.0`; `pnpm run build` green with
   its lockstep line printed.
 - Both tarballs packed and manifest-verified as specified.
-- The smoke script RAN (output shown in the report) and exercised: derived
-  coordinate + ref, ψ statement, closed-atom query, `Kind.match` — not just a
-  load check.
+- The smoke script RAN (output shown in the report) and exercised: the
+  law-typed class map, a ψ statement, a closed-atom query, `Kind.match` —
+  not just a load check.
 - `ts/PUBLISHING.md` current; no `private` flip, no publish, no tag in the
   diff or the shell history of this PRD.
 - Commit pushed. The packet ends here; delete `docs/hardening-0.3.0/` only

@@ -52,7 +52,9 @@ surface is missing.
    - compile-FAIL (real `@ts-expect-error`): `.where` on a bare-tier closed;
      `Kind.where({ nope: true })` (unknown column); wrong literal type;
      selection on `id` through `.where` (spelled only as handle literals on
-     the referencing side — canonical utterance); cross-domain ψ pairing.
+     the referencing side — canonical utterance). (Domain coherence for ψ
+     faces is schema-level under option 2 — K4's class laws own that probe;
+     no construction-time domain check exists.)
    - runtime: a schema with a ψ statement builds; `Db.create` accepts it; a
      violating commit is rejected and the violation's canonical statement
      string equals the manifest spelling byte-for-byte (extend

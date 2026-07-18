@@ -14,13 +14,13 @@ code blocks.
 
 ## Work
 
-1. Rewrite the Quick start against the final 0.3.0 surface: `relation()` with
-   derived fresh coordinates, `ref()`/`cites()`, `.as` only where a shared
-   value domain genuinely has no owning declaration, free-function statements,
-   ψ-selection where it teaches well, the `query(S).rule(r => ...)` shape with
-   `vars()` and free comparisons, `Kind.match`, the 3-arg `closed`. The example
-   should be one small coherent theory (reuse a cookbook recipe's shape rather
-   than inventing a new one).
+1. Rewrite the Quick start against the final 0.3.0 surface: pure-structure
+   `relation()` declarations (no `.as` — it no longer exists), the statement
+   list doing the typing (say it in one sentence: "the laws type the
+   columns"), ψ-selection where it teaches well, the
+   `query(S).rule(r => ...)` shape with `vars()` and free comparisons,
+   `Kind.match`, the 3-arg `closed`. The example should be one small coherent
+   theory (reuse a cookbook recipe's shape rather than inventing a new one).
 2. Purge the brand era from prose: "branded ids", "brands, fields…" — the
    surface is structural; say so in the README's own voice.
 3. Sweep every listed export against `ts/src/index.ts` at HEAD: the Surface

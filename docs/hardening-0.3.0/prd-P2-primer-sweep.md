@@ -18,19 +18,21 @@ values, and statement types. Re-derive the truth.)
    `@bjornpagen/bumbledb` importers (audited 2026-07-18: **28 files** — 13
    store, 8 driver, 3 prompts, 2 etl, 2 benchmark seeds). For each, list
    which imported names' types or spellings K-wave moved (closed values now
-   carry `where`/`match`; query rule scopes carry `vars`; statement/`Fact`
-   types flow coordinates in domains; the curried `closed` died). Files
-   consuming only `Fact`/`Tx`/`Violation`-shaped types may again be no-ops —
-   PROVE each no-op by typechecking, not by analogy.
+   carry `where`/`match`; query rule scopes carry `vars`; `.as` no longer
+   exists — schema types carry the K4 class map instead of descriptor
+   domains; the curried `closed` died). Files consuming only
+   `Fact`/`Tx`/`Violation`-shaped types may again be no-ops — PROVE each
+   no-op by typechecking, not by analogy.
 2. **Query construction lives ENTIRELY in P1's store cluster** (audited:
    `gates.ts`/`derive.ts`/`observe.ts` + one etl test helper).
    `prompts/store-reads.ts` builds NO queries and deliberately never will
    (its own header states the query surface is not a dependency — scan-only
    by doctrine); do not "adopt" anything there. This PRD's forced edits
    outside the pin are exactly: `store/rebirth.test.ts` ~lines 490 and 524 —
-   two mini-schemas spelling `u64.as(...).fresh`, a K3 construction error —
-   rewrite to derived coordinates. Optional ergonomics adoption in the store
-   cluster belongs to P1 (see P1 §Work-5); this PRD does not double-claim it.
+   two mini-schemas spelling `u64.as(...).fresh`; `.as` no longer exists, so
+   the labels drop (`u64.fresh`) and any domain assertions there move to the
+   class map. Optional ergonomics adoption in the store cluster belongs to
+   P1 (see P1 §Work-4); this PRD does not double-claim it.
 3. **The pin**: `package.json` devDependencies `@bjornpagen/bumbledb` →
    `"0.3.0"` exactly. Do not run any install after the local link (the
    0.2.0-train law); the lockfile stays stale until the owner's post-publish
