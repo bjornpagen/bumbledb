@@ -1,6 +1,6 @@
 {
 	"name": "@bjornpagen/bumbledb-darwin-arm64",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Prebuilt darwin-arm64 native binary for @bjornpagen/bumbledb",
 	"os": [
 		"darwin"
