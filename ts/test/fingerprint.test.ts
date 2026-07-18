@@ -22,32 +22,15 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import {
-	atLeast,
-	atMost,
-	between,
-	bool,
-	bytes,
-	closed,
-	contained,
-	Db,
-	exactly,
-	i64,
-	interval,
-	key,
-	lower,
-	mirrors,
-	none,
-	on,
-	oneOf,
-	relation,
-	schema,
-	span,
-	str,
-	u64,
-	window
-} from "#index.ts"
+import { closed } from "#closed.ts"
+import { atLeast, atMost, between, exactly, none } from "#count.ts"
+import { on, oneOf } from "#face.ts"
+import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
+import { lower } from "#lower.ts"
 import { native } from "#native.ts"
+import { relation } from "#relation.ts"
+import { schema } from "#schema.ts"
+import { contained, key, mirrors, window } from "#statements.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-fingerprint-"))
 const storeDir = path.join(tmpRoot, "store")
@@ -70,21 +53,16 @@ const RAY_END = 18446744073709551615n
 /** The 16 bytes of the Rust twin's `b"0123456789abcdef"` selection literal. */
 const DIGEST = new TextEncoder().encode("0123456789abcdef")
 
-const HolderId = u64.newtype("HolderId")
-const AccountId = u64.newtype("AccountId")
-const ActiveDuring = interval(i64).newtype("ActiveDuring")
-const Lease = interval(u64, 7n).newtype("Lease")
+const HolderId = u64.as("HolderId")
+const AccountId = u64.as("AccountId")
+const ActiveDuring = interval(i64).as("ActiveDuring")
+const Lease = interval(u64, 7n).as("Lease")
 
 const Status = closed("Status", ["Open", "Frozen"])
-const Kind = closed(
-	"Kind",
-	["DirectPass", "Failed"],
-	{ mastered: bool, weight: u64, span: interval(u64) },
-	{
-		DirectPass: { mastered: true, weight: 2n, span: span(1n, 3n) },
-		Failed: { mastered: false, weight: 5n, span: span(3n, 5n) }
-	}
-)
+const Kind = closed("Kind", { mastered: bool, weight: u64, span: interval(u64) })({
+	DirectPass: { mastered: true, weight: 2n, span: span(1n, 3n) },
+	Failed: { mastered: false, weight: 5n, span: span(3n, 5n) }
+})
 
 const Holder = relation("Holder", {
 	id: HolderId.fresh,
@@ -152,6 +130,9 @@ describe("the cross-host fingerprint lock", function suite() {
 	})
 
 	test("the store is inhabitable through the public surface", async function inhabit() {
+		// Loaded lazily: the `Db` runtime is S4's structural rewrite — until it
+		// lands, this import (not the fingerprint pins above) is the red part.
+		const { Db } = await import("#db.ts")
 		const db = await Db.open(storeDir, CrossHost)
 		const result = db.write(function seed(tx) {
 			const ada = tx.insert(Holder, {

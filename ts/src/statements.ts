@@ -4,18 +4,39 @@
  * form, conditional containment, the bidirectional `==` abbreviation, and
  * the cardinality window. A statement value is opaque and inert — no
  * methods, no fluent continuation: a fact about the theory, not a builder.
+ *
+ * Every field reference is checked against the relation it names in the
+ * TYPE — existence through {@link FaceFields} (`on(R, "nope")` does not
+ * compile) and DOMAIN compatibility through {@link SameDomains}: the two
+ * faces' projected domain labels are read structurally off the schema type
+ * (S1's `F["domain"]`) and constrained positionwise equal, so a
+ * cross-domain pair is a compile error by string-literal comparison of
+ * descriptor shapes — never by a value brand (the structural design's
+ * ratified check). What is only a SEMANTIC property — the target side of a
+ * containment resolving a declared key of its relation — is DELIBERATELY
+ * not (and cannot be) stated here: whether `B(y)` is a key of `B` depends
+ * on which `key()` statements the surrounding `schema()` collects, a set no
+ * face type can see; it stays the engine's typed `SchemaError` judgment at
+ * `Db.create`/`Db.open` (the two-boundary split, engine as final
+ * authority).
  */
 
 import * as errors from "@superbuilders/errors"
-import { phantom } from "#brand.ts"
 import type { Count } from "#count.ts"
-import { type AnyFace, type FaceData, renderFace, type SameArity } from "#face.ts"
+import { type AnyFace, type FaceData, renderFace, type SameArity, type SameDomains } from "#face.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import { renderWindow, type WindowSpec } from "#spec.ts"
 
+/** A `key()` statement's runtime description — owner and projection carried at exact types. */
+interface KeyData<R extends AnyRelation, Projection extends readonly string[]> {
+	readonly kind: "key"
+	readonly owner: R
+	readonly projection: Projection
+}
+
 /** One statement's runtime description, tagged by form. */
 type StatementData =
-	| { readonly kind: "key"; readonly owner: AnyRelation; readonly projection: readonly string[] }
+	| KeyData<AnyRelation, readonly string[]>
 	| {
 			readonly kind: "containment"
 			readonly source: FaceData
@@ -35,15 +56,16 @@ interface Statement {
 }
 
 /**
- * A `key()` statement as a TYPED value: the statement plus a phantom
- * carrying its owner and projection tuple — what the key-statement-selected
+ * A `key()` statement as a TYPED value: its `data` carries the owner
+ * relation and the projection tuple at their EXACT types (honest runtime
+ * properties — no phantom), which is what the key-statement-selected
  * `get(relation, keyStatement, key)` overload types its key object by
- * (`docs/architecture/70-api.md` § the freeze, the multi-key typed get).
- * Structurally still a plain {@link Statement}; the phantom is never present
- * at runtime.
+ * (`docs/architecture/70-api.md` § the freeze, the multi-key typed get) and
+ * what resolves each projected field's domain label through the owner's
+ * schema type. Structurally still a plain {@link Statement}.
  */
 interface KeyStatement<R extends AnyRelation, Projection extends readonly string[]> extends Statement {
-	readonly [phantom]?: { readonly owner: R; readonly projection: Projection }
+	readonly data: KeyData<R, Projection>
 }
 
 /**
@@ -51,9 +73,11 @@ interface KeyStatement<R extends AnyRelation, Projection extends readonly string
  * parameter exists (the FD-with-selection shape is unrepresentable, as in
  * the grammar), and only ordinary relations are accepted: a closed
  * relation's key `R(id) -> R` is materialized by the engine, so an
- * explicit one would only ever be a duplicate. The projection tuple is
- * carried in the returned value's type ({@link KeyStatement}), so keyed
- * point reads through THIS statement are typed field-for-field.
+ * explicit one would only ever be a duplicate. Every projected name is
+ * checked against `R`'s field block in the type, and the tuple is carried
+ * in the returned value's type ({@link KeyStatement}) — keyed point reads
+ * through THIS statement are typed field-for-field, domains resolvable
+ * through the owner's schema type.
  */
 function key<
 	R extends AnyRelation,
@@ -64,21 +88,27 @@ function key<
 			`key(${relation.name}, ...): closedness already materializes ${relation.name}(id) -> ${relation.name} — an explicit key on a closed relation is rejected as a duplicate`
 		)
 	}
-	const data: StatementData = Object.freeze({
+	const data: KeyData<R, Projection> = Object.freeze({
 		kind: "key",
 		owner: relation,
-		projection: Object.freeze([...fields])
+		projection: Object.freeze(fields)
 	})
 	return Object.freeze({ data })
 }
 
 /**
- * `A(X|φ) <= B(Y|ψ)` — conditional inclusion, source left. The target
- * side must resolve a declared key of B — DELIBERATELY judged by the
- * engine at `Db.create`/`Db.open` (`SchemaError`), never re-checked here.
- * Arity mismatch between the two faces is a type error ({@link SameArity}).
+ * `A(X|φ) <= B(Y|ψ)` — conditional inclusion, source left. Arity mismatch
+ * between the two faces is a type error ({@link SameArity}); a cross-domain
+ * pair is a type error ({@link SameDomains} — positionwise string-literal
+ * equality of the projected S1 domain labels). The target side must
+ * resolve a declared key of B — a SEMANTIC property of the whole statement
+ * set that no face type can state, DELIBERATELY judged by the engine at
+ * `Db.create`/`Db.open` (`SchemaError`), never re-checked here.
  */
-function contained<A extends AnyFace, B extends AnyFace>(source: A, target: B & SameArity<A, B>): Statement {
+function contained<A extends AnyFace, B extends AnyFace>(
+	source: A,
+	target: B & SameArity<A, B> & SameDomains<A, B>
+): Statement {
 	const data: StatementData = Object.freeze({
 		kind: "containment",
 		source: source.data,
@@ -89,11 +119,18 @@ function contained<A extends AnyFace, B extends AnyFace>(source: A, target: B & 
 }
 
 /**
- * `A(X|φ) == B(Y|ψ)` — the bidirectional abbreviation, one utterance. It
- * lowers to the two adjacent containments in the `A <= B` first order
- * (macro parity) and renders as `==` once, in the written orientation.
+ * `A(X|φ) == B(Y|ψ)` — the bidirectional abbreviation, one utterance: the
+ * selected `==` bijection, a keyed one-to-one correspondence between the
+ * two faces (each side contains the other). It lowers to the two adjacent
+ * containments in the `A <= B` first order (macro parity — the engine
+ * performs the split, source-first) and renders as `==` once, in the
+ * written orientation. Faces pair by arity AND domain, exactly as
+ * {@link contained}.
  */
-function mirrors<A extends AnyFace, B extends AnyFace>(source: A, target: B & SameArity<A, B>): Statement {
+function mirrors<A extends AnyFace, B extends AnyFace>(
+	source: A,
+	target: B & SameArity<A, B> & SameDomains<A, B>
+): Statement {
 	const data: StatementData = Object.freeze({
 		kind: "containment",
 		source: source.data,
@@ -108,9 +145,15 @@ function mirrors<A extends AnyFace, B extends AnyFace>(source: A, target: B & Sa
  * LEFT face is the window's TARGET, the per-group parent (B-family,
  * target-left — macro parity), and the RIGHT face is the counted source.
  * `window(on(Holder, "id"), atMost(3n), on(Account, "holder"))` says: each
- * Holder id groups at most three Account rows by holder.
+ * Holder id groups at most three Account rows by holder. The two faces
+ * pair by arity AND domain ({@link SameDomains}), exactly as containment —
+ * the grouping join reads the same positionwise field pairing.
  */
-function window<B extends AnyFace, A extends AnyFace>(target: B, count: Count, source: A & SameArity<B, A>): Statement {
+function window<B extends AnyFace, A extends AnyFace>(
+	target: B,
+	count: Count,
+	source: A & SameArity<B, A> & SameDomains<B, A>
+): Statement {
 	const data: StatementData = Object.freeze({
 		kind: "window",
 		target: target.data,
@@ -144,5 +187,5 @@ function renderStatement(statement: Statement): string {
 	}
 }
 
-export type { KeyStatement, Statement, StatementData }
+export type { KeyData, KeyStatement, Statement, StatementData }
 export { contained, key, mirrors, renderStatement, window }

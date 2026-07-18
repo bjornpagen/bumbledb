@@ -95,9 +95,10 @@ type WindowSpec =
 	| { readonly kind: "floor"; readonly lo: bigint }
 
 /**
- * One field: name, structural type, host newtype name (carried for handle
- * resolution only — dropped by the engine at descriptor lowering), and the
- * `fresh` mint mark.
+ * One field: name, structural type, host newtype name — the descriptor's
+ * DOMAIN label (the macro's `as NewType`; the SDK's `.as("Domain")`),
+ * carried for handle resolution only, dropped by the engine at descriptor
+ * lowering and never fingerprinted — and the `fresh` mint mark.
  */
 interface FieldSpec {
 	readonly name: string
@@ -120,8 +121,8 @@ interface RowSpec {
  * kind); a closed relation's `fields` are its declared intrinsic columns
  * only — the synthetic (`id`, u64) handle field is materialized by the
  * engine's schema validation. `newtype` is the handle newtype of a closed
- * relation (the SDK uses the closed relation's own name), undefined on an
- * ordinary one.
+ * relation (the SDK emits its handle DOMAIN, `` `${name}Id` `` — the same
+ * label every referencing field carries), undefined on an ordinary one.
  */
 interface RelationSpec {
 	readonly name: string
