@@ -693,15 +693,17 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("TYPE WALLS: the unwritable queries are unwritable (each expect-error real)", function typeWalls() {
-		// A HolderId-domain var joined to an AccountId-domain field — the domain-equal join law.
-		const crossDomainJoin = query(Ledger).rule((r) =>
-			r
-				.match(Holder, { id: r.var("x") })
-				// @ts-expect-error — "x" first bound HolderId-domain; Account.id carries AccountId
-				.match(Account, { id: r.var("x") })
-				.select("x")
-		)
-		assert.equal(crossDomainJoin.data.rules.length, 1, "the wall is the type layer; the engine stays structural")
+		// A HolderId-domain var joined to an AccountId-domain field — the domain-equal join law,
+		// a compile error AND a construction refusal (the wall holds for untyped callers too).
+		assert.throws(function crossDomainJoin() {
+			query(Ledger).rule((r) =>
+				r
+					.match(Holder, { id: r.var("x") })
+					// @ts-expect-error — "x" first bound HolderId-domain; Account.id carries AccountId
+					.match(Account, { id: r.var("x") })
+					.select("x")
+			)
+		}, /joins domain-unequal fields/)
 
 		// The same law through eq: var-to-var unification is domain-equal.
 		const crossDomainEq = query(Ledger).rule((r) =>

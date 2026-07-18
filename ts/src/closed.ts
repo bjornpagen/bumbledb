@@ -37,6 +37,7 @@ const reservedHandleNames: readonly string[] = Object.freeze([
 	"id",
 	"data",
 	"axioms",
+	"columns",
 	"fromId",
 	"relation",
 	"selection"
@@ -123,6 +124,13 @@ interface ClosedCore<Name extends string, Handles extends string, Cols extends R
 	readonly data: ClosedData
 	/** Payload readback: handle to its declared column values, bare and structural. */
 	readonly axioms: Axioms<Handles, Cols>
+	/**
+	 * The declared payload columns, name → S1 field descriptor — carried in
+	 * the TYPE so a projected payload column's domain label is recoverable
+	 * off the schema type (the face layer's `ProjectedDomain` reads it; the
+	 * runtime twin is `data.columns`).
+	 */
+	readonly columns: Cols
 	/** The weld: declaration-order id back to its handle, or undefined beyond the roster. */
 	fromId(id: bigint): Handles | undefined
 }
@@ -145,6 +153,7 @@ interface AnyClosed {
 	readonly id: ClosedIdField
 	readonly data: ClosedData
 	readonly axioms: Readonly<Record<string, object>>
+	readonly columns: Readonly<Record<string, PayloadField>>
 }
 
 /** Narrows the two-tier second argument: a handle tuple (bare tier) or a column block (payload tier). */

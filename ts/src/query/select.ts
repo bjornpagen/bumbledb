@@ -188,10 +188,17 @@ type SelectEntryRow<Env extends EnvShape, E> = E extends string
 /** The inferred answer-row object type of a select tuple. */
 type RowOfSelect<Env extends EnvShape, S extends readonly SelectEntry[]> = ShapeOf<SelectEntryRow<Env, S[number]>>
 
+/**
+ * One projected name's answer-column fragment — a NAKED parameter, so the
+ * judgment distributes per name (the union of a multi-name select never
+ * smears into one column's type), mirroring {@link SelectEntryRow}.
+ */
+type NameSelectRow<Env extends EnvShape, N> = N extends string
+	? { readonly [K in N]: Infer<Env[K & keyof Env]> }
+	: never
+
 /** The inferred answer-row object type of a names-only (recursive-rule) select tuple. */
-type RowOfNameSelect<Env extends EnvShape, S extends readonly string[]> = ShapeOf<
-	S[number] extends infer N extends string ? { readonly [K in N]: Infer<Env[N & keyof Env]> } : never
->
+type RowOfNameSelect<Env extends EnvShape, S extends readonly string[]> = ShapeOf<NameSelectRow<Env, S[number]>>
 
 export type {
 	Agg,

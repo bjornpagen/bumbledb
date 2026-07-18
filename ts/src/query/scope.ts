@@ -181,6 +181,37 @@ type JoinOk<A extends AnyField, B extends AnyField> = [A["kind"], DomainOf<A>, W
 	: false
 
 /**
+ * The runtime twin of {@link JoinOk}: two field descriptors join iff kind,
+ * domain label, width label, and interval element all agree — the same
+ * structural comparison the type tier makes, judged on the descriptor
+ * VALUES (S1 descriptors are honest at runtime). The rule builders throw
+ * through this on a domain-unequal variable reuse, so the wall holds for
+ * untyped callers too, not only where the compiler can see.
+ */
+function fieldJoins(a: AnyField, b: AnyField): boolean {
+	const widthA = "width" in a ? a.width : undefined
+	const widthB = "width" in b ? b.width : undefined
+	const elementA = "element" in a ? a.element : undefined
+	const elementB = "element" in b ? b.element : undefined
+	return a.kind === b.kind && a.domain === b.domain && widthA === widthB && elementA === elementB
+}
+
+/**
+ * Renders one field descriptor for join-mismatch diagnostics — the schema
+ * grammar's own spelling (`u64 as HolderId`, `interval<i64, 7> as Window`).
+ */
+function renderFieldKind(field: AnyField): string {
+	let base: string = field.kind
+	if (field.kind === "bytes") {
+		base = `bytes<${field.width}>`
+	}
+	if (field.kind === "interval") {
+		base = field.width === undefined ? `interval<${field.element}>` : `interval<${field.element}, ${field.width}>`
+	}
+	return field.domain === undefined ? base : `${base} as ${field.domain}`
+}
+
+/**
  * What a PARAM anchored at field `F` accepts at execution: the field's
  * bare value type, exactly. At an interval field the engine resolves the
  * bivalent anchor to the INTERVAL reading (value equality) — the point
@@ -226,4 +257,15 @@ export type {
 	UnionToIntersection,
 	Var
 }
-export { inferred, isTerm, makeDuration, makeMaskParam, makeParam, makeSetParam, makeVar, term }
+export {
+	fieldJoins,
+	inferred,
+	isTerm,
+	makeDuration,
+	makeMaskParam,
+	makeParam,
+	makeSetParam,
+	makeVar,
+	renderFieldKind,
+	term
+}

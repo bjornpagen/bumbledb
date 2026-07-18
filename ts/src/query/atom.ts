@@ -11,7 +11,9 @@
  * comparison), and `and`/`or` (the input condition-tree grammar) complete
  * the roster. Nothing beyond the IR exists here — and the walls the engine
  * enforces at prepare are TYPES first: a var joins only domain-equal
- * fields (`JoinOk`, checked against the rule environment), an
+ * fields (`JoinOk`, checked against the rule environment AND against the
+ * binding record's own same-named siblings — two first occurrences of one
+ * name inside one record are a join too), an
  * interval-typed var under a non-`pointIn` comparison is unwritable, and a
  * negated atom's variables must be positively bound (env membership IS the
  * safety rule). Every condition value carries its operands raw — the
@@ -173,17 +175,44 @@ type MatchShape<F extends FieldsShape> = {
 }
 
 /**
- * The per-property join judgment of a bindings record against the rule
- * environment: a var name already bound must land on a domain-equal field
- * (a cross-domain reuse maps the property to `never` — the compile error
- * the old value brand carried, now structural).
+ * The var binding's judgment against the incoming rule environment: a name
+ * already bound must land on a domain-equal field.
  */
-type BindingOk<Env extends EnvShape, F extends AnyField, T> =
-	T extends Var<infer N extends string> ? (N extends keyof Env ? JoinOk<Env[N], F> : true) : true
+type EnvJoinOk<Env extends EnvShape, F extends FieldsShape, K, N extends string> = N extends keyof Env
+	? JoinOk<Env[N], F[K & keyof F]>
+	: true
+
+/**
+ * The var binding's judgment against its OWN record's siblings: two
+ * bindings of one var name inside a single bindings record are the same
+ * join the environment check judges across atoms, so every same-named
+ * sibling must be domain-equal too. Without this arm two FIRST occurrences
+ * of one name (a record the environment has not seen yet) would meet no
+ * check at all — the intra-atom join would silently cross domains.
+ */
+type SiblingJoinOk<F extends FieldsShape, B, K extends keyof B, N extends string> = false extends {
+	[K2 in Exclude<keyof B & keyof F, K>]: B[K2] extends Var<N> ? JoinOk<F[K2], F[K & keyof F]> : true
+}[Exclude<keyof B & keyof F, K>]
+	? false
+	: true
+
+/**
+ * The per-property join judgment of a bindings record: a var binding must
+ * be domain-equal to the rule environment's binding of the name AND to
+ * every same-named sibling of its own record (a cross-domain reuse maps
+ * the property to `never` — the compile error the old value brand carried,
+ * now structural).
+ */
+type BindingOk<Env extends EnvShape, F extends FieldsShape, B, K extends keyof B> =
+	B[K] extends Var<infer N extends string>
+		? [EnvJoinOk<Env, F, K, N>, SiblingJoinOk<F, B, K, N>] extends [true, true]
+			? true
+			: false
+		: true
 
 /** The validated bindings record (intersect with the inferred `B` — errors land on the offending property). */
 type CheckBindings<Env extends EnvShape, F extends FieldsShape, B> = {
-	readonly [K in keyof B]: K extends keyof F ? (BindingOk<Env, F[K], B[K]> extends true ? B[K] : never) : never
+	readonly [K in keyof B]: K extends keyof F ? (BindingOk<Env, F, B, K> extends true ? B[K] : never) : never
 }
 
 /** The environment a bindings record contributes: var name → the bound field's descriptor. */

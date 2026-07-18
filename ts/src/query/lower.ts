@@ -66,8 +66,19 @@ import type {
 	TreeData
 } from "#query/atom.ts"
 import { allen, and, covers, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
-import type { EnvShape, Flatten, InferredOf, ParamEntry, ParamsRecord, Var } from "#query/scope.ts"
-import { inferred, isTerm, makeDuration, makeMaskParam, makeParam, makeSetParam, makeVar, term } from "#query/scope.ts"
+import type { EnvShape, Flatten, InferredOf, JoinOk, ParamEntry, ParamsRecord, Var } from "#query/scope.ts"
+import {
+	fieldJoins,
+	inferred,
+	isTerm,
+	makeDuration,
+	makeMaskParam,
+	makeParam,
+	makeSetParam,
+	makeVar,
+	renderFieldKind,
+	term
+} from "#query/scope.ts"
 import type { CheckNameSelect, CheckSelect, RowOfNameSelect, RowOfSelect, SelectEntry } from "#query/select.ts"
 import { argMax, argMin, count, countDistinct, max, min, pack, sum } from "#query/select.ts"
 import type { AnyRelation, FieldsShape, RelationFields } from "#relation.ts"
@@ -87,36 +98,76 @@ type ParamsOf<T> = InferredOf<T> extends { readonly params: infer P extends Para
 type RowOf<T> = InferredOf<T> extends { readonly row: infer R } ? R : never
 
 /**
- * One finished rule as a plain value: the runtime data plus the inferred
- * row/params carrier. `.rule(...)` consumes it; hosts never build one by
- * hand.
+ * A recursive predicate's HEAD signature as field descriptors, position
+ * for position — carried on the rec reference so an `idb` join can be
+ * judged against it; `undefined` on values that carry no head (a plain
+ * query rule, or an unthreaded rec handle before its first rule).
  */
-interface RuleValue<Row, P extends ParamsRecord> {
+type HeadShape = readonly AnyField[] | undefined
+
+/**
+ * One finished rule as a plain value: the runtime data plus the inferred
+ * row/params carrier (and, for a RECURSIVE rule, the head's positional
+ * field descriptors — the signature `idb` joins pair against).
+ * `.rule(...)` consumes it; hosts never build one by hand.
+ */
+interface RuleValue<Row, P extends ParamsRecord, Head extends HeadShape = undefined> {
 	readonly rule: RuleData
-	readonly [inferred]?: { readonly row: Row; readonly params: P }
+	readonly [inferred]?: { readonly row: Row; readonly params: P; readonly head: Head }
 }
 
 /** Any finished rule value. */
-type AnyRuleValue = RuleValue<unknown, ParamsRecord>
+type AnyRuleValue = RuleValue<unknown, ParamsRecord, HeadShape>
+
+/** The positional head-field tuple of a recursive rule's names-only select. */
+type HeadFieldsOf<Env extends EnvShape, S extends readonly string[]> = {
+	readonly [I in keyof S]: Env[S[I] & keyof Env]
+}
+
+/** Reads an inferred-head carrier off a rule value or rec reference. */
+type HeadOf<T> = InferredOf<T> extends { readonly head: infer H extends readonly AnyField[] } ? H : undefined
 
 /**
  * A recursive predicate REFERENCE — the shape `idb()` targets carry: the
  * name (type-level identity: a recursive rule's own `idb` accepts only its
  * own name — the self-recursion cut), the runtime data (value identity),
- * and the params its attached rules have used so far (thread the value
- * `.rule(...)` returns into the output's `idb` and the program's `Params`
- * type stays exact).
+ * the params its attached rules have used so far, and the head signature
+ * its FIRST rule sealed (thread the value `.rule(...)` returns into an
+ * `idb` and the program's `Params` type stays exact AND the idb join is
+ * arity- and domain-checked against the head).
  */
-interface RecRef<Name extends string, P extends ParamsRecord> {
+interface RecRef<Name extends string, P extends ParamsRecord, Head extends HeadShape = HeadShape> {
 	readonly name: Name
 	readonly data: RecData
-	readonly [inferred]?: { readonly params: P }
+	readonly [inferred]?: { readonly params: P; readonly head: Head }
 }
 
-/** The validated `idb` variable tuple: every var must already be bound by a relation atom of the rule. */
-type CheckIdbVars<Env extends EnvShape, V> = {
-	readonly [I in keyof V]: V[I] extends Var<infer N extends string> ? (N extends keyof Env ? V[I] : never) : never
-}
+/** One `idb` position's judgment: the var must be bound by a relation atom, domain-equal to the head column when the head is carried. */
+type IdbVarOk<Env extends EnvShape, T, F> =
+	T extends Var<infer N extends string>
+		? N extends keyof Env
+			? F extends AnyField
+				? JoinOk<Env[N], F>
+				: true
+			: false
+		: false
+
+/**
+ * The validated `idb` variable tuple: every var must already be bound by a
+ * relation atom of the rule; and when the target carries its head
+ * signature (the threaded rec handle), the tuple must match the head's
+ * arity and every position must be domain-equal to its head column — the
+ * same wall `JoinOk` holds for EDB atoms. An unthreaded handle carries no
+ * head; its joins stay boundness-checked here and arity/domain-judged at
+ * prepare (the engine's law stands behind both tiers).
+ */
+type CheckIdbVars<Env extends EnvShape, V, Head extends HeadShape = undefined> = Head extends readonly AnyField[]
+	? V extends readonly unknown[]
+		? V["length"] extends Head["length"]
+			? { readonly [I in keyof V]: IdbVarOk<Env, V[I], Head[I & keyof Head]> extends true ? V[I] : never }
+			: { readonly [I in keyof V]: never }
+		: never
+	: { readonly [I in keyof V]: IdbVarOk<Env, V[I], undefined> extends true ? V[I] : never }
 
 /**
  * The term/predicate/aggregate constructor vocabulary every rule builder
@@ -159,10 +210,10 @@ interface TermOps {
 
 /** The rule builder a `query(S).rule(...)` callback receives: the ops plus the first atom. */
 interface QueryRuleScope<Rels extends SchemaRelations> extends TermOps {
-	/** The first EDB atom of the rule: fields bind vars, params, ∈-sets, or bare literals; absence is the wildcard. */
+	/** The first EDB atom of the rule: fields bind vars, params, ∈-sets, or bare literals; absence is the wildcard (same-named vars within the record join domain-equal). */
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
 		relation: R,
-		bindings: B
+		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, B>
 	): QueryRuleChain<Rels, EnvOfMatch<Record<never, never>, RelationFields<R>, B>, BindParamsShape<RelationFields<R>, B>>
 }
 
@@ -185,7 +236,7 @@ interface QueryRuleChain<Rels extends SchemaRelations, Env extends EnvShape, P e
 interface OutputRuleScope<Rels extends SchemaRelations> extends TermOps {
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
 		relation: R,
-		bindings: B
+		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, B>
 	): OutputRuleChain<
 		Rels,
 		EnvOfMatch<Record<never, never>, RelationFields<R>, B>,
@@ -208,11 +259,13 @@ interface OutputRuleChain<Rels extends SchemaRelations, Env extends EnvShape, P 
 	 * position — every variable must already be bound by a relation atom of
 	 * the rule (the theory's own domain relation; the rec's answers are
 	 * theory values, so the join is identity). Threading the rec value the
-	 * last `.rule(...)` returned carries its rules' params into `Params`.
+	 * last `.rule(...)` returned carries its rules' params into `Params`
+	 * AND its head signature, so the join is arity- and domain-checked
+	 * against the head at compile time.
 	 */
 	idb<Target extends RecRef<string, ParamsRecord>, const V extends readonly Var<string>[]>(
 		target: Target,
-		...vars: CheckIdbVars<Env, V> & V
+		...vars: CheckIdbVars<Env, V, HeadOf<Target>> & V
 	): OutputRuleChain<Rels, Env, Flatten<P & ParamsOf<Target>>>
 	select<const S extends readonly SelectEntry[]>(...entries: CheckSelect<Env, S> & S): RuleValue<RowOfSelect<Env, S>, P>
 }
@@ -221,7 +274,7 @@ interface OutputRuleChain<Rels extends SchemaRelations, Env extends EnvShape, P 
 interface RecRuleScope<Rels extends SchemaRelations, Self extends string> extends TermOps {
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
 		relation: R,
-		bindings: B
+		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, B>
 	): RecRuleChain<
 		Rels,
 		Self,
@@ -251,15 +304,15 @@ interface RecRuleChain<
 	where<const C extends AnyCond>(
 		cond: CheckCond<Env, C> & C
 	): RecRuleChain<Rels, Self, Env, Flatten<P & CondParamsShape<Env, C>>>
-	/** The self-recursive atom: `idb(self, ...boundVars)` — only this rec's own reference is accepted. */
-	idb<const V extends readonly Var<string>[]>(
-		target: RecRef<Self, ParamsRecord>,
-		...vars: CheckIdbVars<Env, V> & V
+	/** The self-recursive atom: `idb(self, ...boundVars)` — only this rec's own reference is accepted (threaded, its head arity- and domain-checks the join). */
+	idb<Target extends RecRef<Self, ParamsRecord>, const V extends readonly Var<string>[]>(
+		target: Target,
+		...vars: CheckIdbVars<Env, V, HeadOf<Target>> & V
 	): RecRuleChain<Rels, Self, Env, P>
-	/** The recursive head: bound variable names only (the creation quarantine, restated for fixpoint topology). */
+	/** The recursive head: bound variable names only (the creation quarantine, restated for fixpoint topology); the value carries the head's field descriptors for `idb` pairing. */
 	select<const S extends readonly string[]>(
 		...names: CheckNameSelect<Env, S> & S
-	): RuleValue<RowOfNameSelect<Env, S>, P>
+	): RuleValue<RowOfNameSelect<Env, S>, P, HeadFieldsOf<Env, S>>
 }
 
 /** A query's runtime description — everything lowering, the wire marshal, and answer decode read. */
@@ -428,7 +481,13 @@ function resolveBindings(
 	}
 }
 
-/** Extends a rule state with one positive atom (vars bind on first occurrence). */
+/**
+ * Extends a rule state with one positive atom. Vars bind on first
+ * occurrence; every LATER occurrence (a later atom's field or a same-record
+ * sibling) is a join and must be domain-equal — the construction-time twin
+ * of the type tier's `JoinOk`, so the domain wall holds for untyped
+ * callers too.
+ */
 function advanceMatch(
 	state: RuleBuildState,
 	relation: AnyRelation,
@@ -437,8 +496,13 @@ function advanceMatch(
 	const resolved = resolveBindings(`relation ${relation.name}`, relation, bindings)
 	const varFields: Record<string, AnyField> = { ...state.varFields }
 	for (const bound of resolved.vars) {
-		if (varFields[bound.name] === undefined) {
+		const existing = varFields[bound.name]
+		if (existing === undefined) {
 			varFields[bound.name] = bound.field
+		} else if (!fieldJoins(existing, bound.field)) {
+			throw errors.new(
+				`relation ${relation.name}: the variable ${bound.name} joins domain-unequal fields — first bound at ${renderFieldKind(existing)}, reused at ${renderFieldKind(bound.field)} (a var joins only domain-equal fields)`
+			)
 		}
 	}
 	return {
@@ -750,21 +814,41 @@ function completeRule(context: string, state: RuleBuildState, columns: readonly 
 	for (const item of state.items) {
 		if (item.kind === "negated") {
 			for (const binding of item.atom.bindings) {
-				if (binding.term.kind === "var" && state.varFields[binding.term.name] === undefined) {
-					throw errors.new(
-						`${context}: negated ${item.atom.relation.name} atom binds the variable ${binding.term.name} at position ${binding.field}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
-					)
+				if (binding.term.kind === "var") {
+					const bound = state.varFields[binding.term.name]
+					if (bound === undefined) {
+						throw errors.new(
+							`${context}: negated ${item.atom.relation.name} atom binds the variable ${binding.term.name} at position ${binding.field}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
+						)
+					}
+					if (!fieldJoins(bound, binding.data)) {
+						throw errors.new(
+							`${context}: negated ${item.atom.relation.name} atom reuses the variable ${binding.term.name} at ${binding.field} (${renderFieldKind(binding.data)}), but the rule binds it at ${renderFieldKind(bound)} — a var joins only domain-equal fields`
+						)
+					}
 				}
 			}
 		}
 		if (item.kind === "idb") {
-			for (const name of item.vars) {
-				if (state.varFields[name] === undefined) {
+			const head = item.rec.rules[0]
+			item.vars.forEach(function checkIdbVar(name, position) {
+				const bound = state.varFields[name]
+				if (bound === undefined) {
 					throw errors.new(
 						`${context}: idb ${item.rec.name} names the variable ${name}, but no relation atom of the rule binds it — an idb atom is a join position; bind the variable through the theory's own relation first`
 					)
 				}
-			}
+				const column = head?.select[position]
+				if (column === undefined || column.entry.kind !== "var") {
+					return
+				}
+				const headField = head?.varFields[column.entry.over]
+				if (headField !== undefined && !fieldJoins(headField, bound)) {
+					throw errors.new(
+						`${context}: idb ${item.rec.name} joins the variable ${name} (${renderFieldKind(bound)}) at head position ${position} (${column.name}: ${renderFieldKind(headField)}) — a var joins only domain-equal fields`
+					)
+				}
+			})
 		}
 		if (item.kind === "cond") {
 			validateCond(context, state.varFields, item.cond)
@@ -1543,6 +1627,9 @@ function lowerQuery(q: AnyQuery): ProgramIr {
 export type {
 	AnyQuery,
 	AnyRuleValue,
+	HeadFieldsOf,
+	HeadOf,
+	HeadShape,
 	OutputRuleChain,
 	OutputRuleScope,
 	ParamsOf,
