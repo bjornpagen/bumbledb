@@ -39,7 +39,11 @@
 //! (legal on u64, i64, `bytes<N>`, and both intervals). `fresh`
 //! auto-materializes `R(field) -> R` at schema resolution. **There are no field-level constraint modifiers** — everything
 //! relational is a dependency statement between the relation blocks
-//! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality),
+//! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality —
+//! read as the functional dependency it spells: the key projection
+//! DETERMINES the tuple, and the arrow closing over its own relation is
+//! what makes a key a key; a right side naming any other relation is a
+//! spanned teaching error, not a key statement),
 //! `A(X | σ) <= B(Y | ψ)` (containment), `==` lowered here to the two
 //! adjacent containments, `A <= B` first;
 //! `B(Y | ψ) <={lo..hi} A(X | σ)` (the cardinality window — B-family,
@@ -761,6 +765,17 @@ fn parse_statement_side(tokens: &mut Tokens) -> Side {
     parse_side(relation, relation_span, group)
 }
 
+/// A parse-stage teaching error: the offending token's span plus the
+/// message. `schema()` lands it as a `compile_error!` at the token —
+/// the same landing the lowering's `SpecIssue`s take — for the grammar
+/// mistakes that carry MEANING worth teaching (today: the key arrow's
+/// right side), where an expansion panic at the invocation would bury
+/// the lesson.
+struct ParseError {
+    span: Span,
+    message: String,
+}
+
 /// Parses one dependency statement, `relation` being its left relation
 /// name (already consumed, its span in hand). `==` survives as the
 /// `bidirectional` containment spelling — the shared lowering lowers it
@@ -771,26 +786,44 @@ fn parse_statement(
     relation_span: Span,
     tokens: &mut Tokens,
     statements: &mut Vec<Statement>,
-) {
+) -> Result<(), ParseError> {
     let group = take_group(tokens, Delimiter::Parenthesis, "a projection list");
     let left = parse_side(relation, relation_span, group);
     match tokens.next() {
-        // `->`: functionality. The right side is the side's own relation,
-        // and the FD form takes no selection — the engine descriptor
+        // `->`: functionality. The right side is the side's own relation
+        // — the arrow closing over it is the dependency-theoretic reading
+        // (OWNER RULING 2026-07-18: the arrow is canon, never respelled) —
+        // and the FD form takes no selection: the engine descriptor
         // carries none by construction (the shape is unrepresentable, not
         // rejected downstream), so the grammar is the judge here.
         Some(TokenTree::Punct(p)) if p.as_char() == '-' => {
             expect_punct(tokens, '>');
-            let right = expect_ident(tokens, "the FD's relation name");
+            let (right, right_span) = spanned_ident(tokens, "the FD's relation name");
             assert!(
                 left.selection.is_empty(),
                 "schema!: an FD takes no selection — the FD form is `R(X) -> R` \
                  (docs/architecture/30-dependencies.md)"
             );
-            assert_eq!(
-                right, left.relation,
-                "schema!: an FD's right side is its own relation: R(X) -> R"
-            );
+            if right != left.relation {
+                let fields: Vec<&str> = left
+                    .projection
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect();
+                return Err(ParseError {
+                    span: right_span,
+                    message: format!(
+                        "schema!: the key arrow closes over its own relation: \
+                         `{rel}({proj}) -> {rel}` — the projection determines the \
+                         tuple, and that closure is what makes a key a key (a \
+                         functional dependency over the relation's own attributes); \
+                         `-> {right}` is not a key statement \
+                         (docs/architecture/30-dependencies.md)",
+                        rel = left.relation,
+                        proj = fields.join(", "),
+                    ),
+                });
+            }
             statements.push(Statement::Functionality {
                 relation: left.relation,
                 relation_span: left.relation_span,
@@ -849,6 +882,7 @@ fn parse_statement(
         other => panic!("schema!: expected `->`, `<=`, `<={{lo..hi}}`, or `==`, found {other:?}"),
     }
     expect_punct(tokens, ';');
+    Ok(())
 }
 
 /// One window bound out of the brace group: a non-negative integer,
@@ -909,8 +943,10 @@ fn parse_window(body: TokenStream) -> WindowSpec {
 }
 
 /// Parses the whole `schema!` body: the `pub Name;` header first, then
-/// relation blocks and dependency statements in any order.
-fn parse_schema(input: TokenStream) -> SchemaAst {
+/// relation blocks and dependency statements in any order. `Err` is the
+/// parse's one teaching error (the key arrow's foreign right side),
+/// spanned at the offending token.
+fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
     let mut tokens = input.into_iter().peekable();
     match tokens.next() {
         Some(TokenTree::Ident(ident)) if ident.to_string() == "pub" => {}
@@ -952,10 +988,10 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
                  (docs/architecture/30-dependencies.md § refused: order marks)"
             );
         } else {
-            parse_statement(ident, ident_span, &mut tokens, &mut schema.statements);
+            parse_statement(ident, ident_span, &mut tokens, &mut schema.statements)?;
         }
     }
-    schema
+    Ok(schema)
 }
 
 /// The declarative schema surface: expands to the header's `Theory`
@@ -974,10 +1010,15 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
 /// On malformed `schema!` grammar or a literal that does not fit its
 /// field's declared type — a compile error at the macro call site.
 /// Lowering issues (unresolvable names, banned spellings) are not panics:
-/// each becomes a `compile_error!` at the offending token.
+/// each becomes a `compile_error!` at the offending token — as does the
+/// parse's teaching error (a key arrow whose right side names a foreign
+/// relation), spanned at the offending name.
 #[proc_macro]
 pub fn schema(input: TokenStream) -> TokenStream {
-    let schema = parse_schema(input);
+    let schema = match parse_schema(input) {
+        Ok(schema) => schema,
+        Err(error) => return compile_error_tokens(error.span, &error.message),
+    };
     let (spec, spans) = lower_input(&schema);
     let descriptor = match spec.descriptor() {
         Ok(descriptor) => descriptor,

@@ -897,6 +897,11 @@ split is unchanged: what the type layer cannot state (target-resolves-a-key
 and the rest of the semantic roster) stays a typed `Db.create` error, and
 host-variable id-mixing on `insert` — a raw `bigint` in the wrong field —
 stays the engine's containment judgment at commit, exactly as for any host.
+The statement builders are host-idiomatic FLAVOR over one meaning:
+`key(R, ["a", "b"])` is the TS spelling of the canonical key arrow
+`R(a, b) -> R` (the FD reading, `30-dependencies.md` — ratified, owner
+ruling 2026-07-18), and the manifest renders the arrow, byte-pinned by the
+render golden — the semantic-parity law in miniature.
 Structural values keep the marshal boundary pure both ways: nothing is
 branded going in, so nothing is asserted coming out, and the SDK's product
 code carries zero casts.

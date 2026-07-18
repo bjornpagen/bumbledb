@@ -4,9 +4,10 @@
 //! and its `//@ error: <substring>` directives (repeatable) pin the
 //! diagnostic. The macro's grammar and literal-typing checks are
 //! expansion panics spanned at the invocation; the shared lowering's
-//! issues (names, the ban table) are `compile_error!`s at the offending
-//! token; and the schema-bound-witness fixture is an ordinary type
-//! mismatch — any way, no `//@ line` directives.
+//! issues (names, the ban table) and the parse's teaching error (the
+//! key arrow's foreign right side) are `compile_error!`s at the
+//! offending token; and the schema-bound-witness fixture is an ordinary
+//! type mismatch — any way, no `//@ line` directives.
 //!
 //! The runner drives `rustc` directly against the workspace's own build
 //! artifacts: this integration test lives in `target/…/deps`, so its
@@ -128,10 +129,10 @@ fn schema_compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's twenty-four cases (docs/architecture/70-api.md — the
+    // The suite's twenty-five cases (docs/architecture/70-api.md — the
     // emission's roster, the funerals, the width grammar, the
-    // canonical-utterance law's ban table, and the schema-bound
-    // witness): duplicate handle; missing column; extra column;
+    // canonical-utterance law's ban table, the key arrow's closure, and
+    // the schema-bound witness): duplicate handle; missing column; extra column;
     // type-mismatched literal; the width-mismatched `bytes<N>` and
     // `interval<E, w>` selection literals (the width is the type — the
     // token→`Value` seam judges it, never `Db::create`); `closed
@@ -148,11 +149,14 @@ fn schema_compile_fail_fixtures() {
     // open shorthands `{..hi}` / `{lo..}`, the empty window `<={}`
     // (names no bounds), the singleton literal set (the bare literal's
     // second spelling), and the empty literal set `{}` (selects
-    // nothing — write no binding); and the cross-schema `FreshField`
+    // nothing — write no binding); the key arrow whose right side names
+    // a foreign relation (the FD reading ratified — the arrow closes
+    // over its own relation, and the teaching error is spanned at the
+    // offending name); and the cross-schema `FreshField`
     // witness (the schema-bound witness law — the binding typestate
     // makes a foreign witness a type mismatch).
     assert_eq!(
-        seen, 24,
-        "the schema compile-fail roster has twenty-four fixtures"
+        seen, 25,
+        "the schema compile-fail roster has twenty-five fixtures"
     );
 }
