@@ -31,6 +31,8 @@ import * as errors from "@superbuilders/errors"
 import type { RecData } from "#query/atom.ts"
 import type {
 	AnyRuleValue,
+	HeadOf,
+	HeadShape,
 	OutputRuleScope,
 	ParamsOf,
 	ProgramState,
@@ -50,11 +52,21 @@ import type { Schema, SchemaRelations } from "#schema.ts"
  * One recursive predicate HANDLE: `rec.rule(...)` attaches a clause and
  * returns the SAME rec under a widened params type (the runtime data is
  * shared — either handle is the self-reference; the returned one carries
- * the rules' params for the output to thread).
+ * the rules' params for the output to thread) and under the head signature
+ * the FIRST rule sealed (every later rule derives the same head — the
+ * runtime alignment check's law), so a threaded handle's `idb` joins are
+ * arity- and domain-checked against the head.
  */
-interface Rec<Rels extends SchemaRelations, Name extends string, P extends ParamsRecord> extends RecRef<Name, P> {
-	rule<RV extends AnyRuleValue>(build: (r: RecRuleScope<Rels, Name>) => RV): Rec<Rels, Name, Flatten<P & ParamsOf<RV>>>
-	readonly [inferred]?: { readonly params: P }
+interface Rec<
+	Rels extends SchemaRelations,
+	Name extends string,
+	P extends ParamsRecord,
+	Head extends HeadShape = undefined
+> extends RecRef<Name, P, Head> {
+	rule<RV extends AnyRuleValue>(
+		build: (r: RecRuleScope<Rels, Name>) => RV
+	): Rec<Rels, Name, Flatten<P & ParamsOf<RV>>, Head extends undefined ? HeadOf<RV> : Head>
+	readonly [inferred]?: { readonly params: P; readonly head: Head }
 }
 
 /** One output-rule builder function. */

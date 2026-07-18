@@ -5,10 +5,11 @@
  * REPRESENTATIONALLY, stronger than Rust's expansion errors, in two tiers:
  *
  * - **The type tier**: a banned spelling written as a LITERAL does not
- *   compile — `exactly(0n)`, `between(n, n)`, `atLeast(0n)`, `atLeast(1n)`,
- *   `atMost(0n)`, and every negative bound are type errors naming the
- *   canonical form (`{n..n}`, `{0..0}`, `{0..*}`, `{1..*}` have NO argument
- *   shape that produces them), and no sixth constructor exists at all.
+ *   compile — `exactly(0n)`, `between(n, n)`, `between(0n, hi)`,
+ *   `atLeast(0n)`, `atLeast(1n)`, `atMost(0n)`, and every negative bound
+ *   are type errors naming the canonical form (`{n..n}`, `{0..0}`,
+ *   `{0..hi}`-via-between, `{0..*}`, `{1..*}` have NO argument shape that
+ *   produces them), and no sixth constructor exists at all.
  * - **The construction tier**: a bound the type level cannot judge — a
  *   COMPUTED `bigint`, whose literal identity is erased, or an inverted
  *   `between(lo, hi)` order, which type-level bigints cannot compare — is
@@ -92,12 +93,19 @@ type AtMostBan<N extends bigint> = bigint extends N
 			? BannedWindow<"`{0..0}` — the exclusion is written `{0}`: use none">
 			: unknown
 
+/** The ban verdict on a `between` floor of zero: `{0..hi}` is the ceiling respelled (`atMost(hi)`). */
+type BetweenFloorBan<Lo extends bigint> = Lo extends 0n
+	? BannedWindow<"`{0..hi}` — a ceiling is written atMost(hi)">
+	: unknown
+
 /**
  * The ban verdict on `between(lo, hi)`, judged on the second bound once
  * both literals are known: `{n..n}` is the exact count respelled
- * (`exactly(n)`, or `none` at 0). Bound ORDER (`{hi..lo}` inverted) is not
- * type-expressible — bigint literals have no type-level comparison — so
- * inversion stays a construction error below.
+ * (`exactly(n)`, or `none` at 0), and `{0..hi}` is the ceiling respelled
+ * (`atMost(hi)` — the five constructors PARTITION the legal windows, so
+ * the one ceiling window keeps its one spelling). Bound ORDER (`{hi..lo}`
+ * inverted) is not type-expressible — bigint literals have no type-level
+ * comparison — so inversion stays a construction error below.
  */
 type BetweenBan<Lo extends bigint, Hi extends bigint> = bigint extends Lo
 	? unknown
@@ -112,8 +120,8 @@ type BetweenBan<Lo extends bigint, Hi extends bigint> = bigint extends Lo
 						? Lo extends 0n
 							? BannedWindow<"`{0..0}` — the exclusion is written `{0}`: use none">
 							: BannedWindow<"`{n..n}` — an exact count is written `{n}`: use exactly(n)">
-						: unknown
-					: unknown
+						: BetweenFloorBan<Lo>
+					: BetweenFloorBan<Lo>
 
 /**
  * `{n}` — THE exact-count spelling, n ≥ 1. `exactly(0)` is the exclusion
@@ -134,11 +142,13 @@ function exactly<const N extends bigint>(n: N & ExactlyBan<N>): Count {
 const none: Count = admit(exclusion)
 
 /**
- * `{lo..hi}` — both bounds explicit, 0 ≤ lo < hi. `lo === hi` is the exact
- * count respelled: unwritable as literals ({@link BetweenBan} names
- * `exactly(n)`, or `none` at 0), rejected at construction when computed;
- * an inverted window is unsatisfiable and rejected at construction (bigint
- * literals carry no type-level order).
+ * `{lo..hi}` — both bounds explicit, 1 ≤ lo < hi. `lo === hi` is the exact
+ * count respelled and `lo === 0` is the ceiling respelled: unwritable as
+ * literals ({@link BetweenBan} names `exactly(n)`, `none` at `{0..0}`, or
+ * `atMost(hi)` at a zero floor — the five constructors PARTITION the legal
+ * windows), rejected at construction when computed; an inverted window is
+ * unsatisfiable and rejected at construction (bigint literals carry no
+ * type-level order).
  */
 function between<const Lo extends bigint, const Hi extends bigint>(lo: Lo, hi: Hi & BetweenBan<Lo, Hi>): Count {
 	if (lo < 0n || hi < 0n) {
@@ -154,6 +164,9 @@ function between<const Lo extends bigint, const Hi extends bigint>(lo: Lo, hi: H
 			throw errors.new("`{0..0}` — the exclusion is written `{0}`: use none")
 		}
 		throw errors.new(`\`{${lo}..${lo}}\` — an exact count is written \`{${lo}}\`: use exactly(${lo})`)
+	}
+	if (lo === 0n) {
+		throw errors.new(`\`{0..${hi}}\` — a ceiling is written atMost: use atMost(${hi})`)
 	}
 	return admit(Object.freeze({ kind: "range", lo, hi }))
 }
