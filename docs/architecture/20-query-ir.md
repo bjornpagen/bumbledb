@@ -1057,11 +1057,14 @@ macro consumes a literal token tree and expansion constructs the `ir::Query` val
 IR layer, which exists regardless.
 
 **One notation, everywhere — the anti-drift discipline.** `ir::render` emits this
-grammar; the cookbook writes its queries in it; any foreign sugar (the anticipated
-TS binding) parses it. The renderer is the spec, and every implementation is pinned
+grammar; the cookbook writes its queries in it; any foreign sugar that speaks
+text parses it. The renderer is the spec, and every implementation is pinned
 by **round-trip goldens**: `render(lower(text))` equals the normalized text,
-byte-exactly (`bumbledb-query/tests/notation.rs`). Three consumers, one grammar,
-zero drift by construction.
+byte-exactly (`bumbledb-query/tests/notation.rs`). One grammar, zero drift by
+construction. (The shipped TS SDK sits below the notation, not beside it: its
+query builders construct IR values directly — no string parsing anywhere —
+so it is an IR producer under the trust-boundary law, not a fourth speaker of
+the text; `70-api.md` § the TypeScript SDK.)
 
 ## Prepared queries
 

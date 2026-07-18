@@ -277,11 +277,13 @@ recursion, the ruling that survived the campaign whole); the closure idiom
 remains the covenant for what the caps and the chain-window fence keep
 outside, not a workaround.
 
-**Anticipated, not built:** JS/N-API bindings are punted with zero deliverable and
-a recorded quarantine shape — a downstream crate on the bench-crate precedent (it
-may hold the N-API dependency; the engine never depends on it; no engine decision
-may lean on its existence), compiling the application's `schema!` in and marshaling
-IR-as-data in, result copies out (`70-api.md` § anticipated bindings).
+**Built, quarantined:** the JS binding is the in-tree TypeScript SDK
+(`@bjornpagen/bumbledb`, `ts/`), landed on the quarantine shape that was
+recorded for it — the napi bridge is a downstream crate on the bench-crate
+precedent (`ts/crate/`, outside the Cargo workspace; it holds the N-API
+dependency; the engine never depends on it; no engine decision leans on its
+existence), marshaling schemas and IR as data in, result copies out
+(`70-api.md` § the TypeScript SDK).
 
 **Deleted vocabulary** (each word's replacement, one line, normative in
 `30-dependencies.md` and `10-data-model.md`): *primary key* → the fact is its own

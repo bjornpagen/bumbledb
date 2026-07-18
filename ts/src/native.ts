@@ -479,8 +479,8 @@ const SHIPPED_PLATFORMS = "darwin-arm64"
  * It resolves the per-platform binary package by name (see
  * {@link loadNativeBinding}); the addon never crosses as a relative path.
  * createRequire is the only unflagged Node-API addon loader in ESM, and this
- * file is the package's single sanctioned FFI boundary
- * (docs/road-to-1.0.0/prd-03-arch-split-packaging.md).
+ * file is the package's single sanctioned FFI boundary (the arch-split
+ * packaging ruling).
  */
 const requireNative = createRequire(import.meta.url)
 
