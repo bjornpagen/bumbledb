@@ -57,7 +57,10 @@ function resolveEntry(field: AnyField, entry: unknown): LiteralSetSpec {
  * Resolves a whole `where()` selection against the declared fields, in the
  * selection's written order (macro parity: σ is spelled, not sorted). An
  * empty selection is the bare relation respelled and rejected (the
- * canonical-utterance law).
+ * canonical-utterance law). THE one selection resolver — `closed()`'s
+ * `where()` resolves its payload columns through this same machine (a
+ * `ClosedColumn` is structurally a {@link RelationField}), so both surfaces
+ * share one vocabulary and one error voice.
  */
 function resolveSelection(
 	name: string,
@@ -246,4 +249,4 @@ export type {
 	SelectionBinding,
 	SelectionInput
 }
-export { relation }
+export { relation, resolveSelection }

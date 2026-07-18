@@ -15,10 +15,16 @@
  * { pages: true }, ... })` — the axioms record IS the handle declaration,
  * every handle carrying every column exactly once (type-enforced). No fact
  * type and no insert surface exist — closed relations are unwritable by
- * construction: the value simply lacks the writable relation shape.
+ * construction: the value simply lacks the writable relation shape. The
+ * payload tier additionally mints `where()` — the ψ-selection surface
+ * (`Kind.where({ mastered: true })` as a face source), resolved through the
+ * ONE selection machine (`relation.ts::resolveSelection`); the bare tier has
+ * no payload columns to select on, so `.where` is absent there, at the type
+ * AND on the value.
  */
 
 import * as errors from "@superbuilders/errors"
+import type { OneOf } from "#face.ts"
 import {
 	type AnyField,
 	assertDeclarationOrderKey,
@@ -27,13 +33,16 @@ import {
 	type Infer,
 	literalOf
 } from "#fields.ts"
+import { resolveSelection, type SelectionBinding } from "#relation.ts"
 import type { LiteralSpec } from "#spec.ts"
 
 /**
  * The value-surface property names a handle may not shadow — the macro's
  * name-collision diagnostic, here over the closed value's own properties
  * (`relation`/`selection` are reserved so a closed value can never be
- * mistaken for a selected relation by `on()`'s discriminant).
+ * mistaken for a selected relation by `on()`'s discriminant; `where` is
+ * reserved because the payload tier mints the ψ-selection method under
+ * exactly that name).
  */
 const reservedHandleNames: readonly string[] = Object.freeze([
 	"name",
@@ -42,6 +51,7 @@ const reservedHandleNames: readonly string[] = Object.freeze([
 	"axioms",
 	"columns",
 	"fromId",
+	"where",
 	"relation",
 	"selection"
 ])
@@ -121,16 +131,61 @@ interface ClosedCore<Name extends string, Handles extends string, Cols extends R
 }
 
 /**
+ * The `where()` argument of a closed relation: per PAYLOAD column, a bare
+ * structural literal of that column's value type or an `oneOf(a, b, ...)`
+ * literal set — the ordinary `where()`'s vocabulary exactly. The synthetic
+ * `id` is deliberately absent: an id selection is spelled only as handle
+ * literals on the REFERENCING side (the canonical-utterance law).
+ */
+type ClosedSelectionInput<Cols extends Record<string, PayloadField>> = {
+	readonly [C in keyof Cols]?: Infer<Cols[C]> | OneOf<Infer<Cols[C]>>
+}
+
+/**
+ * A closed relation with a ψ selection applied — what `on()` consumes as a
+ * σ-carrying closed source (`on(Kind.where({ mastered: true }), "id")`).
+ * Deliberately the SAME discriminant shape as the ordinary `Selected`
+ * (`relation`/`selection` — `face.ts::faceParts` splits both by `"relation"
+ * in source`), and structurally UNMISTAKABLE for one: an `AnyClosed` lacks
+ * the relation shape (no `fields` record, no `RelationData`).
+ */
+interface SelectedClosed<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>> {
+	readonly relation: Closed<Name, Handles, Cols>
+	readonly selection: readonly SelectionBinding[]
+}
+
+/** Any ψ-selected closed relation value. */
+interface AnySelectedClosed {
+	readonly relation: AnyClosed
+	readonly selection: readonly SelectionBinding[]
+}
+
+/**
+ * The ψ-selection surface of a payload-tier closed value. The selection is
+ * resolved EAGERLY against the declared columns and lowered as-is — the SDK
+ * never pre-folds ψ into an id set: pass-through lowering is what the macro
+ * does, and the ENGINE folds against the sealed extension at validate
+ * (`compile_member_set`).
+ */
+interface ClosedSelectable<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>> {
+	where(selection: ClosedSelectionInput<Cols>): SelectedClosed<Name, Handles, Cols>
+}
+
+/**
  * A closed relation value: the core surface plus one BARE constant per
  * handle (`Kind.Checking: bigint`, ids = declaration order — the value is
  * structural; the roster judges out-of-vocabulary ids at construction and
- * the engine at commit).
+ * the engine at commit), plus — exactly when payload columns exist —
+ * `where()` (the bare tier has nothing to select on, so the method is
+ * ABSENT there, not merely uncallable).
  */
 type Closed<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>> = ClosedCore<
 	Name,
 	Handles,
 	Cols
-> & { readonly [H in Handles]: bigint }
+> & { readonly [H in Handles]: bigint } & ([keyof Cols] extends [never]
+		? unknown
+		: ClosedSelectable<Name, Handles, Cols>)
 
 /** Any closed relation value, whatever its roster and columns. */
 interface AnyClosed {
@@ -323,11 +378,26 @@ function closedPayload<Name extends string, Cols extends Record<string, PayloadF
 }
 
 /**
+ * The trusted seam of the ψ-surface mint: `where` reads back as an own
+ * function exactly when payload columns exist — the runtime twin of the
+ * {@link Closed} type's conditional `ClosedSelectable` arm, verified before
+ * the minted value is admitted at the conditional type.
+ */
+function selectableMinted<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>>(
+	value: ClosedCore<Name, Handles, Cols> & { readonly [H in Handles]: bigint },
+	cols: readonly ClosedColumn[]
+): value is Closed<Name, Handles, Cols> {
+	const selectable = "where" in value && typeof value.where === "function"
+	return cols.length > 0 ? selectable : !selectable
+}
+
+/**
  * Mints one closed relation value — the shared seam of both tiers, HONESTLY
  * typed end to end (a wrong-shaped mint is a compile error here, not a
  * laundered `unknown`): roster checks, eager axiom lowering, the
  * roster-carrying `id` descriptor, the frozen `columns` carrier (the runtime
- * twin of the `Cols` type parameter), and the handle constants.
+ * twin of the `Cols` type parameter), the handle constants, and — on the
+ * payload tier only — the ψ-selection `where()`.
  */
 function mintClosed<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>>(
 	name: Name,
@@ -387,18 +457,48 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 	const constants = mintHandleConstants(name, handleList)
 	const columnsOut: Cols = { ...columns }
 	Object.freeze(columnsOut)
-	return Object.freeze({
-		...constants,
-		name,
-		id,
-		data,
-		axioms: axiomsOut,
-		columns: columnsOut,
-		fromId(idValue: bigint): Handles | undefined {
-			return handleList[Number(idValue)]
+	function fromId(idValue: bigint): Handles | undefined {
+		return handleList[Number(idValue)]
+	}
+	const holder: { value: Closed<Name, Handles, Cols> | undefined } = { value: undefined }
+	/**
+	 * The ψ selection: resolved against the declared payload columns through
+	 * the ONE selection machine (`relation.ts::resolveSelection` — a
+	 * `ClosedColumn` is structurally a `RelationField`), never pre-folded
+	 * into an id set (the engine folds at validate).
+	 */
+	function where(selection: ClosedSelectionInput<Cols>): SelectedClosed<Name, Handles, Cols> {
+		const owner = holder.value
+		if (owner === undefined) {
+			throw errors.new(`closed relation ${name}: self-reference read before construction completed`)
 		}
-	})
+		return Object.freeze({
+			relation: owner,
+			selection: resolveSelection(name, cols, Object.entries(selection))
+		})
+	}
+	const core = { name, id, data, axioms: axiomsOut, columns: columnsOut, fromId }
+	const value: ClosedCore<Name, Handles, Cols> & { readonly [H in Handles]: bigint } =
+		cols.length > 0 ? Object.freeze({ ...constants, ...core, where }) : Object.freeze({ ...constants, ...core })
+	if (!selectableMinted<Name, Handles, Cols>(value, cols)) {
+		throw errors.new(`closed relation ${name}: ψ-surface minting incomplete`)
+	}
+	holder.value = value
+	return value
 }
 
-export type { AnyClosed, AxiomRow, Axioms, Closed, ClosedColumn, ClosedCore, ClosedData, ClosedRow, PayloadField }
+export type {
+	AnyClosed,
+	AnySelectedClosed,
+	AxiomRow,
+	Axioms,
+	Closed,
+	ClosedColumn,
+	ClosedCore,
+	ClosedData,
+	ClosedRow,
+	ClosedSelectionInput,
+	PayloadField,
+	SelectedClosed
+}
 export { closed }
