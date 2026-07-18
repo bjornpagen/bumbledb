@@ -40,6 +40,16 @@ same determinants). **Why it lost:** every instance surveyed is better said as a
 shape; accepting them sells normalization back as a runtime feature. **Reverses if:**
 a real invariant appears that no relation split can express.
 
+**The arrow is canon — RATIFIED, owner ruling 2026-07-18.** `R(X) -> R` is
+the dependency-theoretic utterance, not ceremony: the key projection
+DETERMINES the tuple, and the arrow closing over its own relation is what
+makes a key a key — a functional dependency `X -> R` over R's own
+attributes. The spelling is never respelled, in either host's renderer
+(the TS render golden byte-pins it), and the macro teaches the reading
+rather than merely asserting it: a right side naming a foreign relation is
+a spanned compile error
+(`crates/bumbledb/tests/schema-compile-fail/key_arrow_foreign_relation.rs`).
+
 **Containment (IND).** `A(X | φ) <= B(Y | ψ)`: subset inclusion of the selected
 projected views (`lean/Bumbledb/Dependencies.lean: Containment`,
 `contains_iff_view_subset`). |X| = |Y| with positional type equality — exact
