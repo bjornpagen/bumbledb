@@ -18,6 +18,7 @@
  * where they aggregate and get judged (the one-generator-per-class wall).
  */
 
+import * as errors from "@superbuilders/errors"
 import type { AnyClosed, AnySelectedClosed, PayloadField } from "#closed.ts"
 import type { AnyField } from "#fields.ts"
 import type { AnyRelation, AnySelected, FieldsShape, RelationFields, SelectionBinding } from "#relation.ts"
@@ -25,6 +26,16 @@ import { renderLiteralSet } from "#spec.ts"
 
 /** The empty σ of a selection-free face, shared by every bare projection. */
 const emptySelection: readonly SelectionBinding[] = Object.freeze([])
+
+/**
+ * The OWNER a face source resolves to: a selected relation — ordinary σ or
+ * closed ψ, one shape — projects from its underlying relation; a bare
+ * relation or closed relation is its own owner. The type-level twin of
+ * {@link faceParts}'s split, and what a statement's face `data` carries at
+ * its EXACT type — `schema()`'s law-typing reads the owner's literal name
+ * (and the projection tuple) straight off the statement type.
+ */
+type OwnerOf<S extends FaceSource> = S extends AnySelected | AnySelectedClosed ? S["relation"] : S
 
 /**
  * Splits a face source into its owner and σ: a selected relation — ordinary
@@ -67,10 +78,17 @@ function oneOf<V>(first: V, second: V, ...rest: V[]): OneOf<V> {
 /** The relation a face projects from — ordinary or closed. */
 type FaceOwner = AnyRelation | AnyClosed
 
-/** A face's runtime description: owner, π (written order), σ (resolved bindings). */
-interface FaceData {
-	readonly owner: FaceOwner
-	readonly projection: readonly string[]
+/**
+ * A face's runtime description: owner, π (written order), σ (resolved
+ * bindings). Generic over the owner and projection so a STATEMENT value
+ * carries its paired coordinates at their exact types — the honest runtime
+ * properties (`owner.name`, `projection`) ARE the type-level carrier
+ * `schema()`'s law-typing reads; the defaults are the wide shape every
+ * renderer and lowering walk consumes.
+ */
+interface FaceData<O extends FaceOwner = FaceOwner, P extends readonly string[] = readonly string[]> {
+	readonly owner: O
+	readonly projection: P
 	readonly selection: readonly SelectionBinding[]
 }
 
@@ -79,12 +97,14 @@ interface FaceData {
  * selected relation, or closed relation `on()` was handed — the statement
  * constructors resolve each projected field's DOMAIN through it), and `P`
  * is the projection tuple as written (its length is the positional-pairing
- * arity). Both are honest runtime properties, not phantoms.
+ * arity). Both are honest runtime properties, not phantoms — and `data`
+ * carries the resolved owner at its exact type, which is what a statement
+ * value hands to `schema()`'s law-typing.
  */
 interface Face<S extends FaceSource, P extends readonly string[]> {
 	readonly source: S
 	readonly projection: P
-	readonly data: FaceData
+	readonly data: FaceData<OwnerOf<S>, P>
 }
 
 /** Any face value, whatever its source and projection. */
@@ -232,7 +252,7 @@ function on<S extends FaceSource, const P extends readonly [FaceFields<S>, ...Fa
 	source: S,
 	fields: P
 ): Face<S, P>
-function on(source: FaceSource, fields: string | readonly string[]): Face<FaceSource, readonly string[]> {
+function on<S extends FaceSource>(source: S, fields: string | readonly string[]): Face<S, readonly string[]> {
 	const projection: readonly string[] = Object.freeze(typeof fields === "string" ? [fields] : [...fields])
 	const parts = faceParts(source)
 	const data: FaceData = Object.freeze({
@@ -240,7 +260,33 @@ function on(source: FaceSource, fields: string | readonly string[]): Face<FaceSo
 		projection,
 		selection: parts.selection
 	})
-	return Object.freeze({ source, projection, data })
+	const value = Object.freeze({ source, projection, data })
+	if (!faceMinted<S, readonly string[]>(value, source, projection)) {
+		throw errors.new(`face over ${parts.owner.name}: face construction incomplete`)
+	}
+	return value
+}
+
+/**
+ * The trusted seam of the face mint (the `refsComplete` pattern): the
+ * checkable facts — the value carries exactly the source and projection it
+ * was built from, and `data.owner` is exactly the owner {@link faceParts}
+ * resolves for that source — are verified before the wide construction is
+ * admitted at the exact {@link Face} type (whose `data` claims the owner at
+ * its precise type, the carrier the schema-level law-typing reads).
+ */
+function faceMinted<S extends FaceSource, P extends readonly string[]>(
+	value: { readonly source: FaceSource; readonly projection: readonly string[]; readonly data: FaceData },
+	source: S,
+	projection: P
+): value is Face<S, P> {
+	const owner = "relation" in source ? source.relation : source
+	return (
+		value.source === source &&
+		value.projection === projection &&
+		value.data.owner === owner &&
+		value.data.projection === projection
+	)
 }
 
 /**
@@ -273,6 +319,7 @@ export type {
 	FaceShapes,
 	FaceSource,
 	OneOf,
+	OwnerOf,
 	SameArity,
 	SameShapes
 }

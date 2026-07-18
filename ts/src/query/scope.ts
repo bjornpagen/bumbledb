@@ -1,19 +1,22 @@
 /**
- * Query scope terms, STRUCTURAL edition: string-named variables and
+ * Query scope terms, LAW-TYPED edition: string-named variables and
  * parameters as plain frozen values. A `Var` is a NAME — it is typed by the
- * field it first binds (structurally, off the schema type, through the rule
- * builder's environment), reuse of the name within one rule IS the join,
- * and a domain-mismatched reuse is a compile error (the structural analog
- * of the old brand-equal join — now domain-equal, no value brands
- * anywhere). Params are query-global by name and typed BY USE: the field
- * position or comparison sibling that anchors a param types it, the
- * query's inferred `Params` object is exactly the params the rules use,
- * and a param value that no rule uses simply never registers — the query
- * executes under its own inferred type (the bug-hunt law). This module
- * also owns the environment/typing utilities the whole surface shares:
- * the env shape (var name → field descriptor), the domain-equality
- * judgment, and the record-folding helpers `Params` and `Row` inference
- * ride.
+ * field slot it first binds (the descriptor AND the slot's law-computed
+ * CLASS, read off the schema's class map through the rule builder's
+ * environment), reuse of the name within one rule IS the join, and a
+ * class-mismatched reuse is a compile error: a var joins only class-equal
+ * slots, and BARE PAIRS ONLY WITH BARE (ruling 3 — a slot in no law has no
+ * class and never joins a classed slot; the deliberate sum-domain pointer
+ * stays legal against other bare slots). Params are query-global by name
+ * and typed BY USE: the field position or comparison sibling that anchors
+ * a param types it, the query's inferred `Params` object is exactly the
+ * params the rules use, and a param value that no rule uses simply never
+ * registers — the query executes under its own inferred type (the
+ * bug-hunt law). This module also owns the environment/typing utilities
+ * the whole surface shares: the env shape (var name → classed slot), the
+ * class-equality judgment {@link JoinOk} with its runtime twin
+ * {@link fieldJoins}, and the record-folding helpers `Params` and `Row`
+ * inference ride.
  */
 
 import * as errors from "@superbuilders/errors"
@@ -183,11 +186,24 @@ function makeDuration<const Name extends string>(name: Name): Duration<Name> {
 }
 
 /**
- * A rule's typing environment: variable name → the field descriptor it
- * first bound. Purely a TYPE — the runtime twin is the rule's `varFields`
+ * One bound field slot: the field's descriptor plus the slot's
+ * law-computed CLASS (`undefined` = bare — the slot is in no law). The one
+ * shape the rule environment carries per variable, at the TYPE level (env
+ * entries hold the schema type's class-map lookups) and at RUNTIME alike
+ * (the rule's `varFields` record holds exactly this shape, read off the
+ * schema value's frozen class map) — one shape, two tiers, one walk.
+ */
+interface ClassedField {
+	readonly field: AnyField
+	readonly class: string | undefined
+}
+
+/**
+ * A rule's typing environment: variable name → the classed slot it first
+ * bound. Purely a TYPE — the runtime twin is the rule's `varFields`
  * record, and the two are built by the same walk.
  */
-type EnvShape = Record<string, AnyField>
+type EnvShape = Record<string, ClassedField>
 
 /** A params object type — what `execute` takes and inference carries. */
 type ParamsRecord = Readonly<Record<string, unknown>>
@@ -206,9 +222,6 @@ type UnionToIntersection<U> = (U extends unknown ? (member: U) => void : never) 
  */
 type ShapeOf<U> = [U] extends [never] ? Record<never, never> : Flatten<UnionToIntersection<U>>
 
-/** Reads a field descriptor's domain label (S1: the label IS the domain check). */
-type DomainOf<F extends AnyField> = F["domain"]
-
 /** Reads a field descriptor's width label (`bytes<N>`, `interval<E, W>`); `undefined` when the kind carries none. */
 type WidthOf<F extends AnyField> = F extends { readonly width: infer W } ? W : undefined
 
@@ -216,43 +229,52 @@ type WidthOf<F extends AnyField> = F extends { readonly width: infer W } ? W : u
 type ElementOf<F extends AnyField> = F extends { readonly element: infer E } ? E : undefined
 
 /**
- * The structural join judgment: two field descriptors join iff kind,
- * domain label, width label, and interval element all agree — the
- * string-literal comparison of descriptor shapes that replaced the value
- * brand (design ruling 3).
+ * The join judgment: two bound slots join iff their descriptors' structure
+ * agrees (kind, width label, interval element) AND their law-computed
+ * classes agree — same class name joins, and bare (`undefined`) pairs only
+ * with bare (ruling 3: a field in no law has no class; a bare↔classed
+ * pairing refuses). The class names come off the SCHEMA type's class map —
+ * the statements are the typing; no descriptor label exists to compare.
  */
-type JoinOk<A extends AnyField, B extends AnyField> = [A["kind"], DomainOf<A>, WidthOf<A>, ElementOf<A>] extends [
-	B["kind"],
-	DomainOf<B>,
-	WidthOf<B>,
-	ElementOf<B>
-]
-	? [B["kind"], DomainOf<B>, WidthOf<B>, ElementOf<B>] extends [A["kind"], DomainOf<A>, WidthOf<A>, ElementOf<A>]
+type JoinOk<A extends ClassedField, B extends ClassedField> = [
+	A["field"]["kind"],
+	A["class"],
+	WidthOf<A["field"]>,
+	ElementOf<A["field"]>
+] extends [B["field"]["kind"], B["class"], WidthOf<B["field"]>, ElementOf<B["field"]>]
+	? [B["field"]["kind"], B["class"], WidthOf<B["field"]>, ElementOf<B["field"]>] extends [
+			A["field"]["kind"],
+			A["class"],
+			WidthOf<A["field"]>,
+			ElementOf<A["field"]>
+		]
 		? true
 		: false
 	: false
 
 /**
- * The runtime twin of {@link JoinOk}: two field descriptors join iff kind,
- * domain label, width label, and interval element all agree — the same
- * structural comparison the type tier makes, judged on the descriptor
- * VALUES (S1 descriptors are honest at runtime). The rule builders throw
- * through this on a domain-unequal variable reuse, so the wall holds for
- * untyped callers too, not only where the compiler can see.
+ * The runtime twin of {@link JoinOk}: two bound slots join iff descriptor
+ * structure and class agree — the same comparison the type tier makes,
+ * judged on the honest runtime values (the descriptor and the schema
+ * value's frozen class map). The rule builders throw through this on a
+ * class-unequal variable reuse, so the wall holds for untyped callers too,
+ * not only where the compiler can see.
  */
-function fieldJoins(a: AnyField, b: AnyField): boolean {
-	const widthA = "width" in a ? a.width : undefined
-	const widthB = "width" in b ? b.width : undefined
-	const elementA = "element" in a ? a.element : undefined
-	const elementB = "element" in b ? b.element : undefined
-	return a.kind === b.kind && a.domain === b.domain && widthA === widthB && elementA === elementB
+function fieldJoins(a: ClassedField, b: ClassedField): boolean {
+	const widthA = "width" in a.field ? a.field.width : undefined
+	const widthB = "width" in b.field ? b.field.width : undefined
+	const elementA = "element" in a.field ? a.field.element : undefined
+	const elementB = "element" in b.field ? b.field.element : undefined
+	return a.field.kind === b.field.kind && a.class === b.class && widthA === widthB && elementA === elementB
 }
 
 /**
- * Renders one field descriptor for join-mismatch diagnostics — the schema
- * grammar's own spelling (`u64 as HolderId`, `interval<i64, 7> as Window`).
+ * Renders one bound slot for join-mismatch diagnostics — the structural
+ * kind in the schema grammar's spelling plus the slot's law-computed class
+ * (`u64 in class Holder.id`; a lawless slot renders `bare`).
  */
-function renderFieldKind(field: AnyField): string {
+function renderFieldKind(slot: ClassedField): string {
+	const field = slot.field
 	let base: string = field.kind
 	if (field.kind === "bytes") {
 		base = `bytes<${field.width}>`
@@ -260,7 +282,7 @@ function renderFieldKind(field: AnyField): string {
 	if (field.kind === "interval") {
 		base = field.width === undefined ? `interval<${field.element}>` : `interval<${field.element}, ${field.width}>`
 	}
-	return field.domain === undefined ? base : `${base} as ${field.domain}`
+	return slot.class === undefined ? `${base} (bare)` : `${base} in class ${slot.class}`
 }
 
 /**
@@ -293,7 +315,7 @@ interface ParamEntry {
 
 export type {
 	AnyTerm,
-	DomainOf,
+	ClassedField,
 	Duration,
 	EnvShape,
 	Flatten,

@@ -38,25 +38,51 @@ interface KeyData<R extends AnyRelation, Projection extends readonly string[]> {
 	readonly projection: Projection
 }
 
+/**
+ * A containment statement's runtime description — the two faces carried at
+ * their EXACT types (owner names and projection tuples are honest runtime
+ * properties, and they are the type-level carrier `schema()`'s law-typing
+ * pairs slots through). The defaults are the wide shape renderers and the
+ * wire lowering consume.
+ */
+interface ContainmentData<Src extends FaceData = FaceData, Tgt extends FaceData = FaceData> {
+	readonly kind: "containment"
+	readonly source: Src
+	readonly target: Tgt
+	readonly bidirectional: boolean
+}
+
+/** A window statement's runtime description — target-left, faces at exact types like {@link ContainmentData}. */
+interface WindowData<Tgt extends FaceData = FaceData, Src extends FaceData = FaceData> {
+	readonly kind: "window"
+	readonly target: Tgt
+	readonly window: WindowSpec
+	readonly source: Src
+}
+
 /** One statement's runtime description, tagged by form. */
-type StatementData =
-	| KeyData<AnyRelation, readonly string[]>
-	| {
-			readonly kind: "containment"
-			readonly source: FaceData
-			readonly target: FaceData
-			readonly bidirectional: boolean
-	  }
-	| {
-			readonly kind: "window"
-			readonly target: FaceData
-			readonly window: WindowSpec
-			readonly source: FaceData
-	  }
+type StatementData = KeyData<AnyRelation, readonly string[]> | ContainmentData | WindowData
 
 /** An opaque statement value — what `schema()` assembles into a theory. */
 interface Statement {
 	readonly data: StatementData
+}
+
+/**
+ * A containment (or `==` bijection) statement as a TYPED value: `data`
+ * carries both faces at their exact types, so the schema-level class laws
+ * can read every paired (relation, field) slot off the statement type —
+ * spell the statement list inline in `schema()` and the equivalence
+ * classes compute at the type level too. Structurally still a plain
+ * {@link Statement}.
+ */
+interface ContainedStatement<Src extends FaceData, Tgt extends FaceData> extends Statement {
+	readonly data: ContainmentData<Src, Tgt>
+}
+
+/** A window statement as a TYPED value — the {@link ContainedStatement} of the window form. */
+interface WindowStatement<Tgt extends FaceData, Src extends FaceData> extends Statement {
+	readonly data: WindowData<Tgt, Src>
 }
 
 /**
@@ -112,8 +138,8 @@ function key<
 function contained<A extends AnyFace, B extends AnyFace>(
 	source: A,
 	target: B & SameArity<A, B> & SameShapes<A, B>
-): Statement {
-	const data: StatementData = Object.freeze({
+): ContainedStatement<A["data"], B["data"]> {
+	const data: ContainmentData<A["data"], B["data"]> = Object.freeze({
 		kind: "containment",
 		source: source.data,
 		target: target.data,
@@ -134,8 +160,8 @@ function contained<A extends AnyFace, B extends AnyFace>(
 function mirrors<A extends AnyFace, B extends AnyFace>(
 	source: A,
 	target: B & SameArity<A, B> & SameShapes<A, B>
-): Statement {
-	const data: StatementData = Object.freeze({
+): ContainedStatement<A["data"], B["data"]> {
+	const data: ContainmentData<A["data"], B["data"]> = Object.freeze({
 		kind: "containment",
 		source: source.data,
 		target: target.data,
@@ -158,8 +184,8 @@ function window<B extends AnyFace, A extends AnyFace>(
 	target: B,
 	count: Count,
 	source: A & SameArity<B, A> & SameShapes<B, A>
-): Statement {
-	const data: StatementData = Object.freeze({
+): WindowStatement<B["data"], A["data"]> {
+	const data: WindowData<B["data"], A["data"]> = Object.freeze({
 		kind: "window",
 		target: target.data,
 		window: count.window,
@@ -192,5 +218,14 @@ function renderStatement(statement: Statement): string {
 	}
 }
 
-export type { KeyData, KeyStatement, Statement, StatementData }
+export type {
+	ContainedStatement,
+	ContainmentData,
+	KeyData,
+	KeyStatement,
+	Statement,
+	StatementData,
+	WindowData,
+	WindowStatement
+}
 export { contained, key, mirrors, renderStatement, window }

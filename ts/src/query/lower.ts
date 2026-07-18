@@ -28,6 +28,7 @@
 import * as errors from "@superbuilders/errors"
 import type { AnyField } from "#fields.ts"
 import { assertDeclarationOrderKey } from "#fields.ts"
+import type { ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	AtomIr,
 	ComparisonIr,
@@ -66,7 +67,16 @@ import type {
 	TreeData
 } from "#query/atom.ts"
 import { allen, and, covers, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
-import type { EnvShape, Flatten, InferredOf, JoinOk, ParamEntry, ParamsRecord, Var } from "#query/scope.ts"
+import type {
+	ClassedField,
+	EnvShape,
+	Flatten,
+	InferredOf,
+	JoinOk,
+	ParamEntry,
+	ParamsRecord,
+	Var
+} from "#query/scope.ts"
 import {
 	fieldJoins,
 	inferred,
@@ -88,9 +98,9 @@ import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
 /** The ordinary (matchable) relations of a schema's record — closed relations lack the relation shape entirely. */
 type QueryRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], AnyRelation>
 
-/** The environment after one bindings record: the incoming env plus every var the record binds. */
-type EnvOfMatch<Env extends EnvShape, F extends FieldsShape, B> =
-	Flatten<Env & BindEnv<F, B>> extends infer E extends EnvShape ? E : never
+/** The environment after one bindings record: the incoming env plus every var the record binds (as classed slots). */
+type EnvOfMatch<Env extends EnvShape, F extends FieldsShape, CR, B> =
+	Flatten<Env & BindEnv<F, CR, B>> extends infer E extends EnvShape ? E : never
 
 /** Reads an inferred-params carrier off a rec reference or rule value. */
 type ParamsOf<T> = InferredOf<T> extends { readonly params: infer P extends ParamsRecord } ? P : Record<never, never>
@@ -99,12 +109,13 @@ type ParamsOf<T> = InferredOf<T> extends { readonly params: infer P extends Para
 type RowOf<T> = InferredOf<T> extends { readonly row: infer R } ? R : never
 
 /**
- * A recursive predicate's HEAD signature as field descriptors, position
- * for position — carried on the rec reference so an `idb` join can be
- * judged against it; `undefined` on values that carry no head (a plain
- * query rule, or an unthreaded rec handle before its first rule).
+ * A recursive predicate's HEAD signature as classed slots (descriptor +
+ * law-computed class), position for position — carried on the rec
+ * reference so an `idb` join can be judged against it; `undefined` on
+ * values that carry no head (a plain query rule, or an unthreaded rec
+ * handle before its first rule).
  */
-type HeadShape = readonly AnyField[] | undefined
+type HeadShape = readonly ClassedField[] | undefined
 
 /**
  * One finished rule as a plain value: the runtime data plus the inferred
@@ -126,7 +137,7 @@ type HeadFieldsOf<Env extends EnvShape, S extends readonly string[]> = {
 }
 
 /** Reads an inferred-head carrier off a rule value or rec reference. */
-type HeadOf<T> = InferredOf<T> extends { readonly head: infer H extends readonly AnyField[] } ? H : undefined
+type HeadOf<T> = InferredOf<T> extends { readonly head: infer H extends readonly ClassedField[] } ? H : undefined
 
 /**
  * A recursive predicate REFERENCE — the shape `idb()` targets carry: the
@@ -143,11 +154,11 @@ interface RecRef<Name extends string, P extends ParamsRecord, Head extends HeadS
 	readonly [inferred]?: { readonly params: P; readonly head: Head }
 }
 
-/** One `idb` position's judgment: the var must be bound by a relation atom, domain-equal to the head column when the head is carried. */
+/** One `idb` position's judgment: the var must be bound by a relation atom, class-equal to the head slot when the head is carried. */
 type IdbVarOk<Env extends EnvShape, T, F> =
 	T extends Var<infer N extends string>
 		? N extends keyof Env
-			? F extends AnyField
+			? F extends ClassedField
 				? JoinOk<Env[N], F>
 				: true
 			: false
@@ -157,12 +168,12 @@ type IdbVarOk<Env extends EnvShape, T, F> =
  * The validated `idb` variable tuple: every var must already be bound by a
  * relation atom of the rule; and when the target carries its head
  * signature (the threaded rec handle), the tuple must match the head's
- * arity and every position must be domain-equal to its head column — the
+ * arity and every position must be class-equal to its head slot — the
  * same wall `JoinOk` holds for EDB atoms. An unthreaded handle carries no
- * head; its joins stay boundness-checked here and arity/domain-judged at
+ * head; its joins stay boundness-checked here and arity/class-judged at
  * prepare (the engine's law stands behind both tiers).
  */
-type CheckIdbVars<Env extends EnvShape, V, Head extends HeadShape = undefined> = Head extends readonly AnyField[]
+type CheckIdbVars<Env extends EnvShape, V, Head extends HeadShape = undefined> = Head extends readonly ClassedField[]
 	? V extends readonly unknown[]
 		? V["length"] extends Head["length"]
 			? { readonly [I in keyof V]: IdbVarOk<Env, V[I], Head[I & keyof Head]> extends true ? V[I] : never }
@@ -211,51 +222,77 @@ interface TermOps {
 	readonly pack: typeof pack
 }
 
-/** The rule builder a `query(S).rule(...)` callback receives: the ops plus the first atom. */
-interface QueryRuleScope<Rels extends SchemaRelations> extends TermOps {
-	/** The first EDB atom of the rule: fields bind vars, params, ∈-sets, or bare literals; absence is the wildcard (same-named vars within the record join domain-equal). */
+/** The rule builder a `query(S).rule(...)` callback receives: the ops plus the first atom (`Classes` — the schema type's class map, the join judge's authority). */
+interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
+	/** The first EDB atom of the rule: fields bind vars, params, ∈-sets, or bare literals; absence is the wildcard (same-named vars within the record join class-equal). */
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, B>
-	): QueryRuleChain<Rels, EnvOfMatch<Record<never, never>, RelationFields<R>, B>, BindParamsShape<RelationFields<R>, B>>
+		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+	): QueryRuleChain<
+		Rels,
+		EnvOfMatch<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		BindParamsShape<RelationFields<R>, B>,
+		Classes
+	>
 }
 
 /** The chain of a plain query rule: more atoms, residual predicates, then the head. */
-interface QueryRuleChain<Rels extends SchemaRelations, Env extends EnvShape, P extends ParamsRecord> {
-	/** One more positive EDB atom — var reuse joins, domain-equal by the environment check. */
+interface QueryRuleChain<
+	Rels extends SchemaRelations,
+	Env extends EnvShape,
+	P extends ParamsRecord,
+	Classes extends SchemaClasses = SchemaClasses
+> {
+	/** One more positive EDB atom — var reuse joins, class-equal by the environment check. */
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Env, RelationFields<R>, B>
-	): QueryRuleChain<Rels, EnvOfMatch<Env, RelationFields<R>, B>, Flatten<P & BindParamsShape<RelationFields<R>, B>>>
+		bindings: B & CheckBindings<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+	): QueryRuleChain<
+		Rels,
+		EnvOfMatch<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		Flatten<P & BindParamsShape<RelationFields<R>, B>>,
+		Classes
+	>
 	/** One residual predicate: a comparison, an `and`/`or` tree, or a negated atom (`r.not`). */
 	where<const C extends AnyCond>(
-		cond: CheckCond<Env, C> & C
-	): QueryRuleChain<Rels, Env, Flatten<P & CondParamsShape<Env, C>>>
+		cond: CheckCond<Env, Classes, C> & C
+	): QueryRuleChain<Rels, Env, Flatten<P & CondParamsShape<Env, C>>, Classes>
 	/** The head projection: var names, the measure, and aggregates; written order = answer column order. */
 	select<const S extends readonly SelectEntry[]>(...entries: CheckSelect<Env, S> & S): RuleValue<RowOfSelect<Env, S>, P>
 }
 
 /** The rule builder an OUTPUT rule of a `program()` receives: a query rule plus finished-stratum `idb` atoms. */
-interface OutputRuleScope<Rels extends SchemaRelations> extends TermOps {
+interface OutputRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, B>
+		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): OutputRuleChain<
 		Rels,
-		EnvOfMatch<Record<never, never>, RelationFields<R>, B>,
-		BindParamsShape<RelationFields<R>, B>
+		EnvOfMatch<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		BindParamsShape<RelationFields<R>, B>,
+		Classes
 	>
 }
 
 /** The chain of an output rule: atoms, predicates, `idb` joins over the program's recs, then the head. */
-interface OutputRuleChain<Rels extends SchemaRelations, Env extends EnvShape, P extends ParamsRecord> {
+interface OutputRuleChain<
+	Rels extends SchemaRelations,
+	Env extends EnvShape,
+	P extends ParamsRecord,
+	Classes extends SchemaClasses = SchemaClasses
+> {
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Env, RelationFields<R>, B>
-	): OutputRuleChain<Rels, EnvOfMatch<Env, RelationFields<R>, B>, Flatten<P & BindParamsShape<RelationFields<R>, B>>>
+		bindings: B & CheckBindings<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+	): OutputRuleChain<
+		Rels,
+		EnvOfMatch<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		Flatten<P & BindParamsShape<RelationFields<R>, B>>,
+		Classes
+	>
 	where<const C extends AnyCond>(
-		cond: CheckCond<Env, C> & C
-	): OutputRuleChain<Rels, Env, Flatten<P & CondParamsShape<Env, C>>>
+		cond: CheckCond<Env, Classes, C> & C
+	): OutputRuleChain<Rels, Env, Flatten<P & CondParamsShape<Env, C>>, Classes>
 	/**
 	 * One `idb` atom over a FINISHED stratum (any rec of this program): a
 	 * positional join against the rec's head. An idb atom is a join
@@ -263,26 +300,28 @@ interface OutputRuleChain<Rels extends SchemaRelations, Env extends EnvShape, P 
 	 * the rule (the theory's own domain relation; the rec's answers are
 	 * theory values, so the join is identity). Threading the rec value the
 	 * last `.rule(...)` returned carries its rules' params into `Params`
-	 * AND its head signature, so the join is arity- and domain-checked
+	 * AND its head signature, so the join is arity- and class-checked
 	 * against the head at compile time.
 	 */
 	idb<Target extends RecRef<string, ParamsRecord>, const V extends readonly Var<string>[]>(
 		target: Target,
 		...vars: CheckIdbVars<Env, V, HeadOf<Target>> & V
-	): OutputRuleChain<Rels, Env, Flatten<P & ParamsOf<Target>>>
+	): OutputRuleChain<Rels, Env, Flatten<P & ParamsOf<Target>>, Classes>
 	select<const S extends readonly SelectEntry[]>(...entries: CheckSelect<Env, S> & S): RuleValue<RowOfSelect<Env, S>, P>
 }
 
 /** The rule builder a RECURSIVE rule (`rec.rule(...)`) receives. */
-interface RecRuleScope<Rels extends SchemaRelations, Self extends string> extends TermOps {
+interface RecRuleScope<Rels extends SchemaRelations, Self extends string, Classes extends SchemaClasses = SchemaClasses>
+	extends TermOps {
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, B>
+		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): RecRuleChain<
 		Rels,
 		Self,
-		EnvOfMatch<Record<never, never>, RelationFields<R>, B>,
-		BindParamsShape<RelationFields<R>, B>
+		EnvOfMatch<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		BindParamsShape<RelationFields<R>, B>,
+		Classes
 	>
 }
 
@@ -298,21 +337,28 @@ interface RecRuleChain<
 	Rels extends SchemaRelations,
 	Self extends string,
 	Env extends EnvShape,
-	P extends ParamsRecord
+	P extends ParamsRecord,
+	Classes extends SchemaClasses = SchemaClasses
 > {
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Env, RelationFields<R>, B>
-	): RecRuleChain<Rels, Self, EnvOfMatch<Env, RelationFields<R>, B>, Flatten<P & BindParamsShape<RelationFields<R>, B>>>
+		bindings: B & CheckBindings<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+	): RecRuleChain<
+		Rels,
+		Self,
+		EnvOfMatch<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		Flatten<P & BindParamsShape<RelationFields<R>, B>>,
+		Classes
+	>
 	where<const C extends AnyCond>(
-		cond: CheckCond<Env, C> & C
-	): RecRuleChain<Rels, Self, Env, Flatten<P & CondParamsShape<Env, C>>>
-	/** The self-recursive atom: `idb(self, ...boundVars)` — only this rec's own reference is accepted (threaded, its head arity- and domain-checks the join). */
+		cond: CheckCond<Env, Classes, C> & C
+	): RecRuleChain<Rels, Self, Env, Flatten<P & CondParamsShape<Env, C>>, Classes>
+	/** The self-recursive atom: `idb(self, ...boundVars)` — only this rec's own reference is accepted (threaded, its head arity- and class-checks the join). */
 	idb<Target extends RecRef<Self, ParamsRecord>, const V extends readonly Var<string>[]>(
 		target: Target,
 		...vars: CheckIdbVars<Env, V, HeadOf<Target>> & V
-	): RecRuleChain<Rels, Self, Env, P>
-	/** The recursive head: bound variable names only (the creation quarantine, restated for fixpoint topology); the value carries the head's field descriptors for `idb` pairing. */
+	): RecRuleChain<Rels, Self, Env, P, Classes>
+	/** The recursive head: bound variable names only (the creation quarantine, restated for fixpoint topology); the value carries the head's classed slots for `idb` pairing. */
 	select<const S extends readonly string[]>(
 		...names: CheckNameSelect<Env, S> & S
 	): RuleValue<RowOfNameSelect<Env, S>, P, HeadFieldsOf<Env, S>>
@@ -336,13 +382,18 @@ interface QueryData {
  * the rules use. Prepare with `db.prepare(q)`; nothing here touches an
  * engine.
  */
-interface Query<Rels extends SchemaRelations, Row, Params extends ParamsRecord> {
-	readonly schema: Schema<Rels>
+interface Query<
+	Rels extends SchemaRelations,
+	Row,
+	Params extends ParamsRecord,
+	Classes extends SchemaClasses = SchemaClasses
+> {
+	readonly schema: Schema<Rels, Classes>
 	readonly data: QueryData
 	/** One more rule — the query's answers are the SET UNION of its rules' answers; every rule derives the same head. */
 	rule<RV extends AnyRuleValue>(
-		build: (r: QueryRuleScope<Rels>) => RV
-	): Query<Rels, Row | RowOf<RV>, Flatten<Params & ParamsOf<RV>>>
+		build: (r: QueryRuleScope<Rels, Classes>) => RV
+	): Query<Rels, Row | RowOf<RV>, Flatten<Params & ParamsOf<RV>>, Classes>
 	readonly [inferred]?: { readonly row: Row; readonly params: Params }
 }
 
@@ -363,8 +414,10 @@ type QueryRow<Q extends AnyQuery> = RowOf<Q>
 type QueryParams<Q extends AnyQuery> = ParamsOf<Q>
 
 /** The entry value of `query(S)`: the first `.rule` mints the query. */
-interface QueryStart<Rels extends SchemaRelations> {
-	rule<RV extends AnyRuleValue>(build: (r: QueryRuleScope<Rels>) => RV): Query<Rels, RowOf<RV>, ParamsOf<RV>>
+interface QueryStart<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> {
+	rule<RV extends AnyRuleValue>(
+		build: (r: QueryRuleScope<Rels, Classes>) => RV
+	): Query<Rels, RowOf<RV>, ParamsOf<RV>, Classes>
 }
 
 /** The frozen constructor vocabulary every rule builder spreads. */
@@ -400,7 +453,7 @@ const termOps: TermOps = Object.freeze({
 /** One rule under construction: immutable — every chain step is a fresh state. */
 interface RuleBuildState {
 	readonly items: readonly RuleItem[]
-	readonly varFields: Readonly<Record<string, AnyField>>
+	readonly varFields: Readonly<Record<string, ClassedField>>
 	readonly paramUses: readonly ParamUse[]
 }
 
@@ -411,10 +464,10 @@ const EMPTY_RULE: RuleBuildState = Object.freeze({
 	paramUses: Object.freeze([])
 })
 
-/** One resolved bindings record: the atom entries, the vars it binds, and the params it uses. */
+/** One resolved bindings record: the atom entries, the vars it binds (as classed slots), and the params it uses. */
 interface ResolvedBindings {
 	readonly atom: AtomData
-	readonly vars: ReadonlyArray<{ readonly name: string; readonly field: AnyField }>
+	readonly vars: ReadonlyArray<{ readonly name: string; readonly slot: ClassedField }>
 	readonly uses: readonly ParamUse[]
 }
 
@@ -422,16 +475,20 @@ interface ResolvedBindings {
  * Resolves a bindings record against a relation's declared fields, in the
  * record's written order: terms classify by their runtime tag, everything
  * else is a bare literal (typed by the FIELD at lowering — the membership
- * typing rule included).
+ * typing rule included). Every bound field carries its law-computed class,
+ * read off the schema value's frozen class map — the runtime twin of the
+ * type tier's `SlotAt` lookups.
  */
 function resolveBindings(
 	context: string,
 	relation: AnyRelation,
-	bindings: Readonly<Record<string, unknown>>
+	bindings: Readonly<Record<string, unknown>>,
+	classes: SchemaClasses
 ): ResolvedBindings {
 	const entries: BindingEntry[] = []
-	const vars: Array<{ readonly name: string; readonly field: AnyField }> = []
+	const vars: Array<{ readonly name: string; readonly slot: ClassedField }> = []
 	const uses: ParamUse[] = []
+	const relationClasses = classes[relation.name]
 	for (const [fieldName, value] of Object.entries(bindings)) {
 		if (value === undefined) {
 			continue
@@ -442,12 +499,15 @@ function resolveBindings(
 		if (declared === undefined) {
 			throw errors.new(`${context} has no field ${fieldName}`)
 		}
+		const fieldClass = relationClasses?.[fieldName]
 		let bound: BindingEntry["term"]
 		if (isTerm(value)) {
 			switch (value[term]) {
 				case "var": {
 					bound = Object.freeze({ kind: "var" as const, name: value.name })
-					vars.push(Object.freeze({ name: value.name, field: declared.field }))
+					vars.push(
+						Object.freeze({ name: value.name, slot: Object.freeze({ field: declared.field, class: fieldClass }) })
+					)
 					break
 				}
 				case "param": {
@@ -476,7 +536,7 @@ function resolveBindings(
 		} else {
 			bound = Object.freeze({ kind: "literal" as const, value })
 		}
-		entries.push(Object.freeze({ field: fieldName, data: declared.field, term: bound }))
+		entries.push(Object.freeze({ field: fieldName, data: declared.field, class: fieldClass, term: bound }))
 	}
 	return {
 		atom: Object.freeze({ relation, bindings: Object.freeze(entries) }),
@@ -488,24 +548,25 @@ function resolveBindings(
 /**
  * Extends a rule state with one positive atom. Vars bind on first
  * occurrence; every LATER occurrence (a later atom's field or a same-record
- * sibling) is a join and must be domain-equal — the construction-time twin
- * of the type tier's `JoinOk`, so the domain wall holds for untyped
- * callers too.
+ * sibling) is a join and must be class-equal — the construction-time twin
+ * of the type tier's `JoinOk` (bare pairs only with bare), so the domain
+ * wall holds for untyped callers too.
  */
 function advanceMatch(
 	state: RuleBuildState,
 	relation: AnyRelation,
-	bindings: Readonly<Record<string, unknown>>
+	bindings: Readonly<Record<string, unknown>>,
+	classes: SchemaClasses
 ): RuleBuildState {
-	const resolved = resolveBindings(`relation ${relation.name}`, relation, bindings)
-	const varFields: Record<string, AnyField> = { ...state.varFields }
+	const resolved = resolveBindings(`relation ${relation.name}`, relation, bindings, classes)
+	const varFields: Record<string, ClassedField> = { ...state.varFields }
 	for (const bound of resolved.vars) {
 		const existing = varFields[bound.name]
 		if (existing === undefined) {
-			varFields[bound.name] = bound.field
-		} else if (!fieldJoins(existing, bound.field)) {
+			varFields[bound.name] = bound.slot
+		} else if (!fieldJoins(existing, bound.slot)) {
 			throw errors.new(
-				`relation ${relation.name}: the variable ${bound.name} joins domain-unequal fields — first bound at ${renderFieldKind(existing)}, reused at ${renderFieldKind(bound.field)} (a var joins only domain-equal fields)`
+				`relation ${relation.name}: the variable ${bound.name} joins domain-unequal fields — first bound at ${renderFieldKind(existing)}, reused at ${renderFieldKind(bound.slot)} (a var joins only class-equal slots; bare pairs only with bare)`
 			)
 		}
 	}
@@ -545,7 +606,7 @@ function sideUses(
 	op: CmpKind,
 	side: CmpTermData,
 	sibling: CmpTermData,
-	varFields: Readonly<Record<string, AnyField>>,
+	varFields: Readonly<Record<string, ClassedField>>,
 	uses: ParamUse[]
 ): void {
 	if (side.kind !== "param" && side.kind !== "setParam") {
@@ -553,7 +614,7 @@ function sideUses(
 	}
 	let anchor: AnyField | "measure" | undefined
 	if (sibling.kind === "var") {
-		anchor = varFields[sibling.name]
+		anchor = varFields[sibling.name]?.field
 	} else if (sibling.kind === "measure") {
 		anchor = "measure"
 	} else {
@@ -570,7 +631,7 @@ function sideUses(
 }
 
 /** Lowers one condition VALUE to its runtime data, recording param uses. */
-function condDataOf(cond: AnyCond, varFields: Readonly<Record<string, AnyField>>, uses: ParamUse[]): CondData {
+function condDataOf(cond: AnyCond, varFields: Readonly<Record<string, ClassedField>>, uses: ParamUse[]): CondData {
 	if (cond.cond === "cmp") {
 		const lhs = cmpTermDataOf(cond.op, cond.lhs)
 		const rhs = cmpTermDataOf(cond.op, cond.rhs)
@@ -606,7 +667,7 @@ function condDataOf(cond: AnyCond, varFields: Readonly<Record<string, AnyField>>
 }
 
 /** Extends a rule state with one `.where` item (a condition or a negated atom). */
-function advanceWhere(state: RuleBuildState, cond: AnyCond): RuleBuildState {
+function advanceWhere(state: RuleBuildState, cond: AnyCond, classes: SchemaClasses): RuleBuildState {
 	if (typeof cond !== "object" || cond === null || !("cond" in cond)) {
 		throw errors.new("where() takes a comparison, an and()/or() tree, or a negated atom")
 	}
@@ -617,7 +678,7 @@ function advanceWhere(state: RuleBuildState, cond: AnyCond): RuleBuildState {
 				return value !== undefined
 			})
 		)
-		const resolved = resolveBindings(`negated relation ${relation.name}`, relation, bindings)
+		const resolved = resolveBindings(`negated relation ${relation.name}`, relation, bindings, classes)
 		return {
 			items: Object.freeze([...state.items, Object.freeze({ kind: "negated" as const, atom: resolved.atom })]),
 			varFields: state.varFields,
@@ -723,18 +784,18 @@ function aggregateColumnOf(entry: {
 }
 
 /** Requires a var name to be bound by a relation atom of the rule. */
-function assertBound(context: string, varFields: Readonly<Record<string, AnyField>>, name: string): AnyField {
-	const field = varFields[name]
-	if (field === undefined) {
+function assertBound(context: string, varFields: Readonly<Record<string, ClassedField>>, name: string): ClassedField {
+	const slot = varFields[name]
+	if (slot === undefined) {
 		throw errors.new(`${context}: the variable ${name} is not bound by a relation atom of the rule`)
 	}
-	return field
+	return slot
 }
 
 /** Requires a var name to be bound at an interval field (the measure's and pack's domain). */
-function assertIntervalBound(context: string, varFields: Readonly<Record<string, AnyField>>, name: string): void {
-	const field = assertBound(context, varFields, name)
-	if (field.kind !== "interval") {
+function assertIntervalBound(context: string, varFields: Readonly<Record<string, ClassedField>>, name: string): void {
+	const slot = assertBound(context, varFields, name)
+	if (slot.field.kind !== "interval") {
 		throw errors.new(
 			`${context}: ${name} is not interval-typed — the measure is defined over interval-typed variables only`
 		)
@@ -742,7 +803,7 @@ function assertIntervalBound(context: string, varFields: Readonly<Record<string,
 }
 
 /** Validates one condition's variable references against the rule's bound names. */
-function validateCond(context: string, varFields: Readonly<Record<string, AnyField>>, cond: CondData): void {
+function validateCond(context: string, varFields: Readonly<Record<string, ClassedField>>, cond: CondData): void {
 	if (cond.kind === "cmp") {
 		for (const side of [cond.lhs, cond.rhs]) {
 			if (side.kind === "var") {
@@ -760,7 +821,11 @@ function validateCond(context: string, varFields: Readonly<Record<string, AnyFie
 }
 
 /** Validates one select column's variable references. */
-function validateColumn(context: string, varFields: Readonly<Record<string, AnyField>>, column: SelectColumn): void {
+function validateColumn(
+	context: string,
+	varFields: Readonly<Record<string, ClassedField>>,
+	column: SelectColumn
+): void {
 	const entry = column.entry
 	if (entry.kind === "var") {
 		assertBound(`${context} select ${column.name}`, varFields, entry.over)
@@ -825,9 +890,10 @@ function completeRule(context: string, state: RuleBuildState, columns: readonly 
 							`${context}: negated ${item.atom.relation.name} atom binds the variable ${binding.term.name} at position ${binding.field}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
 						)
 					}
-					if (!fieldJoins(bound, binding.data)) {
+					const negatedSlot: ClassedField = { field: binding.data, class: binding.class }
+					if (!fieldJoins(bound, negatedSlot)) {
 						throw errors.new(
-							`${context}: negated ${item.atom.relation.name} atom reuses the variable ${binding.term.name} at ${binding.field} (${renderFieldKind(binding.data)}), but the rule binds it at ${renderFieldKind(bound)} — a var joins only domain-equal fields`
+							`${context}: negated ${item.atom.relation.name} atom reuses the variable ${binding.term.name} at ${binding.field} (${renderFieldKind(negatedSlot)}), but the rule binds it at ${renderFieldKind(bound)} — a var joins only class-equal slots; bare pairs only with bare`
 						)
 					}
 				}
@@ -846,10 +912,10 @@ function completeRule(context: string, state: RuleBuildState, columns: readonly 
 				if (column === undefined || column.entry.kind !== "var") {
 					return
 				}
-				const headField = head?.varFields[column.entry.over]
-				if (headField !== undefined && !fieldJoins(headField, bound)) {
+				const headSlot = head?.varFields[column.entry.over]
+				if (headSlot !== undefined && !fieldJoins(headSlot, bound)) {
 					throw errors.new(
-						`${context}: idb ${item.rec.name} joins the variable ${name} (${renderFieldKind(bound)}) at head position ${position} (${column.name}: ${renderFieldKind(headField)}) — a var joins only domain-equal fields`
+						`${context}: idb ${item.rec.name} joins the variable ${name} (${renderFieldKind(bound)}) at head position ${position} (${column.name}: ${renderFieldKind(headSlot)}) — a var joins only class-equal slots; bare pairs only with bare`
 					)
 				}
 			})
@@ -892,11 +958,12 @@ interface RawScope extends TermOps {
 	match(relation: AnyRelation, bindings: Readonly<Record<string, unknown>>): RawChain
 }
 
-/** Which rule family a chain builds — gates `idb` and the recursive select. */
-type ChainContext =
+/** Which rule family a chain builds — gates `idb` and the recursive select — plus the schema's runtime class map (the join judge's authority). */
+type ChainContext = { readonly classes: SchemaClasses } & (
 	| { readonly kind: "query" }
 	| { readonly kind: "rec"; readonly self: RecData }
 	| { readonly kind: "output"; readonly program: ProgramState }
+)
 
 /** The diagnostic label of a chain context. */
 function contextLabel(context: ChainContext): string {
@@ -952,10 +1019,10 @@ function selectColumns(context: ChainContext, entries: readonly SelectEntry[]): 
 function makeRawChain(context: ChainContext, state: RuleBuildState): RawChain {
 	const chain: RawChain = {
 		match(relation, bindings) {
-			return makeRawChain(context, advanceMatch(state, relation, bindings))
+			return makeRawChain(context, advanceMatch(state, relation, bindings, context.classes))
 		},
 		where(cond) {
-			return makeRawChain(context, advanceWhere(state, cond))
+			return makeRawChain(context, advanceWhere(state, cond, context.classes))
 		},
 		idb(target, ...vars) {
 			return makeRawChain(context, idbAdvance(context, state, target, vars))
@@ -973,7 +1040,7 @@ function makeRawScope(context: ChainContext): RawScope {
 	const scope: RawScope = {
 		...termOps,
 		match(relation, bindings) {
-			return makeRawChain(context, advanceMatch(EMPTY_RULE, relation, bindings))
+			return makeRawChain(context, advanceMatch(EMPTY_RULE, relation, bindings, context.classes))
 		}
 	}
 	Object.freeze(scope)
@@ -994,26 +1061,31 @@ function isTypedScope<S>(scope: RawScope): scope is RawScope & S {
 }
 
 /** Builds one query-rule builder (the typed face of the raw builder). */
-function makeQueryRuleScope<Rels extends SchemaRelations>(): QueryRuleScope<Rels> {
-	const raw = makeRawScope({ kind: "query" })
-	if (!isTypedScope<QueryRuleScope<Rels>>(raw)) {
+function makeQueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses>(
+	classes: SchemaClasses
+): QueryRuleScope<Rels, Classes> {
+	const raw = makeRawScope({ kind: "query", classes })
+	if (!isTypedScope<QueryRuleScope<Rels, Classes>>(raw)) {
 		throw errors.new("query rule builder construction incomplete")
 	}
 	return raw
 }
 
 /** Builds one output-rule builder over a program's recs. */
-function makeOutputRuleScope<Rels extends SchemaRelations>(program: ProgramState): OutputRuleScope<Rels> {
-	const raw = makeRawScope({ kind: "output", program })
-	if (!isTypedScope<OutputRuleScope<Rels>>(raw)) {
+function makeOutputRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses>(
+	program: ProgramState
+): OutputRuleScope<Rels, Classes> {
+	const raw = makeRawScope({ kind: "output", program, classes: program.classes })
+	if (!isTypedScope<OutputRuleScope<Rels, Classes>>(raw)) {
 		throw errors.new("program output rule builder construction incomplete")
 	}
 	return raw
 }
 
-/** One program's build-time registry: its recs in declaration order, sealed when the output is declared. */
+/** One program's build-time registry: its recs in declaration order (sealed when the output is declared) and the theory's class map. */
 interface ProgramState {
 	readonly recs: RecData[]
+	readonly classes: SchemaClasses
 	sealed: boolean
 }
 
@@ -1117,7 +1189,7 @@ function makeRawQuery(theory: AnySchema, recs: readonly RecData[], rules: readon
 		schema: theory,
 		data,
 		rule(build) {
-			const built = build(makeRawScope({ kind: "query" }))
+			const built = build(makeRawScope({ kind: "query", classes: theory.classes }))
 			return makeRawQuery(theory, recs, [...rules, built.rule])
 		}
 	}
@@ -1130,21 +1202,21 @@ function makeRawQuery(theory: AnySchema, recs: readonly RecData[], rules: readon
  * the checkable fact — the value was assembled over the identical theory —
  * is verified before the raw value is admitted at its typed face.
  */
-function isQueryValue<Rels extends SchemaRelations, Row, P extends ParamsRecord>(
-	theory: Schema<Rels>,
+function isQueryValue<Rels extends SchemaRelations, Row, P extends ParamsRecord, Classes extends SchemaClasses>(
+	theory: Schema<Rels, Classes>,
 	value: RawQuery
-): value is RawQuery & Query<Rels, Row, P> {
+): value is RawQuery & Query<Rels, Row, P, Classes> {
 	return value.schema === theory
 }
 
 /** Assembles one typed query value (rules already completed). */
-function makeQuery<Rels extends SchemaRelations, Row, P extends ParamsRecord>(
-	theory: Schema<Rels>,
+function makeQuery<Rels extends SchemaRelations, Row, P extends ParamsRecord, Classes extends SchemaClasses>(
+	theory: Schema<Rels, Classes>,
 	recs: readonly RecData[],
 	rules: readonly RuleData[]
-): Query<Rels, Row, P> {
+): Query<Rels, Row, P, Classes> {
 	const raw = makeRawQuery(theory, recs, rules)
-	if (!isQueryValue<Rels, Row, P>(theory, raw)) {
+	if (!isQueryValue<Rels, Row, P, Classes>(theory, raw)) {
 		throw errors.new("query value construction incomplete")
 	}
 	return raw
@@ -1153,13 +1225,19 @@ function makeQuery<Rels extends SchemaRelations, Row, P extends ParamsRecord>(
 /**
  * Opens a query over a schema: `query(S).rule(r => ...)`. Each `.rule`
  * adds one conjunctive rule; multiple rules are the set union (answers are
- * SETS — no order or limit exists anywhere; hosts sort).
+ * SETS — no order or limit exists anywhere; hosts sort). The schema's
+ * law-computed class map rides into every rule builder — the join walls
+ * compare class names off it, at the type level and at construction alike.
  */
-function query<Rels extends SchemaRelations>(theory: Schema<Rels>): QueryStart<Rels> {
-	const start: QueryStart<Rels> = {
-		rule<RV extends AnyRuleValue>(build: (r: QueryRuleScope<Rels>) => RV): Query<Rels, RowOf<RV>, ParamsOf<RV>> {
-			const built = build(makeQueryRuleScope<Rels>())
-			return makeQuery<Rels, RowOf<RV>, ParamsOf<RV>>(theory, [], [built.rule])
+function query<Rels extends SchemaRelations, Classes extends SchemaClasses>(
+	theory: Schema<Rels, Classes>
+): QueryStart<Rels, Classes> {
+	const start: QueryStart<Rels, Classes> = {
+		rule<RV extends AnyRuleValue>(
+			build: (r: QueryRuleScope<Rels, Classes>) => RV
+		): Query<Rels, RowOf<RV>, ParamsOf<RV>, Classes> {
+			const built = build(makeQueryRuleScope<Rels, Classes>(theory.classes))
+			return makeQuery<Rels, RowOf<RV>, ParamsOf<RV>, Classes>(theory, [], [built.rule])
 		}
 	}
 	Object.freeze(start)
@@ -1440,7 +1518,7 @@ function lowerCmpTerm(
 /** Resolves the anchor a comparison literal tags by: the sibling's field, the measure, or an anchored param. */
 function cmpAnchorOf(ctx: LowerContext, rule: RuleData, sibling: CmpTermData): AnyField | "measure" | undefined {
 	if (sibling.kind === "var") {
-		return rule.varFields[sibling.name]
+		return rule.varFields[sibling.name]?.field
 	}
 	if (sibling.kind === "measure") {
 		return "measure"

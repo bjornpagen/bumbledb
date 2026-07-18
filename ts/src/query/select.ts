@@ -166,7 +166,7 @@ type CheckNameSelect<Env extends EnvShape, S> = {
  * type.
  */
 type SelectEntryRow<Env extends EnvShape, E> = E extends string
-	? { readonly [K in E]: Infer<Env[E & keyof Env]> }
+	? { readonly [K in E]: Infer<Env[E & keyof Env]["field"]> }
 	: E extends Duration<infer N extends string>
 		? { readonly [K in N]: bigint }
 		: E extends Agg<"count", undefined>
@@ -175,14 +175,14 @@ type SelectEntryRow<Env extends EnvShape, E> = E extends string
 				? { readonly [K in O]: bigint }
 				: E extends Agg<"sum" | "min" | "max", infer O>
 					? O extends string
-						? { readonly [K in O]: Infer<Env[O & keyof Env]> }
+						? { readonly [K in O]: Infer<Env[O & keyof Env]["field"]> }
 						: O extends Duration<infer N extends string>
 							? { readonly [K in N]: bigint }
 							: never
 					: E extends Agg<"argMax" | "argMin", infer O extends string, string>
-						? { readonly [K in O]: Infer<Env[O & keyof Env]> }
+						? { readonly [K in O]: Infer<Env[O & keyof Env]["field"]> }
 						: E extends Agg<"pack", infer O extends string>
-							? { readonly [K in O]: Infer<Env[O & keyof Env]> }
+							? { readonly [K in O]: Infer<Env[O & keyof Env]["field"]> }
 							: never
 
 /** The inferred answer-row object type of a select tuple. */
@@ -194,7 +194,7 @@ type RowOfSelect<Env extends EnvShape, S extends readonly SelectEntry[]> = Shape
  * smears into one column's type), mirroring {@link SelectEntryRow}.
  */
 type NameSelectRow<Env extends EnvShape, N> = N extends string
-	? { readonly [K in N]: Infer<Env[K & keyof Env]> }
+	? { readonly [K in N]: Infer<Env[K & keyof Env]["field"]> }
 	: never
 
 /** The inferred answer-row object type of a names-only (recursive-rule) select tuple. */

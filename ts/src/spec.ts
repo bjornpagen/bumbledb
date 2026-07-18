@@ -121,8 +121,9 @@ interface RowSpec {
  * kind); a closed relation's `fields` are its declared intrinsic columns
  * only — the synthetic (`id`, u64) handle field is materialized by the
  * engine's schema validation. `newtype` is the handle newtype of a closed
- * relation (the SDK emits its handle DOMAIN, `` `${name}Id` `` — the same
- * label every referencing field carries), undefined on an ordinary one.
+ * relation (the SDK emits the id's law-computed generator class,
+ * `` `${name}.id` `` — the same label every referencing field carries by
+ * law), undefined on an ordinary one.
  */
 interface RelationSpec {
 	readonly name: string

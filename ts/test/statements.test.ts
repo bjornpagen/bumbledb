@@ -1,18 +1,20 @@
 /**
- * Statement-algebra pins on the MINIMAL kernel (K3): the full Ledger
- * example (key, containment, selected `==`, window) lowers to its
- * `SchemaSpec` shape — the `newtype` slots temporarily `undefined` until
- * the law-typing lands (K4 computes every field's class name FROM the
- * statements); the canonical-utterance ban table is enumerated one row at
- * a time (each banned LITERAL spelling a REAL `@ts-expect-error` —
- * unwritable — and each computed-bound escape a construction error naming
- * the canonical form); field references are checked in the type —
- * existence AND structural shape (positionwise kind/width/element, read
- * off the schema type; the DOMAIN wall lives at `schema()` and is K4's,
- * not construction's); `schema()` enforces its expansion-boundary checks
- * including the handle-selection paste-back law; ψ-selection over closed
- * relations (`Grade.where({ mastered: true })` as a face source) is typed,
- * rendered, and lowered PASS-THROUGH (the engine folds at validate); and
+ * Statement-algebra pins on the MINIMAL kernel (K3) under the LAW-TYPING
+ * (K4): the full Ledger example (key, containment, selected `==`, window)
+ * lowers to its `SchemaSpec` shape — every `newtype` slot carrying the
+ * class name `schema()` COMPUTED from the statement list (the laws type
+ * the columns; bare fields lower `undefined`); the canonical-utterance ban
+ * table is enumerated one row at a time (each banned LITERAL spelling a
+ * REAL `@ts-expect-error` — unwritable — and each computed-bound escape a
+ * construction error naming the canonical form); field references are
+ * checked in the type — existence AND structural shape (positionwise
+ * kind/width/element, read off the schema type; the DOMAIN wall lives at
+ * `schema()` — the one-generator-per-class law, pinned in
+ * `law-typing.test.ts` — and at query joins, never at face construction);
+ * `schema()` enforces its expansion-boundary checks including the
+ * handle-selection paste-back law; ψ-selection over closed relations
+ * (`Grade.where({ mastered: true })` as a face source) is typed, rendered,
+ * and lowered PASS-THROUGH (the engine folds at validate); and
  * `renderStatement` emits the canonical `70-api.md` spellings exactly.
  */
 
@@ -71,10 +73,14 @@ function buildCalendar() {
  * `Grade(id | mastered == true)` lowers to.
  */
 function buildMastery() {
-	const Grade = closed("Grade", { mastered: bool, score: u64 })({
-		Failed: { mastered: false, score: 0n },
-		DirectPass: { mastered: true, score: 2n }
-	})
+	const Grade = closed(
+		"Grade",
+		{ mastered: bool, score: u64 },
+		{
+			Failed: { mastered: false, score: 0n },
+			DirectPass: { mastered: true, score: 2n }
+		}
+	)
 	const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
 	const psiContainment = contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id"))
 	const psiWindow = window(on(Grade.where({ mastered: true }), "id"), atMost(1n), on(Certificate, "grade"))
@@ -88,10 +94,14 @@ function buildMastery() {
  * admit (its domain, if any, is law-born at `schema()`, never declared).
  */
 function buildSeverity() {
-	const Sev = closed("Sev", { level: u64 })({
-		Info: { level: 1n },
-		Critical: { level: 5n }
-	})
+	const Sev = closed(
+		"Sev",
+		{ level: u64 },
+		{
+			Info: { level: 1n },
+			Critical: { level: 5n }
+		}
+	)
 	const Limit = relation("Limit", { level: u64, cap: u64 })
 	const statements = [contained(on(Sev, "level"), on(Limit, "level"))]
 	const Severity = schema("Severity", { Sev, Limit }, statements)
@@ -99,13 +109,13 @@ function buildSeverity() {
 }
 
 describe("the Ledger example", function describeLedger() {
-	test("lowers to the SchemaSpec shape, declaration order throughout, newtype slots undefined until the law-typing lands", function probeLedgerLowering() {
+	test("lowers to the SchemaSpec shape, declaration order throughout, newtype slots carrying the law-computed class names", function probeLedgerLowering() {
 		const { Ledger } = buildLedger()
 		assert.deepStrictEqual(lower(Ledger), {
 			relations: [
 				{
 					name: "Kind",
-					newtype: undefined,
+					newtype: "Kind.id",
 					fields: [],
 					extension: [
 						{ handle: "Checking", values: [] },
@@ -116,7 +126,7 @@ describe("the Ledger example", function describeLedger() {
 					name: "Holder",
 					newtype: undefined,
 					fields: [
-						{ name: "id", valueType: { kind: "u64" }, newtype: undefined, fresh: true },
+						{ name: "id", valueType: { kind: "u64" }, newtype: "Holder.id", fresh: true },
 						{ name: "name", valueType: { kind: "string" }, newtype: undefined, fresh: false }
 					],
 					extension: undefined
@@ -125,9 +135,9 @@ describe("the Ledger example", function describeLedger() {
 					name: "Account",
 					newtype: undefined,
 					fields: [
-						{ name: "id", valueType: { kind: "u64" }, newtype: undefined, fresh: true },
-						{ name: "holder", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
-						{ name: "kind", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
+						{ name: "id", valueType: { kind: "u64" }, newtype: "Account.id", fresh: true },
+						{ name: "holder", valueType: { kind: "u64" }, newtype: "Holder.id", fresh: false },
+						{ name: "kind", valueType: { kind: "u64" }, newtype: "Kind.id", fresh: false },
 						{
 							name: "active",
 							valueType: { kind: "interval", element: "i64", width: undefined },
@@ -140,7 +150,7 @@ describe("the Ledger example", function describeLedger() {
 				{
 					name: "SavingsTerms",
 					newtype: undefined,
-					fields: [{ name: "account", valueType: { kind: "u64" }, newtype: undefined, fresh: false }],
+					fields: [{ name: "account", valueType: { kind: "u64" }, newtype: "Account.id", fresh: false }],
 					extension: undefined
 				}
 			],
@@ -191,14 +201,14 @@ describe("the Ledger example", function describeLedger() {
 		])
 	})
 
-	test("a closed payload column lowers pure structure — the newtype slot awaits the law-typing", function probeClosedPayloadLowering() {
+	test("a closed payload column lowers pure structure — the newtype slots carry its law-computed classes", function probeClosedPayloadLowering() {
 		const { Severity } = buildSeverity()
 		assert.deepStrictEqual(lower(Severity), {
 			relations: [
 				{
 					name: "Sev",
-					newtype: undefined,
-					fields: [{ name: "level", valueType: { kind: "u64" }, newtype: undefined, fresh: false }],
+					newtype: "Sev.id",
+					fields: [{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level", fresh: false }],
 					extension: [
 						{ handle: "Info", values: [{ kind: "value", value: { kind: "u64", value: 1n } }] },
 						{ handle: "Critical", values: [{ kind: "value", value: { kind: "u64", value: 5n } }] }
@@ -208,7 +218,7 @@ describe("the Ledger example", function describeLedger() {
 					name: "Limit",
 					newtype: undefined,
 					fields: [
-						{ name: "level", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
+						{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level", fresh: false },
 						{ name: "cap", valueType: { kind: "u64" }, newtype: undefined, fresh: false }
 					],
 					extension: undefined
@@ -481,7 +491,7 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 			closed("Bad", ["where"])
 		}, /handle where collides with the closed value's own surface/)
 		assert.throws(function payloadTier() {
-			closed("Bad", { pages: bool })({ where: { pages: true } })
+			closed("Bad", { pages: bool }, { where: { pages: true } })
 		}, /handle where collides with the closed value's own surface/)
 	})
 })

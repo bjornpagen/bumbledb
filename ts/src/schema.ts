@@ -13,6 +13,7 @@ import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import type { FaceData } from "#face.ts"
 import { type AnyField, assertDeclarationOrderKey, type ClosedRoster } from "#fields.ts"
+import { type ClassesOf, classesComplete, computeClasses, type LawfulStatements, type SchemaClasses } from "#law.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
 import { renderStatement, type Statement } from "#statements.ts"
@@ -247,11 +248,21 @@ type SchemaRelation = AnyRelation | AnyClosed
 /** The relation record a schema is generic over — what `Db` and queries key on. */
 type SchemaRelations = Record<string, SchemaRelation>
 
-/** A theory value: named relations plus the DECLARED dependency statements. */
-interface Schema<Rels extends SchemaRelations> {
+/**
+ * A theory value: named relations, the DECLARED dependency statements, and
+ * the LAW-COMPUTED class map (`classes` — relation → field → class name,
+ * `undefined` = bare). The class map is THE domain authority: `schema()`
+ * computes it FROM the statement list at both tiers (the type through
+ * {@link ClassesOf}, the value through the union-find twin), queries
+ * compare class names off it, and the wire lowering emits it as the spec
+ * `newtype` labels. Nothing is ever synthesized: `statements` is exactly
+ * the declared list, in written order.
+ */
+interface Schema<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> {
 	readonly name: string
 	readonly relations: Rels
 	readonly statements: readonly Statement[]
+	readonly classes: Classes
 }
 
 /** Any schema value, whatever its relation record. */
@@ -277,12 +288,21 @@ type AnySchema = Schema<SchemaRelations>
  * list: the engine materializes them itself, in its own pinned order
  * (`SchemaDescriptor::materialized_statements`), and restating them would
  * double them.
+ *
+ * THE LAW-TYPING happens here too (rulings 2/3 — the laws type the
+ * columns): the statement list induces the equivalence classes over field
+ * slots, at the TYPE level ({@link ClassesOf} — spell the statement list
+ * inline so the tuple type stays precise) and at runtime (the union-find
+ * twin), and the one-generator-per-class wall holds at both tiers — the
+ * {@link LawfulStatements} verdict lands the compile error on the
+ * statements argument; `computeClasses` throws the same content naming the
+ * exact statement.
  */
-function schema<const Rels extends SchemaRelations>(
+function schema<const Rels extends SchemaRelations, const Stmts extends readonly Statement[]>(
 	name: string,
 	relations: Rels,
-	statements: readonly Statement[]
-): Schema<Rels> {
+	statements: Stmts & LawfulStatements<Rels, Stmts>
+): Schema<Rels, ClassesOf<Rels, Stmts>> {
 	const implied = collectImplied(name, relations)
 	const seen = new Set<string>()
 	for (const statement of statements) {
@@ -300,7 +320,11 @@ function schema<const Rels extends SchemaRelations>(
 		verifyHandles(name, statement, rendered)
 	}
 	verifyClosedReferences(name, statements)
-	return Object.freeze({ name, relations, statements: Object.freeze([...statements]) })
+	const classes = computeClasses(name, relations, statements)
+	if (!classesComplete<ClassesOf<Rels, Stmts>>(classes, relations)) {
+		throw errors.new(`schema ${name}: class-map construction incomplete`)
+	}
+	return Object.freeze({ name, relations, statements: Object.freeze([...statements]), classes })
 }
 
 export type { AnySchema, Schema, SchemaRelation, SchemaRelations }

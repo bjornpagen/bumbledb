@@ -26,7 +26,9 @@
 
 import * as errors from "@superbuilders/errors"
 import type { AnyField, Infer, IntervalValue } from "#fields.ts"
+import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
+	ClassedField,
 	Duration,
 	EnvShape,
 	JoinOk,
@@ -38,7 +40,7 @@ import type {
 	Var
 } from "#query/scope.ts"
 import { isTerm } from "#query/scope.ts"
-import type { AnyRelation, FieldsShape, Relation } from "#relation.ts"
+import type { AnyRelation, FieldsShape, Relation, RelationFields } from "#relation.ts"
 
 /** One atom-binding position as runtime data. */
 type BindingTermData =
@@ -47,10 +49,11 @@ type BindingTermData =
 	| { readonly kind: "setParam"; readonly name: string }
 	| { readonly kind: "literal"; readonly value: unknown }
 
-/** One resolved binding: the field's name, its descriptor, and the term. */
+/** One resolved binding: the field's name, its descriptor, its law-computed class, and the term. */
 interface BindingEntry {
 	readonly field: string
 	readonly data: AnyField
+	readonly class: string | undefined
 	readonly term: BindingTermData
 }
 
@@ -136,8 +139,8 @@ interface ParamUse {
 interface RuleData {
 	readonly items: readonly RuleItem[]
 	readonly select: readonly SelectColumn[]
-	/** Variable name → the field descriptor its FIRST positive binding carries (the runtime env). */
-	readonly varFields: Readonly<Record<string, AnyField>>
+	/** Variable name → the classed slot its FIRST positive binding carries (the runtime env — descriptor + class). */
+	readonly varFields: Readonly<Record<string, ClassedField>>
 	readonly paramUses: readonly ParamUse[]
 }
 
@@ -175,49 +178,60 @@ type MatchShape<F extends FieldsShape> = {
 }
 
 /**
- * The var binding's judgment against the incoming rule environment: a name
- * already bound must land on a domain-equal field.
+ * One field position of a bindings record as a classed slot: the declared
+ * descriptor plus the slot's law-computed class, read off the relation's
+ * class record (`CR` — the schema class map's entry for the atom's
+ * relation). The one shape every join judgment compares.
  */
-type EnvJoinOk<Env extends EnvShape, F extends FieldsShape, K, N extends string> = N extends keyof Env
-	? JoinOk<Env[N], F[K & keyof F]>
+type SlotAt<F extends FieldsShape, CR, K> = {
+	readonly field: F[K & keyof F]
+	readonly class: ClassLookup<CR, K>
+}
+
+/**
+ * The var binding's judgment against the incoming rule environment: a name
+ * already bound must land on a class-equal slot (bare pairs only with bare).
+ */
+type EnvJoinOk<Env extends EnvShape, F extends FieldsShape, CR, K, N extends string> = N extends keyof Env
+	? JoinOk<Env[N], SlotAt<F, CR, K>>
 	: true
 
 /**
  * The var binding's judgment against its OWN record's siblings: two
  * bindings of one var name inside a single bindings record are the same
  * join the environment check judges across atoms, so every same-named
- * sibling must be domain-equal too. Without this arm two FIRST occurrences
+ * sibling must be class-equal too. Without this arm two FIRST occurrences
  * of one name (a record the environment has not seen yet) would meet no
- * check at all — the intra-atom join would silently cross domains.
+ * check at all — the intra-atom join would silently cross classes.
  */
-type SiblingJoinOk<F extends FieldsShape, B, K extends keyof B, N extends string> = false extends {
-	[K2 in Exclude<keyof B & keyof F, K>]: B[K2] extends Var<N> ? JoinOk<F[K2], F[K & keyof F]> : true
+type SiblingJoinOk<F extends FieldsShape, CR, B, K extends keyof B, N extends string> = false extends {
+	[K2 in Exclude<keyof B & keyof F, K>]: B[K2] extends Var<N> ? JoinOk<SlotAt<F, CR, K2>, SlotAt<F, CR, K>> : true
 }[Exclude<keyof B & keyof F, K>]
 	? false
 	: true
 
 /**
  * The per-property join judgment of a bindings record: a var binding must
- * be domain-equal to the rule environment's binding of the name AND to
- * every same-named sibling of its own record (a cross-domain reuse maps
+ * be class-equal to the rule environment's binding of the name AND to
+ * every same-named sibling of its own record (a cross-class reuse maps
  * the property to `never` — the compile error the old value brand carried,
- * now structural).
+ * now law-born off the schema type's class map).
  */
-type BindingOk<Env extends EnvShape, F extends FieldsShape, B, K extends keyof B> =
+type BindingOk<Env extends EnvShape, F extends FieldsShape, CR, B, K extends keyof B> =
 	B[K] extends Var<infer N extends string>
-		? [EnvJoinOk<Env, F, K, N>, SiblingJoinOk<F, B, K, N>] extends [true, true]
+		? [EnvJoinOk<Env, F, CR, K, N>, SiblingJoinOk<F, CR, B, K, N>] extends [true, true]
 			? true
 			: false
 		: true
 
 /** The validated bindings record (intersect with the inferred `B` — errors land on the offending property). */
-type CheckBindings<Env extends EnvShape, F extends FieldsShape, B> = {
-	readonly [K in keyof B]: K extends keyof F ? (BindingOk<Env, F, B, K> extends true ? B[K] : never) : never
+type CheckBindings<Env extends EnvShape, F extends FieldsShape, CR, B> = {
+	readonly [K in keyof B]: K extends keyof F ? (BindingOk<Env, F, CR, B, K> extends true ? B[K] : never) : never
 }
 
-/** The environment a bindings record contributes: var name → the bound field's descriptor. */
-type BindEnv<F extends FieldsShape, B> = {
-	readonly [K in keyof B & keyof F as B[K] extends Var<infer N extends string> ? N : never]: F[K]
+/** The environment a bindings record contributes: var name → the bound slot (descriptor + class). */
+type BindEnv<F extends FieldsShape, CR, B> = {
+	readonly [K in keyof B & keyof F as B[K] extends Var<infer N extends string> ? N : never]: SlotAt<F, CR, K>
 }
 
 /** The params-object fragments a bindings record contributes (one union member per param use). */
@@ -257,9 +271,9 @@ interface Tree<Ch extends readonly AnyTreeChild[]> {
  * membership at `.where` IS the safety rule, a compile error before it is
  * the engine's refusal.
  */
-interface NotAtom<F extends FieldsShape, B> {
+interface NotAtom<R extends AnyRelation, B> {
 	readonly cond: "not"
-	readonly relation: Relation<string, F>
+	readonly relation: R
 	readonly bindings: B
 }
 
@@ -270,7 +284,7 @@ type AnyCmp = Cmp<CmpKind, unknown, unknown, unknown>
 type AnyTreeChild = AnyCmp | Tree<readonly AnyTreeChild[]>
 
 /** Any negated-atom value. */
-type AnyNotAtom = NotAtom<FieldsShape, unknown>
+type AnyNotAtom = NotAtom<AnyRelation, unknown>
 
 /** Any `.where` input: a comparison, a condition tree, or a negated atom. */
 type AnyCond = AnyCmp | Tree<readonly AnyTreeChild[]> | AnyNotAtom
@@ -469,21 +483,21 @@ function or<const C extends readonly AnyTreeChild[]>(...children: C): Tree<C> {
 function not<Name extends string, F extends FieldsShape, const B extends MatchShape<F>>(
 	relation: Relation<Name, F>,
 	bindings: B
-): NotAtom<F, B> {
-	const value: NotAtom<F, B> = { cond: "not", relation, bindings }
+): NotAtom<Relation<Name, F>, B> {
+	const value: NotAtom<Relation<Name, F>, B> = { cond: "not", relation, bindings }
 	return Object.freeze(value)
 }
 
 /** Whether a var name is bound in the environment at an orderable (u64/i64) field. */
 type OrderVarOk<Env extends EnvShape, N extends string> = N extends keyof Env
-	? Env[N]["kind"] extends "u64" | "i64"
+	? Env[N]["field"]["kind"] extends "u64" | "i64"
 		? true
 		: false
 	: false
 
 /** Whether a var name is bound at an interval field. */
 type IntervalVarOk<Env extends EnvShape, N extends string> = N extends keyof Env
-	? Env[N]["kind"] extends "interval"
+	? Env[N]["field"]["kind"] extends "interval"
 		? true
 		: false
 	: false
@@ -502,7 +516,7 @@ type PointSideOk<Env extends EnvShape, T> = T extends Var<infer N extends string
 /** One interval side's judgment. */
 type IntervalSideOk<Env extends EnvShape, T> = T extends Var<infer N extends string> ? IntervalVarOk<Env, N> : true
 
-/** The `eq`/`ne` judgment: left var bound; right joins it (domain-equal var, param, or an exact-type literal). */
+/** The `eq`/`ne` judgment: left var bound; right joins it (class-equal var, param, or an exact-type literal). */
 type EqOk<Env extends EnvShape, L, R> =
 	L extends Var<infer N extends string>
 		? N extends keyof Env
@@ -512,34 +526,36 @@ type EqOk<Env extends EnvShape, L, R> =
 					: false
 				: R extends Param<string> | SetParam<string>
 					? true
-					: [R] extends [Infer<Env[N]>]
+					: [R] extends [Infer<Env[N]["field"]>]
 						? true
 						: false
 			: false
 		: false
 
-/** One negated-atom binding's judgment: a var must be positively bound (safety) AND domain-equal. */
-type NotBindingOk<Env extends EnvShape, F extends AnyField, T> =
-	T extends Var<infer N extends string> ? (N extends keyof Env ? JoinOk<Env[N], F> : false) : true
+/** One negated-atom binding's judgment: a var must be positively bound (safety) AND class-equal. */
+type NotBindingOk<Env extends EnvShape, S extends ClassedField, T> =
+	T extends Var<infer N extends string> ? (N extends keyof Env ? JoinOk<Env[N], S> : false) : true
 
-/** The whole negated atom's judgment. */
-type NotOk<Env extends EnvShape, F extends FieldsShape, B> = false extends {
-	[K in keyof B]: NotBindingOk<Env, K extends keyof F ? F[K] : never, B[K]>
+/** The whole negated atom's judgment (`CR` — the negated relation's class record off the schema class map). */
+type NotOk<Env extends EnvShape, F extends FieldsShape, CR, B> = false extends {
+	[K in keyof B]: NotBindingOk<Env, SlotAt<F, CR, K>, B[K]>
 }[keyof B]
 	? false
 	: true
 
 /**
  * One condition's judgment against the rule environment — the type-level
- * twin of the engine's comparison roster: domain-equal joins, orderable
- * order sides (an interval var under a non-`pointIn` op is exactly here
- * refused), kind-correct `pointIn`/`covers`/`allen` sides, and negated-atom
- * safety. The leading `[AnyTreeChild] extends [C]` arm is the recursion's
- * base case: at an UNRESOLVED constraint (the whole condition union — or a
- * tree's child union, which is the union itself) the judgment is vacuously
- * true — without it the constraint instantiation recurses into itself.
+ * twin of the engine's comparison roster: class-equal joins (off the
+ * schema type's class map), orderable order sides (an interval var under a
+ * non-`pointIn` op is exactly here refused), kind-correct
+ * `pointIn`/`covers`/`allen` sides, and negated-atom safety (the negated
+ * relation's class record is resolved through `Classes` by its name). The
+ * leading `[AnyTreeChild] extends [C]` arm is the recursion's base case:
+ * at an UNRESOLVED constraint (the whole condition union — or a tree's
+ * child union, which is the union itself) the judgment is vacuously true —
+ * without it the constraint instantiation recurses into itself.
  */
-type CondOkBool<Env extends EnvShape, C> = [AnyTreeChild] extends [C]
+type CondOkBool<Env extends EnvShape, Classes extends SchemaClasses, C> = [AnyTreeChild] extends [C]
 	? true
 	: C extends Cmp<infer Op, infer L, infer R, unknown>
 		? Op extends "eq" | "ne"
@@ -558,23 +574,24 @@ type CondOkBool<Env extends EnvShape, C> = [AnyTreeChild] extends [C]
 							: false
 						: false
 		: C extends Tree<infer Ch extends readonly AnyTreeChild[]>
-			? false extends CondOkBool<Env, Ch[number]>
+			? false extends CondOkBool<Env, Classes, Ch[number]>
 				? false
 				: true
-			: C extends NotAtom<infer F extends FieldsShape, infer B>
-				? NotOk<Env, F, B>
+			: C extends NotAtom<infer R extends AnyRelation, infer B>
+				? NotOk<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 				: false
 
 /** The validated `.where` argument (intersect with the inferred condition type). */
-type CheckCond<Env extends EnvShape, C> = CondOkBool<Env, C> extends true ? C : never
+type CheckCond<Env extends EnvShape, Classes extends SchemaClasses, C> =
+	CondOkBool<Env, Classes, C> extends true ? C : never
 
 /** The `eq`/`ne` params contribution: the param typed by the left variable's field. */
 type EqParams<Env extends EnvShape, L, R> =
 	L extends Var<infer N extends string>
 		? R extends Param<infer P extends string>
-			? { readonly [Q in P]: Infer<Env[N & keyof Env]> }
+			? { readonly [Q in P]: Infer<Env[N & keyof Env]["field"]> }
 			: R extends SetParam<infer P extends string>
-				? { readonly [Q in P]: readonly Infer<Env[N & keyof Env]>[] }
+				? { readonly [Q in P]: readonly Infer<Env[N & keyof Env]["field"]>[] }
 				: never
 		: never
 
@@ -607,8 +624,8 @@ type CondParams<Env extends EnvShape, C> = [AnyTreeChild] extends [C]
 						: never
 		: C extends Tree<infer Ch extends readonly AnyTreeChild[]>
 			? CondParams<Env, Ch[number]>
-			: C extends NotAtom<infer F extends FieldsShape, infer B>
-				? BindParams<F, B>
+			: C extends NotAtom<infer R extends AnyRelation, infer B>
+				? BindParams<RelationFields<R>, B>
 				: never
 
 /** The flattened params record one bindings record contributes. */

@@ -11,12 +11,17 @@
  * surface can spell (the IR-bijection pin), the unused-param law (a param
  * value no rule uses never registers — the query executes under its own
  * inferred `Params`), and the type walls (each `@ts-expect-error` real):
- * cross-domain joins, interval-vs-scalar comparisons outside `pointIn`,
- * minting terms in heads, wrong-typed params, and mismatched result
- * shapes are all unwritable. Execution rides the native bridge directly —
- * the `Db` runtime's typed prepare/execute is S4's surface; the typed
- * seams exercised here (`lowerQuery` + `wireParams` + `decodeAnswers`)
- * are exactly what it consumes.
+ * cross-CLASS joins (the schema is LAW-TYPED — rulings 2/3: the statement
+ * list is what puts `Account.holder` and `Holder.id` in one class while
+ * `Account.id` generates its own; the four join-law probes — same-class
+ * joins, cross-class refusal at the use site, bare↔bare joining, and
+ * bare↔classed refusal — are pinned through `r.var` AND re-pinned through
+ * `r.vars`), interval-vs-scalar comparisons outside `pointIn`, minting
+ * terms in heads, wrong-typed params, and mismatched result shapes are
+ * all unwritable. Execution rides the native bridge directly — the `Db`
+ * runtime's typed prepare/execute is S4's surface; the typed seams
+ * exercised here (`lowerQuery` + `wireParams` + `decodeAnswers`) are
+ * exactly what it consumes.
  */
 
 import assert from "node:assert/strict"
@@ -25,6 +30,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, before, describe, test } from "node:test"
 import { closed } from "#closed.ts"
+import { on } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle } from "#native.ts"
@@ -37,6 +43,7 @@ import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { Param, ParamsRecord } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
+import { contained } from "#statements.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -51,14 +58,11 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const HolderId = u64.as("HolderId")
-const AccountId = u64.as("AccountId")
-
 const Kind = closed("Kind", ["Checking", "Savings"])
-const Holder = relation("Holder", { id: HolderId.fresh, name: str })
+const Holder = relation("Holder", { id: u64.fresh, name: str, rank: u64 })
 const Account = relation("Account", {
-	id: AccountId.fresh,
-	holder: HolderId,
+	id: u64.fresh,
+	holder: u64,
 	kind: Kind.id,
 	balance: i64,
 	active: interval(u64),
@@ -67,11 +71,23 @@ const Account = relation("Account", {
 	tag: bytes(2)
 })
 const Parent = relation("Parent", {
-	child: HolderId,
-	parent: HolderId
+	child: u64,
+	parent: u64
 })
 
-const Ledger = schema("Ledger", { Kind, Holder, Account, Parent }, [])
+/**
+ * THE LAWS TYPE THE COLUMNS: the containments below put `Account.holder`,
+ * `Parent.child`, and `Parent.parent` in the `"Holder.id"` generator class
+ * and `Account.kind` in `"Kind.id"`, while `Account.id` generates
+ * `"Account.id"` — and `Holder.rank`/`Account.opened` are in no law: BARE,
+ * the bare↔bare join probes' slots.
+ */
+const Ledger = schema("Ledger", { Kind, Holder, Account, Parent }, [
+	contained(on(Account, "holder"), on(Holder, "id")),
+	contained(on(Account, "kind"), on(Kind, "id")),
+	contained(on(Parent, "child"), on(Holder, "id")),
+	contained(on(Parent, "parent"), on(Holder, "id"))
+])
 
 type Rels = (typeof Ledger)["relations"]
 
@@ -113,10 +129,10 @@ describe("the query surface against a real store", function suite() {
 		assert.ok(created.ok, "the store admits")
 		db = created.db
 		const tx = native.dbWriteBegin(db)
-		native.txInsert(tx, HOLDER_ID, [ids.ada, "ada"])
-		native.txInsert(tx, HOLDER_ID, [ids.grace, "grace"])
-		native.txInsert(tx, HOLDER_ID, [ids.kurt, "kurt"])
-		native.txInsert(tx, HOLDER_ID, [ids.lone, "lone"])
+		native.txInsert(tx, HOLDER_ID, [ids.ada, "ada", 1n])
+		native.txInsert(tx, HOLDER_ID, [ids.grace, "grace", 2n])
+		native.txInsert(tx, HOLDER_ID, [ids.kurt, "kurt", 3n])
+		native.txInsert(tx, HOLDER_ID, [ids.lone, "lone", 9n])
 		const checking = 0n
 		const savings = 1n
 		native.txInsert(tx, ACCOUNT_ID, [
@@ -693,27 +709,27 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("TYPE WALLS: the unwritable queries are unwritable (each expect-error real)", function typeWalls() {
-		// A HolderId-domain var joined to an AccountId-domain field — the domain-equal join law,
-		// a compile error AND a construction refusal (the wall holds for untyped callers too).
-		assert.throws(function crossDomainJoin() {
+		// A "Holder.id"-class var joined to the "Account.id" generator class — the class-equal
+		// join law, a compile error AND a construction refusal (the wall holds for untyped callers too).
+		assert.throws(function crossClassJoin() {
 			query(Ledger).rule((r) =>
 				r
 					.match(Holder, { id: r.var("x") })
-					// @ts-expect-error — "x" first bound HolderId-domain; Account.id carries AccountId
+					// @ts-expect-error — "x" first bound in the "Holder.id" class; Account.id generates "Account.id"
 					.match(Account, { id: r.var("x") })
 					.select("x")
 			)
 		}, /joins domain-unequal fields/)
 
-		// The same law through eq: var-to-var unification is domain-equal.
-		const crossDomainEq = query(Ledger).rule((r) =>
+		// The same law through eq: var-to-var unification is class-equal.
+		const crossClassEq = query(Ledger).rule((r) =>
 			r
 				.match(Account, { id: r.var("a"), holder: r.var("h") })
-				// @ts-expect-error — "a" is AccountId-domain, "h" is HolderId-domain
+				// @ts-expect-error — "a" is in the "Account.id" class, "h" in "Holder.id"
 				.where(r.eq(r.var("a"), r.var("h")))
 				.select("a")
 		)
-		assert.equal(crossDomainEq.data.rules.length, 1)
+		assert.equal(crossClassEq.data.rules.length, 1)
 
 		// An interval var under a non-pointIn comparison — the interval-vs-scalar wall.
 		const intervalUnderOrder = query(Ledger).rule((r) =>
@@ -767,6 +783,99 @@ describe("the query surface against a real store", function suite() {
 					.select("h")
 			)
 		}, /ghost/)
+	})
+
+	test("THE FOUR JOIN LAWS, r.var spelling: same-class joins+lowers, cross-class refuses at the use site, bare↔bare joins, bare↔classed refuses", function joinLaws() {
+		// 1. Same-class join compiles AND lowers (Account.holder and Holder.id share "Holder.id").
+		const sameClass = query(Ledger).rule((r) =>
+			r
+				.match(Account, { id: r.var("acct"), holder: r.var("h") })
+				.match(Holder, { id: r.var("h") })
+				.select("acct")
+		)
+		assert.equal(lowerQuery(sameClass).predicates.length, 1)
+
+		// 2. Cross-class pairing fails at the use site (compile) and at construction (runtime twin).
+		assert.throws(function crossClass() {
+			query(Ledger).rule((r) =>
+				r
+					.match(Holder, { id: r.var("x") })
+					// @ts-expect-error — the use site: Account.id generates its own class
+					.match(Account, { id: r.var("x") })
+					.select("x")
+			)
+		}, /joins domain-unequal fields/)
+
+		// 3. Bare pairs with bare: Holder.rank and Account.opened are in no law — the join is legal,
+		// lowers, and runs (ada's rank 1 = the opened stamp of her checking account).
+		const bareBare = query(Ledger).rule((r) =>
+			r
+				.match(Holder, { id: r.var("h"), rank: r.var("z") })
+				.match(Account, { opened: r.var("z") })
+				.select("h")
+		)
+		assert.deepEqual(
+			run(bareBare, {}).map(function h(row) {
+				return row.h
+			}),
+			[ids.ada]
+		)
+
+		// 4. Bare↔classed refuses: Account.opened is bare, Account.holder is in "Holder.id".
+		assert.throws(function bareClassed() {
+			query(Ledger).rule((r) =>
+				r
+					.match(Account, { opened: r.var("z") })
+					// @ts-expect-error — bare pairs only with bare; "Holder.id" is a classed slot
+					.match(Account, { holder: r.var("z") })
+					.select("z")
+			)
+		}, /joins domain-unequal fields/)
+	})
+
+	test("THE FOUR JOIN LAWS re-pinned through vars() — one lowering, two entry flavors", function joinLawsViaVars() {
+		const sameClass = query(Ledger).rule((r) => {
+			const { acct, h } = r.vars("acct", "h")
+			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: h }).select("acct")
+		})
+		assert.equal(lowerQuery(sameClass).predicates.length, 1)
+
+		assert.throws(function crossClass() {
+			query(Ledger).rule((r) => {
+				const { x } = r.vars("x")
+				return (
+					r
+						.match(Holder, { id: x })
+						// @ts-expect-error — the vars-minted name meets the same use-site wall
+						.match(Account, { id: x })
+						.select("x")
+				)
+			})
+		}, /joins domain-unequal fields/)
+
+		const bareBare = query(Ledger).rule((r) => {
+			const { h, z } = r.vars("h", "z")
+			return r.match(Holder, { id: h, rank: z }).match(Account, { opened: z }).select("h")
+		})
+		assert.deepEqual(
+			run(bareBare, {}).map(function h(row) {
+				return row.h
+			}),
+			[ids.ada]
+		)
+
+		assert.throws(function bareClassed() {
+			query(Ledger).rule((r) => {
+				const { z } = r.vars("z")
+				return (
+					r
+						.match(Account, { opened: z })
+						// @ts-expect-error — bare pairs only with bare, vars-minted or not
+						.match(Account, { holder: z })
+						.select("z")
+				)
+			})
+		}, /joins domain-unequal fields/)
 	})
 
 	test("RECURSION FENCES: the cut is typed and the quarantine unwritable", function recursionFences() {
