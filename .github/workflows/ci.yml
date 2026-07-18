@@ -2,6 +2,8 @@
 # macos arm64 (macos-latest is M-series): the workspace gate, the
 # corpus-replay lane, and the Lean gate per push; the Miri lane on a
 # nightly cron.
+# The SDK lane (the hardening-0.3.0 packet, PRD T6) joins them as the
+# fifth: both halves of the cross-host fingerprint lock, per push.
 #
 # Wall-time record (measured locally on the pinned M2 Max, 2026-07-13):
 #   * corpus-replay lane: 463 s test wall (the query three-way replay
@@ -168,3 +170,73 @@ jobs:
           key: lean-conformance-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
       - name: the three-way conformance comparator
         run: cargo test -p bumbledb-bench three_way_conformance -- --ignored --nocapture
+
+  # Lane 5 — the SDK lane (the hardening-0.3.0 packet, PRD T6): both
+  # halves of the cross-host fingerprint lock, per push. The TS half is
+  # the full SDK gate exactly as run locally — build the napi bridge +
+  # package from source, then tsc, biome, and `node --test` over
+  # test/*.test.ts (test/fixtures/*.ts are spawned-child helpers, never
+  # tests). The Rust half is `cargo test` against ts/crate — the crate
+  # is workspace-excluded, so the root workspace gate (lane 1) never
+  # reaches it; this step is what executes
+  # ts/crate/src/fingerprint_lock.rs. The T5 per-recipe goldens run
+  # inside the two suites by construction.
+  # Runner: macos-latest (M-series arm64) is REQUIRED, not just house
+  # style — ts/scripts/build.ts hardcodes the darwin-arm64 platform
+  # package and smoke-loads the .node it just built, so the runner arch
+  # must BE darwin-arm64.
+  # Runtime budget (measured locally on the pinned M2 Max, 2026-07-18,
+  # warm caches): pnpm run build 15.6 s (the bridge release compile
+  # dominates) + tsc 1.4 s + biome 1.3 s + node --test 0.9 s + ts/crate
+  # cargo test 9.7 s ≈ 29 s of work; a cold cache pays the toolchain
+  # download and the full dependency builds once. Runs `needs:`-free in
+  # parallel with the engine lanes, never gated behind them.
+  sdk:
+    if: github.event_name != 'schedule'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: install the pinned toolchain
+        # rust-toolchain.toml at the repo root owns the channel for
+        # ts/crate too: the crate is workspace-excluded but sits under
+        # the root, and rustup resolves the toolchain file by walking
+        # up from cwd, not from the manifest path.
+        run: rustup show
+      - uses: actions/setup-node@v4
+        with:
+          # ts/package.json engines pins node >=24 (the build script
+          # and the tests run as .ts through native type stripping).
+          node-version: 24
+      - name: install pnpm
+        # ts/package.json#packageManager (pnpm@11.9.0) owns the exact
+        # version; corepack reads and activates that pin.
+        run: corepack enable pnpm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ts/crate/target
+          key: sdk-cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'ts/crate/Cargo.lock') }}
+      - name: resolve the pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        working-directory: ts
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: sdk-pnpm-${{ runner.os }}-${{ hashFiles('ts/pnpm-lock.yaml') }}
+      - run: pnpm install --frozen-lockfile
+        working-directory: ts
+      - name: build the napi bridge + SDK from source
+        run: pnpm run build
+        working-directory: ts
+      - run: pnpm exec tsc --noEmit
+        working-directory: ts
+      - run: pnpm exec biome check .
+        working-directory: ts
+      - run: node --test $(find test -name '*.test.ts')
+        working-directory: ts
+      - name: the Rust half of the lock (fingerprint_lock.rs)
+        run: cargo test --manifest-path ts/crate/Cargo.toml
