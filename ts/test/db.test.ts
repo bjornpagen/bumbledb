@@ -24,7 +24,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import type { Db as DbValue, ReadScope, Tx } from "#index.ts"
+import type { Db as DbValue, InsertFact, ReadScope, Tx } from "#index.ts"
 import {
 	abandon,
 	atMost,
@@ -54,22 +54,17 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const HolderId = u64.as("HolderId")
-const AccountId = u64.as("AccountId")
-const AuditId = u64.as("AuditId")
-const ActiveDuring = interval(i64).as("ActiveDuring")
-
 const Kind = closed("Kind", ["Checking", "Savings"])
-const Holder = relation("Holder", { id: HolderId.fresh, name: str })
+const Holder = relation("Holder", { id: u64.fresh, name: str })
 const Account = relation("Account", {
-	id: AccountId.fresh,
-	holder: HolderId,
+	id: u64.fresh,
+	holder: u64,
 	kind: Kind.id,
-	active: ActiveDuring
+	active: interval(i64)
 })
-const SavingsTerms = relation("SavingsTerms", { account: AccountId, rate: i64 })
+const SavingsTerms = relation("SavingsTerms", { account: u64, rate: i64 })
 const Audit = relation("Audit", {
-	id: AuditId.fresh,
+	id: u64.fresh,
 	flag: bool,
 	note: str,
 	tag: bytes(4),
@@ -513,4 +508,29 @@ function marshalShapesAreTyped(tx: Tx<(typeof Ledger)["relations"]>): void {
 	})
 }
 
-export { marshalShapesAreTyped }
+/** The Calendar theory the typestate probe holds against the Ledger. */
+const Booking = relation("Booking", { room: u64, during: interval(u64) })
+const Calendar = schema("Calendar", { Booking }, [key(Booking, ["room", "during"])])
+
+/**
+ * `schema()` carries its relation record as typestate: `Db` over one
+ * schema's relations accepts exactly those relations — a schema-A fact
+ * into a schema-B store is a compile error (relation identity is the
+ * membership rule). Moved here from the statement suite (its subject is
+ * `Db`, and the statement suite stays kernel-isolated).
+ */
+function dbTypestateHoldsTheWall(
+	ledgerDb: DbValue<(typeof Ledger)["relations"]>,
+	calendarDb: DbValue<(typeof Calendar)["relations"]>,
+	account: InsertFact<typeof Account>
+): void {
+	ledgerDb.write(function accepts(tx) {
+		tx.insert(Account, account)
+	})
+	calendarDb.write(function rejects(tx) {
+		// @ts-expect-error — a Ledger fact belongs to Db<Ledger>, never Db<Calendar>
+		tx.insert(Account, account)
+	})
+}
+
+export { dbTypestateHoldsTheWall, marshalShapesAreTyped }

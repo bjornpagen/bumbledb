@@ -91,8 +91,8 @@ type FieldsShape = Record<string, AnyField>
 /**
  * A typed field reference (`Account.fields.holder`) — the value statements,
  * selections, and queries address a field through. Purely positional
- * (relation name + field name); the field's descriptor (domain label
- * included) is read off the relation's schema type structurally.
+ * (relation name + field name); the field's descriptor is read off the
+ * relation's schema type structurally.
  */
 interface FieldRef<Rel extends string, Name extends string> {
 	readonly relation: Rel
@@ -186,11 +186,14 @@ type FreshKeys<R extends AnyRelation> = {
 type InsertFact<R extends AnyRelation> = Flatten<Omit<Fact<R>, FreshKeys<R>> & Partial<Pick<Fact<R>, FreshKeys<R>>>>
 
 /**
- * Declares one relation: `relation("Account", { id: AccountId.fresh,
- * holder: HolderId, ... })` — every field references a declared
- * domain-labeled descriptor (`const AccountId = u64.as("AccountId")`) or a
- * bare constructor. Field declaration order is ordinal-id order (macro
- * parity); the returned value is frozen and side-effect free.
+ * Declares one relation: `relation("Account", { id: u64.fresh,
+ * holder: u64, kind: Kind.id, ... })` — every field is a pure-structure
+ * descriptor (the constructor values themselves; domains are never
+ * declared: `schema()` computes them from the statements). Field
+ * declaration order is ordinal-id order (macro parity), carried at BOTH
+ * levels: the type level by the fields object, the value level by the
+ * frozen `data.fields` list — the law the schema-level class naming leans
+ * on. The returned value is frozen and side-effect free.
  */
 function relation<const Name extends string, Fields extends FieldsShape>(
 	name: Name,

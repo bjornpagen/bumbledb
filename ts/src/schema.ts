@@ -128,7 +128,7 @@ function verifyBindingHandles(
 		}
 		if (roster === undefined) {
 			throw errors.new(
-				`schema ${name}: ${face.owner.name}.${binding.field} is not a closed-relation reference — the handle literal ${literal.handle} is legal only on a field whose domain is a closed relation's handle domain — ${rendered}`
+				`schema ${name}: ${face.owner.name}.${binding.field} is not a closed-relation reference — the handle literal ${literal.handle} is legal only on a field carrying a closed relation's roster — ${rendered}`
 			)
 		}
 		if (!roster.handles.includes(literal.handle)) {

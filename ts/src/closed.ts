@@ -4,12 +4,13 @@
  * tiers, one function. The emission per closed relation mirrors the
  * macro's (host-enum analog): handle CONSTANTS on the value
  * (`Kind.Checking`, ids = declaration order, each a BARE `bigint` — no
- * brand), the `fromId` weld, an `id` field descriptor carrying the handle
- * DOMAIN (`"KindId"`, mirroring Rust's `closed relation Kind as KindId`)
+ * brand), the `fromId` weld, an `id` field descriptor carrying the CLOSED
+ * LINKAGE (the roster — pure structure, no declared domain: the laws type
+ * the columns, and `schema()` names the id's generator class `"Kind.id"`)
  * for other relations' field blocks (`kind: Kind.id`), payload readback
  * (`Kind.axioms`), and the declared payload column descriptors
  * (`Kind.columns` — the runtime twin of the `Cols` type parameter, which
- * the face layer's domain wall reads). Bare tier: `closed("Kind", ["Checking",
+ * the face layer's structural wall reads). Bare tier: `closed("Kind", ["Checking",
  * "Savings"])`. Payload tier: `closed("Sev", { pages: bool })({ Critical:
  * { pages: true }, ... })` — the axioms record IS the handle declaration,
  * every handle carrying every column exactly once (type-enforced). No fact
@@ -96,21 +97,22 @@ type Axioms<Handles extends string, Cols extends Record<string, PayloadField>> =
 interface ClosedCore<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>> {
 	readonly name: Name
 	/**
-	 * The handle-domain reference descriptor: `kind: Kind.id` in another
-	 * relation's field block is the reference through which bare handle ids
-	 * become legal in that relation's selections. Its domain is the closed
-	 * relation's handle domain (`"KindId"` — Rust's `as KindId`).
+	 * The closed reference descriptor: `kind: Kind.id` in another relation's
+	 * field block is the reference through which bare handle ids become
+	 * legal in that relation's selections. Pure structure plus the roster —
+	 * the referencing field's domain is law-born: `schema()` computes it
+	 * from the declared containment (`"Kind.id"`, the generator class).
 	 */
-	readonly id: ClosedIdField<`${Name}Id`>
+	readonly id: ClosedIdField
 	readonly data: ClosedData
 	/** Payload readback: handle to its declared column values, bare and structural. */
 	readonly axioms: Axioms<Handles, Cols>
 	/**
-	 * The declared payload columns, name → S1 field descriptor — an HONEST
+	 * The declared payload columns, name → field descriptor — an HONEST
 	 * frozen runtime record (the descriptors themselves, by identity), and
-	 * the typed carrier a projected payload column's domain label is
+	 * the typed carrier a projected payload column's structural shape is
 	 * recovered through off the schema type (the face layer's
-	 * `ProjectedDomain` reads it; `data.columns` carries the same
+	 * `ProjectedShape` reads it; `data.columns` carries the same
 	 * descriptors in declaration order for the lowering).
 	 */
 	readonly columns: Cols
@@ -324,7 +326,7 @@ function closedPayload<Name extends string, Cols extends Record<string, PayloadF
  * Mints one closed relation value — the shared seam of both tiers, HONESTLY
  * typed end to end (a wrong-shaped mint is a compile error here, not a
  * laundered `unknown`): roster checks, eager axiom lowering, the
- * domain-labeled `id` descriptor, the frozen `columns` carrier (the runtime
+ * roster-carrying `id` descriptor, the frozen `columns` carrier (the runtime
  * twin of the `Cols` type parameter), and the handle constants.
  */
 function mintClosed<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>>(
@@ -369,11 +371,7 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 		columns: cols,
 		rows: Object.freeze(rows)
 	})
-	const id: ClosedIdField<`${Name}Id`> = Object.freeze({
-		kind: "u64",
-		domain: `${name}Id`,
-		closed: roster
-	})
+	const id: ClosedIdField = Object.freeze({ kind: "u64", closed: roster })
 	/**
 	 * Handle names are arbitrary identifiers, so rows and constants are
 	 * minted with OWN-property definition (inside {@link mintAxioms} and

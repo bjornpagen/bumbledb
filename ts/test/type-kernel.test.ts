@@ -1,12 +1,14 @@
 /**
- * PRD-S1 runtime pins for the structural field & domain kernel: descriptors
- * honest at runtime (`{ kind, domain, fresh?, width?, element? }` frozen
- * plain objects), closed relations in both tiers (bare-bigint handle
- * constants in declaration order, the `fromId` weld, payload readback, the
- * `__proto__`-safe own-property minting), the field constructors' grammar
- * bounds, `span()`'s half-open nonempty law, and the selection-literal
- * machine's roster judgment — the runtime half of the two-boundary split
- * (structural types admit any bigint; the roster and the engine judge).
+ * Runtime pins for the MINIMAL structural field kernel (K3): descriptors
+ * honest at runtime (`{ kind, width?, element?, fresh? }` frozen plain
+ * objects — PURE STRUCTURE, no `domain` slot, no `.as`: the type-lie sweep
+ * below proves the absences own-property by own-property), closed
+ * relations in both tiers (bare-bigint handle constants in declaration
+ * order, the `fromId` weld, payload readback, the `__proto__`-safe
+ * own-property minting), the field constructors' grammar bounds, `span()`'s
+ * half-open nonempty law, and the selection-literal machine's roster
+ * judgment — the runtime half of the two-boundary split (structural types
+ * admit any bigint; the roster and the engine judge).
  */
 
 import assert from "node:assert/strict"
@@ -16,47 +18,58 @@ import { closed } from "#closed.ts"
 import { bool, bytes, i64, interval, literalOf, span, str, u64 } from "#fields.ts"
 import { relation } from "#relation.ts"
 
-const HolderId = u64.as("HolderId")
-const AccountId = u64.as("AccountId")
-const ActiveDuring = interval(i64).as("ActiveDuring")
-
 function buildLedgerPieces() {
 	const Kind = closed("Kind", ["Checking", "Savings"])
 	const Grade = closed("Grade", { mastered: bool })({
 		DirectPass: { mastered: true },
 		Failed: { mastered: false }
 	})
-	const Holder = relation("Holder", { id: HolderId.fresh, name: str })
+	const Holder = relation("Holder", { id: u64.fresh, name: str })
 	const Account = relation("Account", {
-		id: AccountId.fresh,
-		holder: HolderId,
+		id: u64.fresh,
+		holder: u64,
 		kind: Kind.id,
-		active: ActiveDuring
+		active: interval(i64)
 	})
 	return { Kind, Grade, Holder, Account }
 }
 
 describe("field descriptors", function describeDescriptors() {
 	test("descriptors are honest frozen plain objects — the type IS the runtime shape", function probeDescriptorShape() {
-		assert.equal(HolderId.kind, "u64")
-		assert.equal(HolderId.domain, "HolderId")
-		assert.deepStrictEqual(HolderId.fresh, { kind: "u64", domain: "HolderId", fresh: true })
-		assert.deepStrictEqual(u64.fresh, { kind: "u64", domain: undefined, fresh: true })
-		assert.deepStrictEqual(i64.as("Cents"), { kind: "i64", domain: "Cents" })
-		assert.equal(bool.kind, "bool")
-		assert.equal(bool.domain, undefined)
-		assert.equal(str.kind, "str")
-		assert.equal(str.domain, undefined)
-		assert.ok(Object.isFrozen(HolderId))
-		assert.ok(Object.isFrozen(HolderId.fresh))
+		assert.equal(u64.kind, "u64")
+		assert.deepStrictEqual(u64.fresh, { kind: "u64", fresh: true })
+		assert.deepStrictEqual(i64, { kind: "i64" })
+		assert.deepStrictEqual(bool, { kind: "bool" })
+		assert.deepStrictEqual(str, { kind: "str" })
 		assert.ok(Object.isFrozen(u64))
+		assert.ok(Object.isFrozen(u64.fresh))
+		assert.ok(Object.isFrozen(i64))
+	})
+
+	test("descriptors carry NO domain slot and NO .as — the type-lie sweep, every constructor output", function probeNoDomainSlot() {
+		const { Kind, Grade } = buildLedgerPieces()
+		const descriptors: ReadonlyArray<readonly [string, object]> = [
+			["bool", bool],
+			["str", str],
+			["u64", u64],
+			["u64.fresh", u64.fresh],
+			["i64", i64],
+			["bytes(4)", bytes(4)],
+			["interval(u64)", interval(u64)],
+			["interval(u64, 7n)", interval(u64, 7n)],
+			["interval(i64)", interval(i64)],
+			["Kind.id (closed reference)", Kind.id],
+			["Grade.columns.mastered (payload column)", Grade.columns.mastered]
+		]
+		for (const [name, descriptor] of descriptors) {
+			assert.equal(Object.hasOwn(descriptor, "domain"), false, `${name} must carry no runtime domain slot`)
+			assert.equal(Object.hasOwn(descriptor, "as"), false, `${name} must carry no .as constructor`)
+		}
 	})
 
 	test("bytes carries its width label at runtime and validates the 1..=64 grammar bound", function probeBytes() {
-		const tag = bytes(32).as("Tag")
-		assert.equal(tag.kind, "bytes")
-		assert.equal(tag.width, 32)
-		assert.equal(tag.domain, "Tag")
+		const tag = bytes(32)
+		assert.deepStrictEqual(tag, { kind: "bytes", width: 32 })
 		assert.equal(bytes(4).width, 4)
 		assert.throws(function zeroBytes() {
 			bytes(0)
@@ -68,14 +81,9 @@ describe("field descriptors", function describeDescriptors() {
 
 	test("interval carries element and width labels at runtime and validates w >= 1", function probeInterval() {
 		const fixed = interval(u64, 4n)
-		assert.equal(fixed.kind, "interval")
-		assert.equal(fixed.element, "u64")
-		assert.equal(fixed.width, 4n)
-		assert.equal(fixed.domain, undefined)
-		const general = interval(i64).as("ActiveDuring")
-		assert.equal(general.element, "i64")
-		assert.equal(general.width, undefined)
-		assert.equal(general.domain, "ActiveDuring")
+		assert.deepStrictEqual(fixed, { kind: "interval", element: "u64", width: 4n })
+		const general = interval(i64)
+		assert.deepStrictEqual(general, { kind: "interval", element: "i64", width: undefined })
 		assert.throws(function zeroWidth() {
 			interval(u64, 0n)
 		}, /width must be >= 1/)
@@ -99,11 +107,12 @@ describe("closed relations", function describeClosed() {
 		assert.equal(Kind.fromId(99n), undefined)
 	})
 
-	test("the id descriptor carries the handle domain and the roster", function probeIdDescriptor() {
+	test("the id descriptor is pure structure plus the roster — no declared handle domain", function probeIdDescriptor() {
 		const { Kind } = buildLedgerPieces()
-		assert.equal(Kind.id.kind, "u64")
-		assert.equal(Kind.id.domain, "KindId")
-		assert.deepStrictEqual(Kind.id.closed, { name: "Kind", handles: ["Checking", "Savings"] })
+		assert.deepStrictEqual(Kind.id, {
+			kind: "u64",
+			closed: { name: "Kind", handles: ["Checking", "Savings"] }
+		})
 	})
 
 	test("payload readback returns the declared axioms, bare and structural", function probeAxioms() {
@@ -134,9 +143,9 @@ describe("closed relations", function describeClosed() {
 		assert.ok(Object.hasOwn(Kind, "columns"), "the bare tier carries the empty columns record")
 		assert.ok(Object.isFrozen(Kind.columns))
 		assert.deepStrictEqual(Kind.columns, {})
-		// the carrier's TYPE flows through the mint: the label reads back as its literal
-		const label: "SevLevel" = closed("Sev", { level: u64.as("SevLevel") })({ Info: { level: 1n } }).columns.level.domain
-		assert.equal(label, "SevLevel")
+		// the carrier's TYPE flows through the mint: a width label reads back as its literal
+		const width: 8 = closed("Sev", { tag: bytes(8) })({ Info: { tag: new Uint8Array(8) } }).columns.tag.width
+		assert.equal(width, 8)
 	})
 
 	test("duplicate and reserved handles are construction errors in both tiers", function probeHandleGuards() {

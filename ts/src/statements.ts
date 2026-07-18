@@ -7,12 +7,16 @@
  *
  * Every field reference is checked against the relation it names in the
  * TYPE — existence through {@link FaceFields} (`on(R, "nope")` does not
- * compile) and DOMAIN compatibility through {@link SameDomains}: the two
- * faces' projected domain labels are read structurally off the schema type
- * (S1's `F["domain"]`) and constrained positionwise equal, so a
- * cross-domain pair is a compile error by string-literal comparison of
- * descriptor shapes — never by a value brand (the structural design's
- * ratified check). What is only a SEMANTIC property — the target side of a
+ * compile) and STRUCTURAL compatibility through {@link SameShapes}: the two
+ * faces' projected kind/width/element triples are read off the schema type
+ * (the minimal kernel — descriptors are pure structure) and constrained
+ * positionwise equal, so a u64 face against a str face, a bytes width
+ * mismatch, or an interval element mismatch is a compile error. Domains are
+ * NOT compared here — there is no domain to compare at construction: the
+ * statements themselves are what define the equivalence classes, and the
+ * domain wall lives where they aggregate — `schema()` (the
+ * one-generator-per-class law) and query joins (class names off the schema
+ * type). What is only a SEMANTIC property — the target side of a
  * containment resolving a declared key of its relation — is DELIBERATELY
  * not (and cannot be) stated here: whether `B(y)` is a key of `B` depends
  * on which `key()` statements the surrounding `schema()` collects, a set no
@@ -23,7 +27,7 @@
 
 import * as errors from "@superbuilders/errors"
 import type { Count } from "#count.ts"
-import { type AnyFace, type FaceData, renderFace, type SameArity, type SameDomains } from "#face.ts"
+import { type AnyFace, type FaceData, renderFace, type SameArity, type SameShapes } from "#face.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import { renderWindow, type WindowSpec } from "#spec.ts"
 
@@ -61,7 +65,7 @@ interface Statement {
  * properties — no phantom), which is what the key-statement-selected
  * `get(relation, keyStatement, key)` overload types its key object by
  * (`docs/architecture/70-api.md` § the freeze, the multi-key typed get) and
- * what resolves each projected field's domain label through the owner's
+ * what resolves each projected field's descriptor through the owner's
  * schema type. Structurally still a plain {@link Statement}.
  */
 interface KeyStatement<R extends AnyRelation, Projection extends readonly string[]> extends Statement {
@@ -76,7 +80,7 @@ interface KeyStatement<R extends AnyRelation, Projection extends readonly string
  * explicit one would only ever be a duplicate. Every projected name is
  * checked against `R`'s field block in the type, and the tuple is carried
  * in the returned value's type ({@link KeyStatement}) — keyed point reads
- * through THIS statement are typed field-for-field, domains resolvable
+ * through THIS statement are typed field-for-field, descriptors resolvable
  * through the owner's schema type.
  */
 function key<
@@ -98,16 +102,16 @@ function key<
 
 /**
  * `A(X|φ) <= B(Y|ψ)` — conditional inclusion, source left. Arity mismatch
- * between the two faces is a type error ({@link SameArity}); a cross-domain
- * pair is a type error ({@link SameDomains} — positionwise string-literal
- * equality of the projected S1 domain labels). The target side must
- * resolve a declared key of B — a SEMANTIC property of the whole statement
- * set that no face type can state, DELIBERATELY judged by the engine at
- * `Db.create`/`Db.open` (`SchemaError`), never re-checked here.
+ * between the two faces is a type error ({@link SameArity}); a structurally
+ * mismatched pair is a type error ({@link SameShapes} — positionwise
+ * equality of the projected kind/width/element triples). The target side
+ * must resolve a declared key of B — a SEMANTIC property of the whole
+ * statement set that no face type can state, DELIBERATELY judged by the
+ * engine at `Db.create`/`Db.open` (`SchemaError`), never re-checked here.
  */
 function contained<A extends AnyFace, B extends AnyFace>(
 	source: A,
-	target: B & SameArity<A, B> & SameDomains<A, B>
+	target: B & SameArity<A, B> & SameShapes<A, B>
 ): Statement {
 	const data: StatementData = Object.freeze({
 		kind: "containment",
@@ -124,12 +128,12 @@ function contained<A extends AnyFace, B extends AnyFace>(
  * two faces (each side contains the other). It lowers to the two adjacent
  * containments in the `A <= B` first order (macro parity — the engine
  * performs the split, source-first) and renders as `==` once, in the
- * written orientation. Faces pair by arity AND domain, exactly as
- * {@link contained}.
+ * written orientation. Faces pair by arity AND structural shape, exactly
+ * as {@link contained}.
  */
 function mirrors<A extends AnyFace, B extends AnyFace>(
 	source: A,
-	target: B & SameArity<A, B> & SameDomains<A, B>
+	target: B & SameArity<A, B> & SameShapes<A, B>
 ): Statement {
 	const data: StatementData = Object.freeze({
 		kind: "containment",
@@ -146,13 +150,14 @@ function mirrors<A extends AnyFace, B extends AnyFace>(
  * target-left — macro parity), and the RIGHT face is the counted source.
  * `window(on(Holder, "id"), atMost(3n), on(Account, "holder"))` says: each
  * Holder id groups at most three Account rows by holder. The two faces
- * pair by arity AND domain ({@link SameDomains}), exactly as containment —
- * the grouping join reads the same positionwise field pairing.
+ * pair by arity AND structural shape ({@link SameShapes}), exactly as
+ * containment — the grouping join reads the same positionwise field
+ * pairing.
  */
 function window<B extends AnyFace, A extends AnyFace>(
 	target: B,
 	count: Count,
-	source: A & SameArity<B, A> & SameDomains<B, A>
+	source: A & SameArity<B, A> & SameShapes<B, A>
 ): Statement {
 	const data: StatementData = Object.freeze({
 		kind: "window",

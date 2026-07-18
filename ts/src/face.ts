@@ -7,13 +7,16 @@
  * relation's sealed shape opened through its synthetic `id`. Projection is
  * positional: tuple order is preserved in the type, and the statement
  * constructors pair the two sides' tuples by arity ({@link SameArity}) AND
- * by domain ({@link SameDomains}) — the domain wall of the structural
- * design: every projected field's domain LABEL is read off the schema type
- * (`F["domain"]`, the S1 kernel) and compared positionwise by
- * string-literal equality, never by any value brand.
+ * by structural shape ({@link SameShapes}) — every projected field's
+ * kind/width/element triple is read off the schema type (the minimal
+ * kernel: descriptors are pure structure) and compared positionwise. There
+ * is no domain to compare at construction — domains are LAW-BORN: the
+ * statements themselves define the equivalence classes, and `schema()` is
+ * where they aggregate and get judged (the one-generator-per-class wall).
  */
 
 import type { AnyClosed, PayloadField } from "#closed.ts"
+import type { AnyField } from "#fields.ts"
 import type { AnyRelation, AnySelected, FieldsShape, RelationFields, SelectionBinding } from "#relation.ts"
 import { renderLiteralSet } from "#spec.ts"
 
@@ -101,41 +104,50 @@ type FaceFields<S extends FaceSource> = S extends AnySelected
 			? "id" | (keyof Row & string)
 			: never
 
-/** One field's domain label within a declared field block (`undefined` when the name is foreign). */
-type DomainIn<Fields extends FieldsShape, K extends string> = K extends keyof Fields ? Fields[K]["domain"] : undefined
+/**
+ * One descriptor's structural comparand: the kind/width/element triple —
+ * exactly the structure the minimal kernel carries (`width` on bytes and
+ * intervals, `element` on intervals, `undefined` where a kind has no such
+ * label).
+ */
+type ShapeOf<F extends AnyField> = readonly [
+	F["kind"],
+	F extends { readonly width: infer W } ? W : undefined,
+	F extends { readonly element: infer E } ? E : undefined
+]
+
+/** One field's structural shape within a declared field block (`undefined` when the name is foreign). */
+type ShapeIn<Fields extends FieldsShape, K extends string> = K extends keyof Fields ? ShapeOf<Fields[K]> : undefined
 
 /**
- * The domain LABEL of one projected field, read structurally off the
- * source's schema type — an ordinary or selected relation's field carries
- * its S1 descriptor's `domain`; a closed relation's synthetic `id` carries
- * the handle domain (`"KindId"`), and its payload columns carry their own
- * declared descriptors' labels through the closed value's typed `columns`
- * carrier (whose runtime twin is the frozen `columns` record the mint
- * carries), so a same-label closed-payload ↔ relation-field pairing
- * compiles and a mismatched one refuses — the identical wall every other
- * face position gets. The lowering carries the same label to the engine,
- * which stays the final authority.
+ * The structural SHAPE of one projected field, read off the source's
+ * schema type — an ordinary or selected relation's field contributes its
+ * descriptor's triple; a closed relation's synthetic `id` is a u64, and
+ * its payload columns contribute their declared descriptors' triples
+ * through the closed value's typed `columns` carrier (whose runtime twin
+ * is the frozen `columns` record the mint carries). The engine stays the
+ * final authority at `Db.create`/`Db.open`.
  */
-type ProjectedDomain<S extends FaceSource, K extends string> = S extends AnySelected
-	? DomainIn<RelationFields<S["relation"]>, K>
+type ProjectedShape<S extends FaceSource, K extends string> = S extends AnySelected
+	? ShapeIn<RelationFields<S["relation"]>, K>
 	: S extends AnyRelation
-		? DomainIn<RelationFields<S>, K>
+		? ShapeIn<RelationFields<S>, K>
 		: S extends {
-					readonly id: { readonly domain: infer D extends string }
+					readonly id: infer Id extends AnyField
 					readonly columns: infer Cols extends Record<string, PayloadField>
 				}
 			? K extends "id"
-				? D
-				: DomainIn<Cols, K>
+				? ShapeOf<Id>
+				: ShapeIn<Cols, K>
 			: undefined
 
-/** The positionwise domain-label tuple of a projection over `S`. */
-type DomainsOf<S extends FaceSource, P extends readonly string[]> = {
-	readonly [I in keyof P]: ProjectedDomain<S, P[I] & string>
+/** The positionwise structural-shape tuple of a projection over `S`. */
+type ShapesOf<S extends FaceSource, P extends readonly string[]> = {
+	readonly [I in keyof P]: ProjectedShape<S, P[I] & string>
 }
 
-/** The domain-label tuple a face projects, positionwise — the comparand of {@link SameDomains}. */
-type FaceDomains<F extends AnyFace> = F extends Face<infer S, infer P> ? DomainsOf<S, P> : never
+/** The shape tuple a face projects, positionwise — the comparand of {@link SameShapes}. */
+type FaceShapes<F extends AnyFace> = F extends Face<infer S, infer P> ? ShapesOf<S, P> : never
 
 /** The projection arity of a face. */
 type Arity<F extends AnyFace> = F["projection"]["length"]
@@ -165,31 +177,35 @@ type SameArity<A extends AnyFace, B extends AnyFace> =
 		: FaceArityMismatch<Arity<A>, Arity<B>>
 
 /**
- * The legible domain-mismatch verdict: when the two faces of a containment,
- * bijection, or window project different domain labels at any position,
- * this type is intersected into the second face's parameter and names both
- * label tuples — a cross-domain pair is a COMPILE error, achieved by
- * string-literal comparison of descriptor shapes (the structural design's
- * ratified check), never by a value brand.
+ * The legible shape-mismatch verdict: when the two faces of a containment,
+ * bijection, or window project structurally incompatible fields at any
+ * position, this type is intersected into the second face's parameter and
+ * names both shape tuples — a u64 face against a str face, a bytes width
+ * mismatch, or an interval element mismatch is a COMPILE error.
  */
-interface FaceDomainMismatch<Left, Right> {
-	readonly "face domain mismatch — positionwise domain labels must be equal on both sides": readonly [Left, Right]
+interface FaceShapeMismatch<Left, Right> {
+	readonly "face shape mismatch — positionwise kind, width, and element must be equal on both sides": readonly [
+		Left,
+		Right
+	]
 }
 
 /**
  * Resolves to `unknown` (a no-op intersection) when the two faces project
- * positionwise-equal domain labels, and to {@link FaceDomainMismatch}
- * otherwise. Equality is mutual tuple assignability over string-literal
- * labels (`undefined` pairs only with `undefined` — an unlabeled field
- * links only unlabeled fields, mirroring Rust where `u64` and `u64 as
- * HolderId` are different host types).
+ * positionwise-equal structural shapes, and to {@link FaceShapeMismatch}
+ * otherwise. Equality is mutual tuple assignability over the
+ * kind/width/element triples. This is the whole construction-time wall —
+ * deliberately: there is no domain to compare here. The domain wall lives
+ * where domains are BORN: `schema()` computes every field's class from the
+ * statement list and holds the one-generator-per-class law, and query
+ * joins compare class names off the schema type.
  */
-type SameDomains<A extends AnyFace, B extends AnyFace> =
-	FaceDomains<A> extends FaceDomains<B>
-		? FaceDomains<B> extends FaceDomains<A>
+type SameShapes<A extends AnyFace, B extends AnyFace> =
+	FaceShapes<A> extends FaceShapes<B>
+		? FaceShapes<B> extends FaceShapes<A>
 			? unknown
-			: FaceDomainMismatch<FaceDomains<A>, FaceDomains<B>>
-		: FaceDomainMismatch<FaceDomains<A>, FaceDomains<B>>
+			: FaceShapeMismatch<FaceShapes<A>, FaceShapes<B>>
+		: FaceShapeMismatch<FaceShapes<A>, FaceShapes<B>>
 
 /**
  * Projects a face — one spelling, arity-generic: `on(Account, "holder")`
@@ -241,13 +257,13 @@ export type {
 	Face,
 	FaceArityMismatch,
 	FaceData,
-	FaceDomainMismatch,
-	FaceDomains,
 	FaceFields,
 	FaceOwner,
+	FaceShapeMismatch,
+	FaceShapes,
 	FaceSource,
 	OneOf,
 	SameArity,
-	SameDomains
+	SameShapes
 }
 export { on, oneOf, renderFace }
