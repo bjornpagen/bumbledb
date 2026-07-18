@@ -4,6 +4,8 @@ Type-theoretic TypeScript SDK for the [bumbledb](https://github.com/bjornpagen/b
 
 bumbledb models data as relations judged by statements (functionality, containment, cardinality) and queried with Datalog expressed as plain values — no SQL, no query-string parser. The SDK is a thin, fully typed surface over an in-process native engine (LMDB storage, MVCC snapshots, a single-writer witnessed write loop).
 
+The surface is structural to the bone. Relation declarations are pure structure — kind, width, element, fresh, nothing else — and domains are never declared anywhere: **the laws type the columns**. `schema()` computes every field's equivalence class from the statement list itself, so the containments and mirrors you already write ARE the typing, at compile time and again at construction. Values stay bare (`bigint`, `string`, …); identity lives in the class the laws compute, not in a wrapper.
+
 > **Research-grade, one platform.** This is a `0.x` release of an embedded engine under active development. It targets a single platform today (below), the API is not yet frozen across `0.x`, and the FFI ABI is pinned exactly per version. Treat it as an early adopter's tool, not a production datastore.
 
 ## Platform support
@@ -18,32 +20,47 @@ pnpm add @bjornpagen/bumbledb
 
 ## Quick start
 
-Declare a schema, write facts through a transaction, and query with Datalog as
-values. Everything is typed end to end — branded ids, inferred query rows, and
-rejections that arrive as data rather than exceptions.
+Declare relations as pure structure, let the statement list type every column,
+write facts through a transaction, and query with Datalog as values.
+Everything is typed end to end — bare structural values in law-computed
+classes, inferred query rows, and rejections that arrive as data rather than
+exceptions.
 
 ```ts
-import { Db, relation, schema, contained, on, query, match, u64, str, type Brand, type Scope } from "@bjornpagen/bumbledb"
+import { bool, closed, contained, Db, gt, key, on, query, relation, schema, u64 } from "@bjornpagen/bumbledb"
 
-// Branded, fresh-minted id types.
-const HolderId = u64.newtype("HolderId")
-const AccountId = u64.newtype("AccountId")
+// A closed relation: a sealed roster of axioms with typed payload columns.
+const Kind = closed(
+	"Kind",
+	{ mastered: bool, rank: u64 },
+	{
+		DirectPass: { mastered: true, rank: 30n },
+		JudgedPass: { mastered: true, rank: 20n },
+		Failed: { mastered: false, rank: 10n }
+	}
+)
 
-// Relations. `.fresh` marks an engine-minted primary key.
-const Holder = relation("Holder", { id: HolderId.fresh, name: str })
-const Account = relation("Account", { id: AccountId.fresh, holder: HolderId })
+// Relations are pure structure — no domain is declared anywhere.
+// `u64.fresh` marks an engine-minted primary key.
+const Attempt = relation("Attempt", { id: u64.fresh, kind: Kind.id })
+const Certificate = relation("Certificate", { attempt: u64, kind: Kind.id })
 
-// A theory: every Account.holder must reference an existing Holder.id.
-const Ledger = schema("Ledger", { Holder, Account }, [contained(on(Account, "holder"), on(Holder, "id"))])
+// THE LAWS TYPE THE COLUMNS: schema() computes every field's class FROM this
+// statement list — the containments are the typing. The last statement uses
+// ψ-selection: a certificate may only ever cite a mastered kind.
+const Review = schema("Review", { Kind, Attempt, Certificate }, [
+	contained(on(Attempt, "kind"), on(Kind, "id")),
+	key(Certificate, ["attempt"]),
+	contained(on(Certificate, "attempt"), on(Attempt, "id")),
+	contained(on(Certificate, "kind"), on(Kind.where({ mastered: true }), "id"))
+])
 
-const db = await Db.create("./ledger.db", Ledger)
+const db = await Db.create("./review.db", Review)
 
 // Write. The delta is judged against every statement at commit.
-let adaId: Brand<bigint, "HolderId"> | undefined
 const result = db.write((tx) => {
-	const ada = tx.insert(Holder, { name: "ada" }) // ada.id is a branded HolderId
-	adaId = ada.id
-	tx.insert(Account, { holder: ada.id })
+	const attempt = tx.insert(Attempt, { kind: Kind.DirectPass }) // attempt.id minted, a bare bigint
+	tx.insert(Certificate, { attempt: attempt.id, kind: Kind.DirectPass })
 })
 
 // Rejection-as-data: no throw — a rejected commit is a typed value carrying
@@ -54,28 +71,46 @@ if (!result.ok) {
 	}
 }
 
-// Query: Datalog as values. Rows are typed from the `select` shape.
-const accountsOf = query(Ledger, ($: Scope<(typeof Ledger)["relations"]>) => {
-	const acct = $.var(Account.fields.id)
-	const holder = $.param("holder", Holder.fields.id)
-	return { rules: [[match(Account, { id: acct, holder })]], select: { acct } }
+// Query: Datalog as values. Vars are named and typed by the class of their
+// first binding; params are typed by use; rows are typed from the select.
+// `gt` is one of the free comparison exports.
+const certifiedAbove = query(Review).rule((r) => {
+	const { a, k, rank } = r.vars("a", "k", "rank")
+	return r
+		.match(Certificate, { attempt: a, kind: k })
+		.match(Kind, { id: k, mastered: true, rank }) // ψ on the read side too
+		.where(gt(rank, r.param("floor")))
+		.select("a", "rank")
 })
 
-const prepared = db.prepare(accountsOf)
-const rows = db.execute(prepared, { holder: adaId }) // rows: { acct: AccountId }[]
+const prepared = db.prepare(certifiedAbove)
+const rows = db.execute(prepared, { floor: 15n }) // rows: { a: bigint; rank: bigint }[]
+console.log(rows)
+
+// Host dispatch over the sealed roster — exhaustive by construction; each
+// arm receives its axiom row.
+const label = Kind.match(Kind.JudgedPass, {
+	DirectPass: (row) => `mastered, rank ${row.rank}`,
+	JudgedPass: (row) => `mastered, rank ${row.rank}`,
+	Failed: () => "not mastered"
+})
+console.log(label) // "mastered, rank 20"
 ```
+
+Every `ts` fence in this README is extracted and type-checked against the
+real surface by `test/readme.test.ts` — the examples cannot drift.
 
 ## Surface
 
-- The type kernel — brands, fields, `relation()`, `closed()`.
-- The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `window`.
-- The `Db` runtime — path-cached stores, transactions, typed violations, scoped snapshot reads, the witnessed write loop.
-- The query surface — Datalog as values: scoped vars/params, atoms, negation, conditions, aggregates, engine recursion via predicates, `db.prepare`.
-- The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name.
+- The structural type kernel — fields as pure structure (`bool`, `bytes`, `i64`, `u64`, `str`, `interval`, `span`), `relation()`, and `closed()` sealed rosters with typed axiom payloads and exhaustive host dispatch via `.match`. Domains are never declared: `schema()` computes every field's class from the statement list.
+- The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `window`; faces via `on`/`oneOf`; counts via `exactly`, `atLeast`, `atMost`, `between`, `none`; ψ-selection via `.where` on relations and closed rosters.
+- The `Db` runtime — `Db.create`/`Db.open`, path-cached stores, transactions, typed violations, scoped snapshot reads, the witnessed write loop with `abandon`.
+- The query surface — Datalog as values, `query(S).rule(r => ...)`: named vars, params typed by use, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`, `covers`); stratified recursion via `program()`; `db.prepare` as a plain value.
+- The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name, with typed refusals (`ErrExhumeNoDescriptor`, `ErrExhumeFormatMismatch`, `ErrExhumeCorruption`).
 
 ## Cookbook
 
-The engine cookbook's 29 modeling recipes, translated to this SDK's structural API: [COOKBOOK.md](./COOKBOOK.md). Every recipe is compile-pinned by `test/cookbook.test.ts` — each schema is admitted by the real engine and every query snippet lowers through `db.prepare` — so the cookbook can never drift from the surface.
+The engine cookbook's 29 modeling recipes, translated to this SDK's structural API: [COOKBOOK.md](./COOKBOOK.md). Every recipe is compile-pinned by `test/cookbook.test.ts` — each schema is admitted by the real engine, its fingerprint asserted against the cross-host goldens the Rust cookbook suite also pins, and every query snippet lowers through `db.prepare` — so the cookbook can never drift from the surface.
 
 ## Architecture
 
