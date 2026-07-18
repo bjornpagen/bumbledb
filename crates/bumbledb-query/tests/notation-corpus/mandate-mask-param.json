@@ -1,0 +1,8 @@
+{
+  "name": "mandate-mask-param",
+  "builder": true,
+  "productions": ["allen-mask-param"],
+  "notation": "(a, b) | Mandate(account: a, active: s), Mandate(account: b, active: t), a < b, Allen(s, ?rel, t);",
+  "normalized": "(v0, v2) | Mandate(account: v0, active: v1), Mandate(account: v2, active: v3), v0 < v2, Allen(v1, ?0, v3);",
+  "program": {"predicates":[{"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0},{"kind":"var","var":2}],"atoms":[{"source":{"kind":"edb","relation":11},"bindings":[[0,{"kind":"var","var":0}],[2,{"kind":"var","var":1}]]},{"source":{"kind":"edb","relation":11},"bindings":[[0,{"kind":"var","var":2}],[2,{"kind":"var","var":3}]]}],"negated":[],"conditions":[{"kind":"leaf","cmp":{"op":{"kind":"lt"},"lhs":{"kind":"var","var":0},"rhs":{"kind":"var","var":2}}},{"kind":"leaf","cmp":{"op":{"kind":"allen","mask":{"kind":"param","param":0}},"lhs":{"kind":"var","var":1},"rhs":{"kind":"var","var":3}}}]}]}],"output":0}
+}

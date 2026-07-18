@@ -1,0 +1,8 @@
+{
+  "name": "mandate-durations",
+  "builder": true,
+  "productions": ["duration"],
+  "notation": "(org, Duration(active)) | Mandate(org, active);",
+  "normalized": "(v0, Duration(v1)) | Mandate(org: v0, active: v1);",
+  "program": {"predicates":[{"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0},{"kind":"measure","var":1}],"atoms":[{"source":{"kind":"edb","relation":11},"bindings":[[1,{"kind":"var","var":0}],[2,{"kind":"var","var":1}]]}],"negated":[],"conditions":[]}]}],"output":0}
+}

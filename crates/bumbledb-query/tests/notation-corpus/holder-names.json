@@ -1,0 +1,8 @@
+{
+  "name": "holder-names",
+  "builder": true,
+  "productions": ["punning", "field-var"],
+  "notation": "(name) | Holder(id: h, name);",
+  "normalized": "(v1) | Holder(id: v0, name: v1);",
+  "program": {"predicates":[{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":1}],"atoms":[{"source":{"kind":"edb","relation":3},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"var","var":1}]]}],"negated":[],"conditions":[]}]}],"output":0}
+}

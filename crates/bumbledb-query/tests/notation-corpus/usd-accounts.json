@@ -1,0 +1,8 @@
+{
+  "name": "usd-accounts",
+  "builder": true,
+  "productions": ["eq-handle"],
+  "notation": "(id) | Account(id, currency == Usd);",
+  "normalized": "(v0) | Account(id: v0, currency == Usd);",
+  "program": {"predicates":[{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"edb","relation":4},"bindings":[[0,{"kind":"var","var":0}],[2,{"kind":"literal","value":{"kind":"u64","value":"0"}}]]}],"negated":[],"conditions":[]}]}],"output":0}
+}

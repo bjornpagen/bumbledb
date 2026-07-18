@@ -1,0 +1,8 @@
+{
+  "name": "posted-sparse",
+  "builder": false,
+  "productions": ["idb-sparse", "idb-position-selection"],
+  "notation": "posted(id, account, amount) | Posting(id, account, amount);\n(x) | posted(2: x, 0 in ?wanted);",
+  "normalized": "p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);\n(v0) | p0(2: v0, 0 in ?0);",
+  "program": {"predicates":[{"head":[{"kind":"var"},{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0},{"kind":"var","var":1},{"kind":"var","var":2}],"atoms":[{"source":{"kind":"edb","relation":7},"bindings":[[0,{"kind":"var","var":0}],[2,{"kind":"var","var":1}],[4,{"kind":"var","var":2}]]}],"negated":[],"conditions":[]}]},{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"idb","pred":0},"bindings":[[2,{"kind":"var","var":0}],[0,{"kind":"paramSet","param":0}]]}],"negated":[],"conditions":[]}]}],"output":1}
+}

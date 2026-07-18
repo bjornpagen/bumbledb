@@ -1,0 +1,8 @@
+{
+  "name": "org-reach",
+  "builder": false,
+  "productions": ["program-recursion", "idb-ordered-dense"],
+  "notation": "reach(c, a) | OrgParent(child: c, parent: a);\nreach(c, a) | OrgParent(child: c, parent: m), reach(m, a);\n(c, a) | reach(c, a);",
+  "normalized": "p0(v0, v1) | OrgParent(child: v0, parent: v1);\np0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);\n(v0, v1) | p0(v0, v1);",
+  "program": {"predicates":[{"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0},{"kind":"var","var":1}],"atoms":[{"source":{"kind":"edb","relation":10},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"var","var":1}]]}],"negated":[],"conditions":[]},{"finds":[{"kind":"var","var":0},{"kind":"var","var":2}],"atoms":[{"source":{"kind":"edb","relation":10},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"var","var":1}]]},{"source":{"kind":"idb","pred":0},"bindings":[[0,{"kind":"var","var":1}],[1,{"kind":"var","var":2}]]}],"negated":[],"conditions":[]}]},{"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0},{"kind":"var","var":1}],"atoms":[{"source":{"kind":"idb","pred":0},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"var","var":1}]]}],"negated":[],"conditions":[]}]}],"output":1}
+}
