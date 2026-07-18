@@ -57,6 +57,8 @@ import type {
 	CondData,
 	CondParamsShape,
 	MaskData,
+	MatchFields,
+	MatchOwner,
 	MatchShape,
 	ParamUse,
 	RecData,
@@ -92,11 +94,17 @@ import {
 } from "#query/scope.ts"
 import type { CheckNameSelect, CheckSelect, RowOfNameSelect, RowOfSelect, SelectEntry } from "#query/select.ts"
 import { argMax, argMin, count, countDistinct, max, min, pack, sum } from "#query/select.ts"
-import type { AnyRelation, FieldsShape, RelationFields } from "#relation.ts"
+import type { FieldsShape, RelationField } from "#relation.ts"
 import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
 
-/** The ordinary (matchable) relations of a schema's record — closed relations lack the relation shape entirely. */
-type QueryRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], AnyRelation>
+/**
+ * The matchable members of a schema's record — ordinary relations AND
+ * closed vocabularies (ψ query atoms: a closed atom is an ordinary EDB
+ * atom over the sealed extension; the ENGINE decides whether it folds to a
+ * plan-constant member set or joins the L1-resident virtual image — the
+ * SDK lowers pass-through and never knows which).
+ */
+type QueryRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], MatchOwner>
 
 /** The environment after one bindings record: the incoming env plus every var the record binds (as classed slots). */
 type EnvOfMatch<Env extends EnvShape, F extends FieldsShape, CR, B> =
@@ -225,13 +233,13 @@ interface TermOps {
 /** The rule builder a `query(S).rule(...)` callback receives: the ops plus the first atom (`Classes` — the schema type's class map, the join judge's authority). */
 interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
 	/** The first EDB atom of the rule: fields bind vars, params, ∈-sets, or bare literals; absence is the wildcard (same-named vars within the record join class-equal). */
-	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
+	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+		bindings: B & CheckBindings<Record<never, never>, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): QueryRuleChain<
 		Rels,
-		EnvOfMatch<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
-		BindParamsShape<RelationFields<R>, B>,
+		EnvOfMatch<Record<never, never>, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		BindParamsShape<MatchFields<R>, B>,
 		Classes
 	>
 }
@@ -244,13 +252,13 @@ interface QueryRuleChain<
 	Classes extends SchemaClasses = SchemaClasses
 > {
 	/** One more positive EDB atom — var reuse joins, class-equal by the environment check. */
-	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
+	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+		bindings: B & CheckBindings<Env, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): QueryRuleChain<
 		Rels,
-		EnvOfMatch<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
-		Flatten<P & BindParamsShape<RelationFields<R>, B>>,
+		EnvOfMatch<Env, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		Flatten<P & BindParamsShape<MatchFields<R>, B>>,
 		Classes
 	>
 	/** One residual predicate: a comparison, an `and`/`or` tree, or a negated atom (`r.not`). */
@@ -263,13 +271,13 @@ interface QueryRuleChain<
 
 /** The rule builder an OUTPUT rule of a `program()` receives: a query rule plus finished-stratum `idb` atoms. */
 interface OutputRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
-	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
+	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+		bindings: B & CheckBindings<Record<never, never>, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): OutputRuleChain<
 		Rels,
-		EnvOfMatch<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
-		BindParamsShape<RelationFields<R>, B>,
+		EnvOfMatch<Record<never, never>, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		BindParamsShape<MatchFields<R>, B>,
 		Classes
 	>
 }
@@ -281,13 +289,13 @@ interface OutputRuleChain<
 	P extends ParamsRecord,
 	Classes extends SchemaClasses = SchemaClasses
 > {
-	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
+	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+		bindings: B & CheckBindings<Env, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): OutputRuleChain<
 		Rels,
-		EnvOfMatch<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
-		Flatten<P & BindParamsShape<RelationFields<R>, B>>,
+		EnvOfMatch<Env, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		Flatten<P & BindParamsShape<MatchFields<R>, B>>,
 		Classes
 	>
 	where<const C extends AnyCond>(
@@ -313,14 +321,14 @@ interface OutputRuleChain<
 /** The rule builder a RECURSIVE rule (`rec.rule(...)`) receives. */
 interface RecRuleScope<Rels extends SchemaRelations, Self extends string, Classes extends SchemaClasses = SchemaClasses>
 	extends TermOps {
-	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
+	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+		bindings: B & CheckBindings<Record<never, never>, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): RecRuleChain<
 		Rels,
 		Self,
-		EnvOfMatch<Record<never, never>, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
-		BindParamsShape<RelationFields<R>, B>,
+		EnvOfMatch<Record<never, never>, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		BindParamsShape<MatchFields<R>, B>,
 		Classes
 	>
 }
@@ -340,14 +348,14 @@ interface RecRuleChain<
 	P extends ParamsRecord,
 	Classes extends SchemaClasses = SchemaClasses
 > {
-	match<R extends QueryRelation<Rels>, const B extends MatchShape<RelationFields<R>>>(
+	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
-		bindings: B & CheckBindings<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+		bindings: B & CheckBindings<Env, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): RecRuleChain<
 		Rels,
 		Self,
-		EnvOfMatch<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
-		Flatten<P & BindParamsShape<RelationFields<R>, B>>,
+		EnvOfMatch<Env, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>,
+		Flatten<P & BindParamsShape<MatchFields<R>, B>>,
 		Classes
 	>
 	where<const C extends AnyCond>(
@@ -472,16 +480,33 @@ interface ResolvedBindings {
 }
 
 /**
- * Resolves a bindings record against a relation's declared fields, in the
- * record's written order: terms classify by their runtime tag, everything
- * else is a bare literal (typed by the FIELD at lowering — the membership
- * typing rule included). Every bound field carries its law-computed class,
- * read off the schema value's frozen class map — the runtime twin of the
- * type tier's `SlotAt` lookups.
+ * The ordered matchable fields of an atom owner — the runtime twin of the
+ * type tier's `MatchFields`: a relation's declared fields; a closed
+ * relation's SEALED shape, the synthetic `id` (the value's own
+ * roster-carrying descriptor, by identity) at ordinal 0 and the declared
+ * payload columns at declared index + 1 (the sealed shift, mirroring
+ * `spec.rs`'s resolver — a `ClosedColumn` is structurally a
+ * {@link RelationField}). The lowering golden pins this mapping.
+ */
+function matchFieldsOf(owner: MatchOwner): readonly RelationField[] {
+	if ("axioms" in owner) {
+		return [Object.freeze({ name: "id", field: owner.id }), ...owner.data.columns]
+	}
+	return owner.data.fields
+}
+
+/**
+ * Resolves a bindings record against an atom owner's matchable fields (a
+ * relation's declared fields; a closed relation's sealed id + columns), in
+ * the record's written order: terms classify by their runtime tag,
+ * everything else is a bare literal (typed by the FIELD at lowering — the
+ * membership typing rule included). Every bound field carries its
+ * law-computed class, read off the schema value's frozen class map — the
+ * runtime twin of the type tier's `SlotAt` lookups.
  */
 function resolveBindings(
 	context: string,
-	relation: AnyRelation,
+	relation: MatchOwner,
 	bindings: Readonly<Record<string, unknown>>,
 	classes: SchemaClasses
 ): ResolvedBindings {
@@ -489,11 +514,12 @@ function resolveBindings(
 	const vars: Array<{ readonly name: string; readonly slot: ClassedField }> = []
 	const uses: ParamUse[] = []
 	const relationClasses = classes[relation.name]
+	const ordered = matchFieldsOf(relation)
 	for (const [fieldName, value] of Object.entries(bindings)) {
 		if (value === undefined) {
 			continue
 		}
-		const declared = relation.data.fields.find(function byName(candidate) {
+		const declared = ordered.find(function byName(candidate) {
 			return candidate.name === fieldName
 		})
 		if (declared === undefined) {
@@ -554,7 +580,7 @@ function resolveBindings(
  */
 function advanceMatch(
 	state: RuleBuildState,
-	relation: AnyRelation,
+	relation: MatchOwner,
 	bindings: Readonly<Record<string, unknown>>,
 	classes: SchemaClasses
 ): RuleBuildState {
@@ -672,7 +698,7 @@ function advanceWhere(state: RuleBuildState, cond: AnyCond, classes: SchemaClass
 		throw errors.new("where() takes a comparison, an and()/or() tree, or a negated atom")
 	}
 	if (cond.cond === "not") {
-		const relation: AnyRelation = cond.relation
+		const relation: MatchOwner = cond.relation
 		const bindings: Readonly<Record<string, unknown>> = Object.fromEntries(
 			Object.entries(cond.bindings ?? {}).filter(function defined([, value]) {
 				return value !== undefined
@@ -947,7 +973,7 @@ function makeRuleValue<Row, P extends ParamsRecord>(rule: RuleData): RuleValue<R
  * (bound variable names only — the creation quarantine).
  */
 interface RawChain {
-	match(relation: AnyRelation, bindings: Readonly<Record<string, unknown>>): RawChain
+	match(relation: MatchOwner, bindings: Readonly<Record<string, unknown>>): RawChain
 	where(cond: AnyCond): RawChain
 	idb(target: RecRef<string, ParamsRecord>, ...vars: readonly Var<string>[]): RawChain
 	select(...entries: readonly SelectEntry[]): RuleValue<never, never>
@@ -955,7 +981,7 @@ interface RawChain {
 
 /** The runtime rule-builder shape beneath every typed scope. */
 interface RawScope extends TermOps {
-	match(relation: AnyRelation, bindings: Readonly<Record<string, unknown>>): RawChain
+	match(relation: MatchOwner, bindings: Readonly<Record<string, unknown>>): RawChain
 }
 
 /** Which rule family a chain builds — gates `idb` and the recursive select — plus the schema's runtime class map (the join judge's authority). */
@@ -1430,7 +1456,13 @@ function paramIdOf(ctx: LowerContext, name: string): number {
 	return id
 }
 
-/** Lowers one EDB atom (either polarity). */
+/**
+ * Lowers one EDB atom (either polarity). A CLOSED owner lowers through the
+ * same edb source — its ordinal is its record-declaration slot exactly like
+ * an ordinary relation's — with field ordinals over the SEALED shape: `id`
+ * at 0, each payload column at its declared index + 1 (`matchFieldsOf`
+ * carries the shift; the lowering golden pins it).
+ */
 function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
 	const member = ctx.theory.relations[atom.relation.name]
 	if (member !== atom.relation) {
@@ -1442,8 +1474,9 @@ function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
 	if (relationId === undefined) {
 		throw errors.new(`query lowering: relation ${atom.relation.name} has no ordinal`)
 	}
+	const ordered = matchFieldsOf(atom.relation)
 	const bindings: Array<readonly [number, TermIr]> = atom.bindings.map(function lowerBinding(binding) {
-		const ordinal = atom.relation.data.fields.findIndex(function byName(candidate) {
+		const ordinal = ordered.findIndex(function byName(candidate) {
 			return candidate.name === binding.field
 		})
 		if (ordinal < 0) {

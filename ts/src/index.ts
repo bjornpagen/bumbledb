@@ -111,6 +111,8 @@ export type {
 	AnyCond,
 	BindingInput,
 	Cmp,
+	MatchFields,
+	MatchOwner,
 	MatchShape,
 	NotAtom,
 	RecData,

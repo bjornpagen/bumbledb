@@ -25,7 +25,8 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import type { AnyField, Infer, IntervalValue } from "#fields.ts"
+import type { AnyClosed } from "#closed.ts"
+import type { AnyField, ClosedIdField, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	ClassedField,
@@ -40,7 +41,31 @@ import type {
 	Var
 } from "#query/scope.ts"
 import { isTerm } from "#query/scope.ts"
-import type { AnyRelation, FieldsShape, Relation, RelationFields } from "#relation.ts"
+import type { AnyRelation, FieldsShape, RelationFields } from "#relation.ts"
+
+/**
+ * What a query atom matches over: an ordinary relation or a CLOSED
+ * vocabulary (ψ query atoms — the engine folds a resolvable closed atom
+ * into a plan-constant member set at prepare, or joins the L1-resident
+ * virtual image when the shape does not fold; the SDK never pre-folds and
+ * never knows which — transparency is the contract).
+ */
+type MatchOwner = AnyRelation | AnyClosed
+
+/**
+ * The matchable field block of an atom owner: a relation's declared
+ * fields; a closed relation's SEALED shape — the synthetic `id` (the
+ * roster-carrying descriptor) first, then the declared payload columns
+ * read through the typed `columns` carrier (the one source of payload
+ * typing — no parallel column table exists). The runtime twin is
+ * `matchFieldsOf` in `#query/lower.ts`; the id-first ordinal shift the two
+ * tiers share is pinned by the lowering golden.
+ */
+type MatchFields<R extends MatchOwner> = R extends AnyClosed
+	? { readonly id: ClosedIdField } & R["columns"]
+	: R extends AnyRelation
+		? RelationFields<R>
+		: never
 
 /** One atom-binding position as runtime data. */
 type BindingTermData =
@@ -57,9 +82,9 @@ interface BindingEntry {
 	readonly term: BindingTermData
 }
 
-/** One EDB atom as runtime data (either polarity — polarity is the rule item's). */
+/** One EDB atom as runtime data (either polarity — polarity is the rule item's; a closed owner is a ψ atom). */
 interface AtomData {
-	readonly relation: AnyRelation
+	readonly relation: MatchOwner
 	readonly bindings: readonly BindingEntry[]
 }
 
@@ -271,7 +296,7 @@ interface Tree<Ch extends readonly AnyTreeChild[]> {
  * membership at `.where` IS the safety rule, a compile error before it is
  * the engine's refusal.
  */
-interface NotAtom<R extends AnyRelation, B> {
+interface NotAtom<R extends MatchOwner, B> {
 	readonly cond: "not"
 	readonly relation: R
 	readonly bindings: B
@@ -284,7 +309,7 @@ type AnyCmp = Cmp<CmpKind, unknown, unknown, unknown>
 type AnyTreeChild = AnyCmp | Tree<readonly AnyTreeChild[]>
 
 /** Any negated-atom value. */
-type AnyNotAtom = NotAtom<AnyRelation, unknown>
+type AnyNotAtom = NotAtom<MatchOwner, unknown>
 
 /** Any `.where` input: a comparison, a condition tree, or a negated atom. */
 type AnyCond = AnyCmp | Tree<readonly AnyTreeChild[]> | AnyNotAtom
@@ -478,13 +503,16 @@ function or<const C extends readonly AnyTreeChild[]>(...children: C): Tree<C> {
  * rejects every binding some matching fact extends. A negated atom binds
  * nothing, only rejects: every variable it names must be positively bound
  * in the rule, which `.where`'s environment check makes a COMPILE error
- * (the engine's safety refusal stands behind it).
+ * (the engine's safety refusal stands behind it). A CLOSED owner is legal
+ * here too — the engine folds a resolvable negated closed atom to the
+ * COMPLEMENT of its member set (domain-witness guarded), and the SDK's
+ * negation rules apply to it unchanged.
  */
-function not<Name extends string, F extends FieldsShape, const B extends MatchShape<F>>(
-	relation: Relation<Name, F>,
+function not<R extends MatchOwner, const B extends MatchShape<MatchFields<R>>>(
+	relation: R,
 	bindings: B
-): NotAtom<Relation<Name, F>, B> {
-	const value: NotAtom<Relation<Name, F>, B> = { cond: "not", relation, bindings }
+): NotAtom<R, B> {
+	const value: NotAtom<R, B> = { cond: "not", relation, bindings }
 	return Object.freeze(value)
 }
 
@@ -577,8 +605,8 @@ type CondOkBool<Env extends EnvShape, Classes extends SchemaClasses, C> = [AnyTr
 			? false extends CondOkBool<Env, Classes, Ch[number]>
 				? false
 				: true
-			: C extends NotAtom<infer R extends AnyRelation, infer B>
-				? NotOk<Env, RelationFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+			: C extends NotAtom<infer R extends MatchOwner, infer B>
+				? NotOk<Env, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 				: false
 
 /** The validated `.where` argument (intersect with the inferred condition type). */
@@ -624,8 +652,8 @@ type CondParams<Env extends EnvShape, C> = [AnyTreeChild] extends [C]
 						: never
 		: C extends Tree<infer Ch extends readonly AnyTreeChild[]>
 			? CondParams<Env, Ch[number]>
-			: C extends NotAtom<infer R extends AnyRelation, infer B>
-				? BindParams<RelationFields<R>, B>
+			: C extends NotAtom<infer R extends MatchOwner, infer B>
+				? BindParams<MatchFields<R>, B>
 				: never
 
 /** The flattened params record one bindings record contributes. */
@@ -660,6 +688,8 @@ export type {
 	IntervalSide,
 	IntervalVarOk,
 	MaskData,
+	MatchFields,
+	MatchOwner,
 	MatchShape,
 	NotAtom,
 	OrderSide,
