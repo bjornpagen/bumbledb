@@ -26,7 +26,7 @@
 
 import { contained, on, relation, schema, str, u64 } from "#index.ts"
 
-const DocId = u64.newtype("DocId")
+const DocId = u64.as("DocId")
 
 const Doc = relation("Doc", { id: DocId.fresh, title: str })
 const Tagged = relation("Tagged", { doc: DocId, tag: str })

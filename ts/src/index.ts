@@ -6,9 +6,11 @@
  * algebra with `schema()` and `SchemaSpec` lowering (PRD-06), the `Db`
  * runtime (path-cached stores, transactions, typed violations, scoped
  * snapshot reads, the witnessed write loop with `abandon` — PRD-07, zero
- * closables), the query surface (Datalog as values: scoped vars/params,
- * atoms, negation, conditions, aggregates, engine recursion via predicates,
- * `db.prepare` as a plain value — PRD-08), and the exhume surface
+ * closables), the query surface (Datalog as values, kysely-shaped:
+ * `query(S).rule(r => r.match(...).where(...).select(...))` with
+ * string-named domain-typed vars, params typed by use, negation,
+ * conditions, aggregates, and stratified recursion via `program()`/`rec` —
+ * `db.prepare` as a plain value), and the exhume surface
  * (`Db.exhume` — the one schema-independent read path: the store's
  * self-described shapes and raw facts by name, deliberately untyped —
  * course-serialization PRD-02). The raw native bridge is not exported (the
@@ -99,51 +101,41 @@ export type {
 } from "#native.ts"
 
 export type {
-	AnyBodyItem,
-	AnyCondition,
-	ComparisonItem,
-	ConditionTreeItem,
-	Duration,
-	MatchAtom,
-	MatchInput,
-	TermInput
+	AnyCond,
+	BindingInput,
+	Cmp,
+	MatchShape,
+	NotAtom,
+	RecData,
+	RuleData,
+	SelectColumn,
+	Tree
 } from "#query/atom.ts"
-
-export {
-	ALLEN,
-	allen,
-	and,
-	covers,
-	duration,
-	ge,
-	gt,
-	is,
-	le,
-	lt,
-	match,
-	ne,
-	not,
-	or
-} from "#query/atom.ts"
-
+export { ALLEN } from "#query/atom.ts"
 export type {
 	AnyQuery,
+	AnyRuleValue,
+	OutputRuleChain,
+	OutputRuleScope,
 	Query,
-	QueryBuild,
+	QueryData,
 	QueryParams,
+	QueryRelation,
 	QueryRow,
-	Scope
+	QueryRuleChain,
+	QueryRuleScope,
+	QueryStart,
+	RecRef,
+	RecRuleChain,
+	RecRuleScope,
+	RuleValue,
+	TermOps
 } from "#query/lower.ts"
 export { lowerQuery, query } from "#query/lower.ts"
-export type {
-	Predicate,
-	PredicateBindings,
-	PredicateRuleInput,
-	PredicateSelf
-} from "#query/predicate.ts"
-export type { MaskParam, Param, ParamSet, ParamsRecord, Var } from "#query/scope.ts"
-export type { Aggregate, RowOf, SelectShape } from "#query/select.ts"
-export { argmax, argmin, count, countDistinct, max, min, pack, sum } from "#query/select.ts"
+export type { ProgramScope, Rec } from "#query/predicate.ts"
+export { program } from "#query/predicate.ts"
+export type { Duration, MaskParam, Param, ParamEntry, ParamsRecord, SetParam, Var } from "#query/scope.ts"
+export type { Agg, SelectEntry } from "#query/select.ts"
 export type {
 	AnyRelation,
 	AnySelected,

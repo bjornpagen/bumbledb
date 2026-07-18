@@ -70,8 +70,9 @@ before(async function create() {
 		})
 		grpId = grpRow.id
 		/**
-		 * A minted-then-deleted grp: its BRANDED id provably misses without
-		 * any cast (the id is real, the row is gone from the final state).
+		 * A minted-then-deleted grp: its bare structural id provably misses
+		 * without any cast (the id is real, the row is gone from the final
+		 * state).
 		 */
 		const doomed = tx.insert(grp, { sheet: sheetRow.id, label: "doomed", context: "c" })
 		missingGrpId = doomed.id
