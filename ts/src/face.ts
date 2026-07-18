@@ -13,7 +13,7 @@
  * string-literal equality, never by any value brand.
  */
 
-import type { AnyClosed } from "#closed.ts"
+import type { AnyClosed, PayloadField } from "#closed.ts"
 import type { AnyRelation, AnySelected, FieldsShape, RelationFields, SelectionBinding } from "#relation.ts"
 import { renderLiteralSet } from "#spec.ts"
 
@@ -108,20 +108,25 @@ type DomainIn<Fields extends FieldsShape, K extends string> = K extends keyof Fi
  * The domain LABEL of one projected field, read structurally off the
  * source's schema type — an ordinary or selected relation's field carries
  * its S1 descriptor's `domain`; a closed relation's synthetic `id` carries
- * the handle domain (`"KindId"`). A closed relation's payload columns type
- * as `undefined`: the `Closed` TYPE deliberately erases its payload
- * descriptors (axioms carry bare values), so no label survives to compare —
- * the lowering still carries the runtime label to the engine, which stays
- * the final authority on any pairing the type layer cannot see.
+ * the handle domain (`"KindId"`), and its payload columns carry their own
+ * declared descriptors' labels through the closed value's typed `columns`
+ * carrier (whose runtime twin is the frozen `columns` record the mint
+ * carries), so a same-label closed-payload ↔ relation-field pairing
+ * compiles and a mismatched one refuses — the identical wall every other
+ * face position gets. The lowering carries the same label to the engine,
+ * which stays the final authority.
  */
 type ProjectedDomain<S extends FaceSource, K extends string> = S extends AnySelected
 	? DomainIn<RelationFields<S["relation"]>, K>
 	: S extends AnyRelation
 		? DomainIn<RelationFields<S>, K>
-		: S extends { readonly id: { readonly domain: infer D extends string } }
+		: S extends {
+					readonly id: { readonly domain: infer D extends string }
+					readonly columns: infer Cols extends Record<string, PayloadField>
+				}
 			? K extends "id"
 				? D
-				: undefined
+				: DomainIn<Cols, K>
 			: undefined
 
 /** The positionwise domain-label tuple of a projection over `S`. */
