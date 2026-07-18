@@ -331,8 +331,9 @@ fn fresh_ids_allocated_in_a_rejected_txn_are_burned() {
     // before the commit's fate is known, and a rejection carries the
     // offending facts back as data, so re-issue would break observability
     // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`;
-    // `commit`'s escaped-flush on the reject exit). The other abort path,
-    // a failing `Db::write` closure, burns through `Db::write`'s own flush.
+    // `commit`'s escaped-flush on the reject exit). The other abort paths
+    // — a failing or PANICKING `Db::write` closure — burn through
+    // `Db::write`'s `EscapedIdBurn` drop guard.
     let dir = TempDir::new("commit-fresh-reject");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");

@@ -299,9 +299,16 @@ SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
   observability whatever became of the data. The escaped high-water flushes through a
   counters-only commit that writes exactly the dirty `Q` marks — no generation bump,
   no cache eviction — so an abort leaves query-visible state (facts and generation)
-  untouched but never recycles an id it issued. Interns are the one thing an abort
-  still drops: intern ids never escape (hosts see values, not words), so recycling an
-  unflushed provisional intern is invisible.
+  untouched but never recycles an id it issued. The mechanism names its owners:
+  `commit` flushes its own reject/infra exits, and `Db::write`'s `EscapedIdBurn` drop
+  guard covers the closure region — an `Err` return and a panic alike, exactly once
+  per termination. Each abort flush is best-effort (`let _ =`): a burn whose own
+  counters-only commit fails on disk silently no-ops, so the never-reissue law as
+  mechanized is unconditional *modulo I/O failure* — a sanctioned narrowing, recorded
+  beside the model (`lean/Bumbledb/Txn/Fresh.lean`, narrowings recorded), the same
+  class as the dirty-mark-flush-is-mechanism narrowing. Interns are the one thing an
+  abort still drops: intern ids never escape (hosts see values, not words), so
+  recycling an unflushed provisional intern is invisible.
 - **A Fresh field auto-materializes a functional dependency** — the statement
   `R(field) -> R`, first in the relation's materialized statement order, ordinary in
   every way and targetable by inclusions like any declared key. Two Accounts sharing

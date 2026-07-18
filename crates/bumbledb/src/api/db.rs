@@ -5,7 +5,10 @@
 //! handle is `Send + Sync`; readers run concurrently on LMDB snapshots;
 //! writes queue on one mutex. A write transaction is a [`WriteDelta`]
 //! — in-memory set arithmetic, nothing touches LMDB until commit, and an
-//! abort (error or panic) never wrote anything.
+//! abort (error or panic) never wrote a fact: the one thing every abort
+//! persists is the escaped fresh high-water, burned exactly once by the
+//! `EscapedIdBurn` drop guard (`db/write.rs`) — the never-reissue law
+//! binds a panicking closure like any other termination.
 //!
 //! # The `Fact<'a>` lifetime (a decision, recorded here)
 //!
