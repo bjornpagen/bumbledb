@@ -50,8 +50,8 @@ pub use manifest::{
 };
 pub use render::{RenderedFact, RenderedViolation, render_rejection};
 pub use spec::{
-    FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SchemaSpec, SchemaSpecError,
-    SideSpec, SpecIssue, StatementSpec, WindowSpec,
+    FaceNewtype, FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SchemaSpec,
+    SchemaSpecError, SideSpec, SpecIssue, StatementSpec, WindowSpec,
 };
 pub use validate::ValidateDescriptor;
 

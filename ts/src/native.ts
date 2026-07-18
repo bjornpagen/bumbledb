@@ -244,13 +244,17 @@ interface Violation {
  * `dbCreate`/`dbOpen`'s domain outcome. `schemaError` covers both spec
  * resolution (unresolvable names, banned spellings — every issue in one
  * message) and schema validation at the declaration boundary;
- * `fingerprintMismatch` is `dbOpen`'s stored-theory refusal.
+ * `newtypeMismatch` is the coherence wall's own kind — a spec whose
+ * statement pairs faces with disagreeing newtype labels (the engine twin
+ * of the schema-level class wall; unreachable through the typed builder,
+ * which computes every label from the laws, so only a raw spec can reach
+ * it); `fingerprintMismatch` is `dbOpen`'s stored-theory refusal.
  */
 type DbOpenResult =
 	| { readonly ok: true; readonly db: DbHandle }
 	| {
 			readonly ok: false
-			readonly kind: "schemaError" | "fingerprintMismatch"
+			readonly kind: "schemaError" | "newtypeMismatch" | "fingerprintMismatch"
 			readonly message: string
 	  }
 

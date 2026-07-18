@@ -14,6 +14,10 @@
 pub use bumbledb_bench::corpus_gen::theorygen::*;
 
 use bumbledb::Value;
+use bumbledb::schema::spec::{
+    FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, SchemaSpec, SideSpec, SpecIssue,
+    StatementSpec,
+};
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, MAX_EXTENSION_ROWS,
     RelationDescriptor, RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType,
@@ -375,6 +379,104 @@ fn extreme_pair(rng: &mut Rng, value_type: &ValueType) -> Box<[Value]> {
     }
 }
 
+/// One spec-arm case: the spec plus whether its drawn labels cohere —
+/// the arm's own expectation, asserted against the lowering's verdict.
+pub struct SpecCase {
+    pub spec: SchemaSpec,
+    /// Whether the drawn faces agree (same label, or both bare).
+    pub coherent: bool,
+}
+
+/// The spec tier (M5): the newtype-coherence wall fuzzed at its OWN
+/// surface — `SchemaSpec::descriptor`, the wall's one home. Every name
+/// resolves by construction; the one free variable is the newtype
+/// vocabulary on the paired key columns, drawn from a three-label pool
+/// (bare, `AKey`, `BKey`) so the three rule cases — same label, bare
+/// with bare, and the two mismatch shapes (label↔label, label↔bare) —
+/// all stay a draw away. A ψ-selection sometimes rides the target face
+/// (selection never changes the pairing) and the `==` spelling is
+/// coin-flipped (one spec statement, one check).
+pub fn newtype_spec(rng: &mut Rng) -> SpecCase {
+    const POOL: [Option<&str>; 3] = [None, Some("AKey"), Some("BKey")];
+    let source_label = POOL[draw(rng, POOL.len())];
+    let target_label = POOL[draw(rng, POOL.len())];
+    let keyed = |name: &str, label: Option<&str>| RelationSpec {
+        name: name.into(),
+        newtype: None,
+        fields: vec![
+            FieldSpec {
+                name: "key".into(),
+                value_type: ValueType::U64,
+                newtype: label.map(Into::into),
+                fresh: false,
+            },
+            FieldSpec {
+                name: "gate".into(),
+                value_type: ValueType::Bool,
+                newtype: None,
+                fresh: false,
+            },
+        ],
+        extension: None,
+    };
+    let side = |relation: &str, selected: bool| SideSpec {
+        relation: relation.into(),
+        projection: vec!["key".into()],
+        selection: if selected {
+            vec![(
+                "gate".into(),
+                LiteralSetSpec::One(LiteralSpec::Value(Value::Bool(true))),
+            )]
+        } else {
+            Vec::new()
+        },
+    };
+    let spec = SchemaSpec {
+        relations: vec![keyed("Src", source_label), keyed("Tgt", target_label)],
+        statements: vec![
+            StatementSpec::Fd {
+                relation: "Src".into(),
+                projection: vec!["key".into()],
+            },
+            StatementSpec::Fd {
+                relation: "Tgt".into(),
+                projection: vec!["key".into()],
+            },
+            StatementSpec::Containment {
+                source: side("Src", false),
+                target: side("Tgt", rng.chance(1, 2)),
+                bidirectional: rng.chance(1, 2),
+            },
+        ],
+    };
+    SpecCase {
+        spec,
+        coherent: source_label == target_label,
+    }
+}
+
+/// The spec-issue census — the `DescriptorMissing` convention at the
+/// spec surface: every rejection class of the shared lowering is a
+/// NAMED `SpecIssue` variant. Total match, zero catch-alls — a new
+/// variant is a compile error here.
+pub fn spec_issue_variant(issue: &SpecIssue) -> &'static str {
+    match issue {
+        SpecIssue::UnknownRelation { .. } => "UnknownRelation",
+        SpecIssue::UnknownField { .. } => "UnknownField",
+        SpecIssue::NotAHandleField { .. } => "NotAHandleField",
+        SpecIssue::UnknownHandle { .. } => "UnknownHandle",
+        SpecIssue::RowArityExcess { .. } => "RowArityExcess",
+        SpecIssue::DuplicateHandleNewtype { .. } => "DuplicateHandleNewtype",
+        SpecIssue::WindowInverted { .. } => "WindowInverted",
+        SpecIssue::WindowExactRespelled { .. } => "WindowExactRespelled",
+        SpecIssue::WindowExclusionRespelled { .. } => "WindowExclusionRespelled",
+        SpecIssue::WindowVacuous { .. } => "WindowVacuous",
+        SpecIssue::WindowContainmentRespelled { .. } => "WindowContainmentRespelled",
+        SpecIssue::DegenerateLiteralSet { .. } => "DegenerateLiteralSet",
+        SpecIssue::StatementNewtypeMismatch { .. } => "StatementNewtypeMismatch",
+    }
+}
+
 fn field_id(index: usize) -> FieldId {
     FieldId(u16::try_from(index).expect("grid field index fits u16"))
 }
@@ -401,6 +503,41 @@ mod tests {
             adversarial_descriptor(&mut Rng::from_bytes(&bytes)),
             "same bytes, same descriptor"
         );
+    }
+
+    /// The spec arm judges exactly its own expectation across the seed
+    /// sweep — coherent draws lower AND seal, mismatched draws reject
+    /// with the wall's issue and nothing else — and BOTH verdict
+    /// classes arise (a sweep that never mismatches proves nothing).
+    #[test]
+    fn the_spec_arm_judges_exactly_its_expectation() {
+        let mut rejected = 0u32;
+        for seed in 0..512 {
+            let case = super::newtype_spec(&mut Rng::new(seed));
+            match case.spec.descriptor() {
+                Ok(descriptor) => {
+                    assert!(case.coherent, "a mismatched spec lowered (seed {seed})");
+                    descriptor
+                        .validate()
+                        .expect("the coherent spec-arm theory seals");
+                }
+                Err(error) => {
+                    assert!(
+                        !case.coherent,
+                        "a coherent spec was rejected (seed {seed}): {error}"
+                    );
+                    rejected += 1;
+                    for issue in error.issues() {
+                        assert_eq!(
+                            super::spec_issue_variant(issue),
+                            "StatementNewtypeMismatch",
+                            "the arm resolves every name — the wall is its one issue"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(rejected > 0, "the mismatch shapes never arose");
     }
 
     /// The tier's whole point: a strong majority of draws pass the

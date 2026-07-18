@@ -71,6 +71,37 @@ pub fn theory(data: &[u8]) {
     let verdict = theory_oracles(&case.descriptor);
     assert_arity_expectation(case.coverage.expectation, &verdict);
     record_arity(ArityLane::Theory, case.coverage);
+
+    // The spec arm (M5): the newtype-coherence wall fuzzed at its OWN
+    // surface — the shared lowering (`SchemaSpec::descriptor`) is the
+    // wall's one home, and this arm proves it total there: a drawn label
+    // vocabulary either coheres (the spec lowers AND seals — pure, no
+    // store) or rejects typed, every issue named through the exhaustive
+    // spec-issue census (the `DescriptorMissing` convention). Fresh
+    // entropy from the same bytes; the legacy arms' draws are untouched.
+    let mut spec_rng = Rng::from_bytes(data);
+    let spec_case = theorygen::newtype_spec(&mut spec_rng);
+    match spec_case.spec.descriptor() {
+        Ok(descriptor) => {
+            assert!(
+                spec_case.coherent,
+                "a mismatched spec lowered: {descriptor:?}"
+            );
+            if let Err(err) = descriptor.validate() {
+                panic!("the coherent spec-arm theory must seal: {err:?}");
+            }
+        }
+        Err(error) => {
+            assert!(!spec_case.coherent, "a coherent spec was rejected: {error}");
+            for issue in error.issues() {
+                assert_eq!(
+                    theorygen::spec_issue_variant(issue),
+                    "StatementNewtypeMismatch",
+                    "the arm resolves every name — the wall is its one reachable issue"
+                );
+            }
+        }
+    }
 }
 
 fn theory_oracles(descriptor: &SchemaDescriptor) -> Verdict {

@@ -46,7 +46,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
-use bumbledb::schema::StatementDescriptor;
+use bumbledb::schema::{SpecIssue, StatementDescriptor};
 use bumbledb::{
     Answers, BindValue, Db, Error, Exhumed, FieldId, ParamArg, PreparedQuery, RelationId,
     SchemaDescriptor, Snapshot, StatementId, Theory, Value, Violations, WriteTx, exhume,
@@ -151,10 +151,17 @@ struct DbInner {
     tx_open: Arc<AtomicBool>,
 }
 
-/// `dbCreate`/`dbOpen`'s domain outcome.
+/// `dbCreate`/`dbOpen`'s domain outcome. `NewtypeMismatch` is the
+/// coherence wall's own kind — a spec whose statement pairs faces with
+/// disagreeing newtype labels (the engine twin of the SDK's schema-level
+/// class wall; unreachable through the typed builder, provable through a
+/// raw spec) — carved out of `SchemaError` so the SDK's rejection is
+/// typed. The carve-out is a match on the lowering's OWN issue list, no
+/// judgment here (the dumb-bridge law holds).
 pub enum OpenOutcome {
     Ok(External<DbHandle>),
     SchemaError(String),
+    NewtypeMismatch(String),
     FingerprintMismatch(String),
 }
 
@@ -170,6 +177,11 @@ impl ToNapiValue for OpenOutcome {
             Self::SchemaError(message) => {
                 obj.set("ok", false)?;
                 obj.set("kind", "schemaError")?;
+                obj.set("message", message)?;
+            }
+            Self::NewtypeMismatch(message) => {
+                obj.set("ok", false)?;
+                obj.set("kind", "newtypeMismatch")?;
                 obj.set("message", message)?;
             }
             Self::FingerprintMismatch(message) => {
@@ -190,7 +202,19 @@ fn open_with(
     let spec = marshal::schema_spec(spec)?;
     let descriptor = match spec.descriptor() {
         Ok(descriptor) => descriptor,
-        Err(error) => return Ok(OpenOutcome::SchemaError(error.to_string())),
+        Err(error) => {
+            // The coherence wall's kind rides its own arm; the message
+            // still carries the COMPLETE issue list either way.
+            let mismatched = error
+                .issues()
+                .iter()
+                .any(|issue| matches!(issue, SpecIssue::StatementNewtypeMismatch { .. }));
+            return Ok(if mismatched {
+                OpenOutcome::NewtypeMismatch(error.to_string())
+            } else {
+                OpenOutcome::SchemaError(error.to_string())
+            });
+        }
     };
     let statements = descriptor.materialized_statements();
     match open(std::path::Path::new(path), descriptor.clone()) {
