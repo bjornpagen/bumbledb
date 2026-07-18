@@ -300,7 +300,7 @@ broken until they agree.
 | [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, witnessed writes, prepared queries |
 
 The intuition-transfer companion is [`docs/cookbook.md`](docs/cookbook.md) —
-twenty-eight worked schemas (unions, vocabularies, trees, calendars, tax
+twenty-nine worked schemas (unions, vocabularies, trees, calendars, tax
 brackets, ledgers, maintained derived facts, host-driven closures), each
 rot-proofed by a compile test, each comment naming the theorem its statement
 buys.
@@ -308,6 +308,21 @@ buys.
 The algorithmic reference is Wang, Willsey & Suciu, *Free Join: Unifying
 Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in
 [`docs/free-join-paper/`](docs/free-join-paper/).
+
+The engine has a second host: [`ts/`](ts/README.md) is the TypeScript SDK,
+`@bjornpagen/bumbledb` on npm. It is not a port and not a wire protocol —
+schemas and queries declared in TypeScript lower through the same shared
+schema library (`crates/bumbledb-theory`) into the same engine, in-process
+over a napi bridge (`ts/crate`), so both hosts produce the same lowered
+descriptors and the same query IR. The flavor is the host's; the meaning is
+the theory's.
+
+The semantics themselves have one normative home: [`lean/`](lean/README.md),
+the Lean specification — the architecture docs motivate and cite it, never
+restate it. The tree builds under a zero-sorry law (the proof-escape battery
+in `scripts/lean.sh`), and the checked-in conformance corpus is judged three
+ways — the real engine, the naive brute-force model, and the executable Lean
+denotation — with any disagreement a failed gate.
 
 ## Measurement discipline
 
@@ -348,27 +363,76 @@ by machinery, not judgment:
 ## Repository layout
 
 ```
-crates/bumbledb/         the engine (LMDB via heed + blake3 are the only deps)
+crates/bumbledb/         the engine — external deps: heed (LMDB), blake3, and
+                         libc (the ephemeral kind's open-time preallocation;
+                         already in the graph under heed's lmdb-master-sys, so
+                         it adds no node) — plus the in-house bumbledb-macros
+                         and bumbledb-theory
   src/exec/              executor, COLT, sinks, wordmap, NEON kernels
   src/storage/           LMDB env, deltas, commit, interning
   src/api/               Db, transactions, prepared queries
   src/plan/, src/ir/     planner and query IR
 crates/bumbledb-macros/  the schema! proc macro (hand-rolled, no syn/quote)
+crates/bumbledb-theory/  the shared schema library: values, intervals, the
+                         Allen mask algebra, descriptors, the SchemaSpec
+                         lowering — every host lowers through this one crate
 crates/bumbledb-query/   the query! notation macro (downstream sugar; lowers to IR)
-crates/bumbledb-bench/   the oracle + benchmark suite (gen/verify/bench/trace)
+crates/bumbledb-bench/   the oracle + benchmark suite
+                         (gen/verify/verify-store/bench/trace/scenarios)
+ts/                      the TypeScript SDK — @bjornpagen/bumbledb on npm; the
+                         napi bridge crate lives at ts/crate
+lean/                    the Lean spec + the conformance corpus — the one
+                         normative home of the semantics
+fuzz/                    the detached fuzz crate: five coverage-guided targets,
+                         the replayed corpus, SESSIONS.md, trophies
 docs/                    the normative architecture + the cookbook (docs/cookbook.md)
-scripts/                 measure.sh, check-asm.sh, check.sh, bench_viz.py
+docs/reference/          background dossiers (apple-silicon-performance.md)
+scripts/
+  bench_viz.py           bench run dirs -> the README charts
+  check.sh               the engine gate suite (below)
+  check-asm.sh           disassembly gates: machine-code properties of hot
+                         symbols asserted against objdump output
+  fuzz.sh                the all-cores fuzz launcher: five targets, fork mode,
+                         time-sliced
+  lean.sh                the Lean gate (below)
+  measure.sh             the machine-wide measurement mutex — two agents'
+                         timing runs never overlap
+  miri.sh                the Miri lane: the pure modules' tests, native and
+                         cross-interpreted against x86_64-unknown-linux-gnu
+  miri-cross-cc.sh       stand-in cross C compiler so the Miri cross pass can
+                         satisfy LMDB's build script without a linux toolchain
+  ramdisk.sh             the RAM-backed scratch volume for the adversarial
+                         lanes (verify/differential/fuzz); every timed lane
+                         refuses it
+  spec-census.sh         the Bridge's grep-checked half: mechanism, instrument,
+                         and doc citations resolve against the tree
 ```
 
-The gate suite (run `scripts/check.sh`, or by hand):
+The gate suite (`scripts/check.sh`) opens with the classics:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo test --features alloc-counter --test alloc_gate --release
-scripts/check-asm.sh          # machine-property gates (needs a release bench build)
+cargo test --workspace --doc
+cargo test --features alloc-counter --test alloc_gate --release -- --test-threads=1
 ```
+
+…then runs the lanes a one-liner can't spell: clippy and tests with each
+fuzz-oracle feature compiled in (`ground-off`, `fold-off`); clippy over the
+detached fuzz crate (which every `--workspace` invocation skips); the
+deterministic crashpoint sweeps, durable and ephemeral; the WRITEMAP
+random-timing kill smoke; the bench crate linted and tested under its `obs`
+feature; and — when the cross std and cross C compiler are present — the
+x86-64 scalar-fallback `cargo check`. The alloc gate's `--test-threads=1` is
+load-bearing: the counting allocator is process-global.
+
+The Lean gate is `scripts/lean.sh`: `lake build` over the spec tree, the
+proof-escape battery, the spec census, the conformance corpus evaluated under
+the executable Lean denotation, and the three-way comparator replaying that
+corpus through the real engine and the naive model. It lives apart from
+`check.sh` on purpose — the Lean-dependent lane owns the Lean-dependent test,
+so `check.sh` stays toolchain-independent.
 
 ## Status
 
