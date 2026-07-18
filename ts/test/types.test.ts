@@ -27,10 +27,14 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 type Expect<T extends true> = T extends true ? true : never
 
 const Kind = closed("Kind", ["Checking", "Savings"])
-const Grade = closed("Grade", { mastered: bool })({
-	DirectPass: { mastered: true },
-	Failed: { mastered: false }
-})
+const Grade = closed(
+	"Grade",
+	{ mastered: bool },
+	{
+		DirectPass: { mastered: true },
+		Failed: { mastered: false }
+	}
+)
 const Tag = bytes(32)
 const ActiveDuring = interval(i64)
 /** The fixed-width interval family: the width is a descriptor-type label. */
