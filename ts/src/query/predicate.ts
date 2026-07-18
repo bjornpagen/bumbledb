@@ -28,6 +28,7 @@
  */
 
 import * as errors from "@superbuilders/errors"
+import type { SchemaClasses } from "#law.ts"
 import type { RecData } from "#query/atom.ts"
 import type {
 	AnyRuleValue,
@@ -61,42 +62,47 @@ interface Rec<
 	Rels extends SchemaRelations,
 	Name extends string,
 	P extends ParamsRecord,
-	Head extends HeadShape = undefined
+	Head extends HeadShape = undefined,
+	Classes extends SchemaClasses = SchemaClasses
 > extends RecRef<Name, P, Head> {
 	rule<RV extends AnyRuleValue>(
-		build: (r: RecRuleScope<Rels, Name>) => RV
-	): Rec<Rels, Name, Flatten<P & ParamsOf<RV>>, Head extends undefined ? HeadOf<RV> : Head>
+		build: (r: RecRuleScope<Rels, Name, Classes>) => RV
+	): Rec<Rels, Name, Flatten<P & ParamsOf<RV>>, Head extends undefined ? HeadOf<RV> : Head, Classes>
 	readonly [inferred]?: { readonly params: P; readonly head: Head }
 }
 
 /** One output-rule builder function. */
-type OutputBuild<Rels extends SchemaRelations> = (r: OutputRuleScope<Rels>) => AnyRuleValue
+type OutputBuild<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> = (
+	r: OutputRuleScope<Rels, Classes>
+) => AnyRuleValue
 
 /** A build function's rule value. */
 type BuiltRule<F> = F extends (r: never) => infer RV ? RV : never
 
 /** The union row of a tuple of output builds. */
-type OutputRow<Builds extends readonly OutputBuild<SchemaRelations>[]> = RowOf<BuiltRule<Builds[number]>>
+type OutputRow<Builds extends readonly OutputBuild<SchemaRelations, SchemaClasses>[]> = RowOf<BuiltRule<Builds[number]>>
 
 /** The intersected params record of a tuple of output builds. */
-type OutputParams<Builds extends readonly OutputBuild<SchemaRelations>[]> = ShapeOf<ParamsOf<BuiltRule<Builds[number]>>>
+type OutputParams<Builds extends readonly OutputBuild<SchemaRelations, SchemaClasses>[]> = ShapeOf<
+	ParamsOf<BuiltRule<Builds[number]>>
+>
 
 /**
  * The program scope: declare recs, attach their rules, then declare the
  * output — which seals the recs (a later `rec`/`rule` is a construction
  * error) and returns the program as an ordinary query value.
  */
-interface ProgramScope<Rels extends SchemaRelations> {
+interface ProgramScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> {
 	/** Declares one recursive predicate; declaration order = its dense `PredId`. */
-	rec<const Name extends string>(name: Name): Rec<Rels, Name, Record<never, never>>
+	rec<const Name extends string>(name: Name): Rec<Rels, Name, Record<never, never>, undefined, Classes>
 	/**
 	 * Declares the output predicate (one rule per build; multiple rules =
 	 * set union) and seals the program. Must be what the `program()`
 	 * callback returns.
 	 */
-	output<const Builds extends readonly OutputBuild<Rels>[]>(
+	output<const Builds extends readonly OutputBuild<Rels, Classes>[]>(
 		...builds: Builds
-	): Query<Rels, OutputRow<Builds>, OutputParams<Builds>>
+	): Query<Rels, OutputRow<Builds>, OutputParams<Builds>, Classes>
 }
 
 /** The runtime rec-handle shape beneath the typed `Rec` face. */
@@ -117,7 +123,7 @@ function makeRawRec<Name extends string>(state: ProgramState, name: Name, data: 
 					`rec ${name}: the program's output is already declared — recursive rules attach before p.output`
 				)
 			}
-			const built = build(makeRawScope({ kind: "rec", self: data }))
+			const built = build(makeRawScope({ kind: "rec", self: data, classes: state.classes }))
 			const head = data.rules[0]
 			if (head !== undefined) {
 				const declared = head.select.map(function columnName(column) {
@@ -145,21 +151,24 @@ function makeRawRec<Name extends string>(state: ProgramState, name: Name, data: 
  * the checkable fact — the handle owns exactly the rec data it names — is
  * verified before the raw handle is admitted at its typed face.
  */
-function isRecHandle<Rels extends SchemaRelations, Name extends string, P extends ParamsRecord>(
-	data: RecData,
-	rec: RawRec<Name>
-): rec is RawRec<Name> & Rec<Rels, Name, P> {
+function isRecHandle<
+	Rels extends SchemaRelations,
+	Name extends string,
+	P extends ParamsRecord,
+	Classes extends SchemaClasses
+>(data: RecData, rec: RawRec<Name>): rec is RawRec<Name> & Rec<Rels, Name, P, undefined, Classes> {
 	return rec.data === data
 }
 
 /** Builds one typed rec handle over shared rec data. */
-function makeRec<Rels extends SchemaRelations, Name extends string, P extends ParamsRecord>(
-	state: ProgramState,
-	name: Name,
-	data: RecData
-): Rec<Rels, Name, P> {
+function makeRec<
+	Rels extends SchemaRelations,
+	Name extends string,
+	P extends ParamsRecord,
+	Classes extends SchemaClasses
+>(state: ProgramState, name: Name, data: RecData): Rec<Rels, Name, P, undefined, Classes> {
 	const raw = makeRawRec<Name>(state, name, data)
-	if (!isRecHandle<Rels, Name, P>(data, raw)) {
+	if (!isRecHandle<Rels, Name, P, Classes>(data, raw)) {
 		throw errors.new(`rec ${name}: handle construction incomplete`)
 	}
 	return raw
@@ -172,15 +181,16 @@ function makeRec<Rels extends SchemaRelations, Name extends string, P extends Pa
  * the one `ProgramIr` shape the engine executes under the per-stratum
  * fixpoint driver.
  */
-function program<Rels extends SchemaRelations, Q extends Query<Rels, unknown, ParamsRecord>>(
-	theory: Schema<Rels>,
-	build: (p: ProgramScope<Rels>) => Q
-): Q {
-	const state: ProgramState = { recs: [], sealed: false }
+function program<
+	Rels extends SchemaRelations,
+	Classes extends SchemaClasses,
+	Q extends Query<Rels, unknown, ParamsRecord, Classes>
+>(theory: Schema<Rels, Classes>, build: (p: ProgramScope<Rels, Classes>) => Q): Q {
+	const state: ProgramState = { recs: [], classes: theory.classes, sealed: false }
 	const names = new Set<string>()
 	const made: { query: unknown } = { query: undefined }
-	const scope: ProgramScope<Rels> = {
-		rec<const Name extends string>(name: Name): Rec<Rels, Name, Record<never, never>> {
+	const scope: ProgramScope<Rels, Classes> = {
+		rec<const Name extends string>(name: Name): Rec<Rels, Name, Record<never, never>, undefined, Classes> {
 			if (state.sealed) {
 				throw errors.new(`program: the output is already declared — rec ${name} would be unreachable`)
 			}
@@ -192,11 +202,11 @@ function program<Rels extends SchemaRelations, Q extends Query<Rels, unknown, Pa
 			names.add(name)
 			const data: RecData = { name, rules: [] }
 			state.recs.push(data)
-			return makeRec<Rels, Name, Record<never, never>>(state, name, data)
+			return makeRec<Rels, Name, Record<never, never>, Classes>(state, name, data)
 		},
-		output<const Builds extends readonly OutputBuild<Rels>[]>(
+		output<const Builds extends readonly OutputBuild<Rels, Classes>[]>(
 			...builds: Builds
-		): Query<Rels, OutputRow<Builds>, OutputParams<Builds>> {
+		): Query<Rels, OutputRow<Builds>, OutputParams<Builds>, Classes> {
 			if (state.sealed) {
 				throw errors.new("program: output is declared once — multiple rules are multiple builds of the one output")
 			}
@@ -213,9 +223,9 @@ function program<Rels extends SchemaRelations, Q extends Query<Rels, unknown, Pa
 				throw errors.new("program: the output needs at least one rule")
 			}
 			const rules = builds.map(function buildRule(buildOne) {
-				return buildOne(makeOutputRuleScope<Rels>(state)).rule
+				return buildOne(makeOutputRuleScope<Rels, Classes>(state)).rule
 			})
-			const q = makeQuery<Rels, OutputRow<Builds>, OutputParams<Builds>>(theory, state.recs, rules)
+			const q = makeQuery<Rels, OutputRow<Builds>, OutputParams<Builds>, Classes>(theory, state.recs, rules)
 			made.query = q
 			return q
 		}

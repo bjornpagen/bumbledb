@@ -11,6 +11,7 @@
 import type { AnyClosed } from "#closed.ts"
 import type { FaceData } from "#face.ts"
 import type { AnyField } from "#fields.ts"
+import type { RelationClasses } from "#law.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { AnySchema, SchemaRelation } from "#schema.ts"
 import type {
@@ -57,18 +58,19 @@ function valueTypeOf(field: AnyField): ValueTypeSpec {
 
 /**
  * Lowers one field descriptor to its {@link FieldSpec}: the structural
- * type and the structural fresh mark (`fresh` is the literal `true`
- * exactly on a fresh-marked u64 — on an unmarked one the property holds
- * the marked descriptor, never `true`). The wire's `newtype` is the
- * COMPUTED class name — `schema()` derives it from the statement list (the
- * laws type the columns); until that law-typing lands the slot is fed
- * `undefined` (never fingerprinted either way).
+ * type, the structural fresh mark (`fresh` is the literal `true` exactly
+ * on a fresh-marked u64 — on an unmarked one the property holds the marked
+ * descriptor, never `true`), and the wire's `newtype` — the COMPUTED class
+ * name `schema()` derived from the statement list (the laws type the
+ * columns), `undefined` on a bare field. The engine reads newtypes for
+ * handle resolution and the coherence check only and DROPS them at
+ * descriptor lowering — class names are never fingerprinted.
  */
-function lowerField(name: string, field: AnyField): FieldSpec {
+function lowerField(name: string, field: AnyField, newtype: string | undefined): FieldSpec {
 	return {
 		name,
 		valueType: valueTypeOf(field),
-		newtype: undefined,
+		newtype,
 		fresh: "fresh" in field && field.fresh === true
 	}
 }
@@ -114,11 +116,14 @@ function lowerStatement(statement: Statement): StatementSpec {
 
 /**
  * Lowers one ordinary relation to its `RelationSpec` fragment: fields in
- * declaration order, `extension: undefined` (the option is the kind).
+ * declaration order, each carrying its law-computed class name as the
+ * `newtype` (`classes` — the schema's class record for this relation;
+ * bare fields carry `undefined`), `extension: undefined` (the option is
+ * the kind).
  */
-function lowerRelation(relation: AnyRelation): RelationSpec {
+function lowerRelation(relation: AnyRelation, classes: RelationClasses): RelationSpec {
 	const fields: FieldSpec[] = relation.data.fields.map(function lowerDeclared(declared) {
-		return lowerField(declared.name, declared.field)
+		return lowerField(declared.name, declared.field, classes[declared.name])
 	})
 	return { name: relation.name, newtype: undefined, fields, extension: undefined }
 }
@@ -127,33 +132,40 @@ function lowerRelation(relation: AnyRelation): RelationSpec {
  * Lowers one closed relation to its `RelationSpec` fragment: declared
  * intrinsic columns only (the engine materializes the synthetic `id`),
  * the handle newtype — the COMPUTED class name of the id's generator
- * class (`"Kind.id"`), which `schema()` derives and every referencing
- * field shares (how the engine resolves a handle literal back to its
- * roster); until the law-typing lands the slot is fed `undefined` — and
- * the ground axioms in declaration order (row id = index); the literals
- * were already lowered at `closed()` construction.
+ * class (`"Kind.id"`, always present: a closed id is a generator), which
+ * every referencing field shares by law (how the engine resolves a handle
+ * literal back to its roster) — and the ground axioms in declaration
+ * order (row id = index); the literals were already lowered at `closed()`
+ * construction.
  */
-function lowerClosed(member: AnyClosed): RelationSpec {
+function lowerClosed(member: AnyClosed, classes: RelationClasses): RelationSpec {
 	const fields: FieldSpec[] = member.data.columns.map(function lowerColumn(column) {
-		return lowerField(column.name, column.field)
+		return lowerField(column.name, column.field, classes[column.name])
 	})
 	const extension = member.data.rows.map(function lowerRow(row) {
 		return { handle: row.handle, values: row.values }
 	})
-	return { name: member.name, newtype: undefined, fields, extension }
+	return { name: member.name, newtype: classes.id, fields, extension }
 }
+
+/** The frozen empty class record a relation outside the schema's map lowers under (nothing classed). */
+const noClasses: RelationClasses = Object.freeze({})
 
 /**
  * Lowers a whole theory to the `SchemaSpec` the bridge takes: relations in
  * record declaration order, DECLARED statements only in written order (the
- * engine materializes the fresh-implied and closed auto-keys itself).
+ * engine materializes the fresh-implied and closed auto-keys itself), and
+ * every field's `newtype` slot fed from the schema's law-computed class
+ * map — the ONE domain authority (fingerprint-neutral: the engine drops
+ * newtypes at descriptor lowering).
  */
 function lower(theory: AnySchema): SchemaSpec {
-	const relations: RelationSpec[] = Object.values(theory.relations).map(function lowerMember(member) {
+	const relations: RelationSpec[] = Object.entries(theory.relations).map(function lowerMember([name, member]) {
+		const classes = theory.classes[name] ?? noClasses
 		if (isClosedMember(member)) {
-			return lowerClosed(member)
+			return lowerClosed(member, classes)
 		}
-		return lowerRelation(member)
+		return lowerRelation(member, classes)
 	})
 	return { relations, statements: theory.statements.map(lowerStatement) }
 }

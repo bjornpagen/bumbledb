@@ -1,9 +1,10 @@
 /**
  * @bjornpagen/bumbledb — the type-theoretic TypeScript SDK for the
  * bumbledb embedded relational engine. Public surface: the structural type
- * kernel (fields with schema-level domain labels, `relation()`,
- * `closed()`), the statement
- * algebra with `schema()` and `SchemaSpec` lowering (PRD-06), the `Db`
+ * kernel (fields as pure structure, `relation()`, `closed()` — domains are
+ * never declared: THE LAWS TYPE THE COLUMNS, `schema()` computing every
+ * field's equivalence class FROM the statement list at both tiers), the
+ * statement algebra with `schema()` and `SchemaSpec` lowering (PRD-06), the `Db`
  * runtime (path-cached stores, transactions, typed violations, scoped
  * snapshot reads, the witnessed write loop with `abandon` — PRD-07, zero
  * closables), the query surface (Datalog as values, kysely-shaped:
@@ -75,6 +76,7 @@ export type {
 	FaceShapes,
 	FaceSource,
 	OneOf,
+	OwnerOf,
 	SameArity,
 	SameShapes
 } from "#face.ts"
@@ -94,6 +96,7 @@ export type {
 	U64Field
 } from "#fields.ts"
 export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
+export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower, lowerClosed, lowerRelation } from "#lower.ts"
 export type { KeyFact, Minted } from "#marshal.ts"
 export type {
@@ -138,7 +141,17 @@ export type {
 export { lowerQuery, query } from "#query/lower.ts"
 export type { ProgramScope, Rec } from "#query/predicate.ts"
 export { program } from "#query/predicate.ts"
-export type { Duration, MaskParam, Param, ParamEntry, ParamsRecord, SetParam, Var, VarsRecord } from "#query/scope.ts"
+export type {
+	ClassedField,
+	Duration,
+	MaskParam,
+	Param,
+	ParamEntry,
+	ParamsRecord,
+	SetParam,
+	Var,
+	VarsRecord
+} from "#query/scope.ts"
 export type { Agg, SelectEntry } from "#query/select.ts"
 export type {
 	AnyRelation,
@@ -174,5 +187,14 @@ export type {
 	WindowSpec
 } from "#spec.ts"
 export { renderLiteral, renderLiteralSet, renderWindow } from "#spec.ts"
-export type { KeyData, KeyStatement, Statement, StatementData } from "#statements.ts"
+export type {
+	ContainedStatement,
+	ContainmentData,
+	KeyData,
+	KeyStatement,
+	Statement,
+	StatementData,
+	WindowData,
+	WindowStatement
+} from "#statements.ts"
 export { contained, key, mirrors, renderStatement, window } from "#statements.ts"

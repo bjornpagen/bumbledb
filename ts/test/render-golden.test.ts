@@ -132,10 +132,14 @@ const Golden = schema("Golden", { Status, Kind, Holder, Account, Booking, Slot, 
  * which lands in K4; the ψ selection itself is a plain bool literal and
  * resolves against the sealed columns today).
  */
-const Grade = closed("Grade", { mastered: bool })({
-	Failed: { mastered: false },
-	DirectPass: { mastered: true }
-})
+const Grade = closed(
+	"Grade",
+	{ mastered: bool },
+	{
+		Failed: { mastered: false },
+		DirectPass: { mastered: true }
+	}
+)
 const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
 const closedPsiContainment = contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id"))
 const closedPsiWindow = window(on(Grade.where({ mastered: true }), "id"), atMost(1n), on(Certificate, "grade"))

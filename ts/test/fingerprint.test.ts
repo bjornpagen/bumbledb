@@ -53,32 +53,39 @@ const RAY_END = 18446744073709551615n
 /** The 16 bytes of the Rust twin's `b"0123456789abcdef"` selection literal. */
 const DIGEST = new TextEncoder().encode("0123456789abcdef")
 
-const HolderId = u64.as("HolderId")
-const AccountId = u64.as("AccountId")
-const ActiveDuring = interval(i64).as("ActiveDuring")
-const Lease = interval(u64, 7n).as("Lease")
-
 const Status = closed("Status", ["Open", "Frozen"])
-const Kind = closed("Kind", { mastered: bool, weight: u64, span: interval(u64) })({
-	DirectPass: { mastered: true, weight: 2n, span: span(1n, 3n) },
-	Failed: { mastered: false, weight: 5n, span: span(3n, 5n) }
-})
+const Kind = closed(
+	"Kind",
+	{ mastered: bool, weight: u64, span: interval(u64) },
+	{
+		DirectPass: { mastered: true, weight: 2n, span: span(1n, 3n) },
+		Failed: { mastered: false, weight: 5n, span: span(3n, 5n) }
+	}
+)
 
+/**
+ * Fields are PURE STRUCTURE (the minimal kernel) — the Rust twin's declared
+ * `as HolderId`/`as AccountId` sorts have no SDK spelling: here the classes
+ * are LAW-COMPUTED from the statement list, and the fingerprint agrees
+ * because newtypes are dropped before hashing on both hosts
+ * (`bumbledb-schema-v4` hashes canonical descriptor bytes, never labels) —
+ * the neutrality law this lock re-pins under class names.
+ */
 const Holder = relation("Holder", {
-	id: HolderId.fresh,
+	id: u64.fresh,
 	name: str,
 	digest: bytes(16),
 	at: interval(u64)
 })
 const Account = relation("Account", {
-	id: AccountId.fresh,
-	holder: HolderId,
+	id: u64.fresh,
+	holder: u64,
 	kind: Kind.id,
 	status: Status.id,
-	active: ActiveDuring,
-	lease: Lease
+	active: interval(i64),
+	lease: interval(u64, 7n)
 })
-const SavingsTerms = relation("SavingsTerms", { account: AccountId, rate_bps: i64 })
+const SavingsTerms = relation("SavingsTerms", { account: u64, rate_bps: i64 })
 
 /**
  * Statement for statement the Rust twin's declaration order — order is
